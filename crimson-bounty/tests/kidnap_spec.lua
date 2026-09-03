@@ -176,3 +176,30 @@ describe('countdown', function()
         eq(s.kidnap.activeCount(), 0)
     end)
 end)
+
+describe('a protected target is refused up front', function()
+    it('will not arm a countdown the claim would refuse anyway', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+
+        for _, src in ipairs({ 1, 2, 3 }) do
+            Env.players[src]._coords = { x = 5.0, y = 5.0, z = 30.0 }
+        end
+        Env.players[2].PlayerData.metadata.ishandcuffed = true
+
+        -- The target has just respawned, so the claim would be refused.
+        s.death.onRevived('TARGET01')
+
+        local ok, reason = s.kidnap.arm(c.id, 'HUNTER01')
+        falsy(ok, 'thirty seconds of holding someone should not end in a refusal')
+        eq(reason, 'target_protected')
+
+        Env.advance(Config.Immunity.PostRespawnSeconds + 10)
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'), 'and arms once they are fair game again')
+    end)
+end)

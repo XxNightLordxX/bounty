@@ -71,9 +71,9 @@ function Memory.writeEscrow(contractId, lines)
         local incoming = lines[i]
         local existing = db.escrow[incoming.id]
         if existing and existing ~= incoming then
+            -- A separate copy of a line we already hold: take only the
+            -- fields a caller is allowed to change.
             existing.owed_to = incoming.owed_to
-        elseif existing == incoming then
-            db.escrow[incoming.id] = incoming
         else
             db.escrow[incoming.id] = incoming
         end

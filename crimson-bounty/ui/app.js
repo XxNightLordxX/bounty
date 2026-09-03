@@ -390,7 +390,10 @@
           target_not_conscious: 'The target must be alive and conscious.',
           not_coerced: 'The target must be restrained or in your vehicle.',
           creator_too_far: 'Get the target to the client.',
-          target_too_far: 'Keep the target close.'
+          target_too_far: 'Keep the target close.',
+          target_protected: 'Leave them a moment — they only just got up.',
+          party_offline: 'Everyone has to be online for a handover.',
+          limit_reached: 'Too many handovers in progress. Try shortly.'
         };
         return say(reasons[r.err] || ERRORS[r.err] || 'Cannot start the handover.');
       }

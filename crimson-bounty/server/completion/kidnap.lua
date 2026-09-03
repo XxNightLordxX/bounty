@@ -127,6 +127,13 @@ function Kidnap.arm(contractId, hunterCid)
     local ok, reason = Kidnap.conditionsMet(contract, hunterActor, targetActor, creatorActor)
     if not ok then return false, reason end
 
+    -- Immunity is checked here, not only at the end. The claim would be
+    -- refused either way, and finding out after thirty seconds of holding
+    -- someone is a waste of the hunter's time.
+    if targetActor and Contracts.isImmune(targetActor) then
+        return false, 'target_protected'
+    end
+
     active[key(contractId, hunterCid)] = {
         contractId = contractId,
         hunterCid  = hunterCid,
