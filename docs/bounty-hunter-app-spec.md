@@ -75,6 +75,25 @@ The app presents these as a single reward builder: the creator picks sources, se
 
 **Hunter choice.** The hunter decides on the fly how to handle the target based on opportunity — eliminate for the baseline, or kidnap for baseline + bonus.
 
+### 3.5 Payout Slots — multiple collections per contract
+
+A contract is not limited to paying out once. The creator sets **how many times it can be collected**, and funds a **separate reward set for each collection**.
+
+- `payoutSlots` is chosen at creation, from 1 to `Config.Limits.MaxPayoutSlots`.
+- Each slot carries its **own baseline and its own kidnapping bonus**. They need not be equal — a creator can make the first kill worth more than the third, or load the value onto the last one.
+- **All slots are escrowed up front** (§3.6). A contract that can pay three times has all three reward sets confiscated at creation; the creator cannot promise value they have not surrendered.
+- Slots are claimed **lowest-numbered first**, so what a hunter is competing for is always unambiguous, and the app shows which slot is next and what it holds.
+- The contract closes when the **last slot is claimed**, or on deadline/bailout/cancellation, whichever comes first. Unclaimed slots return to the creator in full through the normal release path (§9.2).
+- Multi-slot contracts are inherently competitive: `Config.Limits.MaxHuntersPerContract` still caps concurrent hunters, and exclusive mode with more than one slot means the same single hunter may collect repeatedly.
+
+**Anti-farm rules** (these are what stop a multi-slot contract becoming a respawn-camping machine):
+
+- A slot cannot be claimed while the target holds post-respawn immunity (§14.39).
+- The same hunter cannot claim two slots within `Config.Limits.SlotCooldownSeconds`.
+- Each claim is a full fulfilment: its own death report, its own capture token, its own verification photo. There is no bulk claim.
+
+---
+
 ### 3.5 Escrow Automation
 
 On submission, **all baseline and potential bonus** currency and items are automatically confiscated from the creator's inventory/accounts and held securely in escrow by the script until the contract resolves.
@@ -167,6 +186,7 @@ A hunter must **explicitly accept** the contract via the phone app to participat
 - The script confirms completion only if the target player's entity is within a short radius of the hunter at capture time.
 - On verification: the photo is transmitted instantly to the creator's app as proof of death, **baseline rewards** are released, and the contract closes for all hunters.
 - **No payout** if the target dies by local elements, suicide, or a player who did not accept the contract.
+- **The target must be genuinely dead, not downed.** A player in a downed / bleeding-out / last-stand state is *not* a completed elimination: the server requires the QBox death state (`isdead`), and explicitly rejects `inlaststand`. A hunter who downs a target and photographs them mid-bleedout gets nothing until the target actually dies. This is re-checked at photo submission, not only at the death report — a target revived between the two invalidates the pending completion.
 
 Attribution and photo binding:
 
@@ -177,8 +197,34 @@ Attribution and photo binding:
 - The contractor must bring the target **alive** to the physical location of the bounty creator.
 - The script must detect a **30-second continuous proximity countdown** between contractor, target, and creator.
 - On success: **baseline + bonus** escrowed rewards are released, and the contract closes for all hunters.
+- **The target must be alive and conscious for the entire delivery** — not dead, not downed / bleeding out, and above a configurable health floor. This is re-checked on every countdown sample, not only when the countdown arms: a target who dies or drops into last stand mid-countdown fails the delivery, and the hunter gets nothing. Delivering a corpse is not a kidnapping.
 - A short **grace period (config-backed, 2–3s default)** absorbs desync and doorways before the countdown resets; only a break exceeding the grace resets it.
 - The hunter sees the live countdown and its grace state on screen, so a reset is never silent.
+
+---
+
+### 7.5 Law Enforcement Threat Advisory
+
+A contract may name a player who holds a protected job (LEO, EMS, fire). Those players cannot use the app (§2), so they have no in-app way to learn about it — the system tells them, and tells their department.
+
+When a contract is created against a protected-job target:
+
+- **Every online law enforcement player receives an lb-phone notification** naming **which officer** the contract is on: *"THREAT ADVISORY — A contract has been placed on Deputy J. Wood."* The bulletin is sent to their phone, one per contract, deduped.
+- **An advisory goes out on every acceptance, carrying the running count.** The first bulletin says a threat exists; each acceptance says how much worse it has got — *"THREAT ADVISORY — The contract on Deputy J. Wood has been accepted. 3 operatives are now active."* Law enforcement can therefore judge the scale of the threat, not just its existence. The per-contract hunter cap (§3.7) bounds how many advisories one contract can raise, so this cannot be used to flood dispatch.
+- **The targeted officer is alerted directly** regardless of the paranoid-alert config — they cannot open the app to check, so the alert is not optional for them.
+- **The creator's identity is never included**, even when the creator is not anonymous. The advisory tells law enforcement that a threat exists and who it is against; finding out who ordered it is police work, not a free lookup.
+- **A dispatch entry is raised** through `sc-dispatch`'s `AddNotification` export when that resource is present, so the threat lands in the MDT alongside other calls. Config-backed; falls back to phone notification alone.
+- Which job types trigger a bulletin, and which jobs receive it, are separate config lists.
+
+Both sides of the contract are told plainly who they are dealing with:
+
+- **The creator is warned before the contract is placed.** Selecting a protected-job target raises an explicit confirmation — *"This target is a sworn law enforcement officer. Placing this contract will alert every officer on duty."* — naming the target's department. Escrow is not taken until they confirm.
+- **The hunter is warned before accepting.** The listing carries a permanent **LAW ENFORCEMENT** flag, and accepting raises the same style of confirmation — *"This contract is on an active police officer. Law enforcement has been advised."* No hunter can claim they did not know.
+- The flag is shown even when the creator is anonymous: it describes the *target*, and the target's job is not the creator's secret to keep.
+
+Contracts on protected-job targets are **allowed by default** — hunting a cop is legitimate criminal roleplay, and the advisory is what makes it a two-sided fight rather than an ambush. A server that would rather forbid it entirely sets `Config.Targeting.AllowProtectedJobTargets = false`, and creation is refused instead.
+
+The out-of-app bailout (§5) is unavailable to protected-job targets by default — the department response is their counter-play. `Config.Bailout.AllowProtectedJobCommand` enables a command-based buyout for servers that prefer it.
 
 ---
 
@@ -205,6 +251,9 @@ The following must be config-driven:
 - JSON-mode write debounce interval
 - Contract reason: maximum length and permitted character set
 - `Config.MaxActiveContractsPerCreator` and `Config.MaxAcceptedPerHunter`
+- `Config.Limits.MaxPayoutSlots` and `Config.Limits.SlotCooldownSeconds`
+- Threat advisory: trigger job types, recipient jobs, dispatch integration on/off
+- `Config.Targeting.AllowProtectedJobTargets`, `Config.Bailout.AllowProtectedJobCommand`
 - Amendment proposal expiry window (default 5 min)
 - Contract-cancellation cooldown (pre-acceptance)
 - Relay message rate limit and length cap; masked-call enable

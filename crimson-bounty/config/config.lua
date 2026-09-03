@@ -1,0 +1,401 @@
+--- Crimson Bounty System — configuration.
+--- Every value here is read server-side. Nothing in this file is sent to a
+--- client except through an explicit projection (server/projection.lua).
+
+Config = Config or {}
+
+--------------------------------------------------------------------------
+-- Access (§2)
+--------------------------------------------------------------------------
+
+--- Job *types* barred from the app. Blocking by type is what stops a newly
+--- added LEO job from silently gaining access.
+Config.BlockedJobTypes = {
+    leo = true, police = true, ems = true, fire = true,
+}
+
+--- Job *names* barred from the app, as a belt-and-braces list alongside the
+--- types above. Sourced from this server's sc-police / sc-dispatch configs.
+Config.BlockedJobNames = {
+    police = true, sheriff = true, leo = true, trooper = true, sasp = true,
+    bcso = true, fib = true, ranger = true, doj = true, lawyer = true,
+    ambulance = true, fire = true,
+}
+
+--- Off-duty players are still blocked by default: a police officer who clocks
+--- off is still a police officer to everyone they arrested this week.
+Config.BlockOffDuty = true
+
+--------------------------------------------------------------------------
+-- Reward sources (§3.4)
+--------------------------------------------------------------------------
+
+Config.Sources = {
+    cash   = { enabled = true,  max = 250000 },
+    bank   = { enabled = true,  max = 500000 },
+    dirty  = { enabled = true,  max = 250000, item = 'black_money' },
+    item   = { enabled = true,  maxStacks = 10, maxPerStack = 100 },
+    weapon = { enabled = true,  max = 3 },
+}
+
+--- Total escrow value ceiling across all sources, money-equivalent.
+Config.MaxContractValue = 1000000
+
+--- Items that may never be escrowed, whatever the creator selects.
+Config.EscrowBlacklist = {
+    ['phone'] = true, ['id_card'] = true, ['driver_license'] = true,
+    ['weaponlicense'] = true, ['handcuffs'] = true,
+}
+
+--- Kidnapping bonus. Percentage applies per money source; items are extra
+--- lines escrowed alongside the baseline.
+Config.Bonus = {
+    maxPercent = 200,       -- +200% ceiling
+    allowExtraItems = true,
+}
+
+--------------------------------------------------------------------------
+-- Payout currency (§14.10)
+--------------------------------------------------------------------------
+
+Config.Payout = {
+    --- Escrow pays out in exactly the sources it holds. Leave this false.
+    --- Turning it on lets a creator escrow clean money and have it paid as
+    --- dirty money, which on this server is a laundering rail: sc-blackmarket
+    --- prices dirty money at 0.85, making it worth ~1.18x clean.
+    AllowConversion = false,
+    --- Conversion rate applied when AllowConversion is on. Matched to
+    --- sc-blackmarket's BlackMoneyRate so converting is value-neutral, never
+    --- profitable.
+    DirtyConversionRate = 0.85,
+}
+
+--------------------------------------------------------------------------
+-- Anonymity (§4)
+--------------------------------------------------------------------------
+
+Config.Anonymity = {
+    CreatorFee = 0,          -- flat fee, 0 = free
+    HunterFee  = 0,
+    FeeAccount = 'bank',     -- 'cash' | 'bank'
+    AppliesToStaff = false,  -- never hide identity from logs or staff views
+}
+
+--------------------------------------------------------------------------
+-- Bailout (§5, §14.16, §14.17)
+--------------------------------------------------------------------------
+
+Config.Bailout = {
+    Enabled = true,
+    --- The creator names the premium, but the server clamps it to a multiple
+    --- of the escrow value so the bailout cannot be used as an uncapped,
+    --- untaxed transfer rail between two cooperating players.
+    MinMultiplier = 1.0,
+    MaxMultiplier = 3.0,
+    AbsoluteMax = 500000,
+    --- A bailout does not resolve instantly once a hunter is engaged: the
+    --- hunter gets this long to complete before it takes effect, so a target
+    --- cannot rug-pull a hunter mid-fight.
+    ProcessingDelaySeconds = 120,
+    --- Bailout is blocked while the target is dead or in last stand.
+    BlockWhileIncapacitated = true,
+    --- Protected-job targets cannot buy out in-app because they cannot open
+    --- the app. Enabling this gives them a command-based buyout instead;
+    --- off by default, since the department response is their counter-play.
+    AllowProtectedJobCommand = false,
+}
+
+--------------------------------------------------------------------------
+-- Limits and cooldowns (§9.5, §12.5, §13)
+--------------------------------------------------------------------------
+
+Config.Limits = {
+    MaxActiveContractsPerCreator = 3,
+    MaxAcceptedPerHunter         = 3,
+    MaxActiveContractsPerTarget  = 2,
+    MaxHuntersPerContract        = 5,
+
+    --- How many times one contract may be collected. Each slot carries its
+    --- own reward set and all of them are escrowed at creation.
+    MaxPayoutSlots               = 5,
+    --- The same hunter may not claim two slots inside this window. Without
+    --- it a multi-slot contract becomes a respawn-camping machine.
+    SlotCooldownSeconds          = 600,
+
+    TargetCooldownAfterResolveSeconds = 1800,
+    SameCreatorSameTargetCooldownSeconds = 7200,
+
+    ContractLifetimeSeconds = 172800,   -- absolute ceiling, pause included
+    MaxPausedSeconds        = 86400,
+    DefaultDeadlineSeconds  = 10800,
+}
+
+Config.Cooldowns = {
+    create    = { per = 60, burst = 2 },
+    accept    = { per = 30, burst = 3 },
+    bailout   = { per = 60, burst = 1 },
+    informant = { per = 300, burst = 1 },
+    message   = { per = 5,  burst = 5 },
+    amend     = { per = 30, burst = 3 },
+    search    = { per = 10, burst = 5 },
+    photo     = { per = 15, burst = 3 },
+}
+
+--------------------------------------------------------------------------
+-- Target eligibility and immunity (§14.19, §14.39)
+--------------------------------------------------------------------------
+
+Config.Immunity = {
+    MinTargetPlaytimeHours   = 5,
+    MinTargetSessionMinutes  = 10,
+    PostRespawnSeconds       = 300,
+    AfterBailoutSeconds      = 3600,
+    AfterContractResolvedSeconds = 1800,
+    --- Unresolvable playtime counts as below every minimum.
+    FailClosed = true,
+}
+
+--------------------------------------------------------------------------
+-- Completion (§7.4, §14.2, §14.20)
+--------------------------------------------------------------------------
+
+Config.Completion = {
+    --- Elimination requires a genuine death. A downed / bleeding-out target
+    --- is not a kill: both of these are re-checked at photo submission.
+    RequireTrueDeath   = true,
+    RejectLastStand    = true,
+    --- Server-side death state providers, tried in order. Each entry is
+    --- { resource, deadExport, lastStandExport }.
+    DeathStateProviders = {
+        { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
+        { resource = 'qbx_medical',  dead = 'IsDead', lastStand = 'IsLaststand' },
+    },
+    DeathReportWindowMs = 30000,
+    MaxWeaponRange      = 250.0,
+    PhotoRadius         = 5.0,
+    PhotoTokenLifetimeSeconds = 120,
+    --- A photo URL is accepted only from the host lb-phone uploads to.
+    --- Populated at boot from lb-phone's own upload config; entries here are
+    --- added to that set.
+    ExtraPhotoHosts = {},
+}
+
+Config.Kidnap = {
+    CountdownSeconds   = 30,
+    Radius             = 12.0,
+    ArmRadius          = 30.0,
+    MaxTotalGraceMs    = 3000,
+    SampleIntervalMs   = 1000,
+    TickMs             = 1000,
+    MaxConcurrentCountdowns = 20,
+    --- A kidnapping is a *live* delivery. The target must be conscious the
+    --- whole way: not dead, not downed / bleeding out, and above the health
+    --- floor. Both states are re-checked on every countdown sample, so a
+    --- target who dies or goes down mid-countdown fails the delivery.
+    RequireConscious   = true,
+    RejectDead         = true,
+    RejectLastStand    = true,
+    MinTargetHealthPercent = 20,
+    --- Observable coercion: the target must be restrained or under the
+    --- hunter's physical control. Any enabled detector satisfies it.
+    RequireCoercion    = true,
+    Coercion = {
+        handcuffed        = true,   -- QBox metadata 'ishandcuffed'
+        passengerOfHunter = true,   -- target is in the hunter's vehicle
+    },
+    --- Optional resource exposing IsRestrained(playerId) for custom rope /
+    --- ziptie scripts. Leave nil if unused.
+    RestraintProvider  = nil,
+    MaxHoldMinutes     = 30,
+    CreatorArrivalMinutes = 10,
+}
+
+--------------------------------------------------------------------------
+-- Tracking, mugshots and listings (§14.22, §14.26, §14.33)
+--------------------------------------------------------------------------
+
+Config.Tracking = {
+    Mode = 'ping',              -- coarse search area, never raw coordinates
+    UpdateIntervalMs = 15000,
+    CoarseRadius = 250.0,
+    AcceptedHuntersOnly = true,
+    DisabledWhileDead = true,
+    MaxActiveStreams = 40,
+}
+
+Config.Mugshot = {
+    Mode = 'delayed',           -- 'frozen' | 'delayed'
+    MinRefreshMinutes = 5,
+    MaxConcurrentRenders = 2,
+    RenderTimeoutMs = 8000,
+}
+
+Config.Listing = {
+    PageSize = 15,
+    CacheTTLMs = 5000,
+    DefaultSort = 'reward',
+    ExposeCreatedAt = false,
+}
+
+Config.Targeting = {
+    Mode = 'search',
+    MinQueryLength = 3,
+    MaxResults = 8,
+    AllowBrowseList = false,
+    --- Protected-job players may be targeted by default: hunting a cop is
+    --- legitimate criminal roleplay. What makes it fair is the advisory
+    --- below, not a ban. Set false to refuse creation instead.
+    AllowProtectedJobTargets = true,
+}
+
+--------------------------------------------------------------------------
+-- Law enforcement threat advisory (§7.5)
+--------------------------------------------------------------------------
+
+Config.Advisory = {
+    Enabled = true,
+    --- Job types that trigger an advisory when targeted.
+    TriggerJobTypes = { leo = true, police = true, ems = true, fire = true },
+    --- Job names that trigger one, for jobs with an unusual type.
+    TriggerJobNames = { doj = true, lawyer = true, ranger = true },
+    --- Who receives the advisory. Law enforcement only by default; EMS are
+    --- not a response unit for a contract killing.
+    RecipientJobTypes = { leo = true, police = true },
+    RecipientJobNames = {
+        police = true, sheriff = true, bcso = true, fib = true,
+        trooper = true, sasp = true, ranger = true,
+    },
+    --- Also raise a dispatch entry through sc-dispatch when present.
+    UseDispatch = true,
+    DispatchPriority = 1,
+    --- The targeted officer is always told, whatever the paranoid-alert
+    --- setting says — they cannot open the app to check for themselves.
+    AlwaysAlertTarget = true,
+    --- Warn the creator before escrow is taken, and the hunter before they
+    --- accept, that the target is law enforcement. The listing also carries a
+    --- permanent flag. Nobody hunts a cop by accident.
+    --- Advisories fire at creation and again on the first acceptance, so
+    --- the department learns both that a threat exists and that it went
+    --- live. Later acceptances on a competitive contract stay silent.
+    OnCreate = true,
+    OnAccept = true,
+    WarnCreator = true,
+    WarnHunter = true,
+    FlagListing = true,
+}
+
+--------------------------------------------------------------------------
+-- Reason text and relay (§11.4, §14.30)
+--------------------------------------------------------------------------
+
+Config.Reason = {
+    Mode = 'freetext',          -- 'preset' | 'freetext' | 'off'
+    MaxLength = 140,
+    MaxDigits = 6,
+    Presets = {
+        'Unpaid debt', 'Snitching', 'Territory dispute', 'Stolen product',
+        'Disrespect', 'Broken deal',
+    },
+    PatternDenylist = { 'https?://', 'discord%.gg', 'www%.', '@%w+' },
+}
+
+Config.Relay = {
+    Enabled = true,
+    MaxLength = 200,
+    MaxPerMinute = 12,
+    AllowMaskedCalls = true,
+}
+
+--------------------------------------------------------------------------
+-- Amendments (§12)
+--------------------------------------------------------------------------
+
+Config.Amendments = {
+    Enabled = true,
+    ProposalExpirySeconds = 300,
+    MaxOpenPerContract = 1,
+    CancelCooldownSeconds = 300,
+}
+
+--------------------------------------------------------------------------
+-- Informant and ledger (§6.1, §6.3)
+--------------------------------------------------------------------------
+
+Config.Informant = {
+    Enabled = true,
+    Cost = 25000,
+    Account = 'bank',
+    RevealMode = 'name',        -- 'name' | 'description'
+    TrackingRadius = 150.0,
+    TrackingWindowSeconds = 900,
+    RerollLockMinutes = 30,
+    MaxPurchasesPerContract = 2,
+    ChargeOnEmptyResult = true,
+}
+
+Config.Ledger = {
+    Depth = 10,
+    MaxDepthHardCap = 25,
+    StorePhotos = true,
+    ShowPhotoToTarget = false,
+    PhotoRetentionDays = 14,
+}
+
+--------------------------------------------------------------------------
+-- Notifications (§7.3, §14.40)
+--------------------------------------------------------------------------
+
+Config.Notifications = {
+    ParanoidAlert = true,
+    ParanoidCooldownMinutes = 30,
+    MaxPerRecipientPerMinute = 6,
+    MaxPerRecipientPerHour = 40,
+}
+
+--------------------------------------------------------------------------
+-- Persistence (§10)
+--------------------------------------------------------------------------
+
+Config.Database = {
+    Mode = 'mysql',             -- 'mysql' | 'json' | 'memory'
+    DebounceMs = 5000,          -- non-financial writes only
+    Json = {
+        Directory = 'data',
+        SyncOnFinancialWrite = true,
+        WarnContractCount = 2000,
+    },
+}
+
+Config.PendingEscrow = {
+    MaxPerPlayer = 20,
+    MaxRetriesPerLogin = 5,
+    RetryBackoffSeconds = 30,
+    DeadLetterAfterDays = 7,
+}
+
+--------------------------------------------------------------------------
+-- Audit (§9.8, §14.31)
+--------------------------------------------------------------------------
+
+Config.Audit = {
+    LogAllActions = true,
+    LogReasonText = true,
+    FlushIntervalMs = 10000,
+    MaxQueueSize = 5000,
+    RetentionDays = 30,
+    Webhook = false,
+    IdentityRevealAce = 'crimsonbounty.identity',
+}
+
+Config.AntiCollusion = {
+    --- Compares creator / hunter / target account identifiers. A shared
+    --- account is blocked outright; a shared household (same IP) is flagged
+    --- for staff, never auto-blocked — families share connections.
+    BlockSameAccount = true,
+    FlagSharedHousehold = true,
+    PairThrottleSeconds = 3600,
+}
+
+Config.Debug = false
+
+return Config

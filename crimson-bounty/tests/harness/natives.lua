@@ -1,0 +1,346 @@
+--- FiveM native + external resource stubs.
+--- Installs globals so the real server modules load unmodified.
+
+local Env = require('crimson-bounty.tests.harness.env')
+
+local Natives = { env = Env }
+
+--------------------------------------------------------------------------
+-- Core runtime
+--------------------------------------------------------------------------
+
+function Natives.install()
+    _G.GetGameTimer = function() return Env.gameTimer end
+    _G.os_time_real = os.time
+    _G.CreateThread = function(fn) table.insert(Env.threads, fn) end
+    _G.SetTimeout = function(ms, fn)
+        table.insert(Env.timers, { at = Env.gameTimer + ms, fn = fn })
+    end
+    _G.Wait = function() end
+    _G.GetCurrentResourceName = function() return 'crimson-bounty' end
+    _G.GetResourceState = function(name) return Natives.resourceStates[name] or 'missing' end
+
+    _G.RegisterNetEvent = function(name, handler)
+        Env.events[name] = handler
+    end
+    _G.AddEventHandler = function(name, handler)
+        Env.events['local:' .. name] = handler
+    end
+    _G.TriggerClientEvent = function(name, target, ...)
+        table.insert(Env.clientEvents, { name = name, target = target, args = { ... } })
+    end
+    _G.TriggerEvent = function(name, ...)
+        local h = Env.events['local:' .. name]
+        if h then h(...) end
+    end
+
+    _G.GetPlayerIdentifiers = function(src)
+        local p = Env.players[tonumber(src)]
+        if not p then return {} end
+        return { p.PlayerData.license, 'discord:' .. p.PlayerData.citizenid, 'ip:127.0.0.1' }
+    end
+    _G.GetPlayerName = function(src)
+        local p = Env.players[tonumber(src)]
+        return p and (p.PlayerData.charinfo.firstname .. ' ' .. p.PlayerData.charinfo.lastname) or 'Unknown'
+    end
+    _G.GetPlayers = function()
+        local out = {}
+        for src in pairs(Env.players) do out[#out + 1] = tostring(src) end
+        table.sort(out)
+        return out
+    end
+    _G.GetPlayerPed = function(src) return 1000 + tonumber(src) end
+    _G.GetEntityCoords = function(ped)
+        local src = ped - 1000
+        local p = Env.players[src]
+        if not p then return { x = 0.0, y = 0.0, z = 0.0 } end
+        return p._coords
+    end
+    _G.GetEntityHealth = function(ped)
+        local p = Env.players[ped - 1000]
+        return p and p._health or 0
+    end
+    _G.GetVehiclePedIsIn = function(ped)
+        local p = Env.players[ped - 1000]
+        return p and p._vehicle or 0
+    end
+    _G.GetPedInVehicleSeat = function(veh, seat)
+        for src, p in pairs(Env.players) do
+            if p._vehicle == veh and p._seat == seat then return 1000 + src end
+        end
+        return 0
+    end
+    _G.DoesEntityExist = function(entity) return entity and entity ~= 0 end
+
+    _G.print = function(...)
+        local parts = {}
+        for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+        table.insert(Env.console, table.concat(parts, ' '))
+    end
+
+    _G.json = Natives.json
+    _G.exports = Natives.exportsProxy()
+    _G.MySQL = Natives.mysql
+end
+
+--------------------------------------------------------------------------
+-- Minimal JSON (round-trips the shapes this resource stores)
+--------------------------------------------------------------------------
+
+Natives.json = {}
+
+local function encodeValue(v, out)
+    local t = type(v)
+    if t == 'nil' then out[#out + 1] = 'null'
+    elseif t == 'boolean' or t == 'number' then out[#out + 1] = tostring(v)
+    elseif t == 'string' then
+        out[#out + 1] = '"' .. v:gsub('[%c"\\]', function(c)
+            if c == '"' then return '\\"' elseif c == '\\' then return '\\\\' end
+            return string.format('\\u%04x', c:byte())
+        end) .. '"'
+    elseif t == 'table' then
+        local isArray, n = true, 0
+        for k in pairs(v) do
+            n = n + 1
+            if type(k) ~= 'number' then isArray = false end
+        end
+        if isArray and n == #v then
+            out[#out + 1] = '['
+            for i = 1, #v do
+                if i > 1 then out[#out + 1] = ',' end
+                encodeValue(v[i], out)
+            end
+            out[#out + 1] = ']'
+        else
+            out[#out + 1] = '{'
+            local keys = {}
+            for k in pairs(v) do keys[#keys + 1] = tostring(k) end
+            table.sort(keys)
+            for i = 1, #keys do
+                if i > 1 then out[#out + 1] = ',' end
+                encodeValue(keys[i], out)
+                out[#out + 1] = ':'
+                encodeValue(v[keys[i]] ~= nil and v[keys[i]] or v[tonumber(keys[i])], out)
+            end
+            out[#out + 1] = '}'
+        end
+    end
+end
+
+function Natives.json.encode(value)
+    local out = {}
+    encodeValue(value, out)
+    return table.concat(out)
+end
+
+--- Decoder sufficient for our own encoder's output.
+function Natives.json.decode(str)
+    local pos = 1
+    local function skip()
+        while pos <= #str and str:sub(pos, pos):match('%s') do pos = pos + 1 end
+    end
+    local parseValue
+    local function parseString()
+        pos = pos + 1
+        local buf = {}
+        while true do
+            local c = str:sub(pos, pos)
+            if c == '"' then pos = pos + 1 break end
+            if c == '\\' then
+                local nxt = str:sub(pos + 1, pos + 1)
+                if nxt == 'u' then
+                    buf[#buf + 1] = string.char(tonumber(str:sub(pos + 2, pos + 5), 16) % 256)
+                    pos = pos + 6
+                else
+                    buf[#buf + 1] = nxt == 'n' and '\n' or nxt
+                    pos = pos + 2
+                end
+            else
+                buf[#buf + 1] = c
+                pos = pos + 1
+            end
+        end
+        return table.concat(buf)
+    end
+    parseValue = function()
+        skip()
+        local c = str:sub(pos, pos)
+        if c == '{' then
+            pos = pos + 1
+            local obj = {}
+            skip()
+            if str:sub(pos, pos) == '}' then pos = pos + 1 return obj end
+            while true do
+                skip()
+                local k = parseString()
+                skip(); pos = pos + 1 -- colon
+                obj[k] = parseValue()
+                skip()
+                local d = str:sub(pos, pos)
+                pos = pos + 1
+                if d == '}' then break end
+            end
+            return obj
+        elseif c == '[' then
+            pos = pos + 1
+            local arr = {}
+            skip()
+            if str:sub(pos, pos) == ']' then pos = pos + 1 return arr end
+            while true do
+                arr[#arr + 1] = parseValue()
+                skip()
+                local d = str:sub(pos, pos)
+                pos = pos + 1
+                if d == ']' then break end
+            end
+            return arr
+        elseif c == '"' then
+            return parseString()
+        elseif str:sub(pos, pos + 3) == 'true' then pos = pos + 4 return true
+        elseif str:sub(pos, pos + 4) == 'false' then pos = pos + 5 return false
+        elseif str:sub(pos, pos + 3) == 'null' then pos = pos + 4 return nil
+        else
+            local numStr = str:match('^%-?%d+%.?%d*', pos)
+            pos = pos + #numStr
+            return tonumber(numStr)
+        end
+    end
+    return parseValue()
+end
+
+--------------------------------------------------------------------------
+-- Resource states and exports
+--------------------------------------------------------------------------
+
+Natives.resourceStates = {
+    ['qbx_core'] = 'started',
+    ['ox_inventory'] = 'started',
+    ['lb-phone'] = 'started',
+    ['sc-ambulance'] = 'started',
+    ['sc-dispatch'] = 'started',
+    ['MugShotBase64'] = 'started',
+}
+
+Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+
+function Natives.exportsProxy()
+    local resources = {}
+
+    resources['qbx_core'] = {
+        GetPlayer = function(_, src) return Env.players[tonumber(src)] end,
+        GetPlayerByCitizenId = function(_, cid)
+            local src = Env.byCitizen[cid]
+            return src and Env.players[src] or nil
+        end,
+    }
+
+    resources['ox_inventory'] = {
+        GetItem = function(_, src, name, metadata, returnsCount)
+            local p = Env.players[tonumber(src)]
+            if not p then return returnsCount and 0 or nil end
+            local count = 0
+            for _, slot in ipairs(p._inventory) do
+                if slot.name == name then count = count + slot.count end
+            end
+            return returnsCount and count or { count = count }
+        end,
+        RemoveItem = function(_, src, name, count)
+            local p = Env.players[tonumber(src)]
+            if not p then return false end
+            local remaining = count
+            for _, slot in ipairs(p._inventory) do
+                if slot.name == name and remaining > 0 then
+                    local take = math.min(slot.count, remaining)
+                    slot.count = slot.count - take
+                    remaining = remaining - take
+                end
+            end
+            table.insert(Natives.calls.inventory, { op = 'remove', src = src, name = name, count = count })
+            return remaining == 0
+        end,
+        AddItem = function(_, src, name, count, metadata)
+            local p = Env.players[tonumber(src)]
+            if not p then return false end
+            if p._inventoryFull then return false end
+            table.insert(p._inventory, { name = name, count = count, metadata = metadata })
+            table.insert(Natives.calls.inventory, { op = 'add', src = src, name = name, count = count })
+            return true
+        end,
+        CanCarryItem = function(_, src, name, count)
+            local p = Env.players[tonumber(src)]
+            return p and not p._inventoryFull or false
+        end,
+        Search = function(_, src, query, name)
+            local p = Env.players[tonumber(src)]
+            if not p then return {} end
+            local out = {}
+            for _, slot in ipairs(p._inventory) do
+                if slot.name == name then out[#out + 1] = slot end
+            end
+            return out
+        end,
+    }
+
+    resources['lb-phone'] = {
+        SendNotification = function(_, data)
+            table.insert(Natives.calls.notifications, data)
+            return true
+        end,
+        ContainsBlacklistedWord = function(_, src, text)
+            return tostring(text):lower():find('slur') ~= nil
+        end,
+        GetEquippedPhoneNumber = function(_, src) return '555-' .. tostring(src) end,
+        AddCustomApp = function() return true end,
+    }
+
+    resources['sc-ambulance'] = {
+        IsDead = function(_, src)
+            local p = Env.players[tonumber(src)]
+            return p and p.PlayerData.metadata.isdead or false
+        end,
+        IsLaststand = function(_, src)
+            local p = Env.players[tonumber(src)]
+            return p and p.PlayerData.metadata.inlaststand or false
+        end,
+    }
+
+    resources['sc-dispatch'] = {
+        AddNotification = function(_, data)
+            table.insert(Natives.calls.dispatch, data)
+            return 1
+        end,
+    }
+
+    return setmetatable({}, {
+        __index = function(_, resource)
+            return resources[resource] or setmetatable({}, {
+                __index = function() return function() return nil end end,
+            })
+        end,
+    })
+end
+
+--------------------------------------------------------------------------
+-- MySQL stub — parameterized only. A query containing an interpolated
+-- literal where a placeholder belongs fails the test suite loudly.
+--------------------------------------------------------------------------
+
+Natives.mysql = {
+    queries = {},
+}
+
+local function recordQuery(sql, params)
+    table.insert(Natives.mysql.queries, { sql = sql, params = params })
+end
+
+Natives.mysql.query = { await = function(sql, params) recordQuery(sql, params) return {} end }
+Natives.mysql.insert = { await = function(sql, params) recordQuery(sql, params) return 1 end }
+Natives.mysql.update = { await = function(sql, params) recordQuery(sql, params) return 1 end }
+Natives.mysql.scalar = { await = function(sql, params) recordQuery(sql, params) return nil end }
+Natives.mysql.prepare = { await = function(sql, params) recordQuery(sql, params) return {} end }
+Natives.mysql.transaction = { await = function(queries)
+    for _, q in ipairs(queries) do recordQuery(q.query or q[1], q.values or q[2]) end
+    return true
+end }
+
+return Natives

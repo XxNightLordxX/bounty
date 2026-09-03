@@ -1,0 +1,435 @@
+--- Escrow: the single source of truth for what a contract is worth (§9.1).
+---
+--- Two rules govern this file and nothing may bypass them:
+---   1. Funds and items move in the same operation that writes the record.
+---   2. Every release passes through releaseEscrow, which performs a guarded
+---      compare-and-set on the escrow line's state (§14.3). A line can settle
+---      exactly once, no matter which path reaches it.
+
+local Util = require_shared('util')
+
+local Escrow = {}
+
+local Storage, Audit
+
+function Escrow.init(storage, audit)
+    Storage, Audit = storage, audit
+end
+
+--------------------------------------------------------------------------
+-- Validation
+--------------------------------------------------------------------------
+
+--- Validate a client-submitted reward composition against what the player
+--- actually holds, reading everything server-side (§3.5, §14.13).
+---
+--- Returns a normalised line list. The caller never sees the client's own
+--- numbers again — only what this function produced.
+--- A contract may pay out several times (§3.5): `spec.slots` is an array of
+--- reward sets, one per collection, each with its own baseline and bonus.
+--- A bare { baseline = ..., bonus = ... } is accepted as a single slot.
+---
+---@param actor table
+---@param spec table client submission
+---@return table[]|nil lines
+---@return string|nil err
+---@return integer|nil slotCount
+function Escrow.validate(actor, spec)
+    if type(spec) ~= 'table' then return nil, CB.ERR.INVALID_REWARD end
+
+    local slots = spec.slots
+    if slots == nil then
+        slots = { { baseline = spec.baseline, bonus = spec.bonus } }
+    end
+    if type(slots) ~= 'table' or #slots < 1 or #slots > Config.Limits.MaxPayoutSlots then
+        return nil, CB.ERR.INVALID_REWARD
+    end
+
+    local lines = {}
+    local moneyTotal = 0
+    local slotIndex = 0
+
+    local function addMoney(portion, source, rawAmount)
+        local rule = Config.Sources[source]
+        if not rule or not rule.enabled then return CB.ERR.INVALID_REWARD end
+        local amount = Util.toPositive(rawAmount, rule.max)
+        if not amount then return CB.ERR.INVALID_REWARD end
+
+        local held
+        if source == 'cash' or source == 'bank' then
+            held = actor.player.Functions.GetMoney(source) or 0
+        else
+            held = exports.ox_inventory:GetItem(actor.source, rule.item, nil, true) or 0
+        end
+        if held < amount then return CB.ERR.INSUFFICIENT end
+
+        lines[#lines + 1] = { slot = slotIndex, portion = portion, source = source, amount = amount }
+        moneyTotal = moneyTotal + amount
+        return nil
+    end
+
+    local function addItems(portion, list)
+        if list == nil then return nil end
+        if type(list) ~= 'table' then return CB.ERR.INVALID_REWARD end
+        if #list > Config.Sources.item.maxStacks then return CB.ERR.INVALID_REWARD end
+
+        for i = 1, #list do
+            local entry = list[i]
+            if type(entry) ~= 'table' then return CB.ERR.INVALID_REWARD end
+            local name = Util.sanitizeText(entry.name, 64)
+            local count = Util.toPositive(entry.count, Config.Sources.item.maxPerStack)
+            if not name or not count then return CB.ERR.INVALID_REWARD end
+            if Config.EscrowBlacklist[name] then return CB.ERR.INVALID_REWARD end
+
+            local held = exports.ox_inventory:GetItem(actor.source, name, nil, true) or 0
+            if held < count then return CB.ERR.INSUFFICIENT end
+
+            lines[#lines + 1] = { slot = slotIndex, portion = portion, source = CB.SOURCE.ITEM, item = name, quantity = count }
+        end
+        return nil
+    end
+
+    local function addWeapons(portion, list)
+        if list == nil then return nil end
+        if type(list) ~= 'table' then return CB.ERR.INVALID_REWARD end
+        if #list > Config.Sources.weapon.max then return CB.ERR.INVALID_REWARD end
+
+        for i = 1, #list do
+            local entry = list[i]
+            if type(entry) ~= 'table' then return CB.ERR.INVALID_REWARD end
+            local name = Util.sanitizeText(entry.name, 64)
+            local slotIndex = Util.toPositive(entry.slot, 200)
+            if not name or not slotIndex then return CB.ERR.INVALID_REWARD end
+            if Config.EscrowBlacklist[name] then return CB.ERR.INVALID_REWARD end
+
+            -- Read the weapon's real metadata from the server-side inventory
+            -- and snapshot it (§9.4). The client's copy is never stored.
+            local found
+            local slots = exports.ox_inventory:Search(actor.source, 'slots', name) or {}
+            for j = 1, #slots do
+                if slots[j].slot == slotIndex or not found then found = slots[j] end
+            end
+            if not found then return CB.ERR.INSUFFICIENT end
+
+            lines[#lines + 1] = {
+                slot     = slotIndex,
+                portion  = portion,
+                source   = CB.SOURCE.WEAPON,
+                item     = name,
+                quantity = 1,
+                metadata = Util.copy(found.metadata) or {},
+                slot     = found.slot,
+            }
+        end
+        return nil
+    end
+
+    for index = 1, #slots do
+        slotIndex = index
+        local set = slots[index]
+        if type(set) ~= 'table' then return nil, CB.ERR.INVALID_REWARD end
+
+        local before = #lines
+        for _, portion in ipairs({ CB.PORTION.BASELINE, CB.PORTION.BONUS }) do
+            local part = set[portion]
+            if part ~= nil then
+                if type(part) ~= 'table' then return nil, CB.ERR.INVALID_REWARD end
+                for _, source in ipairs({ 'cash', 'bank', 'dirty' }) do
+                    if part[source] ~= nil then
+                        local err = addMoney(portion, source, part[source])
+                        if err then return nil, err end
+                    end
+                end
+                local err = addItems(portion, part.items)
+                if err then return nil, err end
+                err = addWeapons(portion, part.weapons)
+                if err then return nil, err end
+            end
+        end
+
+        -- Every slot must actually be funded; an empty slot would be a
+        -- collection that pays nothing.
+        local slotLines = {}
+        for i = before + 1, #lines do slotLines[#slotLines + 1] = lines[i] end
+        if Util.escrowIsEmpty(slotLines, CB.PORTION.BASELINE) then
+            return nil, CB.ERR.INVALID_REWARD
+        end
+    end
+
+    -- Holdings were checked per line against the live balance, so a creator
+    -- could otherwise fund three slots from one balance. Re-check the totals.
+    local err = Escrow.checkAggregate(actor, lines)
+    if err then return nil, err end
+
+    if moneyTotal > Config.MaxContractValue then
+        return nil, CB.ERR.INVALID_REWARD
+    end
+
+    return lines, nil, #slots
+end
+
+--- Confirm the creator actually holds the SUM of every line, not just each
+--- line individually. Without this, three slots of $10,000 each would pass
+--- on a $10,000 balance and the third confiscation would fail mid-take.
+---@return string|nil err
+function Escrow.checkAggregate(actor, lines)
+    local money, items = {}, {}
+
+    for i = 1, #lines do
+        local line = lines[i]
+        if CB.MONEY_SOURCES[line.source] then
+            money[line.source] = (money[line.source] or 0) + line.amount
+        else
+            local key = line.item
+            items[key] = (items[key] or 0) + (line.quantity or 1)
+        end
+    end
+
+    for source, total in pairs(money) do
+        local held
+        if source == 'cash' or source == 'bank' then
+            held = actor.player.Functions.GetMoney(source) or 0
+        else
+            held = exports.ox_inventory:GetItem(actor.source, Config.Sources.dirty.item, nil, true) or 0
+        end
+        if held < total then return CB.ERR.INSUFFICIENT end
+    end
+
+    for name, total in pairs(items) do
+        local held = exports.ox_inventory:GetItem(actor.source, name, nil, true) or 0
+        if held < total then return CB.ERR.INSUFFICIENT end
+    end
+
+    return nil
+end
+
+--------------------------------------------------------------------------
+-- Taking escrow
+--------------------------------------------------------------------------
+
+--- Confiscate the validated lines and write the escrow record as one
+--- operation. On any failure everything already taken is put back, so a
+--- partially-charged creator is not a reachable state (§3.5).
+---@param actor table
+---@param contractId string
+---@param lines table[] from Escrow.validate
+---@return boolean ok
+---@return string|nil err
+function Escrow.take(actor, contractId, lines)
+    local taken = {}
+
+    local function rollback()
+        for i = #taken, 1, -1 do
+            local line = taken[i]
+            if line.source == 'cash' or line.source == 'bank' then
+                actor.player.Functions.AddMoney(line.source, line.amount)
+            elseif line.source == 'dirty' then
+                exports.ox_inventory:AddItem(actor.source, Config.Sources.dirty.item, line.amount)
+            elseif line.source == CB.SOURCE.ITEM then
+                exports.ox_inventory:AddItem(actor.source, line.item, line.quantity)
+            elseif line.source == CB.SOURCE.WEAPON then
+                exports.ox_inventory:AddItem(actor.source, line.item, 1, line.metadata)
+            end
+        end
+    end
+
+    for i = 1, #lines do
+        local line = lines[i]
+        local ok = false
+
+        if line.source == 'cash' or line.source == 'bank' then
+            ok = actor.player.Functions.RemoveMoney(line.source, line.amount) and true or false
+        elseif line.source == 'dirty' then
+            ok = exports.ox_inventory:RemoveItem(actor.source, Config.Sources.dirty.item, line.amount) and true or false
+        elseif line.source == CB.SOURCE.ITEM then
+            ok = exports.ox_inventory:RemoveItem(actor.source, line.item, line.quantity) and true or false
+        elseif line.source == CB.SOURCE.WEAPON then
+            ok = exports.ox_inventory:RemoveItem(actor.source, line.item, 1, line.metadata) and true or false
+        end
+
+        if not ok then
+            rollback()
+            return false, CB.ERR.INSUFFICIENT
+        end
+        taken[#taken + 1] = line
+    end
+
+    local records = {}
+    for i = 1, #lines do
+        local line = Util.copy(lines[i])
+        line.contract_id = contractId
+        line.state = CB.ESCROW_STATE.HELD
+        line.id = contractId .. ':' .. tostring(i)
+        line.slot = line.slot or 1
+        records[#records + 1] = line
+    end
+
+    local ok = Storage.writeEscrow(contractId, records)
+    if not ok then
+        rollback()
+        return false, CB.ERR.BAD_STATE
+    end
+
+    Audit.financial('escrow_taken', actor.cid, contractId, { lines = #records })
+    return true
+end
+
+--------------------------------------------------------------------------
+-- Releasing escrow
+--------------------------------------------------------------------------
+
+--- Release escrow to a recipient.
+---
+--- The compare-and-set on each line's state is the guard that makes every
+--- release path safe against every other: completion, bailout, cancel,
+--- expiry, penalty resolution, login retry and the shutdown sweep all call
+--- this, and a line that is already `releasing` or `settled` moves nothing.
+---
+---@param contractId string
+---@param recipientCid string
+---@param filter table|string|nil { slot = n, portion = s } — nil releases everything
+---@param reason string audit tag
+---@return boolean moved  true when at least one line settled here
+---@return table   result { settled = n, pending = n }
+function Escrow.release(contractId, recipientCid, filter, reason)
+    if type(filter) == 'string' then filter = { portion = filter } end
+    local lines = Storage.readEscrow(contractId)
+    local result = { settled = 0, pending = 0, skipped = 0 }
+
+    for i = 1, #lines do
+        local line = lines[i]
+        local matches = true
+        if filter then
+            if filter.portion and line.portion ~= filter.portion then matches = false end
+            if filter.slot and line.slot ~= filter.slot then matches = false end
+        end
+
+        if matches then
+            -- Compare-and-set: only a line still `held` may be claimed, and
+            -- the claim is what authorises moving the funds.
+            local claimed = Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING)
+            if not claimed then
+                result.skipped = result.skipped + 1
+            else
+                local delivered = Escrow.deliver(recipientCid, line)
+                if delivered then
+                    Storage.settleEscrowLine(line.id, recipientCid)
+                    result.settled = result.settled + 1
+                else
+                    -- Could not deliver (offline, or inventory full). The line
+                    -- stays owed rather than being destroyed (§9.3): it goes
+                    -- back to `held` and is queued for retry on next login.
+                    Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
+                    Storage.queuePending(recipientCid, contractId, line.id)
+                    result.pending = result.pending + 1
+                end
+            end
+        end
+    end
+
+    Audit.financial('escrow_released', recipientCid, contractId, {
+        reason = reason, settled = result.settled, pending = result.pending,
+    })
+
+    return result.settled > 0, result
+end
+
+--- Hand a single escrow line to a player. Returns false when it cannot be
+--- delivered right now — never destroys the property to force success.
+---@return boolean
+function Escrow.deliver(recipientCid, line)
+    local recipient = exports.qbx_core:GetPlayerByCitizenId(recipientCid)
+    if not recipient or not recipient.PlayerData then return false end
+
+    local src = recipient.PlayerData.source
+
+    if line.source == 'cash' or line.source == 'bank' then
+        local account, amount = line.source, line.amount
+        if Config.Payout.AllowConversion and line.convertTo == 'dirty' then
+            -- Conversion is lossy by design: the rate matches the server's
+            -- black market so converting is never profitable (§14.10).
+            local converted = math.floor(amount * Config.Payout.DirtyConversionRate)
+            if converted <= 0 then return false end
+            return exports.ox_inventory:AddItem(src, Config.Sources.dirty.item, converted) and true or false
+        end
+        recipient.Functions.AddMoney(account, amount)
+        return true
+
+    elseif line.source == 'dirty' then
+        if not exports.ox_inventory:CanCarryItem(src, Config.Sources.dirty.item, line.amount) then return false end
+        return exports.ox_inventory:AddItem(src, Config.Sources.dirty.item, line.amount) and true or false
+
+    elseif line.source == CB.SOURCE.ITEM then
+        if not exports.ox_inventory:CanCarryItem(src, line.item, line.quantity) then return false end
+        return exports.ox_inventory:AddItem(src, line.item, line.quantity) and true or false
+
+    elseif line.source == CB.SOURCE.WEAPON then
+        if not exports.ox_inventory:CanCarryItem(src, line.item, 1) then return false end
+        -- The snapshot goes back exactly as it was taken: serial, attachments
+        -- and durability all restored (§9.4).
+        return exports.ox_inventory:AddItem(src, line.item, 1, line.metadata) and true or false
+    end
+
+    return false
+end
+
+--- Money-equivalent value of what a contract holds. Items and weapons are
+--- counted at zero — this figure is used for bailout clamping and sorting,
+--- and inflating it with unpriceable items would let a creator set an
+--- arbitrary premium (§14.16).
+---@param contractId string
+---@param filter table|string|nil
+---@return integer
+function Escrow.moneyValue(contractId, filter)
+    if type(filter) == 'string' then filter = { portion = filter } end
+    local lines = Storage.readEscrow(contractId)
+    local total = 0
+    for i = 1, #lines do
+        local line = lines[i]
+        local matches = true
+        if filter then
+            if filter.portion and line.portion ~= filter.portion then matches = false end
+            if filter.slot and line.slot ~= filter.slot then matches = false end
+        end
+        if matches and CB.MONEY_SOURCES[line.source] then
+            if line.state ~= CB.ESCROW_STATE.SETTLED then
+                total = total + (line.amount or 0)
+            end
+        end
+    end
+    return total
+end
+
+--- Retry queued deliveries for a player who has just come online (§9.3).
+---@param cid string
+---@return integer delivered
+function Escrow.retryPending(cid)
+    local queued = Storage.readPending(cid)
+    local delivered = 0
+
+    for i = 1, math.min(#queued, Config.PendingEscrow.MaxRetriesPerLogin) do
+        local entry = queued[i]
+        local line = Storage.readEscrowLine(entry.line_id)
+        if line and line.state == CB.ESCROW_STATE.HELD then
+            local claimed = Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING)
+            if claimed then
+                if Escrow.deliver(cid, line) then
+                    Storage.settleEscrowLine(line.id, cid)
+                    Storage.clearPending(entry.id)
+                    delivered = delivered + 1
+                else
+                    Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
+                end
+            end
+        else
+            Storage.clearPending(entry.id)
+        end
+    end
+
+    if delivered > 0 then
+        Audit.financial('pending_delivered', cid, nil, { count = delivered })
+    end
+    return delivered
+end
+
+return Escrow
