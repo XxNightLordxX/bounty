@@ -485,9 +485,17 @@ function JsonStore.setEscrowAmount(id, expectedState, amount, expectedAmount)
     return true
 end
 
+--- Settle a line this caller holds.
+---
+--- Guarded on `releasing`, because both callers settle only after claiming
+--- held -> releasing. Without the guard the write was `WHERE id = ?`: it
+--- would settle a line something else had taken back — restart recovery
+--- returning a stuck `releasing` line to `held`, or a second server
+--- instance on the same database — which is a line paid twice and recorded
+--- once.
 function JsonStore.settleEscrowLine(id, recipientCid)
     local line = db.escrow[id]
-    if not line then return false end
+    if not line or line.state ~= CB.ESCROW_STATE.RELEASING then return false end
     line.state = CB.ESCROW_STATE.SETTLED
     line.settled_to = recipientCid
     line.settled_at = os.time()

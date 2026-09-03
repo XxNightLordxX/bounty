@@ -541,7 +541,17 @@ function Escrow.release(contractId, recipientCid, filter, reason)
 
                 local delivered = Escrow.deliver(recipientCid, line)
                 if delivered then
-                    Storage.settleEscrowLine(line.id, recipientCid)
+                    -- The money is already with the recipient, so this is
+                    -- settled whatever the store says. A refused settle
+                    -- means something else took the line out of `releasing`
+                    -- between the claim and here — recovery, or a second
+                    -- server on the same database — and it is now at risk of
+                    -- being paid again. Nothing here can fix that; the row
+                    -- is what tells staff to look.
+                    if not Storage.settleEscrowLine(line.id, recipientCid) then
+                        Audit.financial('escrow_settle_lost', recipientCid, contractId,
+                            { line = line.id })
+                    end
                     result.settled = result.settled + 1
                 else
                     -- Could not deliver (offline, or inventory full). The line
@@ -707,7 +717,10 @@ function Escrow.retryPending(cid)
             local claimed = Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING)
             if claimed then
                 if Escrow.deliver(cid, line) then
-                    Storage.settleEscrowLine(line.id, cid)
+                    if not Storage.settleEscrowLine(line.id, cid) then
+                        Audit.financial('escrow_settle_lost', cid, line.contract_id,
+                            { line = line.id })
+                    end
                     Storage.clearPending(entry.id)
                     delivered = delivered + 1
                 else

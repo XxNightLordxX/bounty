@@ -1111,3 +1111,53 @@ describe('a rollback that cannot return what it took', function()
         end
     end)
 end)
+
+
+describe('a settle the store will not take', function()
+    it('records it, because the money has already gone', function()
+        -- Settling is guarded on the line still being the one this release
+        -- claimed. If something else took it — restart recovery returning a
+        -- stuck line to held, or a second server instance on the same
+        -- database — the delivery has already happened and the line is at
+        -- risk of being paid again. Nothing here can undo it; the row is
+        -- what tells staff to look.
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+
+        local real = s.storage.settleEscrowLine
+        s.storage.settleEscrowLine = function() return false end
+        local ok, result = s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'test')
+        s.storage.settleEscrowLine = real
+
+        truthy(ok, 'the hunter was paid')
+        eq(result.settled, 1)
+        eq(Env.players[3].PlayerData.money.cash, 10000, 'and really has the money')
+
+        s.audit.flush()
+        local seen = false
+        for _, row in ipairs(s.storage.readAudit(200)) do
+            if row.action == 'escrow_settle_lost' then seen = true end
+        end
+        truthy(seen, 'a line that could not be settled after delivery must be recorded')
+    end)
+
+    it('says nothing on an ordinary settle', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'test'))
+
+        s.audit.flush()
+        for _, row in ipairs(s.storage.readAudit(200)) do
+            falsy(row.action == 'escrow_settle_lost', 'a normal payout raises no alarm')
+        end
+    end)
+end)

@@ -479,11 +479,20 @@ function MySQLStore.setEscrowAmount(id, expectedState, amount, expectedAmount)
     return (tonumber(affected) or 0) > 0
 end
 
+--- Settle a line this caller holds.
+---
+--- Guarded on `releasing`, because both callers settle only after claiming
+--- held -> releasing. Without the guard the write was `WHERE id = ?`: it
+--- would settle a line something else had taken back — restart recovery
+--- returning a stuck `releasing` line to `held`, or a second server
+--- instance on the same database — which is a line paid twice and recorded
+--- once.
 function MySQLStore.settleEscrowLine(id, recipientCid)
-    MySQL.update.await(
-        'UPDATE crimson_escrow SET state = ?, settled_to = ?, settled_at = ? WHERE id = ?',
-        { CB.ESCROW_STATE.SETTLED, recipientCid, os.time(), id })
-    return true
+    local affected = MySQL.update.await(
+        'UPDATE crimson_escrow SET state = ?, settled_to = ?, settled_at = ? '
+        .. 'WHERE id = ? AND state = ?',
+        { CB.ESCROW_STATE.SETTLED, recipientCid, os.time(), id, CB.ESCROW_STATE.RELEASING })
+    return (tonumber(affected) or 0) > 0
 end
 
 --------------------------------------------------------------------------

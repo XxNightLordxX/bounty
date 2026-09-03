@@ -119,6 +119,39 @@ describe('storage conformance', function()
         end
     end)
 
+    it('settles only the line the caller actually holds, in every backend', function()
+        -- Settling was unconditional: `WHERE id = ?`, with no check that
+        -- the line was still the one this release had claimed. Both callers
+        -- settle only after claiming held -> releasing, so guarding on that
+        -- costs nothing and closes the case where something else took the
+        -- line in between — restart recovery putting a stuck `releasing`
+        -- line back to `held`, or a second server instance on the same
+        -- database doing the same. Without the guard that is a line paid
+        -- twice and recorded once.
+        for _, b in ipairs(backends()) do
+            b.store.writeEscrow('ct1', { {
+                id = 'ct1:9', contract_id = 'ct1', slot = 1, portion = 'baseline',
+                source = 'cash', amount = 500, state = CB.ESCROW_STATE.HELD,
+            } })
+
+            falsy(b.store.settleEscrowLine('ct1:9', 'HUNTER01'),
+                b.name .. ': a held line was never claimed by this caller')
+            eq(b.store.readEscrowLine('ct1:9').state, CB.ESCROW_STATE.HELD,
+                b.name .. ': and must be left alone')
+
+            truthy(b.store.claimEscrowLine('ct1:9', CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING),
+                b.name)
+            truthy(b.store.settleEscrowLine('ct1:9', 'HUNTER01'),
+                b.name .. ': the holder settles')
+            eq(b.store.readEscrowLine('ct1:9').settled_to, 'HUNTER01', b.name)
+
+            falsy(b.store.settleEscrowLine('ct1:9', 'SOMEONE1'),
+                b.name .. ': and a settled line cannot be settled again to someone else')
+            eq(b.store.readEscrowLine('ct1:9').settled_to, 'HUNTER01',
+                b.name .. ': the first recipient stands')
+        end
+    end)
+
     it('caps the ledger at the configured depth in every backend', function()
         for _, b in ipairs(backends()) do
             for i = 1, Config.Ledger.Depth + 5 do
