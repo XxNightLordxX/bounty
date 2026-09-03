@@ -1573,3 +1573,72 @@ describe('the rewardOptions handler', function()
         eq(reply.rid, 4242, 'two requests in flight must not resolve into each other')
     end)
 end)
+
+
+--- The escrow-line ceiling bounds what a contract still holds, not what it
+--- has ever held. Counting settled lines and hunters' stakes refused a
+--- legitimate top-up on any contract that had already paid out.
+describe('topping up a contract that has paid out', function()
+    local function carrying()
+        local inventory = {}
+        for i = 1, 20 do
+            inventory[i] = { name = 'part_' .. i, count = 500, slot = i, label = 'Part ' .. i }
+        end
+        return inventory
+    end
+
+    local function itemList(n)
+        local list = {}
+        for i = 1, n do list[i] = { name = 'part_' .. i, count = 1 } end
+        return list
+    end
+
+    it('does not count what it has already paid out', function()
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = carrying() })
+        Env.players[3].PlayerData.money.bank = 50000
+
+        -- Fifty lines across five payouts: at the ceiling minus ten.
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = {
+                { baseline = { items = itemList(10) } }, { baseline = { items = itemList(10) } },
+                { baseline = { items = itemList(10) } }, { baseline = { items = itemList(10) } },
+                { baseline = { items = itemList(10) } },
+            } },
+            penaltyAmount = 5000,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        -- One payout collected: ten of those lines are settled now, and the
+        -- hunter's stake is a line the creator never put up.
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+
+        local ok, err = s.amendments.addEscrow(f.creator,
+            c.id, { baseline = { items = itemList(10) } })
+        truthy(ok, 'a top-up on a contract that has paid out must not be refused: '
+            .. tostring(err))
+    end)
+
+    it('still refuses one that would take it past the ceiling', function()
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = carrying() })
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { slots = {
+                { baseline = { items = itemList(10) } }, { baseline = { items = itemList(10) } },
+                { baseline = { items = itemList(10) } }, { baseline = { items = itemList(10) } },
+                { baseline = { items = itemList(10) } },
+            } },
+        })
+        truthy(c)
+
+        -- Fifty held plus ten is the ceiling exactly; the next ten is over.
+        truthy(s.amendments.addEscrow(f.creator, c.id, { baseline = { items = itemList(10) } }))
+        local ok, err = s.amendments.addEscrow(f.creator,
+            c.id, { baseline = { items = { { name = 'part_11', count = 1 } } } })
+        falsy(ok, 'the ceiling still holds')
+        eq(err, CB.ERR.INVALID_REWARD)
+    end)
+end)

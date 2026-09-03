@@ -166,6 +166,12 @@ input:focus, select:focus, textarea:focus {
 .slot h4 { font-size: 0.72rem; color: var(--crimson-bright);
   text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.45rem; }
 
+/* Goods on a payout, which carry no price. */
+.reward .goods {
+  font-size: 0.64rem; color: var(--gold); margin-top: 0.15rem;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+
 /* ---------- amendment proposals ----------
    A change one side has put on the table and the other has to answer. */
 

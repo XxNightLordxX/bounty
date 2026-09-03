@@ -432,6 +432,62 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 14. No test that asserts nothing
+--------------------------------------------------------------------------
+--
+-- A test with no assertion in it passes forever and reads as coverage. I
+-- wrote three of these in one sitting — one built an app and returned it,
+-- one checked a value that could never be undefined — and every one of them
+-- was found by a reviewer rather than by the suite.
+--
+-- The body is found by matching braces from the `function` that opens it,
+-- so a one-line test and a fifty-line one are read the same way. A check
+-- that fires on correct code would be worse than no check at all.
+
+do
+    local src = read('crimson-bounty/tests/ui/run.js') or ''
+    local path = 'crimson-bounty/tests/ui/run.js'
+
+    local position = 1
+    while true do
+        local from, to, name = src:find("it%s*%(%s*['\"]([^'\"]+)['\"]%s*,", position)
+        if not from then break end
+        position = to + 1
+
+        -- The body starts at the first `{` after the callback's argument
+        -- list and ends at its matching `}`.
+        local open = src:find('{', to, true)
+        if open then
+            local depth, index = 0, open
+            local limit = #src
+            local close
+
+            while index <= limit do
+                local char = src:sub(index, index)
+                if char == '{' then
+                    depth = depth + 1
+                elseif char == '}' then
+                    depth = depth - 1
+                    if depth == 0 then close = index break end
+                end
+                index = index + 1
+            end
+
+            if close then
+                local body = src:sub(open, close)
+                local asserts = body:find('eq%s*%(') or body:find('truthy%s*%(')
+                    or body:find('falsy%s*%(') or body:find('throw%s')
+                if not asserts then
+                    failures[#failures + 1] =
+                        ('%s: the test %q contains no assertion; it passes forever and '
+                         .. 'reads as coverage'):format(path, name)
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

@@ -575,6 +575,53 @@ function Escrow.moneyValue(contractId, filter)
     return total
 end
 
+--- What a slot holds beyond money: how many item stacks and how many
+--- weapons, and what they are.
+---
+--- Items and weapons are deliberately not priced — an unpriceable item
+--- would let a creator set any headline figure they liked — but leaving
+--- them out of the projection entirely advertised a contract paying a
+--- kitted rifle as $0. A hunter needs to know the goods are there to
+--- decide, without being told a number nobody can defend.
+---@return table { items = n, weapons = n, labels = { name, ... } }
+function Escrow.goodsIn(contractId, filter)
+    if type(filter) == 'string' then filter = { portion = filter } end
+
+    local lines = Storage.readEscrow(contractId)
+    local out = { items = 0, weapons = 0, labels = {} }
+    local seen = {}
+
+    for i = 1, #lines do
+        local line = lines[i]
+        local matches = true
+        if filter then
+            if filter.portion and line.portion ~= filter.portion then matches = false end
+            if filter.slot and line.slot ~= filter.slot then matches = false end
+        end
+
+        if matches and line.state ~= CB.ESCROW_STATE.SETTLED
+            and line.portion ~= CB.PORTION.STAKE and line.portion ~= CB.PORTION.OWED then
+
+            if line.source == CB.SOURCE.ITEM then
+                out.items = out.items + (line.quantity or 0)
+            elseif line.source == CB.SOURCE.WEAPON then
+                out.weapons = out.weapons + 1
+            end
+
+            -- Names only. A serial is an identifier and never crosses, and
+            -- metadata is nobody's business but the parties'.
+            if (line.source == CB.SOURCE.ITEM or line.source == CB.SOURCE.WEAPON)
+                and line.item and not seen[line.item] then
+                seen[line.item] = true
+                out.labels[#out.labels + 1] = line.item
+            end
+        end
+    end
+
+    table.sort(out.labels)
+    return out
+end
+
 --- Retry queued deliveries for a player who has just come online (§9.3).
 ---@param cid string
 ---@return integer delivered

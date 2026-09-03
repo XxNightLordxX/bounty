@@ -382,8 +382,13 @@ describe('damage claims are corroborated, not trusted', function()
         Env.players[2]._health = 120
         s.death.recordDamage(3, 2, 123456)
 
+        -- They actually die, and the server sees it, before anyone can come
+        -- back from it. A revive claim with no death behind it is refused.
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.onVictimReport(2)
+
         Env.players[2].PlayerData.metadata.isdead = false
-        s.death.onRevivedVerified(2, 'TARGET01')
+        truthy(s.death.onRevivedVerified(2, 'TARGET01') ~= nil)
         Env.players[2]._health = 200            -- back on their feet
 
         s.death.recordDamage(3, 2, 123456)      -- no new damage since
@@ -770,5 +775,97 @@ describe('condition sampling', function()
         truthy(s.death.startSampler(), 'the first call starts it')
         falsy(s.death.startSampler(), 'the second must not start a second one')
         eq(#Env.threads - before, 1)
+    end)
+end)
+
+
+--- Coming back requires having gone.
+---
+--- A revive is claimed by the reviving player's own client, and the only
+--- check was that they are not dead right now — which every living player
+--- passes. Each claim renews post-respawn immunity and clears the damage
+--- recorded against them, so anyone could stay permanently untargetable and
+--- erase the attribution for a hunter who had just shot them.
+describe('a revive claim needs a death behind it', function()
+    local function armed()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        Env.players[3]._coords = { x = 10.0, y = 10.0, z = 30.0 }
+        Env.players[2]._coords = { x = 11.0, y = 10.0, z = 30.0 }
+        return s, f, c
+    end
+
+    it('refuses one from a player who never died', function()
+        local s, f, c = armed()
+        eq(s.death.onRevivedVerified(2, 'TARGET01'), 0,
+            'a living player cannot come back from anything')
+        falsy(s.death.sinceRespawn('TARGET01'),
+            'and must not be handed post-respawn immunity for asking')
+    end)
+
+    it('does not let a claim erase the damage against them', function()
+        local s, f, c = armed()
+        Env.players[2]._health = 200
+        s.death.watch('TARGET01', 2, true)
+        Env.players[2]._health = 60
+        s.death.recordDamage(3, 2, 123456)
+        truthy(s.death.recordFor('TARGET01', 'HUNTER01'), 'the shot is on record')
+
+        s.death.onRevivedVerified(2, 'TARGET01')
+        truthy(s.death.recordFor('TARGET01', 'HUNTER01'),
+            'a refused claim must not wipe what a hunter earned')
+    end)
+
+    it('does not let a claim renew immunity in a loop', function()
+        local s, f, c = armed()
+        for _ = 1, 5 do s.death.onRevivedVerified(2, 'TARGET01') end
+        falsy(s.death.sinceRespawn('TARGET01'),
+            'spamming the event must not be a way to stay untargetable forever')
+    end)
+
+    it('accepts one after a death the server saw', function()
+        local s, f, c = armed()
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.onVictimReport(2)
+        truthy(s.death.wasSeenDead('TARGET01'), 'the server saw them die')
+
+        Env.players[2].PlayerData.metadata.isdead = false
+        s.death.onRevivedVerified(2, 'TARGET01')
+        truthy(s.death.sinceRespawn('TARGET01'), 'and a real revive counts')
+    end)
+
+    it('accepts one after a death nobody reported', function()
+        local s, f, c = armed()
+        -- Died to a fall, or a car, or another player entirely. The sampler
+        -- visits every live target, so the server still sees it.
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.watchTargets(s.storage.allContracts())
+        truthy(s.death.wasSeenDead('TARGET01'))
+
+        Env.players[2].PlayerData.metadata.isdead = false
+        s.death.onRevivedVerified(2, 'TARGET01')
+        truthy(s.death.sinceRespawn('TARGET01'),
+            'a target who dies to the world can still come back')
+    end)
+
+    it('spends the death, so one death is one revive', function()
+        local s, f, c = armed()
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.onVictimReport(2)
+        Env.players[2].PlayerData.metadata.isdead = false
+
+        s.death.onRevivedVerified(2, 'TARGET01')
+        local first = s.death.sinceRespawn('TARGET01')
+        truthy(first, 'the first claim takes')
+
+        Env.time = Env.time + 60
+        eq(s.death.onRevivedVerified(2, 'TARGET01'), 0, 'the second does not')
+        truthy(s.death.sinceRespawn('TARGET01') > first,
+            'and the immunity clock is not renewed by asking again')
     end)
 end)

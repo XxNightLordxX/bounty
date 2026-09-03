@@ -22,6 +22,25 @@ local pending = {}
 --- re-listed or re-claimed the instant they respawn (§14.39).
 local respawnedAt = {}
 
+--- Players the server has actually seen dead, and has not yet seen revived.
+---
+--- A revive is claimed by the reviving player's own client, and the only
+--- check was that they are not dead *now* — which every living player
+--- passes. Claiming one grants post-respawn immunity and wipes the damage
+--- log, so anyone could stay permanently untargetable and erase the
+--- attribution for a hunter who had just shot them, by claiming to have
+--- come back from a death that never happened.
+local seenDead = {}
+
+--- Record that the server itself observed this player die.
+function Death.markDead(cid)
+    if cid then seenDead[cid] = os.time() end
+end
+
+function Death.wasSeenDead(cid)
+    return cid ~= nil and seenDead[cid] ~= nil
+end
+
 function Death.init(deps)
     Storage, Identity, Contracts, Audit, Photo =
         deps.storage, deps.identity, deps.contracts, deps.audit, deps.photo
@@ -245,6 +264,11 @@ function Death.watchTargets(contracts)
                 Death.watch(target.cid, target.source, true)
                 watched = watched + 1
 
+                -- A target may die to something no hunter reported — a fall,
+                -- a car, another player. Noting it here is what lets them
+                -- claim the revive afterwards.
+                if Identity.isTrulyDead(target.source) then Death.markDead(target.cid) end
+
                 local targetCoords = GetEntityCoords(GetPlayerPed(target.source))
                 local hunters = Storage.readHunters(c.id)
                 for j = 1, #hunters do
@@ -359,6 +383,10 @@ function Death.onVictimReport(victimSource, killerServerId)
         return 0
     end
 
+    -- The server has now seen this player dead, which is what a later
+    -- revive claim from them is checked against.
+    Death.markDead(victim.cid)
+
     local opened = 0
     local contracts = Storage.allContracts()
 
@@ -453,6 +481,14 @@ function Death.onRevivedVerified(source, cid)
         Audit.rejected('revive_claim_while_dead', cid, nil, {})
         return 0
     end
+
+    -- Coming back requires having gone. Without this any living player can
+    -- claim a revive, and each claim renews their post-respawn immunity and
+    -- clears the damage recorded against them.
+    if not seenDead[cid] then
+        Audit.rejected('revive_claim_without_death', cid, nil, {})
+        return 0
+    end
     -- A revived player is back at full health; the next hit measures from
     -- there rather than being read as a decrease from their dying value.
     Death.resetHealth(cid, source)
@@ -461,6 +497,8 @@ end
 
 function Death.onRevived(cid)
     respawnedAt[cid] = os.time()
+    -- One death, one revive. A second claim has to wait for a second death.
+    seenDead[cid] = nil
 
     -- A revive ends the fight. Damage recorded before it must not
     -- corroborate a death that happens afterwards, or a hunter who shot
@@ -517,10 +555,15 @@ function Death.pendingCount()
     return n
 end
 
+function Death.clearSeenDead(cid)
+    seenDead[cid] = nil
+end
+
 function Death.clearPlayer(cid)
     damage[cid] = nil
     condition[cid] = nil
     respawnedAt[cid] = nil
+    seenDead[cid] = nil
     for key, record in pairs(pending) do
         if record.victimCid == cid or record.hunterCid == cid then pending[key] = nil end
     end

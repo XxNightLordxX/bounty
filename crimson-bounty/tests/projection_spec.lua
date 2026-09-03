@@ -276,3 +276,91 @@ describe('target mugshots', function()
         falsy(s.mugshot.get('TARGET01'))
     end)
 end)
+
+
+--- A contract paying goods is not a contract paying nothing.
+---
+--- Items and weapons are deliberately unpriced, so a payout funded with a
+--- rifle and nothing else was advertised to every hunter as $0.
+describe('goods on a listing', function()
+    local function paying(reward)
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = reward,
+        })
+        truthy(c, 'the contract should be created')
+        return s, f, c
+    end
+
+    it('says what a goods-only payout is worth in goods', function()
+        local s, f, c = paying({ baseline = {
+            items = { { name = 'lockpick', count = 3 } },
+            weapons = { { name = 'WEAPON_PISTOL', slot = 3 } },
+        } })
+
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        eq(row.reward.baseline, 0, 'there is genuinely no money in it')
+        eq(row.reward.goods.items, 3, 'but three items')
+        eq(row.reward.goods.weapons, 1, 'and a weapon')
+        truthy(#row.reward.goods.labels > 0, 'and what they are')
+    end)
+
+    it('never publishes a serial with them', function()
+        local s, f, c = paying({ baseline = {
+            weapons = { { name = 'WEAPON_PISTOL', slot = 3 } },
+        } })
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        local shown = table.concat(row.reward.goods.labels, ' ')
+        falsy(shown:find('ABC123', 1, true),
+            'a serial is an identifier and never crosses: ' .. shown)
+    end)
+
+    it('reports no goods on a money-only payout', function()
+        local s, f, c = paying({ baseline = { cash = 5000 } })
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        eq(row.reward.baseline, 5000)
+        eq(row.reward.goods.items, 0)
+        eq(row.reward.goods.weapons, 0)
+    end)
+
+    it('counts the bonus goods separately', function()
+        local s, f, c = paying({
+            baseline = { cash = 5000 },
+            bonus = { items = { { name = 'lockpick', count = 2 } } },
+        })
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        eq(row.reward.goods.items, 0, 'none on the baseline')
+        eq(row.reward.bonusGoods.items, 2, 'two on the live-delivery bonus')
+    end)
+
+    it('stops counting goods once they are paid out', function()
+        local s, f, c = paying({ baseline = {
+            items = { { name = 'lockpick', count = 3 } },
+        } })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        eq(row.reward.goods.items, 0, 'a settled line is not still on offer')
+    end)
+
+    it('never counts a hunter stake as reward goods', function()
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = {
+            { name = 'lockpick', count = 5, slot = 1, label = 'Lockpick' },
+        } })
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { items = { { name = 'lockpick', count = 1 } } } },
+            penaltyAmount = 10000,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        eq(row.reward.goods.items, 1, 'the creator put up one item, and only that')
+    end)
+end)

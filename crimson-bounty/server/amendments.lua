@@ -51,10 +51,18 @@ function Amendments.addEscrow(actor, contractId, rewardSpec)
         return false, CB.ERR.BAD_STATE
     end
 
-    -- Counted against what the contract already holds, so a creator cannot
-    -- top up past the line ceiling in small increments.
-    local lines, err = Escrow.validate(actor, rewardSpec, nil,
-        #Storage.readEscrow(contractId))
+    -- Counted against what the contract still holds, so a creator cannot top
+    -- up past the line ceiling in small increments — but settled lines are
+    -- not held, and neither are hunters' stakes. Counting those refused a
+    -- legitimate top-up on any contract that had already paid out.
+    local held = 0
+    for _, line in ipairs(Storage.readEscrow(contractId)) do
+        if line.state ~= CB.ESCROW_STATE.SETTLED and line.portion ~= CB.PORTION.STAKE then
+            held = held + 1
+        end
+    end
+
+    local lines, err = Escrow.validate(actor, rewardSpec, nil, held)
     if not lines then return false, err end
 
     -- Added value lands on the slot currently being competed for, so it is

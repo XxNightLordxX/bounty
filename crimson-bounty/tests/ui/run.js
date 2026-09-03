@@ -482,6 +482,49 @@ async function main() {
     });
   })();
 
+  // A contract paying a rifle and nothing else used to read as $0.
+  await (async function goodsOnACard() {
+    const row = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    row.reward = {
+      baseline: 0, bonus: 0,
+      goods: { items: 3, weapons: 1, labels: ['WEAPON_PISTOL', 'lockpick'] },
+      bonusGoods: { items: 0, weapons: 0, labels: [] }
+    };
+
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [row], settings: {} } },
+      mine: MINE, ledger: LEDGER
+    });
+    await settle(); await settle();
+
+    it('says a goods-only contract pays goods', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('3 items and 1 weapon') !== -1,
+        'the goods, in words: ' + text);
+      truthy(text.indexOf('lockpick') !== -1, 'and what they are');
+    });
+
+  })();
+
+  await (async function moneyOnlyCardStaysPlain() {
+    const plain = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    plain.reward = { baseline: 5000, bonus: 0,
+                     goods: { items: 0, weapons: 0, labels: [] } };
+
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [plain], settings: {} } },
+      mine: MINE, ledger: LEDGER
+    });
+    await settle(); await settle();
+
+    it('shows nothing extra on a money-only contract', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('$5,000') !== -1, 'the money: ' + text);
+      falsy(text.indexOf('item') !== -1, 'and no goods line: ' + text);
+      falsy(text.indexOf('weapon') !== -1, text);
+    });
+  })();
+
   // The thread view renders from a shape the server sends and has been
   // broken before. It had no coverage at all.
   await (async function threadView() {

@@ -49,6 +49,11 @@ local function currentReward(contract)
     return {
         baseline = Escrow.moneyValue(contract.id, { slot = slot, portion = CB.PORTION.BASELINE }),
         bonus    = Escrow.moneyValue(contract.id, { slot = slot, portion = CB.PORTION.BONUS }),
+        -- Items and weapons are not priced, so a contract paying a kitted
+        -- rifle and nothing else showed as $0. The counts and the item names
+        -- cross; serials and metadata do not.
+        goods    = Escrow.goodsIn(contract.id, { slot = slot, portion = CB.PORTION.BASELINE }),
+        bonusGoods = Escrow.goodsIn(contract.id, { slot = slot, portion = CB.PORTION.BONUS }),
     }
 end
 

@@ -251,6 +251,13 @@
     if (contract.reward.bonus > 0) {
       reward.appendChild(el('div', 'bonus', '+' + money(contract.reward.bonus) + ' alive'));
     }
+
+    // Goods are not priced — nobody can defend a number for a kitted rifle —
+    // but a contract paying one and nothing else read as $0.
+    var goods = goodsLine(contract.reward.goods);
+    if (goods) { reward.appendChild(el('div', 'goods', goods)); }
+    var bonusGoods = goodsLine(contract.reward.bonusGoods);
+    if (bonusGoods) { reward.appendChild(el('div', 'goods', '+ ' + bonusGoods + ' alive')); }
     head.appendChild(reward);
     node.appendChild(head);
 
@@ -285,6 +292,23 @@
 
     node.appendChild(actionsFor(contract, context));
     return node;
+  }
+
+  // "2 items and a weapon", or nothing when a payout is money only.
+  function goodsLine(goods) {
+    if (!goods) { return null; }
+
+    var parts = [];
+    if (goods.items > 0) {
+      parts.push(goods.items + (goods.items === 1 ? ' item' : ' items'));
+    }
+    if (goods.weapons > 0) {
+      parts.push(goods.weapons + (goods.weapons === 1 ? ' weapon' : ' weapons'));
+    }
+    if (parts.length === 0) { return null; }
+
+    return parts.join(' and ')
+      + (goods.labels && goods.labels.length ? ' (' + goods.labels.join(', ') + ')' : '');
   }
 
   function actionsFor(contract, context) {
