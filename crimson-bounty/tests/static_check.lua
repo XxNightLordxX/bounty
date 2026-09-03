@@ -674,6 +674,46 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 20. The client never calls an optional export unguarded
+--------------------------------------------------------------------------
+--
+-- lb-phone ships its server code escrowed and its export surface has moved
+-- across releases; MugShotBase64 is optional entirely. Indexing an export
+-- that is not there throws, and every one of these is called from inside an
+-- event handler or an NUI callback — so the throw takes the handler with
+-- it, and the page is left waiting for a reply that will never come.
+--
+-- client/main.lua routes them through `phone`, which pcalls and says which
+-- export was missing. client/mugshot.lua pcalls its one call directly. A
+-- new call site written without either is caught here.
+
+do
+    local OPTIONAL = { 'lb%-phone', 'MugShotBase64' }
+
+    for _, path in ipairs(walk('crimson-bounty/client')) do
+        local src = read(path) or ''
+        local line = 0
+        for text in src:gmatch('[^\n]*') do
+            line = line + 1
+            for _, resource in ipairs(OPTIONAL) do
+                if text:find("exports%['" .. resource .. "'%]") and not text:match('^%s*%-%-') then
+                    -- Guarded either by the file-local helper on the line
+                    -- above, or by a pcall in the same statement.
+                    local before = src:sub(1, src:find(text, 1, true) or 1)
+                    local window = before:sub(-400)
+                    if not (window:find('phone%(') or window:find('pcall%(')) then
+                        failures[#failures + 1] =
+                            ('%s:%d calls an optional export without a guard. The export may '
+                             .. 'not exist on this build, and the throw takes the handler '
+                             .. 'with it.'):format(path, line)
+                    end
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then
