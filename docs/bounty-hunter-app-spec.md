@@ -82,7 +82,7 @@ On submission, **all baseline and potential bonus** currency and items are autom
 Required behavior:
 
 - The reward builder is validated **server-side twice** — once when it is opened (the client is sent only what the player actually holds) and again on submit, to confirm nothing changed in between. A submitted source the player no longer holds rejects the whole contract; it is never silently reduced.
-- Confiscation and the writing of the escrow record happen in a **single database transaction**. If any part fails, nothing is taken.
+- Confiscation and the writing of the escrow record happen as a **single atomic operation** — a database transaction in `mysql` mode, an atomic file swap in `json` mode (§10). If any part fails, nothing is taken.
 - Weapons are stored as a **full metadata snapshot** (serial, attachments, ammo, durability), never as a slot reference.
 
 See §9 for the binding rules these follow from.
@@ -201,6 +201,9 @@ The following must be config-driven:
 - Kidnapping proximity radius, countdown duration (default 30s), and proximity grace period (default 2–3s)
 - Per-action cooldowns (create / accept / bailout / informant purchase)
 - Capture-token lifetime for photo verification
+- `Config.Database.Mode` — `mysql` / `json` / `memory` (§10)
+- JSON-mode write debounce interval
+- Contract reason: maximum length and permitted character set
 
 ---
 
@@ -209,7 +212,7 @@ The following must be config-driven:
 These are requirements, not suggestions. Every one of them is referenced from the sections above.
 
 ### 9.1 Escrow is the single source of truth
-Each contract has **one** escrow record enumerating every source and amount it holds. It is written in the same database transaction that removes those funds and items from the creator. Payout, refund, bailout, and penalty resolution all read from that record. No other part of the script independently computes what a contract is worth.
+Each contract has **one** escrow record enumerating every source and amount it holds. It is written in the same atomic operation that removes those funds and items from the creator (§10 defines that operation per persistence mode). Payout, refund, bailout, and penalty resolution all read from that record. No other part of the script independently computes what a contract is worth.
 
 ### 9.2 One shared release routine
 Bailout return, expiry refund, failure-penalty resolution, and hunter payout all call a single `releaseEscrow(contractId, recipient, portion)` function. Adding a new reward source means touching one function, so no source can be honored on one path and dropped on another.
@@ -233,12 +236,66 @@ Completion takes a lock on the contract before any funds move. A contract can tr
 Every escrow, payout, refund, bailout, and penalty is written to an admin-readable log with amounts, sources, both parties, and timestamp. This is the only way to adjudicate a player dispute after the fact.
 
 ### 9.9 Persistence footprint
-Active contracts plus the last 10 completed contracts per player. Verification photos are stored as lb-phone image references, not blobs.
+Active contracts plus the last 10 completed contracts per player. Verification photos are stored as lb-phone image references, not blobs. Storage backend is selectable per §10 without changing any of these rules.
 
 ### 9.10 Contract state machine
 `draft → active → accepted → (completed | bailed_out | expired | cancelled)`, with `hidden` as a display flag orthogonal to state (§7.1). No transition skips escrow resolution.
 
-## 10. Design Rationale
+## 10. Persistence Modes (`Config.Database.Mode`)
+
+Persistence is selectable so a server owner can run the script with **no SQL engine involved at all**.
+
+| Mode | Storage | Durability | Intended use |
+|---|---|---|---|
+| `mysql` | `oxmysql`, auto-created tables | Full — survives restart and crash | Default, production |
+| `json` | Flat files under the resource's `data/` directory | Full — survives restart | Production without a database |
+| `memory` | In-process tables only | **None** — everything is lost on restart | Testing and development only |
+
+### 10.1 A correction worth stating plainly
+
+Turning the database off does **not** fix SQL injection — and leaving it on does not cause it. Injection comes from **building query strings out of user input**, nothing else. A script that writes
+
+```lua
+MySQL.query('SELECT * FROM bounties WHERE citizenid = "' .. citizenid .. '"')
+```
+
+is exploitable; the same script using a placeholder is not:
+
+```lua
+MySQL.query('SELECT * FROM bounties WHERE citizenid = ?', { citizenid })
+```
+
+So `Config.Database.Mode` exists because some owners genuinely do not want to run MySQL — not as a security control. **Regardless of mode**, these hold:
+
+- Every query uses **parameterized placeholders**. String concatenation or `string.format` into SQL is forbidden, without exception.
+- Table and column names are **never** taken from config or player input — they are literals in the source.
+- All player-supplied text (the contract reason above all) is **length-capped, character-filtered, and escaped at the render boundary** before it reaches the app UI. This matters in every mode: `json` mode is immune to SQL injection but not to injection into the phone UI or into the JSON files themselves.
+- No query is ever built from a value that arrived in a client event.
+
+### 10.2 `json` mode requirements
+
+- Writes are **atomic**: serialize to a temp file, `os.rename` over the target. A crash mid-write must never leave a truncated escrow file.
+- Writes are **debounced and batched** (config-backed, default 5s), not one write per state change.
+- Keys are sanitized before use as filenames or object keys — a citizen id is validated against a strict pattern, never trusted as a path fragment.
+- On load, a malformed or unreadable data file **halts the resource with a clear console error** rather than starting with empty escrow. Silently starting fresh would delete every open contract's escrow.
+
+### 10.3 `memory` mode requirements
+
+Memory mode holds no durable escrow, so it must not be able to destroy player property:
+
+- On resource stop and server shutdown, **all open escrow is released back to its creators** before the resource unloads.
+- Creators who are offline at that moment cannot be refunded — therefore memory mode **refuses to escrow from a player who then logs out**: contracts are cancelled and refunded automatically when the creator disconnects.
+- The Ledger (§6.3) is empty in this mode; the tab states that history is disabled.
+- The console prints a **startup warning** that persistence is off and contracts will not survive a restart.
+
+### 10.4 Mode-independent guarantees
+
+- The escrow record (§9.1) has the same shape in all three modes; storage is behind one interface, so no game logic branches on the mode.
+- Restart recovery (`mysql` and `json`): on startup, every contract in `accepted` state has its capture tokens invalidated and its failure-penalty timer resumed from stored elapsed time — never restarted from zero, which would silently extend a hunter's deadline.
+
+---
+
+## 11. Design Rationale
 
 The rules in §9 exist for specific failure modes, recorded here so they are not "simplified away" during implementation:
 
