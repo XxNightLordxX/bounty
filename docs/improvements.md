@@ -239,16 +239,30 @@ The suite is strong on money and weak in three specific places:
 
 ## 6. Where the code and the spec still disagree
 
-Not improvements — just an honest list, so the spec is not read as a promise
-the code keeps.
+Four of the five are now resolved in the code; the fifth is resolved in the
+spec, which is the other honest way to close a gap.
 
-| Spec | Reality |
+| Spec | Resolution |
 |---|---|
-| §14.22 coarse target tracking | Not implemented. The app shows no target location at all. |
-| §14.25 maximum hold time, creator arrival clock | Not implemented; a handover has no time limit. |
-| §6.1 informant requires recorded proximity | The pool is every active hunter, not those seen near you. The damage log already carries coordinates, so this one is close to reachable. |
-| §14.43 photo retention window | Photos are kept for the life of the ledger row. |
-| §7.5 out-of-app buyout for officers | Not implemented; an officer cannot buy out at all. |
+| §6.1 informant requires recorded proximity | **Built.** The pool is hunters the condition sampler has actually seen within `Config.Informant.ProximityRadius` of the target, inside a window. A hunter who pressed accept and went to bed is no longer named, which is what turned the purchase into a roster dump. `RequireProximity = false` restores the old behaviour. |
+| §14.25 maximum hold time, creator arrival clock | **Built.** The countdown was always bounded by the grace budget; the *retrying* was not, so a hunter whose client never turned up could re-arm in a loop and hold a target at no cost. `Config.Kidnap.RearmCooldownSeconds` bounds it, the creator is told the moment a handover starts, and the hunter is told why one failed. |
+| §14.43 photo retention window | **Built.** `Config.Ledger.PhotoRetentionDays` drops the photo reference from ledger rows past the window, in every backend — one indexed UPDATE on mysql. The row stays, because the record is the point of the ledger; the photo of somebody's corpse does not. Zero keeps them forever. |
+| §7.5 out-of-app buyout for officers | **Built.** `/cleanse` lists what is out on the caller and buys one out. Law enforcement and EMS are barred from the app by §2, so an officer had no way to reach the one mechanic a target is supposed to have. Not ACE-gated: it only ever acts on a contract naming the caller, and applies every check the app's button does. |
+| §14.22 coarse target tracking | **Spec amended, not built.** This resource ships no tracking of any kind, and §14.22 now says so at the top. Every safeguard that section lists exists to stop a feature that hands a player another player's position from becoming a cheat feed, and the safest version is the one that does not exist. §1's tracking pillar is served by the informant purchase and by nothing else. A server that wants it should build it to that section. |
 
-Each is a decision to make rather than a bug: implement it, or amend the spec
-so the document stops claiming it.
+---
+
+## 7. Still open
+
+Nothing from sections 1 to 5 remains. What is deliberately *not* here:
+
+- **The storage conformance suite against a real MySQL.** The backend is now
+  executed rather than only read — `tests/harness/mysql_exec.lua` runs the
+  statement shapes this resource issues and raises on one it cannot, and the
+  whole conformance suite runs against it. That is not the same as a real
+  database: it does not prove MySQL's own behaviour around collation,
+  concurrent writes or transaction isolation. A docker MySQL in CI would
+  close the rest, and it has not been written because it could not be run
+  here, and a CI job that has never been executed is a CI job that is broken.
+- **Anything requiring a live server.** `docs/in-game-checklist.md` is the
+  list of what only a running FiveM server can prove.

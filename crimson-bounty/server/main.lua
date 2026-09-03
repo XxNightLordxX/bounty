@@ -211,7 +211,7 @@ function StartCrimsonBounty()
                   audit = audit, notify = notify, ledger = ledger })
     bailout.init({ storage = Storage, identity = identity, contracts = contracts,
                    escrow = escrow, audit = audit, notify = notify, kidnap = kidnap })
-    informant.init({ storage = Storage, identity = identity, audit = audit })
+    informant.init({ storage = Storage, identity = identity, audit = audit, death = death })
     amendments.init({ storage = Storage, identity = identity, contracts = contracts,
                       escrow = escrow, audit = audit, notify = notify })
     comms.init({ storage = Storage, identity = identity, audit = audit,
@@ -343,6 +343,7 @@ function Tick()
     modules.death.sweep()
     modules.ratelimit.sweep()
     if Storage.prune then Storage.prune() end
+    modules.ledger.forgetOldPhotos()
     local app = require('server.app')
     app.sweepHandles()
     app.sweepFloodCounters()

@@ -97,6 +97,7 @@ function Bridges.install(modules)
     modules.contracts.onResolved = function(contractId)
         modules.informant.clearContract(contractId)
         modules.comms.clearContract(contractId)
+        modules.death.clearProximity(contractId)
     end
 
     -- The expiry pass skips itself when nothing could have changed since the
@@ -265,6 +266,48 @@ function Bridges.installCommands(modules)
         local ok, err = Admin.settleLine(src, args[1], args[2])
         reply(src, ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err)))
     end)
+
+    -- Buying out a contract on yourself, for players the app is closed to.
+    --
+    -- Law enforcement and EMS are barred from the app by §2, so an officer
+    -- with a contract on them had no way to reach the one mechanic the
+    -- target of a contract is supposed to have. Not ACE-gated — anyone may
+    -- run it — because it only ever acts on a contract naming the caller,
+    -- and every check the app's button passes is applied here too.
+    if Config.Bailout.Enabled and Config.Bailout.Command then
+        RegisterCommand(Config.Bailout.Command, function(src, args)
+            if src == 0 then
+                return reply(src, 'This is for a player buying out a contract on themselves.')
+            end
+
+            local actor = modules.identity.resolve(src)
+            if not actor then return end
+
+            -- Deliberately past the app's job gate: being barred from the
+            -- app is the reason this exists.
+            if not modules.ratelimit.check(actor.cid, 'bailout') then
+                return reply(src, 'Slow down.')
+            end
+
+            local open = modules.bailout.available(actor)
+            if #open == 0 then
+                return reply(src, 'Nothing is out on you.')
+            end
+
+            if not args[1] then
+                reply(src, ('%d contract(s) on you can be bought out:'):format(#open))
+                for i = 1, #open do
+                    reply(src, ('  %s  $%d%s'):format(open[i].id, open[i].amount,
+                        open[i].queued and '  (already paid, closing shortly)' or ''))
+                end
+                return reply(src, ('Buy one out with /%s <id>'):format(Config.Bailout.Command))
+            end
+
+            local ok, err = modules.bailout.buy(actor, args[1])
+            reply(src, ok and 'Paid. The contract closes shortly.'
+                          or ('Could not buy it out: ' .. tostring(err)))
+        end, false)
+    end
 
     -- Its own ACE: reading a history and unmasking a person are different
     -- kinds of act, and should not be the same permission.

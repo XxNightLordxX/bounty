@@ -88,8 +88,18 @@ describe('bailout', function()
 end)
 
 describe('informant data', function()
+    --- Put the hunter on the target's shoulder and let the sampler see it.
+    --- A hunter who pressed accept and went to bed is not tracking anybody,
+    --- and naming them would make the purchase a roster dump (§6.1).
+    local function tailing(s, hunterSource)
+        Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
+        Env.players[hunterSource or 3]._coords = { x = 505.0, y = 500.0, z = 30.0 }
+        s.death.watchTargets(s.storage.allContracts())
+    end
+
     it('names a hunter for the creator', function()
         local s, f, c = seeded()
+        tailing(s)
         local ok, err, data = s.informant.buy(f.creator, c.id)
         truthy(ok, tostring(err))
         truthy(data.found)
@@ -98,10 +108,42 @@ describe('informant data', function()
 
     it('is available to the target as well', function()
         local s, f, c = seeded()
+        tailing(s)
         Env.players[2].PlayerData.money.bank = 100000
         local ok, _, data = s.informant.buy(f.target, c.id)
         truthy(ok)
         truthy(data.found)
+    end)
+
+    it('names nobody when no hunter has come near', function()
+        local s, f, c = seeded()
+        -- Accepted, and a mile away. There is nobody on you to name.
+        Env.players[2]._coords = { x = 0.0, y = 0.0, z = 30.0 }
+        Env.players[3]._coords = { x = 3000.0, y = 3000.0, z = 30.0 }
+        s.death.watchTargets(s.storage.allContracts())
+
+        local ok, err, data = s.informant.buy(f.creator, c.id)
+        truthy(ok, tostring(err))
+        falsy(data.found, 'accepting a contract is not tracking somebody')
+    end)
+
+    it('forgets an observation that has gone stale', function()
+        local s, f, c = seeded()
+        tailing(s)
+        Env.time = Env.time + (Config.Informant.ProximityWindowMinutes * 60) + 1
+
+        local ok, _, data = s.informant.buy(f.creator, c.id)
+        truthy(ok)
+        falsy(data.found, 'somebody who walked past yesterday is not on you now')
+    end)
+
+    it('names everyone active when proximity is not required', function()
+        local s, f, c = seeded()
+        withConfig({ { Config.Informant, 'RequireProximity', false } }, function()
+            local ok, _, data = s.informant.buy(f.creator, c.id)
+            truthy(ok)
+            truthy(data.found, 'the old behaviour, for servers that prefer it')
+        end)
     end)
 
     it('refuses anyone who is not the creator or the target', function()
@@ -1184,5 +1226,222 @@ describe('open amendments', function()
         local open = s.amendments.openFor(f.creator, c.id)
         truthy(open, 'an empty list, not an error')
         eq(#open, 0)
+    end)
+end)
+
+
+--- The four spec promises the code did not keep, now that it does.
+
+describe('a handover cannot be retried in a loop', function()
+    local AT = { x = 300.0, y = 300.0, z = 30.0 }
+
+    local function armed()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        for _, src in ipairs({ 1, 2, 3 }) do Env.players[src]._coords = AT end
+        Env.players[2].PlayerData.metadata.ishandcuffed = true
+        return s, f, c
+    end
+
+    it('tells the client to come when a handover starts', function()
+        local s, f, c = armed()
+        Natives.calls.notifications = {}
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+
+        local told = false
+        for _, note in ipairs(Natives.calls.notifications) do
+            if tostring(note.title):find('Handover') then told = true end
+        end
+        truthy(told, 'the creator has to be present for the whole countdown')
+    end)
+
+    it('refuses to re-arm straight after a failure', function()
+        local s, f, c = armed()
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+
+        -- The client walks off and the grace budget runs out.
+        Env.players[1]._coords = { x = 3000.0, y = 3000.0, z = 30.0 }
+        for _ = 1, 10 do s.kidnap.tick(Config.Kidnap.MaxTotalGraceMs) end
+        eq(s.kidnap.activeCount(), 0, 'the handover failed')
+
+        Env.players[1]._coords = AT
+        local ok, err = s.kidnap.arm(c.id, 'HUNTER01')
+        falsy(ok, 'a failed handover cannot be restarted immediately')
+        eq(err, CB.ERR.BAD_STATE)
+    end)
+
+    it('lets them try again once the cooldown has passed', function()
+        local s, f, c = armed()
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        Env.players[1]._coords = { x = 3000.0, y = 3000.0, z = 30.0 }
+        for _ = 1, 10 do s.kidnap.tick(Config.Kidnap.MaxTotalGraceMs) end
+
+        Env.players[1]._coords = AT
+        Env.time = Env.time + Config.Kidnap.RearmCooldownSeconds + 1
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'), 'the target is still fair game afterwards')
+    end)
+
+    it('tells the hunter why it failed', function()
+        local s, f, c = armed()
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        Env.players[1]._coords = { x = 3000.0, y = 3000.0, z = 30.0 }
+        Natives.calls.notifications = {}
+        for _ = 1, 10 do s.kidnap.tick(Config.Kidnap.MaxTotalGraceMs) end
+
+        local said = ''
+        for _, note in ipairs(Natives.calls.notifications) do
+            said = said .. tostring(note.content)
+        end
+        truthy(said:find('client did not arrive'),
+            'rather than leaving them to assume the script ate it: ' .. said)
+    end)
+end)
+
+describe('a photo is not kept forever', function()
+    local function recorded(s, f, c)
+        s.ledger.record(s.storage.readContract(c.id), 'HUNTER01',
+                        'https://cdn.fivemanage.com/proof.png', CB.FULFILMENT.ELIMINATION, {})
+    end
+
+    it('drops the reference once the window has passed', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000 } },
+        })
+        recorded(s, f, c)
+
+        truthy(s.storage.readLedger('HUNTER01', 10)[1].photo_ref, 'kept at first')
+
+        Env.time = Env.time + (Config.Ledger.PhotoRetentionDays * 86400) + 1
+        truthy(s.ledger.forgetOldPhotos() > 0, 'something was forgotten')
+
+        local row = s.storage.readLedger('HUNTER01', 10)[1]
+        truthy(row, 'the row itself stays — the record is the point of the ledger')
+        falsy(row.photo_ref, 'but the photo of somebody\'s corpse does not')
+    end)
+
+    it('keeps a photo inside the window', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000 } },
+        })
+        recorded(s, f, c)
+
+        Env.time = Env.time + 60
+        eq(s.ledger.forgetOldPhotos(), 0)
+        truthy(s.storage.readLedger('HUNTER01', 10)[1].photo_ref)
+    end)
+
+    it('keeps them forever when the window is zero', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000 } },
+        })
+        recorded(s, f, c)
+
+        withConfig({ { Config.Ledger, 'PhotoRetentionDays', 0 } }, function()
+            Env.time = Env.time + (365 * 86400)
+            eq(s.ledger.forgetOldPhotos(), 0, 'an operator who asks for that gets it')
+            truthy(s.storage.readLedger('HUNTER01', 10)[1].photo_ref)
+        end)
+    end)
+
+    it('forgets in every backend', function()
+        for _, name in ipairs({ 'memory', 'json', 'mysql' }) do
+            local store = name == 'mysql'
+                and (function()
+                    require('crimson-bounty.tests.harness.mysql_exec').install(Natives)
+                    package.loaded['crimson-bounty.server.storage.mysql'] = nil
+                    local m = require('crimson-bounty.server.storage.mysql')
+                    m.open()
+                    return m
+                end)()
+                or (function()
+                    package.loaded['crimson-bounty.server.storage.' .. name] = nil
+                    Natives.files = {}
+                    local m = require('crimson-bounty.server.storage.' .. name)
+                    m.open()
+                    return m
+                end)()
+
+            store.writeLedger({ cid = 'A', contract_id = 'c1', role = 'hunter',
+                                resolved_at = 100, photo_ref = 'https://x/y.png' })
+            eq(store.forgetLedgerPhotos(1000), 1, name .. ': one row forgotten')
+            falsy(store.readLedger('A', 10)[1].photo_ref, name .. ': and it is gone')
+        end
+    end)
+end)
+
+describe('a player the app is closed to can still buy out', function()
+    local function officer()
+        local s = newStack()
+        local f = fixture(s, { targetJob = { name = 'trooper', type = 'leo', onduty = true } })
+        Env.players[2].PlayerData.money.bank = 100000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000,
+        })
+        truthy(c, 'a contract on an officer')
+
+        Env.commands = {}
+        require('crimson-bounty.server.bridges').installCommands(s)
+        return s, f, c
+    end
+
+    it('is barred from the app in the first place', function()
+        local s, f, c = officer()
+        falsy(s.app.canUseApp(2), 'the job gate is why this command exists')
+    end)
+
+    it('lists what is out on them', function()
+        local s, f, c = officer()
+        Env.chat = {}
+        Env.commands[Config.Bailout.Command](2, {})
+
+        local said = ''
+        for _, line in ipairs(Env.chat) do said = said .. line.text .. '\n' end
+        truthy(said:find(c.id, 1, true), 'the contract: ' .. said)
+        truthy(said:find('15000', 1, true), 'and what it costs')
+    end)
+
+    it('buys it out', function()
+        local s, f, c = officer()
+        Env.commands[Config.Bailout.Command](2, { c.id })
+
+        eq(Env.players[2].PlayerData.money.bank, 85000, 'charged the premium')
+        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+    end)
+
+    it('will not buy out somebody else contract', function()
+        local s, f, c = officer()
+        Env.chat = {}
+        -- The creator running it against their own contract: they are not
+        -- its target, so there is nothing here for them.
+        Env.commands[Config.Bailout.Command](1, { c.id })
+
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'untouched')
+        local said = ''
+        for _, line in ipairs(Env.chat) do said = said .. line.text end
+        truthy(said:find('Nothing is out on you'), said)
+    end)
+
+    it('refuses an id that is not one', function()
+        local s, f, c = officer()
+        for _, bogus in ipairs({ '../etc', 'ct99999999', 'x' }) do
+            Env.commands[Config.Bailout.Command](2, { bogus })
+        end
+        eq(Env.players[2].PlayerData.money.bank, 100000, 'nothing was charged')
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE)
     end)
 end)

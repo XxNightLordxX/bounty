@@ -696,6 +696,15 @@ function MySQLStore.auditForContract(contractId, limit)
         { contractId, limit or 200 }) or {}
 end
 
+--- Drop the photo reference from rows older than the cutoff (§14.43).
+--- One indexed UPDATE rather than reading the ledger into Lua.
+function MySQLStore.forgetLedgerPhotos(cutoff)
+    local affected = MySQL.update.await(
+        'UPDATE crimson_ledger SET photo_ref = NULL WHERE resolved_at < ? AND photo_ref IS NOT NULL',
+        { cutoff })
+    return tonumber(affected) or 0
+end
+
 function MySQLStore.prune()
     MySQL.query.await('DELETE FROM crimson_audit WHERE ts < ?',
         { os.time() - (Config.Audit.RetentionDays * 86400) })

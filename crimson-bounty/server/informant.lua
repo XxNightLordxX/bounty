@@ -8,13 +8,14 @@ local Util = require_shared('util')
 
 local Informant = {}
 
-local Storage, Identity, Audit
+local Storage, Identity, Audit, Death
 
 --- [contractId .. ':' .. buyerCid] = { hunterCid, at, purchases }
 local reveals = {}
 
 function Informant.init(deps)
     Storage, Identity, Audit = deps.storage, deps.identity, deps.audit
+    Death = deps.death
     reveals = {}
 end
 
@@ -23,15 +24,26 @@ local function authorised(contract, actor)
     return contract.creator_cid == actor.cid or contract.target_cid == actor.cid
 end
 
---- Hunters eligible to be revealed. A hunter who accepted but has done
---- nothing is not "tracking" anyone; requiring recorded proximity keeps the
---- purchase meaningful rather than a roster dump.
+--- Hunters eligible to be revealed.
+---
+--- A hunter who accepted and has done nothing is not tracking anyone. The
+--- pool is those the server has actually seen near the target recently
+--- (§6.1) — observed by the condition sampler, never claimed by anybody —
+--- so the purchase names someone who is genuinely on you rather than
+--- dumping the roster of everyone who pressed accept.
+---
+--- With the requirement switched off the pool is every active hunter, which
+--- is what this did before and is left available for servers that prefer it.
 local function pool(contract, actor)
     local hunters = Storage.readHunters(contract.id)
+    local near = Config.Informant.RequireProximity and Death and Death.seenNear(contract.id)
+
     local out = {}
     for i = 1, #hunters do
         local h = hunters[i]
-        if h.state == 'active' then out[#out + 1] = h end
+        if h.state == 'active' and (not near or near[h.hunter_cid]) then
+            out[#out + 1] = h
+        end
     end
     return out
 end

@@ -219,10 +219,24 @@ function Death.startSampler()
     return true
 end
 
---- Refresh baselines for every player who is the target of a live contract.
+--- When the server last saw a hunter close to their target.
+---
+--- [contractId] = { [hunterCid] = os.time() }
+---
+--- Observed here rather than claimed anywhere: this is what makes "a hunter
+--- currently tracking you" (§6.1) a thing the server knows rather than a
+--- synonym for "a hunter who accepted".
+local seenNear = {}
+
+--- Refresh baselines for every player who is the target of a live contract,
+--- and note which of its hunters are near them.
 --- Bounded by the number of live contracts, not the player count.
 function Death.watchTargets(contracts)
     local watched = 0
+    local radius = (Config.Informant.ProximityRadius or 120.0)
+    local radius2 = radius * radius
+    local now = os.time()
+
     for i = 1, #contracts do
         local c = contracts[i]
         if c.state == CB.STATE.ACTIVE or c.state == CB.STATE.ACCEPTED then
@@ -230,10 +244,46 @@ function Death.watchTargets(contracts)
             if target then
                 Death.watch(target.cid, target.source, true)
                 watched = watched + 1
+
+                local targetCoords = GetEntityCoords(GetPlayerPed(target.source))
+                local hunters = Storage.readHunters(c.id)
+                for j = 1, #hunters do
+                    local hunter = hunters[j]
+                    if hunter.state == 'active' then
+                        local actor = Identity.byCitizenId(hunter.hunter_cid)
+                        if actor then
+                            local distance2 = Util.dist2(
+                                GetEntityCoords(GetPlayerPed(actor.source)), targetCoords)
+                            if distance2 <= radius2 then
+                                seenNear[c.id] = seenNear[c.id] or {}
+                                seenNear[c.id][hunter.hunter_cid] = now
+                            end
+                        end
+                    end
+                end
             end
         end
     end
+
     return watched
+end
+
+--- Hunters the server has seen near this target recently.
+---@param contractId string
+---@return table set of hunter citizen ids
+function Death.seenNear(contractId)
+    local out = {}
+    local window = (Config.Informant.ProximityWindowMinutes or 10) * 60
+    local now = os.time()
+
+    for hunterCid, at in pairs(seenNear[contractId] or {}) do
+        if (now - at) <= window then out[hunterCid] = true end
+    end
+    return out
+end
+
+function Death.clearProximity(contractId)
+    seenNear[contractId] = nil
 end
 
 --- Seconds since this player was last revived, or nil if never seen.

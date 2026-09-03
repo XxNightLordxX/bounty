@@ -101,10 +101,25 @@ end
 --- Try to arm a countdown for a hunter delivering to the creator.
 ---@return boolean armed
 ---@return string|nil err
+--- When a hunter's last handover attempt on a contract failed.
+--- [contractId .. ':' .. hunterCid] = os.time()
+local lastFailure = {}
+
 function Kidnap.arm(contractId, hunterCid)
     contractId = Util.toId(contractId)
     if not contractId then return false, CB.ERR.INVALID_INPUT end
     if active[key(contractId, hunterCid)] then return true end
+
+    -- A failed handover cannot be restarted immediately. Without this a
+    -- hunter whose client never turns up can re-arm in a loop and hold a
+    -- target indefinitely at no cost, which is the hold with no time limit
+    -- §14.25 was written about: the countdown is bounded, the retrying is
+    -- what was not.
+    local failedAt = lastFailure[key(contractId, hunterCid)]
+    local cooldown = Config.Kidnap.RearmCooldownSeconds or 0
+    if failedAt and (os.time() - failedAt) < cooldown then
+        return false, CB.ERR.BAD_STATE
+    end
 
     local count = 0
     for _ in pairs(active) do count = count + 1 end
@@ -142,6 +157,11 @@ function Kidnap.arm(contractId, hunterCid)
         lastTick   = GetGameTimer(),
         startedAt  = GetGameTimer(),
     }
+
+    -- The creator has to be present for the whole countdown, so they are
+    -- told the moment it starts rather than discovering it failed.
+    Notify.toCitizen(contract.creator_cid, 'Handover starting',
+        'An operative has your target in hand. Be there now.')
 
     Audit.action('kidnap_armed', hunterCid, contractId, {})
     Kidnap.start()
@@ -197,7 +217,16 @@ function Kidnap.tick(deltaMs)
 
                 if state.graceUsedMs > Config.Kidnap.MaxTotalGraceMs then
                     active[k] = nil
+                    lastFailure[k] = os.time()
                     Audit.action('kidnap_failed', state.hunterCid, state.contractId, { reason = reason })
+
+                    -- Told why, so a hunter whose client never showed up
+                    -- knows that is what happened rather than assuming the
+                    -- script ate their delivery.
+                    Notify.toCitizen(state.hunterCid, 'Handover failed',
+                        reason == 'creator_too_far'
+                            and 'Your client did not arrive in time.'
+                            or 'You lost hold of the target.')
                 end
             end
         end
@@ -244,6 +273,18 @@ end
 function Kidnap.clearPlayer(cid)
     for k, state in pairs(active) do
         if state.hunterCid == cid then active[k] = nil end
+    end
+    for k in pairs(lastFailure) do
+        if k:sub(-#cid - 1) == ':' .. cid then lastFailure[k] = nil end
+    end
+end
+
+function Kidnap.clearContract(contractId)
+    for k, state in pairs(active) do
+        if state.contractId == contractId then active[k] = nil end
+    end
+    for k in pairs(lastFailure) do
+        if k:sub(1, #contractId + 1) == contractId .. ':' then lastFailure[k] = nil end
     end
 end
 

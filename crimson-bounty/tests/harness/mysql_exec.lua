@@ -196,16 +196,48 @@ local function update(sql, params)
     end
 
     local conditions = parseConditions(whereClause)
+
+    -- `col IS NOT NULL` / `col IS NULL`, which parseConditions does not read
+    -- as an equality. Without these the row count comes back wrong, and the
+    -- count is what callers act on.
+    local requireSet, requireUnset = {}, {}
+    for column in whereClause:gmatch('([%w_]+) IS NOT NULL') do
+        requireSet[#requireSet + 1] = column
+    end
+    for column in whereClause:gmatch('([%w_]+) IS NULL') do
+        -- `IS NOT NULL` also matches here, so anything already required to be
+        -- set is not also required to be unset.
+        local alsoNotNull = false
+        for _, name in ipairs(requireSet) do if name == column then alsoNotNull = true end end
+        if not alsoNotNull then requireUnset[#requireUnset + 1] = column end
+    end
+
     local changed = 0
 
     for _, row in pairs(Exec.tables[tableName] or {}) do
-        if matches(row, conditions, params, index + 1) then
+        local eligible = matches(row, conditions, params, index + 1)
+        for _, column in ipairs(requireSet) do
+            if row[column] == nil then eligible = false end
+        end
+        for _, column in ipairs(requireUnset) do
+            if row[column] ~= nil then eligible = false end
+        end
+
+        if eligible then
             for i = 1, #assignments do
                 local assignment = assignments[i]
                 local value = assignment.literal
                 if value == nil then value = params[assignment.index] end
-                local coerced = coerce(tableName, assignment.column, value)
-                if coerced ~= nil then row[assignment.column] = coerced end
+
+                if type(value) == 'string' and value:upper() == 'NULL' then
+                    -- A real database stores a NULL and oxmysql hands it back
+                    -- as nil. Storing the string 'NULL' would make a column
+                    -- that was cleared look like one holding the word.
+                    row[assignment.column] = nil
+                else
+                    local coerced = coerce(tableName, assignment.column, value)
+                    if coerced ~= nil then row[assignment.column] = coerced end
+                end
             end
             changed = changed + 1
         end

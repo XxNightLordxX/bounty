@@ -642,6 +642,19 @@ Severity is the damage if the rule is absent, not the difficulty of the fix.
 
 #### 14.22 Tracking is defined, coarse, scoped and suppressed — it is not a player locator
 
+> **Not built, deliberately.** This resource ships no target tracking of any
+> kind: no coordinates, no blip, no coarsened point, no district name. §1's
+> tracking pillar is served instead by the informant purchase (§6.1), which
+> names a hunter the server has *observed near you*, and by nothing else.
+>
+> The rule below stands as the design any implementation must follow, and it
+> is why there is none: every safeguard it lists exists to stop a feature
+> that hands a player another player's position from becoming a cheat feed,
+> and the safest version of that feature is the one that does not exist.
+> Hunters find their target the way anyone else does. A server that wants
+> tracking should build it to this section; `Config.Tracking` does not exist
+> until somebody does.
+
 **Vector.** §1 advertises real-time target tracking and no later section defines it, so the implementer ships the thing the word means: a live blip. Under OneSync Infinity a client cannot otherwise obtain the position of a player outside its cull radius, so an unscoped precise feed hands cheaters information their menu cannot get, on a player they select — and it makes disguise, hiding and every counter-play inoperative because position arrives by menu.
 
 **Rule.** Define tracking in §7 rather than leaving §1's pillar undefined. The server never transmits a target's raw coordinates, heading, blip, GPS route or postal to any client, including admin-facing client builds. Under `Config.Tracking.Mode = 'ping'` (the default) one shared server tick resolves positions every `Config.Tracking.UpdateIntervalMs` — never per frame, never a timer per hunter-contract pair — and sends each recipient a point coarsened to `Config.Tracking.CoarseRadius` or a district name, so hunters receive a search area and the UI renders a radius rather than a cursor. Fine proximity state — in-photo-range, countdown ticks, grace state — is computed server-side and pushed as a boolean and an integer, never as coordinates the client can difference. The channel is addressed per recipient to citizen ids the server has recorded as accepted hunters on a contract in `accepted` state; a subscribe carrying a contract id the resolved player does not hunt returns nothing. Tracking returns nothing while the target is dead or downed, for `Config.Immunity.PostRespawnSeconds` after respawn, and inside any `Config.SafeZones` polygon, where photo verification also refuses to validate and kidnap countdowns do not progress. Tracking stops on contract close, hunter abandonment and disconnect, and total live streams are capped by `Config.Tracking.MaxActiveStreams`. Granularity is a per-server balance decision — set too coarse in a dense downtown block the pillar stops working, and players will coordinate the search in Discord instead, which is worse.

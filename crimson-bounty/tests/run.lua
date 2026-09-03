@@ -220,7 +220,7 @@ function _G.newStack()
 
     bailout.init({ storage = storage, identity = identity, contracts = contracts,
         escrow = escrow, audit = audit, notify = notify, kidnap = kidnap })
-    informant.init({ storage = storage, identity = identity, audit = audit })
+    informant.init({ storage = storage, identity = identity, audit = audit, death = death })
     amendments.init({ storage = storage, identity = identity, contracts = contracts,
         escrow = escrow, audit = audit, notify = notify })
     comms.init({ storage = storage, identity = identity, audit = audit,

@@ -102,6 +102,14 @@ Config.Bailout = {
     ProcessingDelaySeconds = 120,
     --- Bailout is blocked while the target is dead or in last stand.
     BlockWhileIncapacitated = true,
+    --- A command for players who cannot open the app at all (§7.5).
+    ---
+    --- Law enforcement and EMS are barred from the app by §2, so an officer
+    --- with a contract on them had no way to buy it out — the one mechanic
+    --- the target of a contract is supposed to have. The command works only
+    --- for the target of a contract, does exactly what the app's button
+    --- does, and is otherwise no different.
+    Command = 'cleanse',
     --- How many ticks a queued buyout waits on a contract that is mid-claim
     --- before giving up and refunding. A claim resolves within a tick or two,
     --- so this only matters when one was interrupted by a crash — and the
@@ -244,6 +252,11 @@ Config.Kidnap = {
     MaxTotalGraceMs    = 3000,
     TickMs             = 1000,
     MaxConcurrentCountdowns = 20,
+    --- How long a hunter must wait before re-arming a handover that failed
+    --- on this contract. The countdown itself is bounded by the grace
+    --- budget; without this the *retrying* is not, and a hunter whose client
+    --- never turns up can hold a target in a loop at no cost.
+    RearmCooldownSeconds = 60,
     --- A kidnapping is a *live* delivery. The target must be conscious the
     --- whole way: not dead, not downed / bleeding out, and above the health
     --- floor. Both states are re-checked on every countdown sample, so a
@@ -397,6 +410,17 @@ Config.Informant = {
     Cost = 25000,
     Account = 'bank',
     RevealMode = 'name',        -- 'name' | 'description'
+    --- Only a hunter the server has actually seen near the target may be
+    --- named (§6.1). A hunter who pressed accept and did nothing is not
+    --- tracking anyone, and revealing them turns the purchase into a roster
+    --- dump. Proximity is observed by the condition sampler; nothing is ever
+    --- taken from a client's word for where it is.
+    RequireProximity = true,
+    ProximityRadius = 120.0,
+    --- How long an observation counts for. Long enough that a hunter who
+    --- tailed you and backed off is still named; short enough that one who
+    --- walked past yesterday is not.
+    ProximityWindowMinutes = 10,
     RerollLockMinutes = 30,
     MaxPurchasesPerContract = 2,
 }
@@ -406,6 +430,15 @@ Config.Ledger = {
     MaxDepthHardCap = 25,
     StorePhotos = true,
     ShowPhotoToTarget = false,
+    --- How long a verification photo stays attached to a ledger row (§14.43).
+    ---
+    --- The row itself is kept — a record of what somebody finished is the
+    --- point of the ledger — but the photo is the most sensitive thing this
+    --- resource stores and was held for the life of the row, which on a
+    --- depth-ten ledger can be months. Only the reference is dropped; the
+    --- image lives wherever the phone uploaded it, which is not this
+    --- resource's to delete. Zero keeps them forever.
+    PhotoRetentionDays = 7,
 }
 
 --------------------------------------------------------------------------

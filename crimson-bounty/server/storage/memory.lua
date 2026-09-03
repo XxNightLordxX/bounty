@@ -254,6 +254,20 @@ function Memory.writeLedger(entry)
 
     return true
 end
+--- Drop the photo reference from rows older than the cutoff (§14.43).
+--- The row stays; the image reference does not.
+function Memory.forgetLedgerPhotos(cutoff)
+    local forgotten = 0
+    for i = 1, #db.ledger do
+        local row = db.ledger[i]
+        if row.photo_ref and (row.resolved_at or 0) < cutoff then
+            row.photo_ref = nil
+            forgotten = forgotten + 1
+        end
+    end
+    return forgotten
+end
+
 function Memory.readLedger(cid, depth)
     local out = {}
     for i = #db.ledger, 1, -1 do

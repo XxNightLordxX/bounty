@@ -41,6 +41,25 @@ function Ledger.record(contract, hunterCid, photoRef, fulfilment, result)
     entry(contract.target_cid, 'target', Config.Ledger.ShowPhotoToTarget)
 end
 
+--- Drop the photo from ledger rows past the retention window (§14.43).
+---
+--- The row stays — a hunter's record of what they finished is the point of
+--- the ledger — but the image reference does not. A photo of somebody's
+--- corpse is the most sensitive thing this resource stores and it was kept
+--- for the life of the row, which on a depth-ten ledger can be months.
+---
+--- Only the reference is dropped; the image itself lives wherever lb-phone
+--- uploaded it, which is not this resource's to delete.
+---@return integer forgotten
+function Ledger.forgetOldPhotos()
+    local days = Config.Ledger.PhotoRetentionDays or 0
+    if days <= 0 then return 0 end
+
+    -- One call, so on mysql this is a single indexed UPDATE rather than
+    -- reading the whole ledger into Lua to write most of it back.
+    return Storage.forgetLedgerPhotos(os.time() - (days * 86400)) or 0
+end
+
 function Ledger.read(cid)
     local depth = math.min(Config.Ledger.Depth, Config.Ledger.MaxDepthHardCap)
     return Storage.readLedger(cid, depth)

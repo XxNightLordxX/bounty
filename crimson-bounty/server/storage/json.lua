@@ -527,6 +527,20 @@ function JsonStore.writeLedger(entry)
     return true
 end
 
+--- Drop the photo reference from rows older than the cutoff (§14.43).
+function JsonStore.forgetLedgerPhotos(cutoff)
+    local forgotten = 0
+    for i = 1, #db.ledger do
+        local row = db.ledger[i]
+        if row.photo_ref and (row.resolved_at or 0) < cutoff then
+            row.photo_ref = nil
+            forgotten = forgotten + 1
+        end
+    end
+    if forgotten > 0 then touch(false) end
+    return forgotten
+end
+
 function JsonStore.readLedger(cid, depth)
     local out = {}
     for i = #db.ledger, 1, -1 do
