@@ -512,3 +512,74 @@ describe('the victim names the killer, the server checks the claim', function()
         eq(s.death.onVictimReport(2), 1, 'the damage log still works on its own')
     end)
 end)
+
+describe('a respawn does not take a kill away from the hunter', function()
+    --- The proof window and post-respawn immunity were added in the same
+    --- change and contradicted each other: the respawn the window exists to
+    --- survive was exactly what armed the immunity. This drives the real
+    --- revive event, which the earlier test did not.
+
+    local function killed()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+
+        Env.players[3]._coords = { x = 20.0, y = 20.0, z = 30.0 }
+        Env.players[2]._coords = { x = 21.0, y = 20.0, z = 30.0 }
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2, 3), 1, 'the kill should be attributed')
+
+        Config.Completion.ExtraPhotoHosts = { 'cdn.fivemanage.com' }
+        s.photo.loadAllowedHosts()
+        return s, f, c
+    end
+
+    it('pays the hunter who photographs after the target respawns', function()
+        local s, f, c = killed()
+        local token = s.photo.issue(f.hunter, c.id)
+        truthy(token)
+
+        -- The target hits respawn, through the event the client really fires.
+        Env.advance(5)
+        Env.players[2].PlayerData.metadata.isdead = false
+        s.death.onRevivedVerified(2, 'TARGET01')
+
+        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        truthy(ok, 'the kill happened before the respawn: ' .. tostring(err))
+        eq(Env.players[3].PlayerData.money.cash, 10000, 'and it was paid')
+    end)
+
+    it('keeps the token usable when a claim is refused for something transient', function()
+        local s, f, c = killed()
+        local token = s.photo.issue(f.hunter, c.id)
+
+        -- Something else holds the contract, so the claim cannot land yet.
+        s.storage.compareSetContractState(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING)
+        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        falsy(ok, 'the claim cannot be made right now')
+
+        -- The hold clears and the same token still works: a transient refusal
+        -- must not destroy proof of a kill the server itself attributed.
+        s.storage.compareSetContractState(c.id, CB.STATE.COMPLETING, CB.STATE.ACCEPTED)
+        local retry = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        truthy(retry, 'the proof should survive a transient refusal')
+        eq(Env.players[3].PlayerData.money.cash, 10000)
+    end)
+
+    it('still refuses a claim on a target who respawned long ago', function()
+        local s, f, c = killed()
+        local token = s.photo.issue(f.hunter, c.id)
+
+        Env.players[2].PlayerData.metadata.isdead = false
+        s.death.onRevivedVerified(2, 'TARGET01')
+        Env.advance(Config.Completion.ProofWindowSeconds + 30)
+
+        local ok = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        falsy(ok, 'a target up and about for a minute is not proof of death')
+        eq(Env.players[3].PlayerData.money.cash, 5000)
+    end)
+end)
