@@ -786,3 +786,178 @@ describe('terminal transitions', function()
         end
     end)
 end)
+
+
+--- An id that is already in use is not a free id.
+---
+--- The MySQL backend writes contracts and escrow with ON DUPLICATE KEY
+--- UPDATE, so a repeated id does not fail — it overwrites. The id carries a
+--- per-process counter and the clock modulo 100000, which repeats every
+--- 27.7 hours and restarts at one on every boot, so two instances sharing a
+--- database, or one restarting at the wrong moment, can mint the same id
+--- twice. Escrow.take already reads back and confirms its own lines for
+--- exactly this reason; nothing else did.
+describe('minting an id that is already taken', function()
+    it('does not overwrite an existing contract', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        local first = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'The original', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(first)
+
+        -- The next id comes back the same, as a second instance sharing the
+        -- database would produce.
+        local real = s.storage.nextId
+        s.storage.nextId = function(prefix)
+            if prefix == 'ct' then return first.id end
+            return real(prefix)
+        end
+
+        Env.addPlayer({ source = 7, citizenid = 'CREATOR9', license = 'license:zzz',
+                        cash = 100000, bank = 100000, firstname = 'Ann', lastname = 'Poe' })
+        local second, err = s.contracts.create(s.identity.resolve(7), {
+            targetCid = 'TARGET01', reason = 'The impostor', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.storage.nextId = real
+
+        falsy(second, 'a contract must not be created onto an id already in use')
+        truthy(err)
+
+        local stored = s.storage.readContract(first.id)
+        eq(stored.reason, 'The original', 'and the original is untouched')
+        eq(stored.creator_cid, 'CREATOR1')
+    end)
+
+    it('does not charge the second creator for a contract it refused', function()
+        local s = newStack()
+        local f = fixture(s)
+        local first = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(first)
+
+        local real = s.storage.nextId
+        s.storage.nextId = function(prefix)
+            if prefix == 'ct' then return first.id end
+            return real(prefix)
+        end
+
+        Env.addPlayer({ source = 7, citizenid = 'CREATOR9', license = 'license:zzz',
+                        cash = 100000, bank = 100000, firstname = 'Ann', lastname = 'Poe' })
+        local before = Env.players[7].PlayerData.money.cash
+        s.contracts.create(s.identity.resolve(7), {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.storage.nextId = real
+
+        eq(Env.players[7].PlayerData.money.cash, before,
+            'nothing was taken, because nothing was created')
+    end)
+
+    it('does not write an owed payout over an existing escrow line', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 10000,
+        })
+        truthy(c)
+
+        local existing = s.storage.readEscrow(c.id)[1]
+        truthy(existing, 'a line to be overwritten')
+
+        local real = s.storage.nextId
+        s.storage.nextId = function(prefix)
+            if prefix == 'owe' then return existing.id end
+            return real(prefix)
+        end
+        local lineId = s.bailout.owe('CREATOR1', c.id, 7500, 'bank', 'test')
+        s.storage.nextId = real
+
+        local after = s.storage.readEscrowLine(existing.id)
+        eq(after.amount, existing.amount,
+            'the baseline line must not have been overwritten by an owed payout')
+        eq(after.portion, existing.portion)
+        falsy(lineId == existing.id and after.owed_to == 'CREATOR1',
+            'and the owed money must not have landed on top of it')
+    end)
+end)
+
+
+describe('minting a hunter id that is already taken', function()
+    local function seeded()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, penaltyAmount = 10000,
+        })
+        return s, f, c
+    end
+
+    it('lets a second hunter in when the id is free', function()
+        -- The control: without this the refusals below could be the
+        -- contract refusing a second hunter at all, which is what the
+        -- first draft of these tests was actually measuring.
+        local s, f, c = seeded()
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        Env.addPlayer({ source = 8, citizenid = 'HUNTER08', license = 'license:h8',
+                        cash = 50000, bank = 50000, firstname = 'Kit', lastname = 'Vale' })
+        local ok, err = s.contracts.accept(s.identity.resolve(8), c.id, false)
+        truthy(ok, 'a competitive contract takes more than one hunter: ' .. tostring(err))
+        eq(#s.storage.readHunters(c.id), 2)
+    end)
+
+    it('refuses the acceptance rather than throwing on a duplicate row', function()
+        local s, f, c = seeded()
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local existing = s.storage.readHunters(c.id)[1]
+        truthy(existing)
+
+        Env.addPlayer({ source = 8, citizenid = 'HUNTER08', license = 'license:h8',
+                        cash = 50000, bank = 50000, firstname = 'Kit', lastname = 'Vale' })
+        local real = s.storage.nextId
+        s.storage.nextId = function(prefix)
+            if prefix == 'hn' then return existing.id end
+            return real(prefix)
+        end
+        local ok, err = s.contracts.accept(s.identity.resolve(8), c.id, false)
+        s.storage.nextId = real
+
+        falsy(ok, 'an acceptance must not be written onto another hunter row')
+        truthy(err)
+        eq(#s.storage.readHunters(c.id), 1, 'and the first hunter still stands alone')
+        eq(s.storage.readHunterById(existing.id).hunter_cid, 'HUNTER01')
+    end)
+
+    it('gives the stake back when it refuses', function()
+        local s, f, c = seeded()
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local existing = s.storage.readHunters(c.id)[1]
+
+        Env.addPlayer({ source = 8, citizenid = 'HUNTER08', license = 'license:h8',
+                        cash = 50000, bank = 50000, firstname = 'Kit', lastname = 'Vale' })
+        local before = Env.players[8].PlayerData.money.bank
+            + Env.players[8].PlayerData.money.cash
+
+        local real = s.storage.nextId
+        s.storage.nextId = function(prefix)
+            if prefix == 'hn' then return existing.id end
+            return real(prefix)
+        end
+        falsy(s.contracts.accept(s.identity.resolve(8), c.id, false))
+        s.storage.nextId = real
+
+        eq(Env.players[8].PlayerData.money.bank + Env.players[8].PlayerData.money.cash,
+            before,
+            'the stake is taken before the row is written, so a refusal must return it — '
+            .. 'nothing else ever would, with no hunter row naming who staked it')
+    end)
+end)

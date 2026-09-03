@@ -532,6 +532,16 @@ function MySQLStore.readHunter(contractId, cid)
     return hydrateHunter(rows and rows[1])
 end
 
+--- One hunter row by its own id.
+---
+--- Used to confirm an id is free before minting onto it: the stake is taken
+--- before the row is written, so an id already in use is a duplicate-key
+--- error with the money already gone and no record naming who staked it.
+function MySQLStore.readHunterById(id)
+    local rows = MySQL.query.await('SELECT * FROM crimson_hunters WHERE id = ?', { id })
+    return hydrateHunter(rows and rows[1])
+end
+
 function MySQLStore.updateHunter(id, fields)
     -- Column names are literals here, never interpolated from the caller.
     if fields.state ~= nil then

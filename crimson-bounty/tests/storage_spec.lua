@@ -152,6 +152,21 @@ describe('storage conformance', function()
         end
     end)
 
+    it('reads a hunter by its own id in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.addHunter({
+                id = 'hn0001', contract_id = 'ct1', hunter_cid = 'HUNTER01',
+                hunter_account = 'license:ccc', hunter_name = 'Rook Ash',
+                alias = 'Operative #1', anon = false, accepted_at = 1700000000,
+                state = 'active', claims = 0,
+            })
+            local read = b.store.readHunterById('hn0001')
+            truthy(read, b.name .. ': hunter not found by id')
+            eq(read.hunter_cid, 'HUNTER01', b.name)
+            falsy(b.store.readHunterById('hn9999'), b.name .. ': an unused id must read as free')
+        end
+    end)
+
     it('caps the ledger at the configured depth in every backend', function()
         for _, b in ipairs(backends()) do
             for i = 1, Config.Ledger.Depth + 5 do

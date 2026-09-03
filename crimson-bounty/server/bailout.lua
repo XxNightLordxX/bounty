@@ -199,8 +199,15 @@ end
 function Bailout.owe(cid, contractId, amount, account, reason)
     -- The id comes from the store's own sequence, not a truncated clock:
     -- two owes in the same second would otherwise share an id and the second
-    -- would overwrite the first.
-    local lineId = Storage.nextId('owe')
+    -- would overwrite the first. And confirmed unused before it is written,
+    -- because escrow is stored with ON DUPLICATE KEY UPDATE: an id already
+    -- in use does not fail, it lands on top of the line that holds it and
+    -- takes its money with it.
+    local lineId = Util.mintId(Storage.nextId, 'owe', Storage.readEscrowLine)
+    if not lineId then
+        Audit.financial('owe_id_exhausted', cid, contractId, { amount = amount })
+        return nil
+    end
 
     Storage.writeEscrow(contractId, { {
         id = lineId,

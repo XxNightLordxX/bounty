@@ -532,6 +532,15 @@ function JsonStore.readHunter(contractId, cid)
     return nil
 end
 
+--- One hunter row by its own id.
+---
+--- Used to confirm an id is free before minting onto it: the stake is taken
+--- before the row is written, so an id already in use is a duplicate-key
+--- error with the money already gone and no record naming who staked it.
+function JsonStore.readHunterById(id)
+    return db.hunters[id]
+end
+
 function JsonStore.updateHunter(id, fields)
     local h = db.hunters[id]
     if not h then return false end

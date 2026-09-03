@@ -202,3 +202,50 @@ describe('proof tokens across a timer wrap', function()
         eq(s.photo.tokenCount(), 0, 'the sweep must still reclaim tokens after a wrap')
     end)
 end)
+
+
+--- Minting an id nothing is using.
+describe('Util.mintId', function()
+    local Util = require('crimson-bounty.shared.util')
+
+    it('returns the first id nothing holds', function()
+        local n = 0
+        local id = Util.mintId(function(prefix)
+            n = n + 1
+            return prefix .. n
+        end, 'ct', function() return nil end)
+        eq(id, 'ct1')
+        eq(n, 1, 'and asks for exactly one when the first is free')
+    end)
+
+    it('walks past ids that are taken', function()
+        local n = 0
+        local taken = { ct1 = true, ct2 = true }
+        local id = Util.mintId(function(prefix)
+            n = n + 1
+            return prefix .. n
+        end, 'ct', function(candidate) return taken[candidate] end)
+        eq(id, 'ct3')
+    end)
+
+    it('gives up rather than writing onto one that is in use', function()
+        -- Refusing costs a caller one attempt. Writing would destroy
+        -- whatever already holds the id.
+        local id = Util.mintId(function(prefix) return prefix .. '1' end,
+            'ct', function() return true end)
+        falsy(id)
+    end)
+
+    it('gives up when the store will not mint at all', function()
+        falsy(Util.mintId(function() return nil end, 'ct', function() return nil end))
+    end)
+
+    it('bounds how long it tries', function()
+        local n = 0
+        Util.mintId(function(prefix)
+            n = n + 1
+            return prefix .. n
+        end, 'ct', function() return true end, 3)
+        eq(n, 3, 'a store handing out nothing but taken ids must not loop forever')
+    end)
+end)

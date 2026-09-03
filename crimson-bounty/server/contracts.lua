@@ -317,9 +317,18 @@ function Contracts.create(actor, req)
         end
     end
 
+    local contractId = Util.mintId(Storage.nextId, 'ct', Storage.readContract)
+    if not contractId then
+        -- Every id on offer belongs to a contract that already exists.
+        -- Refusing costs this creator one attempt; writing would rewrite
+        -- somebody else's contract under them.
+        Audit.rejected('contract_id_exhausted', actor.cid, nil, {})
+        return nil, CB.ERR.BAD_STATE
+    end
+
     local now = os.time()
     local contract = {
-        id            = Storage.nextId('ct'),
+        id            = contractId,
         creator_cid   = actor.cid,
         creator_account = actor.account,
         creator_name  = actor.name,
@@ -475,8 +484,25 @@ function Contracts.accept(actor, contractId, anonymous)
         Audit.financial('stake_taken', actor.cid, contractId, { amount = stake })
     end
 
+    -- Confirmed free before the row is written. The stake above is already
+    -- taken by this point, and addHunter is a plain insert: an id in use is
+    -- a duplicate-key error thrown out of here with the money gone and no
+    -- hunter row to say whose it was, so nothing would ever return it.
+    local hunterId = Util.mintId(Storage.nextId, 'hn', Storage.readHunterById)
+    if not hunterId then
+        if stake > 0 then
+            Escrow.release(contractId, actor.cid,
+                { portion = CB.PORTION.STAKE, staker = actor.cid }, 'hunter_id_exhausted')
+        end
+        if contract.mode == CB.MODE.EXCLUSIVE then
+            Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'accept_failed')
+        end
+        Audit.rejected('hunter_id_exhausted', actor.cid, contractId, {})
+        return false, CB.ERR.BAD_STATE
+    end
+
     local record = {
-        id            = Storage.nextId('hn'),
+        id            = hunterId,
         contract_id   = contractId,
         hunter_cid    = actor.cid,
         hunter_account = actor.account,

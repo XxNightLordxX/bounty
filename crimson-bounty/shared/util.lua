@@ -171,6 +171,40 @@ function Util.escrowIsEmpty(lines, portion)
 end
 
 --------------------------------------------------------------------------
+-- Ids
+--------------------------------------------------------------------------
+
+--- Mint an id nothing is using yet.
+---
+--- Ids carry a per-process counter, so they are unique within one run of one
+--- server and not beyond it. Two instances sharing a database mint the same
+--- sequence, and the MySQL backend writes contracts and escrow with
+--- ON DUPLICATE KEY UPDATE — a repeat does not fail, it overwrites. That is
+--- a contract rewritten under its creator, or a payout landing on top of an
+--- escrow line and taking its money with it.
+---
+--- Escrow.take already reads back and confirms its own lines for exactly
+--- this reason. This is the same defence for everything else that mints one.
+---
+--- Kept here rather than in the store so it is the same check for every
+--- backend, and so it can be tested without one.
+---@param nextId fun(prefix: string): string
+---@param prefix string
+---@param exists fun(id: string): any truthy when the id is already in use
+---@param attempts integer|nil
+---@return string|nil id nil when no free id could be found
+function Util.mintId(nextId, prefix, exists, attempts)
+    for _ = 1, (attempts or 5) do
+        local id = nextId(prefix)
+        if not id then return nil end
+        if not exists(id) then return id end
+    end
+    -- Refusing is the only safe answer: every id on offer is in use, and
+    -- writing to one of them would destroy whatever is already there.
+    return nil
+end
+
+--------------------------------------------------------------------------
 -- A clock that only goes forward
 --------------------------------------------------------------------------
 
