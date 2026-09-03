@@ -411,3 +411,171 @@ describe('money owed to a player is reachable only by them', function()
         eq(#s.storage.readPending('HUNTER01'), 1, 'still owed to the hunter')
     end)
 end)
+
+
+--- Items are not interchangeable because they share a name.
+---
+--- Exposing items in the reward builder made this reachable: escrow took a
+--- worn repair kit and handed back a fresh one, and took a loaded backpack
+--- and handed back an empty one with a new container id. The first mints
+--- value, the second destroys it, and both break the invariant this whole
+--- resource is built on.
+describe('item instances', function()
+    local function carrying(inventory)
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = inventory })
+        return s, f
+    end
+
+    it('snapshots what was actually in the slot', function()
+        local s, f = carrying({
+            { name = 'repairkit', count = 1, slot = 1, label = 'Repair Kit',
+              metadata = { durability = 11 } },
+        })
+        local lines, err = s.escrow.validate(f.creator, {
+            baseline = { items = { { name = 'repairkit', count = 1 } } },
+        })
+        truthy(lines, tostring(err))
+        eq(lines[1].metadata.durability, 11,
+            'the worn kit, not the idea of a repair kit')
+        eq(lines[1].inv_slot, 1, 'and where it came from')
+    end)
+
+    it('gives back the same instance it took', function()
+        local s, f = carrying({
+            { name = 'repairkit', count = 1, slot = 1, label = 'Repair Kit',
+              metadata = { durability = 11 } },
+        })
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { items = { { name = 'repairkit', count = 1 } } } },
+        })
+        truthy(c)
+
+        -- Gone from the creator while it is escrowed.
+        eq(exports.ox_inventory:GetItem(1, 'repairkit', nil, true), 0)
+
+        truthy(s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
+
+        local returned
+        for _, slot in ipairs(Env.players[1]._inventory) do
+            if slot.name == 'repairkit' and slot.count > 0 then returned = slot end
+        end
+        truthy(returned, 'the kit comes back')
+        eq(returned.metadata.durability, 11,
+            'at the durability it had — a stage-and-cancel loop must not repair it')
+    end)
+
+    it('does not orphan what a container was holding', function()
+        local s, f = carrying({
+            { name = 'backpack', count = 1, slot = 1, label = 'Backpack',
+              metadata = { container = 'bp-1234' } },
+        })
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { items = { { name = 'backpack', count = 1 } } } },
+        })
+        truthy(c)
+        truthy(s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
+
+        local returned
+        for _, slot in ipairs(Env.players[1]._inventory) do
+            if slot.name == 'backpack' and slot.count > 0 then returned = slot end
+        end
+        truthy(returned, 'the bag comes back')
+        eq(returned.metadata.container, 'bp-1234',
+            'still the same bag — a new container id orphans everything in it')
+    end)
+
+    it('takes the slot it staged, not any stack of the name', function()
+        local s, f = carrying({
+            { name = 'repairkit', count = 1, slot = 1, metadata = { durability = 11 } },
+            { name = 'repairkit', count = 1, slot = 2, metadata = { durability = 96 } },
+        })
+        local lines = s.escrow.validate(f.creator, {
+            baseline = { items = { { name = 'repairkit', count = 1 } } },
+        })
+        truthy(lines)
+        truthy(s.escrow.take(f.creator, 'ct_probe', lines))
+
+        -- The other kit is untouched, whichever one was staged.
+        local left = {}
+        for _, slot in ipairs(Env.players[1]._inventory) do
+            if slot.name == 'repairkit' and slot.count > 0 then
+                left[#left + 1] = slot.metadata.durability
+            end
+        end
+        eq(#left, 1, 'one kit left')
+        truthy(left[1] ~= lines[1].metadata.durability,
+            'and it is the one that was not staked')
+    end)
+
+    it('splits a request across the slots it actually draws from', function()
+        local s, f = carrying({
+            { name = 'bandage', count = 2, slot = 1, metadata = { source = 'ems' } },
+            { name = 'bandage', count = 3, slot = 2, metadata = { source = 'store' } },
+        })
+        local lines, err = s.escrow.validate(f.creator, {
+            baseline = { items = { { name = 'bandage', count = 4 } } },
+        })
+        truthy(lines, tostring(err))
+        eq(#lines, 2, 'one line per slot drawn from')
+        eq(lines[1].quantity + lines[2].quantity, 4, 'four bandages in total')
+        truthy(lines[1].metadata.source ~= lines[2].metadata.source,
+            'each remembering its own instance')
+    end)
+
+    it('refuses a weapon smuggled through the item list', function()
+        local s = newStack()
+        local f = fixture(s)
+        -- The picker sends weapons separately, so this is a hand-written
+        -- payload. Through the item path a weapon is stored as a bare name
+        -- and handed back clean: attachments destroyed, serial laundered.
+        for _, name in ipairs({ 'WEAPON_PISTOL', 'weapon_pistol', 'Weapon_Pistol' }) do
+            local lines, err = s.escrow.validate(f.creator, {
+                baseline = { items = { { name = name, count = 1 } } },
+            })
+            falsy(lines, name .. ' must not escrow as an item')
+            eq(err, CB.ERR.INVALID_REWARD)
+        end
+    end)
+
+    it('still escrows a weapon properly through its own path', function()
+        local s = newStack()
+        local f = fixture(s)
+        local lines = s.escrow.validate(f.creator, {
+            baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } },
+        })
+        truthy(lines, 'the weapon path is unaffected')
+        eq(lines[1].metadata.serial, 'ABC123')
+    end)
+
+    it('carries the metadata through storage in every backend', function()
+        local Exec = require('crimson-bounty.tests.harness.mysql_exec')
+        for _, name in ipairs({ 'memory', 'json', 'mysql' }) do
+            local store
+            if name == 'mysql' then
+                Exec.install(Natives)
+                package.loaded['crimson-bounty.server.storage.mysql'] = nil
+                store = require('crimson-bounty.server.storage.mysql')
+            else
+                package.loaded['crimson-bounty.server.storage.' .. name] = nil
+                Natives.files = {}
+                store = require('crimson-bounty.server.storage.' .. name)
+            end
+            store.open()
+
+            store.writeEscrow('ct1', { {
+                id = 'ct1:1', contract_id = 'ct1', slot = 1, portion = 'baseline',
+                source = CB.SOURCE.ITEM, item = 'repairkit', quantity = 1,
+                state = CB.ESCROW_STATE.HELD, inv_slot = 1,
+                metadata = { durability = 11 },
+            } })
+
+            local read = store.readEscrowLine('ct1:1')
+            truthy(read, name .. ': line not found')
+            truthy(read.metadata, name .. ': metadata must survive the round trip')
+            eq(read.metadata.durability, 11, name)
+        end
+    end)
+end)

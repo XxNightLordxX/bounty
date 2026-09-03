@@ -297,6 +297,31 @@ Natives.phoneConfig = {
     },
 }
 
+--- ox_inventory matches a removal against slot metadata: nil means "any
+--- slot of this name", and a table means the slot's metadata must equal it.
+--- Two items with the same name and different metadata are different items —
+--- a repair kit at 11% durability is not a fresh one, and a backpack holding
+--- goods is not an empty one.
+function Natives.metadataMatches(slotMeta, wanted)
+    if wanted == nil then return true end
+    if type(wanted) ~= 'table' then return false end
+
+    local function same(a, b)
+        if a == b then return true end
+        if type(a) ~= 'table' or type(b) ~= 'table' then return false end
+        for k, v in pairs(a) do if not same(v, b[k]) then return false end end
+        for k in pairs(b) do if a[k] == nil then return false end end
+        return true
+    end
+
+    -- An empty wanted table is how this resource records "no metadata", so
+    -- it matches a slot that has none.
+    if next(wanted) == nil then
+        return slotMeta == nil or next(slotMeta) == nil
+    end
+    return same(slotMeta or {}, wanted)
+end
+
 Natives.resourceStates = {}
 
 --- Restore the default set, in place. Assigning a fresh table would leave
@@ -331,18 +356,24 @@ function Natives.exportsProxy()
             end
             return returnsCount and count or { count = count }
         end,
-        RemoveItem = function(_, src, name, count)
+        --- Removes only from slots whose metadata matches, as ox_inventory
+        --- does. Ignoring metadata here made a worn item and a pristine one
+        --- indistinguishable, so a test could not see an escrow path that
+        --- takes one and hands back the other.
+        RemoveItem = function(_, src, name, count, metadata)
             local p = Env.players[tonumber(src)]
             if not p then return false end
             local remaining = count
             for _, slot in ipairs(p._inventory) do
-                if slot.name == name and remaining > 0 then
+                if slot.name == name and remaining > 0
+                    and Natives.metadataMatches(slot.metadata, metadata) then
                     local take = math.min(slot.count, remaining)
                     slot.count = slot.count - take
                     remaining = remaining - take
                 end
             end
-            table.insert(Natives.calls.inventory, { op = 'remove', src = src, name = name, count = count })
+            table.insert(Natives.calls.inventory,
+                { op = 'remove', src = src, name = name, count = count, metadata = metadata })
             return remaining == 0
         end,
         AddItem = function(_, src, name, count, metadata)

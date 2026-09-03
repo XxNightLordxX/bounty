@@ -36,6 +36,13 @@ end
 ---@return table[]|nil lines
 ---@return string|nil err
 ---@return integer|nil slotCount
+--- A weapon by name. ox_inventory names every weapon WEAPON_*, and this is
+--- the boundary between the two escrow paths: one snapshots an object's
+--- metadata, the other counts a stack.
+local function isWeaponName(name)
+    return type(name) == 'string' and name:upper():sub(1, 7) == 'WEAPON_'
+end
+
 function Escrow.validate(actor, spec, bonusPercent, existingLines)
     if type(spec) ~= 'table' then return nil, CB.ERR.INVALID_REWARD end
 
@@ -83,10 +90,47 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
             if not name or not count then return CB.ERR.INVALID_REWARD end
             if Config.EscrowBlacklist[name] then return CB.ERR.INVALID_REWARD end
 
+            -- A weapon is one physical object with a serial, attachments and
+            -- wear. Through this path it would be stored as a bare name and
+            -- handed back as a fresh clean one: attachments destroyed, wear
+            -- refunded, serial laundered. Weapons go through addWeapons,
+            -- which snapshots the metadata, or they do not go at all.
+            if isWeaponName(name) then return CB.ERR.INVALID_REWARD end
+
             local held = exports.ox_inventory:GetItem(actor.source, name, nil, true) or 0
             if held < count then return CB.ERR.INSUFFICIENT end
 
-            lines[#lines + 1] = { slot = slotIndex, portion = portion, source = CB.SOURCE.ITEM, item = name, quantity = count }
+            -- Items are not interchangeable just because they share a name.
+            -- A repair kit at 11% durability is not a fresh one; a backpack
+            -- holding goods is not an empty one. Escrow takes specific
+            -- slots and remembers what was in them, so what comes back is
+            -- what went in — the same rule §9.4 already applies to weapons.
+            local slots = exports.ox_inventory:Search(actor.source, 'slots', name) or {}
+            local remaining = count
+
+            for j = 1, #slots do
+                if remaining <= 0 then break end
+                local found = slots[j]
+                local take = math.min(found.count or 0, remaining)
+
+                if take > 0 then
+                    remaining = remaining - take
+                    lines[#lines + 1] = {
+                        slot     = slotIndex,
+                        inv_slot = found.slot,
+                        portion  = portion,
+                        source   = CB.SOURCE.ITEM,
+                        item     = name,
+                        quantity = take,
+                        metadata = Util.copy(found.metadata) or {},
+                    }
+                end
+            end
+
+            -- GetItem said the creator holds enough and the slot walk did
+            -- not find it. Refuse rather than escrow a quantity from
+            -- nowhere.
+            if remaining > 0 then return CB.ERR.INSUFFICIENT end
         end
         return nil
     end
@@ -284,7 +328,7 @@ function Escrow.take(actor, contractId, lines)
             elseif line.source == 'dirty' then
                 exports.ox_inventory:AddItem(actor.source, Config.Sources.dirty.item, line.amount)
             elseif line.source == CB.SOURCE.ITEM then
-                exports.ox_inventory:AddItem(actor.source, line.item, line.quantity)
+                exports.ox_inventory:AddItem(actor.source, line.item, line.quantity, line.metadata)
             elseif line.source == CB.SOURCE.WEAPON then
                 exports.ox_inventory:AddItem(actor.source, line.item, 1, line.metadata)
             end
@@ -300,7 +344,9 @@ function Escrow.take(actor, contractId, lines)
         elseif line.source == 'dirty' then
             ok = exports.ox_inventory:RemoveItem(actor.source, Config.Sources.dirty.item, line.amount) and true or false
         elseif line.source == CB.SOURCE.ITEM then
-            ok = exports.ox_inventory:RemoveItem(actor.source, line.item, line.quantity) and true or false
+            -- Names the metadata, so the slot that was staged is the slot
+            -- that is taken rather than any stack of the same name.
+            ok = exports.ox_inventory:RemoveItem(actor.source, line.item, line.quantity, line.metadata) and true or false
         elseif line.source == CB.SOURCE.WEAPON then
             ok = exports.ox_inventory:RemoveItem(actor.source, line.item, 1, line.metadata) and true or false
         end
@@ -466,7 +512,11 @@ function Escrow.deliver(recipientCid, line)
 
     elseif line.source == CB.SOURCE.ITEM then
         if not exports.ox_inventory:CanCarryItem(src, line.item, line.quantity) then return false end
-        return exports.ox_inventory:AddItem(src, line.item, line.quantity) and true or false
+        -- The snapshot goes back exactly as it was taken. Without it a worn
+        -- item returns pristine and a container returns as a fresh empty
+        -- one, which mints value in the first case and destroys it in the
+        -- second (§9.4).
+        return exports.ox_inventory:AddItem(src, line.item, line.quantity, line.metadata) and true or false
 
     elseif line.source == CB.SOURCE.WEAPON then
         if not exports.ox_inventory:CanCarryItem(src, line.item, 1) then return false end

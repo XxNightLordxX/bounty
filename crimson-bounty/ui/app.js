@@ -19,6 +19,11 @@
     // in the DOM because the picker rebuilds its own markup on every add and
     // remove, and a rebuilt <select> forgets what was put in it.
     picked: {},
+    // The Place form's own values. They used to live only in the DOM, so
+    // anything that re-rendered — a tab change, a push, a late reply, the
+    // sworn-officer dialog — silently emptied the form the player had built.
+    // Keeping them here is what makes the form survive being rebuilt.
+    draft: {},
     // Open amendment proposals, keyed by contract. Read on demand rather
     // than carried in every listing row: most contracts have none.
     proposals: {}
@@ -904,7 +909,8 @@
     }
 
     form.appendChild(labelled('Target', targetSearch()));
-    form.appendChild(labelled('Reason', textInput('reason', 'Why?', 140)));
+    form.appendChild(labelled('Reason',
+      drafted(textInput('reason', 'Why?', 140), 'reason')));
 
     var mode = document.createElement('select');
     mode.id = 'mode';
@@ -914,14 +920,14 @@
       opt.value = o[0]; opt.textContent = o[1];
       mode.appendChild(opt);
     });
-    form.appendChild(labelled('Assignment', mode));
+    form.appendChild(labelled('Assignment', drafted(mode, 'mode', 'exclusive')));
 
-    var slots = numberInput('slots', 1);
+    var slots = drafted(numberInput('slots', 1), 'slots', '1');
     slots.min = 1;
     // The server's ceiling, not a number typed here: raising MaxPayoutSlots
     // in the config used to leave the form refusing to go past five.
     slots.max = (state.wallet && state.wallet.caps && state.wallet.caps.slots) || 5;
-    slots.onchange = function () { renderSlots(); };
+    slots.onchange = function () { state.draft.slots = slots.value; renderSlots(); };
     form.appendChild(labelled('Payouts (how many times it can be collected)', slots));
     form.appendChild(el('div', 'hint',
       'Every payout is funded and escrowed up front. More hunters may accept than there are ' +
@@ -931,14 +937,19 @@
     slotBox.id = 'slots';
     form.appendChild(slotBox);
 
-    form.appendChild(labelled('Kidnapping bonus %', numberInput('bonus', 50)));
-    form.appendChild(labelled('Buyout price (0 for none)', numberInput('bailout', 0)));
-    form.appendChild(labelled('Failure penalty (0 for none)', numberInput('penalty', 0)));
+    form.appendChild(labelled('Kidnapping bonus %',
+      drafted(numberInput('bonus', 50), 'bonus', '50')));
+    form.appendChild(labelled('Buyout price (0 for none)',
+      drafted(numberInput('bailout', 0), 'bailout', '0')));
+    form.appendChild(labelled('Failure penalty (0 for none)',
+      drafted(numberInput('penalty', 0), 'penalty', '0')));
     form.appendChild(el('div', 'hint',
       'A hunter stakes this when they accept, and forfeits it to you if they walk away.'));
 
     var anon = document.createElement('input');
     anon.type = 'checkbox'; anon.id = 'anon';
+    anon.checked = state.draft.anon === true;
+    anon.onclick = function () { state.draft.anon = anon.checked; };
     var toggle = el('div', 'toggle');
     toggle.appendChild(anon);
     toggle.appendChild(el('span', null, 'Place anonymously'));
@@ -957,22 +968,13 @@
   function renderSlots() {
     var box = document.getElementById('slots');
     if (!box) return;
-    var count = parseInt(document.getElementById('slots-count').value, 10) || 1;
+    var count = parseInt(state.draft.slots, 10) || 1;
 
-    // Read back whatever is already typed before the box is torn down.
-    // Changing the payout count used to reset every amount above it.
-    var typed = {};
-    ['cash', 'bank', 'dirty'].forEach(function (source) {
-      for (var i = 1; i <= 10; i++) {
-        var node = document.getElementById('slot-' + source + '-' + i);
-        if (node) { typed['slot-' + source + '-' + i] = node.value; }
-      }
-    });
-
-    // Drop what was staged on payouts that no longer exist. Leaving it in
-    // place kept those items counted as promised — so lowering the payout
-    // count made them unaddable anywhere, while nothing would ever submit
-    // them.
+    // Drop what was staged on payouts the player has taken away. This runs
+    // only on a real change to the count, never on a rebuild: it used to run
+    // on every render, and since a rebuilt form reported one payout, it
+    // deleted everything staged on payouts two and up — destroying exactly
+    // the state that was moved out of the DOM to protect it.
     Object.keys(state.picked).forEach(function (index) {
       if (parseInt(index, 10) > count) { delete state.picked[index]; }
     });
@@ -985,10 +987,9 @@
       var split = el('div', 'split');
       ['cash', 'bank', 'dirty'].forEach(function (source) {
         var id = 'slot-' + source + '-' + i;
-        var input = numberInput(id, 0);
-        if (typed[id] !== undefined) { input.value = typed[id]; }
         split.appendChild(labelled(
-          source.charAt(0).toUpperCase() + source.slice(1), input));
+          source.charAt(0).toUpperCase() + source.slice(1),
+          drafted(numberInput(id, 0), id, '0')));
       });
       slot.appendChild(split);
 
@@ -1175,10 +1176,13 @@
   }
 
   function submitContract() {
-    var target = document.getElementById('target-handle').value;
+    // From the draft, not the DOM: the sworn-officer confirmation renders a
+    // dialog over the form, which empties #view. Reading the controls here
+    // meant the first submit always failed and the second submitted nothing.
+    var target = state.draft.target || document.getElementById('target-handle').value;
     if (!target) return say('Choose a target.');
 
-    var count = parseInt(document.getElementById('slots-count').value, 10) || 1;
+    var count = parseInt(state.draft.slots, 10) || 1;
     var slots = [];
     for (var i = 1; i <= count; i++) {
       // Only sources the creator actually funded are sent. A zero is not a
@@ -1203,7 +1207,7 @@
       slots.push({ baseline: baseline });
     }
 
-    var protectedTarget = document.getElementById('target-handle').dataset.protected === 'true';
+    var protectedTarget = state.draft.targetProtected === true;
     if (protectedTarget && settings().warnCreator !== false && !state.leoConfirmed) {
       ask('That target is a sworn officer.',
           'Placing this will alert every officer on duty, by phone and over dispatch.',
@@ -1214,29 +1218,43 @@
 
     post('create', {
       target: target,
-      reason: document.getElementById('reason').value,
-      mode: document.getElementById('mode').value,
+      reason: state.draft.reason || '',
+      mode: state.draft.mode || 'exclusive',
       reward: { slots: slots },
       bonusPercent: num('bonus'),
       bailoutAmount: num('bailout'),
       penaltyAmount: num('penalty'),
-      anonymous: document.getElementById('anon').checked
+      anonymous: state.draft.anon === true
     }).then(function (r) {
       if (!r.ok) return fail(r);
       say('Contract placed.', 'gold');
       // The goods are gone from the player's pockets now; leaving them
       // staged would offer them again on the next contract.
       state.picked = {};
+      state.draft = {};
       state.wallet = null;
       state.tab = 'mine';
       refresh();
     });
   }
 
+  // From the draft, so a value survives the form being rebuilt under it.
   function num(id) {
-    var node = document.getElementById(id);
-    var value = node ? parseInt(node.value, 10) : 0;
+    var raw = state.draft[id];
+    if (raw === undefined) {
+      var node = document.getElementById(id);
+      raw = node && node.value;
+    }
+    var value = parseInt(raw, 10);
     return (!value || value < 0) ? 0 : value;
+  }
+
+  // An input whose value is the draft's, and whose edits go back into it.
+  function drafted(input, key, fallback) {
+    input.value = state.draft[key] !== undefined ? state.draft[key] : (fallback || '');
+    input.oninput = function () { state.draft[key] = input.value; };
+    input.onchange = function () { state.draft[key] = input.value; };
+    return input;
   }
 
   function labelled(text, control) {
@@ -1265,8 +1283,13 @@
   function targetSearch() {
     var wrap = el('div');
     var input = textInput('target-query', 'Search by name', 32);
+    input.value = state.draft.targetName || '';
+
     var handle = document.createElement('input');
     handle.type = 'hidden'; handle.id = 'target-handle';
+    handle.value = state.draft.target || '';
+    handle.dataset.protected = state.draft.targetProtected ? 'true' : 'false';
+
     var results = el('div');
 
     var searchTimer = null;
@@ -1306,6 +1329,9 @@
             handle.value = person.handle;
             handle.dataset.protected = person.protected ? 'true' : 'false';
             input.value = person.name;
+            state.draft.target = person.handle;
+            state.draft.targetProtected = person.protected === true;
+            state.draft.targetName = person.name;
             results.innerHTML = '';
             if (person.protected) {
               say('That is a sworn officer. Placing this will alert their department.', 'gold');

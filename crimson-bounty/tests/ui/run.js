@@ -1028,10 +1028,16 @@ async function main() {
     return app;
   }
 
+  // Typing into a control the way a browser does: the value changes and the
+  // page is told. Setting .value silently is not what a player does, and a
+  // form that reads its own state back would never see the edit.
   function pick(app, id, value) {
     const node = app.document.getElementById(id);
     truthy(node, 'missing control: ' + id);
-    if (value !== undefined) { node.value = String(value); }
+    if (value !== undefined) {
+      node.value = String(value);
+      if (node.oninput) { node.oninput(); }
+    }
     return node;
   }
 
@@ -1040,6 +1046,112 @@ async function main() {
     truthy(node, 'missing button: ' + id);
     node.onclick();
   }
+
+  // A form whose values live only in the DOM loses them every time anything
+  // re-renders — a tab change, a push, a late reply, or a dialog. Both of
+  // these were found by review, not by the tests written alongside the
+  // feature.
+  await (async function formSurvivesRerender() {
+    const app = placeForm();
+    await settle(); await settle();
+
+    function openPlace(a) {
+      a.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    }
+
+    openPlace(app);
+    await settle(); await settle();
+
+    // Build a two-payout contract with goods on the second.
+    pick(app, 'slots-count', 2).onchange();
+    pick(app, 'slot-cash-1', 7000);
+    pick(app, 'slot-item-2').value = 'lockpick';
+    pick(app, 'slot-item-count-2', 3);
+    press(app, 'slot-item-add-2');
+    // Chosen from a search, the only way a target is ever set.
+    const query = pick(app, 'target-query');
+    query.value = 'Dana';
+    query.oninput();
+    app.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+    app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent.indexOf('Dana Reyes') === 0;
+    })[0].onclick();
+
+    pick(app, 'reason', 'Unpaid debt');
+
+    // Glance at another tab and come back, as anyone would.
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+    openPlace(app);
+    await settle(); await settle();
+
+    it('keeps the payout count across a tab change', function () {
+      eq(app.document.getElementById('slots-count').value, '2',
+        'the form must not quietly become a one-payout contract');
+    });
+
+    it('keeps goods staged on a payout across a tab change', function () {
+      truthy(app.view.textContent.indexOf('Lockpick x3') !== -1,
+        'staged goods must survive a rebuild: ' + app.view.textContent);
+    });
+
+    it('keeps the target and the amounts too', function () {
+      eq(app.document.getElementById('target-handle').value, 'tg00000001');
+      eq(app.document.getElementById('reason').value, 'Unpaid debt');
+      eq(app.document.getElementById('slot-cash-1').value, '7000');
+    });
+  })();
+
+  await (async function officerConfirmationKeepsTheForm() {
+    let submission = null;
+    const app = placeForm({
+      searchTargets: { ok: true, data: [{ handle: 'tg00000001', name: 'Ann Ryder', protected: true }] },
+      create: function (body) { submission = body; return { ok: true, data: {} }; }
+    });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    // Picked from a search, the only way a target is ever chosen.
+    const query = pick(app, 'target-query');
+    query.value = 'Ryder';
+    query.oninput();
+    app.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+
+    const candidate = app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent.indexOf('Ann Ryder') === 0;
+    })[0];
+    truthy(candidate, 'the officer should be offered');
+    if (candidate) { candidate.onclick(); }
+
+    pick(app, 'reason', 'Unpaid debt');
+    pick(app, 'slot-cash-1', 5000);
+
+    press(app, 'place-submit');
+    await settle();
+
+    it('asks before placing a contract on a sworn officer', function () {
+      truthy(app.view.textContent.indexOf('sworn officer') !== -1,
+        'the warning: ' + app.view.textContent);
+    });
+
+    // Confirm it, the way a player does.
+    const yes = app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Yes';
+    })[0];
+    truthy(yes, 'a way to confirm');
+    if (yes) { yes.onclick(); await settle(); await settle(); }
+
+    it('places the contract the player actually built', function () {
+      truthy(submission, 'confirming must submit, not rebuild an empty form');
+      eq(submission.reason, 'Unpaid debt', 'with what was typed');
+      eq(submission.reward.slots[0].baseline.cash, 5000, 'and what was funded');
+    });
+  })();
 
   await (async function stakesGoods() {
     const app = placeForm();
@@ -1122,7 +1234,7 @@ async function main() {
     });
 
     pick(app, 'target-handle', 'tg00000001');
-    pick(app, 'reason').value = 'Unpaid debt';
+    pick(app, 'reason', 'Unpaid debt');
     pick(app, 'slot-cash-2', 1000);
     press(app, 'place-submit');
     await settle(); await settle();
@@ -1164,7 +1276,7 @@ async function main() {
     await settle(); await settle();
 
     pick(app, 'target-handle', 'tg00000001');
-    pick(app, 'reason').value = 'Debt';
+    pick(app, 'reason', 'Debt');
     pick(app, 'slot-item-1').value = 'lockpick';
     pick(app, 'slot-item-count-1', 5);
     press(app, 'slot-item-add-1');
