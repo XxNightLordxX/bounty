@@ -108,7 +108,15 @@ See §9 for the binding rules these follow from.
 
 ### 3.6 Failure Penalty Configuration
 
-An optional, config-backed setting allowing the creator to enforce a **financial penalty** (a specific amount of money) if an accepted hunter fails to complete an **exclusive** contract within a designated time parameter.
+An optional, config-backed setting allowing the creator to enforce a **financial penalty** if an accepted hunter fails to complete the contract within a designated time parameter.
+
+The penalty is **staked, not invoiced**. A penalty charged only after a failure is a penalty the hunter can simply walk away from, so:
+
+- The amount is **taken from the hunter when they accept**, and held in escrow alongside the creator's reward. A hunter who cannot cover it cannot accept the contract, and is told so.
+- It is **forfeited to the creator** if they abandon the contract or let it expire while holding it.
+- It is **returned in full** when they deliver, or when the contract ends for a reason that is not their fault — the creator cancelling, or the target buying out.
+- A stake is never counted as part of the contract's reward, never shown on the board as such, and never swept into a general refund to the creator.
+- Lowering the penalty by amendment (§12.1) returns the difference to every hunter who staked the higher figure.
 
 The penalty timer **pauses** whenever the creator or target is offline (§7.1), so that logging out cannot be used to run out a hunter's clock — or, from the creator's side, to dodge the refund that follows expiry.
 
@@ -258,6 +266,9 @@ The following must be config-driven:
 - Contract-cancellation cooldown (pre-acceptance)
 - Relay message rate limit and length cap; masked-call enable
 - Alt-account protection toggle (account-level identifier check)
+- `Config.Progression` — enabled, resource name, trust per elimination and per kidnapping
+- `Config.Mugshot.MaxImageBytes` — bound on a client-rendered headshot
+- `Config.Audit.Webhook` — staff mirror for financial and rejected lines
 
 ---
 
@@ -876,7 +887,34 @@ Severity is the damage if the rule is absent, not the difficulty of the fix.
 
 ---
 
-## 15. Configuration Appendix
+## 15. Progression & Reputation
+
+The bounty board is part of the server's criminal economy, not a parallel one.
+
+### 16.1 Criminal progression
+Completing a contract awards **trust in the server's existing criminal progression** (`sc-blackmarket` on this server), so hunting feeds the same rank and access ladder as every other criminal activity. A live delivery is worth more than a kill.
+
+- Config-gated and resource-detected: if the progression resource is absent, the award is skipped silently.
+- A progression failure **never** affects the payout. Money moves first, and the award is attempted afterwards inside a guard — a broken integration must not cost a hunter what they earned.
+
+### 16.2 Hunter record
+Each player carries four counters: contracts **completed**, **placed**, **failed** and **survived**, plus a standing derived from them (`Unproven` → `Known` → `Established` → `Notorious`).
+
+- Shown to the player in their Ledger.
+- Shown to a **creator** for each operative on their contract — attached to the alias, never to an identity — so anonymity and reputation coexist: a client can judge whether the operative who took their contract is any good without learning who they are.
+- A success rate is withheld until there are at least three resolved contracts. One completed contract is not a hundred percent record.
+
+### 16.3 What counts
+| Event | Counter |
+|---|---|
+| Slot claimed by a hunter | `completed` for the hunter |
+| Contract created | `placed` for the creator |
+| Hunter abandons an accepted contract | `failed` for the hunter |
+| Target buys out, or the contract expires | `survived` for the target |
+
+---
+
+## 16. Configuration Appendix
 
 Every `config.lua` entry implied by §8, §10 and §15, as one list. Defaults belong in the file itself; this is the surface an implementer must cover.
 
@@ -1100,7 +1138,7 @@ Every `config.lua` entry implied by §8, §10 and §15, as one list. Defaults be
 - Config.Boot.ValidateCounterplayConfig = true — refuse or warn on contradictory configuration
 
 ---
-## 16. Design Rationale
+## 17. Design Rationale
 
 The rules in §9 exist for specific failure modes, recorded here so they are not "simplified away" during implementation:
 
