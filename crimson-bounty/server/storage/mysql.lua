@@ -146,10 +146,139 @@ local SCHEMA = {
     )]],
 }
 
+--------------------------------------------------------------------------
+-- Migration
+--------------------------------------------------------------------------
+--
+-- CREATE TABLE IF NOT EXISTS creates a table and then never touches it
+-- again, so a server that ran an earlier version keeps its old columns and
+-- silently drops every field added since. The columns added during this
+-- build — staker, owed_to, paused_since, the bailout queue — would all have
+-- gone that way.
+--
+-- The declarations above are the single source of truth: what a table should
+-- have is read out of them, compared against what the database reports, and
+-- anything absent is added. Nothing is ever dropped or altered in place —
+-- an automatic migration that can destroy a column is a worse problem than
+-- the one it solves.
+
+--- Column and index declarations for one CREATE TABLE statement.
+---@return string|nil name
+---@return table columns [ { name, definition } ] in declaration order
+---@return table indexes [ { name, definition } ]
+local function declarationsIn(sql)
+    local name = sql:match('CREATE TABLE IF NOT EXISTS ([%w_]+)')
+    if not name then return nil, {}, {} end
+
+    local columns, indexes = {}, {}
+    local body = sql:match('%((.*)%)%s*$') or ''
+
+    for line in body:gmatch('[^,\n]+') do
+        local trimmed = line:match('^%s*(.-)%s*$')
+        local head = trimmed:match('^([%w_]+)')
+
+        if head then
+            local upper = head:upper()
+            if upper == 'INDEX' or upper == 'KEY' then
+                local indexName = trimmed:match('^[%w_]+%s+([%w_]+)')
+                if indexName then
+                    indexes[#indexes + 1] = { name = indexName, definition = trimmed }
+                end
+            elseif upper ~= 'PRIMARY' and upper ~= 'UNIQUE'
+                and upper ~= 'CONSTRAINT' and upper ~= 'FOREIGN' then
+                columns[#columns + 1] = { name = head, definition = trimmed }
+            end
+        end
+    end
+
+    return name, columns, indexes
+end
+
+--- Table and column names here come from the literals in this file and from
+--- nowhere else — never from config, never from a player — which is what
+--- makes it safe to build DDL from them. MySQL will not take a placeholder
+--- for an identifier, so there is no parameterized alternative. The guard is
+--- belt and braces: anything that is not a plain lowercase identifier is not
+--- something this file declared.
+local function safeIdentifier(name)
+    return type(name) == 'string' and name:match('^[a-z][a-z0-9_]*$') ~= nil
+end
+
+--- Add whatever the declarations have and the database does not.
+---@return integer added columns
+---@return integer added indexes
+function MySQLStore.migrate()
+    local addedColumns, addedIndexes = 0, 0
+
+    for i = 1, #SCHEMA do
+        local table_, columns, indexes = declarationsIn(SCHEMA[i])
+
+        if table_ and safeIdentifier(table_) then
+            local present = {}
+            local rows = MySQL.query.await([[
+                SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+            ]], { table_ }) or {}
+            for j = 1, #rows do
+                present[tostring(rows[j].COLUMN_NAME or rows[j].column_name):lower()] = true
+            end
+
+            -- An empty answer means the table was just created by the
+            -- statement above and already matches, or the query failed. Doing
+            -- nothing is right either way.
+            if next(present) then
+                for j = 1, #columns do
+                    local column = columns[j]
+                    if safeIdentifier(column.name) and not present[column.name:lower()] then
+                        MySQL.query.await(
+                            ('ALTER TABLE %s ADD COLUMN %s'):format(table_, column.definition))
+                        print(('[crimson-bounty] migrated: added %s.%s'):format(table_, column.name))
+                        addedColumns = addedColumns + 1
+                    end
+                end
+            end
+
+            local haveIndex = {}
+            local indexRows = MySQL.query.await([[
+                SELECT INDEX_NAME FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+            ]], { table_ }) or {}
+            for j = 1, #indexRows do
+                haveIndex[tostring(indexRows[j].INDEX_NAME or indexRows[j].index_name):lower()] = true
+            end
+
+            if next(haveIndex) then
+                for j = 1, #indexes do
+                    local index = indexes[j]
+                    if safeIdentifier(index.name) and not haveIndex[index.name:lower()] then
+                        MySQL.query.await(
+                            ('ALTER TABLE %s ADD %s'):format(table_, index.definition))
+                        print(('[crimson-bounty] migrated: added index %s on %s')
+                            :format(index.name, table_))
+                        addedIndexes = addedIndexes + 1
+                    end
+                end
+            end
+        end
+    end
+
+    if addedColumns > 0 or addedIndexes > 0 then
+        print(('[crimson-bounty] schema migration: %d column(s), %d index(es) added')
+            :format(addedColumns, addedIndexes))
+    end
+
+    return addedColumns, addedIndexes
+end
+
 function MySQLStore.open()
     for i = 1, #SCHEMA do
         MySQL.query.await(SCHEMA[i])
     end
+
+    -- A table that already existed keeps whatever shape it had, so the
+    -- statements above are not enough on their own.
+    MySQLStore.migrate()
+
     local highest = MySQL.scalar.await('SELECT COUNT(*) FROM crimson_contracts') or 0
     seq = tonumber(highest) or 0
     return true

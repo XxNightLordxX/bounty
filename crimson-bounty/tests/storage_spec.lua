@@ -404,3 +404,128 @@ describe('indexed contract lookups agree across backends', function()
         truthy(schema:find('INDEX idx_hunter', 1, true), 'hunter index')
     end)
 end)
+
+
+--- Schema migration.
+---
+--- CREATE TABLE IF NOT EXISTS creates a table and then never touches it
+--- again, so a server that ran an earlier version keeps its old columns and
+--- silently drops every field added since — which on this build would be the
+--- stake owner, the pause marker and the whole bailout queue.
+describe('mysql schema migration', function()
+    local Sim = require('crimson-bounty.tests.harness.mysql_sim')
+
+    local function opened(existing, indexes)
+        Sim.install(Natives)
+        if existing then Sim.existingSchema(existing, indexes) end
+        package.loaded['crimson-bounty.server.storage.mysql'] = nil
+        local store = require('crimson-bounty.server.storage.mysql')
+        store.open()
+        return store
+    end
+
+    local function addedColumns()
+        local out = {}
+        for _, change in ipairs(Sim.altered) do
+            if change.column then out[#out + 1] = change.table_ .. '.' .. change.column end
+        end
+        table.sort(out)
+        return out
+    end
+
+    it('adds nothing to a database it just created', function()
+        opened(nil)
+        eq(#Sim.altered, 0, 'a fresh install needs no migration')
+    end)
+
+    it('adds the columns an older version never had', function()
+        -- A contracts table as an early build left it: no stake owner, no
+        -- pause marker, no bailout queue.
+        opened({
+            crimson_contracts = {
+                id = true, creator_cid = true, target_cid = true,
+                mode = true, state = true, created_at = true,
+            },
+        })
+
+        local added = addedColumns()
+        local names = table.concat(added, ' ')
+        truthy(names:find('crimson_contracts.paused_since', 1, true),
+            'the pause marker: ' .. names)
+        truthy(names:find('crimson_contracts.bailout_queued_at', 1, true),
+            'the bailout queue: ' .. names)
+        truthy(names:find('crimson_contracts.bailout_attempts', 1, true),
+            'and the newest column: ' .. names)
+    end)
+
+    it('leaves the columns that are already there alone', function()
+        opened({
+            crimson_contracts = {
+                id = true, creator_cid = true, target_cid = true,
+                mode = true, state = true, created_at = true,
+            },
+        })
+        for _, name in ipairs(addedColumns()) do
+            falsy(name == 'crimson_contracts.id', 'must not re-add id')
+            falsy(name == 'crimson_contracts.state', 'must not re-add state')
+        end
+    end)
+
+    it('never drops or alters a column it does not recognise', function()
+        opened({
+            crimson_contracts = {
+                id = true, creator_cid = true, target_cid = true,
+                mode = true, state = true, created_at = true,
+                -- Something an operator or an older build added.
+                their_own_column = true,
+            },
+        })
+        for _, change in ipairs(Sim.altered) do
+            falsy(change.sql:find('DROP', 1, true),
+                'an automatic migration that can destroy a column is worse than the '
+                .. 'problem it solves: ' .. change.sql)
+            falsy(change.sql:find('MODIFY', 1, true), change.sql)
+            falsy(change.sql:find('their_own_column', 1, true), change.sql)
+        end
+    end)
+
+    it('is idempotent — a second run changes nothing', function()
+        local store = opened({
+            crimson_contracts = {
+                id = true, creator_cid = true, target_cid = true,
+                mode = true, state = true, created_at = true,
+            },
+        })
+        truthy(#Sim.altered > 0, 'the first run had work to do')
+
+        Sim.altered = {}
+        store.migrate()
+        eq(#Sim.altered, 0, 'the second run finds nothing left')
+    end)
+
+    it('adds an index an older version never had', function()
+        opened(
+            { crimson_audit = { id = true, ts = true, kind = true, action = true,
+                                actor_cid = true, contract_id = true, detail = true } },
+            { crimson_audit = { idx_ts = true } })
+
+        local indexes = {}
+        for _, change in ipairs(Sim.altered) do
+            if change.index then indexes[#indexes + 1] = change.index end
+        end
+        local names = table.concat(indexes, ' ')
+        truthy(names:find('idx_audit_contract', 1, true),
+            'the timeline index the admin command needs: ' .. names)
+        falsy(names:find('idx_ts', 1, true), 'and not one that already exists')
+    end)
+
+    it('migrates every table it declares, not only contracts', function()
+        opened({
+            crimson_escrow = { id = true, contract_id = true, portion = true,
+                               source = true, state = true },
+        })
+        local names = table.concat(addedColumns(), ' ')
+        truthy(names:find('crimson_escrow.staker', 1, true), 'the stake owner: ' .. names)
+        truthy(names:find('crimson_escrow.owed_to', 1, true), 'and the owed marker')
+    end)
+end)

@@ -45,6 +45,36 @@ end
 function Sim.reset()
     Sim.tables, Sim.schema = {}, {}
     Sim.rejected = {}
+    -- What a pre-existing database reports it has, which is the whole point
+    -- of a migration: nil means the table is new and matches its
+    -- declaration, a table here means it was created by an older version.
+    Sim.existing = nil
+    Sim.existingIndexes = nil
+    Sim.altered = {}
+end
+
+--- Pretend the database already holds these tables, shaped as an older
+--- version left them. Anything the current declarations add on top is what
+--- a migration has to find.
+---@param tables table [tableName] = { column = true }
+---@param indexes table|nil [tableName] = { indexName = true }
+function Sim.existingSchema(tables, indexes)
+    Sim.existing = tables
+    Sim.existingIndexes = indexes or {}
+end
+
+--- Parse an ALTER TABLE so a test can assert on what the migration did.
+local function parseAlter(sql)
+    local table_, rest = sql:match('^ALTER TABLE ([%w_]+) ADD (.+)$')
+    if not table_ then return nil end
+
+    local column = rest:match('^COLUMN ([%w_]+)')
+    if column then return { table_ = table_, column = column, sql = sql } end
+
+    local index = rest:match('^INDEX ([%w_]+)')
+    if index then return { table_ = table_, index = index, sql = sql } end
+
+    return { table_ = table_, sql = sql }
 end
 
 --- Record any column an INSERT names that the schema does not declare.
@@ -79,10 +109,46 @@ function Sim.install(Natives)
     Sim.reset()
 
     local function run(sql, params)
-        if type(sql) == 'string' then
-            if sql:find('CREATE TABLE', 1, true) then parseSchema(sql) end
-            if sql:find('INSERT INTO', 1, true) then Sim.check(sql) end
+        if type(sql) ~= 'string' then return {} end
+
+        if sql:find('CREATE TABLE', 1, true) then parseSchema(sql) end
+        if sql:find('INSERT INTO', 1, true) then Sim.check(sql) end
+
+        -- What the database says it already has. Only answered when a test
+        -- has set up a pre-existing schema; otherwise the empty answer means
+        -- "just created, nothing to migrate", which is the live behaviour
+        -- for a fresh install.
+        if sql:find('information_schema.COLUMNS', 1, true) then
+            local held = Sim.existing and Sim.existing[params and params[1]]
+            if not held then return {} end
+            local rows = {}
+            for column in pairs(held) do rows[#rows + 1] = { COLUMN_NAME = column } end
+            return rows
         end
+
+        if sql:find('information_schema.STATISTICS', 1, true) then
+            local held = Sim.existingIndexes and Sim.existingIndexes[params and params[1]]
+            if not held then return {} end
+            local rows = {}
+            for index in pairs(held) do rows[#rows + 1] = { INDEX_NAME = index } end
+            return rows
+        end
+
+        if sql:find('^ALTER TABLE') then
+            local change = parseAlter(sql)
+            if change then
+                Sim.altered[#Sim.altered + 1] = change
+                -- Applied, so a second migration finds nothing to do.
+                if change.column and Sim.existing and Sim.existing[change.table_] then
+                    Sim.existing[change.table_][change.column] = true
+                end
+                if change.index and Sim.existingIndexes
+                    and Sim.existingIndexes[change.table_] then
+                    Sim.existingIndexes[change.table_][change.index] = true
+                end
+            end
+        end
+
         return {}
     end
 
