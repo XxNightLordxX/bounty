@@ -188,6 +188,7 @@ function StartCrimsonBounty()
     local comms      = require('server.comms')
     local mugshot    = require('server.mugshot')
     local progression = require('server.progression')
+    local admin      = require('server.admin')
     local projection = require('server.projection')
     local app        = require('server.app')
 
@@ -221,7 +222,7 @@ function StartCrimsonBounty()
         death = death, photo = photo, kidnap = kidnap, bailout = bailout,
         informant = informant, amendments = amendments, comms = comms,
         projection = projection, mugshot = mugshot, progression = progression,
-        app = app,
+        app = app, admin = admin,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -231,6 +232,7 @@ function StartCrimsonBounty()
     }
 
     app.init(modules)
+    admin.init(modules)
     require('server.bridges').install(modules)
 
     Recover()

@@ -377,11 +377,18 @@ function Escrow.release(contractId, recipientCid, filter, reason)
             if filter.portion and line.portion ~= filter.portion then matches = false end
             if filter.slot and line.slot ~= filter.slot then matches = false end
             if filter.staker and line.staker ~= filter.staker then matches = false end
-            -- A release that names no portion is a general refund. It must
-            -- not sweep up a hunter's stake, nor money already promised to a
-            -- named person.
-            if not filter.portion
+
+            if filter.line then
+                -- One named line and nothing else. A caller that names a
+                -- specific line has said exactly what it means, so the
+                -- general-refund exclusions below do not apply — but the
+                -- name has to match, or this releases the whole contract.
+                if line.id ~= filter.line then matches = false end
+            elseif not filter.portion
                 and (line.portion == CB.PORTION.STAKE or line.portion == CB.PORTION.OWED) then
+                -- A release that names no portion is a general refund. It
+                -- must not sweep up a hunter's stake, nor money already
+                -- promised to a named person.
                 matches = false
             end
         elseif line.portion == CB.PORTION.STAKE or line.portion == CB.PORTION.OWED then
@@ -389,8 +396,11 @@ function Escrow.release(contractId, recipientCid, filter, reason)
         end
 
         -- A line already owed to someone belongs to them, whatever this
-        -- release is for.
-        if line.owed_to and line.owed_to ~= recipientCid then matches = false end
+        -- release is for. A staff settlement names the line explicitly and
+        -- is audited, so it is the one thing that may override this.
+        if line.owed_to and line.owed_to ~= recipientCid and not (filter and filter.line) then
+            matches = false
+        end
 
         if matches then
             -- Compare-and-set: only a line still `held` may be claimed, and

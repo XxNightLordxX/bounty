@@ -41,6 +41,24 @@ function Util.toId(id)
     return id
 end
 
+--- Same, for an escrow line id.
+---
+--- A line id is either a store sequence ('owe00000001') or a contract id
+--- and an index joined by a colon ('ct00000001:3'), so it needs the colon
+--- that Util.toId deliberately refuses. Exactly one, and never at either
+--- end, so the shape stays as narrow as the ids the store actually mints.
+---@param id any
+---@return string|nil
+function Util.toLineId(id)
+    if type(id) ~= 'string' then return nil end
+    if #id < 8 or #id > 80 then return nil end
+    if not id:match('^[A-Za-z0-9_%-]+:?[A-Za-z0-9_%-]*$') then return nil end
+    local _, colons = id:gsub(':', '')
+    if colons > 1 then return nil end
+    if id:sub(-1) == ':' then return nil end
+    return id
+end
+
 --- Validate a citizen id shape (QBox ids are alphanumeric).
 function Util.toCitizenId(cid)
     if type(cid) ~= 'string' then return nil end

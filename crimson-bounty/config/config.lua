@@ -443,6 +443,34 @@ Config.Progression = {
     TrustPerKidnapping  = 20,
 }
 
+--------------------------------------------------------------------------
+-- Staff commands (§4.1 of the improvements document)
+--------------------------------------------------------------------------
+
+Config.Admin = {
+    Enabled = true,
+    --- ACE for reading and for closing a contract. The server console is
+    --- always allowed: an owner locked out of their own recovery tools by a
+    --- missing ACE has no way back in.
+    Ace = 'crimson.admin',
+    --- Reading who is behind an anonymous party is gated separately, because
+    --- it is a different kind of act from reading a history. Give it to fewer
+    --- people than the one above.
+    IdentityAce = 'crimson.identity',
+    --- Command names, without the leading slash.
+    Commands = {
+        timeline = 'cb-timeline',
+        void     = 'cb-void',
+        stuck    = 'cb-stuck',
+        settle   = 'cb-settle',
+        whois    = 'cb-whois',
+    },
+    --- Rows read per contract for a timeline. A cap, because the audit log
+    --- is the largest table here and a staff command should not be able to
+    --- pull an unbounded amount of it into memory.
+    TimelineRows = 200,
+}
+
 Config.Debug = false
 
 return Config

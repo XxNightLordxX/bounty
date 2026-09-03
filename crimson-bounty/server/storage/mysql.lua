@@ -139,7 +139,10 @@ local SCHEMA = {
         contract_id VARCHAR(32),
         detail TEXT,
         INDEX idx_ts (ts),
-        INDEX idx_actor (actor_cid)
+        INDEX idx_actor (actor_cid),
+        -- The admin timeline reads every row for one contract. Without this
+        -- that is a scan of the whole log, which is the largest table here.
+        INDEX idx_audit_contract (contract_id)
     )]],
 }
 
@@ -554,6 +557,14 @@ end
 function MySQLStore.readAudit(limit)
     return MySQL.query.await('SELECT * FROM crimson_audit ORDER BY id DESC LIMIT ?',
         { limit or 100 }) or {}
+end
+
+--- Every audit row naming one contract, oldest first. Indexed, so the
+--- admin timeline is a lookup rather than a scan of the whole log.
+function MySQLStore.auditForContract(contractId, limit)
+    return MySQL.query.await(
+        'SELECT * FROM crimson_audit WHERE contract_id = ? ORDER BY id ASC LIMIT ?',
+        { contractId, limit or 200 }) or {}
 end
 
 function MySQLStore.prune()

@@ -386,6 +386,20 @@ end
 
 function JsonStore.readAudit() return db.audit end
 
+--- Every audit row naming one contract, oldest first.
+function JsonStore.auditForContract(contractId, limit)
+    local out = {}
+    for i = 1, #db.audit do
+        if db.audit[i].contract_id == contractId then out[#out + 1] = db.audit[i] end
+    end
+    if limit and #out > limit then
+        local trimmed = {}
+        for i = #out - limit + 1, #out do trimmed[#trimmed + 1] = out[i] end
+        return trimmed
+    end
+    return out
+end
+
 function JsonStore._raw() return db end
 
 return JsonStore

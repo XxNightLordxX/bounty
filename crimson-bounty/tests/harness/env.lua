@@ -12,6 +12,10 @@ Env.byCitizen = {}        -- [citizenid] = source
 Env.events = {}           -- registered net events
 Env.handlers = {}         -- registered local event handlers, by name
 Env.clientEvents = {}     -- captured TriggerClientEvent calls
+Env.commands = {}         -- [name] = handler, as RegisterCommand saw it
+Env.chat = {}             -- lines a command printed back to a player
+Env.aces = {}             -- [source] = { ['crimson.admin'] = true }
+Env.consoleOut = {}       -- lines a command printed to the console
 Env.notifications = {}
 Env.threads = {}
 Env.timers = {}
@@ -78,6 +82,7 @@ function Env.reset()
     Env.gameTimer = 0
     Env.players, Env.byCitizen = {}, {}
     Env.events, Env.clientEvents, Env.notifications = {}, {}, {}
+    Env.commands, Env.chat, Env.aces, Env.consoleOut = {}, {}, {}, {}
     Env.handlers = {}
     Env.threads, Env.timers, Env.console = {}, {}, {}
 end

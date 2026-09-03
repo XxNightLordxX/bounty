@@ -32,6 +32,11 @@ function Natives.install()
     _G.TriggerClientEvent = function(name, target, ...)
         table.insert(Env.clientEvents, { name = name, target = target, args = { ... } })
         -- Phone notifications reach the player as a client event, since
+        if name == 'chat:addMessage' then
+            local payload = ...
+            local args = payload and payload.args or {}
+            table.insert(Env.chat, { target = target, text = tostring(args[2] or '') })
+        end
         -- lb-phone's SendNotification export is client-side only.
         if name == 'crimson-bounty:notify' then
             local payload = ...
@@ -41,6 +46,18 @@ function Natives.install()
     _G.TriggerEvent = function(name, ...)
         local h = Env.events['local:' .. name]
         if h then h(...) end
+    end
+
+    -- Staff commands. Registered handlers are kept so a test can run one
+    -- exactly as a console or a player would, and the ACE answer is a
+    -- fixture rather than always-true: a command that is only ever tested
+    -- with permission is a command whose gate is untested.
+    _G.RegisterCommand = function(name, handler)
+        Env.commands[name] = handler
+    end
+    _G.IsPlayerAceAllowed = function(src, ace)
+        local granted = Env.aces[tonumber(src)]
+        return (granted and granted[ace]) == true
     end
 
     _G.GetPlayerIdentifiers = function(src)

@@ -169,6 +169,7 @@ function _G.newStack()
     package.loaded['crimson-bounty.server.mugshot'] = nil
     package.loaded['crimson-bounty.server.progression'] = nil
     package.loaded['crimson-bounty.server.app'] = nil
+    package.loaded['crimson-bounty.server.admin'] = nil
     package.loaded['crimson-bounty.server.amendments'] = nil
     package.loaded['crimson-bounty.server.informant'] = nil
     package.loaded['crimson-bounty.server.bailout'] = nil
@@ -193,6 +194,7 @@ function _G.newStack()
     local mugshot    = require('crimson-bounty.server.mugshot')
     local progression = require('crimson-bounty.server.progression')
     local app        = require('crimson-bounty.server.app')
+    local admin      = require('crimson-bounty.server.admin')
 
     storage.open()
     audit.init(storage)
@@ -231,20 +233,23 @@ function _G.newStack()
     -- Wired exactly as main.lua wires it. The app was previously left
     -- uninitialised here, so anything it reached for through deps was
     -- unreachable in a test and only failed on a live server.
-    app.init({
+    local wiring = {
         storage = storage, identity = identity, ratelimit = ratelimit, audit = audit,
         notify = notify, escrow = escrow, contracts = contracts, ledger = ledger,
         death = death, photo = photo, kidnap = kidnap, bailout = bailout,
         informant = informant, amendments = amendments, comms = comms,
         projection = projection, mugshot = mugshot, progression = progression,
-    })
+        admin = admin,
+    }
+    app.init(wiring)
+    admin.init(wiring)
 
     return {
         storage = storage, audit = audit, kidnap = kidnap, projection = projection,
         bailout = bailout, informant = informant, amendments = amendments, comms = comms, identity = identity, notify = notify,
         escrow = escrow, contracts = contracts, ratelimit = ratelimit,
         ledger = ledger, death = death, photo = photo, bridges = bridges,
-        mugshot = mugshot, progression = progression, app = app,
+        mugshot = mugshot, progression = progression, app = app, admin = admin,
     }
 end
 
@@ -281,7 +286,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec',
 }
 
 for _, name in ipairs(suites) do

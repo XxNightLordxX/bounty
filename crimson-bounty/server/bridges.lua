@@ -175,6 +175,114 @@ function Bridges.install(modules)
         Bridges.onPlayerDropped(modules, cid)
     end)
 
+    Bridges.installCommands(modules)
+    return true
+end
+
+--------------------------------------------------------------------------
+-- Staff commands
+--------------------------------------------------------------------------
+
+--- Print to whoever ran the command — the console when there is no player.
+local function reply(src, line)
+    if src == 0 then
+        print(line)
+    else
+        TriggerClientEvent('chat:addMessage', src, { args = { 'CRIMSON', line } })
+    end
+end
+
+--- Register the staff commands. Kept here with the other engine bindings so
+--- there is one place that knows what this resource attaches to the runtime.
+function Bridges.installCommands(modules)
+    if not Config.Admin.Enabled then return false end
+
+    local Admin = modules.admin
+    local names = Config.Admin.Commands
+
+    --- Wrap a command in its permission check. A caller without the ACE is
+    --- told the same thing whether or not the contract exists, so the
+    --- command cannot be used to probe for ids.
+    local function command(name, ace, fn)
+        RegisterCommand(name, function(src, args)
+            if not Admin.allowed(src, ace) then
+                reply(src, 'Not authorised.')
+                return
+            end
+            fn(src, args or {})
+        end, false)
+    end
+
+    command(names.timeline, Config.Admin.Ace, function(src, args)
+        local view, err = Admin.timeline(args[1])
+        if not view then return reply(src, 'No such contract (' .. tostring(err) .. ').') end
+
+        local c = view.contract
+        reply(src, ('%s  %s  %s -> %s'):format(c.id, c.state, c.creator, c.target))
+        reply(src, ('slots %d/%d  created %s%s'):format(
+            c.claimed or 0, c.slots or 1, os.date('%Y-%m-%d %H:%M', c.created_at),
+            c.resolved_at and ('  resolved ' .. os.date('%Y-%m-%d %H:%M', c.resolved_at)
+                .. ' (' .. tostring(c.resolution) .. ')') or ''))
+
+        for i = 1, #view.escrow do
+            local line = view.escrow[i]
+            reply(src, ('  escrow %s  %s %s  %s  slot %s  %s'):format(
+                line.id, line.portion, line.source,
+                line.amount and ('$' .. line.amount) or (tostring(line.item) .. ' x' .. tostring(line.quantity)),
+                tostring(line.slot), line.state))
+        end
+
+        for i = 1, #view.events do
+            local row = view.events[i]
+            reply(src, ('  %s  %-10s %s'):format(
+                os.date('%H:%M:%S', row.ts), row.kind, row.action))
+        end
+    end)
+
+    command(names.void, Config.Admin.Ace, function(src, args)
+        local reason = table.concat(args, ' ', math.min(2, #args + 1))
+        local ok, err = Admin.void(src, args[1], reason)
+        reply(src, ok and 'Contract voided; escrow returned to the creator.'
+                       or ('Could not void it: ' .. tostring(err)))
+    end)
+
+    command(names.stuck, Config.Admin.Ace, function(src)
+        local lines = Admin.interrupted()
+        if #lines == 0 then return reply(src, 'No interrupted releases.') end
+
+        reply(src, ('%d escrow line(s) were mid-release at a shutdown:'):format(#lines))
+        for i = 1, #lines do
+            local line = lines[i]
+            reply(src, ('  %s  contract %s  %s  was paying %s  (%s)'):format(
+                line.line, line.contract,
+                line.amount and ('$' .. line.amount) or tostring(line.item),
+                tostring(line.intended), os.date('%Y-%m-%d %H:%M', line.at)))
+        end
+        reply(src, ('Settle each with /%s <line> pay|return'):format(names.settle))
+    end)
+
+    command(names.settle, Config.Admin.Ace, function(src, args)
+        local ok, err = Admin.settleLine(src, args[1], args[2])
+        reply(src, ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err)))
+    end)
+
+    -- Its own ACE: reading a history and unmasking a person are different
+    -- kinds of act, and should not be the same permission.
+    command(names.whois, Config.Admin.IdentityAce, function(src, args)
+        local who, err = Admin.identify(src, args[1])
+        if not who then return reply(src, 'No such contract (' .. tostring(err) .. ').') end
+
+        reply(src, ('creator  %s  %s%s'):format(who.creator.cid, who.creator.name,
+            who.creator.anonymous and '  (listed anonymously)' or ''))
+        reply(src, ('target   %s  %s'):format(who.target.cid, who.target.name))
+        for i = 1, #who.hunters do
+            local h = who.hunters[i]
+            reply(src, ('%-8s %s  %s%s'):format(
+                h.alias or 'operative', h.cid, h.name,
+                h.anonymous and '  (listed anonymously)' or ''))
+        end
+    end)
+
     return true
 end
 
