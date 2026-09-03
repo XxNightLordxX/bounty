@@ -307,11 +307,22 @@ function StartTick()
     end)
 end
 
+--- When the photo host allowlist was last re-read. Not every tick: it is a
+--- cross-resource config read, and an upload provider changes about as often
+--- as anything else in a server config.
+local lastHostRefresh = 0
+
 function Tick()
     modules.audit.flush()
     modules.amendments.expire()
     modules.bailout.processQueue()
     modules.photo.sweep()
+
+    local now = os.time()
+    if now - lastHostRefresh >= (Config.Completion.PhotoHostRefreshSeconds or 300) then
+        lastHostRefresh = now
+        modules.photo.loadAllowedHosts()
+    end
     modules.death.sweep()
     modules.death.watchTargets(Storage.allContracts())
     modules.ratelimit.sweep()

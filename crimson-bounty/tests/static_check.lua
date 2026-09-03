@@ -343,6 +343,95 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 12. Every field written onto a contract has a column to live in
+--------------------------------------------------------------------------
+--
+-- The memory and json backends store whole Lua tables, so a field the MySQL
+-- schema forgets survives there for free and every test passes. The storage
+-- suite compares a hand-written list of fields against the schema, which is
+-- only as good as somebody remembering to extend it — `bailout_attempts` was
+-- added, persisted fine in two backends, and would have been dropped on the
+-- backend that ships by default.
+--
+-- This finds the fields by reading the code that assigns them, so the next
+-- one is caught without anyone remembering anything.
+
+do
+    local schema = read('crimson-bounty/server/storage/mysql.lua') or ''
+    local contractSchema = schema:match('CREATE TABLE IF NOT EXISTS crimson_contracts(.-)%]%]') or ''
+
+    -- Fields deliberately not persisted. Each one needs a reason, because
+    -- "it is in this list" is the only thing standing between a field and a
+    -- silent data loss bug.
+    local TRANSIENT = {
+        -- Nothing yet. A field added here must say why it does not persist.
+    }
+
+    local seen = {}
+    for _, path in ipairs(files) do
+        if path:find('server/') then
+            local src = read(path) or ''
+            -- Assignments onto a variable holding a contract row. The
+            -- trailing [^=] keeps a comparison from reading as a write.
+            for name in src:gmatch('[^%w_]contract%.([%a_][%w_]*)%s*=[^=]') do
+                seen[name] = seen[name] or path
+            end
+            for name in src:gmatch('[^%w_]settled%.([%a_][%w_]*)%s*=[^=]') do
+                seen[name] = seen[name] or path
+            end
+        end
+    end
+
+    for name, path in pairs(seen) do
+        if not TRANSIENT[name] and not contractSchema:find('[^%w_]' .. name .. '%s') then
+            failures[#failures + 1] =
+                ('%s writes contract.%s but crimson_contracts has no such column; '
+                 .. 'mysql would drop it silently while memory and json keep it')
+                    :format(path, name)
+        end
+    end
+end
+
+--------------------------------------------------------------------------
+-- 13. No function is defined twice in one file
+--------------------------------------------------------------------------
+--
+-- Lua takes the last definition silently. I added a Photo.allowedHosts that
+-- returned a sorted list, twenty lines above one that already existed and
+-- returned the raw set — so the new one never ran, and the test written
+-- against it failed in a way that pointed at the loader instead. Nothing
+-- warned.
+
+do
+    for _, path in ipairs(files) do
+        if path:sub(-4) == '.lua' then
+            local src = read(path) or ''
+            local seen = {}
+            for name in src:gmatch('\nfunction%s+([%w_]+[.:][%w_]+)%s*%(') do
+                if seen[name] then
+                    failures[#failures + 1] =
+                        ('%s defines %s twice; Lua keeps the last one and the first '
+                         .. 'silently never runs'):format(path, name)
+                else
+                    seen[name] = true
+                end
+            end
+
+            local seenLocal = {}
+            for name in src:gmatch('\nlocal function%s+([%w_]+)%s*%(') do
+                if seenLocal[name] then
+                    failures[#failures + 1] =
+                        ('%s defines local function %s twice; the first is unreachable')
+                            :format(path, name)
+                else
+                    seenLocal[name] = true
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

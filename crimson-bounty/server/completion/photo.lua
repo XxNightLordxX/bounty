@@ -27,7 +27,15 @@ end
 
 --- Read the upload host from lb-phone's config so the allowlist matches
 --- wherever the phone actually uploads to on this server.
+---
+--- Re-read on the maintenance tick rather than only at boot: an owner who
+--- changes upload provider would otherwise have to restart this resource
+--- too, and the failure mode is every verification photo being rejected
+--- with nothing saying why. A change is logged, because a silently shifting
+--- allowlist is its own debugging problem.
+---@return table allowedHosts
 function Photo.loadAllowedHosts()
+    local previous = allowedHosts or {}
     allowedHosts = {}
 
     for _, host in ipairs(Config.Completion.ExtraPhotoHosts or {}) do
@@ -54,7 +62,46 @@ function Photo.loadAllowedHosts()
         end
     end
 
+    -- Only report a set that actually differs. On the tick this runs
+    -- constantly and an unchanged allowlist is not news.
+    local added, removed = {}, {}
+    for host in pairs(allowedHosts) do
+        if not previous[host] then added[#added + 1] = host end
+    end
+    for host in pairs(previous) do
+        if not allowedHosts[host] then removed[#removed + 1] = host end
+    end
+
+    if #added > 0 or #removed > 0 then
+        table.sort(added)
+        table.sort(removed)
+        -- next(previous) is nil only on the very first load, which is not a
+        -- change worth reporting as one.
+        if next(previous) ~= nil then
+            print(('[crimson-bounty] photo host allowlist changed: %s%s%s'):format(
+                #added > 0 and ('+' .. table.concat(added, ' +')) or '',
+                (#added > 0 and #removed > 0) and ' ' or '',
+                #removed > 0 and ('-' .. table.concat(removed, ' -')) or ''))
+        end
+
+        if next(allowedHosts) == nil then
+            print('[crimson-bounty] warning: no photo upload host is allowed; ' ..
+                'every verification photo will be rejected. Check lb-phone\'s upload ' ..
+                'config or set Config.Completion.ExtraPhotoHosts')
+        end
+
+        Photo.hostsChangedAt = os.time()
+    end
+
     return allowedHosts
+end
+
+--- Every host currently accepted, sorted. For the admin command and tests.
+function Photo.allowedHosts()
+    local out = {}
+    for host in pairs(allowedHosts) do out[#out + 1] = host end
+    table.sort(out)
+    return out
 end
 
 function Photo.hostAllowed(url)
@@ -67,8 +114,6 @@ function Photo.hostAllowed(url)
     end
     return false
 end
-
-function Photo.allowedHosts() return allowedHosts end
 
 --------------------------------------------------------------------------
 -- Tokens

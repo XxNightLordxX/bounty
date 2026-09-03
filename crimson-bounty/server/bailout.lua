@@ -134,13 +134,33 @@ end
 
 --- Close a bought-out contract: the creator gets their escrow back plus the
 --- premium, and the contract resolves once.
-function Bailout.settle(contractId, amount, targetCid, account)
+---@param opts table|nil { retryable = true } when driven by the queue
+function Bailout.settle(contractId, amount, targetCid, account, opts)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
     account = account or contract.bailout_paid_account or 'bank'
 
     local ok, err = Contracts.resolve(contractId, CB.STATE.BAILED_OUT, contract.creator_cid, nil, 'bailed_out')
     if not ok then
+        -- LOCKED is not a resolution: the contract is mid-claim and will be
+        -- either completed or back to accepted within a tick or two. Refunding
+        -- here made the target buy out again for a race they did not lose, so
+        -- a queued buyout waits and tries again instead.
+        --
+        -- Bounded, because a claim interrupted by a crash could leave a
+        -- contract completing forever, and the target's money is already
+        -- gone. Once the attempts run out it refunds like any other failure.
+        if err == CB.ERR.LOCKED and opts and opts.retryable then
+            local attempts = (contract.bailout_attempts or 0) + 1
+            if attempts < (Config.Bailout.MaxSettleAttempts or 10) then
+                contract.bailout_attempts = attempts
+                Storage.writeContract(contract)
+                return false, err
+            end
+            Audit.financial('bailout_retries_exhausted', targetCid, contractId,
+                { amount = amount, attempts = attempts })
+        end
+
         -- The contract resolved some other way first (a hunter completed it
         -- during the delay). Refund the premium to the account it came from;
         -- if the target is offline, it is owed rather than lost.
@@ -205,6 +225,7 @@ function Bailout.clearQueue(contractId)
     contract.bailout_paid_by = nil
     contract.bailout_paid_amount = nil
     contract.bailout_paid_account = nil
+    contract.bailout_attempts = nil
     Storage.writeContract(contract)
     return true
 end
@@ -218,7 +239,8 @@ function Bailout.processQueue()
         local contract = pending[i]
         if os.time() - contract.bailout_queued_at >= Config.Bailout.ProcessingDelaySeconds then
             if Bailout.settle(contract.id, contract.bailout_paid_amount,
-                              contract.bailout_paid_by, contract.bailout_paid_account) then
+                              contract.bailout_paid_by, contract.bailout_paid_account,
+                              { retryable = true }) then
                 settled = settled + 1
             end
         end

@@ -102,6 +102,11 @@ Config.Bailout = {
     ProcessingDelaySeconds = 120,
     --- Bailout is blocked while the target is dead or in last stand.
     BlockWhileIncapacitated = true,
+    --- How many ticks a queued buyout waits on a contract that is mid-claim
+    --- before giving up and refunding. A claim resolves within a tick or two,
+    --- so this only matters when one was interrupted by a crash — and the
+    --- target's premium is already spent, so it cannot wait forever.
+    MaxSettleAttempts = 10,
 }
 
 --------------------------------------------------------------------------
@@ -188,6 +193,11 @@ Config.Completion = {
         { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
         { resource = 'qbx_medical',  dead = 'IsDead', lastStand = 'IsLaststand' },
     },
+    --- How often the photo host allowlist is re-read from lb-phone's upload
+    --- config. Read only at boot, an owner who changed upload provider had
+    --- to restart this resource too, and the failure mode is every
+    --- verification photo being rejected.
+    PhotoHostRefreshSeconds = 300,
     DeathReportWindowMs = 30000,
     MaxWeaponRange      = 250.0,
     PhotoRadius         = 5.0,

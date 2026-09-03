@@ -37,6 +37,7 @@ local SCHEMA = {
         bailout_paid_by VARCHAR(32),
         bailout_paid_amount INT,
         bailout_paid_account VARCHAR(8),
+        bailout_attempts INT DEFAULT 0,
         resolved_at INT,
         resolution VARCHAR(32),
         INDEX idx_state (state),
@@ -173,8 +174,8 @@ function MySQLStore.writeContract(c)
              bailout_amount, penalty_amount, payout_slots, slots_claimed, next_slot,
              created_at, deadline_at, expires_at, paused_ms, paused_since,
              bailout_queued_at, bailout_paid_by, bailout_paid_amount, bailout_paid_account,
-             resolved_at, resolution)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             bailout_attempts, resolved_at, resolution)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON DUPLICATE KEY UPDATE
             reason = VALUES(reason), mode = VALUES(mode),
             bailout_amount = VALUES(bailout_amount), penalty_amount = VALUES(penalty_amount),
@@ -185,6 +186,7 @@ function MySQLStore.writeContract(c)
             bailout_paid_by = VALUES(bailout_paid_by),
             bailout_paid_amount = VALUES(bailout_paid_amount),
             bailout_paid_account = VALUES(bailout_paid_account),
+            bailout_attempts = VALUES(bailout_attempts),
             resolved_at = VALUES(resolved_at), resolution = VALUES(resolution)
     ]], {
         c.id, c.creator_cid, c.creator_account, c.creator_name, c.target_cid, c.target_name,
@@ -193,7 +195,7 @@ function MySQLStore.writeContract(c)
         c.penalty_amount or 0, c.payout_slots or 1, c.slots_claimed or 0, c.next_slot or 1,
         c.created_at, c.deadline_at, c.expires_at, c.paused_ms or 0, c.paused_since,
         c.bailout_queued_at, c.bailout_paid_by, c.bailout_paid_amount, c.bailout_paid_account,
-        c.resolved_at, c.resolution,
+        c.bailout_attempts or 0, c.resolved_at, c.resolution,
     })
     return true
 end

@@ -268,6 +268,15 @@ local DEFAULT_RESOURCE_STATES = {
     ['sc-blackmarket'] = 'started',
 }
 
+--- lb-phone's configuration, as GetConfig returns it. The shape here is the
+--- real one: an Upload table whose values are URLs, sometimes nested.
+Natives.phoneConfig = {
+    Upload = {
+        url = 'https://cdn.fivemanage.com/upload',
+        images = { url = 'https://api.fivemanage.com/api/image' },
+    },
+}
+
 Natives.resourceStates = {}
 
 --- Restore the default set, in place. Assigning a fresh table would leave
@@ -365,6 +374,10 @@ function Natives.exportsProxy()
         end,
         GetEquippedPhoneNumber = function(_, src) return '555-' .. tostring(src) end,
         AddCustomApp = function() return true end,
+        -- The photo host allowlist is derived from this. Without a stub the
+        -- pcall around it always failed, so the half of the allowlist that
+        -- comes from the phone was never once exercised by a test.
+        GetConfig = function() return Natives.phoneConfig end,
     }
 
     resources['sc-ambulance'] = {

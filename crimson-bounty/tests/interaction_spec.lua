@@ -843,3 +843,91 @@ describe('integration report', function()
         truthy(main.reportIntegrations(), 'everything installed')
     end)
 end)
+
+
+--- A queued buyout that loses a race. LOCKED means the contract is mid-claim,
+--- not that it resolved: refunding there made the target buy out again for a
+--- race they had not lost.
+describe('bailout races', function()
+    local function queued()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000,
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        -- A hunter is engaged, so the buyout queues rather than settling.
+        truthy(s.bailout.buy(f.target, c.id))
+        eq(s.storage.readContract(c.id).bailout_queued_at ~= nil, true)
+        Env.time = Env.time + Config.Bailout.ProcessingDelaySeconds + 1
+        return s, f, c
+    end
+
+    it('waits rather than refunding while a claim is in flight', function()
+        local s, f, c = queued()
+        local paid = Env.players[2].PlayerData.money.bank
+
+        -- Mid-claim: the contract sits in COMPLETING, so resolve returns
+        -- LOCKED rather than a terminal state.
+        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming'))
+        eq(s.bailout.processQueue(), 0, 'nothing settles this tick')
+
+        eq(Env.players[2].PlayerData.money.bank, paid, 'and the premium is not handed back')
+        local row = s.storage.readContract(c.id)
+        truthy(row.bailout_queued_at, 'the buyout is still queued')
+        eq(row.bailout_attempts, 1, 'the attempt is counted')
+    end)
+
+    it('settles once the claim clears without completing', function()
+        local s, f, c = queued()
+        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming'))
+        eq(s.bailout.processQueue(), 0)
+
+        -- The claim fell through — the hunter's proof was rejected — and the
+        -- contract went back to accepted.
+        truthy(s.contracts.transition(c.id, CB.STATE.COMPLETING, CB.STATE.ACCEPTED, 'claim_failed'))
+        eq(s.bailout.processQueue(), 1, 'the buyout the target paid for goes through')
+        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+    end)
+
+    it('refunds when the hunter actually completes first', function()
+        local s, f, c = queued()
+        local before = Env.players[2].PlayerData.money.bank
+
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        eq(s.bailout.processQueue(), 0, 'the contract is genuinely over')
+
+        eq(Env.players[2].PlayerData.money.bank, before + 15000,
+            'a race the target lost returns their premium')
+        falsy(s.storage.readContract(c.id).bailout_queued_at, 'and clears the queue')
+    end)
+
+    it('gives up and refunds if the claim never clears', function()
+        local s, f, c = queued()
+        local before = Env.players[2].PlayerData.money.bank
+        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming'))
+
+        -- A claim interrupted by a crash leaves the contract completing for
+        -- good. The target's money is already spent, so it cannot wait
+        -- forever.
+        for _ = 1, Config.Bailout.MaxSettleAttempts do s.bailout.processQueue() end
+
+        eq(Env.players[2].PlayerData.money.bank, before + 15000, 'refunded in the end')
+        falsy(s.storage.readContract(c.id).bailout_queued_at, 'and no longer queued')
+        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETING, 'the stuck contract is untouched')
+    end)
+
+    it('does not count attempts against an unqueued buyout', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000,
+        })
+        -- Nobody engaged, so this settles immediately and never queues.
+        truthy(s.bailout.buy(f.target, c.id))
+        falsy(s.storage.readContract(c.id).bailout_attempts)
+    end)
+end)

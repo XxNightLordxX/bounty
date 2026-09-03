@@ -583,3 +583,71 @@ describe('a respawn does not take a kill away from the hunter', function()
         eq(Env.players[3].PlayerData.money.cash, 5000)
     end)
 end)
+
+
+--- The photo host allowlist follows lb-phone's upload config. Read only at
+--- boot, an owner who changed provider had to restart this resource too, and
+--- the failure mode is every verification photo being rejected.
+describe('photo host allowlist', function()
+    it('picks up a provider changed after boot', function()
+        local s = newStack()
+        local phone = Natives.phoneConfig
+
+        withConfig({ { Config.Completion, 'ExtraPhotoHosts', {} } }, function()
+            Natives.phoneConfig = { Upload = { url = 'https://old.example/upload' } }
+            s.photo.loadAllowedHosts()
+            truthy(s.photo.hostAllowed('https://old.example/x.png'), 'the old provider')
+            falsy(s.photo.hostAllowed('https://new.example/x.png'), 'not yet the new one')
+
+            -- The owner switches provider without restarting this resource.
+            Natives.phoneConfig = { Upload = { url = 'https://new.example/upload' } }
+            s.photo.loadAllowedHosts()
+            truthy(s.photo.hostAllowed('https://new.example/x.png'), 'the new provider')
+            falsy(s.photo.hostAllowed('https://old.example/x.png'), 'and not the old one')
+        end)
+
+        Natives.phoneConfig = phone
+    end)
+
+    it('keeps the configured extra hosts across a refresh', function()
+        local s = newStack()
+        local phone = Natives.phoneConfig
+
+        withConfig({ { Config.Completion, 'ExtraPhotoHosts', { 'cdn.fivemanage.com' } } }, function()
+            Natives.phoneConfig = { Upload = { url = 'https://other.example/upload' } }
+            s.photo.loadAllowedHosts()
+            truthy(s.photo.hostAllowed('https://cdn.fivemanage.com/x.png'),
+                'an operator-set host is not swept away by a refresh')
+        end)
+
+        Natives.phoneConfig = phone
+    end)
+
+    it('reports an allowlist that has become empty', function()
+        local s = newStack()
+        local phone = Natives.phoneConfig
+
+        withConfig({ { Config.Completion, 'ExtraPhotoHosts', {} } }, function()
+            Natives.phoneConfig = { Upload = { url = 'https://old.example/upload' } }
+            s.photo.loadAllowedHosts()
+            eq(#s.photo.allowedHosts(), 1)
+
+            -- Provider removed entirely: nothing would verify, and that is
+            -- worth saying out loud rather than silently rejecting.
+            Natives.phoneConfig = {}
+            s.photo.loadAllowedHosts()
+            eq(#s.photo.allowedHosts(), 0)
+            truthy(s.photo.hostsChangedAt, 'the change is recorded')
+        end)
+
+        Natives.phoneConfig = phone
+    end)
+
+    it('does not record a change when nothing changed', function()
+        local s = newStack()
+        s.photo.loadAllowedHosts()
+        local before = s.photo.hostsChangedAt
+        s.photo.loadAllowedHosts()
+        eq(s.photo.hostsChangedAt, before, 'a steady allowlist is not news')
+    end)
+end)
