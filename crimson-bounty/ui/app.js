@@ -573,6 +573,25 @@
     });
   }
 
+  function requestCall() {
+    var t = state.thread;
+    if (!t) { return; }
+
+    post('requestCall', {
+      id: t.contract.id,
+      thread: t.thread ? t.thread.handle : null
+    }).then(function (r) {
+      if (!r.ok) { return fail(r); }
+      // Say which of the two actually happened. A phone that cannot place
+      // the call still gets the other party asked to ring back, and telling
+      // the player a call is connecting when none is would be worse than
+      // either.
+      say(r.data && r.data.placed
+        ? 'Calling.'
+        : 'They have been asked to call you back.', 'gold');
+    });
+  }
+
   function sendMessage(body) {
     if (!body) return;
     var t = state.thread;
@@ -670,9 +689,22 @@
     var t = state.thread;
     if (!t) { state.tab = 'mine'; return render(); }
 
+    var row = el('div', 'row');
+
     var back = el('button', 'ghost', 'Back');
     back.onclick = function () { state.tab = 'mine'; render(); };
-    view.appendChild(back);
+    row.appendChild(back);
+
+    // The server has always had a call path and nothing reached it, so the
+    // whole feature was unreachable from the phone.
+    if (settings().calls) {
+      var call = el('button', 'ghost', 'Call');
+      call.id = 'thread-call';
+      call.onclick = function () { requestCall(); };
+      row.appendChild(call);
+    }
+
+    view.appendChild(row);
 
     var thread = el('div', 'thread');
     t.messages.forEach(function (m) {

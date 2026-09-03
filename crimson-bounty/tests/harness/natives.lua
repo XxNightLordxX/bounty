@@ -395,6 +395,13 @@ function Natives.exportsProxy()
         -- pcall around it always failed, so the half of the allowlist that
         -- comes from the phone was never once exercised by a test.
         GetConfig = function() return Natives.phoneConfig end,
+        -- Only present when a test says this build has it: lb-phone ships
+        -- its server code escrowed, so whether a call-placing export exists
+        -- is exactly what cannot be assumed.
+        StartCall = function(...)
+            if not Natives.callExport then error('no such export') end
+            return Natives.callExport(...)
+        end,
     }
 
     resources['sc-ambulance'] = {

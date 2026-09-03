@@ -121,6 +121,10 @@ local function optionalIntegrations()
     if Config.Advisory.UseDispatch then
         add('sc-dispatch', 'threat advisories in the MDT')
     end
+    if Config.Relay.Enabled and Config.Relay.AllowMaskedCalls
+        and Config.Relay.CallExport and Config.Relay.CallExport.resource then
+        add(Config.Relay.CallExport.resource, 'placing masked calls between parties')
+    end
     -- Headshots have no enable switch: without a renderer the board simply
     -- shows no faces, which is a degradation rather than a failure.
     add('MugShotBase64', 'target headshots on the board', false)

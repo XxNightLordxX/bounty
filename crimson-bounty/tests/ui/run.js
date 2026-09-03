@@ -482,6 +482,98 @@ async function main() {
     });
   })();
 
+  // The server has had a call path since the first commit and the app had no
+  // button that reached it, so the whole feature was unreachable.
+  await (async function threadCall() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hunter';
+    held.myAlias = 'Operative #1';
+
+    function open(settings, callReply) {
+      const app = boot({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: settings } },
+        mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+        ledger: LEDGER,
+        readThread: { ok: true, data: [] },
+        requestCall: callReply
+      });
+      return app;
+    }
+
+    const app = open({ calls: true }, { ok: true, data: { placed: true } });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+
+    // Open the thread the way a hunter does, from their card.
+    const talk = app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Message';
+    });
+    truthy(talk.length > 0, 'the card should offer a thread');
+    talk[0].onclick();
+    await settle(); await settle();
+
+    // Read once and asserted before use: a missing button used to take the
+    // whole suite down with a stack trace instead of naming the one test
+    // that failed.
+    const callButton = app.document.getElementById('thread-call');
+
+    it('offers a call in the thread', function () {
+      truthy(callButton, 'a call button');
+    });
+
+    if (callButton) {
+      callButton.onclick();
+      await settle(); await settle();
+    }
+
+    it('sends the contract and thread the server expects', function () {
+      const sent = app.sent.filter(function (s) { return s.name === 'requestCall'; });
+      eq(sent.length, 1);
+      eq(sent[0].body.id, 'ct00000001', 'the contract, not undefined');
+    });
+
+    it('says a call is connecting only when one is', function () {
+      truthy(app.notice().indexOf('Calling') !== -1, 'the notice: ' + app.notice());
+    });
+
+    // A phone that cannot place calls still gets the other party asked.
+    const asked = open({ calls: true }, { ok: true, data: { placed: false } });
+    await settle(); await settle();
+    asked.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+    asked.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Message';
+    })[0].onclick();
+    await settle(); await settle();
+    const askedButton = asked.document.getElementById('thread-call');
+    if (askedButton) {
+      askedButton.onclick();
+      await settle(); await settle();
+    }
+
+    it('does not claim a call is connecting when none is', function () {
+      truthy(asked.notice().indexOf('asked to call you back') !== -1,
+        'the honest notice: ' + asked.notice());
+      falsy(asked.notice().indexOf('Calling') !== -1);
+    });
+
+    // With calls off the button is not drawn, rather than drawn and refused.
+    const off = open({ calls: false }, { ok: false, err: 'bad_state' });
+    await settle(); await settle();
+    off.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+    off.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Message';
+    })[0].onclick();
+    await settle(); await settle();
+
+    it('draws no call button when the server has calls off', function () {
+      falsy(off.document.getElementById('thread-call'),
+        'a button that can only be refused should not be there');
+    });
+  })();
+
   // The app refreshes only on an unsolicited push, because refreshing on every
   // mirrored reply was an exponential storm. Nothing sent a push, so an open
   // app never moved.

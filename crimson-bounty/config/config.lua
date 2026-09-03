@@ -351,6 +351,30 @@ Config.Relay = {
     Enabled = true,
     MaxLength = 200,
     AllowMaskedCalls = true,
+
+    --- The export that actually places a call, if this phone build has one.
+    ---
+    --- lb-phone ships its server code escrowed, so the name and signature
+    --- of a call-placing export cannot be read from the resource and are
+    --- not guessed here: an invented export name is a call that silently
+    --- does nothing on a live server, which is worse than one that says it
+    --- cannot place calls.
+    ---
+    --- Set `resource` and `export` if your build exposes one. It is probed
+    --- at boot — the export must exist and be callable — and the startup
+    --- report says whether it was found. Until then a call request notifies
+    --- the other party, which is what it has always done, and the app says
+    --- plainly that it is a request rather than a call.
+    ---
+    --- The export is called as
+    ---   exports[resource][export](callerSource, targetNumber, anonymous)
+    --- and anything that does not match that shape needs a shim resource.
+    CallExport = nil,
+
+    --- Refuse to place a call at all when the other party is anonymous and
+    --- the phone cannot suppress caller identity. Leave this on: the
+    --- alternative is revealing a number somebody paid to hide.
+    RequireMaskingForAnonymous = true,
 }
 
 --------------------------------------------------------------------------

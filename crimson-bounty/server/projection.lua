@@ -189,6 +189,9 @@ function Projection.listing(viewerCid, page)
             warnHunter  = Config.Advisory.WarnHunter ~= false,
             flagListing = Config.Advisory.FlagListing ~= false,
             minQueryLength = Config.Targeting.MinQueryLength,
+            -- Whether the app should offer a call at all. Off, the button
+            -- is not drawn rather than drawn and refused.
+            calls = Config.Relay.Enabled and Config.Relay.AllowMaskedCalls,
         },
     }
     local from = ((page - 1) * pageSize) + 1

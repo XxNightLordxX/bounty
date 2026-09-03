@@ -343,9 +343,12 @@ function App.register()
     end)
 
     handler('requestCall', 'message', function(actor, payload)
-        local ok, err = deps.comms.requestCall(actor, payload.id, payload.thread)
+        local ok, err, result = deps.comms.requestCall(actor, payload.id, payload.thread)
         if not ok then return false, err end
-        return true
+        -- Whether a call is actually ringing or the other party has merely
+        -- been asked to call back. The app says which; implying a call is
+        -- connecting when none is, is the worst of the three outcomes.
+        return { placed = result and result.placed == true }
     end)
 
     -- Death reporting ---------------------------------------------------

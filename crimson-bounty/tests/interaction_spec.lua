@@ -931,3 +931,164 @@ describe('bailout races', function()
         falsy(s.storage.readContract(c.id).bailout_attempts)
     end)
 end)
+
+
+--- Masked calls. The server checked that the phone could suppress caller
+--- identity, notified the other party, and never placed a call — and the app
+--- had no button that reached any of it.
+describe('masked calls', function()
+    local function threaded(opts)
+        opts = opts or {}
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+            anonymous = opts.anonCreator,
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, opts.anonHunter))
+        s.comms.resetCallCache()
+        return s, f, c
+    end
+
+    it('notifies rather than calling when no export is configured', function()
+        local s, f, c = threaded()
+        Natives.calls.notifications = {}
+
+        local ok, err, result = s.comms.requestCall(f.hunter, c.id, nil)
+        truthy(ok, tostring(err))
+        eq(result.placed, false, 'nothing was dialled')
+
+        local said = Natives.calls.notifications[1]
+        truthy(said, 'the other party is still told')
+        truthy(said.title:find('request'), 'and told it is a request: ' .. said.title)
+    end)
+
+    it('places the call when the phone exports one', function()
+        local s, f, c = threaded()
+        local dialled = {}
+        Natives.callExport = function(_, caller, number, anonymous)
+            dialled = { caller = caller, number = number, anonymous = anonymous }
+            return true
+        end
+
+        withConfig({ { Config.Relay, 'CallExport',
+                       { resource = 'lb-phone', export = 'StartCall' } } }, function()
+            s.comms.resetCallCache()
+            Natives.calls.notifications = {}
+
+            local ok, err, result = s.comms.requestCall(f.hunter, c.id, nil)
+            truthy(ok, tostring(err))
+            eq(result.placed, true, 'the call was placed')
+
+            eq(dialled.caller, 3, 'from the caller, resolved server-side')
+            eq(dialled.number, '555-1', "to the callee's own number, read server-side")
+            eq(dialled.anonymous, false)
+
+            local said = Natives.calls.notifications[1]
+            truthy(said.title:find('Incoming'), 'and it says a call is coming: ' .. said.title)
+        end)
+
+        Natives.callExport = nil
+    end)
+
+    it('asks the phone to suppress identity for an anonymous party', function()
+        local s, f, c = threaded({ anonCreator = true })
+        local anonymous = nil
+        Natives.callExport = function(_, _, _, anon) anonymous = anon return true end
+
+        withConfig({ { Config.Relay, 'CallExport',
+                       { resource = 'lb-phone', export = 'StartCall' } } }, function()
+            s.comms.resetCallCache()
+            truthy(s.comms.requestCall(f.hunter, c.id, nil))
+            eq(anonymous, true, 'the creator being called chose to be anonymous')
+        end)
+
+        Natives.callExport = nil
+    end)
+
+    it('refuses to place one that would unmask a number somebody hid', function()
+        local s, f, c = threaded({ anonCreator = true })
+        local dialled = false
+        Natives.callExport = function() dialled = true return true end
+
+        withConfig({
+            { Config.Relay, 'CallExport', { resource = 'lb-phone', export = 'StartCall' } },
+            { Natives, 'phoneConfig', { AnonymousCalls = false } },
+        }, function()
+            s.comms.resetCallCache()
+            s.comms.resetMaskingCache()
+            local ok, err = s.comms.requestCall(f.hunter, c.id, nil)
+            -- The whole request is refused, not degraded to an unmasked call.
+            falsy(ok, 'a call that reveals a hidden number is not placed')
+            eq(err, CB.ERR.BAD_STATE)
+            falsy(dialled, 'and nothing was dialled')
+        end)
+
+        Natives.callExport = nil
+        s.comms.resetMaskingCache()
+    end)
+
+    it('falls back to a notification when the named export does not exist', function()
+        local s, f, c = threaded()
+        withConfig({ { Config.Relay, 'CallExport',
+                       { resource = 'lb-phone', export = 'NoSuchExport' } } }, function()
+            s.comms.resetCallCache()
+            Natives.calls.notifications = {}
+
+            local ok, err, result = s.comms.requestCall(f.hunter, c.id, nil)
+            truthy(ok, tostring(err))
+            eq(result.placed, false, 'an export this build lacks is not a call')
+            truthy(Natives.calls.notifications[1], 'the other party is still told')
+        end)
+    end)
+
+    it('does not re-probe a phone that has no call export', function()
+        local s, f, c = threaded()
+        local probes = 0
+        withConfig({ { Config.Relay, 'CallExport',
+                       { resource = 'nope-not-started', export = 'StartCall' } } }, function()
+            s.comms.resetCallCache()
+            for _ = 1, 3 do
+                if not s.comms.callPlacer() then probes = probes + 1 end
+            end
+        end)
+        eq(probes, 3, 'it answers every time')
+    end)
+
+    it('will not dial an anonymous party a phone cannot mask', function()
+        local s, f, c = threaded({ anonCreator = true })
+        local dialled = false
+        Natives.callExport = function() dialled = true return true end
+
+        withConfig({
+            { Config.Relay, 'CallExport', { resource = 'lb-phone', export = 'StartCall' } },
+            { Natives, 'phoneConfig', { AnonymousCalls = false } },
+        }, function()
+            s.comms.resetCallCache()
+            s.comms.resetMaskingCache()
+
+            -- placeCall directly, past the request-level check, because it
+            -- is a public function and the guard has to hold on its own —
+            -- not only because something upstream happened to refuse first.
+            falsy(s.comms.placeCall(f.hunter, 'CREATOR1', true),
+                'a number somebody paid to hide is not dialled')
+            falsy(dialled)
+
+            -- The same call for a party who is not anonymous goes through.
+            truthy(s.comms.placeCall(f.hunter, 'CREATOR1', false))
+        end)
+
+        Natives.callExport = nil
+        s.comms.resetMaskingCache()
+    end)
+
+    it('is refused entirely when calls are switched off', function()
+        local s, f, c = threaded()
+        withConfig({ { Config.Relay, 'AllowMaskedCalls', false } }, function()
+            local ok, err = s.comms.requestCall(f.hunter, c.id, nil)
+            falsy(ok)
+            eq(err, CB.ERR.BAD_STATE)
+        end)
+    end)
+end)

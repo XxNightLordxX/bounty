@@ -212,11 +212,108 @@ function Comms.requestCall(actor, contractId, threadHandle)
     end
 
     local recipient = ctx.role == 'creator' and ctx.hunterCid or ctx.contract.creator_cid
-    Notify.toCitizen(recipient, 'Call request',
-        ('%s wants to speak with you about a contract.'):format(ctx.alias))
 
-    Audit.action('call_requested', actor.cid, contractId, {})
-    return true
+    -- Place the call for real when this phone build can, rather than only
+    -- telling the other party somebody wants to talk. Whether it can is
+    -- probed at boot, not assumed: lb-phone ships its server code escrowed,
+    -- so an invented export name would be a call that silently does nothing.
+    local placed = Comms.placeCall(actor, recipient, otherAnon == true)
+
+    Notify.toCitizen(recipient,
+        placed and 'Incoming call' or 'Call request',
+        placed
+            and ('%s is calling you about a contract.'):format(ctx.alias)
+            or  ('%s wants to speak with you about a contract.'):format(ctx.alias))
+
+    Audit.action(placed and 'call_placed' or 'call_requested', actor.cid, contractId,
+        { anonymous = otherAnon == true })
+
+    -- The caller is told which of the two happened, so the app can say
+    -- "calling" or "they have been asked to call you" rather than implying
+    -- a call is ringing when none is.
+    return true, nil, { placed = placed }
+end
+
+--------------------------------------------------------------------------
+-- Placing a call
+--------------------------------------------------------------------------
+
+--- The configured call export, resolved once and remembered.
+--- `false` means probed and not available, distinct from `nil` for not yet
+--- probed — a phone without the export must not be re-probed per call.
+local callExport = nil
+
+--- Whether this server can place a call at all.
+---
+--- The export must be configured, its resource running, and the export
+--- itself must resolve to something callable. Any of those missing leaves
+--- call requests as notifications, which is what they have always been.
+---@return function|nil
+function Comms.callPlacer()
+    if callExport ~= nil then return callExport or nil end
+
+    local spec = Config.Relay.CallExport
+    if not (spec and spec.resource and spec.export) then
+        callExport = false
+        return nil
+    end
+
+    if GetResourceState(spec.resource) ~= 'started' then
+        callExport = false
+        return nil
+    end
+
+    local ok, fn = pcall(function() return exports[spec.resource][spec.export] end)
+    if not ok or type(fn) ~= 'function' then
+        print(('[crimson-bounty] warning: Relay.CallExport names %s:%s, which this build ' ..
+               'does not export; call requests will be notifications only')
+               :format(spec.resource, spec.export))
+        callExport = false
+        return nil
+    end
+
+    callExport = fn
+    return fn
+end
+
+function Comms.resetCallCache()
+    callExport = nil
+end
+
+--- Ring the other party's phone.
+---
+--- Refuses rather than degrading when the callee is anonymous and identity
+--- cannot be suppressed: a call that reveals a number somebody paid to hide
+--- is not a call worth placing (§11.3).
+---@return boolean placed
+function Comms.placeCall(actor, recipientCid, anonymous)
+    local placer = Comms.callPlacer()
+    if not placer then return false end
+
+    if anonymous and Config.Relay.RequireMaskingForAnonymous
+        and not Comms.maskingAvailable() then
+        return false
+    end
+
+    local recipient = Identity.byCitizenId(recipientCid)
+    if not recipient then return false end
+
+    -- The callee's number, read server-side. Never from a payload, and
+    -- never handed back to the caller: the caller's phone is told to dial,
+    -- it is not told what it dialled.
+    local ok, number = pcall(function()
+        return exports['lb-phone']:GetEquippedPhoneNumber(recipient.source)
+    end)
+    if not ok or type(number) ~= 'string' or number == '' then return false end
+
+    -- A pcall that merely did not throw is not proof the call was placed:
+    -- an export returning false has told us it failed. Only an explicit
+    -- false counts as a refusal, since many exports return nothing at all.
+    local ok2, result = pcall(function()
+        return placer(nil, actor.source, number, anonymous == true)
+    end)
+    if not ok2 then return false end
+    return result ~= false
 end
 
 --- Whether this lb-phone build can suppress caller identity. Checked once at
