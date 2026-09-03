@@ -941,3 +941,45 @@ describe('staging the same item stack twice', function()
         eq(err, CB.ERR.INSUFFICIENT)
     end)
 end)
+
+
+--- A percentage bonus is real escrow, so the arithmetic that derives it is
+--- financial arithmetic.
+describe('a bonus derived from a percentage', function()
+    local function bonusFor(percent, baseline)
+        local s = newStack()
+        local f = fixture(s)
+        local lines = s.escrow.validate(f.creator, {
+            baseline = { cash = baseline },
+        }, percent)
+        truthy(lines, 'lines for ' .. percent .. '% of ' .. baseline)
+        for i = 1, #lines do
+            if lines[i].portion == CB.PORTION.BONUS then return lines[i].amount end
+        end
+        return nil
+    end
+
+    it('pays exactly the percentage promised', function()
+        -- amount * (percent / 100) computes a binary fraction first and loses
+        -- a whole unit on it: 29% of 50000 came out as 14499. Multiplying
+        -- before dividing keeps it in integers.
+        eq(bonusFor(29, 50000), 14500)
+        eq(bonusFor(57, 10000), 5700)
+        eq(bonusFor(58, 50000), 29000)
+        eq(bonusFor(69, 10000), 6900)
+    end)
+
+    it('is still exact on the percentages that never lost anything', function()
+        eq(bonusFor(50, 10000), 5000)
+        eq(bonusFor(25, 10000), 2500)
+        eq(bonusFor(100, 10000), 10000)
+        eq(bonusFor(1, 10000), 100)
+    end)
+
+    it('rounds down rather than up when the split is not whole', function()
+        -- 33% of 101 is 33.33: the creator is charged 33, not 34. Rounding
+        -- the other way would take money they never agreed to.
+        eq(bonusFor(33, 101), 33)
+        eq(bonusFor(50, 99), 49)
+    end)
+end)

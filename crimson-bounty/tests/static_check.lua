@@ -605,6 +605,36 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 18. A percentage of money is not taken through a binary fraction
+--------------------------------------------------------------------------
+--
+-- `amount * (percent / 100)` divides first, and most hundredths are not
+-- representable in binary: 29/100 lands just under, so 29% of 50,000 came
+-- out as 14,499. The creator promised a percentage, the hunter was shown a
+-- percentage, and the escrow held a unit less than either.
+--
+-- Multiplying first keeps the whole calculation in integers, which is where
+-- money belongs. This refuses the shape rather than the one instance, since
+-- the next percentage added would be written the same way.
+
+do
+    for _, path in ipairs(files) do
+        local src = read(path) or ''
+        local line = 0
+        for text in src:gmatch('[^\n]*') do
+            line = line + 1
+            if not text:match('^%s*%-%-')
+                and text:match('%*%s*%(%s*[%w_%.]+%s*/%s*%d') then
+                failures[#failures + 1] =
+                    ('%s:%d multiplies by a parenthesised division. Dividing first goes '
+                     .. 'through a binary fraction and loses whole units; multiply first, '
+                     .. 'then divide.'):format(path, line)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

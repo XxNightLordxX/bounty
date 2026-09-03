@@ -267,7 +267,11 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
             if line.portion == CB.PORTION.BASELINE
                 and not explicit[line.slot]
                 and CB.MONEY_SOURCES[line.source] then
-                local extra = math.floor(line.amount * (bonusPercent / 100))
+                -- Multiply before dividing. `amount * (percent / 100)`
+                -- computes a binary fraction first, and 29/100 is not one:
+                -- 29% of 50,000 came out as 14,499, a unit short of what the
+                -- creator promised and the hunter was shown.
+                local extra = math.floor(line.amount * bonusPercent / 100)
                 if extra > 0 then
                     derived[#derived + 1] = {
                         slot = line.slot, portion = CB.PORTION.BONUS,

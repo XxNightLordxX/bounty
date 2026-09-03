@@ -247,8 +247,14 @@ function Identity.isAliveAndConscious(source)
     if Config.Kidnap.RejectDead and dead then return false end
     if Config.Kidnap.RejectLastStand and lastStand then return false end
 
+    -- GTA health runs 100..200, where 100 is dead — so the percentage is
+    -- the health above 100, directly. Computing it as ((health - 100) / 100)
+    -- * 100 went through a binary fraction on the way and came back as
+    -- 28.999999999999996 for a health of 129: a target sitting exactly on a
+    -- floor of 29% was refused, and no amount of healing to that number
+    -- would ever have let the delivery start.
     local health = GetEntityHealth(GetPlayerPed(source)) or 0
-    local percent = ((health - 100) / 100) * 100
+    local percent = health - 100
     if percent < (Config.Kidnap.MinTargetHealthPercent or 0) then return false end
 
     return true
