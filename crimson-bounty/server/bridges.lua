@@ -67,6 +67,8 @@ function Bridges.onPlayerDropped(modules, cid)
     modules.notify.clearPlayer(cid)
     modules.comms.clearPlayer(cid)
     modules.mugshot.clearPlayer(cid)
+    modules.informant.clearPlayer(cid)
+    modules.app.clearPlayerHandles(cid)
 
     -- Memory mode holds no durable escrow, so a creator disconnecting would
     -- strand it. Refund and close rather than risk losing their property.
@@ -134,8 +136,10 @@ function Bridges.install(modules)
     end)
 
     RegisterNetEvent('crimson-bounty:appearanceChanged', function()
-        local actor = modules.identity.resolve(source)
+        local src = source
+        local actor = modules.identity.resolve(src)
         if not actor then return end
+        if not modules.ratelimit.check(actor.cid, 'mugshot') then return end
         modules.mugshot.invalidate(actor.cid)
     end)
 

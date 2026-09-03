@@ -74,17 +74,27 @@ function Informant.buy(actor, contractId)
     if #candidates == 0 then
         -- Charged anyway, and deliberately: a refund on an empty result turns
         -- the purchase into a free oracle for "is anyone hunting me?".
-        reveals[key] = { hunterCid = nil, at = os.time(), purchases = purchases + 1 }
+        reveals[key] = { hunterCid = nil, at = os.time(),
+                         purchases = purchases + 1, seed = existing and existing.seed }
         return true, nil, { found = false }
     end
 
-    -- Server-side selection, derived from stable data rather than a random
-    -- source (scripts have no reliable RNG at boot and a predictable pick is
-    -- fine here — the buyer cannot influence the inputs).
-    local index = ((os.time() + #contractId + purchases) % #candidates) + 1
+    -- Selection must not be steerable. A wall clock in the formula lets the
+    -- buyer pick the second they press buy and walk the roster; the seed is
+    -- instead fixed per (contract, buyer) on first purchase, so a second
+    -- purchase moves on deterministically rather than to a chosen target.
+    local seed = existing and existing.seed
+    if not seed then
+        seed = 0
+        for i = 1, #contractId do seed = seed + contractId:byte(i) * i end
+        for i = 1, #actor.cid do seed = seed + actor.cid:byte(i) * (i * 7) end
+    end
+
+    local index = ((seed + purchases) % #candidates) + 1
     local chosen = candidates[index]
 
-    reveals[key] = { hunterCid = chosen.hunter_cid, at = os.time(), purchases = purchases + 1 }
+    reveals[key] = { hunterCid = chosen.hunter_cid, at = os.time(),
+                     purchases = purchases + 1, seed = seed }
     Audit.action('informant_revealed', actor.cid, contractId, { hunter = chosen.hunter_cid })
 
     return true, nil, Informant.describe(chosen.hunter_cid)
@@ -106,6 +116,13 @@ function Informant.describe(hunterCid)
             and ('Seen recently around %s'):format(actor.job and actor.job.name or 'the city')
             or 'A face you have seen before',
     }
+end
+
+--- Release a player's reveals when they disconnect.
+function Informant.clearPlayer(cid)
+    for key, entry in pairs(reveals) do
+        if key:find(':' .. cid, 1, true) or entry.hunterCid == cid then reveals[key] = nil end
+    end
 end
 
 function Informant.clearContract(contractId)

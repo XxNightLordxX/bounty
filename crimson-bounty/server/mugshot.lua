@@ -32,14 +32,33 @@ end
 function Mugshot.request(cid)
     local entry = cache[cid]
     local floor = (Config.Mugshot.MinRefreshMinutes or 5) * 60
+    local timeout = (Config.Mugshot.RenderTimeoutMs or 8000) / 1000
 
-    if entry and entry.pending then return entry.data end
+    -- A request that was never answered must not pin the entry forever: the
+    -- client may have disconnected, or simply chosen not to reply.
+    if entry and entry.pending then
+        if (os.time() - (entry.pendingSince or 0)) < timeout then return entry.data end
+        entry.pending = false
+        entry.misses = (entry.misses or 0) + 1
+        -- After repeated silence, stop serving an image nobody is refreshing.
+        if entry.misses >= 3 then
+            cache[cid] = nil
+            entry = nil
+        end
+    end
+
     if entry and (os.time() - entry.at) < floor then return entry.data end
 
     local actor = Identity.byCitizenId(cid)
     if not actor then return entry and entry.data or nil end
 
-    cache[cid] = { data = entry and entry.data or nil, at = os.time(), pending = true }
+    cache[cid] = {
+        data = entry and entry.data or nil,
+        at = entry and entry.at or os.time(),
+        misses = entry and entry.misses or 0,
+        pending = true,
+        pendingSince = os.time(),
+    }
     TriggerClientEvent('crimson-bounty:renderMugshot', actor.source)
 
     return cache[cid].data
@@ -53,17 +72,43 @@ end
 ---@param image any
 ---@return boolean accepted
 function Mugshot.store(cid, image)
-    if type(image) ~= 'string' then return false end
-    if #image > (Config.Mugshot.MaxImageBytes or 262144) then
-        Audit.rejected('mugshot_too_large', cid, nil, { bytes = #image })
-        return false
-    end
-    if not image:match('^data:image/[%w%+%-%.]+;base64,[%w%+/=]+$') then
-        Audit.rejected('mugshot_bad_format', cid, nil, {})
+    -- Only an image the server asked for is accepted. Without this a client
+    -- can push a picture of its choosing into every viewer's listing without
+    -- anything ever having requested a render.
+    local entry = cache[cid]
+    if not entry or not entry.pending then
+        Audit.rejected('mugshot_unsolicited', cid, nil, {})
         return false
     end
 
-    cache[cid] = { data = image, at = os.time(), pending = false }
+    if type(image) ~= 'string' then return false end
+    if #image > (Config.Mugshot.MaxImageBytes or 32768) then
+        Audit.rejected('mugshot_too_large', cid, nil, { bytes = #image })
+        return false
+    end
+
+    -- An explicit MIME allowlist, not a character class: 'image/svg+xml' and
+    -- 'image/x-anything' both satisfy a pattern and neither is a headshot.
+    local mime, payload = image:match('^data:(image/[%w%+%-%.]+);base64,([%w%+/=]+)$')
+    if not mime or not Config.Mugshot.AllowedMime[mime] then
+        Audit.rejected('mugshot_bad_format', cid, nil, { mime = mime })
+        return false
+    end
+
+    -- Check the decoded prefix really is the format it claims, so the MIME
+    -- label alone is not what decides what viewers are shown.
+    local MAGIC = {
+        ['image/png']  = 'iVBORw0KGgo',
+        ['image/jpeg'] = '/9j/',
+        ['image/webp'] = 'UklGR',
+    }
+    local expected = MAGIC[mime]
+    if expected and payload:sub(1, #expected) ~= expected then
+        Audit.rejected('mugshot_magic_mismatch', cid, nil, { mime = mime })
+        return false
+    end
+
+    cache[cid] = { data = image, at = os.time(), pending = false, misses = 0 }
     return true
 end
 

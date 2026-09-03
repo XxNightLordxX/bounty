@@ -25,9 +25,53 @@ end
 ---@param name string event suffix
 ---@param action string|nil rate-limit bucket
 ---@param fn fun(actor: table, payload: table): any
+--- Cheap per-source counter, consulted BEFORE identity resolution.
+---
+--- A caller who cannot pass the gate never consumes a rate-limit token,
+--- because tokens are keyed on a citizen id they never get. Without this,
+--- a blocked player can flood the gate path — each call resolving identity,
+--- writing an audit row and sending a reply — and evict genuine rows from
+--- the audit queue.
+local floodCounters = {}
+
+local function floodCheck(src)
+    local now = GetGameTimer()
+    local entry = floodCounters[src]
+
+    if not entry or now - entry.since > 10000 then
+        floodCounters[src] = { since = now, count = 1, warned = false }
+        return true, false
+    end
+
+    entry.count = entry.count + 1
+    if entry.count <= 20 then return true, false end
+
+    -- Past the threshold: drop silently, and log once per window rather than
+    -- once per call, so a flood cannot blind the log it is recorded in.
+    local shouldLog = not entry.warned
+    entry.warned = true
+    return false, shouldLog
+end
+
+function App.sweepFloodCounters()
+    local now = GetGameTimer()
+    for src, entry in pairs(floodCounters) do
+        if now - entry.since > 60000 then floodCounters[src] = nil end
+    end
+end
+
 local function handler(name, action, fn)
     RegisterNetEvent('crimson-bounty:' .. name, function(payload)
         local src = source
+
+        local allowed, shouldLog = floodCheck(src)
+        if not allowed then
+            if shouldLog then
+                deps.audit.rejected('flood_' .. name, nil, nil, { source = src })
+            end
+            return
+        end
+
         local actor, err = deps.identity.gate(src)
         if not actor then
             deps.audit.rejected('gate_' .. name, nil, nil, { source = src, reason = err })

@@ -114,18 +114,42 @@ function Amendments.improve(actor, contractId, kind, payload)
         if not amount or amount >= (contract.penalty_amount or 0) then
             return false, CB.ERR.INVALID_INPUT
         end
-        -- Lowering the penalty returns the difference to every hunter who
-        -- staked the old, higher figure.
-        local difference = (contract.penalty_amount or 0) - amount
-        local hunters = Storage.readHunters(contractId)
-        for i = 1, #hunters do
-            if hunters[i].state == 'active' then
-                local hunter = Identity.byCitizenId(hunters[i].hunter_cid)
-                if hunter then hunter.player.Functions.AddMoney('bank', difference) end
-                Audit.financial('stake_reduced', hunters[i].hunter_cid, contractId,
-                    { returned = difference })
+
+        -- The reduction is paid OUT OF THE STAKE, never minted. Crediting the
+        -- difference directly while leaving the escrow line whole would let a
+        -- creator and a hunter raise and lower the penalty in a loop and
+        -- print money with nothing behind it.
+        --
+        -- Each hunter's own line is the source of truth for what they staked:
+        -- successive reductions, and hunters who joined at different figures,
+        -- all settle correctly because the amount comes from their line.
+        local lines = Storage.readEscrow(contractId)
+        for i = 1, #lines do
+            local line = lines[i]
+            if line.portion == CB.PORTION.STAKE
+                and line.state == CB.ESCROW_STATE.HELD
+                and (line.amount or 0) > amount then
+
+                local returned = line.amount - amount
+                local staker = Identity.byCitizenId(line.staker)
+
+                if staker then
+                    -- Back to the account it came from, not always bank.
+                    staker.player.Functions.AddMoney(line.source, returned)
+                    line.amount = amount
+                    Storage.writeEscrow(contractId, { line })
+                    Audit.financial('stake_reduced', line.staker, contractId,
+                        { returned = returned, remaining = amount })
+                else
+                    -- The staker is offline: their stake stays as it is
+                    -- rather than being reduced against a player who cannot
+                    -- be paid. They keep the higher stake and get it back in
+                    -- full when the contract resolves.
+                    Audit.action('stake_reduction_deferred', line.staker, contractId, {})
+                end
             end
         end
+
         contract.penalty_amount = amount
 
     else
@@ -245,6 +269,7 @@ function Amendments.sanitize(kind, payload)
     elseif kind == CB.AMENDMENT.RAISE_PENALTY or kind == CB.AMENDMENT.LOWER_PENALTY then
         clean.amount = Util.toCount(payload.amount, Config.MaxContractValue)
         if not clean.amount then return nil, CB.ERR.INVALID_INPUT end
+        clean.raise = (kind == CB.AMENDMENT.RAISE_PENALTY) or nil
 
     elseif kind == CB.AMENDMENT.REDUCE_REWARD then
         clean.slot = Util.toPositive(payload.slot, Config.Limits.MaxPayoutSlots)
@@ -351,6 +376,14 @@ function Amendments.apply(proposal)
         contract.reason = reason
 
     elseif kind == CB.AMENDMENT.RAISE_PENALTY or kind == CB.AMENDMENT.LOWER_PENALTY then
+        -- A penalty is only real if it was staked (§3.6). Raising the figure
+        -- after a hunter has staked the old one would display a penalty
+        -- nobody has put up, so it is only allowed while the contract is
+        -- unheld — a hunter stakes whatever it says when they accept.
+        local hunters = Storage.readHunters(proposal.contract_id)
+        for i = 1, #hunters do
+            if hunters[i].state == 'active' then return false, CB.ERR.BAD_STATE end
+        end
         contract.penalty_amount = Util.toCount(payload.amount, Config.MaxContractValue) or 0
 
     elseif kind == CB.AMENDMENT.CANCEL or kind == CB.AMENDMENT.WITHDRAW then

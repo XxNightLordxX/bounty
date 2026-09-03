@@ -78,6 +78,7 @@ function _G.newStack()
     package.loaded['crimson-bounty.server.bridges'] = nil
     package.loaded['crimson-bounty.server.mugshot'] = nil
     package.loaded['crimson-bounty.server.progression'] = nil
+    package.loaded['crimson-bounty.server.app'] = nil
     package.loaded['crimson-bounty.server.amendments'] = nil
     package.loaded['crimson-bounty.server.informant'] = nil
     package.loaded['crimson-bounty.server.bailout'] = nil
@@ -101,6 +102,7 @@ function _G.newStack()
     local bridges    = require('crimson-bounty.server.bridges')
     local mugshot    = require('crimson-bounty.server.mugshot')
     local progression = require('crimson-bounty.server.progression')
+    local app        = require('crimson-bounty.server.app')
 
     storage.open()
     audit.init(storage)
@@ -141,7 +143,7 @@ function _G.newStack()
         bailout = bailout, informant = informant, amendments = amendments, comms = comms, identity = identity, notify = notify,
         escrow = escrow, contracts = contracts, ratelimit = ratelimit,
         ledger = ledger, death = death, photo = photo, bridges = bridges,
-        mugshot = mugshot, progression = progression,
+        mugshot = mugshot, progression = progression, app = app,
     }
 end
 

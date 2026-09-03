@@ -131,6 +131,7 @@ function StartCrimsonBounty()
         death = death, photo = photo, kidnap = kidnap, bailout = bailout,
         informant = informant, amendments = amendments, comms = comms,
         projection = projection, mugshot = mugshot, progression = progression,
+        app = app,
     }
 
     app.init(modules)
@@ -209,7 +210,9 @@ function Tick()
     modules.death.sweep()
     modules.ratelimit.sweep()
     if Storage.prune then Storage.prune() end
-    require('server.app').sweepHandles()
+    local app = require('server.app')
+    app.sweepHandles()
+    app.sweepFloodCounters()
     ExpireContracts()
     if Storage.flush then Storage.flush() end
 end

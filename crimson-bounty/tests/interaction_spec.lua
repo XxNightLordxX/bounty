@@ -438,11 +438,55 @@ describe('additive improvements apply without approval', function()
             'lowering a bonus is not an improvement')
     end)
 
-    it('returns the difference to the hunter when the penalty is lowered', function()
+    it('returns the difference to the hunter out of the stake, not out of nothing', function()
         local s, f, c = seededImprove()
         eq(Env.players[3].PlayerData.money.bank, 40000, 'staked 10000')
+
         truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 4000 }))
         eq(Env.players[3].PlayerData.money.bank, 46000, 'the 6000 difference comes back')
+
+        -- And the escrowed stake shrank to match: the difference came out of
+        -- the stake rather than being minted alongside it.
+        local staked = 0
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.portion == CB.PORTION.STAKE then staked = staked + line.amount end
+        end
+        eq(staked, 4000, 'the escrow line must shrink with the penalty')
+    end)
+
+    it('cannot be looped to print money', function()
+        local s, f, c = seededImprove()
+        local opening = Env.players[3].PlayerData.money.bank
+            + Env.players[1].PlayerData.money.bank
+            + Env.players[1].PlayerData.money.cash
+
+        -- Raise and lower repeatedly: each cycle used to mint the difference.
+        for _ = 1, 5 do
+            local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.RAISE_PENALTY,
+                { amount = 10000 })
+            if proposal then s.amendments.respond(f.hunter, proposal.id, true) end
+            s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 1 })
+        end
+
+        local staked = 0
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.portion == CB.PORTION.STAKE then staked = staked + line.amount end
+        end
+
+        local closing = Env.players[3].PlayerData.money.bank
+            + Env.players[1].PlayerData.money.bank
+            + Env.players[1].PlayerData.money.cash
+
+        -- What must be conserved is money in hand plus money in escrow.
+        -- 10000 was staked before the opening measurement was taken.
+        eq(closing + staked, opening + 10000,
+            'no value may be created by cycling the penalty')
+    end)
+
+    it('refuses to lower a penalty to or above its current figure', function()
+        local s, f, c = seededImprove()
+        falsy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 10000 }))
+        falsy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 99999 }))
     end)
 
     it('refuses improvements from anyone but the creator', function()

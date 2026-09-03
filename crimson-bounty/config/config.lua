@@ -233,8 +233,14 @@ Config.Mugshot = {
     MaxConcurrentRenders = 2,
     RenderTimeoutMs = 8000,
     --- A base64 headshot arrives from a player's client, so it is bounded
-    --- before it is cached and shown to anyone else.
-    MaxImageBytes = 262144,
+    --- and format-checked before it is cached and shown to anyone else.
+    --- A real MugShotBase64 headshot is comfortably under this.
+    MaxImageBytes = 49152,
+    --- An explicit allowlist: a pattern match on the MIME type would also
+    --- accept image/svg+xml, which is not a headshot.
+    AllowedMime = {
+        ['image/png'] = true, ['image/jpeg'] = true, ['image/webp'] = true,
+    },
 }
 
 Config.Listing = {

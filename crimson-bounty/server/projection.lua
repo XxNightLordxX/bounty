@@ -110,9 +110,13 @@ function Projection.contract(contract, viewerCid)
                     alias = h.alias,
                     name  = (not h.anon) and h.hunter_name or nil,
                     claims = h.claims or 0,
-                    -- A record, not an identity: a creator can judge who
-                    -- took their contract without learning who they are.
-                    record = Progression and Progression.record(h.hunter_cid) or nil,
+                    -- A record, not an identity. For an anonymous hunter
+                    -- only the coarse standing crosses: exact counters are a
+                    -- stable fingerprint that links the same person across
+                    -- contracts, which is the thing anonymity is for.
+                    record = Progression and (h.anon
+                        and { standing = Progression.record(h.hunter_cid).standing }
+                        or Progression.record(h.hunter_cid)) or nil,
                 }
             end
         end

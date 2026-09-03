@@ -148,6 +148,13 @@ describe('target mugshots', function()
 
     local VALID = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
 
+    --- The real flow: the server asks, then the client answers. store()
+    --- rejects an image nothing asked for.
+    local function render(s, cid, image)
+        s.mugshot.request(cid)
+        return s.mugshot.store(cid, image or VALID)
+    end
+
     it('asks the target to render their own headshot', function()
         local s, f, c = seededMug()
         s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
@@ -161,7 +168,7 @@ describe('target mugshots', function()
 
     it('serves the cached image to every viewer once rendered', function()
         local s, f, c = seededMug()
-        truthy(s.mugshot.store('TARGET01', VALID))
+        truthy(render(s, 'TARGET01'))
         local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
         eq(row.targetImage, VALID)
     end)
@@ -169,16 +176,45 @@ describe('target mugshots', function()
     it('rejects an oversized or malformed image', function()
         local s = newStack()
         fixture(s)
-        falsy(s.mugshot.store('TARGET01', string.rep('a', Config.Mugshot.MaxImageBytes + 1)))
-        falsy(s.mugshot.store('TARGET01', 'javascript:alert(1)'))
-        falsy(s.mugshot.store('TARGET01', 'https://evil.tld/x.png'))
-        falsy(s.mugshot.store('TARGET01', 12345))
+        for _, bad in ipairs({
+            'data:image/png;base64,' .. string.rep('A', Config.Mugshot.MaxImageBytes + 1),
+            'javascript:alert(1)',
+            'https://evil.tld/x.png',
+            'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',   -- not a headshot
+            'data:image/x-anything;base64,QUFBQQ==',
+            'data:image/png;base64,QUFBQQ==',               -- claims png, is not
+            12345,
+        }) do
+            falsy(render(s, 'TARGET01', bad), 'accepted: ' .. tostring(bad):sub(1, 40))
+        end
         falsy(s.mugshot.get('TARGET01'), 'nothing bad was cached')
+    end)
+
+    it('refuses an image nothing asked for', function()
+        local s = newStack()
+        fixture(s)
+        falsy(s.mugshot.store('TARGET01', VALID),
+            'a client must not be able to push an image on its own initiative')
+        falsy(s.mugshot.get('TARGET01'))
+    end)
+
+    it('does not let an unanswered request pin the cache forever', function()
+        local s, f, c = seededMug()
+        render(s, 'TARGET01')
+
+        -- The client stops answering. After the timeout the entry stops
+        -- claiming to be pending, and after repeated silence it is dropped
+        -- rather than serving an image nobody is refreshing.
+        for _ = 1, 4 do
+            Env.advance((Config.Mugshot.MinRefreshMinutes * 60) + 60)
+            s.mugshot.request('TARGET01')
+        end
+        falsy(s.mugshot.get('TARGET01'), 'a stale image must not be served indefinitely')
     end)
 
     it('does not re-render inside the refresh floor', function()
         local s, f, c = seededMug()
-        s.mugshot.store('TARGET01', VALID)
+        render(s, 'TARGET01')
         Env.clientEvents = {}
 
         s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
@@ -190,7 +226,7 @@ describe('target mugshots', function()
 
     it('re-renders after an appearance change once the floor has passed', function()
         local s, f, c = seededMug()
-        s.mugshot.store('TARGET01', VALID)
+        render(s, 'TARGET01')
 
         falsy(s.mugshot.invalidate('TARGET01'), 'too soon after the last render')
         Env.advance((Config.Mugshot.MinRefreshMinutes * 60) + 10)

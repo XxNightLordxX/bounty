@@ -176,3 +176,71 @@ describe('staff webhook', function()
             'identity must not leave the server')
     end)
 end)
+
+describe('anonymity survives reputation', function()
+    it('shows an anonymous hunter only a coarse standing', function()
+        local s = newStack()
+        local f = fixture(s)
+        s.storage.bumpStat('HUNTER01', 'completed', 7)
+        s.storage.bumpStat('HUNTER01', 'failed', 2)
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 1000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, true)   -- anonymous
+
+        local row = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1')
+        local record = row.hunters[1].record
+        truthy(record.standing, 'a client still learns roughly who they hired')
+        falsy(record.completed, 'exact counters are a fingerprint across contracts')
+        falsy(record.failed)
+        falsy(record.rate)
+    end)
+
+    it('shows full counters for a hunter who chose to be seen', function()
+        local s = newStack()
+        local f = fixture(s)
+        s.storage.bumpStat('HUNTER01', 'completed', 7)
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 1000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+
+        local row = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1')
+        eq(row.hunters[1].record.completed, 7)
+    end)
+end)
+
+describe('informant selection is not steerable', function()
+    it('does not change with the second the buyer presses buy', function()
+        local results = {}
+
+        for _, offset in ipairs({ 0, 1, 2, 3 }) do
+            local s = newStack()
+            local f = fixture(s)
+            Env.players[1].PlayerData.money.bank = 500000
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 1000 } },
+            })
+            s.contracts.accept(f.hunter, c.id, false)
+            for i = 2, 3 do
+                Env.addPlayer({ source = 3 + i, citizenid = 'HUNTER0' .. i,
+                    license = 'license:h' .. i })
+                s.contracts.accept(s.identity.resolve(3 + i), c.id, false)
+            end
+
+            Env.advance(offset)
+            local _, _, data = s.informant.buy(f.creator, c.id)
+            results[#results + 1] = data and data.name or 'none'
+        end
+
+        for i = 2, #results do
+            eq(results[i], results[1],
+                'waiting a second must not let a buyer choose which hunter is unmasked')
+        end
+    end)
+end)

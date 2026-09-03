@@ -210,3 +210,80 @@ describe('copy-on-read semantics', function()
         eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
     end)
 end)
+
+describe('the mysql schema holds every field the code writes', function()
+    --- The memory and json backends store whole Lua tables, so any field the
+    --- MySQL backend forgets to declare survives there for free and no test
+    --- notices. These checks compare what the code actually writes against
+    --- what the schema can hold, which is the only way to catch a dropped
+    --- column without a live database.
+
+    local Sim = require('crimson-bounty.tests.harness.mysql_sim')
+
+    local function schemaFor()
+        Sim.install(Natives)
+        package.loaded['crimson-bounty.server.storage.mysql'] = nil
+        local store = require('crimson-bounty.server.storage.mysql')
+        store.open()
+        return Sim
+    end
+
+    it('declares every column the contract writer names', function()
+        local sim = schemaFor()
+        package.loaded['crimson-bounty.server.storage.mysql'] = nil
+        local store = require('crimson-bounty.server.storage.mysql')
+        store.writeContract({ id = 'ct1', creator_cid = 'C', target_cid = 'T',
+            mode = 'exclusive', state = 'active', created_at = 1 })
+        eq(#sim.rejected, 0, table.concat(sim.rejected, '; '))
+    end)
+
+    it('can hold every field a live contract carries', function()
+        local sim = schemaFor()
+
+        -- Every field the server sets on a contract anywhere in the codebase.
+        local contract = {
+            id = 'ct1', creator_cid = 'C', creator_account = 'license:a',
+            creator_name = 'A', target_cid = 'T', target_name = 'B',
+            target_protected = false, target_job = 'unemployed', reason = 'x',
+            mode = 'exclusive', state = 'active', anon_creator = false,
+            bonus_percent = 50, bailout_amount = 100, penalty_amount = 100,
+            payout_slots = 1, slots_claimed = 0, next_slot = 1,
+            created_at = 1, deadline_at = 2, expires_at = 3,
+            paused_ms = 0, paused_since = 1,
+            bailout_queued_at = 1, bailout_paid_by = 'T',
+            bailout_paid_amount = 100, bailout_paid_account = 'bank',
+            resolved_at = 4, resolution = 'expired',
+        }
+
+        local missing = sim.missingColumns('crimson_contracts', contract)
+        eq(#missing, 0, 'crimson_contracts cannot store: ' .. table.concat(missing, ', '))
+    end)
+
+    it('can hold every field a live escrow line carries', function()
+        local sim = schemaFor()
+
+        local line = {
+            id = 'ct1:1', contract_id = 'ct1', slot = 1, portion = 'stake',
+            source = 'bank', amount = 100, item = 'x', quantity = 1,
+            metadata = {}, staker = 'HUNTER01', inv_slot = 3,
+            state = 'held', settled_to = 'HUNTER01', settled_at = 1,
+        }
+
+        local missing = sim.missingColumns('crimson_escrow', line)
+        eq(#missing, 0, 'crimson_escrow cannot store: ' .. table.concat(missing, ', '))
+    end)
+
+    it('can hold every field a hunter record carries', function()
+        local sim = schemaFor()
+
+        local hunter = {
+            id = 'hn1', contract_id = 'ct1', hunter_cid = 'H',
+            hunter_account = 'license:h', hunter_name = 'H', alias = 'Operative #1',
+            anon = false, accepted_at = 1, left_at = 2, last_claim_at = 3,
+            claims = 1, stake_amount = 100, state = 'active',
+        }
+
+        local missing = sim.missingColumns('crimson_hunters', hunter)
+        eq(#missing, 0, 'crimson_hunters cannot store: ' .. table.concat(missing, ', '))
+    end)
+end)

@@ -32,6 +32,11 @@ local SCHEMA = {
         deadline_at INT,
         expires_at INT,
         paused_ms INT DEFAULT 0,
+        paused_since INT,
+        bailout_queued_at INT,
+        bailout_paid_by VARCHAR(32),
+        bailout_paid_amount INT,
+        bailout_paid_account VARCHAR(8),
         resolved_at INT,
         resolution VARCHAR(32),
         INDEX idx_state (state),
@@ -48,6 +53,8 @@ local SCHEMA = {
         item VARCHAR(64),
         quantity INT DEFAULT 0,
         metadata TEXT,
+        staker VARCHAR(32),
+        inv_slot INT,
         state VARCHAR(16) NOT NULL,
         settled_to VARCHAR(32),
         settled_at INT,
@@ -163,20 +170,29 @@ function MySQLStore.writeContract(c)
             (id, creator_cid, creator_account, creator_name, target_cid, target_name,
              target_protected, target_job, reason, mode, state, anon_creator, bonus_percent,
              bailout_amount, penalty_amount, payout_slots, slots_claimed, next_slot,
-             created_at, deadline_at, expires_at, paused_ms, resolved_at, resolution)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             created_at, deadline_at, expires_at, paused_ms, paused_since,
+             bailout_queued_at, bailout_paid_by, bailout_paid_amount, bailout_paid_account,
+             resolved_at, resolution)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON DUPLICATE KEY UPDATE
             reason = VALUES(reason), mode = VALUES(mode),
             bailout_amount = VALUES(bailout_amount), penalty_amount = VALUES(penalty_amount),
             slots_claimed = VALUES(slots_claimed), next_slot = VALUES(next_slot),
             deadline_at = VALUES(deadline_at), paused_ms = VALUES(paused_ms),
+            paused_since = VALUES(paused_since),
+            bailout_queued_at = VALUES(bailout_queued_at),
+            bailout_paid_by = VALUES(bailout_paid_by),
+            bailout_paid_amount = VALUES(bailout_paid_amount),
+            bailout_paid_account = VALUES(bailout_paid_account),
             resolved_at = VALUES(resolved_at), resolution = VALUES(resolution)
     ]], {
         c.id, c.creator_cid, c.creator_account, c.creator_name, c.target_cid, c.target_name,
         c.target_protected and 1 or 0, c.target_job, c.reason, c.mode, c.state,
         c.anon_creator and 1 or 0, c.bonus_percent or 0, c.bailout_amount or 0,
         c.penalty_amount or 0, c.payout_slots or 1, c.slots_claimed or 0, c.next_slot or 1,
-        c.created_at, c.deadline_at, c.expires_at, c.paused_ms or 0, c.resolved_at, c.resolution,
+        c.created_at, c.deadline_at, c.expires_at, c.paused_ms or 0, c.paused_since,
+        c.bailout_queued_at, c.bailout_paid_by, c.bailout_paid_amount, c.bailout_paid_account,
+        c.resolved_at, c.resolution,
     })
     return true
 end
@@ -217,12 +233,14 @@ function MySQLStore.writeEscrow(contractId, lines)
         local l = lines[i]
         MySQL.query.await([[
             INSERT INTO crimson_escrow
-                (id, contract_id, slot, portion, source, amount, item, quantity, metadata, state)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
+                (id, contract_id, slot, portion, source, amount, item, quantity, metadata,
+                 staker, inv_slot, state)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             ON DUPLICATE KEY UPDATE state = VALUES(state)
         ]], {
             l.id, contractId, l.slot or 1, l.portion, l.source, l.amount or 0,
-            l.item, l.quantity or 0, l.metadata and json.encode(l.metadata) or nil, l.state,
+            l.item, l.quantity or 0, l.metadata and json.encode(l.metadata) or nil,
+            l.staker, l.inv_slot, l.state,
         })
     end
     return true

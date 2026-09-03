@@ -7,7 +7,8 @@
 --- Coverage accumulated across every seed, asserted at the end: an
 --- individual seed may draw an unlucky operation mix, but the suite as a
 --- whole must exercise creation, acceptance and payout.
-local coverage = { created = 0, accepted = 0, claimed = 0, bailed = 0, added = 0 }
+local coverage = { created = 0, accepted = 0, claimed = 0, bailed = 0,
+                   added = 0, improved = 0 }
 
 --- Deterministic generator, so a failure is reproducible from its seed.
 local function rng(seed)
@@ -113,14 +114,15 @@ local function buildWorld(seed)
 end
 
 describe('value conservation under random operation orders', function()
-    for _, seed in ipairs({ 7, 101, 4242, 99991 }) do
+    for _, seed in ipairs({ 7, 101, 4242, 99991, 31337, 8675309 }) do
         it('conserves every unit of value (seed ' .. seed .. ')', function()
             local rand = rng(seed)
             local s, cids = buildWorld(seed)
             local opening = worldValue(s, cids)
 
             local ids = {}
-            local counts = { created = 0, accepted = 0, claimed = 0, bailed = 0, added = 0 }
+            local counts = { created = 0, accepted = 0, claimed = 0, bailed = 0,
+                             added = 0, improved = 0 }
 
             for step = 1, 200 do
                 -- A live server has time passing between actions; without it
@@ -129,7 +131,7 @@ describe('value conservation under random operation orders', function()
 
                 local actorSrc = rand(8)
                 local actor = s.identity.resolve(actorSrc)
-                local op = rand(8)
+                local op = rand(9)
 
                 if op == 1 then
                     -- Place a contract on someone else.
@@ -146,6 +148,9 @@ describe('value conservation under random operation orders', function()
                             mode = rand(2) == 1 and CB.MODE.EXCLUSIVE or CB.MODE.COMPETITIVE,
                             reward = { slots = slots },
                             bailoutAmount = rand(2) == 1 and (rand(50) * 100) or nil,
+                            -- Stakes are money too, and the path that moves
+                            -- them is separate from every other payout path.
+                            penaltyAmount = rand(2) == 1 and (rand(20) * 100) or nil,
                         })
                         if c then
                             ids[#ids + 1] = c.id
@@ -196,6 +201,20 @@ describe('value conservation under random operation orders', function()
                 elseif op == 8 then
                     Env.advance(rand(300))
                     s.bailout.processQueue()
+
+                elseif op == 9 and #ids > 0 then
+                    -- Improvements move money between a hunter's stake and
+                    -- their pocket, so the loop has to try them.
+                    local id = ids[rand(#ids)]
+                    local kinds = {
+                        { CB.AMENDMENT.EXTEND_DEADLINE, { seconds = rand(20) * 60 } },
+                        { CB.AMENDMENT.RAISE_BONUS, { percent = rand(150) } },
+                        { CB.AMENDMENT.LOWER_PENALTY, { amount = rand(15) * 100 } },
+                    }
+                    local pick = kinds[rand(#kinds)]
+                    if s.amendments.improve(actor, id, pick[1], pick[2]) then
+                        counts.improved = (counts.improved or 0) + 1
+                    end
                 end
 
                 -- Deliveries that could not be handed over are retried, so
@@ -236,6 +255,7 @@ describe('simulation coverage', function()
         truthy(coverage.accepted >= 10, ('acceptances: %d'):format(coverage.accepted))
         truthy(coverage.claimed >= 3, ('payouts claimed: %d'):format(coverage.claimed))
         truthy(coverage.added >= 1, ('escrow top-ups: %d'):format(coverage.added))
+        truthy(coverage.improved >= 1, ('improvements: %d'):format(coverage.improved))
     end)
 end)
 

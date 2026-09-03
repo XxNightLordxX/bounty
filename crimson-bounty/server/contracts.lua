@@ -40,6 +40,43 @@ function Contracts.transition(contractId, expected, next_, reason)
     return ok
 end
 
+--- Settle every hunter's stake on a contract that is ending.
+---
+--- Called from every terminal path. `forfeit` is true only when the ending
+--- is the hunter's failure — an expiry while they still held it.
+---@param contractId string
+---@param creatorCid string
+---@param forfeit boolean
+local function settleStakes(contractId, creatorCid, forfeit)
+    local hunters = Storage.readHunters(contractId)
+    for i = 1, #hunters do
+        local hunter = hunters[i]
+        local toCreator = forfeit and hunter.state == 'active'
+        Escrow.release(contractId,
+            toCreator and creatorCid or hunter.hunter_cid,
+            { portion = CB.PORTION.STAKE, staker = hunter.hunter_cid },
+            toCreator and 'penalty_forfeited' or 'stake_returned')
+    end
+end
+
+--- Everything that must happen exactly once when a contract ends, whichever
+--- path got it there. Routing every terminal transition through here is what
+--- stops a new path forgetting a step — the completion path already did.
+---@param contractId string
+---@param contract table
+---@param forfeitStakes boolean
+local function finalise(contractId, contract, forfeitStakes)
+    settleStakes(contractId, contract.creator_cid, forfeitStakes)
+
+    -- Anything still held — a top-up on a slot nobody claimed, an odd line
+    -- from an amendment — goes back to the creator while it is still
+    -- reachable.
+    Escrow.release(contractId, contract.creator_cid, nil, 'unclaimed_remainder')
+
+    Notify.clearContract(contractId)
+    if Contracts.onResolved then Contracts.onResolved(contractId) end
+end
+
 --------------------------------------------------------------------------
 -- Eligibility
 --------------------------------------------------------------------------
@@ -344,6 +381,10 @@ function Contracts.abandon(actor, contractId)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
 
+    if CB.TERMINAL[contract.state] or contract.state == CB.STATE.COMPLETING then
+        return false, CB.ERR.BAD_STATE
+    end
+
     local hunter = Storage.readHunter(contractId, actor.cid)
     if not hunter or hunter.state ~= 'active' then return false, CB.ERR.NOT_PARTICIPANT end
 
@@ -452,11 +493,10 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment)
 
     local exhausted = contract.next_slot > (contract.payout_slots or 1)
     if exhausted then
-        -- Last slot: the contract is finished for everyone. Anything still
-        -- held — a top-up that landed on a slot nobody claimed, an odd line
-        -- from an amendment — goes back to the creator before the contract
-        -- goes terminal, because nothing can reach it afterwards.
-        Escrow.release(contractId, contract.creator_cid, nil, 'unclaimed_remainder')
+        -- Last slot: the contract is finished for everyone. Every other
+        -- hunter's stake comes back and any unclaimed escrow returns to the
+        -- creator, while the contract is still non-terminal and reachable.
+        finalise(contractId, contract, false)
 
         contract.resolved_at = os.time()
         contract.resolution = 'completed'

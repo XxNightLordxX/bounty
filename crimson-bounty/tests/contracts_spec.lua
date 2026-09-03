@@ -326,3 +326,74 @@ describe('spam and rollback', function()
         eq(Env.players[1].PlayerData.money.cash, 100000, 'and nothing was charged')
     end)
 end)
+
+describe('stakes survive every ending', function()
+    local function competitiveWithStakes()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd', bank = 50000 })
+        local second = s.identity.resolve(4)
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, penaltyAmount = 10000,
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(second, c.id, false)
+        return s, f, c, second
+    end
+
+    it('returns the losing hunters stake when the contract completes', function()
+        local s, f, c, second = competitiveWithStakes()
+        eq(Env.players[4].PlayerData.money.bank, 40000, 'hunter two staked')
+
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+
+        eq(Env.players[3].PlayerData.money.bank, 50000, 'the winner gets their stake back')
+        eq(Env.players[4].PlayerData.money.bank, 50000,
+            'and so does the hunter who simply lost the race')
+    end)
+
+    it('leaves nothing held on a completed contract', function()
+        local s, f, c = competitiveWithStakes()
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            eq(line.state, CB.ESCROW_STATE.SETTLED,
+                ('line %s (%s) stranded on a completed contract'):format(line.id, line.portion))
+        end
+    end)
+
+    it('refuses an abandon on a contract that has already finished', function()
+        local s, f, c, second = competitiveWithStakes()
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        local before = Env.players[1].PlayerData.money.bank
+
+        local ok, err = s.contracts.abandon(second, c.id)
+        falsy(ok, 'nothing to abandon once it is over')
+        eq(err, CB.ERR.BAD_STATE)
+        eq(Env.players[1].PlayerData.money.bank, before,
+            'and the creator cannot be handed a stake that was already returned')
+    end)
+
+    it('conserves value across a completion with several stakes', function()
+        local s, f, c, second = competitiveWithStakes()
+        local function total()
+            local money = 0
+            for _, p in pairs(Env.players) do
+                money = money + p.PlayerData.money.cash + p.PlayerData.money.bank
+            end
+            for _, line in ipairs(s.storage.readEscrow(c.id)) do
+                if line.state ~= CB.ESCROW_STATE.SETTLED and CB.MONEY_SOURCES[line.source] then
+                    money = money + (line.amount or 0)
+                end
+            end
+            return money
+        end
+
+        local opening = total()
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        eq(total(), opening, 'completion must neither create nor destroy value')
+    end)
+end)
