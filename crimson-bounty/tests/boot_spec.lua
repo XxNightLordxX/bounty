@@ -368,3 +368,75 @@ describe('a maintenance job that throws', function()
             .. 'silent gaps is worse than no log')
     end)
 end)
+
+
+--- The configuration an operator edited.
+---
+--- Config values go straight into arithmetic. A key deleted or misspelled
+--- while editing is nil, and nil does not fail at startup — it fails deep
+--- inside whichever handler reaches that line first, as an error in a
+--- player's face with nothing to say which setting caused it.
+describe('starting on a configuration with a hole in it', function()
+    --- Boot with one setting broken, capturing what the console was told.
+    local function bootExpectingFailure(section, key, value)
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        package.loaded['server.main'] = nil
+
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Config.Database.Mode = 'memory'
+
+        local saved = Config[section][key]
+        Config[section][key] = value
+
+        -- The fatal lines go to the console, and the console is what an
+        -- operator actually reads.
+        local said = {}
+        local realPrint = _G.print
+        _G.print = function(...)
+            local parts = {}
+            for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+            said[#said + 1] = table.concat(parts, ' ')
+        end
+
+        local main = require('server.main')
+        local ok, err = pcall(main.start)
+
+        _G.print = realPrint
+        Config[section][key] = saved
+        resetConfig()
+        return ok, tostring(err), table.concat(said, ' | ')
+    end
+
+    it('refuses to start when a number it does arithmetic on is missing', function()
+        local ok, err = bootExpectingFailure('Limits', 'MaxPayoutSlots', nil)
+        falsy(ok, 'a missing limit must stop startup, not the first player who hits it')
+        truthy(err:find('invalid configuration', 1, true), err)
+    end)
+
+    it('names the setting rather than the line that threw', function()
+        local ok, _, said = bootExpectingFailure('Completion', 'PhotoTokenLifetimeSeconds', nil)
+        falsy(ok)
+        truthy(said:find('Completion.PhotoTokenLifetimeSeconds', 1, true),
+            'the operator has to be told which setting, not which line: ' .. said)
+        truthy(said:find('nil', 1, true), 'and what is wrong with it: ' .. said)
+    end)
+
+    it('refuses a number that has been set to something that is not one', function()
+        local ok, err = bootExpectingFailure('Bailout', 'MaxMultiplier', 'ten')
+        falsy(ok, 'a string where a number belongs is the same hole')
+        truthy(err:find('invalid configuration', 1, true), err)
+    end)
+
+    it('still starts on the configuration as it ships', function()
+        local main, modules = boot()
+        truthy(modules, 'the shipped config must be valid')
+        truthy(main)
+    end)
+end)

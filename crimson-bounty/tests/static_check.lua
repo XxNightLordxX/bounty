@@ -714,6 +714,73 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 21. Every config key the code reads actually exists
+--------------------------------------------------------------------------
+--
+-- Config values are read directly and many of them go straight into
+-- arithmetic. A key that is not there is nil, which throws — not at startup
+-- where anyone would see it, but deep inside whichever handler happens to
+-- reach that line first. A typo in a read, or a key renamed on one side
+-- only, is silent until a player triggers it.
+--
+-- Reads are found textually and checked against the shipped config, which
+-- this file loads for real.
+
+do
+    local ok, config = pcall(dofile, 'crimson-bounty/config/config.lua')
+    if not ok or type(config) ~= 'table' then
+        -- config.lua assigns to a global rather than returning; load it that
+        -- way instead.
+        local chunk = loadfile('crimson-bounty/config/config.lua')
+        if chunk then
+            _G.Config = {}
+            pcall(chunk)
+            config = _G.Config
+        end
+    end
+
+    -- A key written as `Thing = nil` is a declaration, not an omission: Lua
+    -- stores nothing for it, but the author said out loud that it is an
+    -- optional integration hook and every read of one is guarded. Read from
+    -- the source text, since the loaded table cannot tell the two apart.
+    local declaredNil = {}
+    local configSrc = read('crimson-bounty/config/config.lua') or ''
+    for key in configSrc:gmatch('\n%s*([%w_]+)%s*=%s*nil%s*,') do
+        declaredNil[key] = true
+    end
+
+    if type(config) ~= 'table' then
+        failures[#failures + 1] = 'could not load crimson-bounty/config/config.lua to check '
+            .. 'the keys the code reads against it'
+    else
+        local seen = {}
+
+        for _, path in ipairs(files) do
+            local src = read(path) or ''
+            for section, key in src:gmatch('Config%.(%u[%w_]*)%.([%w_]+)') do
+                local where = section .. '.' .. key
+                if not seen[where] then
+                    seen[where] = true
+                    local block = config[section]
+                    if type(block) ~= 'table' then
+                        failures[#failures + 1] =
+                            ('%s reads Config.%s, which the shipped config does not define')
+                                :format(path, section)
+                    elseif block[key] == nil and not declaredNil[key] then
+                        failures[#failures + 1] =
+                            ('%s reads Config.%s, which the shipped config does not define. '
+                             .. 'It is nil at runtime, and the first handler to reach it throws. '
+                             .. 'If it is meant to be optional, write it as `%s = nil,` in the '
+                             .. 'config so that is on the record.')
+                                :format(path, where, key)
+                    end
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

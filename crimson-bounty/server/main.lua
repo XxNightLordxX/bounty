@@ -16,6 +16,72 @@ local modules = {}
 local function validateConfig()
     local fatal, warn = {}, {}
 
+    -- Every value the code puts straight into arithmetic or a comparison.
+    -- A key an operator deleted or misspelled while editing their config is
+    -- nil, and nil does not fail here — it fails deep inside whichever
+    -- handler reaches that line first, as an error in a player's face with
+    -- nothing to say which setting caused it.
+    --
+    -- This is the operator's copy of the config, which the static check
+    -- cannot see. The static check covers the other direction: a key the
+    -- code reads that the shipped config never defined.
+    local REQUIRED_NUMBERS = {
+        { 'Limits', 'MaxActiveContractsPerCreator' },
+        { 'Limits', 'MaxAcceptedPerHunter' },
+        { 'Limits', 'MaxActiveContractsPerTarget' },
+        { 'Limits', 'MaxHuntersPerContract' },
+        { 'Limits', 'MaxPayoutSlots' },
+        { 'Limits', 'MaxEscrowLines' },
+        { 'Limits', 'MaxDeadlineSkipSeconds' },
+        { 'Limits', 'SlotCooldownSeconds' },
+        { 'Limits', 'ContractLifetimeSeconds' },
+        { 'Limits', 'DefaultDeadlineSeconds' },
+        { 'Limits', 'TargetCooldownAfterResolveSeconds' },
+        { 'Limits', 'SameCreatorSameTargetCooldownSeconds' },
+        { 'Bonus', 'maxPercent' },
+        { 'Bailout', 'MinMultiplier' },
+        { 'Bailout', 'MaxMultiplier' },
+        { 'Bailout', 'AbsoluteMax' },
+        { 'Bailout', 'ProcessingDelaySeconds' },
+        { 'Completion', 'PhotoTokenLifetimeSeconds' },
+        { 'Completion', 'ProofWindowSeconds' },
+        { 'Completion', 'DeathReportWindowMs' },
+        { 'Completion', 'PhotoRadius' },
+        { 'Completion', 'MaxWeaponRange' },
+        { 'Kidnap', 'CountdownSeconds' },
+        { 'Kidnap', 'MaxTotalGraceMs' },
+        { 'Audit', 'MaxQueueSize' },
+        { 'Audit', 'RetentionDays' },
+        { 'Ledger', 'Depth' },
+        { 'Ledger', 'MaxDepthHardCap' },
+        { 'Informant', 'RerollLockMinutes' },
+        { 'Amendments', 'ProposalExpirySeconds' },
+        { 'Amendments', 'MaxOpenPerContract' },
+        { 'Relay', 'MaxLength' },
+    }
+
+    for _, entry in ipairs(REQUIRED_NUMBERS) do
+        local section, key = entry[1], entry[2]
+        local block = Config[section]
+        if type(block) ~= 'table' then
+            fatal[#fatal + 1] = ('Config.%s is missing entirely'):format(section)
+        elseif type(block[key]) ~= 'number' then
+            fatal[#fatal + 1] = ('Config.%s.%s is %s; it has to be a number, and is used '
+                .. 'in arithmetic that would otherwise throw at the first player who '
+                .. 'reached it'):format(section, key, type(block[key]))
+        end
+    end
+
+    -- Every check below compares these values, and a comparison against nil
+    -- throws — so a hole in the config would take out the very code written
+    -- to report it. Nothing else runs until the shapes are known good.
+    if #fatal > 0 then
+        for _, message in ipairs(fatal) do
+            print('[crimson-bounty] FATAL: ' .. message)
+        end
+        error('[crimson-bounty] refusing to start on an invalid configuration')
+    end
+
     local mode = Config.Database.Mode
     if mode ~= 'mysql' and mode ~= 'json' and mode ~= 'memory' then
         fatal[#fatal + 1] = ('Config.Database.Mode is "%s"; expected mysql, json or memory'):format(tostring(mode))
