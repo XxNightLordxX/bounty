@@ -99,7 +99,13 @@ end
 -- Contracts
 --------------------------------------------------------------------------
 
+--- State is not written here: it changes only through
+--- compareSetContractState, so a stale copy cannot revert a transition.
 function JsonStore.writeContract(c)
+    local existing = db.contracts[c.id]
+    if existing and existing ~= c then
+        c.state = existing.state
+    end
     db.contracts[c.id] = c
     touch(true)
     return true

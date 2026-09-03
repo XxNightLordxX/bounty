@@ -25,7 +25,14 @@ end
 -- Contracts
 --------------------------------------------------------------------------
 
+--- Persist a contract's fields. State is deliberately NOT written here:
+--- it changes only through compareSetContractState, so a caller holding a
+--- copy read before a transition cannot revert it (§9.7).
 function Memory.writeContract(contract)
+    local existing = db.contracts[contract.id]
+    if existing and existing ~= contract then
+        contract.state = existing.state
+    end
     db.contracts[contract.id] = contract
     return true
 end

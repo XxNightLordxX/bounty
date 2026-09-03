@@ -119,3 +119,94 @@ describe('json durability', function()
         eq(#store.allContracts(), 0)
     end)
 end)
+
+describe('copy-on-read semantics', function()
+    --- Real databases return fresh rows, not shared tables. Anything that
+    --- relies on mutating a record it read earlier breaks against MySQL,
+    --- so the whole system is run against a copying backend here.
+    local function copyingStack()
+        local wrap = require('crimson-bounty.tests.harness.copying_store')
+        local stack = newStack()
+        local copying = wrap(stack.storage)
+
+        -- Rewire every module onto the copying store.
+        stack.audit.init(copying)
+        stack.escrow.init(copying, stack.audit)
+        stack.contracts.init({ storage = copying, escrow = stack.escrow,
+            identity = stack.identity, audit = stack.audit, notify = stack.notify })
+        stack.ledger.init(copying)
+        stack.projection.init({ storage = copying, identity = stack.identity,
+            escrow = stack.escrow, kidnap = stack.kidnap })
+        stack.bailout.init({ storage = copying, identity = stack.identity,
+            contracts = stack.contracts, escrow = stack.escrow,
+            audit = stack.audit, notify = stack.notify })
+
+        stack.raw = stack.storage
+        stack.storage = copying
+        return stack
+    end
+
+    it('does not revert a state transition when a stale copy is written', function()
+        local s = copyingStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+
+        -- A copy read before the transition, written after it, must not
+        -- carry the old state back into storage.
+        local stale = s.storage.readContract(c.id)
+        s.storage.compareSetContractState(c.id, CB.STATE.ACTIVE, CB.STATE.ACCEPTED)
+        stale.resolution = 'something'
+        s.storage.writeContract(stale)
+
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED,
+            'a stale write must not revert the transition')
+    end)
+
+    it('resolves a contract correctly against a copying backend', function()
+        local s = copyingStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } },
+        })
+        eq(Env.players[1].PlayerData.money.cash, 95000)
+
+        local ok = s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        truthy(ok)
+        eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED, 'stays cancelled')
+        eq(Env.players[1].PlayerData.money.cash, 100000, 'refunded once')
+
+        local again = s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'again')
+        falsy(again, 'and cannot be resolved twice')
+        eq(Env.players[1].PlayerData.money.cash, 100000)
+    end)
+
+    it('claims payout slots correctly against a copying backend', function()
+        local s = copyingStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = {
+                { baseline = { cash = 1000 } },
+                { baseline = { cash = 2000 } },
+            } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        local ok, err, result = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        truthy(ok, tostring(err))
+        eq(result.slot, 1)
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED,
+            'back to accepted with a slot remaining, not stuck completing')
+        eq(s.storage.readContract(c.id).next_slot, 2, 'slot counter advanced')
+        eq(Env.players[3].PlayerData.money.cash, 6000)
+
+        Env.advance(Config.Limits.SlotCooldownSeconds + 1)
+        local ok2, err2, result2 = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        truthy(ok2, tostring(err2))
+        truthy(result2.exhausted)
+        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+    end)
+end)

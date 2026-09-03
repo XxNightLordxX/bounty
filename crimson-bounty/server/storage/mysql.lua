@@ -145,6 +145,11 @@ end
 -- Contracts
 --------------------------------------------------------------------------
 
+--- Persist a contract's fields. `state` is intentionally absent from the
+--- UPDATE clause: it changes only through compareSetContractState, so a
+--- caller writing a copy it read before a transition cannot revert it. This
+--- matters more here than in the other backends, because reads return fresh
+--- rows rather than shared tables.
 function MySQLStore.writeContract(c)
     MySQL.query.await([[
         INSERT INTO crimson_contracts
@@ -154,7 +159,7 @@ function MySQLStore.writeContract(c)
              created_at, deadline_at, expires_at, paused_ms, resolved_at, resolution)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON DUPLICATE KEY UPDATE
-            state = VALUES(state), reason = VALUES(reason), mode = VALUES(mode),
+            reason = VALUES(reason), mode = VALUES(mode),
             bailout_amount = VALUES(bailout_amount), penalty_amount = VALUES(penalty_amount),
             slots_claimed = VALUES(slots_claimed), next_slot = VALUES(next_slot),
             deadline_at = VALUES(deadline_at), paused_ms = VALUES(paused_ms),
