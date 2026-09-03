@@ -58,7 +58,9 @@ CB.SOURCE = {
 
 CB.MONEY_SOURCES = { cash = true, bank = true, dirty = true }
 
-CB.PORTION = { BASELINE = 'baseline', BONUS = 'bonus' }
+--- A stake is escrow held from the *hunter*, not the creator: the failure
+--- penalty they agreed to when accepting an exclusive contract (§3.6).
+CB.PORTION = { BASELINE = 'baseline', BONUS = 'bonus', STAKE = 'stake' }
 
 CB.MODE = { EXCLUSIVE = 'exclusive', COMPETITIVE = 'competitive' }
 

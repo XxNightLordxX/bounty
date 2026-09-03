@@ -117,9 +117,11 @@ function Amendments.propose(actor, contractId, kind, payload)
     local clean, payloadErr = Amendments.sanitize(kind, payload)
     if not clean then return nil, payloadErr end
 
-    local approvals = {}
-    for cid in pairs(people) do approvals[cid] = false end
-    approvals[actor.cid] = true  -- proposing is approving
+    -- Only the proposer's answer is recorded here. The set of people who
+    -- must agree is recomputed when someone responds, so a hunter who joins
+    -- afterwards is not silently bound by a vote they never cast, and one
+    -- who leaves does not keep a veto over a contract they abandoned.
+    local approvals = { [actor.cid] = true }
 
     local proposal = {
         id          = Storage.nextId('am'),
@@ -213,7 +215,12 @@ function Amendments.respond(actor, amendmentId, approve)
         return false, CB.ERR.BAD_STATE, 'expired'
     end
 
-    if proposal.approvals[actor.cid] == nil then return false, CB.ERR.NOT_PARTICIPANT end
+    local contract = Storage.readContract(proposal.contract_id)
+    if not contract then return false, CB.ERR.NOT_FOUND end
+
+    -- Live participants, not the set captured when the proposal was made.
+    local people = participants(contract)
+    if not people[actor.cid] then return false, CB.ERR.NOT_PARTICIPANT end
 
     if not approve then
         proposal.outcome = 'declined'
@@ -227,8 +234,8 @@ function Amendments.respond(actor, amendmentId, approve)
 
     proposal.approvals[actor.cid] = true
 
-    for _, approved in pairs(proposal.approvals) do
-        if not approved then
+    for cid in pairs(people) do
+        if not proposal.approvals[cid] then
             Storage.writeAmendment(proposal)
             return true, nil, 'pending'
         end

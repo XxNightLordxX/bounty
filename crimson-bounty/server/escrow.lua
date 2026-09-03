@@ -322,6 +322,12 @@ function Escrow.release(contractId, recipientCid, filter, reason)
         if filter then
             if filter.portion and line.portion ~= filter.portion then matches = false end
             if filter.slot and line.slot ~= filter.slot then matches = false end
+            if filter.staker and line.staker ~= filter.staker then matches = false end
+            -- A release that names no portion is a general refund, and must
+            -- not sweep up a hunter's stake along with the creator's escrow.
+            if not filter.portion and line.portion == CB.PORTION.STAKE then matches = false end
+        elseif line.portion == CB.PORTION.STAKE then
+            matches = false
         end
 
         if matches then
@@ -411,7 +417,7 @@ function Escrow.moneyValue(contractId, filter)
             if filter.portion and line.portion ~= filter.portion then matches = false end
             if filter.slot and line.slot ~= filter.slot then matches = false end
         end
-        if matches and CB.MONEY_SOURCES[line.source] then
+        if matches and line.portion ~= CB.PORTION.STAKE and CB.MONEY_SOURCES[line.source] then
             if line.state ~= CB.ESCROW_STATE.SETTLED then
                 total = total + (line.amount or 0)
             end

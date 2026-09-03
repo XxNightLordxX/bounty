@@ -202,3 +202,86 @@ describe('state machine', function()
         eq(Env.players[1].PlayerData.money.cash, 100000, 'no second refund')
     end)
 end)
+
+describe('failure penalty', function()
+    local function withPenalty(amount)
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } },
+            penaltyAmount = amount,
+        })
+        return s, f, c
+    end
+
+    it('stakes the penalty from the hunter at acceptance', function()
+        local s, f, c = withPenalty(10000)
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        eq(Env.players[3].PlayerData.money.bank, 40000, 'staked up front, not merely promised')
+    end)
+
+    it('refuses acceptance from a hunter who cannot cover the stake', function()
+        local s, f, c = withPenalty(10000)
+        Env.players[3].PlayerData.money.bank = 100
+        Env.players[3].PlayerData.money.cash = 100
+        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        falsy(ok)
+        eq(err, CB.ERR.INSUFFICIENT)
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'and the contract stays open')
+    end)
+
+    it('forfeits the stake to the creator when the hunter walks away', function()
+        local s, f, c = withPenalty(10000)
+        s.contracts.accept(f.hunter, c.id, false)
+        local creatorBefore = Env.players[1].PlayerData.money.bank
+
+        truthy(s.contracts.abandon(f.hunter, c.id))
+        eq(Env.players[1].PlayerData.money.bank, creatorBefore + 10000, 'creator keeps the penalty')
+        eq(Env.players[3].PlayerData.money.bank, 40000, 'hunter does not get it back')
+    end)
+
+    it('returns the stake when the hunter delivers', function()
+        local s, f, c = withPenalty(10000)
+        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        eq(Env.players[3].PlayerData.money.bank, 50000, 'stake returned in full')
+        eq(Env.players[3].PlayerData.money.cash, 10000, 'and the reward paid')
+    end)
+
+    it('forfeits the stake when the contract expires under them', function()
+        local s, f, c = withPenalty(10000)
+        s.contracts.accept(f.hunter, c.id, false)
+        local creatorBefore = Env.players[1].PlayerData.money.bank
+
+        s.contracts.resolve(c.id, CB.STATE.EXPIRED, 'CREATOR1', nil, 'expired')
+        eq(Env.players[1].PlayerData.money.bank, creatorBefore + 10000, 'the penalty is the point')
+    end)
+
+    it('returns the stake when the creator cancels instead', function()
+        local s, f, c = withPenalty(10000)
+        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        eq(Env.players[3].PlayerData.money.bank, 50000, 'not the hunter\'s fault, not their loss')
+    end)
+
+    it('never counts a stake as part of the contract reward', function()
+        local s, f, c = withPenalty(10000)
+        s.contracts.accept(f.hunter, c.id, false)
+        eq(s.escrow.moneyValue(c.id), 5000, 'the board shows the reward, not the hunter\'s stake')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        eq(row.reward.baseline, 5000)
+    end)
+
+    it('does not sweep a stake into a general refund', function()
+        local s, f, c = withPenalty(10000)
+        s.contracts.accept(f.hunter, c.id, false)
+        local creatorBefore = Env.players[1].PlayerData.money.cash
+
+        s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        eq(Env.players[1].PlayerData.money.cash, creatorBefore + 5000,
+            'the creator gets their escrow back and nothing of the stake')
+        eq(Env.players[3].PlayerData.money.bank, 50000)
+    end)
+end)

@@ -332,3 +332,71 @@ describe('amendment payloads are bounded', function()
         eq(s.storage.readAmendment(proposal.id).outcome, 'expired')
     end)
 end)
+
+describe('bailout money survives everything', function()
+    local function queued()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 10000,
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        truthy(s.bailout.buy(f.target, c.id))
+        return s, f, c
+    end
+
+    it('persists a queued buyout on the contract, not in memory', function()
+        local s, f, c = queued()
+        local stored = s.storage.readContract(c.id)
+        truthy(stored.bailout_queued_at, 'a restart must not lose the queued buyout')
+        eq(stored.bailout_paid_amount, 10000)
+        eq(stored.bailout_paid_by, 'TARGET01')
+    end)
+
+    it('settles a queued buyout that was pending across a restart', function()
+        local s, f, c = queued()
+        -- Simulate a restart: a fresh process reads the queue from storage.
+        s.bailout.init({ storage = s.storage, identity = s.identity,
+            contracts = s.contracts, escrow = s.escrow, audit = s.audit, notify = s.notify })
+
+        Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
+        eq(s.bailout.processQueue(), 1, 'the queued buyout survives a restart')
+        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+    end)
+
+    it('owes the premium to an offline creator instead of dropping it', function()
+        local s, f, c = queued()
+        Env.removePlayer(1)  -- creator logs out before it settles
+
+        Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
+        s.bailout.processQueue()
+
+        local owed = s.storage.readPending('CREATOR1')
+        truthy(#owed > 0, 'the premium must be owed, not silently dropped')
+
+        -- The creator comes back and is paid.
+        Env.addPlayer({ source = 1, citizenid = 'CREATOR1', license = 'license:aaa', cash = 0, bank = 0 })
+        local before = Env.players[1].PlayerData.money.bank + Env.players[1].PlayerData.money.cash
+        s.escrow.retryPending('CREATOR1')
+        local after = Env.players[1].PlayerData.money.bank + Env.players[1].PlayerData.money.cash
+        truthy(after > before, 'the owed premium and escrow are delivered on return')
+    end)
+
+    it('refunds a cash premium as cash, not as bank money', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[2].PlayerData.money.bank = 0
+        Env.players[2].PlayerData.money.cash = 50000
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 10000,
+        })
+        truthy(s.bailout.buy(f.target, c.id))
+        eq(Env.players[2].PlayerData.money.cash, 40000, 'paid from cash')
+        eq(Env.players[1].PlayerData.money.cash, 95000 + 5000 + 10000,
+            'creator receives the premium as cash too')
+        eq(Env.players[1].PlayerData.money.bank, 100000, 'and no bank money appeared')
+    end)
+end)

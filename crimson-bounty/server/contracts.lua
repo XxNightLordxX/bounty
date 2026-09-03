@@ -269,6 +269,34 @@ function Contracts.accept(actor, contractId, anonymous)
         end
     end
 
+    -- The failure penalty is staked here, at acceptance, or not at all: a
+    -- penalty that is only charged after a failure is a penalty the hunter
+    -- can walk away from (§3.6). The hunter is told the amount before this
+    -- point, and refusing to stake simply refuses the contract.
+    local stake = contract.penalty_amount or 0
+    if stake > 0 then
+        local account = (actor.player.Functions.GetMoney('bank') or 0) >= stake and 'bank' or 'cash'
+        if (actor.player.Functions.GetMoney(account) or 0) < stake then
+            -- Undo the state change made for an exclusive acceptance.
+            if contract.mode == CB.MODE.EXCLUSIVE then
+                Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
+            end
+            return false, CB.ERR.INSUFFICIENT
+        end
+
+        local ok = Escrow.take(actor, contractId, { {
+            slot = 0, portion = CB.PORTION.STAKE, source = account,
+            amount = stake, staker = actor.cid,
+        } })
+        if not ok then
+            if contract.mode == CB.MODE.EXCLUSIVE then
+                Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
+            end
+            return false, CB.ERR.INSUFFICIENT
+        end
+        Audit.financial('stake_taken', actor.cid, contractId, { amount = stake })
+    end
+
     local record = {
         id            = Storage.nextId('hn'),
         contract_id   = contractId,
@@ -298,6 +326,14 @@ function Contracts.abandon(actor, contractId)
     if not hunter or hunter.state ~= 'active' then return false, CB.ERR.NOT_PARTICIPANT end
 
     Storage.updateHunter(hunter.id, { state = 'abandoned', left_at = os.time() })
+
+    -- Walking away from an accepted contract forfeits the stake to the
+    -- creator. That is what the penalty is for.
+    local forfeited = Escrow.release(contractId, contract.creator_cid,
+        { portion = CB.PORTION.STAKE, staker = actor.cid }, 'penalty_forfeited')
+    if forfeited then
+        Audit.financial('stake_forfeited', actor.cid, contractId, {})
+    end
 
     local remaining = 0
     local hunters = Storage.readHunters(contractId)
@@ -367,6 +403,10 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment)
     Storage.writeContract(contract)
     Storage.updateHunter(hunter.id, { last_claim_at = os.time(), claims = (hunter.claims or 0) + 1 })
 
+    -- Delivered: the stake goes back to the hunter who put it up.
+    Escrow.release(contractId, hunterCid,
+        { portion = CB.PORTION.STAKE, staker = hunterCid }, 'stake_returned')
+
     Audit.financial('slot_claimed', hunterCid, contractId, {
         slot = slot, fulfilment = fulfilment,
         settled = baseline.settled + bonus.settled,
@@ -375,7 +415,12 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment)
 
     local exhausted = contract.next_slot > (contract.payout_slots or 1)
     if exhausted then
-        -- Last slot: the contract is finished for everyone.
+        -- Last slot: the contract is finished for everyone. Anything still
+        -- held — a top-up that landed on a slot nobody claimed, an odd line
+        -- from an amendment — goes back to the creator before the contract
+        -- goes terminal, because nothing can reach it afterwards.
+        Escrow.release(contractId, contract.creator_cid, nil, 'unclaimed_remainder')
+
         contract.resolved_at = os.time()
         contract.resolution = 'completed'
         Storage.writeContract(contract)
@@ -417,6 +462,18 @@ function Contracts.resolve(contractId, terminal, recipientCid, filter, reason)
     contract.resolved_at = os.time()
     contract.resolution = reason
     Storage.writeContract(contract)
+
+    -- Stakes resolve by why the contract ended: an expiry is the hunter
+    -- failing, so the creator keeps it; anything else returns it.
+    local hunters = Storage.readHunters(contractId)
+    for i = 1, #hunters do
+        local hunter = hunters[i]
+        local toCreator = (terminal == CB.STATE.EXPIRED) and hunter.state == 'active'
+        Escrow.release(contractId,
+            toCreator and contract.creator_cid or hunter.hunter_cid,
+            { portion = CB.PORTION.STAKE, staker = hunter.hunter_cid },
+            toCreator and 'penalty_forfeited' or 'stake_returned')
+    end
 
     local _, result = Escrow.release(contractId, recipientCid, filter, reason)
 

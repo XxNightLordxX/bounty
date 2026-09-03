@@ -173,6 +173,18 @@ end
 
 --- A revive invalidates every pending completion for that player: a target
 --- who is back on their feet was not eliminated (§7.4).
+---
+--- The claim is verified against the medical state before anything is
+--- cleared. Taking it on trust would let a target's client void a hunter's
+--- legitimate pending kill by asserting a revive that never happened.
+function Death.onRevivedVerified(source, cid)
+    if Identity.isTrulyDead(source) then
+        Audit.rejected('revive_claim_while_dead', cid, nil, {})
+        return 0
+    end
+    return Death.onRevived(cid)
+end
+
 function Death.onRevived(cid)
     local cleared = 0
     for key, record in pairs(pending) do

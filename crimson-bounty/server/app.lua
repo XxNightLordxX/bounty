@@ -272,7 +272,7 @@ function App.register()
             deps.audit.rejected('ratelimit_iRevived', actor.cid, nil, {})
             return
         end
-        local ok, err = pcall(deps.death.onRevived, actor.cid)
+        local ok, err = pcall(deps.death.onRevivedVerified, src, actor.cid)
         if not ok then deps.audit.rejected('error_iRevived', actor.cid, nil, { error = tostring(err) }) end
     end)
 end
