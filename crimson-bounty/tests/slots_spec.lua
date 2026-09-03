@@ -328,3 +328,34 @@ describe('the kidnapping bonus is real money', function()
         eq(row.reward.bonus, 5000, 'the +alive figure must be the real one')
     end)
 end)
+
+describe('an explicit bonus is not doubled by a percentage', function()
+    it('leaves a slot that names its own bonus alone', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 10000 }, bonus = { cash = 1000 } },
+            bonusPercent = 50,
+        })
+        truthy(c)
+        eq(s.escrow.moneyValue(c.id, CB.PORTION.BONUS), 1000,
+            'the creator said 1000; they must not be charged 6000')
+    end)
+
+    it('still derives one for a slot that does not', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { slots = {
+                { baseline = { cash = 10000 }, bonus = { cash = 1000 } },
+                { baseline = { cash = 10000 } },
+            } },
+            bonusPercent = 50,
+        })
+        truthy(c)
+        eq(s.escrow.moneyValue(c.id, { slot = 1, portion = CB.PORTION.BONUS }), 1000)
+        eq(s.escrow.moneyValue(c.id, { slot = 2, portion = CB.PORTION.BONUS }), 5000)
+    end)
+end)

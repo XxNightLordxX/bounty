@@ -15,8 +15,15 @@ local Identity = {}
 local sessionStart = {}
 
 --- Record a player's arrival. Called from the connection bridge.
-function Identity.beginSession(cid)
-    if cid and not sessionStart[cid] then sessionStart[cid] = os.time() end
+---
+--- `observed` marks a session we merely noticed rather than watched begin —
+--- a player who was already connected when the resource started. Their real
+--- session length is unknown, so the new-player rule must not treat them as
+--- having just walked in.
+function Identity.beginSession(cid, observed)
+    if not cid or sessionStart[cid] then return false end
+    sessionStart[cid] = { at = os.time(), observed = observed == true }
+    return true
 end
 
 function Identity.endSession(cid)
@@ -27,8 +34,11 @@ end
 --- arrive (a resource restart mid-session, for instance).
 function Identity.sessionMinutes(cid)
     local began = sessionStart[cid]
-    if not began then return nil end
-    return math.floor((os.time() - began) / 60)
+    -- Nil for a session we did not watch start: unknown, not zero. Treating
+    -- a restart as everyone having just arrived would make the whole server
+    -- untargetable for ten minutes.
+    if not began or began.observed then return nil end
+    return math.floor((os.time() - began.at) / 60)
 end
 
 --- Total playtime in hours, from whichever provider the server configures.
@@ -64,6 +74,10 @@ function Identity.resolve(source)
     local data = player.PlayerData
     local cid = Util.toCitizenId(data.citizenid)
     if not cid then return nil, CB.ERR.NO_PLAYER end
+
+    -- Note anyone we have not seen before, so their state is tracked even
+    -- if this resource started after they connected.
+    Identity.beginSession(cid, true)
 
     return {
         source  = src,

@@ -108,9 +108,11 @@ function Bridges.install(modules)
         local actor = modules.identity.resolve(src)
         if actor then
             connected[src] = actor.cid
-            -- Session length is measured here rather than asked of the
-            -- framework, so the new-player rule always has an answer.
-            modules.identity.beginSession(actor.cid)
+            -- A session we watched begin, so its length is known exactly.
+            -- Identity.resolve may already have noted them as observed; this
+            -- replaces that with the real thing.
+            modules.identity.endSession(actor.cid)
+            modules.identity.beginSession(actor.cid, false)
         end
         return actor
     end

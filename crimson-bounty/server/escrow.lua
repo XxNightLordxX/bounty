@@ -171,10 +171,20 @@ function Escrow.validate(actor, spec, bonusPercent)
     -- what a kill is worth.
     bonusPercent = Util.toCount(bonusPercent, Config.Bonus.maxPercent) or 0
     if bonusPercent > 0 then
+        -- A slot that already names its own bonus is left alone: the
+        -- creator said exactly what they meant, and deriving another on top
+        -- would charge them twice for one promise.
+        local explicit = {}
+        for i = 1, #lines do
+            if lines[i].portion == CB.PORTION.BONUS then explicit[lines[i].slot] = true end
+        end
+
         local derived = {}
         for i = 1, #lines do
             local line = lines[i]
-            if line.portion == CB.PORTION.BASELINE and CB.MONEY_SOURCES[line.source] then
+            if line.portion == CB.PORTION.BASELINE
+                and not explicit[line.slot]
+                and CB.MONEY_SOURCES[line.source] then
                 local extra = math.floor(line.amount * (bonusPercent / 100))
                 if extra > 0 then
                     derived[#derived + 1] = {

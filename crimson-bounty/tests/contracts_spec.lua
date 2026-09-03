@@ -54,7 +54,10 @@ describe('contract creation', function()
     it('refuses a target who only just connected', function()
         local s = newStack()
         local f = fixture(s)
-        s.identity.beginSession('TARGET01')
+        -- A session the resource watched begin, as the connection bridge
+        -- records it.
+        s.identity.endSession('TARGET01')
+        s.identity.beginSession('TARGET01', false)
         local contract, err = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
         })
@@ -679,5 +682,33 @@ describe('post-respawn immunity', function()
         })
         falsy(again, 'paying to be left alone should buy more than the usual cooldown')
         eq(err, CB.ERR.TARGET_PROTECTED)
+    end)
+end)
+
+describe('session tracking survives a restart', function()
+    it('does not treat everyone as new when the resource starts mid-session', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        -- Identity.resolve has already noted the target, but only as
+        -- observed: the resource did not watch them arrive.
+        falsy(s.identity.sessionMinutes('TARGET01'),
+            'an observed session length is unknown, not zero')
+
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        truthy(c, 'a restart must not make the whole server untargetable: ' .. tostring(err))
+    end)
+
+    it('measures a session it did watch begin', function()
+        local s = newStack()
+        fixture(s)
+        s.identity.endSession('TARGET01')
+        s.identity.beginSession('TARGET01', false)
+        eq(s.identity.sessionMinutes('TARGET01'), 0)
+
+        Env.advance(900)
+        eq(s.identity.sessionMinutes('TARGET01'), 15)
     end)
 end)
