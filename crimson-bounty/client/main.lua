@@ -125,7 +125,7 @@ local UI_EVENTS = {
     'create', 'accept', 'abandon',
     'requestPhotoToken', 'armKidnap', 'kidnapProgress',
     'bailout', 'informant',
-    'addEscrow', 'improve', 'propose', 'respondAmendment',
+    'addEscrow', 'improve', 'propose', 'respondAmendment', 'amendments',
     'threads', 'readThread', 'sendMessage', 'requestCall',
 }
 

@@ -166,6 +166,21 @@ input:focus, select:focus, textarea:focus {
 .slot h4 { font-size: 0.72rem; color: var(--crimson-bright);
   text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.45rem; }
 
+/* ---------- amendment proposals ----------
+   A change one side has put on the table and the other has to answer. */
+
+.proposals { margin-top: 0.6rem; }
+.proposal {
+  border: 1px solid var(--crimson-deep); border-radius: 0.5rem;
+  padding: 0.55rem; margin-top: 0.4rem; background: rgba(180, 30, 50, 0.06);
+}
+.proposal .what { font-size: 0.82rem; color: var(--ink); }
+.proposal .who {
+  font-size: 0.66rem; color: var(--ink-dim); text-transform: uppercase;
+  letter-spacing: 0.05em; margin-top: 0.2rem;
+}
+.proposal .hint { margin-top: 0.35rem; }
+
 /* ---------- dialog ----------
    In-page, because FiveM's NUI never shows a native confirm or prompt. */
 

@@ -482,6 +482,127 @@ async function main() {
     });
   })();
 
+  // Proposals, approvals, declines and expiry have all been implemented on
+  // the server since the first commit, and nothing rendered any of it.
+  await (async function amendmentPanel() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hunter';
+    held.myAlias = 'Operative #1';
+
+    let answered = null;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+      ledger: LEDGER,
+      amendments: { ok: true, data: [{
+        id: 'am00000001', kind: 'shorten_deadline', payload: { seconds: 900 },
+        proposer: 'The client', mine: false, answered: false, waiting: 1,
+        expires: 0
+      }] },
+      respondAmendment: function (body) {
+        answered = body;
+        return { ok: true, data: { outcome: 'applied' } };
+      }
+    });
+    await settle(); await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+
+    it('shows a proposal in words rather than a wire value', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('Shorten the deadline by 15 minutes') !== -1,
+        'the change, readably: ' + text);
+      falsy(text.indexOf('shorten_deadline') !== -1,
+        'never the raw kind: ' + text);
+      truthy(text.indexOf('The client proposed this') !== -1, 'and who put it there');
+    });
+
+    const buttons = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; });
+    const agree = buttons.filter(function (n) { return n.textContent === 'Agree'; })[0];
+
+    it('offers both answers', function () {
+      const labels = buttons.map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('Agree') !== -1, 'agree: ' + labels.join(','));
+      truthy(labels.indexOf('Decline') !== -1, 'decline: ' + labels.join(','));
+    });
+
+    // Guarded, so a missing button fails the test above by name instead of
+    // taking the whole suite down with a stack trace.
+    if (agree) {
+      agree.onclick();
+      await settle(); await settle();
+    }
+
+    it('sends the answer the server expects', function () {
+      truthy(answered, 'nothing was sent');
+      eq(answered.id, 'am00000001');
+      eq(answered.approve, true);
+    });
+
+    it('says what the answer settled', function () {
+      truthy(app.notice().indexOf('in effect') !== -1, 'the outcome: ' + app.notice());
+    });
+  })();
+
+  await (async function ownProposalIsNotAnswerable() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hunter';
+    held.myAlias = 'Operative #1';
+
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+      ledger: LEDGER,
+      amendments: { ok: true, data: [{
+        id: 'am00000001', kind: 'cancel', payload: {},
+        proposer: 'Operative #1', mine: true, answered: true, waiting: 1, expires: 0
+      }] }
+    });
+    await settle(); await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+
+    it('does not let a proposer vote on their own proposal twice', function () {
+      const labels = app.view.all()
+        .filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      falsy(labels.indexOf('Agree') !== -1, 'no second vote: ' + labels.join(','));
+      truthy(app.view.textContent.indexOf('Your proposal') !== -1, 'it is marked as theirs');
+      truthy(app.view.textContent.indexOf('Waiting on 1 other party') !== -1,
+        'and says who it is waiting for: ' + app.view.textContent);
+    });
+  })();
+
+  await (async function unknownAmendmentKind() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hunter';
+    held.myAlias = 'Operative #1';
+
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+      ledger: LEDGER,
+      amendments: { ok: true, data: [{
+        id: 'am00000002', kind: 'some_future_kind', payload: {},
+        proposer: 'The client', mine: false, answered: false, waiting: 1, expires: 0
+      }] }
+    });
+    await settle(); await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+
+    it('still offers an answer to a kind it does not recognise', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('A change to this contract') !== -1,
+        'a proposal nobody can read is a proposal nobody can refuse: ' + text);
+      falsy(text.indexOf('some_future_kind') !== -1, 'and never the wire value');
+      const labels = app.view.all()
+        .filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('Decline') !== -1, 'it can still be refused');
+    });
+  })();
+
   // The server has had a call path since the first commit and the app had no
   // button that reached it, so the whole feature was unreachable.
   await (async function threadCall() {

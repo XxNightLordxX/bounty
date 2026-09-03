@@ -18,7 +18,10 @@
     // Items and weapons chosen per payout slot. These live here rather than
     // in the DOM because the picker rebuilds its own markup on every add and
     // remove, and a rebuilt <select> forgets what was put in it.
-    picked: {}
+    picked: {},
+    // Open amendment proposals, keyed by contract. Read on demand rather
+    // than carried in every listing row: most contracts have none.
+    proposals: {}
   };
 
   /* ---------- transport ---------- */
@@ -316,13 +319,19 @@
       };
       row.appendChild(quit);
 
+      var propose = el('button', 'ghost', 'Propose change');
+      propose.onclick = function () { proposeChange(contract); };
+      row.appendChild(propose);
+
       // Live progress if the countdown is running, otherwise the snapshot
       // that came with the projection.
       var progress = state.progress[contract.id] || contract.kidnapProgress;
-      if (progress) {
+      var panel = proposalPanel(contract);
+      if (progress || panel) {
         var wrap = el('div');
         wrap.appendChild(row);
-        wrap.appendChild(countdown(progress));
+        if (progress) { wrap.appendChild(countdown(progress)); }
+        if (panel) { wrap.appendChild(panel); }
         return wrap;
       }
       return row;
@@ -346,6 +355,18 @@
       var extend = el('button', 'ghost', 'Extend deadline');
       extend.onclick = function () { improveContract(contract); };
       row.appendChild(extend);
+
+      var change = el('button', 'ghost', 'Propose change');
+      change.onclick = function () { proposeChange(contract); };
+      row.appendChild(change);
+
+      var creatorPanel = proposalPanel(contract);
+      if (creatorPanel) {
+        var creatorWrap = el('div');
+        creatorWrap.appendChild(row);
+        creatorWrap.appendChild(creatorPanel);
+        return creatorWrap;
+      }
       return row;
     }
 
@@ -522,6 +543,142 @@
   }
 
   // Improvements apply at once: they can only benefit the hunter.
+  /* ---------- contract amendments ----------
+     The server has implemented proposals, approvals, declines and expiry
+     since the first commit, and nothing rendered any of it: a change could
+     be proposed and the other party had no way to see it, let alone answer. */
+
+  // A proposal in words. The kind alone ('shorten_deadline') is a wire
+  // value, not something to put in front of a player.
+  var AMENDMENT = {
+    reduce_reward: function (p) {
+      return 'Reduce the reward' + (p && p.amount ? ' by ' + money(p.amount) : '');
+    },
+    shorten_deadline: function (p) {
+      return 'Shorten the deadline'
+        + (p && p.seconds ? ' by ' + Math.round(p.seconds / 60) + ' minutes' : '');
+    },
+    raise_penalty: function (p) {
+      return 'Raise the failure stake' + (p && p.amount ? ' to ' + money(p.amount) : '');
+    },
+    change_mode: function (p) {
+      return 'Change this to a ' + ((p && p.mode) === 'exclusive'
+        ? 'single-hunter contract' : 'competitive contract');
+    },
+    change_reason: function (p) {
+      return 'Change the stated reason' + (p && p.reason ? ' to "' + p.reason + '"' : '');
+    },
+    withdraw: function () { return 'Withdraw from this contract'; },
+    cancel: function () { return 'Cancel this contract outright'; }
+  };
+
+  function describeAmendment(proposal) {
+    var describe = AMENDMENT[proposal.kind];
+    // An unknown kind is still shown, because a proposal nobody can read is
+    // a proposal nobody can refuse.
+    return describe ? describe(proposal.payload) : 'A change to this contract';
+  }
+
+  function loadProposals(contract) {
+    post('amendments', { id: contract.id }).then(function (r) {
+      if (!r.ok) { return fail(r); }
+      state.proposals[contract.id] = r.data || [];
+      render();
+    });
+  }
+
+  function answerProposal(proposal, approve) {
+    post('respondAmendment', { id: proposal.id, approve: approve }).then(function (r) {
+      if (!r.ok) { return fail(r); }
+      var outcome = r.data && r.data.outcome;
+      say(outcome === 'applied' ? 'Agreed — the change is in effect.'
+        : outcome === 'declined' ? 'Declined.'
+        : 'Recorded. Waiting on the other party.', 'gold');
+      state.proposals = {};
+      refresh();
+    });
+  }
+
+  // The panel under a card: everything currently on the table, and the two
+  // buttons that answer it.
+  function proposalPanel(contract) {
+    var open = state.proposals[contract.id];
+    if (!open || open.length === 0) { return null; }
+
+    var box = el('div', 'proposals');
+    open.forEach(function (proposal) {
+      var item = el('div', 'proposal');
+      item.appendChild(el('div', 'what', describeAmendment(proposal)));
+      item.appendChild(el('div', 'who',
+        proposal.mine ? 'Your proposal' : proposal.proposer + ' proposed this'));
+
+      if (proposal.mine || proposal.answered) {
+        item.appendChild(el('div', 'hint', proposal.waiting === 0
+          ? 'Waiting to be applied.'
+          : 'Waiting on ' + proposal.waiting
+              + (proposal.waiting === 1 ? ' other party.' : ' other parties.')));
+      } else {
+        var row = el('div', 'row');
+        var yes = el('button', 'primary', 'Agree');
+        yes.onclick = function () { answerProposal(proposal, true); };
+        var no = el('button', 'danger', 'Decline');
+        no.onclick = function () { answerProposal(proposal, false); };
+        row.appendChild(yes);
+        row.appendChild(no);
+        item.appendChild(row);
+      }
+
+      box.appendChild(item);
+    });
+
+    return box;
+  }
+
+  // Propose a change that needs the other party's agreement, as opposed to
+  // `improve`, which applies at once because it can only help them.
+  function proposeChange(contract) {
+    var options = [
+      { label: 'Shorten the deadline', kind: 'shorten_deadline', minutes: true },
+      { label: 'Reduce the reward', kind: 'reduce_reward', amount: true },
+      { label: contract.role === 'hunter' ? 'Withdraw' : 'Cancel the contract',
+        kind: contract.role === 'hunter' ? 'withdraw' : 'cancel' }
+    ];
+
+    state.dialog = {
+      kind: 'choice',
+      question: 'Propose a change',
+      detail: 'Both sides have to agree before it takes effect.',
+      options: options.map(function (option) {
+        return {
+          label: option.label,
+          run: function () {
+            if (option.minutes) {
+              return askNumber(option.label, 'By how many minutes?', function (minutes) {
+                sendProposal(contract, option.kind, { seconds: minutes * 60 });
+              });
+            }
+            if (option.amount) {
+              return askNumber(option.label, 'By how much?', function (amount) {
+                sendProposal(contract, option.kind, { amount: amount });
+              });
+            }
+            sendProposal(contract, option.kind, {});
+          }
+        };
+      })
+    };
+    render();
+  }
+
+  function sendProposal(contract, kind, payload) {
+    post('propose', { id: contract.id, kind: kind, payload: payload }).then(function (r) {
+      if (!r.ok) { return fail(r); }
+      say('Proposed. The other party has to agree.', 'gold');
+      state.proposals = {};
+      refresh();
+    });
+  }
+
   function improveContract(contract) {
     askNumber('Extend the deadline by how many minutes?',
               'This applies at once — it can only help whoever is hunting.',
@@ -1194,7 +1351,18 @@
 
   function refresh() {
     post('list', { page: 1 }).then(function (r) { if (r.ok) { state.board = r.data; render(); } });
-    post('mine', {}).then(function (r) { if (r.ok) { state.mine = r.data; render(); } });
+    post('mine', {}).then(function (r) {
+      if (!r.ok) { return; }
+      state.mine = r.data;
+      render();
+      // Only for contracts this player is actually party to, and only for
+      // ones not already loaded: most contracts have no open proposal and
+      // asking about every one of them every refresh would be three
+      // requests a card.
+      (r.data.created || []).concat(r.data.accepted || []).forEach(function (c) {
+        if (state.proposals[c.id] === undefined) { loadProposals(c); }
+      });
+    });
     post('ledger', {}).then(function (r) { if (r.ok) { state.ledger = r.data; render(); } });
   }
 

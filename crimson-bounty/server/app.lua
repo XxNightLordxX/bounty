@@ -310,6 +310,15 @@ function App.register()
         return true
     end)
 
+    -- What is on the table right now. Storage.readOpenAmendments was read
+    -- only by the expiry sweep, so a proposal could be made and approved
+    -- and nobody could see one waiting.
+    handler('amendments', 'search', function(actor, payload)
+        local open, err = deps.amendments.openFor(actor, payload.id)
+        if not open then return false, err end
+        return open
+    end)
+
     handler('propose', 'amend', function(actor, payload)
         local proposal, err = deps.amendments.propose(actor, payload.id, payload.kind, payload.payload)
         if not proposal then return false, err end

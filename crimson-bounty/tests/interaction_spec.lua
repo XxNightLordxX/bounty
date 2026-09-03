@@ -1092,3 +1092,97 @@ describe('masked calls', function()
         end)
     end)
 end)
+
+
+--- What is on the table. readOpenAmendments was read only by the expiry
+--- sweep, so a change could be proposed and the other party had no way to
+--- see one waiting, let alone answer it.
+describe('open amendments', function()
+    local function proposed(opts)
+        opts = opts or {}
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+            anonymous = opts.anonCreator,
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, opts.anonHunter))
+        local p = s.amendments.propose(
+            opts.by == 'hunter' and f.hunter or f.creator, c.id,
+            CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+        truthy(p, 'the proposal should be made')
+        return s, f, c, p
+    end
+
+    it('shows the other party what has been proposed', function()
+        local s, f, c = proposed()
+        local open, err = s.amendments.openFor(f.hunter, c.id)
+        truthy(open, tostring(err))
+        eq(#open, 1)
+        eq(open[1].kind, CB.AMENDMENT.SHORTEN_DEADLINE)
+        eq(open[1].payload.seconds, 600, 'and what it actually changes')
+        eq(open[1].mine, false, 'it is not theirs')
+        eq(open[1].answered, false, 'and they have not answered')
+    end)
+
+    it('marks the proposer their own proposal', function()
+        local s, f, c = proposed()
+        local open = s.amendments.openFor(f.creator, c.id)
+        eq(open[1].mine, true)
+        eq(open[1].answered, true, 'proposing is agreeing')
+        eq(open[1].waiting, 1, 'one other party still to answer')
+    end)
+
+    it('does not name an anonymous creator who proposed it', function()
+        local s, f, c = proposed({ anonCreator = true })
+        local open = s.amendments.openFor(f.hunter, c.id)
+        eq(open[1].proposer, 'The client',
+            'a proposal is not a hole in anonymity')
+        falsy(tostring(open[1].proposer):find('Vic'))
+    end)
+
+    it('names an anonymous hunter by their alias, never their name', function()
+        local s, f, c = proposed({ anonHunter = true, by = 'hunter' })
+        local open = s.amendments.openFor(f.creator, c.id)
+        truthy(tostring(open[1].proposer):find('Operative'),
+            'the alias they are known by: ' .. tostring(open[1].proposer))
+        falsy(tostring(open[1].proposer):find('Rook'))
+        falsy(tostring(open[1].proposer):find('HUNTER01'))
+    end)
+
+    it('shows nobody outside the contract anything', function()
+        local s, f, c = proposed()
+        local outsider = Env.addPlayer({ source = 5, citizenid = 'NOSY0001',
+            license = 'license:n', firstname = 'Nos', lastname = 'Ey' })
+        local open, err = s.amendments.openFor(s.identity.resolve(5), c.id)
+        falsy(open, 'an outsider learns nothing')
+        eq(err, CB.ERR.NOT_PARTICIPANT)
+    end)
+
+    it('stops showing one that has been answered', function()
+        local s, f, c, p = proposed()
+        truthy(s.amendments.respond(f.hunter, p.id, true))
+        eq(#s.amendments.openFor(f.creator, c.id), 0, 'a settled question is closed')
+    end)
+
+    it('stops showing one that expired', function()
+        local s, f, c, p = proposed()
+        Env.time = Env.time + Config.Amendments.ProposalExpirySeconds + 1
+        eq(s.amendments.expire(), 1)
+        eq(#s.amendments.openFor(f.creator, c.id), 0)
+    end)
+
+    it('shows nothing on a contract with no proposals', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000 } },
+        })
+        local open = s.amendments.openFor(f.creator, c.id)
+        truthy(open, 'an empty list, not an error')
+        eq(#open, 0)
+    end)
+end)

@@ -263,6 +263,60 @@ function Amendments.propose(actor, contractId, kind, payload)
     return proposal
 end
 
+--- Open proposals on a contract, projected for one viewer.
+---
+--- The proposer is named by role rather than by citizen id, and an
+--- anonymous hunter is named by their alias — a proposal is not a hole in
+--- anonymity just because it carries a name field.
+---@param actor table
+---@param contractId string
+---@return table[]|nil proposals
+---@return string|nil err
+function Amendments.openFor(actor, contractId)
+    contractId = Util.toId(contractId)
+    if not contractId then return nil, CB.ERR.INVALID_INPUT end
+
+    local contract = Storage.readContract(contractId)
+    if not contract then return nil, CB.ERR.NOT_FOUND end
+
+    local people = participants(contract)
+    if not people[actor.cid] then return nil, CB.ERR.NOT_PARTICIPANT end
+
+    local out = {}
+    for _, proposal in ipairs(Storage.readOpenAmendments(contractId)) do
+        -- Who must still answer. Recomputed from the current participants
+        -- for the same reason respond() recomputes it: a hunter who joined
+        -- after the proposal is not bound by a vote they never cast.
+        local waiting = 0
+        for cid in pairs(people) do
+            if not proposal.approvals[cid] then waiting = waiting + 1 end
+        end
+
+        local proposerName
+        if proposal.proposer == contract.creator_cid then
+            proposerName = contract.anon_creator and 'The client' or contract.creator_name
+        else
+            local hunter = Storage.readHunter(contractId, proposal.proposer)
+            proposerName = hunter and hunter.alias or 'An operative'
+        end
+
+        out[#out + 1] = {
+            id        = proposal.id,
+            kind      = proposal.kind,
+            -- Only the fields sanitize kept, which is already the narrow
+            -- set this kind of amendment reads.
+            payload   = proposal.payload,
+            proposer  = proposerName,
+            mine      = proposal.proposer == actor.cid,
+            answered  = proposal.approvals[actor.cid] == true,
+            waiting   = waiting,
+            expires   = proposal.expires_at,
+        }
+    end
+
+    return out
+end
+
 --- Build a payload containing only what `apply` reads for this kind.
 ---@return table|nil clean
 ---@return string|nil err
