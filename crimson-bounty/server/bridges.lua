@@ -152,7 +152,7 @@ function Bridges.install(modules)
         if not modules.app.floodOk(src, 'mugshot') then return end
         local actor = modules.identity.resolve(src)
         if not actor then return end
-        if not modules.ratelimit.check(actor.cid, 'mugshot') then return end
+        if not modules.ratelimit.check(actor, 'mugshot') then return end
         modules.mugshot.store(actor.cid, image)
     end)
 
@@ -161,7 +161,7 @@ function Bridges.install(modules)
         if not modules.app.floodOk(src, 'appearanceChanged') then return end
         local actor = modules.identity.resolve(src)
         if not actor then return end
-        if not modules.ratelimit.check(actor.cid, 'mugshot') then return end
+        if not modules.ratelimit.check(actor, 'mugshot') then return end
         modules.mugshot.invalidate(actor.cid)
     end)
 
@@ -174,6 +174,40 @@ function Bridges.install(modules)
         end
         connected[src] = nil
         Bridges.onPlayerDropped(modules, cid)
+    end)
+
+    -- A character switch. The player stays connected and keeps their source,
+    -- but the character this resource has been dealing with is gone — on
+    -- this server that runs through the selector's /relog, which calls the
+    -- framework's Logout.
+    --
+    -- Without this, everything keyed on the old citizen id is orphaned:
+    -- their session start never ends, their rate-limit buckets and damage
+    -- records stay, and an armed handover keeps its slot in the global
+    -- countdown budget until the grace timer happens to expire it. It is
+    -- the same cleanup as a disconnect, because from here it is the same
+    -- event — that character has left.
+    local function unload(src)
+        src = tonumber(src)
+        if not src then return end
+
+        local cid = connected[src]
+        if not cid then
+            local actor = modules.identity.resolve(src)
+            cid = actor and actor.cid
+        end
+        connected[src] = nil
+        if cid then Bridges.onPlayerDropped(modules, cid) end
+    end
+
+    -- Both spellings: qbx_core emits the QBCore-compatible one, and a build
+    -- that emits its own is still covered. The handler is idempotent, so
+    -- being called twice for one switch costs nothing.
+    AddEventHandler('QBCore:Server:OnPlayerUnload', function(src)
+        unload(src or source)
+    end)
+    AddEventHandler('qbx_core:server:playerLoggedOut', function(src)
+        unload(src or source)
     end)
 
     Bridges.installCommands(modules)
@@ -285,7 +319,7 @@ function Bridges.installCommands(modules)
 
             -- Deliberately past the app's job gate: being barred from the
             -- app is the reason this exists.
-            if not modules.ratelimit.check(actor.cid, 'bailout') then
+            if not modules.ratelimit.check(actor, 'bailout') then
                 return reply(src, 'Slow down.')
             end
 

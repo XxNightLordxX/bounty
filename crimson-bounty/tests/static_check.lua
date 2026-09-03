@@ -488,6 +488,36 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 15. The app never builds markup from data
+--------------------------------------------------------------------------
+--
+-- Contract reasons, target names and hunter aliases are written by other
+-- players and rendered in everyone's phone. Every one of them goes through
+-- textContent today. An innerHTML assignment of anything but a literal
+-- empty string is how that stops being true.
+
+do
+    local src = read('crimson-bounty/ui/app.js') or ''
+    for assignment in src:gmatch('innerHTML%s*=%s*([^;\n]+)') do
+        local value = assignment:match('^%s*(.-)%s*$')
+        if value ~= "''" and value ~= '""' then
+            failures[#failures + 1] =
+                ('ui/app.js assigns innerHTML = %s; player-written text is rendered here '
+                 .. 'and textContent is the only safe way to put it on the page')
+                    :format(value)
+        end
+    end
+
+    for _, sink in ipairs({ 'insertAdjacentHTML', 'document%.write', 'outerHTML%s*=' }) do
+        if src:find(sink) then
+            failures[#failures + 1] =
+                ('ui/app.js uses %s, which builds markup from data')
+                    :format((sink:gsub('%%', '')))
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

@@ -1642,3 +1642,154 @@ describe('topping up a contract that has paid out', function()
         eq(err, CB.ERR.INVALID_REWARD)
     end)
 end)
+
+--- Switching characters.
+---
+--- On this server the selector's /relog calls the framework's Logout, which
+--- fires QBCore:Server:OnPlayerUnload. The player stays connected and keeps
+--- their source, but the character this resource has been dealing with is
+--- gone. Nothing listened for it, so everything keyed on that citizen id was
+--- orphaned.
+describe('a character switch', function()
+    local function switched(s, source)
+        local fire = Env.events['local:QBCore:Server:OnPlayerUnload']
+            or Env.events['QBCore:Server:OnPlayerUnload']
+        truthy(fire, 'the unload event must be handled')
+        _G.source = source
+        fire(source)
+        _G.source = nil
+    end
+
+    local function installed()
+        local s = newStack()
+        local f = fixture(s)
+        require('crimson-bounty.server.bridges').install(s)
+        return s, f
+    end
+
+    it('ends the session of the character that left', function()
+        local s, f = installed()
+        -- fixture() resolved them, which notes an observed session. A
+        -- watched one has to replace it before the length is measurable.
+        s.identity.endSession('CREATOR1')
+        truthy(s.identity.beginSession('CREATOR1', false))
+        Env.time = Env.time + 600
+        truthy(s.identity.sessionMinutes('CREATOR1'), 'the session is running')
+
+        switched(s, 1)
+        falsy(s.identity.sessionMinutes('CREATOR1'),
+            'a character that logged out is not still sitting in a session')
+    end)
+
+    it('releases an armed handover rather than leaking its slot', function()
+        local s, f = installed()
+        local AT = { x = 400.0, y = 400.0, z = 30.0 }
+        for _, src in ipairs({ 1, 2, 3 }) do Env.players[src]._coords = AT end
+        Env.players[2].PlayerData.metadata.ishandcuffed = true
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        eq(s.kidnap.activeCount(), 1)
+
+        -- The hunter switches characters mid-handover.
+        switched(s, 3)
+        eq(s.kidnap.activeCount(), 0,
+            'the countdown slot is global, so a leaked one is taken from everybody')
+    end)
+
+    it('does not hand the next character a fresh set of cooldowns', function()
+        local s, f = installed()
+
+        -- Spend the create bucket as this character.
+        local before = s.identity.resolve(1)
+        truthy(s.ratelimit.check(before, 'create'))
+        truthy(s.ratelimit.check(before, 'create'))
+        falsy(s.ratelimit.check(before, 'create'), 'the bucket is spent')
+
+        switched(s, 1)
+
+        -- The same player, now a different character on the same account.
+        Env.players[1].PlayerData.citizenid = 'CREATOR2'
+        Env.byCitizen['CREATOR2'] = 1
+        local after = s.identity.resolve(1)
+        eq(after.cid, 'CREATOR2', 'a different character')
+        eq(after.account, before.account, 'the same account')
+
+        falsy(s.ratelimit.check(after, 'create'),
+            'switching characters is a menu, and must not be a way to reset a cooldown')
+    end)
+
+    it('still separates two genuinely different accounts', function()
+        local s, f = installed()
+        local creator = s.identity.resolve(1)
+        truthy(s.ratelimit.check(creator, 'create'))
+        truthy(s.ratelimit.check(creator, 'create'))
+        falsy(s.ratelimit.check(creator, 'create'))
+
+        -- Someone else entirely, with their own licence.
+        local other = s.identity.resolve(3)
+        truthy(other.account ~= creator.account, 'a different account')
+        truthy(s.ratelimit.check(other, 'create'),
+            'one player must not spend another player is allowance')
+    end)
+
+    it('refuses when there is no identity to key on', function()
+        local s = newStack()
+        falsy(s.ratelimit.check(nil, 'create'),
+            'no identity is not a licence to act')
+        falsy(s.ratelimit.check({}, 'create'))
+        falsy(s.ratelimit.check(42, 'create'))
+    end)
+
+    it('drops the damage recorded against the character that left', function()
+        local s, f = installed()
+        Env.players[3]._coords = { x = 10.0, y = 10.0, z = 30.0 }
+        Env.players[2]._coords = { x = 11.0, y = 10.0, z = 30.0 }
+        Env.players[2]._health = 200
+        s.death.watch('TARGET01', 2, true)
+        Env.players[2]._health = 60
+        s.death.recordDamage(3, 2, 123456)
+        truthy(s.death.recordFor('TARGET01', 'HUNTER01'))
+
+        switched(s, 2)
+        falsy(s.death.recordFor('TARGET01', 'HUNTER01'),
+            'a hunter must not inherit the next character to hold that id')
+    end)
+
+    it('retires the target handles the character was given', function()
+        local s, f = installed()
+        local handle = s.app.mintTargetHandle('CREATOR1', 'TARGET01')
+        truthy(handle)
+        eq(s.app.resolveTargetHandle('CREATOR1', handle), 'TARGET01')
+
+        switched(s, 1)
+        falsy(s.app.resolveTargetHandle('CREATOR1', handle),
+            'a handle minted for a character that left must not still resolve')
+    end)
+
+    it('survives an unload for a source holding nobody', function()
+        local s, f = installed()
+        local ok = pcall(switched, s, 9999)
+        truthy(ok, 'an unload for a source this resource never saw must not throw')
+    end)
+
+    it('lets the next character start clean', function()
+        local s, f = installed()
+        switched(s, 1)
+
+        -- The same player, now someone else entirely.
+        Env.players[1].PlayerData.citizenid = 'CREATOR2'
+        Env.byCitizen['CREATOR2'] = 1
+
+        local actor = s.identity.resolve(1)
+        truthy(actor, 'the new character resolves')
+        eq(actor.cid, 'CREATOR2')
+        truthy(s.ratelimit.check('CREATOR2', 'search'),
+            'and starts with their own buckets')
+    end)
+end)

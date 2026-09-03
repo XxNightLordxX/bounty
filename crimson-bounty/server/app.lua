@@ -91,7 +91,7 @@ local function handler(name, action, fn)
                 type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
 
-        if action and not deps.ratelimit.check(actor.cid, action) then
+        if action and not deps.ratelimit.check(actor, action) then
             deps.audit.rejected('ratelimit_' .. name, actor.cid, nil, {})
             return App.reply(src, name, false, CB.ERR.RATE_LIMITED, nil,
                 type(payload) == 'table' and tonumber(payload.__rid) or nil)
@@ -378,7 +378,7 @@ function App.register()
 
         local actor = deps.identity.resolve(src)
         if not actor then return end
-        if not deps.ratelimit.check(actor.cid, 'death') then
+        if not deps.ratelimit.check(actor, 'death') then
             deps.audit.rejected('ratelimit_iDied', actor.cid, nil, {})
             return
         end
@@ -396,7 +396,7 @@ function App.register()
 
         local actor = deps.identity.resolve(src)
         if not actor then return end
-        if not deps.ratelimit.check(actor.cid, 'death') then
+        if not deps.ratelimit.check(actor, 'death') then
             deps.audit.rejected('ratelimit_iRevived', actor.cid, nil, {})
             return
         end

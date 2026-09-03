@@ -152,6 +152,16 @@ Config.Limits = {
     DefaultDeadlineSeconds  = 10800,
 }
 
+--- What an action cooldown is counted against (§14.27).
+---
+--- 'license' keys buckets to the account, so switching characters does not
+--- reset them — which on a server with a character selector is otherwise
+--- one menu away. 'citizenid' keys them per character, which is more
+--- permissive and is the older behaviour.
+Config.RateLimit = {
+    Key = 'license',
+}
+
 Config.Cooldowns = {
     create    = { per = 60, burst = 2 },
     accept    = { per = 30, burst = 3 },

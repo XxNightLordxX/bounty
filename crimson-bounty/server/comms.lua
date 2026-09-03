@@ -110,7 +110,7 @@ function Comms.send(actor, contractId, threadHandle, rawBody)
 
     -- This module owns the message bucket, so every caller is throttled and
     -- a message never costs two tokens.
-    if not RateLimit.check(actor.cid, 'message') then return false, CB.ERR.RATE_LIMITED end
+    if not RateLimit.check(actor, 'message') then return false, CB.ERR.RATE_LIMITED end
 
     local body = Util.sanitizeText(rawBody, Config.Relay.MaxLength)
     if not body then return false, CB.ERR.INVALID_INPUT end

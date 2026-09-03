@@ -8,12 +8,38 @@ local buckets = {}
 
 local function now() return GetGameTimer() end
 
---- @param cid string resolved citizen id
+--- The identity a bucket belongs to.
+---
+--- The account where one is known, the citizen id otherwise. A character
+--- selector makes switching instant and free, so a cooldown keyed on the
+--- citizen id alone is one switch away from being reset — and the spec asks
+--- for account-level keying on exactly these counters (§14.27).
+---
+--- Accepts a resolved actor or a bare citizen id: the callers that hold an
+--- actor get the stronger key, and the ones that only have an id still get
+--- a working limit rather than none.
+---@param who table|string
+---@return string|nil
+local function keyFor(who)
+    if type(who) == 'table' then
+        if Config.RateLimit.Key == 'license' and who.account then return who.account end
+        return who.cid
+    end
+    if type(who) == 'string' then return who end
+    return nil
+end
+
+--- @param who table|string resolved actor, or a citizen id
 --- @param action string key into Config.Cooldowns
 --- @return boolean allowed
-function RateLimit.check(cid, action)
+function RateLimit.check(who, action)
     local rule = Config.Cooldowns[action]
     if not rule then return true end
+
+    local cid = keyFor(who)
+    -- No identity at all is not a licence to act; it is the one case where
+    -- refusing is safer than allowing.
+    if not cid then return false end
 
     local key = cid .. ':' .. action
     local bucket = buckets[key]
