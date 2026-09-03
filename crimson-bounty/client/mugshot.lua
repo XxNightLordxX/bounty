@@ -15,7 +15,10 @@ local function renderSelf()
 
     -- A floor here as well as on the server: a client cannot be made to
     -- render in a loop by a flood of requests.
-    local now = GetGameTimer()
+    -- Not GetGameTimer: it wraps, and after a wrap this subtraction is
+    -- permanently negative, so the floor would refuse every render for the
+    -- rest of the session and this player would have no mugshot at all.
+    local now = CrimsonUtil.monotonicMs()
     if now - lastRender < 30000 then return false end
     lastRender = now
 

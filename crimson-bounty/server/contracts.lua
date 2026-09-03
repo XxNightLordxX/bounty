@@ -220,7 +220,7 @@ function Contracts.isImmune(targetActor, opts)
         if since and since < Config.Immunity.PostRespawnSeconds then
             local respawnedAgo = since
             local deathAgo = opts and opts.deathAt
-                and ((GetGameTimer() - opts.deathAt) / 1000) or nil
+                and ((Util.monotonicMs() - opts.deathAt) / 1000) or nil
             local claimPredatesRespawn = deathAgo ~= nil and deathAgo > respawnedAgo
             if not claimPredatesRespawn then return true end
         end

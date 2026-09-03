@@ -2,11 +2,13 @@
 --- Keyed on the resolved citizen id, never on anything from a payload, so
 --- rotating a field in the request cannot buy extra attempts.
 
+local Util = require_shared('util')
+
 local RateLimit = {}
 
 local buckets = {}
 
-local function now() return GetGameTimer() end
+local function now() return Util.monotonicMs() end
 
 --- The identity a bucket belongs to.
 ---

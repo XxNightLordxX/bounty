@@ -67,7 +67,7 @@ local function readCondition(source)
     return {
         health = GetEntityHealth(ped) or 0,
         armour = (GetPedArmour and GetPedArmour(ped)) or 0,
-        at = GetGameTimer(),
+        at = Util.monotonicMs(),
     }
 end
 
@@ -128,7 +128,7 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
 
     list[#list + 1] = {
         attackerCid = attacker.cid,
-        at = GetGameTimer(),
+        at = Util.monotonicMs(),
         weapon = weaponHash,
         distance = distance,
         coords = victimCoords,
@@ -144,7 +144,7 @@ end
 function Death.prune(victimCid)
     local list = damage[victimCid]
     if not list then return end
-    local cutoff = GetGameTimer() - Config.Completion.DeathReportWindowMs
+    local cutoff = Util.monotonicMs() - Config.Completion.DeathReportWindowMs
     for i = #list, 1, -1 do
         if list[i].at < cutoff then table.remove(list, i) end
     end
@@ -432,7 +432,7 @@ function Death.onVictimReport(victimSource, killerServerId)
                     contractId = contract.id,
                     hunterCid  = hit.attackerCid,
                     victimCid  = victim.cid,
-                    at         = GetGameTimer(),
+                    at         = Util.monotonicMs(),
                     coords     = hit.coords,
                     weapon     = hit.weapon,
                 }
@@ -459,7 +459,7 @@ end
 function Death.getPending(contractId, hunterCid)
     local record = pending[contractId .. ':' .. hunterCid]
     if not record then return nil end
-    if GetGameTimer() - record.at > (Config.Completion.PhotoTokenLifetimeSeconds * 1000) then
+    if Util.monotonicMs() - record.at > (Config.Completion.PhotoTokenLifetimeSeconds * 1000) then
         pending[contractId .. ':' .. hunterCid] = nil
         return nil
     end
@@ -506,7 +506,7 @@ function Death.onRevived(cid)
     damage[cid] = nil
 
     local window = (Config.Completion.ProofWindowSeconds or 0) * 1000
-    local now = GetGameTimer()
+    local now = Util.monotonicMs()
 
     local cleared = 0
     for key, record in pairs(pending) do
@@ -528,7 +528,7 @@ end
 --- Without this, entries only expire when their exact key happens to be
 --- read again, so a busy server accumulates them indefinitely.
 function Death.sweep()
-    local now = GetGameTimer()
+    local now = Util.monotonicMs()
     local removed = 0
 
     for key, record in pairs(pending) do

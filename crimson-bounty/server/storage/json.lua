@@ -5,6 +5,8 @@
 --- and a malformed data file halts the resource rather than starting with
 --- empty escrow.
 
+local Util = require_shared('util')
+
 local JsonStore = {}
 
 local db, dirty, lastFlush, seq = nil, false, 0, 0
@@ -113,6 +115,60 @@ local function writeFile(target, value)
     return true
 end
 
+--- Everything the index file holds: the sequence, which contracts own a
+--- shard, and the small tables that are not per-contract.
+---
+--- Built in one place because both the flush and the writability probe write
+--- it, and an index missing a field here is a store that loses whatever the
+--- field held.
+local function buildIndex()
+    local index = { seq = seq, contractIds = {} }
+    for id in pairs(shardIds) do
+        index.contractIds[#index.contractIds + 1] = id
+    end
+    table.sort(index.contractIds)
+
+    -- Everything that is not per-contract. Small, and rewritten whole.
+    index.ledger, index.pending = db.ledger, db.pending
+    index.audit, index.stats = db.audit, db.stats
+    return index
+end
+
+--- Confirm the store's directories are actually writable.
+---
+--- SaveResourceFile writes a file; it does not create the directories above
+--- it. Without data/ and data/contracts/ already present every write fails
+--- and returns nothing useful, so escrow would be taken from players and
+--- never recorded — and the first anyone would know is a restart with the
+--- contracts gone.
+---
+--- Refusing to start is the only honest answer: a store that silently drops
+--- everything is worse than no store.
+function JsonStore.assertWritable()
+    -- The index is the probe: writing it proves data/ is writable and leaves
+    -- the store in exactly the state a flush would, rather than dropping a
+    -- stray file next to it.
+    if not writeFile(path(), buildIndex()) then
+        error(('[crimson-bounty] cannot write %s. Create the directory %s and make it ' ..
+               'writable by the server, or switch Config.Database.Mode away from json. ' ..
+               'Refusing to start: escrow taken from players would not be recorded.')
+               :format(path(), directory()))
+    end
+
+    -- The shard directory is separate, and just as fatal. Nothing reads this
+    -- file; it exists so a missing contracts/ is found at startup rather than
+    -- the first time a contract is created and its escrow disappears.
+    local file = directory() .. '/contracts/.writable'
+    SaveResourceFile(resource, file, json.encode({ at = os.time() }), -1)
+    if not LoadResourceFile(resource, file) then
+        error(('[crimson-bounty] cannot write %s/contracts/. Create that directory and ' ..
+               'make it writable by the server. Refusing to start: every contract would ' ..
+               'be taken and none of them stored.'):format(directory()))
+    end
+
+    return true
+end
+
 --- Read the store.
 ---
 --- A file that exists but will not parse is fatal: starting fresh would
@@ -126,6 +182,7 @@ function JsonStore.open()
         db = json.decode(json.encode(EMPTY))
         dirtyShards, shardIds, indexDirty = {}, {}, true
         JsonStore.save(true)
+        JsonStore.assertWritable()
         return true
     end
 
@@ -202,6 +259,8 @@ function JsonStore.open()
                'Refusing to start on a store this file does not understand.'):format(path()))
     end
 
+    JsonStore.assertWritable()
+
     local count = 0
     for _ in pairs(db.contracts) do count = count + 1 end
     if count > (Config.Database.Json.WarnContractCount or 2000) then
@@ -245,24 +304,13 @@ function JsonStore.save(force)
 
     if indexDirty or force then
         db.seq = seq
-
-        local index = { seq = seq, contractIds = {} }
-        for id in pairs(shardIds) do
-            index.contractIds[#index.contractIds + 1] = id
-        end
-        table.sort(index.contractIds)
-
-        -- Everything that is not per-contract. Small, and rewritten whole.
-        index.ledger, index.pending = db.ledger, db.pending
-        index.audit, index.stats = db.audit, db.stats
-
-        if writeFile(path(), index) then indexDirty = false end
+        if writeFile(path(), buildIndex()) then indexDirty = false end
     end
 
     if not next(dirtyShards) and not indexDirty then
         dirty = false
     end
-    lastFlush = GetGameTimer()
+    lastFlush = Util.monotonicMs()
     return true
 end
 

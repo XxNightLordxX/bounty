@@ -868,3 +868,75 @@ describe('every mysql statement is executable', function()
             'the simulator could not run: ' .. table.concat(failed, ' | '))
     end)
 end)
+
+
+--- The store's directories have to exist before it can use them.
+---
+--- SaveResourceFile writes a file; it does not create the directories above
+--- it. Without data/ and data/contracts/ present, every write fails and
+--- returns nothing useful — escrow would be taken from players and never
+--- recorded, and the first anyone would know is a restart with the
+--- contracts gone.
+describe('an unwritable json store', function()
+    local function withFileSystem(writable)
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        Natives.files = {}
+        -- Cleared going in as well as coming out: a blocked path left over
+        -- from an earlier test is one test deciding what another measures.
+        Natives.blocked = {}
+
+        local realSave = Natives.saveFile
+        Natives.saveFile = function(file)
+            -- A directory that does not exist: the write goes nowhere, which
+            -- is what FiveM does rather than raising.
+            if not writable(file) then Natives.blocked[file] = true end
+        end
+
+        local store = require('crimson-bounty.server.storage.json')
+        return store, function()
+            Natives.saveFile = realSave
+            Natives.blocked = {}
+        end
+    end
+
+    it('refuses to start when the store directory cannot be written', function()
+        local store, restore = withFileSystem(function() return false end)
+        local ok, err = pcall(store.open)
+        restore()
+
+        falsy(ok, 'a store that silently drops everything is worse than no store')
+        truthy(tostring(err):find('Refusing to start', 1, true), tostring(err))
+        truthy(tostring(err):find('data', 1, true),
+            'and the message must name the directory to create: ' .. tostring(err))
+    end)
+
+    it('refuses to start when only the contracts directory is missing', function()
+        local store, restore = withFileSystem(function(file)
+            return not file:find('/contracts/', 1, true)
+        end)
+        local ok, err = pcall(store.open)
+        restore()
+
+        falsy(ok, 'the shard directory is just as fatal as the index')
+        truthy(tostring(err):find('contracts', 1, true), tostring(err))
+    end)
+
+    it('starts normally when both are writable', function()
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        Natives.files = {}
+        Natives.blocked = {}
+        local store = require('crimson-bounty.server.storage.json')
+        truthy(pcall(store.open), 'an ordinary install must still start')
+    end)
+
+    it('ships the directories it needs', function()
+        -- A fresh install has to arrive with them, because the resource
+        -- cannot create them itself.
+        for _, file in ipairs({ 'crimson-bounty/data/README.md',
+                                'crimson-bounty/data/contracts/README.md' }) do
+            local handle = io.open(file, 'r')
+            truthy(handle, file .. ' is missing, so the directory would not exist')
+            if handle then handle:close() end
+        end
+    end)
+end)

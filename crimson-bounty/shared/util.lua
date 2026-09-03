@@ -170,4 +170,45 @@ function Util.escrowIsEmpty(lines, portion)
     return t.cash == 0 and t.bank == 0 and t.dirty == 0 and t.items == 0 and t.weapons == 0
 end
 
+--------------------------------------------------------------------------
+-- A clock that only goes forward
+--------------------------------------------------------------------------
+
+--- Milliseconds since this resource started, guaranteed non-decreasing.
+---
+--- GetGameTimer wraps. A server that has been up long enough sees it fall
+--- back to near zero, and every elapsed-time calculation in this resource
+--- then goes negative — which is not a cosmetic problem: the rate limiter
+--- computes a refill from it, so a negative elapsed drives every player's
+--- token count deeply negative and refuses them for good, while the sweep
+--- that would clear the bucket also tests an elapsed and never fires. One
+--- wrap would lock every player out of the app until the next restart.
+---
+--- Everything that measures a duration reads this instead. A wrap is
+--- absorbed once, here, rather than guarded at a dozen call sites where the
+--- next one added would forget.
+local lastRaw, carried = 0, 0
+
+function Util.monotonicMs()
+    local raw = GetGameTimer and GetGameTimer() or 0
+    if raw < lastRaw then
+        -- Carry what the timer had reached, so the clock this resource sees
+        -- steps past the wrap rather than back through it.
+        carried = carried + lastRaw
+    end
+    lastRaw = raw
+    return carried + raw
+end
+
+--- Test seam: put the clock back where it started.
+function Util.resetMonotonic()
+    lastRaw, carried = 0, 0
+end
+
+--- The client has no module loader — server/boot.lua's require_shared is a
+--- server-side stand-in for one — so the client half reaches these helpers
+--- through a global. The file is listed in client_scripts and loaded exactly
+--- once on each side, so there is still only one clock per process.
+CrimsonUtil = Util
+
 return Util

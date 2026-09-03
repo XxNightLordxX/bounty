@@ -122,6 +122,9 @@ function Natives.install()
         -- A seam for asserting on which files a write actually touches,
         -- which is the whole claim the sharded store makes.
         if Natives.saveFile then Natives.saveFile(file, data) end
+        -- A write into a directory that does not exist goes nowhere and
+        -- says nothing, which is what FiveM does rather than raising.
+        if Natives.blocked and Natives.blocked[file] then return false end
         Natives.files[file] = data
         return true
     end
@@ -321,6 +324,9 @@ function Natives.metadataMatches(slotMeta, wanted)
     end
     return same(slotMeta or {}, wanted)
 end
+
+--- Files a write must not land in, so a missing directory can be modelled.
+Natives.blocked = {}
 
 Natives.resourceStates = {}
 

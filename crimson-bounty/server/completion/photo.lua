@@ -148,7 +148,7 @@ function Photo.issue(actor, contractId)
         victimCid  = record.victimCid,
         coords     = record.coords,
         diedAt     = record.at,
-        issuedAt   = GetGameTimer(),
+        issuedAt   = Util.monotonicMs(),
         used       = false,
     }
 
@@ -193,7 +193,7 @@ function Photo.submit(actor, rawToken, rawUrl)
         return false, CB.ERR.TOKEN_INVALID
     end
 
-    if GetGameTimer() - record.issuedAt > (Config.Completion.PhotoTokenLifetimeSeconds * 1000) then
+    if Util.monotonicMs() - record.issuedAt > (Config.Completion.PhotoTokenLifetimeSeconds * 1000) then
         tokens[token] = nil
         return false, CB.ERR.TOKEN_INVALID
     end
@@ -219,7 +219,7 @@ function Photo.submit(actor, rawToken, rawUrl)
     -- body should not lose a kill they made to the respawn button.
     local victim = Identity.byCitizenId(record.victimCid)
     if victim and not Identity.isTrulyDead(victim.source) then
-        local sinceDeath = (GetGameTimer() - (record.diedAt or record.issuedAt)) / 1000
+        local sinceDeath = (Util.monotonicMs() - (record.diedAt or record.issuedAt)) / 1000
         if sinceDeath > (Config.Completion.ProofWindowSeconds or 0) then
             Audit.rejected('photo_target_revived', actor.cid, record.contractId,
                 { since = math.floor(sinceDeath) })
@@ -262,7 +262,7 @@ function Photo.clearPlayer(cid)
 end
 
 function Photo.sweep()
-    local cutoff = GetGameTimer() - (Config.Completion.PhotoTokenLifetimeSeconds * 1000)
+    local cutoff = Util.monotonicMs() - (Config.Completion.PhotoTokenLifetimeSeconds * 1000)
     local removed = 0
     for token, record in pairs(tokens) do
         if record.issuedAt < cutoff then

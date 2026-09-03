@@ -184,6 +184,10 @@ function _G.newStack()
     Suite.resetConfig()
     -- Likewise for a fully-equipped server.
     Natives.resetResourceStates()
+    Natives.blocked = {}
+    -- shared/util is not reloaded between stacks, so its wrap-absorbing
+    -- clock would carry the previous test's elapsed time into this one.
+    require('crimson-bounty.shared.util').resetMonotonic()
 
     package.loaded['crimson-bounty.server.storage.memory'] = nil
     package.loaded['crimson-bounty.server.escrow'] = nil
@@ -319,7 +323,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec',
 }
 
 for _, name in ipairs(suites) do

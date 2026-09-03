@@ -35,7 +35,7 @@ end
 local floodCounters = {}
 
 local function floodCheck(src)
-    local now = GetGameTimer()
+    local now = Util.monotonicMs()
     local entry = floodCounters[src]
 
     if not entry or now - entry.since > 10000 then
@@ -54,7 +54,7 @@ local function floodCheck(src)
 end
 
 function App.sweepFloodCounters()
-    local now = GetGameTimer()
+    local now = Util.monotonicMs()
     for src, entry in pairs(floodCounters) do
         if now - entry.since > 60000 then floodCounters[src] = nil end
     end
@@ -509,14 +509,14 @@ local targetSeq = 0
 function App.mintTargetHandle(searcherCid, targetCid)
     for handle, entry in pairs(targetHandles) do
         if entry.searcher == searcherCid and entry.target == targetCid then
-            entry.at = GetGameTimer()
+            entry.at = Util.monotonicMs()
             return handle
         end
     end
 
     targetSeq = targetSeq + 1
     local handle = ('tg%08d'):format(targetSeq)
-    targetHandles[handle] = { searcher = searcherCid, target = targetCid, at = GetGameTimer() }
+    targetHandles[handle] = { searcher = searcherCid, target = targetCid, at = Util.monotonicMs() }
     return handle
 end
 
@@ -524,7 +524,7 @@ function App.resolveTargetHandle(searcherCid, handle)
     if type(handle) ~= 'string' then return nil end
     local entry = targetHandles[handle]
     if not entry or entry.searcher ~= searcherCid then return nil end
-    if GetGameTimer() - entry.at > 600000 then
+    if Util.monotonicMs() - entry.at > 600000 then
         targetHandles[handle] = nil
         return nil
     end
@@ -533,7 +533,7 @@ end
 
 --- Drop stale handles. Called from the maintenance tick.
 function App.sweepHandles()
-    local cutoff = GetGameTimer() - 600000
+    local cutoff = Util.monotonicMs() - 600000
     local removed = 0
     for handle, entry in pairs(targetHandles) do
         if entry.at < cutoff then

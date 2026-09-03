@@ -1,0 +1,6 @@
+# Live store, written at runtime by Config.Database.Mode = 'json'.
+# The directories themselves are tracked (see crimson-bounty/data/README.md);
+# what the server writes into them is not.
+crimson-bounty/data/store.json
+crimson-bounty/data/contracts/*.json
+crimson-bounty/data/contracts/.writable

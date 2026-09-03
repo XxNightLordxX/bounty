@@ -154,8 +154,8 @@ function Kidnap.arm(contractId, hunterCid)
         hunterCid  = hunterCid,
         elapsedMs  = 0,
         graceUsedMs = 0,
-        lastTick   = GetGameTimer(),
-        startedAt  = GetGameTimer(),
+        lastTick   = Util.monotonicMs(),
+        startedAt  = Util.monotonicMs(),
     }
 
     -- The creator has to be present for the whole countdown, so they are

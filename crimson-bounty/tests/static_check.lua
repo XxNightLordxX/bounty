@@ -518,6 +518,93 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 16. Nothing measures a duration against the raw game timer
+--------------------------------------------------------------------------
+--
+-- GetGameTimer is a 32-bit millisecond counter and wraps about every 24.8
+-- days. Every elapsed subtraction against it turns negative at that instant
+-- and stays negative: the rate limiter's refill goes tens of thousands of
+-- tokens below zero and locks every player out for good, its idle sweep
+-- stops firing, and every proof token stops expiring because "issued more
+-- than two minutes ago" is false when the subtraction is negative.
+--
+-- shared/util.lua absorbs the wrap once, in Util.monotonicMs, and every one
+-- of the twenty-two call sites reads that instead. This is the guard on the
+-- twenty-third: a new duration written against the raw timer would pass
+-- every test, because a suite that never runs for a month never wraps.
+
+do
+    for _, path in ipairs(files) do
+        local src = read(path) or ''
+        -- shared/util.lua is the one file allowed to read the raw timer: it
+        -- is where the wrap is absorbed. Everywhere else, including the
+        -- client, goes through Util.monotonicMs.
+        local exempt = path:find('shared/util%.lua$') ~= nil
+        local line = 0
+        for text in src:gmatch('[^\n]*') do
+            line = line + 1
+            -- Comments explaining the wrap are allowed to name the native.
+            if not exempt and not text:match('^%s*%-%-') and text:find('GetGameTimer') then
+                failures[#failures + 1] =
+                    ('%s:%d calls GetGameTimer directly; it wraps every ~24.8 days and '
+                     .. 'every elapsed subtraction against it then goes negative. Use '
+                     .. 'Util.monotonicMs().'):format(path, line)
+            end
+        end
+    end
+
+    -- And the one file allowed to read it must still be absorbing the wrap,
+    -- rather than having been quietly simplified back to a passthrough.
+    local util = read('crimson-bounty/shared/util.lua') or ''
+    local body = util:match('function Util%.monotonicMs%(%)(.-)\nend')
+    if not body then
+        failures[#failures + 1] =
+            'shared/util.lua no longer defines Util.monotonicMs; every duration in the '
+            .. 'resource depends on it'
+    elseif not body:find('lastRaw') then
+        failures[#failures + 1] =
+            'shared/util.lua: Util.monotonicMs no longer compares against the previous '
+            .. 'reading, so it cannot detect a wrap'
+    end
+end
+
+--------------------------------------------------------------------------
+-- 17. A global the client reads is a file the client actually loads
+--------------------------------------------------------------------------
+--
+-- The client has no module loader, so shared code reaches it through a
+-- global that the shared file assigns. That only works if the manifest lists
+-- the file under client_scripts. Miss it and the global is nil on the
+-- client, which throws the first time the code path runs — usually the one
+-- path nobody tests by hand, since the server suite loads shared modules
+-- through require_shared and never notices.
+
+do
+    local clientBlock = manifest:match('client_scripts%s*{(.-)}') or ''
+
+    for _, sharedPath in ipairs(walk('crimson-bounty/shared')) do
+        local src = read(sharedPath) or ''
+        -- A global export is an assignment to a bare capitalised name at the
+        -- start of a line: `CrimsonUtil = Util`.
+        for name in src:gmatch('\n(%u[%w_]*)%s*=%s*%u') do
+            local usedByClient = false
+            for _, clientPath in ipairs(walk('crimson-bounty/client')) do
+                local clientSrc = read(clientPath) or ''
+                if clientSrc:find(name .. '%s*[%.%[]') then usedByClient = true end
+            end
+
+            local relative = sharedPath:gsub('^crimson%-bounty/', '')
+            if usedByClient and not clientBlock:find(relative, 1, true) then
+                failures[#failures + 1] =
+                    ('the client reads the global %s, which %s assigns, but the manifest '
+                     .. 'does not list %s under client_scripts — the global is nil on the '
+                     .. 'client'):format(name, relative, relative)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then
