@@ -313,6 +313,22 @@ function Natives.exportsProxy()
             local p = Env.players[tonumber(src)]
             return p and not p._inventoryFull or false
         end,
+        GetInventoryItems = function(_, src)
+            local p = Env.players[tonumber(src)]
+            if not p then return {} end
+            local out = {}
+            for _, slot in ipairs(p._inventory) do
+                -- Reported exactly as the fixture wrote it. Filling in a
+                -- slot number the fixture did not set would be the harness
+                -- inventing a field, and a slot is what identifies a weapon
+                -- on submit — the one thing a test must not fabricate.
+                out[#out + 1] = {
+                    name = slot.name, count = slot.count, slot = slot.slot,
+                    label = slot.label, metadata = slot.metadata,
+                }
+            end
+            return out
+        end,
         Search = function(_, src, query, name)
             local p = Env.players[tonumber(src)]
             if not p then return {} end

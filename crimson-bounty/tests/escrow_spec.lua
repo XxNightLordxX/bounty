@@ -66,6 +66,105 @@ describe('escrow validation', function()
         eq(lines[1].metadata.ammo, 12, 'ammo captured')
     end)
 
+    it('caps the total number of escrow lines in one contract', function()
+        local s = newStack()
+        -- Twenty distinct stacks, enough to build a contract of a hundred
+        -- lines across five payouts if nothing stopped it.
+        local carried = {}
+        for i = 1, 20 do
+            carried[i] = { name = 'part_' .. i, count = 500, slot = i, label = 'Part ' .. i }
+        end
+        local f = fixture(s, { creatorInventory = carried })
+
+        local function payoutOf(count)
+            local list = {}
+            for i = 1, count do list[i] = { name = 'part_' .. i, count = 1 } end
+            return { baseline = { items = list } }
+        end
+
+        -- Five payouts of ten stacks: fifty lines, inside the ceiling.
+        local lines, err = s.escrow.validate(f.creator, {
+            slots = { payoutOf(10), payoutOf(10), payoutOf(10), payoutOf(10), payoutOf(10) },
+        })
+        truthy(lines, 'fifty lines should validate, got ' .. tostring(err))
+        eq(#lines, 50)
+
+        -- The same again with a bonus portion on each doubles it, and the
+        -- per-payout limits alone would allow every one of them.
+        local doubled = {}
+        for i = 1, 5 do
+            doubled[i] = { baseline = payoutOf(10).baseline, bonus = payoutOf(10).baseline }
+        end
+        lines, err = s.escrow.validate(f.creator, { slots = doubled })
+        falsy(lines, 'a hundred lines in one contract must be refused')
+        eq(err, CB.ERR.INVALID_REWARD)
+    end)
+
+    it('counts a top-up against the lines the contract already holds', function()
+        local s = newStack()
+        local carried = {}
+        for i = 1, 20 do
+            carried[i] = { name = 'part_' .. i, count = 500, slot = i, label = 'Part ' .. i }
+        end
+        local f = fixture(s, { creatorInventory = carried })
+
+        local list = {}
+        for i = 1, 10 do list[i] = { name = 'part_' .. i, count = 1 } end
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { slots = {
+                { baseline = { items = list } }, { baseline = { items = list } },
+                { baseline = { items = list } }, { baseline = { items = list } },
+                { baseline = { items = list } },
+            } },
+        })
+        truthy(c, 'fifty lines is a legal contract')
+        eq(#s.storage.readEscrow(c.id), 50)
+
+        -- Ten more is inside the ceiling; the eleventh set is not.
+        truthy(s.amendments.addEscrow(f.creator, c.id, { baseline = { items = list } }),
+            'sixty lines is still allowed')
+        local ok, err = s.amendments.addEscrow(f.creator, c.id,
+            { baseline = { items = { { name = 'part_11', count = 1 } } } })
+        falsy(ok, 'a top-up must not walk past the ceiling one line at a time')
+        eq(err, CB.ERR.INVALID_REWARD)
+    end)
+
+    it('refuses to stage the same physical weapon in two payouts', function()
+        local s = newStack()
+        local f = fixture(s)
+        -- One pistol, named by both payouts. Held-count arithmetic cannot
+        -- catch this on its own: the aggregate check counts weapons by name,
+        -- and a creator holding two pistols would pass it while both lines
+        -- still pointed at the same object.
+        local lines, err = s.escrow.validate(f.creator, {
+            slots = {
+                { baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } },
+                { baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } },
+            },
+        })
+        falsy(lines, 'one weapon cannot fund two payouts')
+        eq(err, CB.ERR.INVALID_REWARD)
+    end)
+
+    it('still allows two different weapons across two payouts', function()
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = {
+            { name = 'WEAPON_PISTOL', count = 1, slot = 3, metadata = { serial = 'ABC123' } },
+            { name = 'WEAPON_PISTOL', count = 1, slot = 4, metadata = { serial = 'DEF456' } },
+        } })
+        local lines, err = s.escrow.validate(f.creator, {
+            slots = {
+                { baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } },
+                { baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 4 } } } },
+            },
+        })
+        truthy(lines, 'expected lines, got err ' .. tostring(err))
+        eq(#lines, 2)
+        eq(lines[1].inv_slot, 3)
+        eq(lines[2].inv_slot, 4)
+    end)
+
     it('rejects funding several slots from one balance', function()
         local s = newStack()
         local f = fixture(s, { creatorCash = 10000 })

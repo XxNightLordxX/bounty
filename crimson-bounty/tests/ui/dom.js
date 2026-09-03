@@ -36,6 +36,14 @@ Object.defineProperty(Node.prototype, 'textContent', {
   set: function (v) { this._textContent = String(v); this.children = []; }
 });
 
+// The real thing has both: childNodes is every node, children is the element
+// ones. Nothing here creates text nodes, so they are the same list — but code
+// written against either must work, or the harness starts diverging from the
+// browser the app actually runs in.
+Object.defineProperty(Node.prototype, 'childNodes', {
+  get: function () { return this.children; }
+});
+
 Object.defineProperty(Node.prototype, 'innerHTML', {
   get: function () { return this.children.length ? '<...>' : ''; },
   set: function (v) { if (v === '') this.children = []; }
@@ -58,6 +66,13 @@ ClassList.prototype.contains = function (name) {
 Node.prototype.appendChild = function (child) {
   child.parentNode = this;
   this.children.push(child);
+  // A real <select> reports its first option as its value until something
+  // changes it. The pickers rely on that, so the harness has to do it too —
+  // otherwise a test would pass on a select the browser reads differently.
+  if (this.tagName === 'SELECT' && child.tagName === 'OPTION'
+      && this.children.length === 1) {
+    this.value = child.value;
+  }
   return child;
 };
 Node.prototype.addEventListener = function (type, fn) {

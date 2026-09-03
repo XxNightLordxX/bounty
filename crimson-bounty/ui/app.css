@@ -130,6 +130,11 @@ button.primary:hover { background: var(--crimson-bright); }
 button.ghost { background: transparent; }
 button.danger { border-color: var(--crimson-deep); color: var(--crimson-bright); }
 
+/* A chip that removes what it names. `button` sets flex: 1, which inside the
+   flex .meta row would stretch one chip across the whole width. */
+button.chip { flex: 0 0 auto; cursor: pointer; }
+button.chip:hover { color: var(--crimson-bright); border-color: var(--crimson-deep); }
+
 /* ---------- forms ---------- */
 
 .field { margin-bottom: 0.7rem; }

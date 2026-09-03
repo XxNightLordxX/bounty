@@ -68,6 +68,8 @@ Contracts natively support **dynamic field pivots** — the style of completion 
 
 The app presents these as a single reward builder: the creator picks sources, sets amounts/quantities, and sees a running **total reward composition** before submitting. At least one source must be non-empty for the contract to be valid.
 
+**Item and weapon selection is server-listed.** The builder only ever offers what the server read out of the creator's inventory on that request — never a name the client typed. Stackable items are offered aggregated across inventory slots; weapons are offered **one at a time**, each identified by the inventory slot it occupies, because a weapon is a single physical object with its own serial and attachments rather than a quantity. A creator is shown only the last four characters of a serial, enough to tell two of the same model apart and not enough to publish. The same inventory slot may not be staked in two payouts: both lines would snapshot one object, the confiscation would take it once and then fail looking for its twin. Quantities are checked against what is already promised to the contract's other payouts, not merely against the holding, so one stack cannot fund three collections.
+
 **Kidnapping Bonus Multiplier.** The creator configures a bonus paid on live delivery, using the same fully composable model:
 
 - A **percentage multiplier** applied to any or all of the monetary sources in the baseline (e.g., +50% cash, +25% dirty money), set per source or globally, and/or
@@ -260,6 +262,7 @@ The following must be config-driven:
 - Contract reason: maximum length and permitted character set
 - `Config.MaxActiveContractsPerCreator` and `Config.MaxAcceptedPerHunter`
 - `Config.Limits.MaxPayoutSlots` and `Config.Limits.SlotCooldownSeconds`
+- `Config.Limits.MaxEscrowLines` — ceiling on escrow lines in one contract, across every payout, both portions and any later top-up. The per-payout limits multiply, and every line is read on every release.
 - Threat advisory: trigger job types, recipient jobs, dispatch integration on/off
 - `Config.Targeting.AllowProtectedJobTargets`, `Config.Bailout.AllowProtectedJobCommand`
 - Amendment proposal expiry window (default 5 min)

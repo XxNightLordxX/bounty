@@ -68,6 +68,7 @@ function boot(responses) {
     setTimeout: function (fn, ms) { timers.push({ fn: fn, ms: ms }); return timers.length; },
     setInterval: function (fn, ms) { timers.push({ fn: fn, ms: ms, repeating: true }); return timers.length; },
     clearInterval: function () {},
+    clearTimeout: function () {},
     Promise: Promise, JSON: JSON, Math: Math, Number: Number, String: String,
     Array: Array, Object: Object, console: console
   };
@@ -78,7 +79,13 @@ function boot(responses) {
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox, { filename: 'app.js' });
 
-  return { document, view, sent, timers, sandbox, notices };
+  return {
+    document, view, sent, timers, sandbox, notices,
+    // What the player is currently being told. The notice lives outside
+    // #view precisely so it does not rebuild the form, so it has to be read
+    // from its own node rather than from the view.
+    notice: function () { return document.getElementById('notice').textContent; }
+  };
 }
 
 /** Let queued promise callbacks run. */
@@ -465,6 +472,227 @@ async function main() {
     it('debounces the search instead of firing per keystroke', function () {
       const searches = app.sent.filter(function (s) { return s.name === 'searchTargets'; });
       eq(searches.length, 1, 'one lookup for one debounced query');
+    });
+  })();
+
+  // The server has escrowed items and weapons from the start; until the form
+  // offered them, a player could not reach any of it.
+  const GOODS = {
+    cash: 100000, bank: 50000, dirty: 2000,
+    // Ordered by label, as the server sends it.
+    items: [
+      { name: 'bandage', label: 'Bandage', count: 60 },
+      { name: 'lockpick', label: 'Lockpick', count: 5 }
+    ],
+    weapons: [
+      { name: 'WEAPON_PISTOL', label: 'Pistol', slot: 3, serial: 'C123' },
+      { name: 'WEAPON_PISTOL', label: 'Pistol', slot: 4, serial: 'F456' }
+    ],
+    caps: { maxStacks: 3, maxPerStack: 100, maxWeapons: 2, slots: 5 }
+  };
+
+  function placeForm(overrides) {
+    let submission = null;
+    const app = boot(Object.assign({
+      list: BOARD, mine: MINE, ledger: LEDGER,
+      rewardOptions: { ok: true, data: GOODS },
+      searchTargets: { ok: true, data: [{ handle: 'tg00000001', name: 'Dana Reyes', protected: false }] },
+      create: function (body) { submission = body; return { ok: true, data: {} }; }
+    }, overrides || {}));
+    app.submitted = function () { return submission; };
+    return app;
+  }
+
+  function pick(app, id, value) {
+    const node = app.document.getElementById(id);
+    truthy(node, 'missing control: ' + id);
+    if (value !== undefined) { node.value = String(value); }
+    return node;
+  }
+
+  function press(app, id) {
+    const node = app.document.getElementById(id);
+    truthy(node, 'missing button: ' + id);
+    node.onclick();
+  }
+
+  await (async function stakesGoods() {
+    const app = placeForm();
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    it('offers as many payouts as the server allows', function () {
+      eq(app.document.getElementById('slots-count').max, GOODS.caps.slots,
+        'the ceiling comes from the config, not from the form');
+    });
+
+    it('offers the items and weapons the server says are escrowable', function () {
+      truthy(app.document.getElementById('slot-item-1'), 'an item picker');
+      truthy(app.document.getElementById('slot-weapon-1'), 'a weapon picker');
+      truthy(app.view.textContent.indexOf('Lockpick') !== -1,
+        'the item should be named: ' + app.view.textContent);
+      truthy(app.view.textContent.indexOf('#C123') !== -1,
+        'the serial tail tells two pistols apart: ' + app.view.textContent);
+    });
+
+    // Stage a real reward: money, two lockpicks and one specific pistol.
+    pick(app, 'slot-cash-1', 7000);
+    pick(app, 'slot-item-1').value = 'lockpick';
+    pick(app, 'slot-item-count-1', 2);
+    press(app, 'slot-item-add-1');
+    press(app, 'slot-weapon-add-1');
+
+    it('shows what was staged, removably', function () {
+      truthy(app.view.textContent.indexOf('Lockpick x2') !== -1,
+        'the staged item and its count: ' + app.view.textContent);
+      const chips = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n._className.indexOf('chip') !== -1;
+      });
+      eq(chips.length, 2, 'one removable chip per staged reward');
+    });
+
+    it('will not offer the same physical weapon twice', function () {
+      const options = pick(app, 'slot-weapon-1').children;
+      eq(options.length, 1, 'the pistol already staged is gone from the list');
+      eq(options[0].value, '4', 'the other pistol is still offerable');
+    });
+
+    it('will not let one stack fund two payouts', function () {
+      pick(app, 'slots-count', 2).onchange();
+
+      const picker = pick(app, 'slot-item-2');
+      const lockpicks = picker.children.filter(function (o) { return o.value === 'lockpick'; });
+      eq(lockpicks.length, 1, 'lockpicks are still offerable');
+      truthy(lockpicks[0].textContent.indexOf('3 spare') !== -1,
+        'only the three not already promised: ' + lockpicks[0].textContent);
+
+      pick(app, 'slot-item-2').value = 'lockpick';
+      pick(app, 'slot-item-count-2', 4);
+      press(app, 'slot-item-add-2');
+      truthy(app.notice() && app.notice().indexOf('3 of those spare') !== -1,
+        'over-allocating across payouts must be refused: ' + app.notice());
+    });
+
+    it('releases goods staged on a payout that is taken away', function () {
+      // Stage a lockpick on the second payout, then drop back to one.
+      pick(app, 'slot-item-2').value = 'lockpick';
+      pick(app, 'slot-item-count-2', 3);
+      press(app, 'slot-item-add-2');
+
+      pick(app, 'slots-count', 1).onchange();
+      pick(app, 'slots-count', 2).onchange();
+
+      const lockpicks = pick(app, 'slot-item-2').children
+        .filter(function (o) { return o.value === 'lockpick'; });
+      truthy(lockpicks.length === 1 && lockpicks[0].textContent.indexOf('3 spare') !== -1,
+        'the three released must be offerable again: '
+          + (lockpicks[0] && lockpicks[0].textContent));
+    });
+
+    it('keeps typed amounts when the payout count changes', function () {
+      eq(app.document.getElementById('slot-cash-1').value, '7000',
+        'what was typed before the count changed must survive');
+    });
+
+    pick(app, 'target-handle', 'tg00000001');
+    pick(app, 'reason').value = 'Unpaid debt';
+    pick(app, 'slot-cash-2', 1000);
+    press(app, 'place-submit');
+    await settle(); await settle();
+
+    it('sends the goods in the shape the server validates', function () {
+      const submission = app.submitted();
+      truthy(submission, 'nothing was submitted');
+
+      const first = submission.reward.slots[0].baseline;
+      eq(first.cash, 7000);
+      eq(first.items.length, 1);
+      eq(first.items[0].name, 'lockpick');
+      eq(first.items[0].count, 2);
+      eq(first.weapons.length, 1);
+      eq(first.weapons[0].name, 'WEAPON_PISTOL');
+      eq(first.weapons[0].slot, 3, 'the inventory slot, so the right pistol is taken');
+
+      const second = submission.reward.slots[1].baseline;
+      eq(second.cash, 1000);
+      falsy('items' in second, 'the refused item must not have been staged');
+      falsy('weapons' in second);
+    });
+
+    it('clears the staged goods once they have left the player', function () {
+      eq(app.sandbox.window.__state, undefined, 'no state is leaked to the page');
+      // Going back to the form must not offer goods the contract took.
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+      const refetches = app.sent.filter(function (s) { return s.name === 'rewardOptions'; });
+      truthy(refetches.length >= 2, 'the wallet is read again after a contract is placed');
+    });
+  })();
+
+  await (async function goodsOnlyPayout() {
+    const app = placeForm();
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    pick(app, 'target-handle', 'tg00000001');
+    pick(app, 'reason').value = 'Debt';
+    pick(app, 'slot-item-1').value = 'lockpick';
+    pick(app, 'slot-item-count-1', 5);
+    press(app, 'slot-item-add-1');
+    press(app, 'place-submit');
+    await settle(); await settle();
+
+    it('accepts a payout funded only by goods', function () {
+      const submission = app.submitted();
+      truthy(submission, 'a contract paying in goods alone must submit');
+      const slot = submission.reward.slots[0].baseline;
+      falsy('cash' in slot, 'no money was offered, so none is sent');
+      eq(slot.items[0].name, 'lockpick');
+      eq(slot.items[0].count, 5, 'the whole stack may be staked');
+    });
+  })();
+
+  await (async function emptyPayoutStillRefused() {
+    const app = placeForm();
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    pick(app, 'target-handle', 'tg00000001');
+    press(app, 'place-submit');
+    await settle();
+
+    it('still refuses a payout with nothing in it', function () {
+      falsy(app.submitted(), 'an empty payout must not reach the server');
+      truthy(app.notice() && app.notice().indexOf('no reward') !== -1,
+        'and the player must be told why: ' + app.notice());
+    });
+  })();
+
+  await (async function noGoodsToOffer() {
+    const app = placeForm({
+      rewardOptions: { ok: true, data: { cash: 500, bank: 0, dirty: 0, items: [], weapons: [], caps: {} } }
+    });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    it('takes its payout ceiling from the server', function () {
+      // caps.slots is absent here, so the form falls back rather than
+      // offering an unbounded field.
+      eq(app.document.getElementById('slots-count').max, 5);
+    });
+
+    it('shows no picker at all when there is nothing to stake', function () {
+      falsy(app.document.getElementById('slot-item-add-1'), 'no item picker');
+      falsy(app.document.getElementById('slot-weapon-add-1'), 'no weapon picker');
+      truthy(app.document.getElementById('slot-cash-1'), 'money is still offerable');
     });
   })();
 

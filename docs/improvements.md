@@ -78,15 +78,37 @@ amount).
 
 ## 2. Existing features that are less finished than they look
 
-### 2.1 The reward builder cannot offer items or weapons
+### 2.1 The reward builder cannot offer items or weapons — **done**
 The server has supported item and weapon escrow since the first commit —
-validation, metadata snapshots, restoration, the lot — and it is tested. The
-**form does not expose it**. `ui/app.js` collects cash, bank and dirty money
-only, so nobody can put a weapon up as a bounty.
+validation, metadata snapshots, restoration, the lot — and it was tested. The
+form did not expose it: `ui/app.js` collected cash, bank and dirty money only,
+so nobody could put a weapon up as a bounty.
 
-**Do:** extend `rewardOptions` to return the creator's items and weapons
-(the server already reads them), and add a picker to the Place form. This is
-the largest gap between what the code can do and what a player can reach.
+**Done.** `rewardOptions` now returns the creator's stackable items (aggregated
+across inventory slots, weapons and currency excluded, blacklist applied) and
+their weapons one at a time, each identified by its inventory slot and shown
+with the last four characters of its serial so two of the same model can be
+told apart. The Place form grows an item picker and a weapon picker per payout,
+each staged reward removable, and the counts are checked against what is
+already promised to the other payouts before anything is sent.
+
+Four things came out of building it:
+
+- **One weapon could be staged in two payouts.** Both lines snapshotted the
+  same physical object; the take removed it once and then failed hunting for
+  its twin, rolling the whole contract back. `Escrow.validate` now refuses a
+  repeated inventory slot up front.
+- **The per-payout limits multiply.** Five payouts × two portions × ten item
+  stacks is 160 escrow rows for one contract, every one of them read on every
+  release. `Config.Limits.MaxEscrowLines` bounds the total, and
+  `Amendments.addEscrow` counts a top-up against what the contract already
+  holds so it cannot be walked past one line at a time.
+- **A weapon with no inventory slot was offerable** and could only ever be
+  refused on submit. It is filtered out of the offer instead.
+- **`app.init` was missing from the test harness.** Nothing had noticed,
+  because the app only reached through `deps` once the reward builder needed
+  it. Static check 11 now fails the build if `main.lua` initialises a module
+  the harness does not.
 
 ### 2.2 Amendment negotiation is server-only
 `server/amendments.lua` implements proposals, approvals, declines and expiry,

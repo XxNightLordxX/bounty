@@ -32,10 +32,11 @@ end
 ---@param actor table
 ---@param spec table client submission
 ---@param bonusPercent integer|nil derive a bonus from the baseline money
+---@param existingLines integer|nil escrow lines the contract already holds
 ---@return table[]|nil lines
 ---@return string|nil err
 ---@return integer|nil slotCount
-function Escrow.validate(actor, spec, bonusPercent)
+function Escrow.validate(actor, spec, bonusPercent, existingLines)
     if type(spec) ~= 'table' then return nil, CB.ERR.INVALID_REWARD end
 
     local slots = spec.slots
@@ -90,6 +91,12 @@ function Escrow.validate(actor, spec, bonusPercent)
         return nil
     end
 
+    -- Inventory slots already staged in this contract. A weapon is one
+    -- physical object: naming the same slot in two payouts would snapshot
+    -- one weapon twice, take it once, then fail hunting for its twin and
+    -- roll the whole contract back. Refused here instead.
+    local stagedWeaponSlots = {}
+
     local function addWeapons(portion, list)
         if list == nil then return nil end
         if type(list) ~= 'table' then return CB.ERR.INVALID_REWARD end
@@ -115,6 +122,8 @@ function Escrow.validate(actor, spec, bonusPercent)
                 if slots[j].slot == invSlot or not found then found = slots[j] end
             end
             if not found then return CB.ERR.INSUFFICIENT end
+            if stagedWeaponSlots[found.slot] then return CB.ERR.INVALID_REWARD end
+            stagedWeaponSlots[found.slot] = true
 
             lines[#lines + 1] = {
                 slot     = slotIndex,          -- payout slot this reward belongs to
@@ -204,6 +213,13 @@ function Escrow.validate(actor, spec, bonusPercent)
     if err then return nil, err end
 
     if moneyTotal > Config.MaxContractValue then
+        return nil, CB.ERR.INVALID_REWARD
+    end
+
+    -- The per-payout limits multiply, so the total needs its own ceiling.
+    -- Callers adding to a contract that already holds escrow pass the count
+    -- it holds, so a top-up cannot walk past the limit one line at a time.
+    if #lines + (existingLines or 0) > Config.Limits.MaxEscrowLines then
         return nil, CB.ERR.INVALID_REWARD
     end
 

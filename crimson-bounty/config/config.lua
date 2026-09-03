@@ -117,6 +117,13 @@ Config.Limits = {
     --- How many times one contract may be collected. Each slot carries its
     --- own reward set and all of them are escrowed at creation.
     MaxPayoutSlots               = 5,
+    --- Ceiling on escrow lines in one contract, across every payout, both
+    --- portions and any later top-up. The per-payout limits multiply: five
+    --- payouts, two portions and ten item stacks each is a hundred and sixty
+    --- rows for one contract, every one of them read on every release. The
+    --- property is the creator's own, so this is not an economy limit — it
+    --- bounds the work a single contract can cost the database.
+    MaxEscrowLines               = 60,
     --- The same hunter may not claim two slots inside this window. Without
     --- it a multi-slot contract becomes a respawn-camping machine.
     SlotCooldownSeconds          = 600,

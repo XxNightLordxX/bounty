@@ -185,14 +185,25 @@ function App.register()
     -- never displays something they do not hold.
     handler('rewardOptions', 'search', function(actor)
         local dirty = exports.ox_inventory:GetItem(actor.source, Config.Sources.dirty.item, nil, true) or 0
+
+        -- Read once and shared: items and weapons come out of the same
+        -- inventory, and asking for it twice per request is one round trip
+        -- to ox_inventory more than it takes.
+        local carried = App.readInventory(actor)
+
         return {
-            cash  = actor.player.Functions.GetMoney('cash'),
-            bank  = actor.player.Functions.GetMoney('bank'),
-            dirty = dirty,
-            caps  = {
+            cash    = actor.player.Functions.GetMoney('cash'),
+            bank    = actor.player.Functions.GetMoney('bank'),
+            dirty   = dirty,
+            items   = App.escrowableItems(actor, carried),
+            weapons = App.escrowableWeapons(actor, carried),
+            caps    = {
                 cash = Config.Sources.cash.max, bank = Config.Sources.bank.max,
                 dirty = Config.Sources.dirty.max, slots = Config.Limits.MaxPayoutSlots,
                 bonusPercent = Config.Bonus.maxPercent,
+                maxStacks = Config.Sources.item.maxStacks,
+                maxPerStack = Config.Sources.item.maxPerStack,
+                maxWeapons = Config.Sources.weapon.max,
             },
         }
     end)
@@ -362,6 +373,96 @@ function App.register()
         local ok, err = pcall(deps.death.onRevivedVerified, src, actor.cid)
         if not ok then deps.audit.rejected('error_iRevived', actor.cid, nil, { error = tostring(err) }) end
     end)
+end
+
+--------------------------------------------------------------------------
+-- What a creator may put up
+--------------------------------------------------------------------------
+--
+-- The server has always been able to escrow items and weapons — validated,
+-- snapshotted and restored. The form could not offer them because nothing
+-- told it what the player was carrying. These do.
+
+--- Read a player's inventory, tolerating whichever export this build has.
+function App.readInventory(actor)
+    local ok, inventory = pcall(function()
+        return exports.ox_inventory:GetInventoryItems(actor.source)
+    end)
+    if ok and type(inventory) == 'table' then return inventory end
+
+    ok, inventory = pcall(function()
+        local inv = exports.ox_inventory:GetInventory(actor.source)
+        return inv and inv.items or nil
+    end)
+    if ok and type(inventory) == 'table' then return inventory end
+
+    return {}
+end
+
+local function isWeapon(name)
+    return type(name) == 'string' and name:upper():sub(1, 7) == 'WEAPON_'
+end
+
+--- Stackable items the creator could escrow, excluding weapons, currency
+--- and anything the server forbids.
+---@param carried table[]|nil an already-read inventory, to save a round trip
+function App.escrowableItems(actor, carried)
+    if not Config.Sources.item.enabled then return {} end
+
+    local totals, order = {}, {}
+    local slots = carried or App.readInventory(actor)
+
+    for _, slot in pairs(slots) do
+        local name = slot and slot.name
+        if type(name) == 'string'
+            and not isWeapon(name)
+            and name ~= Config.Sources.dirty.item
+            and not Config.EscrowBlacklist[name] then
+            if not totals[name] then
+                totals[name] = { name = name, label = slot.label or name, count = 0 }
+                order[#order + 1] = totals[name]
+            end
+            totals[name].count = totals[name].count + (slot.count or 1)
+        end
+    end
+
+    table.sort(order, function(a, b) return a.label < b.label end)
+    return order
+end
+
+--- Individual weapons, kept separate because each is one object with its
+--- own serial and attachments rather than a stack.
+---@param carried table[]|nil an already-read inventory, to save a round trip
+function App.escrowableWeapons(actor, carried)
+    if not Config.Sources.weapon.enabled then return {} end
+
+    local out = {}
+    local slots = carried or App.readInventory(actor)
+
+    for _, slot in pairs(slots) do
+        local name = slot and slot.name
+        -- The inventory slot is what identifies the weapon on submit, so a
+        -- record without one cannot be escrowed and must not be offered:
+        -- picking it would hand the server a payload it can only refuse.
+        local invSlot = slot and tonumber(slot.slot)
+        if isWeapon(name) and invSlot and not Config.EscrowBlacklist[name] then
+            out[#out + 1] = {
+                name  = name,
+                label = slot.label or name,
+                slot  = invSlot,
+                -- Enough for the creator to tell two of the same weapon
+                -- apart, without publishing the serial to anyone else.
+                serial = slot.metadata and slot.metadata.serial
+                    and tostring(slot.metadata.serial):sub(-4) or nil,
+            }
+        end
+    end
+
+    table.sort(out, function(a, b)
+        if a.label == b.label then return (a.slot or 0) < (b.slot or 0) end
+        return a.label < b.label
+    end)
+    return out
 end
 
 --------------------------------------------------------------------------

@@ -51,7 +51,10 @@ function Amendments.addEscrow(actor, contractId, rewardSpec)
         return false, CB.ERR.BAD_STATE
     end
 
-    local lines, err = Escrow.validate(actor, rewardSpec)
+    -- Counted against what the contract already holds, so a creator cannot
+    -- top up past the line ceiling in small increments.
+    local lines, err = Escrow.validate(actor, rewardSpec, nil,
+        #Storage.readEscrow(contractId))
     if not lines then return false, err end
 
     -- Added value lands on the slot currently being competed for, so it is

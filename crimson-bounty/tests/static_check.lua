@@ -316,6 +316,33 @@ for _, call in ipairs({ 'confirm%s*%(', 'prompt%s*%(', 'alert%s*%(' }) do
 end
 
 --------------------------------------------------------------------------
+-- 11. The test harness wires every module the resource wires
+--------------------------------------------------------------------------
+--
+-- app.init was missing from newStack for the life of this build. Nothing
+-- caught it, because the app only reached through deps once the reward
+-- builder needed the escrow module — at which point a live server would
+-- have thrown on a nil index and the suite would still have been green.
+-- Any module main.lua initialises must be initialised in the harness too.
+
+do
+    local main = read('crimson-bounty/server/main.lua') or ''
+    local harness = read('crimson-bounty/tests/run.lua') or ''
+
+    local wired = {}
+    for name in main:gmatch('([%w_]+)%.init%s*%(') do wired[name] = true end
+
+    for name in pairs(wired) do
+        if not harness:find(name .. '%.init%s*%(') then
+            failures[#failures + 1] =
+                ('main.lua calls %s.init but tests/run.lua does not; anything that '
+                 .. 'module reaches through deps is untested and nil on a live server')
+                    :format(name)
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

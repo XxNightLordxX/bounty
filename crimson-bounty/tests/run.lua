@@ -23,9 +23,15 @@ local Suite = {
     total = 0, passed = 0, failed = 0, current = nil, failures = {},
 }
 
+--- Groups tests under a name for failure reporting. The name is restored
+--- afterwards, so a nested group does not silently relabel every test that
+--- follows it in the file — a mislabelled failure sends you to the wrong
+--- code.
 function Suite.describe(name, fn)
-    Suite.current = name
+    local outer = Suite.current
+    Suite.current = outer and (outer .. ' > ' .. name) or name
     fn()
+    Suite.current = outer
 end
 
 function Suite.it(name, fn)
@@ -147,6 +153,17 @@ function _G.newStack()
     mugshot.init({ identity = identity, audit = audit })
     projection.init({ storage = storage, identity = identity, escrow = escrow,
                       kidnap = kidnap, mugshot = mugshot, progression = progression })
+
+    -- Wired exactly as main.lua wires it. The app was previously left
+    -- uninitialised here, so anything it reached for through deps was
+    -- unreachable in a test and only failed on a live server.
+    app.init({
+        storage = storage, identity = identity, ratelimit = ratelimit, audit = audit,
+        notify = notify, escrow = escrow, contracts = contracts, ledger = ledger,
+        death = death, photo = photo, kidnap = kidnap, bailout = bailout,
+        informant = informant, amendments = amendments, comms = comms,
+        projection = projection, mugshot = mugshot, progression = progression,
+    })
 
     return {
         storage = storage, audit = audit, kidnap = kidnap, projection = projection,

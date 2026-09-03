@@ -9,7 +9,11 @@
   var state = {
     tab: 'board', board: null, mine: null, ledger: null,
     progress: {}, dialog: null, leoConfirmed: false, wallet: null,
-    busy: false, notice: null
+    busy: false, notice: null,
+    // Items and weapons chosen per payout slot. These live here rather than
+    // in the DOM because the picker rebuilds its own markup on every add and
+    // remove, and a rebuilt <select> forgets what was put in it.
+    picked: {}
   };
 
   /* ---------- transport ---------- */
@@ -653,7 +657,10 @@
     form.appendChild(labelled('Assignment', mode));
 
     var slots = numberInput('slots', 1);
-    slots.min = 1; slots.max = 5;
+    slots.min = 1;
+    // The server's ceiling, not a number typed here: raising MaxPayoutSlots
+    // in the config used to leave the form refusing to go past five.
+    slots.max = (state.wallet && state.wallet.caps && state.wallet.caps.slots) || 5;
     slots.onchange = function () { renderSlots(); };
     form.appendChild(labelled('Payouts (how many times it can be collected)', slots));
     form.appendChild(el('div', 'hint',
@@ -678,6 +685,7 @@
     form.appendChild(toggle);
 
     var submit = el('button', 'primary', 'Place contract');
+    submit.id = 'place-submit';
     submit.style.marginTop = '0.8rem';
     submit.onclick = submitContract;
     form.appendChild(submit);
@@ -690,17 +698,220 @@
     var box = document.getElementById('slots');
     if (!box) return;
     var count = parseInt(document.getElementById('slots-count').value, 10) || 1;
+
+    // Read back whatever is already typed before the box is torn down.
+    // Changing the payout count used to reset every amount above it.
+    var typed = {};
+    ['cash', 'bank', 'dirty'].forEach(function (source) {
+      for (var i = 1; i <= 10; i++) {
+        var node = document.getElementById('slot-' + source + '-' + i);
+        if (node) { typed['slot-' + source + '-' + i] = node.value; }
+      }
+    });
+
+    // Drop what was staged on payouts that no longer exist. Leaving it in
+    // place kept those items counted as promised — so lowering the payout
+    // count made them unaddable anywhere, while nothing would ever submit
+    // them.
+    Object.keys(state.picked).forEach(function (index) {
+      if (parseInt(index, 10) > count) { delete state.picked[index]; }
+    });
+
     box.innerHTML = '';
     for (var i = 1; i <= count; i++) {
       var slot = el('div', 'slot');
       slot.appendChild(el('h4', null, 'Payout ' + i));
+
       var split = el('div', 'split');
-      split.appendChild(labelled('Cash', numberInput('slot-cash-' + i, 0)));
-      split.appendChild(labelled('Bank', numberInput('slot-bank-' + i, 0)));
-      split.appendChild(labelled('Dirty', numberInput('slot-dirty-' + i, 0)));
+      ['cash', 'bank', 'dirty'].forEach(function (source) {
+        var id = 'slot-' + source + '-' + i;
+        var input = numberInput(id, 0);
+        if (typed[id] !== undefined) { input.value = typed[id]; }
+        split.appendChild(labelled(
+          source.charAt(0).toUpperCase() + source.slice(1), input));
+      });
       slot.appendChild(split);
+
+      slot.appendChild(goodsBox(i));
       box.appendChild(slot);
     }
+  }
+
+  /* ---------- items and weapons ----------
+     The server has escrowed items and weapons since the first commit; this
+     is what lets a player reach it. Everything shown comes from the
+     server-read inventory in rewardOptions, and every amount is checked
+     there again on submit — this only keeps the form honest. */
+
+  function pickedFor(index) {
+    if (!state.picked[index]) { state.picked[index] = { items: {}, weapons: {} }; }
+    return state.picked[index];
+  }
+
+  // How much of an item is already promised across every payout, so the
+  // same 3 lockpicks cannot be put into three different payouts.
+  function allocatedItem(name) {
+    var total = 0;
+    Object.keys(state.picked).forEach(function (index) {
+      total += state.picked[index].items[name] || 0;
+    });
+    return total;
+  }
+
+  function weaponTaken(slotNumber) {
+    return Object.keys(state.picked).some(function (index) {
+      return state.picked[index].weapons[slotNumber] !== undefined;
+    });
+  }
+
+  function goodsBox(index) {
+    var wrap = el('div');
+    var wallet = state.wallet;
+    if (!wallet) { return wrap; }
+
+    var items = wallet.items || [];
+    var weapons = wallet.weapons || [];
+    if (items.length === 0 && weapons.length === 0) { return wrap; }
+
+    var picked = pickedFor(index);
+
+    // What is already in this payout, each removable.
+    var chosen = el('div', 'meta');
+    Object.keys(picked.items).forEach(function (name) {
+      chosen.appendChild(removable(
+        labelOf(items, name) + ' x' + picked.items[name],
+        function () { delete picked.items[name]; renderSlots(); }));
+    });
+    Object.keys(picked.weapons).forEach(function (slotNumber) {
+      var weapon = picked.weapons[slotNumber];
+      chosen.appendChild(removable(weapon.label + (weapon.serial ? ' #' + weapon.serial : ''),
+        function () { delete picked.weapons[slotNumber]; renderSlots(); }));
+    });
+    if (chosen.children.length > 0) { wrap.appendChild(chosen); }
+
+    if (items.length > 0) { wrap.appendChild(itemPicker(index, items)); }
+    if (weapons.length > 0) { wrap.appendChild(weaponPicker(index, weapons)); }
+    return wrap;
+  }
+
+  function labelOf(items, name) {
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].name === name) { return items[i].label; }
+    }
+    return name;
+  }
+
+  function removable(text, onRemove) {
+    var button = el('button', 'chip', text + '  \u00d7');
+    button.onclick = onRemove;
+    return button;
+  }
+
+  function itemPicker(index, items) {
+    var choose = document.createElement('select');
+    choose.id = 'slot-item-' + index;
+    items.forEach(function (item) {
+      var free = item.count - allocatedItem(item.name);
+      if (free <= 0) { return; }
+      var option = document.createElement('option');
+      option.value = item.name;
+      option.textContent = item.label + '  (' + free + ' spare)';
+      choose.appendChild(option);
+    });
+    if (choose.children.length === 0) { return el('div', 'hint', 'Nothing spare left to add.'); }
+
+    var count = numberInput('slot-item-count-' + index, 1);
+    count.min = 1;
+
+    var add = el('button', 'ghost', 'Add item');
+    add.id = 'slot-item-add-' + index;
+    add.onclick = function () {
+      var name = choose.value;
+      var wanted = parseInt(count.value, 10) || 0;
+      if (!name || wanted <= 0) { return say('Choose an item and a count.'); }
+
+      var caps = state.wallet.caps || {};
+      var picked = pickedFor(index);
+      var held = 0;
+      items.forEach(function (item) { if (item.name === name) { held = item.count; } });
+
+      if (allocatedItem(name) + wanted > held) {
+        return say('You only have ' + (held - allocatedItem(name)) + ' of those spare.');
+      }
+      if ((picked.items[name] || 0) + wanted > (caps.maxPerStack || Infinity)) {
+        return say('That is more than one payout can hold of a single item.');
+      }
+      if (picked.items[name] === undefined
+          && Object.keys(picked.items).length >= (caps.maxStacks || Infinity)) {
+        return say('This payout is already carrying as many kinds of item as it can.');
+      }
+
+      picked.items[name] = (picked.items[name] || 0) + wanted;
+      renderSlots();
+    };
+
+    var row = el('div', 'split');
+    row.appendChild(labelled('Item', choose));
+    row.appendChild(labelled('How many', count));
+    var field = el('div');
+    field.appendChild(row);
+    field.appendChild(add);
+    return field;
+  }
+
+  function weaponPicker(index, weapons) {
+    var choose = document.createElement('select');
+    choose.id = 'slot-weapon-' + index;
+    weapons.forEach(function (weapon) {
+      if (weaponTaken(weapon.slot)) { return; }
+      var option = document.createElement('option');
+      option.value = String(weapon.slot);
+      option.textContent = weapon.label + (weapon.serial ? '  #' + weapon.serial : '');
+      choose.appendChild(option);
+    });
+    if (choose.children.length === 0) { return el('div', 'hint', 'No weapons left to add.'); }
+
+    var add = el('button', 'ghost', 'Add weapon');
+    add.id = 'slot-weapon-add-' + index;
+    add.onclick = function () {
+      var slotNumber = parseInt(choose.value, 10);
+      if (!slotNumber && slotNumber !== 0) { return say('Choose a weapon.'); }
+
+      var caps = state.wallet.caps || {};
+      var picked = pickedFor(index);
+      if (Object.keys(picked.weapons).length >= (caps.maxWeapons || Infinity)) {
+        return say('This payout is already carrying as many weapons as it can.');
+      }
+
+      var found = null;
+      weapons.forEach(function (weapon) { if (weapon.slot === slotNumber) { found = weapon; } });
+      if (!found) { return say('That weapon is no longer in your pockets.'); }
+
+      // Keyed by inventory slot, not by name: two of the same weapon are two
+      // different objects, and escrowing one twice would take one and then
+      // fail looking for its twin.
+      picked.weapons[slotNumber] = found;
+      renderSlots();
+    };
+
+    var field = el('div');
+    field.appendChild(labelled('Weapon', choose));
+    field.appendChild(add);
+    return field;
+  }
+
+  // The chosen goods for one payout, in the shape the server validates.
+  function goodsOf(index) {
+    var picked = state.picked[index];
+    if (!picked) { return { items: [], weapons: [] }; }
+
+    var items = Object.keys(picked.items).map(function (name) {
+      return { name: name, count: picked.items[name] };
+    });
+    var weapons = Object.keys(picked.weapons).map(function (slotNumber) {
+      return { name: picked.weapons[slotNumber].name, slot: parseInt(slotNumber, 10) };
+    });
+    return { items: items, weapons: weapons };
   }
 
   function submitContract() {
@@ -722,7 +933,11 @@
       if (bank) baseline.bank = bank;
       if (dirty) baseline.dirty = dirty;
 
-      if (!cash && !bank && !dirty) {
+      var goods = goodsOf(i);
+      if (goods.items.length) baseline.items = goods.items;
+      if (goods.weapons.length) baseline.weapons = goods.weapons;
+
+      if (!cash && !bank && !dirty && !goods.items.length && !goods.weapons.length) {
         return say('Payout ' + i + ' has no reward in it.');
       }
       slots.push({ baseline: baseline });
@@ -749,6 +964,10 @@
     }).then(function (r) {
       if (!r.ok) return fail(r);
       say('Contract placed.', 'gold');
+      // The goods are gone from the player's pockets now; leaving them
+      // staged would offer them again on the next contract.
+      state.picked = {};
+      state.wallet = null;
       state.tab = 'mine';
       refresh();
     });

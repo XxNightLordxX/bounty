@@ -596,3 +596,82 @@ describe('bailout timing', function()
         eq(Env.players[2].PlayerData.money.bank, 20000, 'and nothing was charged')
     end)
 end)
+
+
+--- What the reward builder is offered. The server has escrowed items and
+--- weapons since the first commit; these cover the reading of the inventory
+--- that lets the form actually offer them.
+describe('reward options', function()
+    it('offers the stackable items the creator is carrying', function()
+        local s = newStack()
+        local f = fixture(s)
+        local items = s.app.escrowableItems(f.creator)
+
+        local byName = {}
+        for _, item in ipairs(items) do byName[item.name] = item.count end
+
+        eq(byName.lockpick, 5, 'the five lockpicks are offerable')
+        eq(byName.black_money, nil, 'dirty money is its own source, not an item')
+        eq(byName.WEAPON_PISTOL, nil, 'a weapon is not a stack')
+    end)
+
+    it('never offers a blacklisted item', function()
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = {
+            { name = 'handcuffs', count = 2, label = 'Handcuffs' },
+            { name = 'lockpick', count = 1, label = 'Lockpick' },
+        } })
+        for _, item in ipairs(s.app.escrowableItems(f.creator)) do
+            falsy(item.name == 'handcuffs', 'handcuffs must never be offered')
+        end
+    end)
+
+    it('adds up a stack split across inventory slots', function()
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = {
+            { name = 'lockpick', count = 3, slot = 1, label = 'Lockpick' },
+            { name = 'lockpick', count = 4, slot = 2, label = 'Lockpick' },
+        } })
+        local items = s.app.escrowableItems(f.creator)
+        eq(#items, 1, 'one offer, not one per slot')
+        eq(items[1].count, 7)
+    end)
+
+    it('offers weapons one at a time, with only the tail of the serial', function()
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = {
+            { name = 'WEAPON_PISTOL', count = 1, slot = 3, label = 'Pistol',
+              metadata = { serial = 'ABC123' } },
+            { name = 'WEAPON_PISTOL', count = 1, slot = 4, label = 'Pistol',
+              metadata = { serial = 'DEF456' } },
+        } })
+        local weapons = s.app.escrowableWeapons(f.creator)
+        eq(#weapons, 2, 'two objects, not one stack of two')
+        eq(weapons[1].slot, 3)
+        eq(weapons[2].slot, 4)
+        -- Enough to tell them apart in the picker, not enough to publish.
+        eq(weapons[1].serial, 'C123')
+        eq(weapons[2].serial, 'F456')
+    end)
+
+    it('never offers a weapon it could not identify on submit', function()
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = {
+            -- No inventory slot: nothing on submit could say which weapon
+            -- this is, so offering it would offer a guaranteed rejection.
+            { name = 'WEAPON_KNIFE', count = 1, label = 'Knife' },
+            { name = 'WEAPON_PISTOL', count = 1, slot = 3, label = 'Pistol' },
+        } })
+        local weapons = s.app.escrowableWeapons(f.creator)
+        eq(#weapons, 1, 'only the identifiable one')
+        eq(weapons[1].name, 'WEAPON_PISTOL')
+    end)
+
+    it('offers nothing when the inventory cannot be read', function()
+        local s = newStack()
+        local f = fixture(s)
+        f.creator.source = 999   -- nobody
+        eq(#s.app.escrowableItems(f.creator), 0)
+        eq(#s.app.escrowableWeapons(f.creator), 0)
+    end)
+end)
