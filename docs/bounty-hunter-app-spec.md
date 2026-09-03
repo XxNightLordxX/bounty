@@ -15,7 +15,7 @@ Core pillars:
 
 - Real-time target tracking with live mugshots
 - Flexible **"Dead or Alive"** contracts with dynamic field pivots
-- Automated **escrow** of cash, bank funds, and inventory items
+- Automated **escrow** of any mix of cash, bank funds, dirty money, crypto, items, and weapons
 - **Multi-hunter competition** (exclusive vs. competitive assignment)
 - **Anonymity** systems for both creators and hunters
 - **Dynamic target counter-play** (bailout, counter-intelligence)
@@ -55,11 +55,25 @@ Provide a free-text reason for the bounty.
 
 Contracts natively support **dynamic field pivots** — the style of completion is not locked in at creation time.
 
-- The creator sets a **baseline escrow reward**:
-  - Cash and/or bank balance
-  - Specific QBox inventory items and/or weapons currently held
-- The creator configures a **Kidnapping Bonus Multiplier** (e.g., +50% extra cash, or additional items) paid on live delivery.
-- The hunter decides **on the fly** how to handle the target based on opportunity — eliminate for the baseline, or kidnap for baseline + bonus.
+**Baseline escrow reward — fully composable.** The creator builds the reward from any combination of the sources below. Every source is individually selectable, none are mutually exclusive, and a single contract may use one, several, or all of them at once:
+
+| Source | Selection |
+|---|---|
+| Cash (on hand) | Any amount up to the creator's carried cash |
+| Bank balance | Any amount up to the creator's bank balance |
+| Dirty money | Any amount up to the creator's dirty money holdings (item or account, per server setup) |
+| Crypto | Any amount up to the creator's crypto balance, if the server runs one |
+| Inventory items | Any items currently held, with per-item quantity |
+| Weapons | Any weapons currently held, carrying their serial and attachments |
+
+The app presents these as a single reward builder: the creator picks sources, sets amounts/quantities, and sees a running **total reward composition** before submitting. At least one source must be non-empty for the contract to be valid.
+
+**Kidnapping Bonus Multiplier.** The creator configures a bonus paid on live delivery, using the same fully composable model:
+
+- A **percentage multiplier** applied to any or all of the monetary sources in the baseline (e.g., +50% cash, +25% dirty money), set per source or globally, and/or
+- **Additional items/weapons** held only for the kidnapping outcome.
+
+**Hunter choice.** The hunter decides on the fly how to handle the target based on opportunity — eliminate for the baseline, or kidnap for baseline + bonus.
 
 ### 3.5 Escrow Automation
 
@@ -154,7 +168,10 @@ The following must be config-driven:
 - Failure penalty availability and time window for exclusive contracts
 - Target Paranoid Alert on/off
 - Target visibility of own contract (enables Bounty Cleanse)
-- Payout currency mode — clean bank / dirty money item / crypto
+- Reward sources enabled server-wide (cash / bank / dirty money / crypto / items / weapons) — any disabled source is hidden from the reward builder
+- Per-source caps and a global maximum contract value
+- Item/weapon blacklist (things that may never be escrowed)
+- Default payout currency for percentage-based bonuses — clean bank / dirty money / crypto
 - Informant Data premium cost
 - Ledger history depth (default 10)
 - Photo-verification proximity radius
@@ -168,3 +185,45 @@ The following must be config-driven:
 - **Escrow integrity** — funds and items are never duplicated or lost across logout, server restart, or contract cancellation; escrow state persists to the database.
 - **Anti-exploit** — validate acceptance, kill attribution, proximity, and photo capture on the server; rate-limit app actions; reject blacklisted-job callers on every event.
 - **Persistence footprint** — keep it small: active contracts plus the last 10 completed contracts per player.
+
+---
+
+## 10. Refinement Recommendations
+
+Improvements to what is already specified above — no new systems, no new player-facing features.
+
+### 10.1 Make escrow the single source of truth
+Give every contract one escrow record listing each source and amount, written in the **same database transaction** that removes the funds and items from the creator. Payout, refund, and bailout all read from that one record. This is what stops the classic duplication bugs — nothing anywhere else in the script should independently decide what a contract is worth.
+
+### 10.2 Snapshot weapons, don't reference them
+When a weapon goes into escrow, store its full serialized metadata (serial, attachments, ammo, durability) in the escrow record rather than a slot reference. Slots move; a reference that dangles pays out a stock weapon and loses the player's attachments.
+
+### 10.3 Validate the reward builder server-side, twice
+Once when the builder is opened (to send the client only what the player actually holds) and again on submit (to confirm nothing changed in between). A client that submits an item it dropped mid-flow must be rejected, not silently paid.
+
+### 10.4 Refund path must be as strict as the payout path
+The bailout, the expiry refund, and the failure-penalty refund all return the same composed escrow. Give them one shared "release escrow to X" function so an item type that survives payout can't be dropped on refund. If the creator's inventory is full at refund time, the escrow stays open and retries on next login rather than deleting the items.
+
+### 10.5 Kill attribution should be recorded, not queried
+Log the killer, weapon, and timestamp at the moment of death into the contract's pending-completion state. Reading attribution later, at photo time, invites a window where a second player's damage or a respawn overwrites it.
+
+### 10.6 Bind the verification photo to the contract
+The photo must be captured through a flow the script started for a specific contract — not any photo taken near a corpse. Server-side, validate contract id, hunter id, target ped distance, and a short expiry window on the capture token together, and reject a photo that arrives without all four.
+
+### 10.7 Kidnapping countdown needs a break tolerance
+Strict continuous proximity will reset on a single frame of desync or a doorway. Allow a short grace (2–3 seconds) before the countdown resets, and show the hunter the live countdown and the grace state so it never fails silently.
+
+### 10.8 Live mugshot: update on event, not on a timer
+Hook appearance changes and refresh the cached mugshot then, rather than re-rendering on an interval for every listed bounty. On a busy server the interval approach is the thing that costs frames.
+
+### 10.9 Rate-limit and debounce every app action
+Contract creation, acceptance, bailout, and informant purchases should each carry a server-side cooldown per citizen id. Without it, a spammed accept is a cheap way to probe the anonymity system or race the competitive payout.
+
+### 10.10 Resolve competitive payout with a single-winner lock
+When multiple hunters race, the first valid completion must take an atomic lock on the contract before any funds move. Everyone else gets a clean "contract closed" result, not a partial payout.
+
+### 10.11 Persist "hidden" contracts explicitly
+Online-presence hiding is a display filter, never a state change. Keep the contract row active with its escrow intact and its failure-penalty timer paused while either party is offline — otherwise a creator can log out to dodge a penalty.
+
+### 10.12 Log everything financial
+An admin-readable log of every escrow, payout, refund, bailout, and penalty, with amounts and both parties. Without it, the first time a player claims they lost items you have no way to tell whether they did.
