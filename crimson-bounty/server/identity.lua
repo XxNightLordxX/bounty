@@ -9,6 +9,47 @@ local Util = require_shared('util')
 
 local Identity = {}
 
+--- When each connected player's session began, stamped by this resource.
+--- Session length is measurable without any framework support, so it is
+--- never the thing that blocks a contract.
+local sessionStart = {}
+
+--- Record a player's arrival. Called from the connection bridge.
+function Identity.beginSession(cid)
+    if cid and not sessionStart[cid] then sessionStart[cid] = os.time() end
+end
+
+function Identity.endSession(cid)
+    sessionStart[cid] = nil
+end
+
+--- Minutes this player has been connected, or nil if we never saw them
+--- arrive (a resource restart mid-session, for instance).
+function Identity.sessionMinutes(cid)
+    local began = sessionStart[cid]
+    if not began then return nil end
+    return math.floor((os.time() - began) / 60)
+end
+
+--- Total playtime in hours, from whichever provider the server configures.
+--- Returns nil when nothing can answer, which callers must treat as
+--- "unknown" rather than "zero".
+function Identity.playtimeHours(actor)
+    local provider = Config.Immunity.PlaytimeProvider
+    if provider and provider.resource and GetResourceState(provider.resource) == 'started' then
+        local ok, minutes = pcall(function()
+            return exports[provider.resource][provider.export](nil, actor.cid)
+        end)
+        if ok and type(minutes) == 'number' then return minutes / 60 end
+    end
+
+    -- QBox keeps playtime in character metadata on most builds.
+    local meta = actor.player and actor.player.PlayerData and actor.player.PlayerData.metadata
+    if meta and type(meta.playtime) == 'number' then return meta.playtime / 60 end
+
+    return nil
+end
+
 --- Resolve the acting player from the engine-supplied event source.
 ---@param source number
 ---@return table|nil actor { source, cid, account, name, job, player }

@@ -31,10 +31,11 @@ end
 ---
 ---@param actor table
 ---@param spec table client submission
+---@param bonusPercent integer|nil derive a bonus from the baseline money
 ---@return table[]|nil lines
 ---@return string|nil err
 ---@return integer|nil slotCount
-function Escrow.validate(actor, spec)
+function Escrow.validate(actor, spec, bonusPercent)
     if type(spec) ~= 'table' then return nil, CB.ERR.INVALID_REWARD end
 
     local slots = spec.slots
@@ -162,6 +163,29 @@ function Escrow.validate(actor, spec)
         if Util.escrowIsEmpty(slotLines, CB.PORTION.BASELINE) then
             return nil, CB.ERR.INVALID_REWARD
         end
+    end
+
+    -- A kidnapping bonus set as a percentage is turned into real escrow
+    -- here. A percentage that is only stored and displayed pays nothing:
+    -- the bonus release finds no lines and a live delivery is worth exactly
+    -- what a kill is worth.
+    bonusPercent = Util.toCount(bonusPercent, Config.Bonus.maxPercent) or 0
+    if bonusPercent > 0 then
+        local derived = {}
+        for i = 1, #lines do
+            local line = lines[i]
+            if line.portion == CB.PORTION.BASELINE and CB.MONEY_SOURCES[line.source] then
+                local extra = math.floor(line.amount * (bonusPercent / 100))
+                if extra > 0 then
+                    derived[#derived + 1] = {
+                        slot = line.slot, portion = CB.PORTION.BONUS,
+                        source = line.source, amount = extra,
+                    }
+                    moneyTotal = moneyTotal + extra
+                end
+            end
+        end
+        for i = 1, #derived do lines[#lines + 1] = derived[i] end
     end
 
     -- Holdings were checked per line against the live balance, so a creator

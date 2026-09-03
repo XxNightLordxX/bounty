@@ -161,6 +161,16 @@ input:focus, select:focus, textarea:focus {
 .slot h4 { font-size: 0.72rem; color: var(--crimson-bright);
   text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.45rem; }
 
+/* ---------- dialog ----------
+   In-page, because FiveM's NUI never shows a native confirm or prompt. */
+
+.dialog {
+  border-color: var(--crimson-deep);
+  box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.55);
+}
+.dialog::before { background: var(--crimson-bright); }
+.dialog .target { font-size: 0.95rem; }
+
 /* ---------- notices ---------- */
 
 .notice {

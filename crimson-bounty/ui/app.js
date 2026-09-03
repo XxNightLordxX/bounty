@@ -8,7 +8,7 @@
   var RESOURCE = 'crimson-bounty';
   var state = {
     tab: 'board', board: null, mine: null, ledger: null,
-    progress: {}, busy: false, notice: null
+    progress: {}, dialog: null, leoConfirmed: false, busy: false, notice: null
   };
 
   /* ---------- transport ---------- */
@@ -42,8 +42,92 @@
     photo_rejected: 'The photo was not accepted.',
     bad_state: 'Not right now.',
     locked: 'Someone got there first.',
-    not_found: 'Gone.'
+    not_found: 'Gone.',
+    cancelled: null,
+    no_token: 'Nothing to verify yet.',
+    timeout: 'No answer. Try again.',
+    unreachable: 'No answer. Try again.'
   };
+
+  /* ---------- dialogs ----------
+     FiveM's NUI is a CEF browser with no dialog handler: window.confirm and
+     window.prompt are never shown, confirm resolves false and prompt null.
+     Every action gated behind one would silently do nothing, which is
+     indistinguishable from the player declining. These render in-page. */
+
+  function ask(question, detail, onYes) {
+    state.dialog = { kind: 'confirm', question: question, detail: detail, onYes: onYes };
+    render();
+  }
+
+  function askNumber(question, detail, onValue) {
+    state.dialog = { kind: 'number', question: question, detail: detail, onValue: onValue };
+    render();
+  }
+
+  function closeDialog() {
+    state.dialog = null;
+    render();
+  }
+
+  function renderDialog(view) {
+    var d = state.dialog;
+    var panel = el('div', 'card dialog');
+    panel.appendChild(el('div', 'target', d.question));
+    if (d.detail) panel.appendChild(el('div', 'reason', d.detail));
+
+    var input;
+    if (d.kind === 'number') {
+      input = document.createElement('input');
+      input.type = 'number';
+      input.id = 'dialog-value';
+      input.min = 0;
+      var field = el('div', 'field');
+      field.appendChild(input);
+      panel.appendChild(field);
+    }
+
+    var row = el('div', 'row');
+    var yes = el('button', 'primary', d.kind === 'number' ? 'Confirm' : 'Yes');
+    yes.onclick = function () {
+      var handler = d.onYes, valueHandler = d.onValue;
+      var value = input ? parseInt(input.value, 10) : null;
+      state.dialog = null;
+      render();
+      if (handler) handler();
+      if (valueHandler && value && value > 0) valueHandler(value);
+    };
+    var no = el('button', 'ghost', 'Cancel');
+    no.onclick = closeDialog;
+    row.appendChild(yes);
+    row.appendChild(no);
+    panel.appendChild(row);
+
+    view.appendChild(panel);
+  }
+
+  function renderChoice(view) {
+    var d = state.dialog;
+    var panel = el('div', 'card dialog');
+    panel.appendChild(el('div', 'target', d.question));
+    if (d.detail) panel.appendChild(el('div', 'reason', d.detail));
+
+    var row = el('div', 'row');
+    d.options.forEach(function (option) {
+      var button = el('button', option.primary ? 'primary' : null, option.label);
+      button.onclick = function () {
+        state.dialog = null;
+        render();
+        option.run();
+      };
+      row.appendChild(button);
+    });
+    var cancel = el('button', 'ghost', 'Cancel');
+    cancel.onclick = closeDialog;
+    row.appendChild(cancel);
+    panel.appendChild(row);
+    view.appendChild(panel);
+  }
 
   function say(message, kind) {
     state.notice = { message: message, kind: kind || 'red' };
@@ -52,6 +136,9 @@
   }
 
   function fail(result) {
+    // A null entry means the player did this on purpose; saying anything
+    // would read as a failure.
+    if (result.err in ERRORS && ERRORS[result.err] === null) return;
     say(ERRORS[result.err] || 'Something went wrong.');
   }
 
@@ -158,6 +245,20 @@
       talk.onclick = function () { openThread(contract, null); };
       row.appendChild(talk);
 
+      var quit = el('button', 'ghost', 'Abandon');
+      quit.onclick = function () {
+        ask('Walk away from this contract?',
+            'If you staked a penalty, the client keeps it.',
+            function () {
+              post('abandon', { id: contract.id }).then(function (r) {
+                if (!r.ok) return fail(r);
+                say('You are off the contract.');
+                refresh();
+              });
+            });
+      };
+      row.appendChild(quit);
+
       // Live progress if the countdown is running, otherwise the snapshot
       // that came with the projection.
       var progress = state.progress[contract.id] || contract.kidnapProgress;
@@ -229,17 +330,34 @@
   }
 
   function acceptContract(contract) {
-    if (contract.targetProtected && settings().warnHunter !== false &&
-        !window.confirm('This contract is on an active law enforcement officer. ' +
-                        'Law enforcement has already been advised. Accept anyway?')) {
+    function take(anonymous) {
+      post('accept', { id: contract.id, anonymous: anonymous }).then(function (r) {
+        if (!r.ok) return fail(r);
+        say(anonymous ? 'Contract accepted, anonymously.' : 'Contract accepted.', 'gold');
+        refresh();
+      });
+    }
+
+    function chooseAnonymity() {
+      state.dialog = {
+        kind: 'choice',
+        question: 'Take this one anonymously?',
+        detail: 'The client will see an operative, not a name.',
+        options: [
+          { label: 'Anonymously', primary: true, run: function () { take(true); } },
+          { label: 'Under my name', run: function () { take(false); } }
+        ]
+      };
+      render();
+    }
+
+    if (contract.targetProtected && settings().warnHunter !== false) {
+      ask('This contract is on a sworn officer.',
+          'Law enforcement has already been advised that someone is coming. Accept anyway?',
+          chooseAnonymity);
       return;
     }
-    var anonymous = window.confirm('Accept anonymously?');
-    post('accept', { id: contract.id, anonymous: anonymous }).then(function (r) {
-      if (!r.ok) return fail(r);
-      say('Contract accepted.', 'gold');
-      refresh();
-    });
+    chooseAnonymity();
   }
 
   function verifyKill(contract) {
@@ -285,16 +403,24 @@
   }
 
   function bailout(contract) {
-    if (!window.confirm('Pay ' + money(contract.bailoutAmount) + ' to close this contract?')) return;
-    post('bailout', { id: contract.id }).then(function (r) {
-      if (!r.ok) return fail(r);
-      say('Paid. The contract closes shortly.', 'gold');
-      refresh();
-    });
+    ask('Pay ' + money(contract.bailoutAmount) + ' to close this contract?',
+        'The client gets their money back along with your payment.',
+        function () {
+          post('bailout', { id: contract.id }).then(function (r) {
+            if (!r.ok) return fail(r);
+            say('Paid. The contract closes shortly.', 'gold');
+            refresh();
+          });
+        });
   }
 
   function buyInformant(contract) {
-    if (!window.confirm('Informant data is expensive and may turn up nothing. Continue?')) return;
+    ask('Buy informant data?',
+        'It is expensive, and it may turn up nothing. You pay either way.',
+        function () { doBuyInformant(contract); });
+  }
+
+  function doBuyInformant(contract) {
     post('informant', { id: contract.id }).then(function (r) {
       if (!r.ok) return fail(r);
       if (!r.data || !r.data.found) return say('The informant had nothing for you.');
@@ -304,30 +430,32 @@
 
   // Improvements apply at once: they can only benefit the hunter.
   function improveContract(contract) {
-    var minutes = window.prompt('Extend the deadline by how many minutes?');
-    var value = parseInt(minutes, 10);
-    if (!value || value <= 0) return;
-    post('improve', {
-      id: contract.id,
-      kind: 'extend_deadline',
-      payload: { seconds: value * 60 }
-    }).then(function (r) {
-      if (!r.ok) return fail(r);
-      say('Deadline extended.', 'gold');
-      refresh();
-    });
+    askNumber('Extend the deadline by how many minutes?',
+              'This applies at once — it can only help whoever is hunting.',
+              function (minutes) {
+                post('improve', {
+                  id: contract.id,
+                  kind: 'extend_deadline',
+                  payload: { seconds: minutes * 60 }
+                }).then(function (r) {
+                  if (!r.ok) return fail(r);
+                  say('Deadline extended.', 'gold');
+                  refresh();
+                });
+              });
   }
 
   function addEscrow(contract) {
-    var amount = window.prompt('Add how much cash to the pot?');
-    var value = parseInt(amount, 10);
-    if (!value || value <= 0) return;
-    post('addEscrow', { id: contract.id, reward: { baseline: { cash: value } } })
-      .then(function (r) {
-        if (!r.ok) return fail(r);
-        say('Added to the pot.', 'gold');
-        refresh();
-      });
+    askNumber('Add how much cash to the pot?',
+              'It is taken from you now and held with the rest.',
+              function (value) {
+                post('addEscrow', { id: contract.id, reward: { baseline: { cash: value } } })
+                  .then(function (r) {
+                    if (!r.ok) return fail(r);
+                    say('Added to the pot.', 'gold');
+                    refresh();
+                  });
+              });
   }
 
   // Threads are addressed by an opaque server-issued handle, never by a
@@ -566,11 +694,13 @@
     }
 
     var protectedTarget = document.getElementById('target-handle').dataset.protected === 'true';
-    if (protectedTarget && settings().warnCreator !== false &&
-        !window.confirm('This target is a sworn law enforcement officer. Placing this ' +
-                        'contract will alert every officer on duty. Continue?')) {
+    if (protectedTarget && settings().warnCreator !== false && !state.leoConfirmed) {
+      ask('That target is a sworn officer.',
+          'Placing this will alert every officer on duty, by phone and over dispatch.',
+          function () { state.leoConfirmed = true; submitContract(); });
       return;
     }
+    state.leoConfirmed = false;
 
     post('create', {
       target: target,
@@ -666,6 +796,15 @@
     if (state.notice) {
       view.appendChild(el('div', 'notice' + (state.notice.kind === 'gold' ? ' gold' : ''),
         state.notice.message));
+    }
+
+    if (state.dialog) {
+      if (state.dialog.kind === 'choice') {
+        renderChoice(view);
+      } else {
+        renderDialog(view);
+      }
+      return;
     }
 
     ({

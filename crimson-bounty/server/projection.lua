@@ -226,7 +226,9 @@ function Projection.onMe(viewerCid)
             local row = Projection.contract(c, viewerCid)
             -- A target learns a price exists on them and what freedom costs.
             -- They do not learn who placed it, and never the hunter roster.
+            -- The target learns there is a client, never which one.
             row.creatorName = nil
+            row.creatorAnonymous = true
             row.hunters = nil
             out[#out + 1] = row
         end

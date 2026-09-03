@@ -52,9 +52,7 @@ function boot(responses) {
   const sandbox = {
     document: document,
     window: {
-      addEventListener: function (type, fn) { sandbox.window['_' + type] = fn; },
-      confirm: function () { return sandbox.confirmAnswer !== false; },
-      prompt: function () { return sandbox.promptAnswer; }
+      addEventListener: function (type, fn) { sandbox.window['_' + type] = fn; }
     },
     fetch: function (url, options) {
       const name = url.split('/crimson:')[1];
@@ -83,6 +81,20 @@ function boot(responses) {
 /** Let queued promise callbacks run. */
 function settle() {
   return new Promise(function (resolve) { setImmediate(resolve); });
+}
+
+/** Click a button in the rendered view by its exact label. */
+function click(app, label) {
+  const match = app.view.all().filter(function (n) {
+    return n.tagName === 'BUTTON' && n.textContent === label;
+  });
+  if (match.length === 0) {
+    throw new Error('no button labelled "' + label + '" — on screen: ' +
+      app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; }).join(' | '));
+  }
+  match[0].onclick();
+  return match[0];
 }
 
 /* ---------------------------------------------------------------- */
@@ -235,6 +247,7 @@ async function main() {
     it('has a buyout button', function () { eq(buy.length, 1); });
 
     buy[0].onclick();
+    click(app, 'Yes');
     await settle();
     it('sends the buyout for the right contract', function () {
       truthy(boughtOut, 'nothing was sent');
@@ -306,19 +319,102 @@ async function main() {
     })[0];
 
     // The player declines the warning.
-    app.sandbox.confirmAnswer = false;
     take.onclick();
-    await settle();
-    it('does not accept when the player declines the warning', function () {
-      falsy(accepted, 'declining the warning must stop the acceptance');
+    it('raises an in-page warning rather than a native dialog', function () {
+      truthy(app.view.textContent.indexOf('sworn officer') !== -1,
+        'the warning must be rendered in the page: ' + app.view.textContent);
     });
 
-    app.sandbox.confirmAnswer = true;
-    take.onclick();
+    click(app, 'Cancel');
     await settle();
-    it('accepts once the player confirms', function () {
-      truthy(accepted);
+    it('does not accept when the player cancels the warning', function () {
+      falsy(accepted, 'cancelling must stop the acceptance');
+    });
+
+    take.onclick();
+    click(app, 'Yes');
+    it('then asks how they want to be named', function () {
+      truthy(app.view.textContent.indexOf('anonymously') !== -1,
+        'the anonymity choice should follow: ' + app.view.textContent);
+    });
+
+    click(app, 'Anonymously');
+    await settle();
+    it('accepts anonymously when that is chosen', function () {
+      truthy(accepted, 'nothing was sent');
       eq(accepted.id, 'ct00000001');
+      eq(accepted.anonymous, true);
+    });
+  })();
+
+  await (async function inPageDialogs() {
+    const onMe = {
+      id: 'ct00000001', reason: 'x', mode: 'exclusive', state: 'active',
+      reward: { baseline: 5000, bonus: 0 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1, huntersActive: 1, huntersMax: 5,
+      targetName: 'Dana Reyes', targetProtected: false, role: 'target',
+      bailoutAmount: 15000, bailoutAvailable: true
+    };
+
+    let bought = null;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [onMe] } },
+      ledger: LEDGER,
+      bailout: function (body) { bought = body; return { ok: true, data: true }; }
+    });
+    await settle(); await settle();
+
+    const tabs = app.document.querySelectorAll('.tab');
+    tabs.filter(function (t) { return t.dataset.tab === 'onme'; })[0].onclick();
+
+    click(app, 'Buy out — $15,000');
+    it('confirms the buyout in the page', function () {
+      truthy(app.view.textContent.indexOf('Pay $15,000') !== -1,
+        'an in-page confirmation must appear: ' + app.view.textContent);
+    });
+
+    it('has not sent anything before the player confirms', function () {
+      falsy(bought);
+    });
+
+    click(app, 'Yes');
+    await settle();
+    it('sends the buyout once confirmed', function () {
+      truthy(bought, 'the buyout must reach the server');
+      eq(bought.id, 'ct00000001');
+    });
+  })();
+
+  await (async function hunterCanWalkAway() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hunter';
+    held.myAlias = 'Operative #1';
+
+    let abandoned = null;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+      ledger: LEDGER,
+      abandon: function (body) { abandoned = body; return { ok: true, data: true }; }
+    });
+    await settle(); await settle();
+
+    const tabs = app.document.querySelectorAll('.tab');
+    tabs.filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+
+    it('offers the hunter a way off the contract', function () {
+      const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('Abandon') !== -1, 'buttons: ' + labels.join(' | '));
+    });
+
+    click(app, 'Abandon');
+    click(app, 'Yes');
+    await settle();
+    it('sends the abandon', function () {
+      truthy(abandoned);
+      eq(abandoned.id, 'ct00000001');
     });
   })();
 

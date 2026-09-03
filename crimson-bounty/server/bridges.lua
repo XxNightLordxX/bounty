@@ -60,6 +60,7 @@ end
 function Bridges.onPlayerDropped(modules, cid)
     if not cid then return false end
 
+    modules.identity.endSession(cid)
     modules.ratelimit.clear(cid)
     modules.death.clearPlayer(cid)
     modules.photo.clearPlayer(cid)
@@ -105,7 +106,12 @@ function Bridges.install(modules)
 
     local function remember(src)
         local actor = modules.identity.resolve(src)
-        if actor then connected[src] = actor.cid end
+        if actor then
+            connected[src] = actor.cid
+            -- Session length is measured here rather than asked of the
+            -- framework, so the new-player rule always has an answer.
+            modules.identity.beginSession(actor.cid)
+        end
         return actor
     end
 

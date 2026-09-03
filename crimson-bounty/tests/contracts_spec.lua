@@ -39,15 +39,43 @@ describe('contract creation', function()
         eq(err, CB.ERR.SAME_ACCOUNT)
     end)
 
-    it('refuses a target who is too new or just connected', function()
+    it('refuses a target who has barely played', function()
         local s = newStack()
         local f = fixture(s)
-        Env.players[2]._playtimeHours = 1
+        -- Playtime comes from the framework's own metadata, in minutes.
+        Env.players[2].PlayerData.metadata.playtime = 60
         local contract, err = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
         })
         falsy(contract)
         eq(err, CB.ERR.TARGET_PROTECTED)
+    end)
+
+    it('refuses a target who only just connected', function()
+        local s = newStack()
+        local f = fixture(s)
+        s.identity.beginSession('TARGET01')
+        local contract, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
+        })
+        falsy(contract, 'someone who walked in a moment ago is not fair game')
+        eq(err, CB.ERR.TARGET_PROTECTED)
+
+        Env.advance((Config.Immunity.MinTargetSessionMinutes * 60) + 60)
+        truthy(s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
+        }), 'and fair game once they have settled in')
+    end)
+
+    it('does not refuse everyone when playtime cannot be resolved', function()
+        local s = newStack()
+        local f = fixture(s)
+        -- No provider, no metadata: the rule is skipped, not applied to all.
+        Env.players[2].PlayerData.metadata.playtime = nil
+        local contract, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
+        })
+        truthy(contract, 'a missing playtime source must not stop the resource: ' .. tostring(err))
     end)
 
     it('rejects a reason containing a link or a phone number', function()
@@ -566,18 +594,37 @@ describe('anonymity fees', function()
         eq(Env.players[3].PlayerData.money.bank, 47500)
     end)
 
-    it('refuses an anonymous acceptance the hunter cannot afford', function()
+    it('accepts under their own name when they cannot afford anonymity', function()
         local s, f = withFees(0, 2500)
         Env.players[3].PlayerData.money.bank = 100
         Env.players[3].PlayerData.money.cash = 100
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
+
+        local ok = s.contracts.accept(f.hunter, c.id, true)
+        reset()
+
+        truthy(ok, 'anonymity is a preference, not a requirement to take work')
+        local hunter = s.storage.readHunter(c.id, 'HUNTER01')
+        falsy(hunter.anon, 'and they are simply named instead')
+        eq(Env.players[3].PlayerData.money.bank, 100, 'charged nothing')
+    end)
+
+    it('never charges a hunter for an acceptance that fails', function()
+        local s, f = withFees(0, 2500)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000 } }, penaltyAmount = 99999,
+        })
         local ok, err = s.contracts.accept(f.hunter, c.id, true)
         reset()
-        falsy(ok)
+
+        falsy(ok, 'the stake is unaffordable')
         eq(err, CB.ERR.INSUFFICIENT)
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'and the contract stays open')
+        eq(Env.players[3].PlayerData.money.bank, 50000,
+            'and no anonymity fee was taken for it')
     end)
 end)
 

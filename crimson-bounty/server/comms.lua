@@ -108,6 +108,8 @@ function Comms.send(actor, contractId, threadHandle, rawBody)
     local ctx, err = Comms.context(actor, contractId, threadHandle)
     if not ctx then return false, err end
 
+    -- This module owns the message bucket, so every caller is throttled and
+    -- a message never costs two tokens.
     if not RateLimit.check(actor.cid, 'message') then return false, CB.ERR.RATE_LIMITED end
 
     local body = Util.sanitizeText(rawBody, Config.Relay.MaxLength)

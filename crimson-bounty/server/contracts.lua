@@ -150,23 +150,44 @@ function Contracts.canCreate(actor, targetActor)
     return true
 end
 
---- Playtime, session and post-respawn immunity (§14.19, §14.39). Fails
---- closed: an unresolvable playtime counts as below every minimum.
-function Contracts.isImmune(targetActor)
-    local hours = targetActor.player and targetActor.player._playtimeHours
-    local session = targetActor.player and targetActor.player._sessionMinutes
-
-    if hours == nil or session == nil then
-        return Config.Immunity.FailClosed
+--- Playtime, session and post-respawn immunity (§14.19, §14.39).
+---
+--- A check we can perform fails closed. A check we have no data for does
+--- NOT: an unresolvable playtime once made every player on the server
+--- immune, which silently stopped every contract and every payout. The
+--- absence of a provider is a configuration problem to be reported at boot,
+--- not a reason to refuse everything.
+---
+---@param targetActor table
+---@param opts table|nil { deathAt = ms } when judging a claim on a specific death
+function Contracts.isImmune(targetActor, opts)
+    -- Session length is measured by this resource, so it is always known
+    -- for anyone who connected while it was running.
+    local session = Identity.sessionMinutes(targetActor.cid)
+    if session ~= nil and session < Config.Immunity.MinTargetSessionMinutes then
+        return true
     end
-    if hours < Config.Immunity.MinTargetPlaytimeHours then return true end
-    if session < Config.Immunity.MinTargetSessionMinutes then return true end
+
+    local hours = Identity.playtimeHours(targetActor)
+    if hours ~= nil and hours < Config.Immunity.MinTargetPlaytimeHours then
+        return true
+    end
 
     -- Someone who just got back up is not immediately fair game again:
     -- without this a multi-slot contract becomes respawn camping.
+    --
+    -- A claim on a death that happened BEFORE the respawn is exempt: the
+    -- hunter earned it while the target was still down, and the target
+    -- pressing respawn must not take it away (§7.4 proof window).
     if Death and (Config.Immunity.PostRespawnSeconds or 0) > 0 then
         local since = Death.sinceRespawn(targetActor.cid)
-        if since and since < Config.Immunity.PostRespawnSeconds then return true end
+        if since and since < Config.Immunity.PostRespawnSeconds then
+            local respawnedAgo = since
+            local deathAgo = opts and opts.deathAt
+                and ((GetGameTimer() - opts.deathAt) / 1000) or nil
+            local claimPredatesRespawn = deathAgo ~= nil and deathAgo > respawnedAgo
+            if not claimPredatesRespawn then return true end
+        end
     end
 
     return false
@@ -205,8 +226,12 @@ function Contracts.create(actor, req)
 
     local mode = req.mode == CB.MODE.COMPETITIVE and CB.MODE.COMPETITIVE or CB.MODE.EXCLUSIVE
 
+    local bonusPercent = Util.toCount(req.bonusPercent, Config.Bonus.maxPercent) or 0
+
+    -- The bonus is escrowed at creation like everything else, so a creator
+    -- cannot promise a live-delivery premium they have not surrendered.
     local lines, slotCount
-    lines, err, slotCount = Escrow.validate(actor, req.reward)
+    lines, err, slotCount = Escrow.validate(actor, req.reward, bonusPercent)
     if not lines then return nil, err end
 
     -- Bailout premium is clamped to a multiple of the money escrow so it
@@ -233,8 +258,6 @@ function Contracts.create(actor, req)
             if bailout > Config.Bailout.AbsoluteMax then bailout = Config.Bailout.AbsoluteMax end
         end
     end
-
-    local bonusPercent = Util.toCount(req.bonusPercent, Config.Bonus.maxPercent) or 0
 
     local now = os.time()
     local contract = {
@@ -289,8 +312,13 @@ function Contracts.create(actor, req)
     end
 
     if not Storage.writeContract(contract) then
-        -- The contract could not be stored, so the escrow must come back.
+        -- The contract could not be stored, so everything taken comes back:
+        -- the escrow, and the anonymity fee charged before it.
         Escrow.release(contract.id, actor.cid, nil, 'contract_write_failed')
+        if contract.anon_creator and (Config.Anonymity.CreatorFee or 0) > 0 then
+            actor.player.Functions.AddMoney(
+                Config.Anonymity.FeeAccount or 'bank', Config.Anonymity.CreatorFee)
+        end
         return nil, CB.ERR.BAD_STATE
     end
 
@@ -362,20 +390,6 @@ function Contracts.accept(actor, contractId, anonymous)
         end
     end
 
-    -- A hunter who wants to stay unnamed pays for it, where the server
-    -- charges for anonymity at all (§4).
-    if anonymous and (Config.Anonymity.HunterFee or 0) > 0 then
-        local account = Config.Anonymity.FeeAccount or 'bank'
-        if not actor.player.Functions.RemoveMoney(account, Config.Anonymity.HunterFee) then
-            if contract.mode == CB.MODE.EXCLUSIVE then
-                Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'fee_failed')
-            end
-            return false, CB.ERR.INSUFFICIENT
-        end
-        Audit.financial('anonymity_fee', actor.cid, contractId,
-            { amount = Config.Anonymity.HunterFee, role = 'hunter' })
-    end
-
     -- The failure penalty is staked here, at acceptance, or not at all: a
     -- penalty that is only charged after a failure is a penalty the hunter
     -- can walk away from (§3.6). The hunter is told the amount before this
@@ -416,6 +430,25 @@ function Contracts.accept(actor, contractId, anonymous)
         state         = 'active',
     }
     Storage.addHunter(record)
+
+    -- The anonymity fee is taken last, after the stake and the record, so
+    -- there is no path where a hunter is charged for an acceptance that
+    -- then fails (§4).
+    if anonymous and (Config.Anonymity.HunterFee or 0) > 0 then
+        local account = Config.Anonymity.FeeAccount or 'bank'
+        if actor.player.Functions.RemoveMoney(account, Config.Anonymity.HunterFee) then
+            Audit.financial('anonymity_fee', actor.cid, contractId,
+                { amount = Config.Anonymity.HunterFee, role = 'hunter' })
+        else
+            -- They cannot afford to stay unnamed, so they are simply named.
+            -- Refusing the whole acceptance here would mean unwinding the
+            -- stake as well, for a preference rather than a requirement.
+            Storage.updateHunter(record.id, { anon = false })
+            record.anon = false
+            Notify.toCitizen(actor.cid, 'Not anonymous',
+                'You could not cover the anonymity fee, so the contract carries your name.')
+        end
+    end
 
     -- Start watching the target's health now, so damage claimed against
     -- them from this point can be corroborated (§14.2).
@@ -488,7 +521,8 @@ end
 ---@return boolean ok
 ---@return string|nil err
 ---@return table|nil result
-function Contracts.claimSlot(contractId, hunterCid, fulfilment)
+---@param opts table|nil { deathAt = ms } when the claim rests on a recorded death
+function Contracts.claimSlot(contractId, hunterCid, fulfilment, opts)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
     if contract.state ~= CB.STATE.ACCEPTED then return false, CB.ERR.BAD_STATE end
@@ -509,7 +543,7 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment)
     -- contract is claimed repeatedly over time, and the target's post-respawn
     -- protection has to hold for every claim (§14.39).
     local targetActor = Identity.byCitizenId(contract.target_cid)
-    if targetActor and Contracts.isImmune(targetActor) then
+    if targetActor and Contracts.isImmune(targetActor, opts) then
         return false, CB.ERR.TARGET_PROTECTED
     end
 

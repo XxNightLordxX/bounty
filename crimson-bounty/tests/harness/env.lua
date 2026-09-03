@@ -33,13 +33,18 @@ function Env.addPlayer(opts)
             charinfo = { firstname = opts.firstname or 'Test', lastname = opts.lastname or ('P' .. src) },
             job = opts.job or { name = 'unemployed', type = 'none', onduty = false },
             money = { cash = opts.cash or 0, bank = opts.bank or 0 },
-            metadata = opts.metadata or { isdead = false, inlaststand = false, ishandcuffed = false },
+            metadata = opts.metadata or {
+                isdead = false, inlaststand = false, ishandcuffed = false,
+                -- QBox stores playtime in minutes.
+                playtime = (opts.playtimeHours or 100) * 60,
+            },
         },
         _inventory = opts.inventory or {},
         _coords = opts.coords or { x = 0.0, y = 0.0, z = 0.0 },
         _health = opts.health or 200,
-        _playtimeHours = opts.playtimeHours or 100,
-        _sessionMinutes = opts.sessionMinutes or 120,
+        -- Playtime lives where the real framework keeps it, so a test can
+        -- never pass on a field production does not have.
+        _playtimeHours = opts.playtimeHours,
     }
 
     player.Functions = {

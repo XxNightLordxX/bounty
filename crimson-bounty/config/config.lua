@@ -141,6 +141,9 @@ Config.Cooldowns = {
     --- contract table, so they are throttled like everything else.
     death     = { per = 5,  burst = 4 },
     mugshot   = { per = 60, burst = 3 },
+    --- The countdown is polled once a second while a delivery runs, so it
+    --- cannot share a bucket with the listing calls.
+    progress  = { per = 1, burst = 5 },
 }
 
 --------------------------------------------------------------------------
@@ -152,8 +155,10 @@ Config.Immunity = {
     MinTargetSessionMinutes  = 10,
     PostRespawnSeconds       = 300,
     AfterBailoutSeconds      = 3600,
-    --- Unresolvable playtime counts as below every minimum.
-    FailClosed = true,
+    --- Where total playtime comes from. Leave nil to read QBox character
+    --- metadata. If nothing can answer, the playtime rule is skipped and the
+    --- resource says so at startup — it does not silently refuse everyone.
+    PlaytimeProvider = nil,
 }
 
 --------------------------------------------------------------------------

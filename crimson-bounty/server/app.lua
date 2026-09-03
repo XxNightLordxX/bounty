@@ -251,8 +251,10 @@ function App.register()
         return { armed = true }
     end)
 
-    handler('kidnapProgress', 'search', function(actor, payload)
-        return deps.kidnap.progress(Util.toId(payload.id) or '', actor.cid) or { elapsed = 0 }
+    handler('kidnapProgress', 'progress', function(actor, payload)
+        -- Returned unchanged: a fabricated { elapsed = 0 } has no `required`,
+        -- which draws a NaN bar and a poller that can never finish.
+        return deps.kidnap.progress(Util.toId(payload.id) or '', actor.cid)
     end)
 
     -- Target counter-play ----------------------------------------------
@@ -307,7 +309,9 @@ function App.register()
         return messages
     end)
 
-    handler('sendMessage', 'message', function(actor, payload)
+    -- No bucket here: Comms.send owns the message throttle, and applying it
+    -- in both places charged two tokens per message.
+    handler('sendMessage', nil, function(actor, payload)
         local ok, err = deps.comms.send(actor, payload.id, payload.thread, payload.body)
         if not ok then return false, err end
         return true

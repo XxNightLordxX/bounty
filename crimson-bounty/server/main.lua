@@ -44,6 +44,15 @@ local function validateConfig()
         warn[#warn + 1] = 'Database.Mode is "memory": contracts and escrow will NOT survive a restart'
     end
 
+    -- A rule that cannot be evaluated is worse than one that is off, because
+    -- nobody can tell. Say so at startup rather than silently skipping it.
+    if Config.Immunity.MinTargetPlaytimeHours > 0
+        and not (Config.Immunity.PlaytimeProvider and Config.Immunity.PlaytimeProvider.resource) then
+        warn[#warn + 1] = ('Immunity.MinTargetPlaytimeHours is %d but no PlaytimeProvider is set; ' ..
+            'the rule applies only where QBox metadata carries a playtime figure')
+            :format(Config.Immunity.MinTargetPlaytimeHours)
+    end
+
     if not Config.Kidnap.RequireCoercion then
         warn[#warn + 1] = 'Kidnap.RequireCoercion is off: a target can be "delivered" while walking freely'
     end

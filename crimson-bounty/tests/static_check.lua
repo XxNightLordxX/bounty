@@ -272,6 +272,50 @@ for key in configSrc:gmatch('\n%s*([%w_]+)%s*=') do
 end
 
 --------------------------------------------------------------------------
+-- 9. No production code reads a field only the test harness invents
+--------------------------------------------------------------------------
+--
+-- The worst bug in this build was a check reading `player._playtimeHours`,
+-- a field the harness fabricated and the real framework never sets. Every
+-- test passed and the resource refused every contract on a live server.
+-- Any underscore-prefixed field read outside the harness is that mistake.
+
+for _, path in ipairs(files) do
+    if path:find('server/') or path:find('client/') or path:find('shared/') then
+        local src = read(path)
+        if src then
+            for field in src:gmatch('%.player%._([%w_]+)') do
+                failures[#failures + 1] =
+                    ('%s reads player._%s, which only the test harness sets')
+                        :format(path, field)
+            end
+            for field in src:gmatch('actor%._([%w_]+)') do
+                failures[#failures + 1] =
+                    ('%s reads actor._%s, which only the test harness sets')
+                        :format(path, field)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
+-- 10. The app never relies on a native browser dialog
+--------------------------------------------------------------------------
+--
+-- FiveM's NUI is a CEF browser with no dialog handler: confirm() resolves
+-- false and prompt() null, neither is ever shown, and an action gated behind
+-- one silently does nothing. Six actions in this app were dead that way.
+
+local uiCode = (read('crimson-bounty/ui/app.js') or ''):gsub('/%*.-%*/', ''):gsub('//[^\n]*', '')
+for _, call in ipairs({ 'confirm%s*%(', 'prompt%s*%(', 'alert%s*%(' }) do
+    if uiCode:find('window%.' .. call) or uiCode:find('[^%w_%.]' .. call) then
+        failures[#failures + 1] =
+            ('ui/app.js uses a native browser dialog (%s), which FiveM NUI never shows')
+                :format((call:gsub('%%s%*%(', '')))
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

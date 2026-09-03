@@ -272,3 +272,59 @@ describe('escrow lines always carry a valid payout slot', function()
         end
     end)
 end)
+
+describe('the kidnapping bonus is real money', function()
+    local function withBonus(percent)
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 10000 } },
+            bonusPercent = percent,
+        })
+        return s, f, c
+    end
+
+    it('escrows the bonus at creation rather than merely promising it', function()
+        local s, f, c = withBonus(50)
+        truthy(c)
+        eq(s.escrow.moneyValue(c.id, CB.PORTION.BONUS), 5000)
+        eq(Env.players[1].PlayerData.money.cash, 85000,
+            'the creator surrendered the bonus too')
+    end)
+
+    it('pays a live delivery more than a kill', function()
+        local s, f, c = withBonus(50)
+        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.KIDNAPPING)
+        eq(Env.players[3].PlayerData.money.cash, 20000, '10000 baseline + 5000 bonus + 5000 start')
+    end)
+
+    it('returns the unearned bonus to the creator on a kill', function()
+        local s, f, c = withBonus(50)
+        s.contracts.accept(f.hunter, c.id, false)
+        local before = Env.players[1].PlayerData.money.cash
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        eq(Env.players[3].PlayerData.money.cash, 15000, 'baseline only')
+        eq(Env.players[1].PlayerData.money.cash, before + 5000, 'bonus comes home')
+    end)
+
+    it('refuses a contract whose bonus the creator cannot cover', function()
+        local s = newStack()
+        local f = fixture(s, { creatorCash = 10000 })
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 10000 } }, bonusPercent = 100,
+        })
+        falsy(c, 'a bonus that cannot be funded is not a bonus')
+        eq(err, CB.ERR.INSUFFICIENT)
+        eq(Env.players[1].PlayerData.money.cash, 10000, 'and nothing was taken')
+    end)
+
+    it('is shown on the board as what the hunter would actually get', function()
+        local s, f, c = withBonus(50)
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        eq(row.reward.baseline, 10000)
+        eq(row.reward.bonus, 5000, 'the +alive figure must be the real one')
+    end)
+end)

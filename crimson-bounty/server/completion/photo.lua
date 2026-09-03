@@ -184,14 +184,20 @@ function Photo.submit(actor, rawToken, rawUrl)
         end
     end
 
-    record.used = true
-    tokens[token] = nil
+    -- The token is spent only once the slot is actually claimed. Burning it
+    -- first meant a transient refusal — a lock held elsewhere, a cooldown —
+    -- destroyed the proof of a kill the server itself had attributed.
+    local ok, err, result = Contracts.claimSlot(
+        record.contractId, actor.cid, CB.FULFILMENT.ELIMINATION,
+        { deathAt = record.diedAt })
 
-    local ok, err, result = Contracts.claimSlot(record.contractId, actor.cid, CB.FULFILMENT.ELIMINATION)
     if not ok then
         Audit.rejected('photo_claim_failed', actor.cid, record.contractId, { reason = err })
         return false, err
     end
+
+    record.used = true
+    tokens[token] = nil
 
     Death.clearPending(record.contractId, actor.cid)
 
