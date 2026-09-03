@@ -374,3 +374,64 @@ describe('damage claims are corroborated, not trusted', function()
         eq(s.death.onVictimReport(2), 0, 'a heal is not a hit')
     end)
 end)
+
+describe('corroboration does not punish legitimate hits', function()
+    local function armed()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        Env.players[3]._coords = { x = 10.0, y = 10.0, z = 30.0 }
+        Env.players[2]._coords = { x = 11.0, y = 10.0, z = 30.0 }
+        return s, f, c
+    end
+
+    it('credits a hit that lands on armour rather than health', function()
+        local s, f, c = armed()
+        Env.players[2]._armour = 100
+        s.death.watch('TARGET01', 2, true)   -- baseline includes the vest
+
+        -- The shot takes armour off and leaves health untouched, which is
+        -- exactly what a vest does.
+        Env.players[2]._armour = 40
+        s.death.recordDamage(3, 2, 123456)
+
+        Env.players[2]._health = 0
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2), 1, 'a shot stopped by a vest is still a shot')
+    end)
+
+    it('credits a hit after the target has healed back up', function()
+        local s, f, c = armed()
+
+        -- An earlier fight left them low, and the baseline recorded it.
+        Env.players[2]._health = 120
+        s.death.watch('TARGET01', 2, true)
+
+        -- They heal to full, and the tick refreshes the baseline.
+        Env.players[2]._health = 200
+        s.death.watchTargets(s.storage.allContracts())
+
+        -- Now a real hit lands.
+        Env.players[2]._health = 150
+        s.death.recordDamage(3, 2, 123456)
+
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2), 1,
+            'a stale low baseline must not make a real hit look like healing')
+    end)
+
+    it('still rejects a claim with no loss of condition at all', function()
+        local s, f, c = armed()
+        Env.players[2]._health = 200
+        Env.players[2]._armour = 0
+        s.death.watch('TARGET01', 2, true)
+
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2), 0)
+    end)
+end)

@@ -28,9 +28,25 @@ end
 -- Damage observation
 --------------------------------------------------------------------------
 
---- Health last seen for a player, so a damage claim can be checked against
---- a decrease the server observed for itself.
-local health = {}
+--- Condition last seen for a player, so a damage claim can be checked
+--- against a decrease the server observed for itself.
+---
+--- Armour is tracked alongside health because a shot that lands on an
+--- armoured target costs no health at all: corroborating on health alone
+--- would reject real hits on anyone wearing a vest.
+---
+--- [cid] = { health = n, armour = n, at = ms }
+local condition = {}
+
+--- Read a player's current condition, server-side.
+local function readCondition(source)
+    local ped = GetPlayerPed(source)
+    return {
+        health = GetEntityHealth(ped) or 0,
+        armour = (GetPedArmour and GetPedArmour(ped)) or 0,
+        at = GetGameTimer(),
+    }
+end
 
 --- Record a damage event.
 ---
@@ -48,20 +64,26 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
     if not attacker or not victim then return end
     if attacker.cid == victim.cid then return end
 
-    -- Corroboration: the victim must actually have lost health. Without
+    -- Corroboration: the victim must actually have lost condition. Without
     -- this, a hunter standing anywhere within weapon range can fabricate a
     -- hit and inherit attribution for a death they had no part in.
-    local current = GetEntityHealth(GetPlayerPed(victimSource)) or 0
-    local previous = health[victim.cid]
-    health[victim.cid] = current
+    local current = readCondition(victimSource)
+    local previous = condition[victim.cid]
+    condition[victim.cid] = current
 
     -- No baseline means nothing to corroborate against, and the baseline is
     -- established the moment a contract on this player is accepted. Failing
     -- closed here is what stops a forged first event from landing before any
     -- real damage has been observed.
-    if not previous or current >= previous then
+    if not previous then
+        Audit.rejected('damage_no_baseline', attacker.cid, nil, { victim = victim.cid })
+        return
+    end
+
+    local lost = (previous.health - current.health) + (previous.armour - current.armour)
+    if lost <= 0 then
         Audit.rejected('damage_unsupported', attacker.cid, nil,
-            { victim = victim.cid, health = current, baseline = previous })
+            { victim = victim.cid, health = current.health, armour = current.armour })
         return
     end
 
@@ -87,9 +109,9 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
         weapon = weaponHash,
         distance = distance,
         coords = victimCoords,
-        -- How much health the server saw disappear, so the hunter who did
+        -- How much condition the server saw disappear, so the hunter who did
         -- the most damage wins attribution rather than whoever claimed last.
-        damage = previous and (previous - current) or 0,
+        damage = lost,
     }
 
     -- Keep the window small: old damage cannot corroborate a later death.
@@ -143,10 +165,18 @@ end
 --- up on the maintenance tick.
 ---@param cid string
 ---@param source number
-function Death.watch(cid, source)
+--- @param refresh boolean|nil update an existing baseline as well as seeding one
+function Death.watch(cid, source, refresh)
     if not cid or not source then return false end
-    if health[cid] == nil then
-        health[cid] = GetEntityHealth(GetPlayerPed(source)) or 200
+
+    -- The baseline is refreshed, not merely seeded: health and armour both
+    -- recover over time, and a stale low baseline would make every later
+    -- hit look like an increase and be rejected as uncorroborated.
+    --
+    -- Refreshing is safe against a hit landing in between, because a damage
+    -- event arrives within milliseconds while this runs on the tick.
+    if condition[cid] == nil or refresh then
+        condition[cid] = readCondition(source)
     end
     return true
 end
@@ -160,7 +190,7 @@ function Death.watchTargets(contracts)
         if c.state == CB.STATE.ACTIVE or c.state == CB.STATE.ACCEPTED then
             local target = Identity.byCitizenId(c.target_cid)
             if target then
-                Death.watch(target.cid, target.source)
+                Death.watch(target.cid, target.source, true)
                 watched = watched + 1
             end
         end
@@ -172,9 +202,9 @@ end
 --- decrease and the next real hit is measured from full.
 function Death.resetHealth(cid, source)
     if source then
-        health[cid] = GetEntityHealth(GetPlayerPed(source)) or 200
+        condition[cid] = readCondition(source)
     else
-        health[cid] = nil
+        condition[cid] = nil
     end
 end
 
@@ -321,7 +351,7 @@ end
 
 function Death.clearPlayer(cid)
     damage[cid] = nil
-    health[cid] = nil
+    condition[cid] = nil
     for key, record in pairs(pending) do
         if record.victimCid == cid or record.hunterCid == cid then pending[key] = nil end
     end

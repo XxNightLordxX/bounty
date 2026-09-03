@@ -69,6 +69,10 @@ function Natives.install()
         local p = Env.players[ped - 1000]
         return p and p._health or 0
     end
+    _G.GetPedArmour = function(ped)
+        local p = Env.players[ped - 1000]
+        return p and p._armour or 0
+    end
     _G.GetVehiclePedIsIn = function(ped)
         local p = Env.players[ped - 1000]
         return p and p._vehicle or 0
