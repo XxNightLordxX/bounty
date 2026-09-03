@@ -1893,3 +1893,68 @@ describe('a credit the framework refuses', function()
         end)
     end)
 end)
+
+
+--- A name is text a player chose, and it goes everywhere text goes.
+---
+--- It is read straight out of the framework's own record and written into
+--- VARCHAR(64) columns, projected to every client and put on the board. On
+--- most servers the player typed it at character creation, so it is no more
+--- trustworthy than a contract reason — and unlike a contract reason,
+--- nothing was cleaning it.
+describe('a player name from the framework', function()
+    it('survives a character record with no name at all', function()
+        -- Identity.resolve runs on nearly every handler. Concatenating a nil
+        -- firstname throws out of all of them, so one malformed row in the
+        -- framework's table locks that player out of the whole resource.
+        local s = newStack()
+        fixture(s)
+        Env.players[1].PlayerData.charinfo = { firstname = nil, lastname = 'Marlowe' }
+
+        local ok, actor = pcall(s.identity.resolve, 1)
+        truthy(ok, 'resolving must not throw: ' .. tostring(actor))
+        truthy(actor, 'and must still identify the player')
+        eq(actor.cid, 'CREATOR1')
+        truthy(type(actor.name) == 'string' and actor.name ~= '')
+    end)
+
+    it('survives a record with no charinfo at all', function()
+        local s = newStack()
+        fixture(s)
+        Env.players[1].PlayerData.charinfo = nil
+
+        local ok, actor = pcall(s.identity.resolve, 1)
+        truthy(ok, tostring(actor))
+        truthy(actor and actor.cid == 'CREATOR1')
+    end)
+
+    it('caps a name that would not fit the column', function()
+        local s = newStack()
+        fixture(s)
+        Env.players[1].PlayerData.charinfo = {
+            firstname = string.rep('A', 200), lastname = string.rep('B', 200),
+        }
+        local actor = s.identity.resolve(1)
+        truthy(#actor.name <= 64,
+            ('a name is written into VARCHAR(64); this one is %d bytes'):format(#actor.name))
+    end)
+
+    it('strips control characters and broken bytes out of a name', function()
+        local s = newStack()
+        fixture(s)
+        Env.players[1].PlayerData.charinfo = {
+            firstname = 'Vic\tMar\255\254', lastname = 'lowe',
+        }
+        local actor = s.identity.resolve(1)
+        falsy(actor.name:find('%c'), 'no control characters: ' .. actor.name)
+        truthy(utf8 == nil or utf8.len(actor.name) ~= nil,
+            'and nothing a utf8mb4 column will refuse: ' .. actor.name)
+    end)
+
+    it('leaves an ordinary name exactly as it is', function()
+        local s = newStack()
+        fixture(s)
+        Env.players[1].PlayerData.charinfo = { firstname = 'Zoë', lastname = 'Ferreira' }
+        eq(s.identity.resolve(1).name, 'Zoë Ferreira')
+    end)
+end)

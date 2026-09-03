@@ -60,6 +60,34 @@ function Identity.playtimeHours(actor)
     return nil
 end
 
+--- A player's name, fit to store and to show.
+---
+--- Read straight out of the framework's own character record, which on most
+--- servers is whatever the player typed at creation — so it is no more
+--- trustworthy than a contract reason, and it goes to the same places: a
+--- VARCHAR(64) column and every client's screen.
+---
+--- Missing pieces are not fatal. resolve runs on nearly every handler, so a
+--- nil firstname concatenated here used to throw out of all of them, and one
+--- malformed row in the framework's table locked that player out of the
+--- whole resource.
+---@param data table PlayerData
+---@return string
+local function nameOf(data)
+    local info = data and data.charinfo
+    local first = info and type(info.firstname) == 'string' and info.firstname or nil
+    local last = info and type(info.lastname) == 'string' and info.lastname or nil
+
+    local whole
+    if first and last then whole = first .. ' ' .. last
+    else whole = first or last end
+
+    -- 64 to match the column. sanitizeText also drops control characters and
+    -- anything a utf8mb4 column would refuse, including the half of a
+    -- character its own cap would otherwise leave behind.
+    return Util.sanitizeText(whole, 64) or 'Unknown'
+end
+
 --- Resolve the acting player from the engine-supplied event source.
 ---@param source number
 ---@return table|nil actor { source, cid, account, name, job, player }
@@ -83,7 +111,7 @@ function Identity.resolve(source)
         source  = src,
         cid     = cid,
         account = Identity.accountOf(src),
-        name    = (data.charinfo and (data.charinfo.firstname .. ' ' .. data.charinfo.lastname)) or 'Unknown',
+        name    = nameOf(data),
         job     = data.job or { name = 'unemployed', type = 'none' },
         player  = player,
     }

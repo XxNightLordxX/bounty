@@ -249,3 +249,116 @@ describe('Util.mintId', function()
         eq(n, 3, 'a store handing out nothing but taken ids must not loop forever')
     end)
 end)
+
+
+--- Text a player typed, on its way to a database and a browser.
+describe('sanitizing text', function()
+    local Util = require('crimson-bounty.shared.util')
+
+    --- Whether every byte sequence in this string is well-formed UTF-8.
+    local function wellFormed(text)
+        return utf8 and utf8.len(text) ~= nil
+    end
+
+    it('does not cut a character in half at the length cap', function()
+        -- The cap counts bytes. An emoji straddling it left two of its four
+        -- bytes behind: valid text in, invalid UTF-8 out, headed for a
+        -- utf8mb4 column that rejects it and a JSON message the page cannot
+        -- parse — which drops the whole reply and freezes the app.
+        local text = string.rep('a', 30) .. '\240\159\148\170 blade'
+        local out = Util.sanitizeText(text, 32)
+        truthy(out)
+        truthy(wellFormed(out), 'the cap must fall on a character boundary')
+        eq(out, string.rep('a', 30), 'and the half-character is dropped, not kept')
+    end)
+
+    it('does not cut a two-byte character in half either', function()
+        local text = string.rep('b', 31) .. '\195\169 end'
+        local out = Util.sanitizeText(text, 32)
+        truthy(out)
+        truthy(wellFormed(out), 'a two-byte character is just as splittable')
+    end)
+
+    it('keeps a character that fits exactly', function()
+        local text = string.rep('c', 28) .. '\240\159\148\170'
+        local out = Util.sanitizeText(text, 32)
+        eq(out, text, 'nothing straddles the cap here')
+        truthy(wellFormed(out))
+    end)
+
+    it('drops bytes that were never valid to begin with', function()
+        -- Not everything arrives from a keyboard. A payload can carry any
+        -- bytes at all, and they end up in the same column and the same
+        -- JSON message.
+        local out = Util.sanitizeText('ok\255\254 then', 64)
+        truthy(out)
+        truthy(wellFormed(out), 'invalid bytes must not survive: ' .. tostring(out))
+        truthy(out:find('ok', 1, true) and out:find('then', 1, true),
+            'while the text around them does')
+    end)
+
+    it('leaves ordinary text alone', function()
+        eq(Util.sanitizeText('  Unpaid   debt  ', 64), 'Unpaid debt')
+        eq(Util.sanitizeText('Zoë Ferreira', 64), 'Zoë Ferreira',
+            'accented text is ordinary text')
+    end)
+
+    it('still refuses what is not a string, and what is left empty', function()
+        falsy(Util.sanitizeText(nil, 10))
+        falsy(Util.sanitizeText(42, 10))
+        falsy(Util.sanitizeText({}, 10))
+        falsy(Util.sanitizeText('   ', 10))
+        falsy(Util.sanitizeText('\255', 10), 'nothing usable is left of this')
+    end)
+end)
+
+
+--- Held against every byte string, not the handful anyone thought of.
+describe('sanitized text is always well-formed', function()
+    local Util = require('crimson-bounty.shared.util')
+
+    it('never returns a sequence Lua itself will not read', function()
+        math.randomseed(20260903)
+        local bad = {}
+
+        for case = 1, 4000 do
+            local bytes = {}
+            for _ = 1, math.random(1, 40) do
+                -- Weighted towards the bytes that start and continue a
+                -- multi-byte sequence, which is where the edges are.
+                local pick = math.random(1, 4)
+                if pick == 1 then bytes[#bytes + 1] = string.char(math.random(0x20, 0x7E))
+                elseif pick == 2 then bytes[#bytes + 1] = string.char(math.random(0x80, 0xBF))
+                elseif pick == 3 then bytes[#bytes + 1] = string.char(math.random(0xC0, 0xFF))
+                else bytes[#bytes + 1] = string.char(math.random(0, 255)) end
+            end
+
+            local out = Util.sanitizeText(table.concat(bytes), math.random(1, 40))
+            if out ~= nil and utf8 and utf8.len(out) == nil then
+                bad[#bad + 1] = case
+            end
+        end
+
+        eq(#bad, 0, ('%d of 4000 random byte strings survived as invalid UTF-8'):format(#bad))
+    end)
+
+    it('leaves well-formed text that fits exactly as it was', function()
+        math.randomseed(20260904)
+        for _ = 1, 2000 do
+            local chars = {}
+            for _ = 1, math.random(1, 12) do
+                -- One codepoint from each length class.
+                local class = math.random(1, 4)
+                local code =
+                    class == 1 and math.random(0x21, 0x7E)
+                    or class == 2 and math.random(0xA1, 0x7FF)
+                    or class == 3 and math.random(0x800, 0xD7FF)
+                    or math.random(0x10000, 0x10FFFF)
+                chars[#chars + 1] = utf8.char(code)
+            end
+            local text = table.concat(chars)
+            eq(Util.sanitizeText(text, #text), text,
+                'text that fits must come back untouched')
+        end
+    end)
+end)
