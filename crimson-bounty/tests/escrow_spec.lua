@@ -782,3 +782,49 @@ describe('concurrent escrow takes', function()
         eq(#s.storage.readEscrow('ct_ok'), 2)
     end)
 end)
+
+
+--- The picker's data is a snapshot, and an inventory moves.
+---
+--- The wallet is read when the Place tab opens and not again until a
+--- contract is placed, so the slot a weapon was picked at can be stale by
+--- the time it is submitted. Substituting whatever weapon happens to share
+--- the name means the creator loses one they never offered.
+describe('a weapon slot that has moved', function()
+    it('refuses rather than staking a weapon the creator did not pick', function()
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = {
+            { name = 'WEAPON_PISTOL', count = 1, slot = 3,
+              metadata = { serial = 'MODDED', components = { 'suppressor' } } },
+            { name = 'WEAPON_PISTOL', count = 1, slot = 9,
+              metadata = { serial = 'BEATUP' } },
+        } })
+
+        -- They picked the beat-up one at slot 9; by submit it has moved.
+        local lines, err = s.escrow.validate(f.creator, {
+            baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 4 } } },
+        })
+        falsy(lines, 'a slot nothing sits in is not an invitation to substitute')
+        eq(err, CB.ERR.INSUFFICIENT)
+
+        -- And the modded one is still theirs.
+        local held = 0
+        for _, slot in ipairs(Env.players[1]._inventory) do
+            if slot.name == 'WEAPON_PISTOL' then held = held + 1 end
+        end
+        eq(held, 2, 'nothing left their pockets')
+    end)
+
+    it('takes the one that is still where it was', function()
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = {
+            { name = 'WEAPON_PISTOL', count = 1, slot = 3, metadata = { serial = 'MODDED' } },
+            { name = 'WEAPON_PISTOL', count = 1, slot = 9, metadata = { serial = 'BEATUP' } },
+        } })
+        local lines = s.escrow.validate(f.creator, {
+            baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 9 } } },
+        })
+        truthy(lines)
+        eq(lines[1].metadata.serial, 'BEATUP', 'the one they picked, and only that')
+    end)
+end)

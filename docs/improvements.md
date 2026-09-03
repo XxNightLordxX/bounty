@@ -296,7 +296,11 @@ were not, which is the argument for checking each one yourself.
 - A payout funded with items or weapons was advertised to hunters as $0.
 
 **And the form:** its values lived only in the DOM, so a tab change emptied
-it and the sworn-officer confirmation threw it away.
+it and the sworn-officer confirmation threw it away. The wallet it builds
+from is a snapshot, so a staged weapon's inventory slot can be stale by the
+time it is submitted — the server refuses rather than substituting, and the
+form now says so and re-reads rather than repeating a refusal the player
+cannot act on.
 
 Six tests were also found to be testing nothing — one asserted a value that
 could never be undefined, two asserted a fixture against an identical

@@ -1204,6 +1204,15 @@
     return field;
   }
 
+  // Whether any payout has goods staged on it, as opposed to money only.
+  function stagedAnything() {
+    return Object.keys(state.picked).some(function (index) {
+      var picked = state.picked[index];
+      return Object.keys(picked.items).length > 0
+        || Object.keys(picked.weapons).length > 0;
+    });
+  }
+
   // The chosen goods for one payout, in the shape the server validates.
   function goodsOf(index) {
     var picked = state.picked[index];
@@ -1269,7 +1278,22 @@
       penaltyAmount: num('penalty'),
       anonymous: state.draft.anon === true
     }).then(function (r) {
-      if (!r.ok) return fail(r);
+      if (!r.ok) {
+        // The wallet is read once when the tab opens, so a staged weapon's
+        // inventory slot can be stale by the time it is submitted. The
+        // server refuses rather than substituting a different one — right,
+        // but "you do not have that" is unhelpful while the form still
+        // shows the thing. Re-read and drop what is no longer there.
+        if (r.err === 'insufficient_funds' && stagedAnything()) {
+          state.wallet = null;
+          state.walletFailed = null;
+          state.picked = {};
+          say('Your pockets have changed since you opened this. '
+            + 'Pick the items and weapons again.');
+          return render();
+        }
+        return fail(r);
+      }
       say('Contract placed.', 'gold');
       // The goods are gone from the player's pockets now; leaving them
       // staged would offer them again on the next contract.

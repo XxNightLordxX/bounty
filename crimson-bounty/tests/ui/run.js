@@ -1092,6 +1092,51 @@ async function main() {
     node.onclick();
   }
 
+  // The wallet is a snapshot, so a staged weapon's slot can be stale by the
+  // time it is submitted. The server refuses rather than substituting — but
+  // "you do not have that" is unhelpful while the form still shows the item.
+  await (async function staleWalletRecovers() {
+    const app = placeForm({
+      create: { ok: false, err: 'insufficient_funds' }
+    });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    const query = pick(app, 'target-query');
+    query.value = 'Dana';
+    query.oninput();
+    app.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+    app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent.indexOf('Dana Reyes') === 0;
+    })[0].onclick();
+
+    pick(app, 'slot-item-1').value = 'lockpick';
+    pick(app, 'slot-item-count-1', 2);
+    press(app, 'slot-item-add-1');
+
+    const before = app.sent.filter(function (s) { return s.name === 'rewardOptions'; }).length;
+    press(app, 'place-submit');
+    await settle(); await settle();
+
+    it('says what actually went wrong', function () {
+      truthy(app.notice().indexOf('pockets have changed') !== -1,
+        'not a bare "you do not have that": ' + app.notice());
+    });
+
+    it('re-reads the wallet instead of showing the stale one', function () {
+      const after = app.sent.filter(function (s) { return s.name === 'rewardOptions'; }).length;
+      truthy(after > before, 'the pickers must be rebuilt from what is there now');
+    });
+
+    it('drops the goods that are no longer holdable', function () {
+      falsy(app.view.textContent.indexOf('Lockpick x2') !== -1,
+        'staging something the server refused must not persist: ' + app.view.textContent);
+    });
+  })();
+
   // A form whose values live only in the DOM loses them every time anything
   // re-renders — a tab change, a push, a late reply, or a dialog. Both of
   // these were found by review, not by the tests written alongside the
