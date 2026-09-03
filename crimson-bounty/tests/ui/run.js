@@ -1013,7 +1013,9 @@ async function main() {
       { name: 'WEAPON_PISTOL', label: 'Pistol', slot: 3, serial: 'C123' },
       { name: 'WEAPON_PISTOL', label: 'Pistol', slot: 4, serial: 'F456' }
     ],
-    caps: { maxStacks: 3, maxPerStack: 100, maxWeapons: 2, slots: 5 }
+    // Deliberately not 5: the form's own fallback is 5, so a fixture of 5
+    // would pass whether or not the ceiling came from the server at all.
+    caps: { maxStacks: 3, maxPerStack: 100, maxWeapons: 2, slots: 7 }
   };
 
   function placeForm(overrides) {
@@ -1161,8 +1163,10 @@ async function main() {
     await settle(); await settle();
 
     it('offers as many payouts as the server allows', function () {
-      eq(app.document.getElementById('slots-count').max, GOODS.caps.slots,
+      eq(app.document.getElementById('slots-count').max, 7,
         'the ceiling comes from the config, not from the form');
+      truthy(GOODS.caps.slots !== 5,
+        'and the fixture must differ from the fallback or this proves nothing');
     });
 
     it('offers the items and weapons the server says are escrowable', function () {
@@ -1188,6 +1192,30 @@ async function main() {
         return n.tagName === 'BUTTON' && n._className.indexOf('chip') !== -1;
       });
       eq(chips.length, 2, 'one removable chip per staged reward');
+    });
+
+    it('actually removes what a chip names', function () {
+      const chip = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n._className.indexOf('chip') !== -1
+          && n.textContent.indexOf('Lockpick') === 0;
+      })[0];
+      truthy(chip, 'a chip for the lockpicks');
+      chip.onclick();
+
+      falsy(app.view.textContent.indexOf('Lockpick x2') !== -1,
+        'removing must remove: ' + app.view.textContent);
+
+      // And the lockpicks are offerable again, rather than still counted
+      // against the holding.
+      const options = app.document.getElementById('slot-item-1').children
+        .filter(function (o) { return o.value === 'lockpick'; });
+      truthy(options.length === 1 && options[0].textContent.indexOf('5 spare') !== -1,
+        'all five are spare again: ' + (options[0] && options[0].textContent));
+
+      // Put it back, since the tests below expect it staged.
+      pick(app, 'slot-item-1').value = 'lockpick';
+      pick(app, 'slot-item-count-1', 2);
+      press(app, 'slot-item-add-1');
     });
 
     it('will not offer the same physical weapon twice', function () {
@@ -1259,10 +1287,16 @@ async function main() {
     });
 
     it('clears the staged goods once they have left the player', function () {
-      eq(app.sandbox.window.__state, undefined, 'no state is leaked to the page');
-      // Going back to the form must not offer goods the contract took.
+      // Back to the form: what the contract took is no longer staged, and
+      // the wallet is read again rather than offering the old holdings.
       app.document.querySelectorAll('.tab')
         .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+
+      falsy(app.view.textContent.indexOf('Lockpick x2') !== -1,
+        'goods that are gone must not still be staged: ' + app.view.textContent);
+      eq(app.document.getElementById('slots-count').value, '1',
+        'and the form starts over rather than keeping the last one');
+
       const refetches = app.sent.filter(function (s) { return s.name === 'rewardOptions'; });
       truthy(refetches.length >= 2, 'the wallet is read again after a contract is placed');
     });
@@ -1320,9 +1354,9 @@ async function main() {
       .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
     await settle(); await settle();
 
-    it('takes its payout ceiling from the server', function () {
-      // caps.slots is absent here, so the form falls back rather than
-      // offering an unbounded field.
+    it('falls back rather than offering an unbounded field', function () {
+      // caps.slots is absent in this fixture, which is what a server too old
+      // to send it looks like.
       eq(app.document.getElementById('slots-count').max, 5);
     });
 

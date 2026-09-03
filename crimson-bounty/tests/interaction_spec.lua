@@ -698,23 +698,59 @@ describe('reward options', function()
 
     it('never offers a weapon it could not identify on submit', function()
         local s = newStack()
+        -- ox_inventory always sets a slot, so the first of these is a shape
+        -- it does not produce today. The guard is for the ones that might:
+        -- a differently-shaped build, or a slot that survived a round trip
+        -- as a string. Offering either would offer a guaranteed rejection,
+        -- since the slot is what names the weapon on submit.
         local f = fixture(s, { creatorInventory = {
-            -- No inventory slot: nothing on submit could say which weapon
-            -- this is, so offering it would offer a guaranteed rejection.
             { name = 'WEAPON_KNIFE', count = 1, label = 'Knife' },
-            { name = 'WEAPON_PISTOL', count = 1, slot = 3, label = 'Pistol' },
+            { name = 'WEAPON_SMG', count = 1, slot = 'not a number', label = 'SMG' },
+            { name = 'WEAPON_PISTOL', count = 1, slot = '4', label = 'Pistol' },
         } })
         local weapons = s.app.escrowableWeapons(f.creator)
-        eq(#weapons, 1, 'only the identifiable one')
+        eq(#weapons, 1, 'only the one whose slot is usable')
         eq(weapons[1].name, 'WEAPON_PISTOL')
+        eq(weapons[1].slot, 4, 'and it is offered as a number, whatever it arrived as')
     end)
 
-    it('offers nothing when the inventory cannot be read', function()
+    it('offers nothing for a player who is not there', function()
         local s = newStack()
         local f = fixture(s)
         f.creator.source = 999   -- nobody
         eq(#s.app.escrowableItems(f.creator), 0)
         eq(#s.app.escrowableWeapons(f.creator), 0)
+    end)
+
+    it('falls back to the older export when this build lacks the newer one', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        -- Not every ox_inventory build has GetInventoryItems, which is the
+        -- whole reason readInventory has a chain. Nothing exercised it: the
+        -- previous test read an empty inventory successfully rather than
+        -- failing a read at all.
+        Natives.noGetInventoryItems = true
+        local items = s.app.escrowableItems(f.creator)
+        Natives.noGetInventoryItems = nil
+
+        truthy(#items > 0, 'the fallback has to actually read something')
+        local found = false
+        for _, item in ipairs(items) do if item.name == 'lockpick' then found = true end end
+        truthy(found, 'the same items, read the other way')
+    end)
+
+    it('offers nothing when no inventory export works at all', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        Natives.noGetInventoryItems, Natives.noGetInventory = true, true
+        local items = s.app.escrowableItems(f.creator)
+        local weapons = s.app.escrowableWeapons(f.creator)
+        Natives.noGetInventoryItems, Natives.noGetInventory = nil, nil
+
+        eq(#items, 0, 'an unreadable inventory offers nothing, rather than throwing')
+        eq(#weapons, 0)
     end)
 end)
 
@@ -1443,5 +1479,97 @@ describe('a player the app is closed to can still buy out', function()
         end
         eq(Env.players[2].PlayerData.money.bank, 100000, 'nothing was charged')
         eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE)
+    end)
+end)
+
+
+--- The handler, not the helpers.
+---
+--- rewardOptions is the whole server-to-UI contract for the reward builder,
+--- and everything tested about it was tested one layer below: the helpers
+--- were covered and the handler that assembles their output, applies the
+--- gate and the rate limit, and names the caps was not.
+describe('the rewardOptions handler', function()
+    --- Fire a registered net event as a player, and read the reply.
+    local function call(name, source, payload)
+        local fire = Env.events['crimson-bounty:' .. name]
+        truthy(fire, 'no handler registered for ' .. name)
+
+        Env.clientEvents = {}
+        _G.source = source
+        fire(payload or {})
+        _G.source = nil
+
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:result' then return event.args[1] end
+        end
+        return nil
+    end
+
+    it('answers with what the creator holds and what the server allows', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        local reply = call('rewardOptions', 1)
+        truthy(reply, 'the handler must reply')
+        truthy(reply.ok, 'and succeed for an ordinary player')
+
+        local data = reply.data
+        eq(data.cash, 100000, 'their cash')
+        eq(data.bank, 100000, 'their bank')
+        eq(data.dirty, 50000, 'their dirty money')
+
+        truthy(#data.items > 0, 'the items they carry')
+        truthy(#data.weapons > 0, 'and the weapons')
+
+        -- The caps the form builds against. Every one of these is read by
+        -- ui/app.js, so a missing key is a form that cannot bound itself.
+        eq(data.caps.slots, Config.Limits.MaxPayoutSlots)
+        eq(data.caps.maxStacks, Config.Sources.item.maxStacks)
+        eq(data.caps.maxPerStack, Config.Sources.item.maxPerStack)
+        eq(data.caps.maxWeapons, Config.Sources.weapon.max)
+        eq(data.caps.bonusPercent, Config.Bonus.maxPercent)
+    end)
+
+    it('never sends a full weapon serial', function()
+        local s = newStack()
+        local f = fixture(s)
+        local data = call('rewardOptions', 1).data
+
+        for _, weapon in ipairs(data.weapons) do
+            falsy(tostring(weapon.serial):find('ABC123', 1, true),
+                'the tail is enough to tell two apart; the whole thing is an identifier')
+            truthy(#tostring(weapon.serial) <= 4, 'four characters at most')
+        end
+    end)
+
+    it('tells a barred job nothing at all', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.job = { name = 'police', type = 'leo', onduty = true }
+
+        local reply = call('rewardOptions', 1)
+        falsy(reply.ok, 'the job gate applies to this handler like every other')
+        eq(reply.err, CB.ERR.BLACKLISTED_JOB)
+        falsy(reply.data)
+    end)
+
+    it('is rate limited', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        local refused = false
+        for _ = 1, 40 do
+            local reply = call('rewardOptions', 1)
+            if reply and not reply.ok and reply.err == CB.ERR.RATE_LIMITED then refused = true end
+        end
+        truthy(refused, 'an unbounded inventory read is a free way to load the server')
+    end)
+
+    it('echoes the correlation id so replies do not cross', function()
+        local s = newStack()
+        local f = fixture(s)
+        local reply = call('rewardOptions', 1, { __rid = 4242 })
+        eq(reply.rid, 4242, 'two requests in flight must not resolve into each other')
     end)
 end)

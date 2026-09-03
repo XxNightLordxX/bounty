@@ -389,6 +389,12 @@ function Natives.exportsProxy()
             return p and not p._inventoryFull or false
         end,
         GetInventoryItems = function(_, src)
+            -- Builds without this export are why App.readInventory has a
+            -- fallback chain. A test that cannot make this fail cannot
+            -- exercise it.
+            if Natives.noGetInventoryItems then
+                error('ox_inventory: no such export GetInventoryItems')
+            end
             local p = Env.players[tonumber(src)]
             if not p then return {} end
             local out = {}
@@ -403,6 +409,22 @@ function Natives.exportsProxy()
                 }
             end
             return out
+        end,
+        --- The older shape: one call returning the whole inventory.
+        GetInventory = function(_, src)
+            if Natives.noGetInventory then
+                error('ox_inventory: no such export GetInventory')
+            end
+            local p = Env.players[tonumber(src)]
+            if not p then return nil end
+            local items = {}
+            for _, slot in ipairs(p._inventory) do
+                items[#items + 1] = {
+                    name = slot.name, count = slot.count, slot = slot.slot,
+                    label = slot.label, metadata = slot.metadata,
+                }
+            end
+            return { items = items }
         end,
         Search = function(_, src, query, name)
             local p = Env.players[tonumber(src)]
