@@ -138,6 +138,56 @@ if not bridgesSrc:find('recordDamage', 1, true) then
 end
 
 --------------------------------------------------------------------------
+-- 5. Every module the production loader asks for exists
+--------------------------------------------------------------------------
+--
+-- The test harness resolves modules through package.path; the resource
+-- resolves them through LoadResourceFile in server/boot.lua. A path that is
+-- wrong for the second but right for the first would pass every test and
+-- fail on the first start.
+
+local function moduleExists(path)
+    local file = path:gsub('%.', '/') .. '.lua'
+    local handle = io.open('crimson-bounty/' .. file, 'r')
+    if handle then handle:close() return true end
+    return false
+end
+
+for _, path in ipairs(files) do
+    local src = read(path)
+    if src then
+        for module in src:gmatch("require%('([%w_%.]+)'%)") do
+            if not moduleExists(module) then
+                failures[#failures + 1] =
+                    ('%s requires "%s", which the resource loader cannot resolve')
+                        :format(path, module)
+            end
+        end
+        for module in src:gmatch("require_shared%('([%w_]+)'%)") do
+            if not moduleExists('shared.' .. module) then
+                failures[#failures + 1] =
+                    ('%s requires shared "%s", which does not exist'):format(path, module)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
+-- 6. Files the manifest declares actually exist
+--------------------------------------------------------------------------
+
+local manifest = read('crimson-bounty/fxmanifest.lua') or ''
+for declared in manifest:gmatch("'([%w_%-/%.]+%.%a+)'") do
+    if declared:find('/') and not declared:find('^@') then
+        local handle = io.open('crimson-bounty/' .. declared, 'r')
+        if handle then handle:close()
+        else
+            failures[#failures + 1] = ('fxmanifest declares %s, which does not exist'):format(declared)
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then
