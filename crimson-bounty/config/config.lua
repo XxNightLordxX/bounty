@@ -370,6 +370,8 @@ Config.PendingEscrow = {
     MaxPerPlayer = 20,
     MaxRetriesPerLogin = 5,
     RetryBackoffSeconds = 30,
+    --- Randomised slightly in code so a reconnect wave does not converge.
+    LoginRetryDelayMs = 5000,
     DeadLetterAfterDays = 7,
 }
 

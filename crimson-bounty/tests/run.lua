@@ -74,6 +74,7 @@ function _G.newStack()
     package.loaded['crimson-bounty.server.completion.photo'] = nil
     package.loaded['crimson-bounty.server.completion.kidnap'] = nil
     package.loaded['crimson-bounty.server.comms'] = nil
+    package.loaded['crimson-bounty.server.projection'] = nil
     package.loaded['crimson-bounty.server.amendments'] = nil
     package.loaded['crimson-bounty.server.informant'] = nil
     package.loaded['crimson-bounty.server.bailout'] = nil
@@ -93,6 +94,7 @@ function _G.newStack()
     local informant  = require('crimson-bounty.server.informant')
     local amendments = require('crimson-bounty.server.amendments')
     local comms      = require('crimson-bounty.server.comms')
+    local projection = require('crimson-bounty.server.projection')
 
     storage.open()
     audit.init(storage)
@@ -123,8 +125,10 @@ function _G.newStack()
     comms.init({ storage = storage, identity = identity, audit = audit,
         notify = notify, ratelimit = ratelimit })
 
+    projection.init({ storage = storage, identity = identity, escrow = escrow, kidnap = kidnap })
+
     return {
-        storage = storage, audit = audit, kidnap = kidnap,
+        storage = storage, audit = audit, kidnap = kidnap, projection = projection,
         bailout = bailout, informant = informant, amendments = amendments, comms = comms, identity = identity, notify = notify,
         escrow = escrow, contracts = contracts, ratelimit = ratelimit,
         ledger = ledger, death = death, photo = photo,
@@ -164,7 +168,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec',
 }
 
 for _, name in ipairs(suites) do

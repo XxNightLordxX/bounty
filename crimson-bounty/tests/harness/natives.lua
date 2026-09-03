@@ -78,6 +78,14 @@ function Natives.install()
         table.insert(Env.console, table.concat(parts, ' '))
     end
 
+    -- Virtual resource filesystem for the json backend.
+    Natives.files = {}
+    _G.LoadResourceFile = function(_, file) return Natives.files[file] end
+    _G.SaveResourceFile = function(_, file, data)
+        Natives.files[file] = data
+        return true
+    end
+
     _G.json = Natives.json
     _G.exports = Natives.exportsProxy()
     _G.MySQL = Natives.mysql
@@ -141,9 +149,11 @@ function Natives.json.decode(str)
     end
     local parseValue
     local function parseString()
+        if str:sub(pos, pos) ~= '"' then error('malformed json: expected a string') end
         pos = pos + 1
         local buf = {}
         while true do
+            if pos > #str then error('malformed json: unterminated string') end
             local c = str:sub(pos, pos)
             if c == '"' then pos = pos + 1 break end
             if c == '\\' then
@@ -164,6 +174,7 @@ function Natives.json.decode(str)
     end
     parseValue = function()
         skip()
+        if pos > #str then error('malformed json: unexpected end of input') end
         local c = str:sub(pos, pos)
         if c == '{' then
             pos = pos + 1
@@ -173,12 +184,15 @@ function Natives.json.decode(str)
             while true do
                 skip()
                 local k = parseString()
-                skip(); pos = pos + 1 -- colon
+                skip()
+                if str:sub(pos, pos) ~= ':' then error('malformed json: expected a colon') end
+                pos = pos + 1
                 obj[k] = parseValue()
                 skip()
                 local d = str:sub(pos, pos)
                 pos = pos + 1
                 if d == '}' then break end
+                if d ~= ',' then error('malformed json: expected , or }') end
             end
             return obj
         elseif c == '[' then
@@ -192,6 +206,7 @@ function Natives.json.decode(str)
                 local d = str:sub(pos, pos)
                 pos = pos + 1
                 if d == ']' then break end
+                if d ~= ',' then error('malformed json: expected , or ]') end
             end
             return arr
         elseif c == '"' then
@@ -201,6 +216,7 @@ function Natives.json.decode(str)
         elseif str:sub(pos, pos + 3) == 'null' then pos = pos + 4 return nil
         else
             local numStr = str:match('^%-?%d+%.?%d*', pos)
+            if not numStr or numStr == '' then error('malformed json: unexpected character') end
             pos = pos + #numStr
             return tonumber(numStr)
         end
