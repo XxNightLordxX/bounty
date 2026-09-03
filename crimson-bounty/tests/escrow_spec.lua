@@ -828,3 +828,116 @@ describe('a weapon slot that has moved', function()
         eq(lines[1].metadata.serial, 'BEATUP', 'the one they picked, and only that')
     end)
 end)
+
+
+--- Items are taken from named inventory slots, and validation runs before
+--- anything is taken. Weapons already guard against staging one slot twice
+--- (a weapon is one physical object); item stacks are the same object with a
+--- count on it, and had no such guard.
+describe('staging the same item stack twice', function()
+    --- Two stacks of one item, distinguishable only by what is in them.
+    local function twoStacks(s)
+        return fixture(s, { creatorInventory = {
+            { name = 'repairkit', count = 10, slot = 5, metadata = { durability = 50 } },
+            { name = 'repairkit', count = 10, slot = 9, metadata = { durability = 100 } },
+        } })
+    end
+
+    it('draws the second payout from the second stack, not the first again', function()
+        local s = newStack()
+        local f = twoStacks(s)
+
+        local lines, err = s.escrow.validate(f.creator, {
+            slots = {
+                { baseline = { items = { { name = 'repairkit', count = 10 } } } },
+                { baseline = { items = { { name = 'repairkit', count = 10 } } } },
+            },
+        })
+        truthy(lines, 'twenty held and twenty asked for: ' .. tostring(err))
+        eq(#lines, 2)
+
+        local from = {}
+        for i = 1, #lines do from[#from + 1] = lines[i].inv_slot end
+        table.sort(from)
+        eq(from[1], 5)
+        eq(from[2], 9, 'the second payout must come from the stack the first did not empty')
+    end)
+
+    it('snapshots what each stack actually holds', function()
+        local s = newStack()
+        local f = twoStacks(s)
+
+        local lines = s.escrow.validate(f.creator, {
+            slots = {
+                { baseline = { items = { { name = 'repairkit', count = 10 } } } },
+                { baseline = { items = { { name = 'repairkit', count = 10 } } } },
+            },
+        })
+        truthy(lines)
+
+        local seen = {}
+        for i = 1, #lines do seen[lines[i].metadata.durability] = true end
+        truthy(seen[50] and seen[100],
+            'both stacks were escrowed, so both durabilities must be recorded — '
+            .. 'otherwise one of them is handed back as a copy of the other')
+    end)
+
+    it('actually takes both stacks rather than rolling the contract back', function()
+        local s = newStack()
+        local f = twoStacks(s)
+
+        local lines = s.escrow.validate(f.creator, {
+            slots = {
+                { baseline = { items = { { name = 'repairkit', count = 10 } } } },
+                { baseline = { items = { { name = 'repairkit', count = 10 } } } },
+            },
+        })
+        truthy(lines)
+
+        local ok, err = s.escrow.take(f.creator, 'CB-STACKS', lines)
+        truthy(ok, 'a fully-funded contract must not be refused: ' .. tostring(err))
+
+        local left = 0
+        for _, slot in ipairs(Env.players[1]._inventory) do
+            if slot.name == 'repairkit' then left = left + slot.count end
+        end
+        eq(left, 0, 'both stacks were escrowed, so neither should still be carried')
+    end)
+
+    it('is tested against an inventory shaped like the real one', function()
+        -- The guard is keyed on the slot number, and ox_inventory numbers
+        -- every stack. A harness that left them unnumbered would exercise
+        -- the fallback path on every test and never the one production
+        -- takes — so the fixture's own default inventory is checked here.
+        local s = newStack()
+        local f = fixture(s)
+        local found = exports.ox_inventory:Search(f.creator.source, 'slots', 'lockpick')
+        eq(#found, 1)
+        eq(type(found[1].slot), 'number',
+            'a stack written without a slot must still arrive with one, because '
+            .. 'that is what ox_inventory does')
+
+        -- And a test that means to model a build without them says so.
+        local g = fixture(newStack(), { creatorInventory = {
+            { name = 'lockpick', count = 1, slot = false },
+        } })
+        local bare = exports.ox_inventory:Search(g.creator.source, 'slots', 'lockpick')
+        eq(#bare, 1)
+        eq(bare[1].slot, nil, 'slot = false is an explicit claim, and is honoured')
+    end)
+
+    it('still refuses when the stacks together are not enough', function()
+        local s = newStack()
+        local f = twoStacks(s)
+
+        local lines, err = s.escrow.validate(f.creator, {
+            slots = {
+                { baseline = { items = { { name = 'repairkit', count = 10 } } } },
+                { baseline = { items = { { name = 'repairkit', count = 10 } } } },
+                { baseline = { items = { { name = 'repairkit', count = 10 } } } },
+            },
+        })
+        falsy(lines, 'thirty asked for against twenty held')
+        eq(err, CB.ERR.INSUFFICIENT)
+    end)
+end)

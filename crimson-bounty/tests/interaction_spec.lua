@@ -704,7 +704,8 @@ describe('reward options', function()
         -- as a string. Offering either would offer a guaranteed rejection,
         -- since the slot is what names the weapon on submit.
         local f = fixture(s, { creatorInventory = {
-            { name = 'WEAPON_KNIFE', count = 1, label = 'Knife' },
+            -- slot = false: this build does not number its slots at all.
+            { name = 'WEAPON_KNIFE', count = 1, label = 'Knife', slot = false },
             { name = 'WEAPON_SMG', count = 1, slot = 'not a number', label = 'SMG' },
             { name = 'WEAPON_PISTOL', count = 1, slot = '4', label = 'Pistol' },
         } })

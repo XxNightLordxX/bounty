@@ -27,6 +27,34 @@ Env.console = {}
 
 --- Create a player. Everything the modules read lives under PlayerData, in
 --- the same shape qbx_core exposes.
+--- Every stack a real inventory holds sits in a numbered slot, and
+--- ox_inventory's Search returns that number. A fixture written without one
+--- would let the escrow code take a path production never takes — and the
+--- guard against staging one stack for two payouts is keyed on exactly that
+--- number.
+---
+--- A test that means to model an inventory build which does NOT number its
+--- slots writes `slot = false`, which is left unnumbered. Saying so out loud
+--- is the point: a missing slot should be a claim about the world, not an
+--- omission.
+local function numberSlots(inventory)
+    local used = {}
+    for i = 1, #inventory do
+        if inventory[i].slot then used[inventory[i].slot] = true end
+    end
+    local next_ = 1
+    for i = 1, #inventory do
+        if inventory[i].slot == false then
+            inventory[i].slot = nil
+        elseif not inventory[i].slot then
+            while used[next_] do next_ = next_ + 1 end
+            inventory[i].slot = next_
+            used[next_] = true
+        end
+    end
+    return inventory
+end
+
 function Env.addPlayer(opts)
     local src = opts.source
     local player = {
@@ -43,7 +71,7 @@ function Env.addPlayer(opts)
                 playtime = (opts.playtimeHours or 100) * 60,
             },
         },
-        _inventory = opts.inventory or {},
+        _inventory = numberSlots(opts.inventory or {}),
         _coords = opts.coords or { x = 0.0, y = 0.0, z = 0.0 },
         _health = opts.health or 200,
         -- Playtime lives where the real framework keeps it, so a test can

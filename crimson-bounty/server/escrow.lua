@@ -77,6 +77,21 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
         return nil
     end
 
+    -- How much of each inventory slot this validation has already promised.
+    --
+    -- Nothing is taken until validate returns, so every payout re-reads the
+    -- same untouched inventory. Without this, two payouts each asking for
+    -- ten of an item both draw them from the first stack the search returns:
+    -- the aggregate check passes (the creator really does hold twenty), the
+    -- escrow records one stack twice with one stack's metadata, and the take
+    -- then fails hunting for a second copy of it and rolls the whole
+    -- contract back — a fully-funded contract refused as insufficient.
+    --
+    -- Weapons share the counter for the opposite reason: a weapon is one
+    -- physical object, so a slot named twice is refused rather than walked
+    -- past.
+    local stagedFromSlot = {}
+
     local function addItems(portion, list)
         if list == nil then return nil end
         if type(list) ~= 'table' then return CB.ERR.INVALID_REWARD end
@@ -116,10 +131,18 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
             for j = 1, #slots do
                 if remaining <= 0 then break end
                 local found = slots[j]
-                local take = math.min(found.count or 0, remaining)
+                -- ox_inventory always numbers a slot, but an inventory build
+                -- that does not would otherwise collapse every stack of one
+                -- name onto a single nil key — and a nil table index throws.
+                -- The search runs against an untouched inventory each time,
+                -- so its ordering is a stable fallback identity.
+                local key = found.slot or (name .. '#' .. j)
+                local free = (found.count or 0) - (stagedFromSlot[key] or 0)
+                local take = math.min(free, remaining)
 
                 if take > 0 then
                     remaining = remaining - take
+                    stagedFromSlot[key] = (stagedFromSlot[key] or 0) + take
                     lines[#lines + 1] = {
                         slot     = slotIndex,
                         inv_slot = found.slot,
@@ -139,12 +162,6 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
         end
         return nil
     end
-
-    -- Inventory slots already staged in this contract. A weapon is one
-    -- physical object: naming the same slot in two payouts would snapshot
-    -- one weapon twice, take it once, then fail hunting for its twin and
-    -- roll the whole contract back. Refused here instead.
-    local stagedWeaponSlots = {}
 
     local function addWeapons(portion, list)
         if list == nil then return nil end
@@ -176,8 +193,10 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
             -- staking a different one — a kitted rifle instead of a bare
             -- one — is not a near-enough answer.
             if not found then return CB.ERR.INSUFFICIENT end
-            if stagedWeaponSlots[found.slot] then return CB.ERR.INVALID_REWARD end
-            stagedWeaponSlots[found.slot] = true
+            -- Naming the same slot in two payouts would snapshot one weapon
+            -- twice, take it once, then fail hunting for its twin.
+            if (stagedFromSlot[found.slot] or 0) > 0 then return CB.ERR.INVALID_REWARD end
+            stagedFromSlot[found.slot] = 1
 
             lines[#lines + 1] = {
                 slot     = slotIndex,          -- payout slot this reward belongs to
