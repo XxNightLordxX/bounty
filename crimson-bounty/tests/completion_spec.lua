@@ -219,3 +219,78 @@ describe('photo verification', function()
         falsy(s.ledger.read('TARGET01')[1].photo_ref, 'the target is not shown their own corpse')
     end)
 end)
+
+describe('damage observation is actually wired', function()
+    --- The elimination payout depends on a single engine event being
+    --- registered. Calling Death.recordDamage directly proves the function
+    --- works, not that anything ever calls it — so these tests go through
+    --- the real registration path.
+
+    local function wiredStack()
+        local s = newStack()
+        s.bridges.install(s)
+        return s
+    end
+
+    it('registers a weaponDamageEvent handler', function()
+        local s = wiredStack()
+        truthy(Env.handlers['weaponDamageEvent'],
+            'nothing would ever record damage, so no kill could be attributed')
+    end)
+
+    it('attributes a kill end to end through the registered handler', function()
+        local s = wiredStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+
+        Env.players[3]._coords = { x = 50.0, y = 50.0, z = 30.0 }
+        Env.players[2]._coords = { x = 51.0, y = 50.0, z = 30.0 }
+
+        -- The engine reports the hit; nothing here is asserted by a player.
+        Env.handlers['weaponDamageEvent'](3, {
+            weaponDamage = 50,
+            weaponType = 123456,
+            hitGlobalIds = { 1002 },   -- the target's ped
+        })
+
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2), 1, 'the kill should now be attributable')
+        truthy(s.death.getPending(c.id, 'HUNTER01'))
+    end)
+
+    it('ignores a damage event reporting no damage', function()
+        local s = wiredStack()
+        local f = fixture(s)
+        eq(s.bridges.onWeaponDamage(s, 3, { weaponDamage = 0, hitGlobalIds = { 1002 } }), 0)
+    end)
+
+    it('ignores self-damage', function()
+        local s = wiredStack()
+        fixture(s)
+        eq(s.bridges.onWeaponDamage(s, 2, { weaponDamage = 50, hitGlobalIds = { 1002 } }), 0,
+            'the attacker and victim are the same player')
+    end)
+
+    it('ignores a malformed payload instead of erroring', function()
+        local s = wiredStack()
+        fixture(s)
+        for _, bad in ipairs({ {}, { weaponDamage = 10 }, { weaponDamage = 10, hitGlobalIds = 'x' } }) do
+            eq(s.bridges.onWeaponDamage(s, 3, bad), 0)
+        end
+        eq(s.bridges.onWeaponDamage(s, 3, nil), 0)
+    end)
+
+    it('cleans a disconnecting player up using their remembered citizen id', function()
+        local s = wiredStack()
+        local f = fixture(s)
+        s.ratelimit.check('HUNTER01', 'create')
+        truthy(s.bridges.onPlayerDropped(s, 'HUNTER01'))
+        -- Cleanup must not depend on the framework still knowing the player.
+        Env.removePlayer(3)
+        truthy(s.bridges.onPlayerDropped(s, 'HUNTER01'), 'still cleans up after they are gone')
+    end)
+end)

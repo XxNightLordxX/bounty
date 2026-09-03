@@ -217,7 +217,9 @@ end)
 describe('masked relay', function()
     it('lets creator and hunter talk under aliases', function()
         local s, f, c = seeded()
-        truthy(s.comms.send(f.creator, c.id, 'HUNTER01', 'Take him alive if you can.'))
+        local threads = s.comms.threads(f.creator, c.id)
+        eq(#threads, 1)
+        truthy(s.comms.send(f.creator, c.id, threads[1].handle, 'Take him alive if you can.'))
         truthy(s.comms.send(f.hunter, c.id, nil, 'Understood.'))
 
         local thread = s.comms.read(f.hunter, c.id, nil)
@@ -228,7 +230,8 @@ describe('masked relay', function()
 
     it('never returns the other partys identity', function()
         local s, f, c = seeded()
-        s.comms.send(f.creator, c.id, 'HUNTER01', 'hello')
+        local threads = s.comms.threads(f.creator, c.id)
+        s.comms.send(f.creator, c.id, threads[1].handle, 'hello')
         local thread = s.comms.read(f.hunter, c.id, nil)
         for _, message in ipairs(thread) do
             falsy(message.from_cid, 'citizen id must not cross')
@@ -241,8 +244,8 @@ describe('masked relay', function()
         local s, f, c = seeded()
         Env.addPlayer({ source = 9, citizenid = 'OUTSIDR1', license = 'license:o' })
         local outsider = s.identity.resolve(9)
-        falsy(s.comms.send(outsider, c.id, 'HUNTER01', 'hi'))
-        falsy(s.comms.read(outsider, c.id, 'HUNTER01'))
+        falsy(s.comms.send(outsider, c.id, 'anything', 'hi'))
+        falsy(s.comms.read(outsider, c.id, 'anything'))
     end)
 
     it('keeps competitive hunters in separate threads', function()
@@ -251,24 +254,81 @@ describe('masked relay', function()
         local second = s.identity.resolve(4)
         s.contracts.accept(second, c.id, false)
 
-        s.comms.send(f.creator, c.id, 'HUNTER01', 'for hunter one only')
+        local threads = s.comms.threads(f.creator, c.id)
+        s.comms.send(f.creator, c.id, threads[1].handle, 'for hunter one only')
         eq(#s.comms.read(second, c.id, nil), 0, 'hunter two sees nothing of it')
         eq(#s.comms.read(f.hunter, c.id, nil), 1)
     end)
 
     it('filters blacklisted words', function()
         local s, f, c = seeded()
-        local ok, err = s.comms.send(f.creator, c.id, 'HUNTER01', 'you slur person')
+        local threads = s.comms.threads(f.creator, c.id)
+        local ok, err = s.comms.send(f.creator, c.id, threads[1].handle, 'you slur person')
         falsy(ok)
         eq(err, CB.ERR.INVALID_INPUT)
     end)
 
     it('rate limits message spam', function()
         local s, f, c = seeded()
+        local threads = s.comms.threads(f.creator, c.id)
         local sent = 0
         for i = 1, 30 do
-            if s.comms.send(f.creator, c.id, 'HUNTER01', 'msg ' .. i) then sent = sent + 1 end
+            if s.comms.send(f.creator, c.id, threads[1].handle, 'msg ' .. i) then sent = sent + 1 end
         end
         truthy(sent <= Config.Cooldowns.message.burst, 'throttled, sent ' .. sent)
+    end)
+end)
+
+describe('amendment payloads are bounded', function()
+    local function seededPair()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        return s, f, c
+    end
+
+    it('stores only the fields the amendment kind actually uses', function()
+        local s, f, c = seededPair()
+        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE, {
+            seconds = 600,
+            junk = string.rep('a', 100000),
+            nested = { deep = { deeper = 'noise' } },
+        })
+        truthy(proposal)
+
+        local stored = s.storage.readAmendment(proposal.id)
+        eq(stored.payload.seconds, 600)
+        falsy(stored.payload.junk, 'unbounded client data must not be persisted')
+        falsy(stored.payload.nested)
+    end)
+
+    it('rejects a proposal whose parameters are missing or malformed', function()
+        local s, f, c = seededPair()
+        for _, bad in ipairs({
+            { kind = CB.AMENDMENT.SHORTEN_DEADLINE, payload = { seconds = 'soon' } },
+            { kind = CB.AMENDMENT.SHORTEN_DEADLINE, payload = {} },
+            { kind = CB.AMENDMENT.CHANGE_MODE, payload = { mode = 'whatever' } },
+            { kind = CB.AMENDMENT.CHANGE_REASON, payload = { reason = '' } },
+            { kind = CB.AMENDMENT.REDUCE_REWARD, payload = { slot = -1 } },
+        }) do
+            local proposal, err = s.amendments.propose(f.creator, c.id, bad.kind, bad.payload)
+            falsy(proposal, 'accepted a malformed payload for ' .. bad.kind)
+            eq(err, CB.ERR.INVALID_INPUT)
+        end
+    end)
+
+    it('expires proposals without walking every contract ever created', function()
+        local s, f, c = seededPair()
+        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+        truthy(proposal)
+
+        Env.advance(Config.Amendments.ProposalExpirySeconds + 10)
+        eq(s.amendments.expire(), 1, 'the open proposal expires')
+        eq(s.amendments.expire(), 0, 'and the tracking set is then empty')
+        eq(s.storage.readAmendment(proposal.id).outcome, 'expired')
     end)
 end)

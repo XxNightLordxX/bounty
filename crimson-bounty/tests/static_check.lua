@@ -100,13 +100,41 @@ end
 --------------------------------------------------------------------------
 
 for _, path in ipairs(files) do
+    -- app.lua, main.lua and bridges.lua are the event boundary: they are
+    -- where `source` legitimately enters and is immediately resolved.
     if path:find('server/') and not path:find('identity%.lua')
-        and not path:find('app%.lua') and not path:find('main%.lua') then
+        and not path:find('app%.lua') and not path:find('main%.lua')
+        and not path:find('bridges%.lua') then
         local src = read(path)
         if src and src:find('\n%s*local%s+src%s*=%s*source') then
             failures[#failures + 1] = ('%s captures `source` outside identity.lua'):format(path)
         end
     end
+end
+
+--------------------------------------------------------------------------
+-- 4. Every engine bridge is actually installed
+--------------------------------------------------------------------------
+--
+-- A producer that is written but never wired is a silent dead path. The
+-- elimination payout depended on exactly one of these, and no unit test
+-- would have noticed it missing.
+
+local mainSrc = read('crimson-bounty/server/main.lua') or ''
+if not mainSrc:find("require%('server%.bridges'%)%.install") then
+    failures[#failures + 1] =
+        'server/main.lua never installs the event bridges: damage would never be observed'
+end
+
+local bridgesSrc = read('crimson-bounty/server/bridges.lua') or ''
+for _, event in ipairs({ 'weaponDamageEvent', 'playerDropped' }) do
+    if not bridgesSrc:find(event, 1, true) then
+        failures[#failures + 1] = ('server/bridges.lua does not register %s'):format(event)
+    end
+end
+if not bridgesSrc:find('recordDamage', 1, true) then
+    failures[#failures + 1] =
+        'server/bridges.lua never calls Death.recordDamage: no elimination could be attributed'
 end
 
 --------------------------------------------------------------------------

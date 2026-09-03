@@ -25,7 +25,10 @@ function Natives.install()
     end
     _G.AddEventHandler = function(name, handler)
         Env.events['local:' .. name] = handler
+        Env.handlers[name] = handler
     end
+    _G.NetworkGetEntityFromNetworkId = function(netId) return netId end
+    _G.NetworkGetEntityOwner = function(entity) return entity - 1000 end
     _G.TriggerClientEvent = function(name, target, ...)
         table.insert(Env.clientEvents, { name = name, target = target, args = { ... } })
         -- Phone notifications reach the player as a client event, since

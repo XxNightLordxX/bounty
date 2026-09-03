@@ -139,6 +139,9 @@ Config.Cooldowns = {
     amend     = { per = 30, burst = 3 },
     search    = { per = 10, burst = 5 },
     photo     = { per = 15, burst = 3 },
+    --- Death and revive reports are client-driven and each one walks the
+    --- contract table, so they are throttled like everything else.
+    death     = { per = 5,  burst = 4 },
 }
 
 --------------------------------------------------------------------------

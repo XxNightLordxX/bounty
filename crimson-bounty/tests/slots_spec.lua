@@ -182,3 +182,93 @@ describe('more hunters than slots', function()
         eq(Env.players[7].PlayerData.money.cash, 0, 'hunter 4 unpaid — balance untouched')
     end)
 end)
+
+describe('escrow lines always carry a valid payout slot', function()
+    --- A line whose slot does not match a real payout can never be released
+    --- by a slot-filtered claim, so it would be stranded on a completed
+    --- contract — property destroyed, silently.
+    local function assertSlotsValid(s, contract)
+        local lines = s.storage.readEscrow(contract.id)
+        truthy(#lines > 0, 'contract should hold escrow')
+        for _, line in ipairs(lines) do
+            truthy(line.slot >= 1 and line.slot <= (contract.payout_slots or 1),
+                ('line %s has slot %s, outside 1..%d')
+                    :format(line.id, tostring(line.slot), contract.payout_slots or 1))
+        end
+    end
+
+    it('assigns weapons the payout slot, not their inventory slot', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { slots = {
+                { baseline = { cash = 1000 } },
+                { baseline = { cash = 1000, weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } },
+            } },
+        })
+        truthy(c)
+        assertSlotsValid(s, c)
+
+        local weaponLine
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.source == 'weapon' then weaponLine = line end
+        end
+        truthy(weaponLine)
+        eq(weaponLine.slot, 2, 'payout slot 2, not inventory slot 3')
+        eq(weaponLine.inv_slot, 3, 'the inventory slot is kept separately')
+    end)
+
+    it('delivers an escrowed weapon to the hunter on completion', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000, weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } },
+        })
+        truthy(c)
+        s.contracts.accept(f.hunter, c.id, false)
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+
+        local got
+        for _, slot in ipairs(Env.players[3]._inventory) do
+            if slot.name == 'WEAPON_PISTOL' then got = slot end
+        end
+        truthy(got, 'the hunter must actually receive the escrowed weapon')
+        eq(got.metadata.serial, 'ABC123', 'with its serial intact')
+
+        -- And nothing may be left held on a finished contract.
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            eq(line.state, CB.ESCROW_STATE.SETTLED,
+                ('line %s left %s on a completed contract'):format(line.id, line.state))
+        end
+    end)
+
+    it('never strands a line on any completed multi-slot contract', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1]._inventory[#Env.players[1]._inventory + 1] =
+            { name = 'WEAPON_PISTOL', count = 1, slot = 7, metadata = { serial = 'XYZ789' } }
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = {
+                { baseline = { cash = 500, weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } },
+                { baseline = { cash = 500, items = { { name = 'lockpick', count = 1 } } } },
+            } },
+        })
+        truthy(c)
+        assertSlotsValid(s, c)
+
+        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        Env.advance(Config.Limits.SlotCooldownSeconds + 1)
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+
+        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            eq(line.state, CB.ESCROW_STATE.SETTLED,
+                ('line %s (%s) stranded on a completed contract'):format(line.id, line.source))
+        end
+    end)
+end)

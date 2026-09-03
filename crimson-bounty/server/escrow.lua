@@ -98,8 +98,12 @@ function Escrow.validate(actor, spec)
             local entry = list[i]
             if type(entry) ~= 'table' then return CB.ERR.INVALID_REWARD end
             local name = Util.sanitizeText(entry.name, 64)
-            local slotIndex = Util.toPositive(entry.slot, 200)
-            if not name or not slotIndex then return CB.ERR.INVALID_REWARD end
+            -- The inventory slot the weapon is being taken FROM. Named
+            -- distinctly from the payout slot (`slotIndex`, set by the
+            -- enclosing loop): they are different numbers with different
+            -- meanings, and conflating them orphans the escrow line.
+            local invSlot = Util.toPositive(entry.slot, 200)
+            if not name or not invSlot then return CB.ERR.INVALID_REWARD end
             if Config.EscrowBlacklist[name] then return CB.ERR.INVALID_REWARD end
 
             -- Read the weapon's real metadata from the server-side inventory
@@ -107,18 +111,18 @@ function Escrow.validate(actor, spec)
             local found
             local slots = exports.ox_inventory:Search(actor.source, 'slots', name) or {}
             for j = 1, #slots do
-                if slots[j].slot == slotIndex or not found then found = slots[j] end
+                if slots[j].slot == invSlot or not found then found = slots[j] end
             end
             if not found then return CB.ERR.INSUFFICIENT end
 
             lines[#lines + 1] = {
-                slot     = slotIndex,
+                slot     = slotIndex,          -- payout slot this reward belongs to
+                inv_slot = found.slot,         -- where it came from, for the audit trail
                 portion  = portion,
                 source   = CB.SOURCE.WEAPON,
                 item     = name,
                 quantity = 1,
                 metadata = Util.copy(found.metadata) or {},
-                slot     = found.slot,
             }
         end
         return nil

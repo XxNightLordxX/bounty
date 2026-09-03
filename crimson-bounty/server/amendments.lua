@@ -11,9 +11,16 @@ local Amendments = {}
 
 local Storage, Identity, Contracts, Escrow, Audit, Notify
 
+--- Contract ids known to carry an open proposal. Walking every contract ever
+--- created on each tick means a query per contract, forever; proposals are
+--- rare and short-lived, so tracking the few that exist gives the same
+--- answer far more cheaply.
+local openContracts = {}
+
 function Amendments.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
         deps.storage, deps.identity, deps.contracts, deps.escrow, deps.audit, deps.notify
+    openContracts = {}
 end
 
 local function participants(contract)
@@ -104,6 +111,12 @@ function Amendments.propose(actor, contractId, kind, payload)
         return nil, CB.ERR.LIMIT_REACHED
     end
 
+    -- Only the fields this amendment kind actually uses are kept, each
+    -- coerced. Storing the client's table verbatim would persist unbounded
+    -- attacker-chosen data in a row nothing ever deletes.
+    local clean, payloadErr = Amendments.sanitize(kind, payload)
+    if not clean then return nil, payloadErr end
+
     local approvals = {}
     for cid in pairs(people) do approvals[cid] = false end
     approvals[actor.cid] = true  -- proposing is approving
@@ -113,12 +126,13 @@ function Amendments.propose(actor, contractId, kind, payload)
         contract_id = contractId,
         proposer    = actor.cid,
         kind        = kind,
-        payload     = Util.copy(payload) or {},
+        payload     = clean,
         approvals   = approvals,
         expires_at  = os.time() + Config.Amendments.ProposalExpirySeconds,
         outcome     = 'open',
     }
     Storage.writeAmendment(proposal)
+    openContracts[contractId] = true
 
     for cid in pairs(people) do
         if cid ~= actor.cid then
@@ -129,6 +143,49 @@ function Amendments.propose(actor, contractId, kind, payload)
 
     Audit.action('amendment_proposed', actor.cid, contractId, { kind = kind })
     return proposal
+end
+
+--- Build a payload containing only what `apply` reads for this kind.
+---@return table|nil clean
+---@return string|nil err
+function Amendments.sanitize(kind, payload)
+    if payload ~= nil and type(payload) ~= 'table' then return nil, CB.ERR.INVALID_INPUT end
+    payload = payload or {}
+    local clean = {}
+
+    if kind == CB.AMENDMENT.SHORTEN_DEADLINE or kind == CB.AMENDMENT.EXTEND_DEADLINE then
+        clean.seconds = Util.toPositive(payload.seconds, Config.Limits.ContractLifetimeSeconds)
+        if not clean.seconds then return nil, CB.ERR.INVALID_INPUT end
+
+    elseif kind == CB.AMENDMENT.CHANGE_MODE then
+        if payload.mode ~= CB.MODE.COMPETITIVE and payload.mode ~= CB.MODE.EXCLUSIVE then
+            return nil, CB.ERR.INVALID_INPUT
+        end
+        clean.mode = payload.mode
+
+    elseif kind == CB.AMENDMENT.CHANGE_REASON then
+        clean.reason = Util.sanitizeText(payload.reason, Config.Reason.MaxLength)
+        if not clean.reason then return nil, CB.ERR.INVALID_INPUT end
+        if Util.digitCount(clean.reason) > Config.Reason.MaxDigits then
+            return nil, CB.ERR.INVALID_INPUT
+        end
+
+    elseif kind == CB.AMENDMENT.RAISE_PENALTY or kind == CB.AMENDMENT.LOWER_PENALTY then
+        clean.amount = Util.toCount(payload.amount, Config.MaxContractValue)
+        if not clean.amount then return nil, CB.ERR.INVALID_INPUT end
+
+    elseif kind == CB.AMENDMENT.REDUCE_REWARD then
+        clean.slot = Util.toPositive(payload.slot, Config.Limits.MaxPayoutSlots)
+        if not clean.slot then return nil, CB.ERR.INVALID_INPUT end
+
+    elseif kind == CB.AMENDMENT.CANCEL or kind == CB.AMENDMENT.WITHDRAW then
+        -- No parameters.
+
+    else
+        return nil, CB.ERR.INVALID_INPUT
+    end
+
+    return clean
 end
 
 function Amendments.isKnown(kind)
@@ -239,18 +296,37 @@ end
 --- Expire proposals nobody answered. Driven by the main tick.
 function Amendments.expire()
     local expired = 0
-    local contracts = Storage.allContracts()
-    for i = 1, #contracts do
-        local open = Storage.readOpenAmendments(contracts[i].id)
+    local now = os.time()
+
+    for contractId in pairs(openContracts) do
+        local open = Storage.readOpenAmendments(contractId)
+        local remaining = 0
         for j = 1, #open do
-            if os.time() > open[j].expires_at then
+            if now > open[j].expires_at then
                 open[j].outcome = 'expired'
                 Storage.writeAmendment(open[j])
                 expired = expired + 1
+            else
+                remaining = remaining + 1
             end
         end
+        if remaining == 0 then openContracts[contractId] = nil end
     end
+
     return expired
+end
+
+--- Rebuild the tracking set after a restart, when proposals may already
+--- exist in storage that this process never saw created.
+function Amendments.reindex()
+    openContracts = {}
+    local contracts = Storage.allContracts()
+    for i = 1, #contracts do
+        if #Storage.readOpenAmendments(contracts[i].id) > 0 then
+            openContracts[contracts[i].id] = true
+        end
+    end
+    return openContracts
 end
 
 return Amendments

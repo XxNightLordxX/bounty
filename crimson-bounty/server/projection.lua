@@ -141,9 +141,19 @@ function Projection.listing(viewerCid, page)
     -- Sorted by reward rather than creation order: creation order leaks when
     -- an anonymous contract was placed, which is half of a timing attack on
     -- anonymity (§14.32).
+    --
+    -- The sort key is computed up front and the comparator only reads that
+    -- table. A comparator that queried storage would run a database call per
+    -- comparison — and under oxmysql that call yields, which is not allowed
+    -- inside table.sort's C frame and would fail the whole listing.
+    local score = {}
+    for i = 1, #visible do
+        local c = visible[i]
+        score[c.id] = Escrow.moneyValue(c.id, { slot = c.next_slot or 1 })
+    end
+
     table.sort(visible, function(a, b)
-        local ra = Escrow.moneyValue(a.id, { slot = a.next_slot or 1 })
-        local rb = Escrow.moneyValue(b.id, { slot = b.next_slot or 1 })
+        local ra, rb = score[a.id] or 0, score[b.id] or 0
         if ra == rb then return a.id < b.id end
         return ra > rb
     end)

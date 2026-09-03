@@ -187,6 +187,31 @@ function Death.onRevived(cid)
     return cleared
 end
 
+--- Drop pending completions and damage records that have aged out.
+--- Without this, entries only expire when their exact key happens to be
+--- read again, so a busy server accumulates them indefinitely.
+function Death.sweep()
+    local now = GetGameTimer()
+    local removed = 0
+
+    for key, record in pairs(pending) do
+        if now - record.at > (Config.Completion.PhotoTokenLifetimeSeconds * 1000) then
+            pending[key] = nil
+            removed = removed + 1
+        end
+    end
+
+    local cutoff = now - Config.Completion.DeathReportWindowMs
+    for cid, list in pairs(damage) do
+        for i = #list, 1, -1 do
+            if list[i].at < cutoff then table.remove(list, i) end
+        end
+        if #list == 0 then damage[cid] = nil end
+    end
+
+    return removed
+end
+
 function Death.pendingCount()
     local n = 0
     for _ in pairs(pending) do n = n + 1 end

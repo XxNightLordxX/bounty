@@ -10,6 +10,7 @@ Env.gameTimer = 0
 Env.players = {}          -- [source] = player record
 Env.byCitizen = {}        -- [citizenid] = source
 Env.events = {}           -- registered net events
+Env.handlers = {}         -- registered local event handlers, by name
 Env.clientEvents = {}     -- captured TriggerClientEvent calls
 Env.notifications = {}
 Env.threads = {}
@@ -72,6 +73,7 @@ function Env.reset()
     Env.gameTimer = 0
     Env.players, Env.byCitizen = {}, {}
     Env.events, Env.clientEvents, Env.notifications = {}, {}, {}
+    Env.handlers = {}
     Env.threads, Env.timers, Env.console = {}, {}, {}
 end
 

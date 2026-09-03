@@ -166,6 +166,12 @@ function Notify.advisory(contract, stage, activeHunters)
     return recipients
 end
 
+--- Release a player's notification budget when they disconnect, so the
+--- table cannot grow across a long uptime.
+function Notify.clearPlayer(cid)
+    budgets[cid] = nil
+end
+
 function Notify.clearContract(contractId)
     for key in pairs(advisorySent) do
         if key:sub(1, #contractId + 1) == contractId .. ':' then advisorySent[key] = nil end

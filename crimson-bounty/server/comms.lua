@@ -10,9 +10,54 @@ local Comms = {}
 
 local Storage, Identity, Audit, Notify, RateLimit
 
+--- Opaque thread handles issued to clients, so a citizen id never leaves the
+--- server. [handle] = { contractId, hunterCid, ownerCid }
+local handles = {}
+local handleSeq = 0
+
 function Comms.init(deps)
     Storage, Identity, Audit, Notify, RateLimit =
         deps.storage, deps.identity, deps.audit, deps.notify, deps.ratelimit
+    handles = {}
+end
+
+--- Mint (or reuse) a handle that stands in for a hunter on one contract, for
+--- one viewer. Handing the creator a hunter's citizen id would defeat
+--- Anonymous Mode outright, and a citizen id is an internal key in any case.
+local function handleFor(ownerCid, contractId, hunterCid)
+    for handle, entry in pairs(handles) do
+        if entry.ownerCid == ownerCid and entry.contractId == contractId
+            and entry.hunterCid == hunterCid then
+            return handle
+        end
+    end
+
+    handleSeq = handleSeq + 1
+    local handle = ('th%s%06d'):format(contractId:gsub('[^%w]', ''), handleSeq)
+    handles[handle] = { contractId = contractId, hunterCid = hunterCid, ownerCid = ownerCid }
+    return handle
+end
+
+--- Resolve a handle back to a hunter, for one viewer only. A handle minted
+--- for someone else is not accepted.
+local function resolveHandle(ownerCid, contractId, handle)
+    if type(handle) ~= 'string' then return nil end
+    local entry = handles[handle]
+    if not entry then return nil end
+    if entry.ownerCid ~= ownerCid or entry.contractId ~= contractId then return nil end
+    return entry.hunterCid
+end
+
+function Comms.clearContract(contractId)
+    for handle, entry in pairs(handles) do
+        if entry.contractId == contractId then handles[handle] = nil end
+    end
+end
+
+function Comms.clearPlayer(cid)
+    for handle, entry in pairs(handles) do
+        if entry.ownerCid == cid or entry.hunterCid == cid then handles[handle] = nil end
+    end
 end
 
 --- A thread is one creator-hunter pair. In competitive mode the creator has
@@ -24,7 +69,8 @@ end
 --- Resolve the caller's role and thread, or refuse.
 ---@return table|nil ctx { contract, role, hunterCid, threadId, alias }
 ---@return string|nil err
-function Comms.context(actor, contractId, hunterCid)
+--- @param threadHandle string|nil an opaque handle from Comms.threads
+function Comms.context(actor, contractId, threadHandle)
     contractId = Util.toId(contractId)
     if not contractId then return nil, CB.ERR.INVALID_INPUT end
 
@@ -32,7 +78,8 @@ function Comms.context(actor, contractId, hunterCid)
     if not contract then return nil, CB.ERR.NOT_FOUND end
 
     if contract.creator_cid == actor.cid then
-        -- The creator must name which hunter's thread they mean.
+        -- The creator names a thread by its handle, never by a citizen id.
+        local hunterCid = resolveHandle(actor.cid, contractId, threadHandle)
         local hunter = hunterCid and Storage.readHunter(contractId, hunterCid)
         if not hunter or hunter.state ~= 'active' then return nil, CB.ERR.NOT_PARTICIPANT end
         return {
@@ -55,10 +102,10 @@ end
 --- Send a message into a contract thread.
 ---@return boolean ok
 ---@return string|nil err
-function Comms.send(actor, contractId, hunterCid, rawBody)
+function Comms.send(actor, contractId, threadHandle, rawBody)
     if not Config.Relay.Enabled then return false, CB.ERR.BAD_STATE end
 
-    local ctx, err = Comms.context(actor, contractId, hunterCid)
+    local ctx, err = Comms.context(actor, contractId, threadHandle)
     if not ctx then return false, err end
 
     if not RateLimit.check(actor.cid, 'message') then return false, CB.ERR.RATE_LIMITED end
@@ -91,8 +138,8 @@ end
 --- learn who the other party is from what comes back.
 ---@return table[]|nil messages
 ---@return string|nil err
-function Comms.read(actor, contractId, hunterCid)
-    local ctx, err = Comms.context(actor, contractId, hunterCid)
+function Comms.read(actor, contractId, threadHandle)
+    local ctx, err = Comms.context(actor, contractId, threadHandle)
     if not ctx then return nil, err end
 
     local rows = Storage.readMessages(contractId, ctx.threadId)
@@ -117,10 +164,14 @@ function Comms.threads(actor, contractId)
         local hunters = Storage.readHunters(contract.id)
         local out = {}
         for i = 1, #hunters do
-            if hunters[i].state == 'active' then
+            local h = hunters[i]
+            if h.state == 'active' then
                 out[#out + 1] = {
-                    hunterCid = hunters[i].hunter_cid,   -- opaque handle for the next call
-                    alias     = hunters[i].alias,
+                    handle = handleFor(actor.cid, contract.id, h.hunter_cid),
+                    alias  = h.alias,
+                    -- A hunter's real name appears only when they chose to
+                    -- be seen; their citizen id never appears at all.
+                    name   = (not h.anon) and h.hunter_name or nil,
                 }
             end
         end
@@ -129,7 +180,7 @@ function Comms.threads(actor, contractId)
 
     local hunter = Storage.readHunter(contract.id, actor.cid)
     if hunter and hunter.state == 'active' then
-        return { { hunterCid = actor.cid, alias = 'Client' } }
+        return { { handle = handleFor(actor.cid, contract.id, actor.cid), alias = 'Client' } }
     end
 
     return {}
@@ -140,10 +191,10 @@ end
 --- at all (§11.3).
 ---@return boolean ok
 ---@return string|nil err
-function Comms.requestCall(actor, contractId, hunterCid)
+function Comms.requestCall(actor, contractId, threadHandle)
     if not Config.Relay.AllowMaskedCalls then return false, CB.ERR.BAD_STATE end
 
-    local ctx, err = Comms.context(actor, contractId, hunterCid)
+    local ctx, err = Comms.context(actor, contractId, threadHandle)
     if not ctx then return false, err end
 
     local otherAnon

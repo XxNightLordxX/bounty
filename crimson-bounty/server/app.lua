@@ -70,7 +70,7 @@ function App.register()
         return deps.projection.listing(actor.cid, payload.page)
     end)
 
-    handler('mine', nil, function(actor)
+    handler('mine', 'search', function(actor)
         return {
             created  = deps.projection.mine(actor.cid),
             accepted = deps.projection.accepted(actor.cid),
@@ -78,12 +78,14 @@ function App.register()
         }
     end)
 
-    handler('ledger', nil, function(actor)
+    handler('ledger', 'search', function(actor)
         return deps.ledger.read(actor.cid)
     end)
 
     -- Target search: returns opaque handles and capped results, never a
-    -- roster of everyone online (§14.33).
+    -- roster of everyone online (§14.33). The handles are minted per
+    -- searcher and expire, so a citizen id never reaches a client and one
+    -- player's handles are useless to another.
     handler('searchTargets', 'search', function(actor, payload)
         local query = Util.sanitizeText(payload.query, 32)
         if not query or #query < Config.Targeting.MinQueryLength then
@@ -99,7 +101,7 @@ function App.register()
                 and candidate.account ~= actor.account
                 and candidate.name:lower():find(needle, 1, true) then
                 out[#out + 1] = {
-                    handle = candidate.cid,
+                    handle = App.mintTargetHandle(actor.cid, candidate.cid),
                     name = candidate.name,
                     protected = deps.identity.isProtectedJob(candidate.job),
                     job = deps.identity.isProtectedJob(candidate.job) and candidate.job.name or nil,
@@ -112,7 +114,7 @@ function App.register()
 
     -- What the creator can actually put up, read server-side so the builder
     -- never displays something they do not hold.
-    handler('rewardOptions', nil, function(actor)
+    handler('rewardOptions', 'search', function(actor)
         local dirty = exports.ox_inventory:GetItem(actor.source, Config.Sources.dirty.item, nil, true) or 0
         return {
             cash  = actor.player.Functions.GetMoney('cash'),
@@ -129,8 +131,11 @@ function App.register()
     -- Contracts ---------------------------------------------------------
 
     handler('create', 'create', function(actor, payload)
+        local targetCid = App.resolveTargetHandle(actor.cid, payload.target)
+        if not targetCid then return false, CB.ERR.INVALID_INPUT end
+
         local contract, err = deps.contracts.create(actor, {
-            targetCid     = payload.target,
+            targetCid     = targetCid,
             reason        = payload.reason,
             reasonPreset  = payload.reasonPreset,
             mode          = payload.mode,
@@ -177,7 +182,7 @@ function App.register()
         return { armed = true }
     end)
 
-    handler('kidnapProgress', nil, function(actor, payload)
+    handler('kidnapProgress', 'search', function(actor, payload)
         return deps.kidnap.progress(Util.toId(payload.id) or '', actor.cid) or { elapsed = 0 }
     end)
 
@@ -217,24 +222,24 @@ function App.register()
 
     -- Relay -------------------------------------------------------------
 
-    handler('threads', nil, function(actor, payload)
+    handler('threads', 'search', function(actor, payload)
         return deps.comms.threads(actor, payload.id)
     end)
 
-    handler('readThread', nil, function(actor, payload)
-        local messages, err = deps.comms.read(actor, payload.id, payload.hunter)
+    handler('readThread', 'search', function(actor, payload)
+        local messages, err = deps.comms.read(actor, payload.id, payload.thread)
         if not messages then return false, err end
         return messages
     end)
 
     handler('sendMessage', 'message', function(actor, payload)
-        local ok, err = deps.comms.send(actor, payload.id, payload.hunter, payload.body)
+        local ok, err = deps.comms.send(actor, payload.id, payload.thread, payload.body)
         if not ok then return false, err end
         return true
     end)
 
     handler('requestCall', 'message', function(actor, payload)
-        local ok, err = deps.comms.requestCall(actor, payload.id, payload.hunter)
+        local ok, err = deps.comms.requestCall(actor, payload.id, payload.thread)
         if not ok then return false, err end
         return true
     end)
@@ -243,20 +248,88 @@ function App.register()
     --
     -- Accepted only from the victim's own client, and everything about it is
     -- then verified server-side (§14.2). A killer cannot report a death.
+    --
+    -- These carry no payload but are still gated and throttled: a client can
+    -- fire them as fast as it likes, and each one walks the contract table.
 
     RegisterNetEvent('crimson-bounty:iDied', function()
         local src = source
         local actor = deps.identity.resolve(src)
         if not actor then return end
-        deps.death.onVictimReport(src)
+        if not deps.ratelimit.check(actor.cid, 'death') then
+            deps.audit.rejected('ratelimit_iDied', actor.cid, nil, {})
+            return
+        end
+        local ok, err = pcall(deps.death.onVictimReport, src)
+        if not ok then deps.audit.rejected('error_iDied', actor.cid, nil, { error = tostring(err) }) end
     end)
 
     RegisterNetEvent('crimson-bounty:iRevived', function()
         local src = source
         local actor = deps.identity.resolve(src)
         if not actor then return end
-        deps.death.onRevived(actor.cid)
+        if not deps.ratelimit.check(actor.cid, 'death') then
+            deps.audit.rejected('ratelimit_iRevived', actor.cid, nil, {})
+            return
+        end
+        local ok, err = pcall(deps.death.onRevived, actor.cid)
+        if not ok then deps.audit.rejected('error_iRevived', actor.cid, nil, { error = tostring(err) }) end
     end)
+end
+
+--------------------------------------------------------------------------
+-- Target handles
+--------------------------------------------------------------------------
+--
+-- A citizen id is an internal key. Search results carry a per-searcher,
+-- expiring handle instead, so a client cannot collect ids or reuse another
+-- player's results.
+
+local targetHandles = {}
+local targetSeq = 0
+
+function App.mintTargetHandle(searcherCid, targetCid)
+    for handle, entry in pairs(targetHandles) do
+        if entry.searcher == searcherCid and entry.target == targetCid then
+            entry.at = GetGameTimer()
+            return handle
+        end
+    end
+
+    targetSeq = targetSeq + 1
+    local handle = ('tg%08d'):format(targetSeq)
+    targetHandles[handle] = { searcher = searcherCid, target = targetCid, at = GetGameTimer() }
+    return handle
+end
+
+function App.resolveTargetHandle(searcherCid, handle)
+    if type(handle) ~= 'string' then return nil end
+    local entry = targetHandles[handle]
+    if not entry or entry.searcher ~= searcherCid then return nil end
+    if GetGameTimer() - entry.at > 600000 then
+        targetHandles[handle] = nil
+        return nil
+    end
+    return entry.target
+end
+
+--- Drop stale handles. Called from the maintenance tick.
+function App.sweepHandles()
+    local cutoff = GetGameTimer() - 600000
+    local removed = 0
+    for handle, entry in pairs(targetHandles) do
+        if entry.at < cutoff then
+            targetHandles[handle] = nil
+            removed = removed + 1
+        end
+    end
+    return removed
+end
+
+function App.clearPlayerHandles(cid)
+    for handle, entry in pairs(targetHandles) do
+        if entry.searcher == cid or entry.target == cid then targetHandles[handle] = nil end
+    end
 end
 
 --- Whether a player may see the app at all. lb-phone asks this before it
