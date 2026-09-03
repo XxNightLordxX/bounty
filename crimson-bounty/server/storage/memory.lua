@@ -48,6 +48,53 @@ function Memory.allContracts()
     return out
 end
 
+--- Contracts this player is involved in, as creator, target or hunter.
+--- Callers used to fetch every contract and filter in Lua, which on a real
+--- database is a full table scan per app request.
+function Memory.contractsInvolving(cid)
+    local seen, out = {}, {}
+
+    for _, c in pairs(db.contracts) do
+        if c.creator_cid == cid or c.target_cid == cid then
+            seen[c.id] = true
+            out[#out + 1] = c
+        end
+    end
+
+    for _, h in pairs(db.hunters) do
+        if h.hunter_cid == cid and not seen[h.contract_id] then
+            local c = db.contracts[h.contract_id]
+            if c then
+                seen[c.id] = true
+                out[#out + 1] = c
+            end
+        end
+    end
+
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+--- Contracts naming this player as target, whatever their state.
+function Memory.contractsNaming(cid)
+    local out = {}
+    for _, c in pairs(db.contracts) do
+        if c.target_cid == cid then out[#out + 1] = c end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+--- Contracts created by this player.
+function Memory.contractsBy(cid)
+    local out = {}
+    for _, c in pairs(db.contracts) do
+        if c.creator_cid == cid then out[#out + 1] = c end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 --- Conditional state write. Returns false when the contract is not in the
 --- expected state, which is how two simultaneous actions are serialised
 --- without either of them silently winning (§9.7).

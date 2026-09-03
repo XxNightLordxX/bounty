@@ -99,12 +99,20 @@ function Contracts.canCreate(actor, targetActor)
         return false, CB.ERR.TARGET_PROTECTED
     end
 
-    local contracts = Storage.allContracts()
+    -- Only the contracts these two are involved in matter here, so this asks
+    -- for those rather than for the whole table.
+    local contracts = Storage.contractsBy(actor.cid)
+    local naming = Storage.contractsNaming(targetActor.cid)
+    for i = 1, #naming do contracts[#contracts + 1] = naming[i] end
+
     local byCreator, byTarget = 0, 0
     local now = os.time()
+    local counted = {}
 
     for i = 1, #contracts do
         local c = contracts[i]
+        if counted[c.id] then goto continue end
+        counted[c.id] = true
         if LIVE_STATES[c.state] then
             if c.creator_cid == actor.cid then byCreator = byCreator + 1 end
             if c.target_cid == targetActor.cid then byTarget = byTarget + 1 end
@@ -127,6 +135,7 @@ function Contracts.canCreate(actor, targetActor)
                 end
             end
         end
+        ::continue::
     end
 
     -- Cancelling and re-listing is otherwise free, which makes the board

@@ -190,12 +190,17 @@ function Projection.listing(viewerCid, page)
 end
 
 --- Contracts the viewer holds as creator.
+---
+--- These three all ask storage for the contracts this player is involved in
+--- rather than for every contract on the server: on a real database the
+--- difference is an indexed lookup against a full table scan, once per app
+--- request.
 function Projection.mine(viewerCid)
-    local all = Storage.allContracts()
+    local involved = Storage.contractsBy(viewerCid)
     local out = {}
-    for i = 1, #all do
-        local c = all[i]
-        if c.creator_cid == viewerCid and not CB.TERMINAL[c.state] then
+    for i = 1, #involved do
+        local c = involved[i]
+        if not CB.TERMINAL[c.state] then
             out[#out + 1] = Projection.contract(c, viewerCid)
         end
     end
@@ -204,13 +209,15 @@ end
 
 --- Contracts the viewer holds as hunter.
 function Projection.accepted(viewerCid)
-    local all = Storage.allContracts()
+    local involved = Storage.contractsInvolving(viewerCid)
     local out = {}
-    for i = 1, #all do
-        local c = all[i]
-        local hunter = Storage.readHunter(c.id, viewerCid)
-        if hunter and hunter.state == 'active' and not CB.TERMINAL[c.state] then
-            out[#out + 1] = Projection.contract(c, viewerCid)
+    for i = 1, #involved do
+        local c = involved[i]
+        if not CB.TERMINAL[c.state] then
+            local hunter = Storage.readHunter(c.id, viewerCid)
+            if hunter and hunter.state == 'active' then
+                out[#out + 1] = Projection.contract(c, viewerCid)
+            end
         end
     end
     return out
@@ -218,11 +225,11 @@ end
 
 --- Contracts naming the viewer as target — their Cleanse tab.
 function Projection.onMe(viewerCid)
-    local all = Storage.allContracts()
+    local naming = Storage.contractsNaming(viewerCid)
     local out = {}
-    for i = 1, #all do
-        local c = all[i]
-        if c.target_cid == viewerCid and not CB.TERMINAL[c.state] then
+    for i = 1, #naming do
+        local c = naming[i]
+        if not CB.TERMINAL[c.state] then
             local row = Projection.contract(c, viewerCid)
             -- A target learns a price exists on them and what freedom costs.
             -- They do not learn who placed it, and never the hunter roster.

@@ -216,6 +216,37 @@ function MySQLStore.allContracts()
     return rows
 end
 
+--- Contracts this player is involved in, as creator, target or hunter.
+--- The indexes for all three columns already exist, so this is the query
+--- the schema was designed for — rather than a full scan filtered in Lua.
+function MySQLStore.contractsInvolving(cid)
+    local rows = MySQL.query.await([[
+        SELECT c.* FROM crimson_contracts c
+        WHERE c.creator_cid = ? OR c.target_cid = ?
+        UNION
+        SELECT c.* FROM crimson_contracts c
+        JOIN crimson_hunters h ON h.contract_id = c.id
+        WHERE h.hunter_cid = ?
+        ORDER BY id
+    ]], { cid, cid, cid }) or {}
+    for i = 1, #rows do hydrateContract(rows[i]) end
+    return rows
+end
+
+function MySQLStore.contractsNaming(cid)
+    local rows = MySQL.query.await(
+        'SELECT * FROM crimson_contracts WHERE target_cid = ? ORDER BY id', { cid }) or {}
+    for i = 1, #rows do hydrateContract(rows[i]) end
+    return rows
+end
+
+function MySQLStore.contractsBy(cid)
+    local rows = MySQL.query.await(
+        'SELECT * FROM crimson_contracts WHERE creator_cid = ? ORDER BY id', { cid }) or {}
+    for i = 1, #rows do hydrateContract(rows[i]) end
+    return rows
+end
+
 --- Conditional state write, done in one statement so it is atomic at the
 --- database rather than in Lua (§9.7).
 function MySQLStore.compareSetContractState(id, expected, next_)

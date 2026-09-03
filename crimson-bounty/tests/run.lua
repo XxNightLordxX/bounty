@@ -53,6 +53,16 @@ function Suite.falsy(value, message)
     if value then error((message or 'expected falsy') .. ', got ' .. tostring(value), 2) end
 end
 
+--- Read a source file, for the few assertions that are about the source
+--- rather than about behaviour.
+function _G.read_file(path)
+    local handle = io.open(path, 'r')
+    if not handle then return '' end
+    local content = handle:read('*a')
+    handle:close()
+    return content
+end
+
 _G.describe, _G.it, _G.eq, _G.truthy, _G.falsy = Suite.describe, Suite.it, Suite.eq, Suite.truthy, Suite.falsy
 _G.Env, _G.Natives, _G.Suite = Env, Natives, Suite
 

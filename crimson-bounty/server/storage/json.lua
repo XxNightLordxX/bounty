@@ -99,6 +99,49 @@ end
 -- Contracts
 --------------------------------------------------------------------------
 
+--- Contracts this player is involved in, as creator, target or hunter.
+function JsonStore.contractsInvolving(cid)
+    local seen, out = {}, {}
+
+    for _, c in pairs(db.contracts) do
+        if c.creator_cid == cid or c.target_cid == cid then
+            seen[c.id] = true
+            out[#out + 1] = c
+        end
+    end
+
+    for _, h in pairs(db.hunters) do
+        if h.hunter_cid == cid and not seen[h.contract_id] then
+            local c = db.contracts[h.contract_id]
+            if c then
+                seen[c.id] = true
+                out[#out + 1] = c
+            end
+        end
+    end
+
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+function JsonStore.contractsNaming(cid)
+    local out = {}
+    for _, c in pairs(db.contracts) do
+        if c.target_cid == cid then out[#out + 1] = c end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+function JsonStore.contractsBy(cid)
+    local out = {}
+    for _, c in pairs(db.contracts) do
+        if c.creator_cid == cid then out[#out + 1] = c end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 --- State is not written here: it changes only through
 --- compareSetContractState, so a stale copy cannot revert a transition.
 function JsonStore.writeContract(c)

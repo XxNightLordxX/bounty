@@ -348,3 +348,59 @@ describe('owed escrow survives in every backend', function()
         eq(#missing, 0, 'crimson_escrow cannot store: ' .. table.concat(missing, ', '))
     end)
 end)
+
+describe('indexed contract lookups agree across backends', function()
+    local function seeded(store)
+        store.writeContract({ id = 'ct1', creator_cid = 'A', target_cid = 'B',
+            mode = 'exclusive', state = 'active', created_at = 1 })
+        store.writeContract({ id = 'ct2', creator_cid = 'C', target_cid = 'A',
+            mode = 'exclusive', state = 'active', created_at = 2 })
+        store.writeContract({ id = 'ct3', creator_cid = 'C', target_cid = 'D',
+            mode = 'exclusive', state = 'active', created_at = 3 })
+        store.addHunter({ id = 'hn1', contract_id = 'ct3', hunter_cid = 'A',
+            accepted_at = 4, state = 'active' })
+    end
+
+    local function ids(rows)
+        local out = {}
+        for i = 1, #rows do out[#out + 1] = rows[i].id end
+        table.sort(out)
+        return table.concat(out, ',')
+    end
+
+    it('finds every contract a player is involved in, in memory and json', function()
+        package.loaded['crimson-bounty.server.storage.memory'] = nil
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        Natives.files = {}
+
+        for _, name in ipairs({ 'memory', 'json' }) do
+            local store = require('crimson-bounty.server.storage.' .. name)
+            store.open()
+            seeded(store)
+
+            -- A as creator on ct1, target on ct2, hunter on ct3.
+            eq(ids(store.contractsInvolving('A')), 'ct1,ct2,ct3', name .. ': involving')
+            eq(ids(store.contractsBy('C')), 'ct2,ct3', name .. ': created by')
+            eq(ids(store.contractsNaming('A')), 'ct2', name .. ': naming as target')
+            eq(ids(store.contractsInvolving('ZZ')), '', name .. ': nobody')
+        end
+    end)
+
+    it('does not return a contract twice when a player holds two roles', function()
+        package.loaded['crimson-bounty.server.storage.memory'] = nil
+        local store = require('crimson-bounty.server.storage.memory')
+        store.open()
+        store.writeContract({ id = 'ct9', creator_cid = 'A', target_cid = 'B',
+            mode = 'exclusive', state = 'active', created_at = 1 })
+        store.addHunter({ id = 'hn9', contract_id = 'ct9', hunter_cid = 'A',
+            accepted_at = 2, state = 'active' })
+        eq(#store.contractsInvolving('A'), 1, 'creator and hunter on one contract is one row')
+    end)
+
+    it('has the indexes the mysql queries rely on', function()
+        local schema = read_file('crimson-bounty/server/storage/mysql.lua')
+        truthy(schema:find('INDEX idx_creator', 1, true), 'creator index')
+        truthy(schema:find('INDEX idx_target', 1, true), 'target index')
+        truthy(schema:find('INDEX idx_hunter', 1, true), 'hunter index')
+    end)
+end)
