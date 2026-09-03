@@ -8,7 +8,8 @@
   var RESOURCE = 'crimson-bounty';
   var state = {
     tab: 'board', board: null, mine: null, ledger: null,
-    progress: {}, dialog: null, leoConfirmed: false, busy: false, notice: null
+    progress: {}, dialog: null, leoConfirmed: false, wallet: null,
+    busy: false, notice: null
   };
 
   /* ---------- transport ---------- */
@@ -131,8 +132,22 @@
 
   function say(message, kind) {
     state.notice = { message: message, kind: kind || 'red' };
-    render();
-    setTimeout(function () { state.notice = null; render(); }, 4000);
+    renderNotice();
+    setTimeout(function () { state.notice = null; renderNotice(); }, 4000);
+  }
+
+  // The notice lives outside #view and is mutated in place. Re-rendering the
+  // shell to show it would rebuild the Place form from scratch and throw
+  // away everything the player had typed — including the target they just
+  // picked, since picking one raises a notice.
+  function renderNotice() {
+    var slot = document.getElementById('notice');
+    if (!slot) return;
+    slot.innerHTML = '';
+    if (!state.notice) { slot.className = ''; return; }
+    slot.className = 'notice-slot';
+    slot.appendChild(el('div', 'notice' + (state.notice.kind === 'gold' ? ' gold' : ''),
+      state.notice.message));
   }
 
   function fail(result) {
@@ -604,6 +619,23 @@
   function viewPlace(view) {
     var form = el('div');
 
+    // What the creator actually has, read server-side, so an over-budget
+    // contract is obvious before they submit rather than after.
+    if (!state.wallet) {
+      post('rewardOptions', {}).then(function (r) {
+        if (r.ok && r.data) { state.wallet = r.data; render(); }
+      });
+    } else {
+      var w = state.wallet;
+      var wallet = el('div', 'card');
+      var meta = el('div', 'meta');
+      meta.appendChild(chip('Cash ' + money(w.cash)));
+      meta.appendChild(chip('Bank ' + money(w.bank)));
+      meta.appendChild(chip('Dirty ' + money(w.dirty)));
+      wallet.appendChild(meta);
+      form.appendChild(wallet);
+    }
+
     form.appendChild(labelled('Target', targetSearch()));
     form.appendChild(labelled('Reason', textInput('reason', 'Why?', 140)));
 
@@ -755,14 +787,35 @@
     handle.type = 'hidden'; handle.id = 'target-handle';
     var results = el('div');
 
+    var searchTimer = null;
+    var searchSeq = 0;
+
     input.oninput = function () {
       // The server tells us its minimum; a shorter query is rejected there
       // and burns a rate-limit token for nothing.
       var minimum = settings().minQueryLength || 4;
       if (input.value.length < minimum) { results.innerHTML = ''; return; }
+
+      // Debounced, so typing a name is one lookup rather than one per
+      // keystroke against a bucket that refills twice a second.
+      if (searchTimer) clearTimeout(searchTimer);
+      var mine = ++searchSeq;
+      searchTimer = setTimeout(function () { runSearch(mine); }, 300);
+    };
+
+    function runSearch(sequence) {
       post('searchTargets', { query: input.value }).then(function (r) {
+        // A reply from a query the player has already typed past is stale.
+        if (sequence !== searchSeq) return;
         results.innerHTML = '';
-        if (!r.ok || !r.data) return;
+        if (!r.ok) {
+          if (r.err === 'rate_limited') say('Searching too fast. Try again in a moment.');
+          return;
+        }
+        if (!r.data || r.data.length === 0) {
+          results.appendChild(el('div', 'hint', 'Nobody by that name is online.'));
+          return;
+        }
         r.data.forEach(function (person) {
           var pick = el('button', 'ghost',
             person.name + (person.protected ? '  ·  LAW ENFORCEMENT' : ''));
@@ -779,7 +832,7 @@
           results.appendChild(pick);
         });
       });
-    };
+    }
 
     wrap.appendChild(input);
     wrap.appendChild(handle);
@@ -792,11 +845,6 @@
   function render() {
     var view = document.getElementById('view');
     view.innerHTML = '';
-
-    if (state.notice) {
-      view.appendChild(el('div', 'notice' + (state.notice.kind === 'gold' ? ' gold' : ''),
-        state.notice.message));
-    }
 
     if (state.dialog) {
       if (state.dialog.kind === 'choice') {
@@ -815,6 +863,8 @@
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
       tab.classList.toggle('is-active', tab.dataset.tab === state.tab);
     });
+
+    renderNotice();
   }
 
   function refresh() {
@@ -824,7 +874,13 @@
   }
 
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
-    tab.onclick = function () { state.tab = tab.dataset.tab; render(); };
+    tab.onclick = function () {
+      state.tab = tab.dataset.tab;
+      state.dialog = null;
+      render();
+      // Opening a tab is when a player expects to see current state.
+      if (state.tab === 'board' || state.tab === 'mine' || state.tab === 'onme') refresh();
+    };
   });
 
   // The client mirrors every server reply here as well as resolving the

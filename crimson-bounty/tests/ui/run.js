@@ -38,6 +38,9 @@ function boot(responses) {
 
   // The tab bar the app expects to exist.
   const app = document.createElement('div');
+  const notice = document.createElement('div');
+  notice.id = 'notice';
+  app.appendChild(notice);
   const view = document.createElement('div');
   view.id = 'view';
   app.appendChild(view);
@@ -415,6 +418,53 @@ async function main() {
     it('sends the abandon', function () {
       truthy(abandoned);
       eq(abandoned.id, 'ct00000001');
+    });
+  })();
+
+  await (async function formSurvivesNotices() {
+    const app = boot({
+      list: BOARD, mine: MINE, ledger: LEDGER,
+      rewardOptions: { ok: true, data: { cash: 100000, bank: 50000, dirty: 2000, caps: {} } },
+      searchTargets: { ok: true, data: [{ handle: 'tg00000001', name: 'Ann Ryder', protected: true }] }
+    });
+    await settle(); await settle();
+
+    const tabs = app.document.querySelectorAll('.tab');
+    tabs.filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    it('shows the creator what they hold', function () {
+      truthy(app.view.textContent.indexOf('$100,000') !== -1,
+        'balances should be on the form: ' + app.view.textContent);
+    });
+
+    // Type a name and pick a law-enforcement target, which raises a notice.
+    const query = app.document.getElementById('target-query');
+    query.value = 'Ryder';
+    query.oninput();
+    app.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+
+    const pick = app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent.indexOf('Ann Ryder') === 0;
+    });
+    it('offers the searched target', function () {
+      eq(pick.length, 1, 'the candidate should be listed');
+    });
+
+    app.document.getElementById('slot-cash-1').value = '5000';
+    pick[0].onclick();
+
+    it('keeps the form intact when a notice appears', function () {
+      eq(app.document.getElementById('target-handle').value, 'tg00000001',
+        'the chosen target must survive the notice it raises');
+      eq(app.document.getElementById('slot-cash-1').value, '5000',
+        'and so must what was already typed');
+    });
+
+    it('debounces the search instead of firing per keystroke', function () {
+      const searches = app.sent.filter(function (s) { return s.name === 'searchTargets'; });
+      eq(searches.length, 1, 'one lookup for one debounced query');
     });
   })();
 

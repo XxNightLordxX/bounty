@@ -171,6 +171,11 @@ input:focus, select:focus, textarea:focus {
 .dialog::before { background: var(--crimson-bright); }
 .dialog .target { font-size: 0.95rem; }
 
+/* ---------- notices ----------
+   Outside the view, so showing one never rebuilds an in-progress form. */
+
+.notice-slot { padding: 0 0.85rem; margin-top: 0.6rem; }
+
 /* ---------- notices ---------- */
 
 .notice {

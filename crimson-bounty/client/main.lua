@@ -30,7 +30,10 @@ local function registerApp()
         ui          = GetCurrentResourceName() .. '/ui/index.html',
         icon        = 'https://cfx-nui-' .. GetCurrentResourceName() .. '/ui/icon.png',
         fixBlur     = true,
-        onOpen      = function() App.refresh() end,
+        -- The page loads its own data when it opens; firing the same
+        -- requests here would duplicate them and drain the rate limit
+        -- before the player has typed anything.
+        onOpen      = function() end,
     })
 
     if not ok then
