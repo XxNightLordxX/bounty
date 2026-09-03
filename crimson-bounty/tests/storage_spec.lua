@@ -529,3 +529,217 @@ describe('mysql schema migration', function()
         truthy(names:find('crimson_escrow.owed_to', 1, true), 'and the owed marker')
     end)
 end)
+
+
+--- The json store writes one file per contract.
+---
+--- It used to re-serialise and rewrite the whole store on every financial
+--- write, which with a few thousand contracts is a multi-megabyte write
+--- every time a coin moves.
+describe('json sharding', function()
+    local function fresh()
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        Natives.files = {}
+        local store = require('crimson-bounty.server.storage.json')
+        store.open()
+        return store
+    end
+
+    local function contract(id, cid)
+        return { id = id, creator_cid = cid or 'CREATOR1', target_cid = 'TARGET01',
+                 mode = 'exclusive', state = 'active', created_at = 1 }
+    end
+
+    local function writtenFiles()
+        local out = {}
+        for name in pairs(Natives.files) do
+            if not name:find('%.tmp$') then out[#out + 1] = name end
+        end
+        table.sort(out)
+        return out
+    end
+
+    it('gives each contract its own file', function()
+        local store = fresh()
+        store.writeContract(contract('ct1'))
+        store.writeContract(contract('ct2'))
+        store.close()
+
+        local files = table.concat(writtenFiles(), ' ')
+        truthy(files:find('data/contracts/ct1.json', 1, true), 'ct1: ' .. files)
+        truthy(files:find('data/contracts/ct2.json', 1, true), 'ct2: ' .. files)
+        truthy(files:find('data/store.json', 1, true), 'and an index')
+    end)
+
+    it('rewrites only the contract that changed', function()
+        local store = fresh()
+        store.writeContract(contract('ct1'))
+        store.writeContract(contract('ct2'))
+        store.close()
+
+        -- Watch what a single write actually touches.
+        local touched = {}
+        local realSave = Natives.saveFile
+        Natives.saveFile = function(file) touched[file] = true end
+
+        store.writeContract(contract('ct1'))
+        store.close()
+        Natives.saveFile = realSave
+
+        falsy(touched['data/contracts/ct2.json'],
+            'an untouched contract must not be rewritten')
+        truthy(touched['data/contracts/ct1.json'], 'the changed one is')
+    end)
+
+    it('keeps everything a contract owns in its own file', function()
+        local store = fresh()
+        store.writeContract(contract('ct1'))
+        store.writeEscrow('ct1', { { id = 'ct1:1', contract_id = 'ct1', portion = 'baseline',
+                                     source = 'cash', amount = 5000, state = 'held', slot = 1 } })
+        store.addHunter({ id = 'h1', contract_id = 'ct1', hunter_cid = 'HUNTER01',
+                          state = 'active', accepted_at = 1, alias = 'Operative #1' })
+        store.writeMessage({ contract_id = 'ct1', thread_id = 't1', body = 'hello' })
+        store.close()
+
+        local shard = json.decode(Natives.files['data/contracts/ct1.json'])
+        truthy(shard.contract, 'the row')
+        truthy(shard.escrow['ct1:1'], 'its escrow')
+        truthy(shard.hunters.h1, 'its hunters')
+        eq(#shard.messages, 1, 'and its messages')
+
+        -- The index holds what is not per-contract, and no contract bodies.
+        local index = json.decode(Natives.files['data/store.json'])
+        falsy(index.contracts, 'the index must not carry the contracts too')
+        eq(#index.contractIds, 1, 'only which ones exist')
+    end)
+
+    it('reads it all back', function()
+        local store = fresh()
+        store.writeContract(contract('ct1'))
+        store.writeEscrow('ct1', { { id = 'ct1:1', contract_id = 'ct1', portion = 'baseline',
+                                     source = 'cash', amount = 5000, state = 'held', slot = 1 } })
+        store.addHunter({ id = 'h1', contract_id = 'ct1', hunter_cid = 'HUNTER01',
+                          state = 'active', accepted_at = 1, alias = 'Operative #1' })
+        store.close()
+
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        local reopened = require('crimson-bounty.server.storage.json')
+        reopened.open()
+
+        truthy(reopened.readContract('ct1'), 'the contract')
+        eq(#reopened.readEscrow('ct1'), 1, 'its escrow')
+        eq(reopened.readEscrowLine('ct1:1').amount, 5000)
+        eq(#reopened.readHunters('ct1'), 1, 'and its hunters')
+    end)
+
+    it('refuses to start when a listed contract file is gone', function()
+        local store = fresh()
+        store.writeContract(contract('ct1'))
+        store.close()
+
+        -- The index says the contract exists and its escrow does not load.
+        -- Starting anyway would quietly lose whatever it held.
+        Natives.files['data/contracts/ct1.json'] = nil
+
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        local reopened = require('crimson-bounty.server.storage.json')
+        local ok, err = pcall(reopened.open)
+        falsy(ok, 'a missing contract file must be fatal')
+        truthy(tostring(err):find('Refusing to start', 1, true), tostring(err))
+    end)
+
+    it('refuses to start on a contract file that will not parse', function()
+        local store = fresh()
+        store.writeContract(contract('ct1'))
+        store.close()
+        Natives.files['data/contracts/ct1.json'] = '{ not json'
+
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        local reopened = require('crimson-bounty.server.storage.json')
+        falsy(pcall(reopened.open), 'unreadable is not empty')
+    end)
+
+    it('migrates a store written by the single-file version', function()
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        Natives.files = {
+            ['data/store.json'] = json.encode({
+                seq = 7,
+                contracts = { ct1 = contract('ct1'), ct2 = contract('ct2') },
+                escrow = { ['ct1:1'] = { id = 'ct1:1', contract_id = 'ct1',
+                                         portion = 'baseline', source = 'cash',
+                                         amount = 5000, state = 'held', slot = 1 } },
+                hunters = {}, amendments = {}, messages = {},
+                ledger = {}, pending = {}, audit = {}, stats = {},
+            }),
+        }
+
+        local store = require('crimson-bounty.server.storage.json')
+        store.open()
+
+        truthy(Natives.files['data/contracts/ct1.json'], 'each contract gets a file')
+        truthy(Natives.files['data/contracts/ct2.json'])
+        truthy(Natives.files['data/store.json.bak'],
+            'and the original is kept: a migration that deletes its only copy of the ' ..
+            'data is not one worth having')
+
+        eq(store.readEscrowLine('ct1:1').amount, 5000, 'nothing is lost in the move')
+
+        -- And it reads back from the new layout on the next start.
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        local reopened = require('crimson-bounty.server.storage.json')
+        reopened.open()
+        truthy(reopened.readContract('ct2'))
+        eq(reopened.readEscrowLine('ct1:1').amount, 5000)
+    end)
+
+    it('does not lose escrow whose contract row is missing', function()
+        local store = fresh()
+        -- An orphan is exactly the case where money must not vanish.
+        store.writeEscrow('ct9', { { id = 'ct9:1', contract_id = 'ct9', portion = 'owed',
+                                     owed_to = 'CREATOR1', source = 'bank',
+                                     amount = 5000, state = 'held', slot = 0 } })
+        store.close()
+
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        local reopened = require('crimson-bounty.server.storage.json')
+        reopened.open()
+        eq(reopened.readEscrowLine('ct9:1').amount, 5000,
+            'money already charged must survive a restart with no contract row')
+    end)
+
+    it('bounds an ordinary flush and finishes on close', function()
+        local store = fresh()
+        withConfig({ { Config.Database.Json, 'MaxDirtyShardsPerFlush', 2 },
+                     { Config.Database.Json, 'SyncOnFinancialWrite', false } }, function()
+            for i = 1, 6 do store.writeContract(contract('ct' .. i)) end
+
+            store.flush()
+            local after = 0
+            for i = 1, 6 do
+                if Natives.files['data/contracts/ct' .. i .. '.json'] then after = after + 1 end
+            end
+            eq(after, 2, 'one flush writes at most its budget')
+
+            store.close()
+            local final = 0
+            for i = 1, 6 do
+                if Natives.files['data/contracts/ct' .. i .. '.json'] then final = final + 1 end
+            end
+            eq(final, 6, 'a shutdown writes everything regardless')
+        end)
+    end)
+
+    it('will not name a file after something it did not mint', function()
+        local store = fresh()
+        for _, bogus in ipairs({ '../../etc/passwd', 'ct1/../../x', 'a b', '' }) do
+            store.writeEscrow(bogus, { { id = 'x1', contract_id = bogus, portion = 'baseline',
+                                         source = 'cash', amount = 1, state = 'held', slot = 1 } })
+        end
+        store.close()
+
+        for name in pairs(Natives.files) do
+            falsy(name:find('%.%.'), 'no path traversal reaches the filesystem: ' .. name)
+            falsy(name:find('passwd'), name)
+        end
+    end)
+end)

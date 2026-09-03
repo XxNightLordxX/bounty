@@ -438,6 +438,13 @@ Config.Database = {
         Directory = 'data',
         SyncOnFinancialWrite = true,
         WarnContractCount = 2000,
+        --- How many changed contracts one ordinary flush writes. Everything
+        --- a contract owns lives in its own file, so a flush is bounded work
+        --- rather than a rewrite of the whole store — but a burst of
+        --- activity should not turn one flush into a stall either. Anything
+        --- over the budget is written on the next flush, and a shutdown
+        --- writes all of it regardless.
+        MaxDirtyShardsPerFlush = 25,
     },
 }
 

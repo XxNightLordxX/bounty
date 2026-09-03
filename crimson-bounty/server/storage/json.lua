@@ -15,37 +15,192 @@ local EMPTY = {
     messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, seq = 0,
 }
 
+--- Which contracts have unwritten changes, and whether the index itself has.
+---
+--- The store used to be re-serialised and rewritten whole on every financial
+--- write. With a few thousand contracts that is a multi-megabyte write every
+--- time a coin moves. Everything a contract owns — its row, its escrow, its
+--- hunters, its amendments, its messages — lives in one file per contract,
+--- and only the contracts that actually changed are written.
+local dirtyShards = {}
+local indexDirty = false
+
+--- Every contract id that owns a file. Kept separately from db.contracts
+--- because a shard can hold escrow whose contract row is missing — an
+--- orphan is exactly the case where money must not be allowed to vanish,
+--- and the index is the only record of which files exist.
+local shardIds = {}
+
+local function directory()
+    return Config.Database.Json.Directory or 'data'
+end
+
 local function path()
-    return (Config.Database.Json.Directory or 'data') .. '/store.json'
+    return directory() .. '/store.json'
+end
+
+--- Contract ids are minted by nextId as a fixed prefix and digits, so they
+--- are safe as a filename. Checked anyway: a value that reached here from
+--- anywhere else must never become a path fragment.
+local function shardPath(contractId)
+    if type(contractId) ~= 'string' or not contractId:match('^[%w_%-]+$') then
+        return nil
+    end
+    return directory() .. '/contracts/' .. contractId .. '.json'
+end
+
+--- Everything belonging to one contract, gathered for writing.
+local function shardOf(contractId)
+    local shard = {
+        contract = db.contracts[contractId],
+        escrow = {}, hunters = {}, amendments = {}, messages = {},
+    }
+
+    for id, line in pairs(db.escrow) do
+        if line.contract_id == contractId then shard.escrow[id] = line end
+    end
+    for id, hunter in pairs(db.hunters) do
+        if hunter.contract_id == contractId then shard.hunters[id] = hunter end
+    end
+    for id, amendment in pairs(db.amendments) do
+        if amendment.contract_id == contractId then shard.amendments[id] = amendment end
+    end
+    for i = 1, #db.messages do
+        if db.messages[i].contract_id == contractId then
+            shard.messages[#shard.messages + 1] = db.messages[i]
+        end
+    end
+
+    return shard
+end
+
+--- Fold a shard back into the in-memory store.
+local function absorb(shard)
+    if type(shard) ~= 'table' then return false end
+    if type(shard.contract) == 'table' then
+        db.contracts[shard.contract.id] = shard.contract
+    end
+    for id, line in pairs(shard.escrow or {}) do db.escrow[id] = line end
+    for id, hunter in pairs(shard.hunters or {}) do db.hunters[id] = hunter end
+    for id, amendment in pairs(shard.amendments or {}) do db.amendments[id] = amendment end
+    for i = 1, #(shard.messages or {}) do
+        db.messages[#db.messages + 1] = shard.messages[i]
+    end
+    return true
 end
 
 --------------------------------------------------------------------------
 -- Load and save
 --------------------------------------------------------------------------
 
---- Read the store. A file that exists but will not parse is fatal: starting
---- fresh would silently delete every open contract's escrow.
+--- Write one file atomically: serialise, write a temp file, read it back,
+--- then put it in place. A crash mid-write cannot leave a truncated file,
+--- and a write that did not land is not treated as one that did.
+---@return boolean written
+local function writeFile(target, value)
+    local encoded = json.encode(value)
+    local temp = target .. '.tmp'
+
+    SaveResourceFile(resource, temp, encoded, -1)
+    local verify = LoadResourceFile(resource, temp)
+    if not verify or #verify ~= #encoded then
+        print(('[crimson-bounty] write verification failed for %s; keeping the previous file')
+            :format(target))
+        return false
+    end
+
+    SaveResourceFile(resource, target, encoded, -1)
+    return true
+end
+
+--- Read the store.
+---
+--- A file that exists but will not parse is fatal: starting fresh would
+--- silently delete every open contract's escrow. The same goes for a shard
+--- the index names and cannot be read — that is one contract's money
+--- missing, which is not something to start up and hope about.
 function JsonStore.open()
     local raw = LoadResourceFile(resource, path())
 
     if raw == nil or raw == '' then
         db = json.decode(json.encode(EMPTY))
+        dirtyShards, shardIds, indexDirty = {}, {}, true
         JsonStore.save(true)
         return true
     end
 
     local ok, decoded = pcall(json.decode, raw)
-    if not ok or type(decoded) ~= 'table' or type(decoded.contracts) ~= 'table' then
+    if not ok or type(decoded) ~= 'table' then
         error(('[crimson-bounty] %s is unreadable. Refusing to start: continuing would ' ..
                'discard every open contract and its escrow. Restore the file from a backup ' ..
                'or move it aside deliberately.'):format(path()))
     end
 
-    db = decoded
+    db = json.decode(json.encode(EMPTY))
+    dirtyShards, shardIds = {}, {}
+    for key, value in pairs(decoded) do
+        if key ~= 'contractIds' then db[key] = value end
+    end
     for key, value in pairs(EMPTY) do
         if db[key] == nil then db[key] = type(value) == 'table' and {} or value end
     end
     seq = tonumber(db.seq) or 0
+
+    if type(decoded.contractIds) == 'table' then
+        -- Sharded layout. There is no directory listing native, so the index
+        -- is the only record of which shards exist; a named shard that will
+        -- not load is a missing contract, not a missing file.
+        for i = 1, #decoded.contractIds do
+            local id = decoded.contractIds[i]
+            local file = shardPath(id)
+            local shardRaw = file and LoadResourceFile(resource, file)
+
+            if not shardRaw or shardRaw == '' then
+                error(('[crimson-bounty] contract %s is listed in %s but its file is ' ..
+                       'missing or empty. Refusing to start: that contract holds escrow ' ..
+                       'nobody could return.'):format(tostring(id), path()))
+            end
+
+            local shardOk, shard = pcall(json.decode, shardRaw)
+            if not shardOk or type(shard) ~= 'table' then
+                error(('[crimson-bounty] contract file for %s is unreadable. Refusing to ' ..
+                       'start rather than discarding its escrow.'):format(tostring(id)))
+            end
+
+            absorb(shard)
+            shardIds[id] = true
+        end
+    elseif type(decoded.contracts) == 'table' then
+        -- The old single-file layout, from a version before this one. Load
+        -- it as it stands and write it out sharded, keeping the original
+        -- where it is: a migration that deletes the only copy of the data it
+        -- is migrating is not one worth having.
+        local migrated = 0
+        for id in pairs(db.contracts) do
+            dirtyShards[id] = true
+            shardIds[id] = true
+            migrated = migrated + 1
+        end
+
+        -- Escrow whose contract row did not survive still belongs to
+        -- somebody. It gets a file of its own rather than being left out of
+        -- the migration.
+        for _, line in pairs(db.escrow) do
+            if line.contract_id and not shardIds[line.contract_id] then
+                dirtyShards[line.contract_id] = true
+                shardIds[line.contract_id] = true
+                migrated = migrated + 1
+            end
+        end
+        indexDirty = true
+        SaveResourceFile(resource, path() .. '.bak', raw, -1)
+        JsonStore.save(true)
+        print(('[crimson-bounty] migrated %d contract(s) to one file each; the original ' ..
+               'store is kept at %s.bak'):format(migrated, path()))
+    else
+        error(('[crimson-bounty] %s has neither a contract index nor contracts. ' ..
+               'Refusing to start on a store this file does not understand.'):format(path()))
+    end
 
     local count = 0
     for _ in pairs(db.contracts) do count = count + 1 end
@@ -56,31 +211,79 @@ function JsonStore.open()
     return true
 end
 
---- Atomic write: serialise to a temp file, then rename over the target, so a
---- crash mid-write cannot leave a truncated escrow file.
+--- Write what changed.
+---
+--- `force` writes every dirty shard; an ordinary flush writes at most
+--- MaxDirtyShardsPerFlush of them and leaves the rest for the next one, so a
+--- burst of activity cannot turn one flush into an unbounded stall.
 function JsonStore.save(force)
+    if not db then return false end
     if not force and not dirty then return false end
 
-    db.seq = seq
-    local encoded = json.encode(db)
-    local temp = path() .. '.tmp'
+    local budget = force and math.huge
+        or (Config.Database.Json.MaxDirtyShardsPerFlush or 25)
+    local written = 0
 
-    SaveResourceFile(resource, temp, encoded, -1)
-    local verify = LoadResourceFile(resource, temp)
-    if not verify or #verify ~= #encoded then
-        print('[crimson-bounty] json write verification failed; keeping the previous store')
-        return false
+    for id in pairs(dirtyShards) do
+        if written >= budget then break end
+
+        local file = shardPath(id)
+        if not file then
+            -- Not a shape this store mints, so not something to name a file
+            -- after. Dropped rather than written.
+            dirtyShards[id] = nil
+        elseif writeFile(file, shardOf(id)) then
+            dirtyShards[id] = nil
+            written = written + 1
+            indexDirty = true
+        else
+            -- Left dirty deliberately: a shard that did not land is retried
+            -- on the next flush rather than forgotten.
+            break
+        end
     end
 
-    SaveResourceFile(resource, path(), encoded, -1)
-    dirty, lastFlush = false, GetGameTimer()
+    if indexDirty or force then
+        db.seq = seq
+
+        local index = { seq = seq, contractIds = {} }
+        for id in pairs(shardIds) do
+            index.contractIds[#index.contractIds + 1] = id
+        end
+        table.sort(index.contractIds)
+
+        -- Everything that is not per-contract. Small, and rewritten whole.
+        index.ledger, index.pending = db.ledger, db.pending
+        index.audit, index.stats = db.audit, db.stats
+
+        if writeFile(path(), index) then indexDirty = false end
+    end
+
+    if not next(dirtyShards) and not indexDirty then
+        dirty = false
+    end
+    lastFlush = GetGameTimer()
     return true
 end
 
---- Mark the store dirty. Financial writes flush immediately; everything else
---- rides the debounce (§10.2).
-local function touch(financial)
+--- Mark the store dirty.
+---
+--- `contractId` names which shard changed; without one the change is in the
+--- index (the ledger, a pending payout, an audit row). Financial writes
+--- flush immediately; everything else rides the debounce (§10.2).
+local function touch(financial, contractId)
     dirty = true
+    if contractId then
+        dirtyShards[contractId] = true
+        if not shardIds[contractId] then
+            shardIds[contractId] = true
+            -- A contract the index does not list is a file nothing will ever
+            -- read back.
+            indexDirty = true
+        end
+    else
+        indexDirty = true
+    end
     if financial and Config.Database.Json.SyncOnFinancialWrite then
         JsonStore.save(true)
     end
@@ -150,7 +353,7 @@ function JsonStore.writeContract(c)
         c.state = existing.state
     end
     db.contracts[c.id] = c
-    touch(true)
+    touch(true, c.id)
     return true
 end
 
@@ -169,7 +372,7 @@ function JsonStore.compareSetContractState(id, expected, next_)
     local c = db.contracts[id]
     if not c or c.state ~= expected then return false end
     c.state = next_
-    touch(true)
+    touch(true, id)
     return true
 end
 
@@ -189,7 +392,7 @@ function JsonStore.writeEscrow(contractId, lines)
             db.escrow[incoming.id] = incoming
         end
     end
-    touch(true)
+    touch(true, contractId)
     return true
 end
 
@@ -208,7 +411,7 @@ function JsonStore.claimEscrowLine(id, expected, next_)
     local line = db.escrow[id]
     if not line or line.state ~= expected then return false end
     line.state = next_
-    touch(true)
+    touch(true, line.contract_id)
     return true
 end
 
@@ -218,7 +421,7 @@ function JsonStore.setEscrowAmount(id, expectedState, amount, expectedAmount)
     if not line or line.state ~= expectedState then return false end
     if expectedAmount ~= nil and line.amount ~= expectedAmount then return false end
     line.amount = amount
-    touch(true)
+    touch(true, line.contract_id)
     return true
 end
 
@@ -228,7 +431,7 @@ function JsonStore.settleEscrowLine(id, recipientCid)
     line.state = CB.ESCROW_STATE.SETTLED
     line.settled_to = recipientCid
     line.settled_at = os.time()
-    touch(true)
+    touch(true, line.contract_id)
     return true
 end
 
@@ -238,7 +441,7 @@ end
 
 function JsonStore.addHunter(record)
     db.hunters[record.id] = record
-    touch(false)
+    touch(false, record.contract_id)
     return true
 end
 
@@ -265,7 +468,7 @@ function JsonStore.updateHunter(id, fields)
     local h = db.hunters[id]
     if not h then return false end
     for k, v in pairs(fields) do h[k] = v end
-    touch(false)
+    touch(false, h.contract_id)
     return true
 end
 
@@ -284,7 +487,7 @@ end
 -- Amendments, messages, ledger, pending, audit
 --------------------------------------------------------------------------
 
-function JsonStore.writeAmendment(a) db.amendments[a.id] = a touch(false) return true end
+function JsonStore.writeAmendment(a) db.amendments[a.id] = a touch(false, a.contract_id) return true end
 function JsonStore.readAmendment(id) return db.amendments[id] end
 
 function JsonStore.readOpenAmendments(contractId)
@@ -297,7 +500,7 @@ end
 
 function JsonStore.writeMessage(m)
     db.messages[#db.messages + 1] = m
-    touch(false)
+    touch(false, m.contract_id)
     return true
 end
 

@@ -119,6 +119,9 @@ function Natives.install()
     Natives.files = {}
     _G.LoadResourceFile = function(_, file) return Natives.files[file] end
     _G.SaveResourceFile = function(_, file, data)
+        -- A seam for asserting on which files a write actually touches,
+        -- which is the whole claim the sharded store makes.
+        if Natives.saveFile then Natives.saveFile(file, data) end
         Natives.files[file] = data
         return true
     end
