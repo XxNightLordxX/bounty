@@ -7,11 +7,11 @@
 
 local Projection = {}
 
-local Storage, Identity, Escrow, Kidnap, Mugshot
+local Storage, Identity, Escrow, Kidnap, Mugshot, Progression
 
 function Projection.init(deps)
-    Storage, Identity, Escrow, Kidnap, Mugshot =
-        deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot
+    Storage, Identity, Escrow, Kidnap, Mugshot, Progression =
+        deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot, deps.progression
 end
 
 --- Roles a viewer can hold relative to a contract. The role decides the key
@@ -110,6 +110,9 @@ function Projection.contract(contract, viewerCid)
                     alias = h.alias,
                     name  = (not h.anon) and h.hunter_name or nil,
                     claims = h.claims or 0,
+                    -- A record, not an identity: a creator can judge who
+                    -- took their contract without learning who they are.
+                    record = Progression and Progression.record(h.hunter_cid) or nil,
                 }
             end
         end

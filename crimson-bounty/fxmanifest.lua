@@ -35,3 +35,9 @@ dependencies {
     'ox_inventory',
     'lb-phone',
 }
+
+--- Optional integrations, all detected at runtime and skipped when absent:
+---   sc-ambulance     server-side death and last-stand state
+---   sc-dispatch      law enforcement threat advisories in the MDT
+---   sc-blackmarket   criminal progression on a completed contract
+---   MugShotBase64    live target headshots

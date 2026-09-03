@@ -75,9 +75,20 @@
     var node = el('div', 'card' + (contract.targetProtected ? ' is-protected' : ''));
 
     var head = el('div', 'card-head');
-    var left = el('div');
-    left.appendChild(el('div', 'target', contract.targetName));
-    left.appendChild(el('div', 'reason', contract.reason || '—'));
+    var left = el('div', 'card-identity');
+
+    if (contract.targetImage) {
+      var shot = document.createElement('img');
+      shot.className = 'mugshot';
+      shot.src = contract.targetImage;
+      shot.alt = '';
+      left.appendChild(shot);
+    }
+
+    var who = el('div');
+    who.appendChild(el('div', 'target', contract.targetName));
+    who.appendChild(el('div', 'reason', contract.reason || '—'));
+    left.appendChild(who);
     head.appendChild(left);
 
     var reward = el('div', 'reward');
@@ -98,6 +109,13 @@
     if (contract.huntersActive > 0) {
       meta.appendChild(chip(
         contract.huntersActive + (contract.huntersActive === 1 ? ' operative' : ' operatives'), 'hot'));
+    }
+    if (contract.role === 'creator' && contract.hunters) {
+      contract.hunters.forEach(function (h) {
+        if (h.record) {
+          meta.appendChild(chip(h.alias + ' · ' + h.record.standing));
+        }
+      });
     }
     meta.appendChild(chip(contract.creatorAnonymous ? 'Anonymous client' : contract.creatorName));
     if (contract.targetProtected) {
@@ -339,7 +357,24 @@
   }
 
   function viewLedger(view) {
-    var rows = state.ledger || [];
+    var data = state.ledger || {};
+    var rows = data.entries || [];
+    var record = data.record;
+
+    if (record) {
+      var card = el('div', 'card');
+      card.appendChild(el('div', 'target', record.standing));
+      var meta = el('div', 'meta');
+      meta.appendChild(chip(record.completed + ' completed', 'hot'));
+      meta.appendChild(chip(record.placed + ' placed'));
+      meta.appendChild(chip(record.survived + ' survived'));
+      if (record.rate !== undefined && record.rate !== null) {
+        meta.appendChild(chip(record.rate + '% success'));
+      }
+      card.appendChild(meta);
+      view.appendChild(card);
+    }
+
     if (!rows.length) {
       view.appendChild(el('div', 'empty', 'No history yet.'));
       return;

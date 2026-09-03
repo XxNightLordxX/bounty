@@ -208,6 +208,25 @@ function Memory.readPending(cid)
 end
 function Memory.clearPending(id) db.pending[id] = nil return true end
 
+--- Per-player counters. Kept separate from the ledger, which is capped at
+--- ten rows and so cannot answer "how many contracts has this operative
+--- finished".
+function Memory.bumpStat(cid, field, amount)
+    db.stats = db.stats or {}
+    local row = db.stats[cid]
+    if not row then
+        row = { cid = cid, completed = 0, failed = 0, placed = 0, survived = 0 }
+        db.stats[cid] = row
+    end
+    row[field] = (row[field] or 0) + (amount or 1)
+    return row[field]
+end
+
+function Memory.readStats(cid)
+    db.stats = db.stats or {}
+    return db.stats[cid] or { cid = cid, completed = 0, failed = 0, placed = 0, survived = 0 }
+end
+
 function Memory.writeAudit(entry)
     db.audit[#db.audit + 1] = entry
     return true

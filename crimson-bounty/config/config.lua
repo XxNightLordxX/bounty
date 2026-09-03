@@ -392,6 +392,9 @@ Config.Audit = {
     FlushIntervalMs = 10000,
     MaxQueueSize = 5000,
     RetentionDays = 30,
+    --- Optional staff webhook. Financial movements and rejected attempts are
+    --- mirrored as a heads-up; identity is never included, because anything
+    --- sent to a third party outlives this server's retention rules.
     Webhook = false,
     IdentityRevealAce = 'crimsonbounty.identity',
 }
@@ -403,6 +406,20 @@ Config.AntiCollusion = {
     BlockSameAccount = true,
     FlagSharedHousehold = true,
     PairThrottleSeconds = 3600,
+}
+
+--------------------------------------------------------------------------
+-- Progression
+--------------------------------------------------------------------------
+
+--- Completing a contract feeds the server's existing criminal progression,
+--- so the bounty board is part of the criminal economy rather than a
+--- parallel one. Disabled automatically if the resource is not running.
+Config.Progression = {
+    Enabled = true,
+    Resource = 'sc-blackmarket',
+    TrustPerElimination = 10,
+    TrustPerKidnapping  = 20,
 }
 
 Config.Debug = false

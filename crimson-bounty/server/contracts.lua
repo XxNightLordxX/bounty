@@ -8,14 +8,15 @@ local Util = require_shared('util')
 
 local Contracts = {}
 
-local Storage, Escrow, Identity, Audit, Notify
+local Storage, Escrow, Identity, Audit, Notify, Progression
 
 function Contracts.init(deps)
-    Storage  = deps.storage
-    Escrow   = deps.escrow
-    Identity = deps.identity
-    Audit    = deps.audit
-    Notify   = deps.notify
+    Storage     = deps.storage
+    Escrow      = deps.escrow
+    Identity    = deps.identity
+    Audit       = deps.audit
+    Notify      = deps.notify
+    Progression = deps.progression
 end
 
 local LIVE_STATES = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true, [CB.STATE.COMPLETING] = true }
@@ -227,6 +228,8 @@ function Contracts.create(actor, req)
         reason = Config.Audit.LogReasonText and reason or nil,
     })
 
+    if Progression then Progression.onContractPlaced(actor.cid) end
+
     Notify.contractCreated(contract, targetActor)
     return contract
 end
@@ -367,6 +370,8 @@ function Contracts.abandon(actor, contractId)
         Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'abandoned')
     end
 
+    if Progression then Progression.onFailed(actor.cid) end
+
     Audit.action('contract_abandoned', actor.cid, contractId, {})
     return true
 end
@@ -437,6 +442,8 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment)
     Escrow.release(contractId, hunterCid,
         { portion = CB.PORTION.STAKE, staker = hunterCid }, 'stake_returned')
 
+    if Progression then Progression.onCompleted(hunterCid, fulfilment) end
+
     Audit.financial('slot_claimed', hunterCid, contractId, {
         slot = slot, fulfilment = fulfilment,
         settled = baseline.settled + bonus.settled,
@@ -503,6 +510,11 @@ function Contracts.resolve(contractId, terminal, recipientCid, filter, reason)
             toCreator and contract.creator_cid or hunter.hunter_cid,
             { portion = CB.PORTION.STAKE, staker = hunter.hunter_cid },
             toCreator and 'penalty_forfeited' or 'stake_returned')
+    end
+
+    -- A target who outlived the contract has something to show for it.
+    if Progression and (terminal == CB.STATE.BAILED_OUT or terminal == CB.STATE.EXPIRED) then
+        Progression.onSurvived(contract.target_cid)
     end
 
     -- Per-contract caches are released here rather than growing for the

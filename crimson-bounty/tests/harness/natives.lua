@@ -95,6 +95,12 @@ function Natives.install()
         return true
     end
 
+    Natives.calls.http = {}
+    _G.PerformHttpRequest = function(url, cb, method, body, headers)
+        table.insert(Natives.calls.http, { url = url, method = method, body = body })
+        if cb then cb(204, '', {}) end
+    end
+
     _G.json = Natives.json
     _G.exports = Natives.exportsProxy()
     _G.MySQL = Natives.mysql
@@ -244,6 +250,7 @@ Natives.resourceStates = {
     ['sc-ambulance'] = 'started',
     ['sc-dispatch'] = 'started',
     ['MugShotBase64'] = 'started',
+    ['sc-blackmarket'] = 'started',
 }
 
 Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }

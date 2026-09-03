@@ -12,7 +12,7 @@ local resource = GetCurrentResourceName and GetCurrentResourceName() or 'crimson
 
 local EMPTY = {
     contracts = {}, escrow = {}, hunters = {}, amendments = {},
-    messages = {}, ledger = {}, pending = {}, audit = {}, seq = 0,
+    messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, seq = 0,
 }
 
 local function path()
@@ -294,6 +294,23 @@ function JsonStore.clearPending(id)
     db.pending[id] = nil
     touch(true)
     return true
+end
+
+function JsonStore.bumpStat(cid, field, amount)
+    db.stats = db.stats or {}
+    local row = db.stats[cid]
+    if not row then
+        row = { cid = cid, completed = 0, failed = 0, placed = 0, survived = 0 }
+        db.stats[cid] = row
+    end
+    row[field] = (row[field] or 0) + (amount or 1)
+    touch(false)
+    return row[field]
+end
+
+function JsonStore.readStats(cid)
+    db.stats = db.stats or {}
+    return db.stats[cid] or { cid = cid, completed = 0, failed = 0, placed = 0, survived = 0 }
 end
 
 function JsonStore.writeAudit(entry)

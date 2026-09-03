@@ -51,6 +51,27 @@ function Audit.rejected(action, actorCid, contractId, detail)
     push('rejected', action, actorCid, contractId, detail)
 end
 
+--- Mirror a line to a staff webhook.
+---
+--- Identity is deliberately absent: the webhook is a heads-up that something
+--- happened, and anything sent to a third party outlives the server's own
+--- retention rules. The full record stays in the database, where staff can
+--- look it up under the ACE that gates identity lookups.
+local function mirror(entry)
+    local url = Config.Audit.Webhook
+    if not url or url == false or url == '' then return false end
+    if entry.kind ~= 'rejected' and entry.kind ~= 'financial' then return false end
+
+    local body = json.encode({
+        content = ('`%s` · %s · contract %s'):format(
+            entry.kind, entry.action, entry.contract_id or 'n/a'),
+    })
+
+    PerformHttpRequest(url, function() end, 'POST', body,
+        { ['Content-Type'] = 'application/json' })
+    return true
+end
+
 function Audit.flush()
     if tail < head then return 0 end
 
@@ -59,6 +80,7 @@ function Audit.flush()
         local entry = queue[i]
         if entry then
             Storage.writeAudit(entry)
+            pcall(mirror, entry)
             queue[i] = nil
             written = written + 1
         end

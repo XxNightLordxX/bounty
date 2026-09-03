@@ -114,6 +114,13 @@ local SCHEMA = {
         queued_at INT NOT NULL,
         INDEX idx_cid (cid)
     )]],
+    [[CREATE TABLE IF NOT EXISTS crimson_stats (
+        cid VARCHAR(32) PRIMARY KEY,
+        completed INT DEFAULT 0,
+        failed INT DEFAULT 0,
+        placed INT DEFAULT 0,
+        survived INT DEFAULT 0
+    )]],
     [[CREATE TABLE IF NOT EXISTS crimson_audit (
         id INT AUTO_INCREMENT PRIMARY KEY,
         ts INT NOT NULL,
@@ -429,6 +436,38 @@ end
 function MySQLStore.clearPending(id)
     MySQL.query.await('DELETE FROM crimson_pending WHERE id = ?', { id })
     return true
+end
+
+--- Counter names are literals chosen from a fixed set, never interpolated
+--- from a caller: this is the one place a column name is selected at
+--- runtime, and it stays a whitelist rather than a string built from input.
+local STAT_COLUMNS = { completed = true, failed = true, placed = true, survived = true }
+
+function MySQLStore.bumpStat(cid, field, amount)
+    if not STAT_COLUMNS[field] then return 0 end
+    amount = amount or 1
+
+    if field == 'completed' then
+        MySQL.query.await([[INSERT INTO crimson_stats (cid, completed) VALUES (?, ?)
+            ON DUPLICATE KEY UPDATE completed = completed + VALUES(completed)]], { cid, amount })
+    elseif field == 'failed' then
+        MySQL.query.await([[INSERT INTO crimson_stats (cid, failed) VALUES (?, ?)
+            ON DUPLICATE KEY UPDATE failed = failed + VALUES(failed)]], { cid, amount })
+    elseif field == 'placed' then
+        MySQL.query.await([[INSERT INTO crimson_stats (cid, placed) VALUES (?, ?)
+            ON DUPLICATE KEY UPDATE placed = placed + VALUES(placed)]], { cid, amount })
+    else
+        MySQL.query.await([[INSERT INTO crimson_stats (cid, survived) VALUES (?, ?)
+            ON DUPLICATE KEY UPDATE survived = survived + VALUES(survived)]], { cid, amount })
+    end
+
+    return amount
+end
+
+function MySQLStore.readStats(cid)
+    local rows = MySQL.query.await('SELECT * FROM crimson_stats WHERE cid = ?', { cid })
+    return (rows and rows[1])
+        or { cid = cid, completed = 0, failed = 0, placed = 0, survived = 0 }
 end
 
 function MySQLStore.writeAudit(entry)

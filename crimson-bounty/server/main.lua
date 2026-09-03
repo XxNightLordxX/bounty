@@ -98,14 +98,16 @@ function StartCrimsonBounty()
     local amendments = require('server.amendments')
     local comms      = require('server.comms')
     local mugshot    = require('server.mugshot')
+    local progression = require('server.progression')
     local projection = require('server.projection')
     local app        = require('server.app')
 
     audit.init(Storage)
     notify.init({ identity = identity })
     escrow.init(Storage, audit)
+    progression.init({ storage = Storage, identity = identity, audit = audit })
     contracts.init({ storage = Storage, escrow = escrow, identity = identity,
-                     audit = audit, notify = notify })
+                     audit = audit, notify = notify, progression = progression })
     ledger.init(Storage)
     death.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit })
     photo.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
@@ -121,14 +123,14 @@ function StartCrimsonBounty()
                  notify = notify, ratelimit = ratelimit })
     mugshot.init({ identity = identity, audit = audit })
     projection.init({ storage = Storage, identity = identity, escrow = escrow,
-                      kidnap = kidnap, mugshot = mugshot })
+                      kidnap = kidnap, mugshot = mugshot, progression = progression })
 
     modules = {
         storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,
         notify = notify, escrow = escrow, contracts = contracts, ledger = ledger,
         death = death, photo = photo, kidnap = kidnap, bailout = bailout,
         informant = informant, amendments = amendments, comms = comms,
-        projection = projection, mugshot = mugshot,
+        projection = projection, mugshot = mugshot, progression = progression,
     }
 
     app.init(modules)

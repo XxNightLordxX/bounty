@@ -81,6 +81,16 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
 .card.is-protected::before { background: var(--gold); }
 
 .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.6rem; }
+.card-identity { display: flex; gap: 0.6rem; align-items: flex-start; min-width: 0; }
+
+/* Live target mugshot (§7.2) — rendered by the target's own client. */
+.mugshot {
+  width: 2.75rem; height: 2.75rem; flex: none;
+  border-radius: 0.45rem; object-fit: cover;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  filter: grayscale(0.35) contrast(1.1);
+}
 .target { font-weight: 650; font-size: 1rem; }
 .reason { color: var(--ink-dim); font-size: 0.78rem; margin-top: 0.15rem; }
 

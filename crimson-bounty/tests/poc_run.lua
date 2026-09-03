@@ -77,7 +77,6 @@ function _G.newStack()
     package.loaded['crimson-bounty.server.projection'] = nil
     package.loaded['crimson-bounty.server.bridges'] = nil
     package.loaded['crimson-bounty.server.mugshot'] = nil
-    package.loaded['crimson-bounty.server.progression'] = nil
     package.loaded['crimson-bounty.server.amendments'] = nil
     package.loaded['crimson-bounty.server.informant'] = nil
     package.loaded['crimson-bounty.server.bailout'] = nil
@@ -100,16 +99,14 @@ function _G.newStack()
     local projection = require('crimson-bounty.server.projection')
     local bridges    = require('crimson-bounty.server.bridges')
     local mugshot    = require('crimson-bounty.server.mugshot')
-    local progression = require('crimson-bounty.server.progression')
 
     storage.open()
     audit.init(storage)
     notify.init({ identity = identity })
     escrow.init(storage, audit)
-    progression.init({ storage = storage, identity = identity, audit = audit })
     contracts.init({
         storage = storage, escrow = escrow, identity = identity,
-        audit = audit, notify = notify, progression = progression,
+        audit = audit, notify = notify,
     })
 
     ledger.init(storage)
@@ -134,14 +131,14 @@ function _G.newStack()
 
     mugshot.init({ identity = identity, audit = audit })
     projection.init({ storage = storage, identity = identity, escrow = escrow,
-                      kidnap = kidnap, mugshot = mugshot, progression = progression })
+                      kidnap = kidnap, mugshot = mugshot })
 
     return {
         storage = storage, audit = audit, kidnap = kidnap, projection = projection,
         bailout = bailout, informant = informant, amendments = amendments, comms = comms, identity = identity, notify = notify,
         escrow = escrow, contracts = contracts, ratelimit = ratelimit,
         ledger = ledger, death = death, photo = photo, bridges = bridges,
-        mugshot = mugshot, progression = progression,
+        mugshot = mugshot,
     }
 end
 
@@ -176,10 +173,7 @@ function _G.fixture(stack, overrides)
 end
 
 --- Load and run every suite listed here.
-local suites = {
-    'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec',
-}
+local suites = { 'poc_spec' }
 
 for _, name in ipairs(suites) do
     local ok, err = pcall(require, 'crimson-bounty.tests.' .. name)

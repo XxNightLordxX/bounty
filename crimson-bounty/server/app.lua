@@ -86,7 +86,10 @@ function App.register()
     end)
 
     handler('ledger', 'search', function(actor)
-        return deps.ledger.read(actor.cid)
+        return {
+            entries = deps.ledger.read(actor.cid),
+            record  = deps.progression.record(actor.cid),
+        }
     end)
 
     -- Target search: returns opaque handles and capped results, never a
