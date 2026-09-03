@@ -482,6 +482,112 @@ async function main() {
     });
   })();
 
+  // The thread view renders from a shape the server sends and has been
+  // broken before. It had no coverage at all.
+  await (async function threadView() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hunter';
+    held.myAlias = 'Operative #1';
+
+    let sent = null;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+      ledger: LEDGER,
+      readThread: { ok: true, data: [
+        { alias: 'Client', body: 'Is it done?', mine: false },
+        { alias: 'Operative #1', body: 'Working on it.', mine: true }
+      ] },
+      sendMessage: function (body) { sent = body; return { ok: true, data: {} }; }
+    });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+
+    const talk = app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Message';
+    })[0];
+    it('offers a thread from the hunter card', function () { truthy(talk, 'a Message button'); });
+    if (talk) { talk.onclick(); await settle(); await settle(); }
+
+    it('renders both sides of the conversation', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('Is it done?') !== -1, 'theirs: ' + text);
+      truthy(text.indexOf('Working on it.') !== -1, 'and ours');
+      truthy(text.indexOf('Operative #1') !== -1, 'under the alias, never a name');
+    });
+
+    it('marks which messages are the viewer own', function () {
+      const mine = app.view.all().filter(function (n) {
+        return n._className && n._className.indexOf('msg mine') !== -1;
+      });
+      eq(mine.length, 1, 'exactly the one they sent');
+    });
+
+    // Type and send, the way a player does.
+    const inputs = app.view.all().filter(function (n) { return n.tagName === 'INPUT'; });
+    const field = inputs[inputs.length - 1];
+    it('offers somewhere to type', function () { truthy(field, 'a message field'); });
+
+    if (field) {
+      field.value = 'On my way.';
+      field.onkeydown({ key: 'Enter' });
+      await settle(); await settle();
+    }
+
+    it('sends what was typed, with the contract it belongs to', function () {
+      truthy(sent, 'nothing was sent');
+      eq(sent.body, 'On my way.');
+      eq(sent.id, 'ct00000001', 'the contract, not undefined');
+    });
+
+    it('clears the field so a message cannot be sent twice by accident', function () {
+      eq(field.value, '', 'the field empties after sending');
+    });
+
+    it('does not send on any other key', function () {
+      const before = sent;
+      field.value = 'half typed';
+      field.onkeydown({ key: 'a' });
+      eq(sent, before, 'only Enter sends');
+    });
+
+    it('goes back to where it came from', function () {
+      const back = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Back';
+      })[0];
+      truthy(back, 'a way out');
+      back.onclick();
+      truthy(app.view.textContent.indexOf('Dana Reyes') !== -1,
+        'back to the cards: ' + app.view.textContent);
+    });
+  })();
+
+  await (async function emptyThread() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hunter';
+    held.myAlias = 'Operative #1';
+
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+      ledger: LEDGER,
+      readThread: { ok: true, data: [] }
+    });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+    app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Message';
+    })[0].onclick();
+    await settle(); await settle();
+
+    it('renders a conversation that has not started yet', function () {
+      const fields = app.view.all().filter(function (n) { return n.tagName === 'INPUT'; });
+      truthy(fields.length > 0, 'still somewhere to type');
+    });
+  })();
+
   // Proposals, approvals, declines and expiry have all been implemented on
   // the server since the first commit, and nothing rendered any of it.
   await (async function amendmentPanel() {

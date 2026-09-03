@@ -313,3 +313,185 @@ describe('no contract can be paid twice under any order', function()
         truthy(settled > 0, 'the run should have settled something')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Restarts
+--------------------------------------------------------------------------
+--
+-- The simulation above proves conservation across thousands of operations
+-- and never once saves, reloads and continues. The recovery path — a
+-- contract caught mid-claim, an escrow line caught mid-release — had only
+-- hand-written tests, and a hand-written test only covers the interleavings
+-- somebody thought of.
+--
+-- These run against the json backend through main.lua, so a restart here is
+-- the real one: the store is closed, the files are all that survive, and
+-- the resource starts again and recovers.
+
+local function bootJson()
+    for name in pairs(package.loaded) do
+        if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+            package.loaded[name] = nil
+        end
+    end
+
+    local main = require('server.main')
+    return main, main.start()
+end
+
+--- A world whose players survive a restart, because they are in Env rather
+--- than in the store.
+local function populate(modules)
+    local cids = {}
+    for i = 1, 6 do
+        local cid = string.format('SIM%05d', i)
+        Env.addPlayer({
+            source = i, citizenid = cid, license = 'license:sim' .. i,
+            cash = 50000, bank = 50000,
+            inventory = { { name = 'black_money', count = 10000 } },
+            firstname = 'Sim', lastname = 'Player' .. i,
+        })
+        cids[#cids + 1] = cid
+    end
+    return cids
+end
+
+describe('value survives a restart', function()
+    for _, seed in ipairs({ 13, 2024, 555001 }) do
+        it('conserves every unit across a mid-run restart (seed ' .. seed .. ')', function()
+            local rand = rng(seed)
+
+            Env.reset()
+            Natives.files = {}
+            Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+            Natives.resetResourceStates()
+            resetConfig()
+            Config.Database.Mode = 'json'
+
+            local main, modules = bootJson()
+            local cids = populate(modules)
+            local opening = worldValue(modules, cids)
+
+            local ids = {}
+            local created, accepted, claimed = 0, 0, 0
+
+            local function step(n)
+                for _ = 1, n do
+                    Env.advance(120)
+                    local actorSrc = rand(6)
+                    local actor = modules.identity.resolve(actorSrc)
+                    local op = rand(6)
+
+                    if op <= 2 then
+                        local targetSrc = rand(6)
+                        if targetSrc ~= actorSrc then
+                            local target = modules.identity.resolve(targetSrc)
+                            local c = modules.contracts.create(actor, {
+                                targetCid = target.cid, reason = 'sim',
+                                mode = CB.MODE.COMPETITIVE,
+                                reward = { baseline = { cash = rand(20) * 100 } },
+                                penaltyAmount = rand(2) == 1 and (rand(10) * 100) or nil,
+                            })
+                            if c then ids[#ids + 1] = c.id created = created + 1 end
+                        end
+                    elseif op == 3 and #ids > 0 then
+                        local id = ids[rand(#ids)]
+                        if modules.contracts.accept(actor, id, rand(2) == 1) then
+                            accepted = accepted + 1
+                        end
+                    elseif op == 4 and #ids > 0 then
+                        local id = ids[rand(#ids)]
+                        local c = modules.storage.readContract(id)
+                        if c and c.state == CB.STATE.ACCEPTED then
+                            local hunters = modules.storage.readHunters(id)
+                            for _, h in ipairs(hunters) do
+                                if h.state == 'active'
+                                    and modules.contracts.claimSlot(id, h.hunter_cid,
+                                                                   CB.FULFILMENT.ELIMINATION) then
+                                    claimed = claimed + 1
+                                    break
+                                end
+                            end
+                        end
+                    elseif op == 5 and #ids > 0 then
+                        modules.contracts.abandon(actor, ids[rand(#ids)])
+                    else
+                        main.tick()
+                    end
+                end
+            end
+
+            step(60)
+
+            -- The restart. Everything not on disk is gone.
+            modules.storage.close()
+            main, modules = bootJson()
+
+            truthy(#modules.storage.allContracts() > 0,
+                'the contracts must come back at all')
+
+            step(60)
+
+            -- Settle everything still open, then check the books.
+            for _, id in ipairs(ids) do
+                local c = modules.storage.readContract(id)
+                if c and not CB.TERMINAL[c.state] then
+                    modules.contracts.resolve(id, CB.STATE.CANCELLED, c.creator_cid,
+                                              nil, 'sim teardown')
+                end
+            end
+            for _, cid in ipairs(cids) do modules.escrow.retryPending(cid) end
+
+            escrowSane(modules)
+            terminalContractsDrained(modules)
+            eq(worldValue(modules, cids), opening,
+                ('value was created or destroyed across the restart (seed %d)'):format(seed))
+
+            truthy(created >= 3, ('only %d contracts created'):format(created))
+            truthy(accepted >= 1, ('only %d acceptances'):format(accepted))
+        end)
+    end
+
+    it('recovers a contract left mid-claim and an escrow line left mid-release', function()
+        Env.reset()
+        Natives.files = {}
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Config.Database.Mode = 'json'
+
+        local main, modules = bootJson()
+        populate(modules)
+
+        local creator = modules.identity.resolve(1)
+        local hunter = modules.identity.resolve(3)
+        local target = modules.identity.resolve(2)
+
+        local c = modules.contracts.create(creator, {
+            targetCid = target.cid, reason = 'sim', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        truthy(modules.contracts.accept(hunter, c.id, false))
+
+        -- Exactly what a crash mid-settlement leaves: a contract stuck in
+        -- COMPLETING and a line claimed but never settled.
+        truthy(modules.storage.compareSetContractState(c.id, CB.STATE.ACCEPTED,
+                                                       CB.STATE.COMPLETING))
+        local line = modules.storage.readEscrow(c.id)[1]
+        truthy(modules.storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD,
+                                               CB.ESCROW_STATE.RELEASING))
+        modules.storage.close()
+
+        main, modules = bootJson()
+
+        eq(modules.storage.readContract(c.id).state, CB.STATE.ACCEPTED,
+            'a contract stuck mid-claim is put back so the normal path can run again')
+        eq(modules.storage.readEscrowLine(line.id).state, CB.ESCROW_STATE.HELD,
+            'and a line stuck mid-release is owed rather than unreachable')
+
+        -- And it can still be finished afterwards.
+        truthy(modules.contracts.claimSlot(c.id, hunter.cid, CB.FULFILMENT.ELIMINATION),
+            'the recovered contract is still completable')
+    end)
+end)

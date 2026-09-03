@@ -1,9 +1,20 @@
 --- Storage conformance. The same contract is run against every backend, so
 --- json mode cannot quietly behave differently from memory mode (§10.4).
 
+local Exec = require('crimson-bounty.tests.harness.mysql_exec')
+
+--- Every backend, opened fresh.
+---
+--- mysql is in here now. It used to be tested by reading it and by a
+--- simulator that only checked which columns an INSERT named, so nothing
+--- proved a query returned the right rows — on the backend that ships by
+--- default. mysql_exec actually executes the statements this file issues,
+--- and raises on one it does not understand rather than quietly returning
+--- nothing, so a gap in the coverage is visible.
 local function backends()
     package.loaded['crimson-bounty.server.storage.memory'] = nil
     package.loaded['crimson-bounty.server.storage.json'] = nil
+    package.loaded['crimson-bounty.server.storage.mysql'] = nil
     Natives.files = {}
 
     local memory = require('crimson-bounty.server.storage.memory')
@@ -11,7 +22,15 @@ local function backends()
     memory.open()
     jsonStore.open()
 
-    return { { name = 'memory', store = memory }, { name = 'json', store = jsonStore } }
+    Exec.install(Natives)
+    local mysqlStore = require('crimson-bounty.server.storage.mysql')
+    mysqlStore.open()
+
+    return {
+        { name = 'memory', store = memory },
+        { name = 'json', store = jsonStore },
+        { name = 'mysql', store = mysqlStore },
+    }
 end
 
 local function contractFixture(id)
@@ -23,6 +42,49 @@ local function contractFixture(id)
 end
 
 describe('storage conformance', function()
+    --- Every field a live contract carries, written and read back.
+    ---
+    --- The narrow fixture below proves a contract survives a round trip; it
+    --- does not prove each value lands in the column it belongs to. Swapping
+    --- two adjacent parameters in the mysql INSERT passed every test until
+    --- this existed, and would have written the bailout queue timestamp into
+    --- the column holding who paid it.
+    it('round-trips every field of a contract in every backend', function()
+        local full = {
+            id = 'ctfull01', creator_cid = 'CREATOR1', creator_account = 'license:aaa',
+            creator_name = 'Vic Marlowe', target_cid = 'TARGET01', target_name = 'Dana Reyes',
+            target_protected = true, target_job = 'trooper', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE, state = CB.STATE.ACTIVE, anon_creator = true,
+            bonus_percent = 50, bailout_amount = 15000, penalty_amount = 10000,
+            payout_slots = 3, slots_claimed = 1, next_slot = 2,
+            created_at = 1700000001, deadline_at = 1700000002, expires_at = 1700000003,
+            paused_ms = 4000, paused_since = 1700000004,
+            bailout_queued_at = 1700000005, bailout_paid_by = 'TARGET01',
+            bailout_paid_amount = 15000, bailout_paid_account = 'bank',
+            bailout_attempts = 2,
+            resolved_at = 1700000006, resolution = 'bailed_out',
+        }
+
+        for _, b in ipairs(backends()) do
+            local written = {}
+            for key, value in pairs(full) do written[key] = value end
+            b.store.writeContract(written)
+
+            local read = b.store.readContract('ctfull01')
+            truthy(read, b.name .. ': contract not found')
+
+            for key, value in pairs(full) do
+                -- `state` is deliberately not written by writeContract; it
+                -- moves only through compareSetContractState, and the row
+                -- keeps whatever it already had.
+                if key ~= 'state' then
+                    eq(read[key], value,
+                        ('%s: %s came back wrong'):format(b.name, key))
+                end
+            end
+        end
+    end)
+
     it('round-trips a contract in every backend', function()
         for _, b in ipairs(backends()) do
             b.store.writeContract(contractFixture('ct1'))
@@ -741,5 +803,68 @@ describe('json sharding', function()
             falsy(name:find('%.%.'), 'no path traversal reaches the filesystem: ' .. name)
             falsy(name:find('passwd'), name)
         end
+    end)
+end)
+
+--- Every function the mysql backend exposes, executed.
+---
+--- The executing simulator raises on a statement it does not understand, so
+--- this is what says the coverage is real: if a query shape is added that
+--- the simulator cannot run, this fails by name rather than the conformance
+--- suite quietly testing a little less than it did yesterday.
+describe('every mysql statement is executable', function()
+    it('runs every function this backend exposes', function()
+        local Exec = require('crimson-bounty.tests.harness.mysql_exec')
+        Exec.install(Natives)
+        package.loaded['crimson-bounty.server.storage.mysql'] = nil
+        local m = require('crimson-bounty.server.storage.mysql')
+        m.open()
+
+        local calls = {
+            function() m.writeContract({ id='c1', creator_cid='A', target_cid='B', mode='exclusive', state='active', created_at=1 }) end,
+            function() m.readContract('c1') end,
+            function() m.allContracts() end,
+            function() m.contractsInvolving('A') end,
+            function() m.contractsNaming('B') end,
+            function() m.contractsBy('A') end,
+            function() m.compareSetContractState('c1','active','accepted') end,
+            function() m.writeEscrow('c1', { { id='c1:1', contract_id='c1', slot=1, portion='baseline', source='cash', amount=100, state='held' } }) end,
+            function() m.readEscrow('c1') end,
+            function() m.readEscrowLine('c1:1') end,
+            function() m.claimEscrowLine('c1:1','held','releasing') end,
+            function() m.setEscrowAmount('c1:1','releasing',50,100) end,
+            function() m.settleEscrowLine('c1:1','A') end,
+            function() m.addHunter({ id='h1', contract_id='c1', hunter_cid='H', state='active', accepted_at=1, alias='Op' }) end,
+            function() m.readHunters('c1') end,
+            function() m.readHunter('c1','H') end,
+            function() m.updateHunter('h1', { claims = 1 }) end,
+            function() m.countHunterContracts('H', { accepted = true }) end,
+            function() m.writeAmendment({ id='am1', contract_id='c1', proposer='A', kind='cancel', payload={}, approvals={}, expires_at=1, outcome='open' }) end,
+            function() m.readAmendment('am1') end,
+            function() m.readOpenAmendments('c1') end,
+            function() m.writeMessage({ contract_id='c1', thread_id='t1', sender_cid='A', body='x', sent_at=1 }) end,
+            function() m.readMessages('c1','t1') end,
+            function() m.writeLedger({ cid='A', contract_id='c1', resolved_at=1 }) end,
+            function() m.readLedger('A', 10) end,
+            function() m.queuePending('A','c1','c1:1') end,
+            function() m.readPending('A') end,
+            function() m.clearPending('pnd1') end,
+            function() m.bumpStat('A','completed',1) end,
+            function() m.readStats('A') end,
+            function() m.writeAudit({ ts=1, kind='financial', action='x', actor_cid='A', contract_id='c1', detail={} }) end,
+            function() m.readAudit(10) end,
+            function() m.auditForContract('c1', 10) end,
+            function() m.prune() end,
+            function() m.migrate() end,
+        }
+
+        local failed = {}
+        for i, call in ipairs(calls) do
+            local ok, err = pcall(call)
+            if not ok then failed[#failed + 1] = i .. ': ' .. tostring(err) end
+        end
+
+        eq(#failed, 0,
+            'the simulator could not run: ' .. table.concat(failed, ' | '))
     end)
 end)
