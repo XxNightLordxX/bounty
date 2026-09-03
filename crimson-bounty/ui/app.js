@@ -10,6 +10,11 @@
     tab: 'board', board: null, mine: null, ledger: null,
     progress: {}, dialog: null, leoConfirmed: false, wallet: null,
     busy: false, notice: null,
+    // Target headshots, keyed by the reference a projection gave us. The
+    // listing carries references, not images, so a board refresh re-sends
+    // nothing and a face is fetched once per render. `null` marks a fetch in
+    // flight, so fifteen rows of the same target ask once.
+    images: {},
     // Items and weapons chosen per payout slot. These live here rather than
     // in the DOM because the picker rebuilds its own markup on every add and
     // remove, and a rebuilt <select> forgets what was put in it.
@@ -134,6 +139,38 @@
     view.appendChild(panel);
   }
 
+  /* ---------- target headshots ---------- */
+
+  // Fetches issued by the render now in progress. Every mugshot() call
+  // happens inside one synchronous render, so the counter reaches its peak
+  // before the first reply arrives and hits zero exactly once — one redraw
+  // for a whole page of faces, not one per face.
+  var facesInFlight = 0;
+
+  // The cached image for a reference, fetching it the first time it is seen.
+  // Returns nothing while a fetch is in flight; the card simply renders
+  // without a face, which is what it does before the first render anyway.
+  function mugshot(id) {
+    if (!id) { return null; }
+    if (state.images[id] !== undefined) { return state.images[id]; }
+
+    // Marked as in flight before the request goes out, so a page of rows
+    // naming the same target asks once rather than once per row.
+    state.images[id] = null;
+    facesInFlight++;
+    post('mugshotImage', { id: id }).then(function (r) {
+      // A reference that no longer resolves — the target re-rendered, or the
+      // entry was dropped. The null stays, so we do not ask again for this
+      // reference; the next projection carries a new one.
+      if (r.ok && r.data && r.data.image) {
+        state.images[r.data.id] = r.data.image;
+      }
+      facesInFlight--;
+      if (facesInFlight === 0) { render(); }
+    });
+    return null;
+  }
+
   function say(message, kind) {
     state.notice = { message: message, kind: kind || 'red' };
     renderNotice();
@@ -186,10 +223,11 @@
     var head = el('div', 'card-head');
     var left = el('div', 'card-identity');
 
-    if (contract.targetImage) {
+    var face = mugshot(contract.targetImageId);
+    if (face) {
       var shot = document.createElement('img');
       shot.className = 'mugshot';
-      shot.src = contract.targetImage;
+      shot.src = face;
       shot.alt = '';
       left.appendChild(shot);
     }

@@ -170,7 +170,49 @@ describe('target mugshots', function()
         local s, f, c = seededMug()
         truthy(render(s, 'TARGET01'))
         local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
-        eq(row.targetImage, VALID)
+
+        -- The row carries a reference, not the image: inlining forty
+        -- kilobytes of base64 into every row of every page was the whole
+        -- cost of the listing.
+        truthy(row.targetImageId, 'the row should name an image')
+        falsy(row.targetImage, 'and must not carry the bytes')
+        eq(s.mugshot.byHandle(row.targetImageId), VALID,
+            'and the reference must resolve to the image')
+    end)
+
+    it('does not put a citizen id in the reference', function()
+        local s, f, c = seededMug()
+        truthy(render(s, 'TARGET01'))
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        falsy(row.targetImageId:find('TARGET01', 1, true),
+            'the handle goes to every viewer; a citizen id in it is a leak')
+    end)
+
+    it('mints a new reference for a new render, and retires the old one', function()
+        local s, f, c = seededMug()
+        truthy(render(s, 'TARGET01'))
+        local first = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01').targetImageId
+
+        -- A second render, past the refresh floor.
+        s.mugshot.clearPlayer('TARGET01')
+        truthy(render(s, 'TARGET01'))
+        local second = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01').targetImageId
+
+        truthy(second and second ~= first, 'a new image is a new reference')
+        falsy(s.mugshot.byHandle(first),
+            'the retired reference must not still serve a face its owner replaced')
+        eq(s.mugshot.byHandle(second), VALID)
+    end)
+
+    it('resolves nothing for a handle nobody minted', function()
+        local s = newStack()
+        fixture(s)
+        for _, bogus in ipairs({ 'mg1_000000', 'TARGET01', '', 'mg' }) do
+            falsy(s.mugshot.byHandle(bogus), 'must not resolve ' .. bogus)
+        end
+        falsy(s.mugshot.byHandle(nil))
+        falsy(s.mugshot.byHandle(42))
+        falsy(s.mugshot.byHandle({}))
     end)
 
     it('rejects an oversized or malformed image', function()

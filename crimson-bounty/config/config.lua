@@ -151,6 +151,10 @@ Config.Cooldowns = {
     --- The countdown is polled once a second while a delivery runs, so it
     --- cannot share a bucket with the listing calls.
     progress  = { per = 1, burst = 5 },
+    --- Fetching a headshot the app was given a reference to. One request per
+    --- face per viewer, cached by reference afterwards, so a full page of
+    --- fifteen unseen targets needs fifteen — hence the generous burst.
+    image     = { per = 2, burst = 20 },
 }
 
 --------------------------------------------------------------------------

@@ -80,10 +80,19 @@ function Projection.contract(contract, viewerCid)
         huntersActive = activeHunters,
         huntersMax    = Config.Limits.MaxHuntersPerContract,
         targetName    = contract.target_name,
-        -- The listing carries a live headshot of the target (§7.2). Asking
-        -- for it here is what schedules the refresh; the cached image is
-        -- returned immediately and a newer one arrives on a later poll.
-        targetImage   = Mugshot and Mugshot.request(contract.target_cid) or nil,
+        -- The listing carries a *reference* to the target's live headshot
+        -- (§7.2), not the image. Inlining the base64 put a whole image in
+        -- every row of every page for every viewer — a 40 KB face across a
+        -- 15-row listing is 600 KB per tab change, re-sent every time. The
+        -- app fetches an image once per handle and caches it, and a new
+        -- render mints a new handle, so nothing has to be invalidated.
+        --
+        -- The call is still made here, because asking is what schedules the
+        -- refresh; only its return value is discarded.
+        targetImageId = Mugshot and (function()
+            Mugshot.request(contract.target_cid)
+            return Mugshot.handleFor(contract.target_cid)
+        end)() or nil,
         targetProtected = contract.target_protected or false,
         deadline      = contract.deadline_at,
         role          = role,
@@ -250,7 +259,8 @@ Projection.ALLOWED_KEYS = {
         id = true, reason = true, mode = true, state = true, reward = true,
         bonusPercent = true, slots = true, slotsClaimed = true, currentSlot = true,
         huntersActive = true, huntersMax = true, targetName = true,
-        targetProtected = true, deadline = true, role = true, targetImage = true,
+        targetProtected = true, deadline = true, role = true,
+        targetImageId = true,
         creatorName = true, creatorAnonymous = true,
     },
     creator = { bailoutAmount = true, penaltyAmount = true, hunters = true },

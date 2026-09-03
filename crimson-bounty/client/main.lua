@@ -111,7 +111,7 @@ end)
 --------------------------------------------------------------------------
 
 local UI_EVENTS = {
-    'list', 'mine', 'ledger', 'searchTargets', 'rewardOptions',
+    'list', 'mine', 'ledger', 'searchTargets', 'rewardOptions', 'mugshotImage',
     'create', 'accept', 'abandon',
     'requestPhotoToken', 'armKidnap', 'kidnapProgress',
     'bailout', 'informant',

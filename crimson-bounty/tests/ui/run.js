@@ -61,6 +61,13 @@ function boot(responses) {
       const name = url.split('/crimson:')[1];
       const body = JSON.parse(options.body);
       sent.push({ name: name, body: body });
+      // A render that re-requests what it is waiting for loops forever, and
+      // a suite that loops forever tells you nothing. One of these bugs has
+      // already shipped in this app; this turns the next one into a failure
+      // with a name on it.
+      if (sent.length > 500) {
+        throw new Error('runaway request loop: ' + sent.length + ' calls, last was ' + name);
+      }
       const answer = responses[name];
       const result = typeof answer === 'function' ? answer(body) : answer;
       return Promise.resolve({ json: function () { return Promise.resolve(result || { ok: true }); } });
@@ -472,6 +479,80 @@ async function main() {
     it('debounces the search instead of firing per keystroke', function () {
       const searches = app.sent.filter(function (s) { return s.name === 'searchTargets'; });
       eq(searches.length, 1, 'one lookup for one debounced query');
+    });
+  })();
+
+  // Headshots arrive as references, not bytes: inlining a 40 KB face into
+  // every row of every page cost 600 KB per tab change, re-sent every time.
+  await (async function facesByReference() {
+    const FACE = 'data:image/png;base64,iVBORw0KGgoAAAA';
+    const rows = [];
+    for (let i = 0; i < 4; i++) {
+      const row = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+      row.id = 'ct0000000' + (i + 1);
+      // Three rows name the same face; the fourth names another.
+      row.targetImageId = i < 3 ? 'mg1_123456' : 'mg2_654321';
+      rows.push(row);
+    }
+
+    const asked = [];
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: rows, settings: {} } },
+      mine: MINE, ledger: LEDGER,
+      mugshotImage: function (body) {
+        asked.push(body.id);
+        return { ok: true, data: { id: body.id, image: FACE + body.id } };
+      }
+    });
+    await settle(); await settle(); await settle();
+
+    it('asks once per face, not once per row', function () {
+      eq(asked.length, 2, 'four rows, two distinct faces: ' + JSON.stringify(asked));
+    });
+
+    it('renders the faces once they arrive', function () {
+      const shots = app.view.all().filter(function (n) {
+        return n.tagName === 'IMG' && n._className === 'mugshot';
+      });
+      eq(shots.length, 4, 'every row shows its face');
+      eq(shots[0].src, FACE + 'mg1_123456');
+      eq(shots[3].src, FACE + 'mg2_654321');
+    });
+
+    it('redraws once for a whole page of faces', function () {
+      // Two faces resolving must not mean two redraws. If they did, the
+      // second would re-enter mugshot() for anything still in flight.
+      const before = app.sent.length;
+      app.sandbox.window._message({ data: { type: 'result', event: 'list' } });
+      eq(app.sent.length, before, 'nothing further should be requested');
+    });
+
+  })();
+
+  await (async function faceReferenceThatFails() {
+    const rows = [JSON.parse(JSON.stringify(BOARD.data.contracts[0]))];
+    rows[0].targetImageId = 'mg9_000000';
+
+    let asked = 0;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: rows, settings: {} } },
+      mine: MINE, ledger: LEDGER,
+      mugshotImage: function () { asked++; return { ok: false, err: 'not_found' }; }
+    });
+    await settle(); await settle(); await settle();
+
+    it('renders the card without a face when the reference is stale', function () {
+      truthy(app.view.textContent.indexOf('Dana Reyes') !== -1,
+        'the card must still render: ' + app.view.textContent);
+      const shots = app.view.all().filter(function (n) { return n.tagName === 'IMG'; });
+      eq(shots.length, 0, 'and show no headshot');
+    });
+
+    it('asks once and does not retry a reference that failed', async function () {
+      const before = asked;
+      app.sandbox.window._message({ data: { type: 'result', event: 'list' } });
+      await settle(); await settle();
+      eq(asked, before, 'a dead reference must not be re-requested every render');
     });
   })();
 

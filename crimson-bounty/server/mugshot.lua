@@ -13,18 +13,63 @@ local Mugshot = {}
 
 local Identity, Audit
 
---- [cid] = { data = base64, at = os.time(), pending = bool }
+--- [cid] = { data = base64, id = handle, at = os.time(), pending = bool }
 local cache = {}
+
+--- [handle] = cid, so an image can be served by reference.
+local byHandle = {}
+
+local handleSeq = 0
+
+--- Mint an opaque handle for a freshly stored image.
+---
+--- Opaque, not the citizen id: a listing row carries this to every viewer,
+--- and a citizen id there would be an identifier leak and an enumeration
+--- surface. A new image gets a new handle, which is also how the app's cache
+--- invalidates — it never has to be told an image changed.
+local function mintHandle(cid)
+    handleSeq = handleSeq + 1
+    local handle = ('mg%d_%d'):format(handleSeq, math.random(100000, 999999))
+    byHandle[handle] = cid
+    return handle
+end
+
+local function dropHandle(entry)
+    if entry and entry.id then byHandle[entry.id] = nil end
+end
 
 function Mugshot.init(deps)
     Identity, Audit = deps.identity, deps.audit
     cache = {}
+    byHandle = {}
+    handleSeq = 0
 end
 
 --- The cached image for a citizen, or nil if none has been rendered yet.
 function Mugshot.get(cid)
     local entry = cache[cid]
     return entry and entry.data or nil
+end
+
+--- The handle of the citizen's current image, or nil if there is none.
+--- This is what a projection carries instead of forty kilobytes of base64.
+function Mugshot.handleFor(cid)
+    local entry = cache[cid]
+    return entry and entry.data and entry.id or nil
+end
+
+--- Resolve a handle to the image it names. Returns nil for a handle that has
+--- been replaced by a newer render or dropped — the app then simply shows no
+--- headshot, which is what it does before the first render anyway.
+function Mugshot.byHandle(handle)
+    if type(handle) ~= 'string' then return nil end
+    local cid = byHandle[handle]
+    if not cid then return nil end
+    local entry = cache[cid]
+    -- A handle that is no longer the current one must not resolve: it would
+    -- serve an image the owner has already replaced.
+    if not entry or entry.id ~= handle then return nil end
+    return entry.data
 end
 
 --- Ask a player's own client for a fresh headshot, subject to the refresh
@@ -42,6 +87,7 @@ function Mugshot.request(cid)
         entry.misses = (entry.misses or 0) + 1
         -- After repeated silence, stop serving an image nobody is refreshing.
         if entry.misses >= 3 then
+            dropHandle(entry)
             cache[cid] = nil
             entry = nil
         end
@@ -54,6 +100,10 @@ function Mugshot.request(cid)
 
     cache[cid] = {
         data = entry and entry.data or nil,
+        -- The handle survives a pending refresh: the old image is still the
+        -- current one until a new one arrives, and changing the handle here
+        -- would make every viewer re-fetch the same bytes.
+        id = entry and entry.id or nil,
         at = entry and entry.at or os.time(),
         misses = entry and entry.misses or 0,
         pending = true,
@@ -108,7 +158,13 @@ function Mugshot.store(cid, image)
         return false
     end
 
-    cache[cid] = { data = image, at = os.time(), pending = false, misses = 0 }
+    -- A new image gets a new handle, so a viewer holding the old one asks
+    -- once and gets the new bytes rather than caching a stale face forever.
+    dropHandle(entry)
+    cache[cid] = {
+        data = image, id = mintHandle(cid),
+        at = os.time(), pending = false, misses = 0,
+    }
     return true
 end
 
@@ -122,11 +178,13 @@ function Mugshot.invalidate(cid)
     if (os.time() - entry.at) < ((Config.Mugshot.MinRefreshMinutes or 5) * 60) then
         return false
     end
+    dropHandle(entry)
     cache[cid] = nil
     return true
 end
 
 function Mugshot.clearPlayer(cid)
+    dropHandle(cache[cid])
     cache[cid] = nil
 end
 

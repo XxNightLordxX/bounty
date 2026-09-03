@@ -181,6 +181,20 @@ function App.register()
         return out
     end)
 
+    -- One target headshot, by the reference a projection handed out. The
+    -- listing carries references rather than images (§7.2), so a board
+    -- refresh re-sends no image bytes at all and the app fetches a face
+    -- once per render.
+    --
+    -- A reference is only learnable from a projection the viewer was
+    -- entitled to receive, and it resolves to nothing once a newer render
+    -- replaces it, so this serves no more than the listing already showed.
+    handler('mugshotImage', 'image', function(actor, payload)
+        local image = deps.mugshot.byHandle(payload and payload.id)
+        if not image then return false, CB.ERR.NOT_FOUND end
+        return { id = payload.id, image = image }
+    end)
+
     -- What the creator can actually put up, read server-side so the builder
     -- never displays something they do not hold.
     handler('rewardOptions', 'search', function(actor)
