@@ -254,7 +254,11 @@ end
 -- Resource states and exports
 --------------------------------------------------------------------------
 
-Natives.resourceStates = {
+--- What a fully-equipped server looks like. A suite that changes one of
+--- these must be able to hand it back, so the defaults are kept separately
+--- and Natives.resetResourceStates puts them all back — a test that leaves
+--- a resource missing silently changes the meaning of every later test.
+local DEFAULT_RESOURCE_STATES = {
     ['qbx_core'] = 'started',
     ['ox_inventory'] = 'started',
     ['lb-phone'] = 'started',
@@ -263,6 +267,17 @@ Natives.resourceStates = {
     ['MugShotBase64'] = 'started',
     ['sc-blackmarket'] = 'started',
 }
+
+Natives.resourceStates = {}
+
+--- Restore the default set, in place. Assigning a fresh table would leave
+--- anything holding the old one looking at stale state.
+function Natives.resetResourceStates()
+    for name in pairs(Natives.resourceStates) do Natives.resourceStates[name] = nil end
+    for name, state in pairs(DEFAULT_RESOURCE_STATES) do Natives.resourceStates[name] = state end
+end
+
+Natives.resetResourceStates()
 
 Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
 

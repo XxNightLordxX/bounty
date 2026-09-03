@@ -151,8 +151,88 @@ function StartCrimsonBounty()
     amendments.reindex()
     StartTick()
 
+    reportIntegrations()
     print(('[crimson-bounty] started in %s mode'):format(Config.Database.Mode))
     return modules
+end
+
+--------------------------------------------------------------------------
+-- Integration report (§4.2 of the improvements document)
+--------------------------------------------------------------------------
+
+--- Every optional integration, where it is configured, and what stops
+--- working without it. Built from config rather than hard-coded names, so
+--- renaming a resource in the config is reflected here.
+local function optionalIntegrations()
+    local out = {}
+
+    local function add(resource, purpose, configured)
+        if not resource then return end
+        out[#out + 1] = {
+            resource = resource, purpose = purpose,
+            -- `configured` distinguishes "the operator asked for this and it
+            -- is missing" from "this is simply not installed", which are
+            -- very different startup messages.
+            configured = configured ~= false,
+        }
+    end
+
+    for _, provider in ipairs(Config.Completion.DeathStateProviders or {}) do
+        add(provider.resource, 'true-death checks for eliminations', false)
+    end
+
+    add(Config.Kidnap.RestraintProvider and Config.Kidnap.RestraintProvider.resource,
+        'custom restraint detection for handovers')
+    add(Config.Immunity.PlaytimeProvider and Config.Immunity.PlaytimeProvider.resource,
+        'playtime for the new-player immunity rule')
+
+    if Config.Progression.Enabled then
+        add(Config.Progression.Resource, 'reputation credit for finished contracts')
+    end
+    if Config.Advisory.UseDispatch then
+        add('sc-dispatch', 'threat advisories in the MDT')
+    end
+    -- Headshots have no enable switch: without a renderer the board simply
+    -- shows no faces, which is a degradation rather than a failure.
+    add('MugShotBase64', 'target headshots on the board', false)
+
+    return out
+end
+
+--- Say what was found and what was not. An integration that is silently
+--- absent is the worst case: progression simply stops crediting and nothing
+--- anywhere says why.
+local function reportIntegrations()
+    local integrations = optionalIntegrations()
+    if #integrations == 0 then
+        print('[crimson-bounty] no optional integrations configured')
+        return integrations
+    end
+
+    -- One provider list can name several alternatives, only one of which
+    -- needs to be present, so the death-state group is summarised together.
+    local deathFound = false
+    for _, entry in ipairs(integrations) do
+        local found = GetResourceState(entry.resource) == 'started'
+        if found and entry.purpose:find('true%-death') then deathFound = true end
+
+        print(('[crimson-bounty] integration %-16s %s  (%s)'):format(
+            entry.resource, found and 'found' or 'not found', entry.purpose))
+
+        -- Only a resource the operator actually named is worth a warning.
+        -- The alternatives in a provider list are not each expected.
+        if not found and entry.configured then
+            print(('[crimson-bounty] warning: %s is configured but not started; %s will not work')
+                :format(entry.resource, entry.purpose))
+        end
+    end
+
+    if not deathFound then
+        print('[crimson-bounty] warning: no death-state provider is running; ' ..
+            'eliminations fall back to QBox metadata for the downed check')
+    end
+
+    return integrations
 end
 
 --------------------------------------------------------------------------
@@ -334,4 +414,9 @@ AddEventHandler('onResourceStop', function(name)
     if Storage and Storage.close then Storage.close() end
 end)
 
-return { start = StartCrimsonBounty, recover = Recover, tick = Tick, expire = ExpireContracts }
+return {
+    start = StartCrimsonBounty, recover = Recover, tick = Tick, expire = ExpireContracts,
+    -- Exposed so the suite can assert on what the report covers rather than
+    -- on printed output.
+    integrations = optionalIntegrations, reportIntegrations = reportIntegrations,
+}

@@ -530,22 +530,18 @@ describe('money already promised to someone is not swept away', function()
 end)
 
 describe('anonymity fees', function()
+    -- Set after the stack is built, not before: newStack restores the
+    -- configuration as it ships, so an override applied first is wiped.
     local function withFees(creatorFee, hunterFee)
+        local s = newStack()
         Config.Anonymity.CreatorFee = creatorFee
         Config.Anonymity.HunterFee = hunterFee
-        local s = newStack()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
         return s, f
     end
 
-    local function reset()
-        Config.Anonymity.CreatorFee = 0
-        Config.Anonymity.HunterFee = 0
-    end
-
     it('charges nothing by default', function()
-        reset()
         local s = newStack()
         local f = fixture(s)
         s.contracts.create(f.creator, {
@@ -561,7 +557,6 @@ describe('anonymity fees', function()
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 1000 } }, anonymous = true,
         })
-        reset()
         eq(Env.players[1].PlayerData.money.bank, 95000)
     end)
 
@@ -571,7 +566,6 @@ describe('anonymity fees', function()
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 1000 } }, anonymous = false,
         })
-        reset()
         eq(Env.players[1].PlayerData.money.bank, 100000)
     end)
 
@@ -582,7 +576,6 @@ describe('anonymity fees', function()
             reward = { baseline = { items = { { name = 'nonexistent', count = 5 } } } },
             anonymous = true,
         })
-        reset()
         falsy(c)
         eq(Env.players[1].PlayerData.money.bank, 100000, 'no half-charged creators')
     end)
@@ -593,7 +586,6 @@ describe('anonymity fees', function()
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
         s.contracts.accept(f.hunter, c.id, true)
-        reset()
         eq(Env.players[3].PlayerData.money.bank, 47500)
     end)
 
@@ -606,7 +598,6 @@ describe('anonymity fees', function()
         })
 
         local ok = s.contracts.accept(f.hunter, c.id, true)
-        reset()
 
         truthy(ok, 'anonymity is a preference, not a requirement to take work')
         local hunter = s.storage.readHunter(c.id, 'HUNTER01')
@@ -622,7 +613,6 @@ describe('anonymity fees', function()
             reward = { baseline = { cash = 1000 } }, penaltyAmount = 99999,
         })
         local ok, err = s.contracts.accept(f.hunter, c.id, true)
-        reset()
 
         falsy(ok, 'the stake is unaffordable')
         eq(err, CB.ERR.INSUFFICIENT)

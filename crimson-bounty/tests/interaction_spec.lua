@@ -762,13 +762,84 @@ describe('app pushes', function()
 
     it('sends nothing when pushes are switched off', function()
         local s, f, c = seeded({ accept = false })
-        local restore = Config.Notifications.PushEnabled
-        Config.Notifications.PushEnabled = false
-        Env.clientEvents = {}
+        withConfig({ { Config.Notifications, 'PushEnabled', false } }, function()
+            Env.clientEvents = {}
+            truthy(s.contracts.accept(f.hunter, c.id, false))
+            eq(#pushesTo(1), 0, 'an operator who turns this off gets no pushes')
+        end)
+    end)
+end)
 
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        eq(#pushesTo(1), 0, 'an operator who turns this off gets no pushes')
 
-        Config.Notifications.PushEnabled = restore
+--- The startup integration report. An optional integration that is silently
+--- absent is the worst case: progression simply stops crediting and nothing
+--- anywhere says why.
+describe('integration report', function()
+    local function report()
+        package.loaded['crimson-bounty.server.main'] = nil
+        return require('crimson-bounty.server.main')
+    end
+
+    local function named(list)
+        local out = {}
+        for _, entry in ipairs(list) do out[entry.resource] = entry end
+        return out
+    end
+
+    it('covers every optional resource the config names', function()
+        local s = newStack()
+        local found = named(report().integrations())
+
+        truthy(found['sc-blackmarket'], 'the progression resource')
+        truthy(found['sc-dispatch'], 'the dispatch resource')
+        truthy(found['sc-ambulance'], 'a death-state provider')
+        truthy(found['MugShotBase64'], 'the headshot renderer')
+    end)
+
+    it('follows a renamed resource rather than a hard-coded name', function()
+        local s = newStack()
+        withConfig({ { Config.Progression, 'Resource', 'my-own-blackmarket' } }, function()
+            local found = named(report().integrations())
+            truthy(found['my-own-blackmarket'], 'the report reads the config')
+            falsy(found['sc-blackmarket'], 'and not a name baked into it')
+        end)
+    end)
+
+    it('names nothing when the features that need it are switched off', function()
+        local s = newStack()
+        withConfig({
+            { Config.Progression, 'Enabled', false },
+            { Config.Advisory, 'UseDispatch', false },
+        }, function()
+            local found = named(report().integrations())
+            falsy(found['sc-blackmarket'], 'progression is off')
+            falsy(found['sc-dispatch'], 'dispatch advisories are off')
+        end)
+    end)
+
+    it('marks a resource the operator asked for as expected', function()
+        local s = newStack()
+        local found = named(report().integrations())
+        -- sc-blackmarket is named directly in the config, so its absence is
+        -- a misconfiguration worth warning about.
+        truthy(found['sc-blackmarket'].configured, 'a configured resource')
+        -- The death-state list offers alternatives; only one need be present,
+        -- so neither is individually expected.
+        falsy(found['sc-ambulance'].configured, 'one of several alternatives')
+    end)
+
+    it('reports without throwing whether or not anything is installed', function()
+        local s = newStack()
+        local main = report()
+
+        -- Mutated in place, and handed back through the harness. Assigning
+        -- a new table here left a later suite holding the old one, which is
+        -- one test quietly changing what another measures.
+        local states = Natives.resourceStates
+        for name in pairs(states) do states[name] = nil end
+        truthy(main.reportIntegrations(), 'nothing installed')
+
+        Natives.resetResourceStates()
+        truthy(main.reportIntegrations(), 'everything installed')
     end)
 end)

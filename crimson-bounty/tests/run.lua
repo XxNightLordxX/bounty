@@ -34,6 +34,66 @@ function Suite.describe(name, fn)
     Suite.current = outer
 end
 
+--- A snapshot of the configuration as the file ships it, taken once.
+---
+--- Suites change config to test a rule, and restoring on the line after the
+--- assertions only works when they pass. A failing test used to leave its
+--- override in place, so one failure became several in unrelated suites and
+--- the real one was buried. Every stack now starts from this snapshot.
+local function deepCopy(value)
+    if type(value) ~= 'table' then return value end
+    local out = {}
+    for k, v in pairs(value) do out[k] = deepCopy(v) end
+    return out
+end
+
+local CONFIG_DEFAULTS = deepCopy(Config)
+
+--- Restore in place, recursing into tables that exist in both. Assigning a
+--- fresh table would leave anything holding a subtable — a module that did
+--- `local rules = Config.Sources.item` at load — looking at a detached copy.
+local function restoreInto(target, defaults)
+    for key in pairs(target) do
+        if defaults[key] == nil then target[key] = nil end
+    end
+    for key, value in pairs(defaults) do
+        if type(value) == 'table' and type(target[key]) == 'table' then
+            restoreInto(target[key], value)
+        else
+            target[key] = deepCopy(value)
+        end
+    end
+end
+
+function Suite.resetConfig()
+    restoreInto(Config, CONFIG_DEFAULTS)
+end
+
+--- Run `fn` with configuration overrides applied, and put the old values
+--- back whichever way `fn` ends.
+---
+--- Restoring on the line after the assertions only works when they pass. A
+--- failing test used to leave the config it changed in place, so one failure
+--- became several in unrelated suites and the real one was hard to find.
+---@param overrides table [ { table, key, value } ]
+---@param fn function
+function Suite.withConfig(overrides, fn)
+    local saved = {}
+    for i = 1, #overrides do
+        local target, key, value = overrides[i][1], overrides[i][2], overrides[i][3]
+        saved[i] = { target, key, target[key] }
+        target[key] = value
+    end
+
+    local ok, err = pcall(fn)
+
+    for i = #saved, 1, -1 do
+        saved[i][1][saved[i][2]] = saved[i][3]
+    end
+
+    if not ok then error(err, 0) end
+end
+
 function Suite.it(name, fn)
     Suite.total = Suite.total + 1
     local ok, err = pcall(fn)
@@ -70,6 +130,7 @@ function _G.read_file(path)
 end
 
 _G.describe, _G.it, _G.eq, _G.truthy, _G.falsy = Suite.describe, Suite.it, Suite.eq, Suite.truthy, Suite.falsy
+_G.withConfig, _G.resetConfig = Suite.withConfig, Suite.resetConfig
 _G.Env, _G.Natives, _G.Suite = Env, Natives, Suite
 
 --- Build a fully wired server stack against fresh in-memory storage.
@@ -77,6 +138,12 @@ _G.Env, _G.Natives, _G.Suite = Env, Natives, Suite
 function _G.newStack()
     Env.reset()
     Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+    -- Every stack starts from the configuration as it ships. A test that
+    -- changes a setting — and fails before putting it back — no longer
+    -- changes what every later test is measuring.
+    Suite.resetConfig()
+    -- Likewise for a fully-equipped server.
+    Natives.resetResourceStates()
 
     package.loaded['crimson-bounty.server.storage.memory'] = nil
     package.loaded['crimson-bounty.server.escrow'] = nil
