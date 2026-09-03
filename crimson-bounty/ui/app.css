@@ -198,6 +198,14 @@ input:focus, select:focus, textarea:focus {
 .bar > i { display: block; height: 100%; background: var(--crimson-bright); width: 0; }
 .countdown .label { font-size: 0.68rem; color: var(--ink-dim); margin-top: 0.25rem; }
 
+/* The grace allowance: one budget for the whole countdown, so what is left
+   of it is what a hunter needs to see. Gold while it holds, crimson while it
+   is being spent. */
+.bar.grace { margin-top: 0.35rem; height: 0.25rem; }
+.bar.grace > i { background: var(--gold); }
+.countdown.is-breaking .bar.grace > i { background: var(--crimson-bright); }
+.countdown .label.warn { color: var(--crimson-bright); }
+
 /* ---------- thread ---------- */
 
 .thread { display: flex; flex-direction: column; gap: 0.4rem; }

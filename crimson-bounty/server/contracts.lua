@@ -27,10 +27,25 @@ local LIVE_STATES = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true, [CB.
 --------------------------------------------------------------------------
 
 --- Move a contract between states, rejecting any transition not declared in
+--- The capability to end a contract. A private table, so holding it means
+--- being inside this module — a boolean flag would be something any caller
+--- could simply pass.
+local SETTLING = {}
+
 --- CB.TRANSITIONS and any transition out of a terminal state.
+---
+--- Moving a contract INTO a terminal state additionally requires the
+--- settling token, which only `resolve` and `claimSlot` hold. Ending a
+--- contract means settling stakes, returning the remainder and nudging the
+--- parties; a path that flipped the state without doing those stranded a
+--- hunter's stake once already. The token makes that mistake unreachable
+--- rather than merely documented: a new path cannot end a contract without
+--- going through one of the two functions that finish the job.
+---@param settling table|nil the private token, for a terminal target only
 ---@return boolean ok
-function Contracts.transition(contractId, expected, next_, reason)
+function Contracts.transition(contractId, expected, next_, reason, settling)
     if CB.TERMINAL[expected] then return false end
+    if CB.TERMINAL[next_] and settling ~= SETTLING then return false end
     local allowed = CB.TRANSITIONS[expected]
     if not allowed or not allowed[next_] then return false end
 
@@ -67,12 +82,23 @@ end
 ---@param contract table
 ---@param forfeitStakes boolean
 local function finalise(contractId, contract, forfeitStakes)
+    -- Read before the stakes settle, while the hunter records still say who
+    -- was on this contract: they are who needs their card to change.
+    local hunterCids = {}
+    local hunters = Storage.readHunters(contractId)
+    for i = 1, #hunters do hunterCids[#hunterCids + 1] = hunters[i].hunter_cid end
+
     settleStakes(contractId, contract.creator_cid, forfeitStakes)
 
     -- Anything still held — a top-up on a slot nobody claimed, an odd line
-    -- from an amendment — goes back to the creator while it is still
-    -- reachable.
+    -- from an amendment, the unpaid bonus on an elimination — goes back to
+    -- the creator while it is still reachable.
     Escrow.release(contractId, contract.creator_cid, nil, 'unclaimed_remainder')
+
+    -- Everyone whose card just changed. Read from storage rather than the
+    -- caller's copy, so the state the app fetches is the settled one.
+    local settled = Storage.readContract(contractId)
+    Notify.pushParties(settled or contract, hunterCids, (settled or contract).state)
 
     Notify.clearContract(contractId)
     if Contracts.onResolved then Contracts.onResolved(contractId) end
@@ -601,7 +627,7 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment, opts)
         contract.resolved_at = os.time()
         contract.resolution = 'completed'
         Storage.writeContract(contract)
-        Contracts.transition(contractId, CB.STATE.COMPLETING, CB.STATE.COMPLETED, 'completed')
+        Contracts.transition(contractId, CB.STATE.COMPLETING, CB.STATE.COMPLETED, 'completed', SETTLING)
     else
         -- Slots remain: the contract goes back to accepted and stays live.
         Contracts.transition(contractId, CB.STATE.COMPLETING, CB.STATE.ACCEPTED, 'slot_claimed')
@@ -632,7 +658,7 @@ function Contracts.resolve(contractId, terminal, recipientCid, filter, reason)
     if not contract then return false, CB.ERR.NOT_FOUND end
     if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
 
-    if not Contracts.transition(contractId, contract.state, terminal, reason) then
+    if not Contracts.transition(contractId, contract.state, terminal, reason, SETTLING) then
         return false, CB.ERR.LOCKED
     end
 
@@ -640,35 +666,23 @@ function Contracts.resolve(contractId, terminal, recipientCid, filter, reason)
     contract.resolution = reason
     Storage.writeContract(contract)
 
-    -- Stakes resolve by why the contract ended: an expiry is the hunter
-    -- failing, so the creator keeps it; anything else returns it.
-    local hunters = Storage.readHunters(contractId)
-    for i = 1, #hunters do
-        local hunter = hunters[i]
-        local toCreator = (terminal == CB.STATE.EXPIRED) and hunter.state == 'active'
-        Escrow.release(contractId,
-            toCreator and contract.creator_cid or hunter.hunter_cid,
-            { portion = CB.PORTION.STAKE, staker = hunter.hunter_cid },
-            toCreator and 'penalty_forfeited' or 'stake_returned')
-    end
-
     -- A target who outlived the contract has something to show for it.
     if Progression and (terminal == CB.STATE.BAILED_OUT or terminal == CB.STATE.EXPIRED) then
         Progression.onSurvived(contract.target_cid)
     end
 
-    -- Per-contract caches are released here rather than growing for the
-    -- life of the process.
-    Notify.clearContract(contractId)
-    if Contracts.onResolved then Contracts.onResolved(contractId) end
-
+    -- Pay whoever this resolution names, before anything sweeps the rest
+    -- back to the creator. A general refund never touches a stake or a line
+    -- already owed to someone, so the ordering here is safe either way.
     local _, result = Escrow.release(contractId, recipientCid, filter, reason)
 
-    -- Anything the winner did not take (the unpaid bonus on an elimination,
-    -- for instance) goes back to the creator rather than staying locked up.
-    if filter ~= nil then
-        Escrow.release(contractId, contract.creator_cid, nil, reason .. '_remainder')
-    end
+    -- Everything else a contract ending has to do — stakes settled by why it
+    -- ended, the remainder returned, the parties nudged, per-contract caches
+    -- released. This used to be open-coded here, which is how the two
+    -- terminal paths came to differ; there is now one of them.
+    --
+    -- An expiry is the hunter failing, so the creator keeps their stake.
+    finalise(contractId, contract, terminal == CB.STATE.EXPIRED)
 
     return true, result
 end

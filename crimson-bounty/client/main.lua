@@ -95,6 +95,16 @@ function App.refresh()
     App.request('mine', {})
 end
 
+--- An unsolicited nudge for an open app: something the player is looking at
+--- changed. Forwarded as a message rather than a notification, because the
+--- app refreshes on this and the phone should not buzz for it.
+RegisterNetEvent('crimson-bounty:push', function(data)
+    exports['lb-phone']:SendCustomAppMessage('crimson-bounty', {
+        type = 'push',
+        reason = type(data) == 'table' and tostring(data.reason or '') or '',
+    })
+end)
+
 --- Phone notifications. lb-phone's SendNotification is client-side only, so
 --- the server addresses the player and the client raises it locally.
 RegisterNetEvent('crimson-bounty:notify', function(data)

@@ -482,6 +482,131 @@ async function main() {
     });
   })();
 
+  // The app refreshes only on an unsolicited push, because refreshing on every
+  // mirrored reply was an exponential storm. Nothing sent a push, so an open
+  // app never moved.
+  await (async function refreshesOnPush() {
+    const app = boot({ list: BOARD, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    const opening = app.sent.length;
+
+    app.sandbox.window._message({ data: { type: 'push', reason: 'accepted' } });
+
+    it('does not refresh until the debounce elapses', function () {
+      eq(app.sent.length, opening, 'a push must not fire a request of its own');
+    });
+
+    // Three parties to one contract push in the same tick.
+    app.sandbox.window._message({ data: { type: 'push', reason: 'completed' } });
+    app.sandbox.window._message({ data: { type: 'push', reason: 'completed' } });
+
+    const due = app.timers.filter(function (t) { return t.ms === 250; });
+    it('coalesces a burst into one pending refresh', function () {
+      truthy(due.length >= 1, 'a debounce timer should be queued');
+    });
+
+    // Fire the last queued debounce, as the browser would.
+    due[due.length - 1].fn();
+    await settle(); await settle();
+
+    it('refreshes once for the whole burst', function () {
+      const calls = app.sent.slice(opening).map(function (s) { return s.name; }).sort();
+      eq(JSON.stringify(calls), JSON.stringify(['ledger', 'list', 'mine']),
+        'exactly one refresh: ' + JSON.stringify(calls));
+    });
+
+    it('still ignores a mirrored reply', function () {
+      const before = app.sent.length;
+      app.sandbox.window._message({ data: { type: 'result', event: 'list' } });
+      eq(app.sent.length, before, 'a reply is not a push');
+    });
+  })();
+
+  // A hunter whose hold is slipping had no way to know: the server has always
+  // sent the reason and the grace budget, and the app rendered neither.
+  await (async function countdownShowsItsGrace() {
+    function withProgress(progress) {
+      const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+      held.role = 'hunter';
+      held.myAlias = 'Operative #1';
+      held.kidnapProgress = progress;
+      return boot({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+        ledger: LEDGER
+      });
+    }
+
+    const holding = withProgress({ elapsed: 12, required: 30, graceLeft: 3000, graceTotal: 3000 });
+    await settle(); await settle();
+    holding.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+
+    it('shows the countdown and the slack while the hold is good', function () {
+      const text = holding.view.textContent;
+      truthy(text.indexOf('12s of 30s') !== -1, 'the countdown: ' + text);
+      truthy(text.indexOf('3.0s of slack left') !== -1, 'the grace budget: ' + text);
+    });
+
+    it('does not warn while nothing is breaking', function () {
+      const warned = holding.view.all().filter(function (n) {
+        return n._className && n._className.indexOf('warn') !== -1;
+      });
+      eq(warned.length, 0, 'a good hold must read as a good hold');
+    });
+
+    const slipping = withProgress({
+      elapsed: 12, required: 30, graceLeft: 900, graceTotal: 3000,
+      breaking: 'creator_too_far'
+    });
+    await settle(); await settle();
+    slipping.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+
+    it('says why the hold is slipping, in words', function () {
+      const text = slipping.view.textContent;
+      truthy(text.indexOf('The client is too far away') !== -1,
+        'the reason, not the code: ' + text);
+      falsy(text.indexOf('creator_too_far') !== -1,
+        'a raw reason code must not reach the player: ' + text);
+      truthy(text.indexOf('0.9s of slack left') !== -1,
+        'and what is left of the allowance: ' + text);
+    });
+
+    it('marks a slipping hold visually', function () {
+      const breaking = slipping.view.all().filter(function (n) {
+        return n._className && n._className.indexOf('is-breaking') !== -1;
+      });
+      truthy(breaking.length > 0, 'the countdown should carry the breaking class');
+    });
+
+    const odd = withProgress({
+      elapsed: 1, required: 30, graceLeft: 3000, graceTotal: 3000,
+      breaking: 'something_new'
+    });
+    await settle(); await settle();
+    odd.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+
+    it('renders an unknown reason without showing its code', function () {
+      const text = odd.view.textContent;
+      truthy(text.indexOf('Hold position') !== -1, 'a usable fallback: ' + text);
+      falsy(text.indexOf('something_new') !== -1, 'never the raw code: ' + text);
+    });
+
+    const none = withProgress({ elapsed: 5, required: 30, graceLeft: 0, graceTotal: 0 });
+    await settle(); await settle();
+    none.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+
+    it('renders a countdown with no grace budget at all', function () {
+      truthy(none.view.textContent.indexOf('5s of 30s') !== -1,
+        'a server configured with no slack must still render: ' + none.view.textContent);
+      falsy(none.view.textContent.indexOf('slack left') !== -1,
+        'and must not offer a budget it does not have');
+    });
+  })();
+
   // Headshots arrive as references, not bytes: inlining a 40 KB face into
   // every row of every page cost 600 KB per tab change, re-sent every time.
   await (async function facesByReference() {

@@ -366,17 +366,50 @@
     return row;
   }
 
+  // Why a hold is slipping, in words a player can act on. The server sends
+  // the reason and always has; the app used to render none of it, so a hunter
+  // whose delivery was failing had no idea until it did.
+  // Every reason Kidnap.conditionsMet can return, and nothing it cannot.
+  var BREAKING = {
+    party_offline: 'Someone this handover needs has gone offline',
+    target_not_conscious: 'Your target must be alive and conscious',
+    not_coerced: 'Your target is not restrained',
+    target_too_far: 'Your target is too far from you',
+    creator_too_far: 'The client is too far away'
+  };
+
   function countdown(progress) {
-    var wrap = el('div', 'countdown');
+    var wrap = el('div', 'countdown' + (progress.breaking ? ' is-breaking' : ''));
+
     var bar = el('div', 'bar');
     var fill = el('i');
     fill.style.width = Math.min(100, (progress.elapsed / progress.required) * 100) + '%';
     bar.appendChild(fill);
     wrap.appendChild(bar);
+
     wrap.appendChild(el('div', 'label',
-      progress.breaking
-        ? 'Hold position — ' + progress.elapsed + 's of ' + progress.required + 's'
-        : progress.elapsed + 's of ' + progress.required + 's'));
+      progress.elapsed + 's of ' + progress.required + 's'));
+
+    // The grace budget is one allowance for the whole countdown, not one per
+    // break, so what is left of it is the number that actually matters.
+    if (progress.graceTotal > 0) {
+      var left = Math.max(0, progress.graceLeft || 0);
+      var grace = el('div', 'bar grace');
+      var graceFill = el('i');
+      graceFill.style.width = Math.min(100, (left / progress.graceTotal) * 100) + '%';
+      grace.appendChild(graceFill);
+      wrap.appendChild(grace);
+
+      wrap.appendChild(el('div', 'label' + (progress.breaking ? ' warn' : ''),
+        progress.breaking
+          ? (BREAKING[progress.breaking] || 'Hold position')
+              + ' — ' + (left / 1000).toFixed(1) + 's of slack left'
+          : (left / 1000).toFixed(1) + 's of slack left'));
+    } else if (progress.breaking) {
+      wrap.appendChild(el('div', 'label warn',
+        BREAKING[progress.breaking] || 'Hold position'));
+    }
+
     return wrap;
   }
 
@@ -1147,9 +1180,17 @@
   // fetch that asked for it. Refreshing on those is a loop: one refresh
   // sends three requests, each reply triggers another refresh, and the app
   // buries itself within seconds. Only an unsolicited push is acted on.
+  var pushTimer = null;
+
   window.addEventListener('message', function (event) {
     var data = event.data || {};
-    if (data.type === 'push') refresh();
+    if (data.type !== 'push') { return; }
+
+    // Debounced: a contract settling pushes the creator, the target and every
+    // hunter, and several of those can land in the same tick. One refresh is
+    // three requests, so a push per party would be a burst per event.
+    if (pushTimer) { clearTimeout(pushTimer); }
+    pushTimer = setTimeout(function () { pushTimer = null; refresh(); }, 250);
   });
 
   render();

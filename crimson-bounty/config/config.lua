@@ -360,6 +360,16 @@ Config.Notifications = {
     ParanoidAlert = true,
     MaxPerRecipientPerMinute = 6,
     MaxPerRecipientPerHour = 40,
+
+    --- Nudge an open app when a contract it is showing changes state, so a
+    --- creator watching their own contract sees it get accepted rather than
+    --- only hearing the phone. A push carries a reason and nothing else; the
+    --- app re-reads through the normal projections.
+    PushEnabled = true,
+    --- Floor between pushes to one player. Several state changes inside this
+    --- window cause one refresh, which is the whole point — the app used to
+    --- refresh on every mirrored reply and buried itself.
+    PushMinIntervalSeconds = 1,
 }
 
 --------------------------------------------------------------------------

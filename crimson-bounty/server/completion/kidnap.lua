@@ -228,6 +228,9 @@ function Kidnap.progress(contractId, hunterCid)
         elapsed   = math.floor(state.elapsedMs / 1000),
         required  = Config.Kidnap.CountdownSeconds,
         graceLeft = math.max(0, Config.Kidnap.MaxTotalGraceMs - state.graceUsedMs),
+        -- The budget, so the app can show how much of it is gone rather
+        -- than a bare number of milliseconds with nothing to compare it to.
+        graceTotal = Config.Kidnap.MaxTotalGraceMs,
         breaking  = state.breaking,
     }
 end

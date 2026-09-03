@@ -52,6 +52,71 @@ function Notify.toCitizen(cid, title, content, opts)
 end
 
 --------------------------------------------------------------------------
+-- App pushes
+--------------------------------------------------------------------------
+--
+-- A phone notification tells a player something happened; it does not move
+-- an app they already have open. The app deliberately refreshes only on an
+-- unsolicited push, because refreshing on every mirrored reply was an
+-- exponential storm — so nothing sending a push meant a creator watching
+-- their own contract never saw it get accepted.
+--
+-- A push carries no contract data, only a reason. The app re-reads through
+-- the normal projections, so a push can never become a channel that leaks
+-- what a projection would have withheld.
+
+--- [cid] = os.clock() of the last push, so a burst of state changes on one
+--- contract does not become a burst of refreshes.
+local lastPush = {}
+
+--- Nudge one player's open app.
+---@param cid string
+---@param reason string what changed, for the app's own logging
+---@return boolean sent
+function Notify.push(cid, reason)
+    if not cid or not Config.Notifications.PushEnabled then return false end
+
+    local now = os.time()
+    local last = lastPush[cid]
+    if last and (now - last) < (Config.Notifications.PushMinIntervalSeconds or 1) then
+        return false
+    end
+
+    local actor = Identity.byCitizenId(cid)
+    if not actor then return false end
+
+    lastPush[cid] = now
+    TriggerClientEvent('crimson-bounty:push', actor.source, { reason = reason })
+    return true
+end
+
+--- Nudge every party to a contract. Used on the four transitions that change
+--- what a card should say: accepted, settled, bought out, expired.
+---@param contract table
+---@param hunterCids string[]|nil
+---@param reason string
+function Notify.pushParties(contract, hunterCids, reason)
+    if not contract then return 0 end
+
+    local seen, sent = {}, 0
+    local function nudge(cid)
+        if not cid or seen[cid] then return end
+        seen[cid] = true
+        if Notify.push(cid, reason) then sent = sent + 1 end
+    end
+
+    nudge(contract.creator_cid)
+    nudge(contract.target_cid)
+    for i = 1, #(hunterCids or {}) do nudge(hunterCids[i]) end
+
+    return sent
+end
+
+function Notify.clearPush(cid)
+    lastPush[cid] = nil
+end
+
+--------------------------------------------------------------------------
 -- Contract lifecycle notifications
 --------------------------------------------------------------------------
 
@@ -80,6 +145,13 @@ function Notify.contractAccepted(contract, hunterRecord, activeHunters)
     if contract.target_protected then
         Notify.advisory(contract, 'accepted', activeHunters)
     end
+
+    -- The creator's own card now shows one more operative, and the hunter's
+    -- Mine tab has a contract in it that was not there a moment ago. The
+    -- target is deliberately not pushed: they are not told a contract exists
+    -- unless the paranoid alert or an advisory tells them.
+    Notify.push(contract.creator_cid, 'accepted')
+    Notify.push(hunterRecord.hunter_cid, 'accepted')
 end
 
 function Notify.contractCompleted(contract, hunterRecord, photoRef)
@@ -170,6 +242,7 @@ end
 --- table cannot grow across a long uptime.
 function Notify.clearPlayer(cid)
     budgets[cid] = nil
+    lastPush[cid] = nil
 end
 
 function Notify.clearContract(contractId)

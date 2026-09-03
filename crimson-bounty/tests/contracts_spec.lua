@@ -712,3 +712,87 @@ describe('session tracking survives a restart', function()
         eq(s.identity.sessionMinutes('TARGET01'), 15)
     end)
 end)
+
+
+--- One place that knows a contract is over. A path that flipped a contract to
+--- a terminal state without settling stranded a hunter's stake once already;
+--- ending one now requires a capability only resolve and claimSlot hold.
+describe('terminal transitions', function()
+    it('refuses to end a contract from outside the settling paths', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } },
+        })
+
+        for _, terminal in ipairs({
+            CB.STATE.COMPLETED, CB.STATE.BAILED_OUT,
+            CB.STATE.EXPIRED, CB.STATE.CANCELLED,
+        }) do
+            falsy(s.contracts.transition(c.id, CB.STATE.ACTIVE, terminal, 'sneaky'),
+                'a caller without the token must not reach ' .. terminal)
+            -- Passing something that looks like the token does not help.
+            falsy(s.contracts.transition(c.id, CB.STATE.ACTIVE, terminal, 'sneaky', true))
+            falsy(s.contracts.transition(c.id, CB.STATE.ACTIVE, terminal, 'sneaky', {}))
+        end
+
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'still live')
+    end)
+
+    it('still allows the live transitions every path needs', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } },
+        })
+
+        truthy(s.contracts.transition(c.id, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted'))
+        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'abandoned'))
+    end)
+
+    it('settles through the paths that do hold it', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } },
+        })
+
+        truthy(s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
+        eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED)
+    end)
+
+    it('leaves nothing held whichever path ends the contract', function()
+        for _, ending in ipairs({ 'cancel', 'expire', 'complete' }) do
+            local s = newStack()
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x',
+                reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
+                penaltyAmount = 10000,
+            })
+
+            if ending == 'complete' then
+                Env.players[3].PlayerData.money.bank = 50000
+                truthy(s.contracts.accept(f.hunter, c.id, false))
+                truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+            elseif ending == 'expire' then
+                Env.players[3].PlayerData.money.bank = 50000
+                truthy(s.contracts.accept(f.hunter, c.id, false))
+                truthy(s.contracts.resolve(c.id, CB.STATE.EXPIRED, f.creator.cid, nil, 'expired'))
+            else
+                truthy(s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
+            end
+
+            -- Both terminal paths run the same finalise, so neither can
+            -- leave escrow sitting on a contract nobody can act on.
+            local held = 0
+            for _, line in ipairs(s.storage.readEscrow(c.id)) do
+                if line.state ~= CB.ESCROW_STATE.SETTLED then held = held + 1 end
+            end
+            eq(held, 0, 'escrow left held after ' .. ending)
+        end
+    end)
+end)

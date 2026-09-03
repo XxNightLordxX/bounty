@@ -675,3 +675,100 @@ describe('reward options', function()
         eq(#s.app.escrowableWeapons(f.creator), 0)
     end)
 end)
+
+
+--- App pushes. A phone notification tells a player something happened; it
+--- does not move an app they already have open, and the app refreshes only
+--- on an unsolicited push.
+describe('app pushes', function()
+    local function pushesTo(source)
+        local out = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:push' and event.target == source then
+                out[#out + 1] = event.args[1] and event.args[1].reason or true
+            end
+        end
+        return out
+    end
+
+    it('nudges the creator and the hunter when a contract is accepted', function()
+        local s, f, c = seeded({ accept = false })
+        Env.clientEvents = {}
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        eq(#pushesTo(1), 1, 'the creator card now shows one more operative')
+        eq(pushesTo(1)[1], 'accepted')
+        eq(#pushesTo(3), 1, 'the hunter has a contract in Mine that was not there')
+    end)
+
+    it('does not nudge the target on acceptance', function()
+        local s, f, c = seeded({ accept = false })
+        Env.clientEvents = {}
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        -- A target is not told a contract exists except through the paranoid
+        -- alert or an advisory. A push would be a side channel saying one
+        -- was just accepted.
+        eq(#pushesTo(2), 0, 'the target must learn nothing from a push')
+    end)
+
+    it('nudges every party when a contract ends', function()
+        local s, f, c = seeded({ bailout = 15000, accept = false })
+        Env.clientEvents = {}
+        truthy(s.bailout.buy(f.target, c.id))
+
+        eq(#pushesTo(1), 1, 'the creator')
+        eq(#pushesTo(2), 1, 'the target, who paid for this one')
+        eq(pushesTo(1)[1], CB.STATE.BAILED_OUT, 'the reason is the state it reached')
+    end)
+
+    it('nudges a hunter whose contract ended under them', function()
+        local s, f, c = seeded()
+        -- Accepting already nudged both of them a moment ago, and the floor
+        -- is deliberately wider than a test. Clearing it is what a second of
+        -- wall clock would do; the floor has its own test below.
+        s.notify.clearPush('CREATOR1')
+        s.notify.clearPush('HUNTER01')
+        Env.clientEvents = {}
+
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        eq(#pushesTo(3), 1, 'the hunter who collected')
+        eq(#pushesTo(1), 1, 'and the client who paid')
+    end)
+
+    it('carries no contract data at all', function()
+        local s, f, c = seeded({ accept = false })
+        Env.clientEvents = {}
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:push' then
+                local payload = event.args[1] or {}
+                local keys = {}
+                for key in pairs(payload) do keys[#keys + 1] = key end
+                eq(#keys, 1, 'a push carries a reason and nothing else')
+                eq(keys[1], 'reason')
+            end
+        end
+    end)
+
+    it('holds a burst to one push per player', function()
+        local s, f, c = seeded({ accept = false })
+        Env.clientEvents = {}
+        -- Two state changes on one contract inside the same second.
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        eq(#pushesTo(1), 1, 'the floor collapses a burst into one refresh')
+    end)
+
+    it('sends nothing when pushes are switched off', function()
+        local s, f, c = seeded({ accept = false })
+        local restore = Config.Notifications.PushEnabled
+        Config.Notifications.PushEnabled = false
+        Env.clientEvents = {}
+
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        eq(#pushesTo(1), 0, 'an operator who turns this off gets no pushes')
+
+        Config.Notifications.PushEnabled = restore
+    end)
+end)
