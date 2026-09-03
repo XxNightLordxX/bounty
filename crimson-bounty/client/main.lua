@@ -73,6 +73,17 @@ function App.refresh()
     App.request('mine', {})
 end
 
+--- Phone notifications. lb-phone's SendNotification is client-side only, so
+--- the server addresses the player and the client raises it locally.
+RegisterNetEvent('crimson-bounty:notify', function(data)
+    if type(data) ~= 'table' then return end
+    exports['lb-phone']:SendNotification({
+        app = 'crimson-bounty',
+        title = tostring(data.title or 'Crimson'),
+        content = tostring(data.content or ''),
+    })
+end)
+
 --------------------------------------------------------------------------
 -- NUI callbacks — the UI's only route to the server
 --------------------------------------------------------------------------

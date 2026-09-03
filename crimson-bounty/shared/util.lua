@@ -77,16 +77,42 @@ function Util.digitCount(text)
     return n
 end
 
---- Extract the host from a URL. Used to check a photo URL against the upload
---- provider allowlist — a photo may only come from where lb-phone uploads.
+--- Extract the host from a URL, for checking a photo URL against the upload
+--- provider allowlist.
+---
+--- The naive pattern `^https://([%w%.%-]+)` is unsafe: it stops at the `@` in
+--- `https://trusted.example@198.51.100.7/x.png` and reports the *userinfo*
+--- as the host, while a browser fetches 198.51.100.7. Any URL carrying
+--- userinfo is therefore rejected outright rather than parsed — no
+--- legitimate upload provider uses it.
 ---@param url any
 ---@return string|nil
 function Util.urlHost(url)
-    if type(url) ~= 'string' or #url > 2048 then return nil end
-    local host = url:match('^https://([%w%.%-]+)') or url:match('^http://([%w%.%-]+)')
+    if type(url) ~= 'string' then return nil end
+    if #url < 8 or #url > Util.MAX_URL_LENGTH then return nil end
+
+    local rest = url:match('^https://(.*)$') or url:match('^http://(.*)$')
+    if not rest or rest == '' then return nil end
+
+    -- The authority ends at the first path, query or fragment delimiter.
+    -- A backslash is treated as a delimiter too: some parsers normalise it
+    -- to a slash, which is another way to smuggle a different host.
+    local authority = rest:match('^([^/?#\\]+)')
+    if not authority or authority == '' then return nil end
+
+    if authority:find('@', 1, true) then return nil end
+
+    local host = authority:match('^([^:]+)')
     if not host or host == '' then return nil end
+    if #host > 253 then return nil end
+    if not host:match('^[%w%.%-]+$') then return nil end
+    if host:find('%.%.') then return nil end
+
     return host:lower()
 end
+
+--- Photo URLs are stored, so they are bounded to what the column holds.
+Util.MAX_URL_LENGTH = 512
 
 --- Deterministic shallow copy; used so stored records are never aliased by
 --- callers that might mutate them.

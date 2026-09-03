@@ -33,6 +33,10 @@ local function withinBudget(cid)
 end
 
 --- Send to one player by citizen id. Silently no-ops when they are offline.
+---
+--- lb-phone's SendNotification is a *client* export — there is no server-side
+--- equivalent — so the server hands the notification to that player's client,
+--- which calls the export locally.
 function Notify.toCitizen(cid, title, content, opts)
     if not cid then return false end
     if not (opts and opts.bypassBudget) and not withinBudget(cid) then return false end
@@ -40,8 +44,7 @@ function Notify.toCitizen(cid, title, content, opts)
     local actor = Identity.byCitizenId(cid)
     if not actor then return false end
 
-    exports['lb-phone']:SendNotification({
-        app = 'crimson-bounty',
+    TriggerClientEvent('crimson-bounty:notify', actor.source, {
         title = title,
         content = content,
     })

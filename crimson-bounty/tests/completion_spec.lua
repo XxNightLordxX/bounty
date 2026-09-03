@@ -136,6 +136,30 @@ describe('photo verification', function()
         end
     end)
 
+    it('rejects a URL whose userinfo impersonates the upload host', function()
+        local s, f, c, token = ready()
+        -- Each of these fetches from somewhere other than the trusted host,
+        -- while a naive parser reports the trusted host.
+        for _, url in ipairs({
+            'https://cdn.fivemanage.com@198.51.100.7/grab.png',
+            'https://cdn.fivemanage.com:8080@evil.tld/x.png',
+            'https://cdn.fivemanage.com%40evil.tld/x.png',
+            'https://user:pass@cdn.fivemanage.com.evil.tld/x.png',
+        }) do
+            local ok, err = s.photo.submit(f.hunter, token, url)
+            falsy(ok, 'accepted a spoofed host: ' .. url)
+            eq(err, CB.ERR.PHOTO_REJECTED)
+        end
+    end)
+
+    it('rejects a URL longer than the stored column holds', function()
+        local s, f, c, token = ready()
+        local long = 'https://cdn.fivemanage.com/' .. string.rep('a', 600) .. '.png'
+        local ok, err = s.photo.submit(f.hunter, token, long)
+        falsy(ok, 'an over-length URL would be truncated in storage')
+        eq(err, CB.ERR.PHOTO_REJECTED)
+    end)
+
     it('accepts a subdomain of the upload host', function()
         local s, f, c, token = ready()
         truthy(s.photo.submit(f.hunter, token, 'https://eu.cdn.fivemanage.com/proof.png'))

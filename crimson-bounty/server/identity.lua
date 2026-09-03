@@ -115,14 +115,38 @@ end
 
 --- Look up an online player by citizen id. Returns nil when offline, which
 --- callers must treat as "not available", never as "does not exist".
+---
+--- qbx_core's lookup export is used when present; if it is missing or its
+--- signature differs on this build, the scan below still finds the player.
+--- Identity resolution is load-bearing for every payout, so it does not get
+--- to depend on one export existing.
 ---@param cid string
 ---@return table|nil actor
 function Identity.byCitizenId(cid)
     cid = Util.toCitizenId(cid)
     if not cid then return nil end
-    local player = exports.qbx_core:GetPlayerByCitizenId(cid)
-    if not player or not player.PlayerData then return nil end
-    return Identity.resolve(player.PlayerData.source)
+
+    local ok, player = pcall(function()
+        return exports.qbx_core:GetPlayerByCitizenId(cid)
+    end)
+
+    if ok and player and player.PlayerData and player.PlayerData.source then
+        -- Trust but verify: the returned record must still be the citizen we
+        -- asked for, and still connected.
+        if player.PlayerData.citizenid == cid then
+            return Identity.resolve(player.PlayerData.source)
+        end
+    end
+
+    local players = GetPlayers() or {}
+    for i = 1, #players do
+        local candidate = exports.qbx_core:GetPlayer(tonumber(players[i]))
+        if candidate and candidate.PlayerData and candidate.PlayerData.citizenid == cid then
+            return Identity.resolve(candidate.PlayerData.source)
+        end
+    end
+
+    return nil
 end
 
 --- Every online player, resolved. Used for advisories and presence checks.

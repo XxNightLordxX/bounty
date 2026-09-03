@@ -152,7 +152,7 @@ function Photo.submit(actor, rawToken, rawUrl)
         return false, CB.ERR.TOKEN_INVALID
     end
 
-    if type(rawUrl) ~= 'string' or not Photo.hostAllowed(rawUrl) then
+    if type(rawUrl) ~= 'string' or #rawUrl > Util.MAX_URL_LENGTH or not Photo.hostAllowed(rawUrl) then
         Audit.rejected('photo_host_not_allowed', actor.cid, record.contractId,
             { host = Util.urlHost(rawUrl) })
         return false, CB.ERR.PHOTO_REJECTED

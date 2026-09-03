@@ -28,6 +28,12 @@ function Natives.install()
     end
     _G.TriggerClientEvent = function(name, target, ...)
         table.insert(Env.clientEvents, { name = name, target = target, args = { ... } })
+        -- Phone notifications reach the player as a client event, since
+        -- lb-phone's SendNotification export is client-side only.
+        if name == 'crimson-bounty:notify' then
+            local payload = ...
+            table.insert(Natives.calls.notifications, payload)
+        end
     end
     _G.TriggerEvent = function(name, ...)
         local h = Env.events['local:' .. name]
