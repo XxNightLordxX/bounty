@@ -51,17 +51,6 @@ function Identity.accountOf(source)
     return identifiers[1]
 end
 
---- The connection identifier, used only to *flag* a shared household for
---- staff review. Never used to block: families and roommates share an IP.
-function Identity.householdOf(source)
-    local identifiers = GetPlayerIdentifiers(source) or {}
-    for i = 1, #identifiers do
-        local id = identifiers[i]
-        if type(id) == 'string' and id:sub(1, 3) == 'ip:' then return id end
-    end
-    return nil
-end
-
 --- True when a job is barred from the app (§2). Checked by type first so a
 --- newly added LEO job is blocked without a config edit.
 ---@param job table

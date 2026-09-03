@@ -77,7 +77,10 @@ function Kidnap.conditionsMet(contract, hunter, target, creator)
 
     -- The target must be alive and conscious for the entire delivery.
     -- Delivering a corpse is not a kidnapping (§7.4).
-    if not Identity.isAliveAndConscious(target.source) then return false, 'target_not_conscious' end
+    if Config.Kidnap.RequireConscious
+        and not Identity.isAliveAndConscious(target.source) then
+        return false, 'target_not_conscious'
+    end
 
     local coerced = Kidnap.isCoerced(hunter.source, target.source)
     if not coerced then return false, 'not_coerced' end

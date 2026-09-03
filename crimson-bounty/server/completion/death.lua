@@ -18,6 +18,10 @@ local damage = {}
 --- Open pending completions: [contractId .. ':' .. hunterCid] = record
 local pending = {}
 
+--- When each player was last back on their feet, so a target cannot be
+--- re-listed or re-claimed the instant they respawn (§14.39).
+local respawnedAt = {}
+
 function Death.init(deps)
     Storage, Identity, Contracts, Audit, Photo =
         deps.storage, deps.identity, deps.contracts, deps.audit, deps.photo
@@ -198,6 +202,13 @@ function Death.watchTargets(contracts)
     return watched
 end
 
+--- Seconds since this player was last revived, or nil if never seen.
+function Death.sinceRespawn(cid)
+    local at = respawnedAt[cid]
+    if not at then return nil end
+    return os.time() - at
+end
+
 --- The most recent damage record from one specific attacker.
 function Death.recordFor(victimCid, attackerCid)
     Death.prune(victimCid)
@@ -349,14 +360,22 @@ function Death.onRevivedVerified(source, cid)
 end
 
 function Death.onRevived(cid)
+    respawnedAt[cid] = os.time()
+
     -- A revive ends the fight. Damage recorded before it must not
     -- corroborate a death that happens afterwards, or a hunter who shot
     -- someone an hour ago inherits their next death.
     damage[cid] = nil
 
+    local window = (Config.Completion.ProofWindowSeconds or 0) * 1000
+    local now = GetGameTimer()
+
     local cleared = 0
     for key, record in pairs(pending) do
-        if record.victimCid == cid then
+        -- A pending completion inside the proof window survives: the kill
+        -- happened, and a target respawning must not erase it from under the
+        -- hunter standing over the body.
+        if record.victimCid == cid and (now - record.at) > window then
             pending[key] = nil
             cleared = cleared + 1
         end
@@ -401,6 +420,7 @@ end
 function Death.clearPlayer(cid)
     damage[cid] = nil
     condition[cid] = nil
+    respawnedAt[cid] = nil
     for key, record in pairs(pending) do
         if record.victimCid == cid or record.hunterCid == cid then pending[key] = nil end
     end

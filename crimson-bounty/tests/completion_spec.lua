@@ -80,9 +80,18 @@ describe('death attribution', function()
         eq(s.death.onVictimReport(2), 0, 'damage outside the window cannot corroborate')
     end)
 
-    it('invalidates a pending completion when the target is revived', function()
+    it('keeps a pending completion alive through an immediate respawn', function()
         local s, f, c = seeded()
         killTarget(s)
+        eq(s.death.onRevived('TARGET01'), 0,
+            'a target pressing respawn must not erase a kill that just happened')
+        truthy(s.death.getPending(c.id, 'HUNTER01'))
+    end)
+
+    it('invalidates a pending completion when the revive comes later', function()
+        local s, f, c = seeded()
+        killTarget(s)
+        Env.advance(Config.Completion.ProofWindowSeconds + 10)
         eq(s.death.onRevived('TARGET01'), 1)
         falsy(s.death.getPending(c.id, 'HUNTER01'), 'a revived target was not eliminated')
     end)
@@ -188,11 +197,19 @@ describe('photo verification', function()
         eq(err, CB.ERR.PHOTO_REJECTED)
     end)
 
-    it('refuses a photo once the target has been revived', function()
+    it('accepts a photo taken right after the target respawned', function()
         local s, f, c, token = ready()
         Env.players[2].PlayerData.metadata.isdead = false
         local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
-        falsy(ok, 'a living target is not proof of death')
+        truthy(ok, 'the kill happened; respawning is not a defence: ' .. tostring(err))
+    end)
+
+    it('refuses a photo long after the target was revived', function()
+        local s, f, c, token = ready()
+        Env.players[2].PlayerData.metadata.isdead = false
+        Env.advance(Config.Completion.ProofWindowSeconds + 10)
+        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        falsy(ok, 'a target who has been up and about for a minute is not proof of death')
         eq(err, CB.ERR.PHOTO_REJECTED)
     end)
 

@@ -121,7 +121,7 @@
       });
     }
     meta.appendChild(chip(contract.creatorAnonymous ? 'Anonymous client' : contract.creatorName));
-    if (contract.targetProtected) {
+    if (contract.targetProtected && settings().flagListing !== false) {
       meta.appendChild(chip('Law enforcement', 'warn'));
     }
     node.appendChild(meta);
@@ -224,8 +224,12 @@
 
   /* ---------- actions ---------- */
 
+  function settings() {
+    return (state.board && state.board.settings) || {};
+  }
+
   function acceptContract(contract) {
-    if (contract.targetProtected &&
+    if (contract.targetProtected && settings().warnHunter !== false &&
         !window.confirm('This contract is on an active law enforcement officer. ' +
                         'Law enforcement has already been advised. Accept anyway?')) {
       return;
@@ -562,7 +566,7 @@
     }
 
     var protectedTarget = document.getElementById('target-handle').dataset.protected === 'true';
-    if (protectedTarget &&
+    if (protectedTarget && settings().warnCreator !== false &&
         !window.confirm('This target is a sworn law enforcement officer. Placing this ' +
                         'contract will alert every officer on duty. Continue?')) {
       return;
@@ -622,9 +626,10 @@
     var results = el('div');
 
     input.oninput = function () {
-      // Matches Config.Targeting.MinQueryLength. A shorter query is rejected
-      // server-side and burns a rate-limit token for nothing.
-      if (input.value.length < 4) { results.innerHTML = ''; return; }
+      // The server tells us its minimum; a shorter query is rejected there
+      // and burns a rate-limit token for nothing.
+      var minimum = settings().minQueryLength || 4;
+      if (input.value.length < minimum) { results.innerHTML = ''; return; }
       post('searchTargets', { query: input.value }).then(function (r) {
         results.innerHTML = '';
         if (!r.ok || !r.data) return;

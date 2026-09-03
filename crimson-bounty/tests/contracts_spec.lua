@@ -497,3 +497,140 @@ describe('money already promised to someone is not swept away', function()
         eq(Env.players[3].PlayerData.money.bank, 5000, 'and nobody else was paid it')
     end)
 end)
+
+describe('anonymity fees', function()
+    local function withFees(creatorFee, hunterFee)
+        Config.Anonymity.CreatorFee = creatorFee
+        Config.Anonymity.HunterFee = hunterFee
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        return s, f
+    end
+
+    local function reset()
+        Config.Anonymity.CreatorFee = 0
+        Config.Anonymity.HunterFee = 0
+    end
+
+    it('charges nothing by default', function()
+        reset()
+        local s = newStack()
+        local f = fixture(s)
+        s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000 } }, anonymous = true,
+        })
+        eq(Env.players[1].PlayerData.money.bank, 100000, 'anonymity is free unless configured')
+    end)
+
+    it('charges the creator when a fee is configured', function()
+        local s, f = withFees(5000, 0)
+        s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000 } }, anonymous = true,
+        })
+        reset()
+        eq(Env.players[1].PlayerData.money.bank, 95000)
+    end)
+
+    it('does not charge a creator who chose to be seen', function()
+        local s, f = withFees(5000, 0)
+        s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000 } }, anonymous = false,
+        })
+        reset()
+        eq(Env.players[1].PlayerData.money.bank, 100000)
+    end)
+
+    it('refunds the fee when the contract cannot be created', function()
+        local s, f = withFees(5000, 0)
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { items = { { name = 'nonexistent', count = 5 } } } },
+            anonymous = true,
+        })
+        reset()
+        falsy(c)
+        eq(Env.players[1].PlayerData.money.bank, 100000, 'no half-charged creators')
+    end)
+
+    it('charges a hunter who accepts anonymously', function()
+        local s, f = withFees(0, 2500)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, true)
+        reset()
+        eq(Env.players[3].PlayerData.money.bank, 47500)
+    end)
+
+    it('refuses an anonymous acceptance the hunter cannot afford', function()
+        local s, f = withFees(0, 2500)
+        Env.players[3].PlayerData.money.bank = 100
+        Env.players[3].PlayerData.money.cash = 100
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        local ok, err = s.contracts.accept(f.hunter, c.id, true)
+        reset()
+        falsy(ok)
+        eq(err, CB.ERR.INSUFFICIENT)
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'and the contract stays open')
+    end)
+end)
+
+describe('post-respawn immunity', function()
+    it('protects a target who has just got back up', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = {
+                { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } },
+            } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+
+        -- A second hunter, so the per-hunter slot cooldown is not what is
+        -- being measured here.
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+        local second = s.identity.resolve(4)
+        s.contracts.accept(second, c.id, false)
+
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+
+        -- The target goes down, respawns, and the next hunter tries again
+        -- straight away.
+        s.death.onRevived('TARGET01')
+
+        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER02', CB.FULFILMENT.ELIMINATION)
+        falsy(ok, 'a multi-slot contract must not become respawn camping')
+        eq(err, CB.ERR.TARGET_PROTECTED)
+
+        Env.advance(Config.Immunity.PostRespawnSeconds + 10)
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER02', CB.FULFILMENT.ELIMINATION),
+            'and claimable again once they have had a moment on their feet')
+    end)
+
+    it('gives a target who bought their way out a longer breather', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[2].PlayerData.money.bank = 100000
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 10000,
+        })
+        truthy(s.bailout.buy(f.target, c.id))
+        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+
+        Env.advance(Config.Limits.TargetCooldownAfterResolveSeconds + 10)
+        local again, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } },
+        })
+        falsy(again, 'paying to be left alone should buy more than the usual cooldown')
+        eq(err, CB.ERR.TARGET_PROTECTED)
+    end)
+end)

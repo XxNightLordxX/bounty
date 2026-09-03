@@ -1,6 +1,10 @@
 --- Crimson Bounty System — configuration.
---- Every value here is read server-side. Nothing in this file is sent to a
---- client except through an explicit projection (server/projection.lua).
+--- Every value here is read by the resource. Nothing in this file is sent
+--- to a client except through an explicit projection (server/projection.lua).
+---
+--- A setting that does nothing is worse than no setting at all: an owner
+--- tunes it and gets silence. Anything that stops being read should be
+--- deleted from here in the same change.
 
 Config = Config or {}
 
@@ -50,8 +54,8 @@ Config.EscrowBlacklist = {
 --- Kidnapping bonus. Percentage applies per money source; items are extra
 --- lines escrowed alongside the baseline.
 Config.Bonus = {
-    maxPercent = 200,       -- +200% ceiling
-    allowExtraItems = true,
+    --- Ceiling on the kidnapping bonus percentage a creator may set.
+    maxPercent = 200,
 }
 
 --------------------------------------------------------------------------
@@ -78,7 +82,6 @@ Config.Anonymity = {
     CreatorFee = 0,          -- flat fee, 0 = free
     HunterFee  = 0,
     FeeAccount = 'bank',     -- 'cash' | 'bank'
-    AppliesToStaff = false,  -- never hide identity from logs or staff views
 }
 
 --------------------------------------------------------------------------
@@ -99,10 +102,6 @@ Config.Bailout = {
     ProcessingDelaySeconds = 120,
     --- Bailout is blocked while the target is dead or in last stand.
     BlockWhileIncapacitated = true,
-    --- Protected-job targets cannot buy out in-app because they cannot open
-    --- the app. Enabling this gives them a command-based buyout instead;
-    --- off by default, since the department response is their counter-play.
-    AllowProtectedJobCommand = false,
 }
 
 --------------------------------------------------------------------------
@@ -126,7 +125,6 @@ Config.Limits = {
     SameCreatorSameTargetCooldownSeconds = 7200,
 
     ContractLifetimeSeconds = 172800,   -- absolute ceiling, pause included
-    MaxPausedSeconds        = 86400,
     DefaultDeadlineSeconds  = 10800,
 }
 
@@ -154,7 +152,6 @@ Config.Immunity = {
     MinTargetSessionMinutes  = 10,
     PostRespawnSeconds       = 300,
     AfterBailoutSeconds      = 3600,
-    AfterContractResolvedSeconds = 1800,
     --- Unresolvable playtime counts as below every minimum.
     FailClosed = true,
 }
@@ -164,10 +161,11 @@ Config.Immunity = {
 --------------------------------------------------------------------------
 
 Config.Completion = {
-    --- Elimination requires a genuine death. A downed / bleeding-out target
-    --- is not a kill: both of these are re-checked at photo submission.
-    RequireTrueDeath   = true,
+    --- Elimination requires a genuine death. A player who is merely downed
+    --- or bleeding out is not a kill, and this is re-checked when the proof
+    --- photo is submitted, not only when the death is reported.
     RejectLastStand    = true,
+
     --- Server-side death state providers, tried in order. Each entry is
     --- { resource, deadExport, lastStandExport }.
     DeathStateProviders = {
@@ -178,6 +176,14 @@ Config.Completion = {
     MaxWeaponRange      = 250.0,
     PhotoRadius         = 5.0,
     PhotoTokenLifetimeSeconds = 120,
+    --- How long after a death the proof is still accepted even if the target
+    --- is back on their feet.
+    ---
+    --- Without this the elimination path barely works: players respawn in
+    --- seconds, and a hunter standing over the body would lose the payout to
+    --- the target pressing respawn. The kill genuinely happened, the hunter
+    --- is still at the recorded scene, and the window is short.
+    ProofWindowSeconds = 60,
     --- A photo URL is accepted only from the host lb-phone uploads to.
     --- Populated at boot from lb-phone's own upload config; entries here are
     --- added to that set.
@@ -187,9 +193,7 @@ Config.Completion = {
 Config.Kidnap = {
     CountdownSeconds   = 30,
     Radius             = 12.0,
-    ArmRadius          = 30.0,
     MaxTotalGraceMs    = 3000,
-    SampleIntervalMs   = 1000,
     TickMs             = 1000,
     MaxConcurrentCountdowns = 20,
     --- A kidnapping is a *live* delivery. The target must be conscious the
@@ -210,27 +214,14 @@ Config.Kidnap = {
     --- Optional resource exposing IsRestrained(playerId) for custom rope /
     --- ziptie scripts. Leave nil if unused.
     RestraintProvider  = nil,
-    MaxHoldMinutes     = 30,
-    CreatorArrivalMinutes = 10,
 }
 
 --------------------------------------------------------------------------
 -- Tracking, mugshots and listings (§14.22, §14.26, §14.33)
 --------------------------------------------------------------------------
 
-Config.Tracking = {
-    Mode = 'ping',              -- coarse search area, never raw coordinates
-    UpdateIntervalMs = 15000,
-    CoarseRadius = 250.0,
-    AcceptedHuntersOnly = true,
-    DisabledWhileDead = true,
-    MaxActiveStreams = 40,
-}
-
 Config.Mugshot = {
-    Mode = 'delayed',           -- 'frozen' | 'delayed'
     MinRefreshMinutes = 5,
-    MaxConcurrentRenders = 2,
     RenderTimeoutMs = 8000,
     --- A base64 headshot arrives from a player's client, so it is bounded
     --- and format-checked before it is cached and shown to anyone else.
@@ -245,17 +236,12 @@ Config.Mugshot = {
 
 Config.Listing = {
     PageSize = 15,
-    CacheTTLMs = 5000,
-    DefaultSort = 'reward',
-    ExposeCreatedAt = false,
 }
 
 Config.Targeting = {
-    Mode = 'search',
     --- Long enough that the search is a lookup rather than an enumeration.
     MinQueryLength = 4,
     MaxResults = 5,
-    AllowBrowseList = false,
     --- Protected-job players may be targeted by default: hunting a cop is
     --- legitimate criminal roleplay. What makes it fair is the advisory
     --- below, not a ban. Set false to refuse creation instead.
@@ -316,7 +302,6 @@ Config.Reason = {
 Config.Relay = {
     Enabled = true,
     MaxLength = 200,
-    MaxPerMinute = 12,
     AllowMaskedCalls = true,
 }
 
@@ -340,11 +325,8 @@ Config.Informant = {
     Cost = 25000,
     Account = 'bank',
     RevealMode = 'name',        -- 'name' | 'description'
-    TrackingRadius = 150.0,
-    TrackingWindowSeconds = 900,
     RerollLockMinutes = 30,
     MaxPurchasesPerContract = 2,
-    ChargeOnEmptyResult = true,
 }
 
 Config.Ledger = {
@@ -352,7 +334,6 @@ Config.Ledger = {
     MaxDepthHardCap = 25,
     StorePhotos = true,
     ShowPhotoToTarget = false,
-    PhotoRetentionDays = 14,
 }
 
 --------------------------------------------------------------------------
@@ -361,7 +342,6 @@ Config.Ledger = {
 
 Config.Notifications = {
     ParanoidAlert = true,
-    ParanoidCooldownMinutes = 30,
     MaxPerRecipientPerMinute = 6,
     MaxPerRecipientPerHour = 40,
 }
@@ -372,7 +352,6 @@ Config.Notifications = {
 
 Config.Database = {
     Mode = 'mysql',             -- 'mysql' | 'json' | 'memory'
-    DebounceMs = 5000,          -- non-financial writes only
     Json = {
         Directory = 'data',
         SyncOnFinancialWrite = true,
@@ -381,12 +360,9 @@ Config.Database = {
 }
 
 Config.PendingEscrow = {
-    MaxPerPlayer = 20,
     MaxRetriesPerLogin = 5,
-    RetryBackoffSeconds = 30,
     --- Randomised slightly in code so a reconnect wave does not converge.
     LoginRetryDelayMs = 5000,
-    DeadLetterAfterDays = 7,
 }
 
 --------------------------------------------------------------------------
@@ -403,16 +379,14 @@ Config.Audit = {
     --- mirrored as a heads-up; identity is never included, because anything
     --- sent to a third party outlives this server's retention rules.
     Webhook = false,
-    IdentityRevealAce = 'crimsonbounty.identity',
 }
 
 Config.AntiCollusion = {
     --- Compares creator / hunter / target account identifiers. A shared
-    --- account is blocked outright; a shared household (same IP) is flagged
-    --- for staff, never auto-blocked — families share connections.
+    --- account is blocked outright. Households are deliberately not
+    --- considered: families and roommates share a connection, and blocking
+    --- or flagging them would punish ordinary players.
     BlockSameAccount = true,
-    FlagSharedHousehold = true,
-    PairThrottleSeconds = 3600,
 }
 
 --------------------------------------------------------------------------

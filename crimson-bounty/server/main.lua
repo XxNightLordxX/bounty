@@ -211,7 +211,7 @@ end
 function StartTick()
     CreateThread(function()
         while true do
-            Wait(10000)
+            Wait(Config.Audit.FlushIntervalMs or 10000)
             local ok, err = pcall(Tick)
             if not ok then print('[crimson-bounty] tick error: ' .. tostring(err)) end
         end

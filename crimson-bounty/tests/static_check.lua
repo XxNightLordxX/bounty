@@ -221,6 +221,57 @@ for name in uiSrc:gmatch("post%('([%w_]+)'") do
 end
 
 --------------------------------------------------------------------------
+-- 8. Every configuration key is actually read
+--------------------------------------------------------------------------
+--
+-- A setting that nothing reads is worse than no setting: an owner tunes it,
+-- nothing changes, and they have no way to tell. This walks the leaf keys in
+-- config.lua and checks each one appears somewhere in the source.
+
+local configSrc = read('crimson-bounty/config/config.lua') or ''
+
+local sourceText = {}
+for _, path in ipairs(files) do
+    if not path:find('config/config%.lua') then
+        sourceText[#sourceText + 1] = read(path) or ''
+    end
+end
+sourceText[#sourceText + 1] = read('crimson-bounty/ui/app.js') or ''
+local allSource = table.concat(sourceText, '\n')
+
+-- Keys reached dynamically rather than by name.
+local DYNAMIC = {
+    Presets = true, Words = true, Apps = true,
+    -- Cooldown buckets are looked up by action name.
+    create = true, accept = true, bailout = true, informant = true,
+    message = true, amend = true, search = true, photo = true,
+    death = true, mugshot = true, per = true, burst = true,
+    -- Source rules are indexed by source name.
+    cash = true, bank = true, dirty = true, item = true, weapon = true,
+    enabled = true, max = true, maxStacks = true, maxPerStack = true,
+    -- Job tables are membership sets.
+    police = true, sheriff = true, leo = true, trooper = true, sasp = true,
+    bcso = true, fib = true, ranger = true, doj = true, lawyer = true,
+    ambulance = true, fire = true, ems = true,
+    -- Death-state provider entries.
+    resource = true, dead = true, lastStand = true,
+    -- MIME allowlist entries and escrow blacklist entries.
+    phone = true, id_card = true, driver_license = true, weaponlicense = true,
+    handcuffs = true, black_money = true,
+    -- Coercion detector names.
+    handcuffed = true, passengerOfHunter = true,
+}
+
+for key in configSrc:gmatch('\n%s*([%w_]+)%s*=') do
+    if not DYNAMIC[key] and #key > 3 then
+        if not allSource:find(key, 1, true) then
+            failures[#failures + 1] =
+                ('Config.%s is declared but nothing reads it'):format(key)
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

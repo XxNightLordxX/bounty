@@ -102,6 +102,7 @@ function Photo.issue(actor, contractId)
         hunterCid  = actor.cid,
         victimCid  = record.victimCid,
         coords     = record.coords,
+        diedAt     = record.at,
         issuedAt   = GetGameTimer(),
         used       = false,
     }
@@ -168,13 +169,19 @@ function Photo.submit(actor, rawToken, rawUrl)
     end
 
     -- Still dead? A target revived between the kill and the photo was not
-    -- eliminated, and the claim dies with the revive (§7.4).
+    -- eliminated (§7.4) — but a short proof window follows the death itself,
+    -- because players respawn in seconds and the hunter standing over the
+    -- body should not lose a kill they made to the respawn button.
     local victim = Identity.byCitizenId(record.victimCid)
     if victim and not Identity.isTrulyDead(victim.source) then
-        Audit.rejected('photo_target_revived', actor.cid, record.contractId, {})
-        Death.clearPending(record.contractId, actor.cid)
-        tokens[token] = nil
-        return false, CB.ERR.PHOTO_REJECTED
+        local sinceDeath = (GetGameTimer() - (record.diedAt or record.issuedAt)) / 1000
+        if sinceDeath > (Config.Completion.ProofWindowSeconds or 0) then
+            Audit.rejected('photo_target_revived', actor.cid, record.contractId,
+                { since = math.floor(sinceDeath) })
+            Death.clearPending(record.contractId, actor.cid)
+            tokens[token] = nil
+            return false, CB.ERR.PHOTO_REJECTED
+        end
     end
 
     record.used = true

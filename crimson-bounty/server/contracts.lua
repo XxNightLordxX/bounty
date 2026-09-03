@@ -112,8 +112,14 @@ function Contracts.canCreate(actor, targetActor)
             -- Cooldowns after a resolution, so a target cannot be re-listed
             -- the moment their last contract closes (§12.5).
             if c.target_cid == targetActor.cid and c.resolved_at then
+                -- Buying your way out earns a longer breather than an
+                -- ordinary resolution: otherwise a creator simply re-lists
+                -- and the target pays again.
                 local since = now - c.resolved_at
-                if since < Config.Limits.TargetCooldownAfterResolveSeconds then
+                local cooldown = (c.state == CB.STATE.BAILED_OUT)
+                    and Config.Immunity.AfterBailoutSeconds
+                    or Config.Limits.TargetCooldownAfterResolveSeconds
+                if since < cooldown then
                     return false, CB.ERR.TARGET_PROTECTED
                 end
                 if c.creator_cid == actor.cid and since < Config.Limits.SameCreatorSameTargetCooldownSeconds then
@@ -144,8 +150,8 @@ function Contracts.canCreate(actor, targetActor)
     return true
 end
 
---- Playtime and session immunity (§14.19). Fails closed: an unresolvable
---- playtime counts as below every minimum.
+--- Playtime, session and post-respawn immunity (§14.19, §14.39). Fails
+--- closed: an unresolvable playtime counts as below every minimum.
 function Contracts.isImmune(targetActor)
     local hours = targetActor.player and targetActor.player._playtimeHours
     local session = targetActor.player and targetActor.player._sessionMinutes
@@ -155,6 +161,14 @@ function Contracts.isImmune(targetActor)
     end
     if hours < Config.Immunity.MinTargetPlaytimeHours then return true end
     if session < Config.Immunity.MinTargetSessionMinutes then return true end
+
+    -- Someone who just got back up is not immediately fair game again:
+    -- without this a multi-slot contract becomes respawn camping.
+    if Death and (Config.Immunity.PostRespawnSeconds or 0) > 0 then
+        local since = Death.sinceRespawn(targetActor.cid)
+        if since and since < Config.Immunity.PostRespawnSeconds then return true end
+    end
+
     return false
 end
 
@@ -248,12 +262,31 @@ function Contracts.create(actor, req)
         paused_ms     = 0,
     }
 
+    -- Anonymity is free by default; where a server charges for it, the fee
+    -- is taken before the escrow so a creator who cannot afford it is
+    -- refused rather than half-charged (§4).
+    if contract.anon_creator and (Config.Anonymity.CreatorFee or 0) > 0 then
+        local account = Config.Anonymity.FeeAccount or 'bank'
+        if not actor.player.Functions.RemoveMoney(account, Config.Anonymity.CreatorFee) then
+            return nil, CB.ERR.INSUFFICIENT
+        end
+        Audit.financial('anonymity_fee', actor.cid, contract.id,
+            { amount = Config.Anonymity.CreatorFee, role = 'creator' })
+    end
+
     -- Escrow is taken before the contract is persisted, so a failure leaves
     -- no row behind at all rather than a cancelled shell that still counts
     -- against the creator's cooldowns.
     local took
     took, err = Escrow.take(actor, contract.id, lines)
-    if not took then return nil, err end
+    if not took then
+        -- Put the anonymity fee back: nothing else was charged.
+        if contract.anon_creator and (Config.Anonymity.CreatorFee or 0) > 0 then
+            actor.player.Functions.AddMoney(
+                Config.Anonymity.FeeAccount or 'bank', Config.Anonymity.CreatorFee)
+        end
+        return nil, err
+    end
 
     if not Storage.writeContract(contract) then
         -- The contract could not be stored, so the escrow must come back.
@@ -327,6 +360,20 @@ function Contracts.accept(actor, contractId, anonymous)
         if contract.state == CB.STATE.ACTIVE then
             Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted')
         end
+    end
+
+    -- A hunter who wants to stay unnamed pays for it, where the server
+    -- charges for anonymity at all (§4).
+    if anonymous and (Config.Anonymity.HunterFee or 0) > 0 then
+        local account = Config.Anonymity.FeeAccount or 'bank'
+        if not actor.player.Functions.RemoveMoney(account, Config.Anonymity.HunterFee) then
+            if contract.mode == CB.MODE.EXCLUSIVE then
+                Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'fee_failed')
+            end
+            return false, CB.ERR.INSUFFICIENT
+        end
+        Audit.financial('anonymity_fee', actor.cid, contractId,
+            { amount = Config.Anonymity.HunterFee, role = 'hunter' })
     end
 
     -- The failure penalty is staked here, at acceptance, or not at all: a

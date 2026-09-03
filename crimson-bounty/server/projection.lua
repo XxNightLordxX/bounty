@@ -169,7 +169,19 @@ function Projection.listing(viewerCid, page)
         return ra > rb
     end)
 
-    local out = { page = page, pages = math.max(1, math.ceil(#visible / pageSize)), contracts = {} }
+    local out = {
+        page = page,
+        pages = math.max(1, math.ceil(#visible / pageSize)),
+        contracts = {},
+        -- The app asks the server how loudly to warn about law enforcement
+        -- targets, rather than deciding for itself (§7.5).
+        settings = {
+            warnCreator = Config.Advisory.WarnCreator ~= false,
+            warnHunter  = Config.Advisory.WarnHunter ~= false,
+            flagListing = Config.Advisory.FlagListing ~= false,
+            minQueryLength = Config.Targeting.MinQueryLength,
+        },
+    }
     local from = ((page - 1) * pageSize) + 1
     for i = from, math.min(from + pageSize - 1, #visible) do
         out.contracts[#out.contracts + 1] = Projection.contract(visible[i], viewerCid)
