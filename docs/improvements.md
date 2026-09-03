@@ -252,9 +252,62 @@ spec, which is the other honest way to close a gap.
 
 ---
 
-## 7. Still open
+## 7. What review found afterwards
 
-Nothing from sections 1 to 5 remains. What is deliberately *not* here:
+Everything in sections 1 to 6 was built, and then reviewed adversarially
+across six independent lenses. Thirty-eight claims came back; thirteen were
+real. Two of the most serious had been marked "refuted" by the verifier and
+were not, which is the argument for checking each one yourself.
+
+**Value:**
+- Escrowing an item ignored its ox_inventory metadata, so a worn repair kit
+  came back pristine (value minted) and a loaded backpack came back with a
+  fresh container id (contents destroyed). Items now carry their instance
+  the way weapons always have.
+- A weapon name in the `items` list bypassed the weapon path entirely:
+  attachments destroyed, wear refunded, serial laundered.
+- A weapon slot the creator does not hold fell back to "the first weapon of
+  that name", staking an object they never picked.
+- Two escrow takes overlapping on one contract could allocate the same line
+  ids, so the second one's lines were merged into the first's while its
+  money was already gone. Every take now confirms its own lines are stored.
+
+**Exploit:**
+- A living player could claim a revive. Each claim renewed post-respawn
+  immunity and cleared the damage log, so anyone could stay permanently
+  untargetable and erase a hunter's attribution seconds after being shot.
+
+**Authority:**
+- `Config.Sources.item.enabled` and `weapon.enabled` were honoured only
+  where the picker is built, not in validation.
+- MySQL's `updateHunter` had no branch for `anon`, so a hunter who could
+  not afford the anonymity fee stayed listed as anonymous — on the backend
+  that ships by default.
+- MySQL could mint a contract id one character shorter than `Util.toId`
+  accepts, for ten seconds out of every twenty-eight hours.
+
+**Correctness:**
+- `claimSlot` wrote back a contract snapshot taken before several yielding
+  reads.
+- The escrow-line ceiling counted settled lines and hunters' stakes against
+  a top-up.
+- An interrupted release recorded no recipient, so the staff command that
+  exists for exactly that case could never pay it.
+- A payout funded with items or weapons was advertised to hunters as $0.
+
+**And the form:** its values lived only in the DOM, so a tab change emptied
+it and the sworn-officer confirmation threw it away.
+
+Six tests were also found to be testing nothing — one asserted a value that
+could never be undefined, two asserted a fixture against an identical
+fallback, one counted chips without clicking any, one never failed the read
+it claimed to. Static check 14 now finds a test with no assertion in it.
+
+---
+
+## 8. Still open
+
+Nothing from sections 1 to 6 remains. What is deliberately *not* here:
 
 - **The storage conformance suite against a real MySQL.** The backend is now
   executed rather than only read — `tests/harness/mysql_exec.lua` runs the

@@ -701,3 +701,84 @@ describe('a hunter who cannot afford anonymity', function()
         end
     end)
 end)
+
+
+--- Two takes on one contract must not collide.
+---
+--- Escrow line ids are allocated from the lines the contract already has,
+--- and reading those yields on a real database. Two takes can therefore
+--- allocate the same ids, and the second one's lines are merged into the
+--- first's rather than stored — with the money for them already gone.
+describe('concurrent escrow takes', function()
+    it('refuses rather than charging for escrow that does not exist', function()
+        local s = newCopyingStack()
+        local f = fixture(s)
+
+        local first = s.escrow.validate(f.creator, { baseline = { cash = 1000 } })
+        local second = s.escrow.validate(f.creator, { baseline = { cash = 2000 } })
+        truthy(first and second)
+
+        truthy(s.escrow.take(f.creator, 'ct_race', first), 'the first take lands')
+
+        -- The second take reads the contract as it was before the first
+        -- wrote, which is exactly what a yielding read gives you when two
+        -- of them overlap. It then allocates ids that are already taken.
+        local realRead = s.storage.readEscrow
+        local stale = true
+        s.storage.readEscrow = function(id, ...)
+            if stale and id == 'ct_race' then
+                stale = false
+                return {}
+            end
+            return realRead(id, ...)
+        end
+
+        local before = Env.players[1].PlayerData.money.cash
+            + Env.players[1].PlayerData.money.bank
+        local ok, err = s.escrow.take(f.creator, 'ct_race', second)
+        s.storage.readEscrow = realRead
+
+        falsy(ok, 'a take whose lines did not store must not report success')
+        eq(err, CB.ERR.LOCKED)
+
+        local after = Env.players[1].PlayerData.money.cash
+            + Env.players[1].PlayerData.money.bank
+        eq(after, before, 'and the creator is not charged for it')
+    end)
+
+    it('leaves the first take untouched', function()
+        local s = newCopyingStack()
+        local f = fixture(s)
+
+        local first = s.escrow.validate(f.creator, { baseline = { cash = 1000 } })
+        truthy(s.escrow.take(f.creator, 'ct_race', first))
+
+        local second = s.escrow.validate(f.creator, { baseline = { cash = 2000 } })
+
+        local realRead = s.storage.readEscrow
+        local stale = true
+        s.storage.readEscrow = function(id, ...)
+            if stale and id == 'ct_race' then stale = false return {} end
+            return realRead(id, ...)
+        end
+        s.escrow.take(f.creator, 'ct_race', second)
+        s.storage.readEscrow = realRead
+
+        local lines = s.storage.readEscrow('ct_race')
+        eq(#lines, 1, 'one line, from the take that won')
+        eq(lines[1].amount, 1000, 'and it still holds what it held')
+    end)
+
+    it('still takes two escrows that do not collide', function()
+        local s = newCopyingStack()
+        local f = fixture(s)
+
+        local first = s.escrow.validate(f.creator, { baseline = { cash = 1000 } })
+        truthy(s.escrow.take(f.creator, 'ct_ok', first))
+
+        local second = s.escrow.validate(f.creator, { baseline = { cash = 2000 } })
+        truthy(s.escrow.take(f.creator, 'ct_ok', second),
+            'an ordinary top-up must not be caught by the collision guard')
+        eq(#s.storage.readEscrow('ct_ok'), 2)
+    end)
+end)

@@ -9,7 +9,7 @@
   var state = {
     tab: 'board', board: null, mine: null, ledger: null,
     progress: {}, dialog: null, leoConfirmed: false, wallet: null,
-    busy: false, notice: null,
+    busy: false, notice: null, walletFailed: null,
     // Target headshots, keyed by the reference a projection gave us. The
     // listing carries references, not images, so a board refresh re-sends
     // nothing and a face is fetched once per render. `null` marks a fetch in
@@ -917,10 +917,29 @@
 
     // What the creator actually has, read server-side, so an over-budget
     // contract is obvious before they submit rather than after.
-    if (!state.wallet) {
+    if (!state.wallet && !state.walletFailed) {
       post('rewardOptions', {}).then(function (r) {
-        if (r.ok && r.data) { state.wallet = r.data; render(); }
+        if (r.ok && r.data) {
+          state.wallet = r.data;
+          state.walletFailed = null;
+        } else {
+          // Silently dropping the pickers left a form that simply had no
+          // item or weapon section, with nothing saying why and no way to
+          // ask again.
+          state.walletFailed = (r.err === 'rate_limited')
+            ? 'Reading your pockets too fast. Try again in a moment.'
+            : 'Could not read what you are carrying.';
+        }
+        render();
       });
+    } else if (state.walletFailed) {
+      var failed = el('div', 'card');
+      failed.appendChild(el('div', 'hint', state.walletFailed
+        + ' Money still works; items and weapons need another look.'));
+      var again = el('button', 'ghost', 'Try again');
+      again.onclick = function () { state.walletFailed = null; render(); };
+      failed.appendChild(again);
+      form.appendChild(failed);
     } else {
       var w = state.wallet;
       var wallet = el('div', 'card');
@@ -1257,6 +1276,7 @@
       state.picked = {};
       state.draft = {};
       state.wallet = null;
+      state.walletFailed = null;
       state.tab = 'mine';
       refresh();
     });

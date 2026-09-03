@@ -400,6 +400,33 @@ function Escrow.take(actor, contractId, lines)
         return false, CB.ERR.BAD_STATE
     end
 
+    -- Read back what was written. Ids are allocated from the lines the
+    -- contract already had, and reading those yields on a real database —
+    -- so two takes on one contract can allocate the same ids, and the
+    -- second one's lines are then merged into the first's rather than
+    -- stored. The money for them has already been confiscated.
+    --
+    -- Rather than trusting the count, every line is confirmed present and
+    -- ours. One that is not means the id was taken in between: the whole
+    -- take is rolled back and the caller can try again, which is far
+    -- better than a creator charged for escrow that does not exist.
+    local stored = {}
+    for _, line in ipairs(Storage.readEscrow(contractId)) do stored[line.id] = line end
+
+    for i = 1, #records do
+        local mine = records[i]
+        local found = stored[mine.id]
+        if not found
+            or found.source ~= mine.source
+            or found.portion ~= mine.portion
+            or (found.amount or 0) ~= (mine.amount or 0)
+            or (found.quantity or 0) ~= (mine.quantity or 0) then
+            Audit.rejected('escrow_id_collision', actor.cid, contractId, { line = mine.id })
+            rollback()
+            return false, CB.ERR.LOCKED
+        end
+    end
+
     Audit.financial('escrow_taken', actor.cid, contractId, { lines = #records })
     return true
 end

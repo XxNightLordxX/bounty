@@ -218,6 +218,10 @@ function App.register()
                 maxStacks = Config.Sources.item.maxStacks,
                 maxPerStack = Config.Sources.item.maxPerStack,
                 maxWeapons = Config.Sources.weapon.max,
+                -- The total the server will accept across every payout.
+                -- Without it the form could build a contract that is always
+                -- refused, and blame the amounts.
+                maxLines = Config.Limits.MaxEscrowLines,
             },
         }
     end)
