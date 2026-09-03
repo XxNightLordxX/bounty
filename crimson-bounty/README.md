@@ -104,14 +104,24 @@ The suite runs the real server modules against a stubbed FiveM runtime, so it
 can be run anywhere Lua is installed:
 
 ```bash
-lua5.4 crimson-bounty/tests/run.lua          # 214 tests
-lua5.4 crimson-bounty/tests/static_check.lua # source-level rules
+sh crimson-bounty/tests/all.sh    # everything
 ```
 
-It covers escrow arithmetic, the state machine, every payout and refund path,
-deliberate exploit attempts, storage conformance across backends, and a
-randomised simulation asserting that no sequence of operations creates or
-destroys value.
+Three kinds of check, because each catches what the others cannot:
+
+- **Server suite** (278 tests) — escrow arithmetic, the state machine, every
+  payout and refund path, deliberate exploit attempts, storage conformance
+  across all three backends, and a randomised simulation asserting that no
+  sequence of operations creates or destroys value.
+- **Static checks** — rules no unit test can see: no SQL built by
+  concatenation, no handler reading an identity from a payload, every module
+  the resource loader asks for exists, every event name agrees across UI,
+  client and server, every config key is actually read, and the MySQL schema
+  can hold every field the code writes.
+- **UI suite** — the real `ui/app.js` driven against a scripted server
+  through a minimal DOM. This exists because the two worst bugs in the whole
+  build were in the app and invisible to Lua tests: a form that could never
+  submit a valid contract, and an open that refreshed itself into a storm.
 
 **What it cannot prove:** behaviour against the real `ox_inventory`,
 `lb-phone` and `qbx_core` builds, or how the UI renders on an actual phone.
