@@ -253,3 +253,62 @@ describe('a form that sends every field still works', function()
         eq(s.escrow.moneyValue(c.id, CB.PORTION.BONUS), 3750)
     end)
 end)
+
+describe('money owed to a player is reachable only by them', function()
+    local function owedToHunter()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { items = { { name = 'lockpick', count = 2 } } } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+
+        -- The hunter earns it but cannot carry it.
+        Env.players[3]._inventoryFull = true
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        return s, f, c
+    end
+
+    it('marks an undeliverable payout as the hunters', function()
+        local s, f, c = owedToHunter()
+        local owed
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.owed_to then owed = line end
+        end
+        truthy(owed, 'the payout should be recorded as owed')
+        eq(owed.owed_to, 'HUNTER01')
+    end)
+
+    it('does not hand it to the creator when the contract closes', function()
+        local s, f, c = owedToHunter()
+        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED,
+            'a single-slot contract is finished')
+
+        local creatorHas = 0
+        for _, slot in ipairs(Env.players[1]._inventory) do
+            if slot.name == 'lockpick' then creatorHas = creatorHas + slot.count end
+        end
+        eq(creatorHas, 3, 'the creator keeps only the 3 they started with')
+    end)
+
+    it('delivers it to the hunter when they can carry it', function()
+        local s, f, c = owedToHunter()
+        Env.players[3]._inventoryFull = false
+        eq(s.escrow.retryPending('HUNTER01'), 1)
+
+        local hunterHas = 0
+        for _, slot in ipairs(Env.players[3]._inventory) do
+            if slot.name == 'lockpick' then hunterHas = hunterHas + slot.count end
+        end
+        eq(hunterHas, 2, 'what they earned arrives when there is room for it')
+    end)
+
+    it('refuses to deliver it to anyone else', function()
+        local s, f, c = owedToHunter()
+        Env.players[1]._inventoryFull = false
+        s.escrow.release(c.id, 'CREATOR1', nil, 'a general sweep')
+        eq(s.escrow.retryPending('CREATOR1'), 0, 'not the creator\'s to collect')
+        eq(#s.storage.readPending('HUNTER01'), 1, 'still owed to the hunter')
+    end)
+end)

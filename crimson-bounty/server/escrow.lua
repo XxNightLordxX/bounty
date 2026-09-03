@@ -361,8 +361,6 @@ function Escrow.release(contractId, recipientCid, filter, reason)
             if filter.portion and line.portion ~= filter.portion then matches = false end
             if filter.slot and line.slot ~= filter.slot then matches = false end
             if filter.staker and line.staker ~= filter.staker then matches = false end
-            -- A release that names no portion is a general refund, and must
-            -- not sweep up a hunter's stake along with the creator's escrow.
             -- A release that names no portion is a general refund. It must
             -- not sweep up a hunter's stake, nor money already promised to a
             -- named person.
