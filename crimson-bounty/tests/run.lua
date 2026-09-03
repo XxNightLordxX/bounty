@@ -168,7 +168,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'invariant_spec',
 }
 
 for _, name in ipairs(suites) do
