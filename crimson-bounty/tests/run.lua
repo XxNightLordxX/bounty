@@ -69,6 +69,14 @@ function _G.newStack()
     package.loaded['crimson-bounty.server.notify'] = nil
     package.loaded['crimson-bounty.server.identity'] = nil
     package.loaded['crimson-bounty.server.ratelimit'] = nil
+    package.loaded['crimson-bounty.server.ledger'] = nil
+    package.loaded['crimson-bounty.server.completion.death'] = nil
+    package.loaded['crimson-bounty.server.completion.photo'] = nil
+    package.loaded['crimson-bounty.server.completion.kidnap'] = nil
+    package.loaded['crimson-bounty.server.comms'] = nil
+    package.loaded['crimson-bounty.server.amendments'] = nil
+    package.loaded['crimson-bounty.server.informant'] = nil
+    package.loaded['crimson-bounty.server.bailout'] = nil
 
     local storage   = require('crimson-bounty.server.storage.memory')
     local audit     = require('crimson-bounty.server.audit')
@@ -77,6 +85,14 @@ function _G.newStack()
     local escrow    = require('crimson-bounty.server.escrow')
     local contracts = require('crimson-bounty.server.contracts')
     local ratelimit = require('crimson-bounty.server.ratelimit')
+    local ledger    = require('crimson-bounty.server.ledger')
+    local death     = require('crimson-bounty.server.completion.death')
+    local photo     = require('crimson-bounty.server.completion.photo')
+    local kidnap    = require('crimson-bounty.server.completion.kidnap')
+    local bailout    = require('crimson-bounty.server.bailout')
+    local informant  = require('crimson-bounty.server.informant')
+    local amendments = require('crimson-bounty.server.amendments')
+    local comms      = require('crimson-bounty.server.comms')
 
     storage.open()
     audit.init(storage)
@@ -87,9 +103,31 @@ function _G.newStack()
         audit = audit, notify = notify,
     })
 
+    ledger.init(storage)
+    death.init({ storage = storage, identity = identity, contracts = contracts, audit = audit })
+    photo.init({
+        storage = storage, identity = identity, contracts = contracts, audit = audit,
+        death = death, notify = notify, ledger = ledger,
+    })
+
+    kidnap.init({
+        storage = storage, identity = identity, contracts = contracts,
+        audit = audit, notify = notify, ledger = ledger,
+    })
+
+    bailout.init({ storage = storage, identity = identity, contracts = contracts,
+        escrow = escrow, audit = audit, notify = notify })
+    informant.init({ storage = storage, identity = identity, audit = audit })
+    amendments.init({ storage = storage, identity = identity, contracts = contracts,
+        escrow = escrow, audit = audit, notify = notify })
+    comms.init({ storage = storage, identity = identity, audit = audit,
+        notify = notify, ratelimit = ratelimit })
+
     return {
-        storage = storage, audit = audit, identity = identity, notify = notify,
+        storage = storage, audit = audit, kidnap = kidnap,
+        bailout = bailout, informant = informant, amendments = amendments, comms = comms, identity = identity, notify = notify,
         escrow = escrow, contracts = contracts, ratelimit = ratelimit,
+        ledger = ledger, death = death, photo = photo,
     }
 end
 
@@ -126,6 +164,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec',
 }
 
 for _, name in ipairs(suites) do

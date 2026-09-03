@@ -254,13 +254,29 @@ function Escrow.take(actor, contractId, lines)
         taken[#taken + 1] = line
     end
 
+    -- Ids are allocated after whatever the contract already holds, so a
+    -- later top-up (§12.1) appends rather than overwriting the original
+    -- lines. A caller-supplied id is respected if it is already unique.
+    local existing = Storage.readEscrow(contractId)
+    local used = {}
+    for i = 1, #existing do used[existing[i].id] = true end
+
     local records = {}
+    local nextIndex = #existing
     for i = 1, #lines do
         local line = Util.copy(lines[i])
         line.contract_id = contractId
         line.state = CB.ESCROW_STATE.HELD
-        line.id = contractId .. ':' .. tostring(i)
         line.slot = line.slot or 1
+
+        if not line.id or used[line.id] then
+            repeat
+                nextIndex = nextIndex + 1
+                line.id = contractId .. ':' .. tostring(nextIndex)
+            until not used[line.id]
+        end
+        used[line.id] = true
+
         records[#records + 1] = line
     end
 
