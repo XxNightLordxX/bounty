@@ -185,3 +185,186 @@ describe('contract expiry', function()
         eq(modules.storage.readContract(c2.id).state, CB.STATE.EXPIRED)
     end)
 end)
+
+
+--- One failing maintenance job must not stop the others.
+---
+--- The tick runs the audit flush, amendment expiry, the bailout queue, every
+--- sweep, contract expiry and the storage flush, in that order, under a
+--- single pcall. A throw anywhere in it skipped everything after — including
+--- the storage flush, so nothing was persisted at all — and kept skipping it
+--- on every subsequent tick, because the thing that threw was still there.
+--- The resource goes on printing nothing and doing nothing.
+describe('a maintenance job that throws', function()
+    it('does not stop the rest of the tick', function()
+        local main, modules = boot()
+        local f = fixture(modules)
+        local c = modules.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+
+        -- The audit flush is the first job the tick runs, and the one that
+        -- talks to the database on every single tick.
+        local realWrite = modules.storage.writeAudit
+        modules.storage.writeAudit = function() error('database went away') end
+        modules.audit.rejected('probe', 'CREATOR1', c.id, {})
+
+        local flushed = false
+        local realStorageFlush = modules.storage.flush
+        modules.storage.flush = function(...)
+            flushed = true
+            if realStorageFlush then return realStorageFlush(...) end
+            return true
+        end
+
+        -- Run the contract past its deadline so expiry has real work to do.
+        local row = modules.storage.readContract(c.id)
+        row.deadline_at = os.time() - 60
+        modules.storage.writeContract(row)
+
+        local ok, err = pcall(main.tick)
+
+        modules.storage.writeAudit = realWrite
+        modules.storage.flush = realStorageFlush
+
+        truthy(ok, 'the tick itself must survive: ' .. tostring(err))
+        truthy(flushed, 'the storage flush must still run after an audit write fails')
+        eq(modules.storage.readContract(c.id).state, CB.STATE.EXPIRED,
+            'and the contract past its deadline must still be closed')
+    end)
+
+    it('does not stop the rest of the tick when it is not the audit flush', function()
+        -- The audit flush is only the first job. Any of them can throw — a
+        -- sweep over a row a future migration left half-written, an export
+        -- from an integration that reloaded mid-call — and the storage flush
+        -- is last, so it is what every one of them stands in front of.
+        local main, modules = boot()
+        local f = fixture(modules)
+        local c = modules.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+
+        local realExpire = modules.amendments.expire
+        modules.amendments.expire = function() error('a sweep went wrong') end
+
+        local flushed = false
+        local realStorageFlush = modules.storage.flush
+        modules.storage.flush = function(...)
+            flushed = true
+            if realStorageFlush then return realStorageFlush(...) end
+            return true
+        end
+
+        local row = modules.storage.readContract(c.id)
+        row.deadline_at = os.time() - 60
+        modules.storage.writeContract(row)
+
+        local ok, err = pcall(main.tick)
+
+        modules.amendments.expire = realExpire
+        modules.storage.flush = realStorageFlush
+
+        truthy(ok, 'the tick must survive: ' .. tostring(err))
+        truthy(flushed, 'the storage flush must still run')
+        eq(modules.storage.readContract(c.id).state, CB.STATE.EXPIRED,
+            'and contract expiry must still have run')
+    end)
+
+    it('is true of every job in the tick, not just the two tested above', function()
+        -- Every job the tick runs, named the way the tick names it. Broken
+        -- one at a time; the storage flush is last, so it standing in for
+        -- "the rest of the tick still ran" is exactly the property at stake.
+        local JOBS = {
+            { 'audit',      'flush' },
+            { 'amendments', 'expire' },
+            { 'bailout',    'processQueue' },
+            { 'photo',      'sweep' },
+            { 'death',      'sweep' },
+            { 'ratelimit',  'sweep' },
+            { 'ledger',     'forgetOldPhotos' },
+        }
+
+        for i = 1, #JOBS do
+            local module, name = JOBS[i][1], JOBS[i][2]
+            local main, modules = boot()
+
+            truthy(modules[module], 'no such module: ' .. module)
+            truthy(modules[module][name], ('no such job: %s.%s'):format(module, name))
+            modules[module][name] = function()
+                error(('%s.%s went wrong'):format(module, name))
+            end
+
+            local flushed = false
+            local realStorageFlush = modules.storage.flush
+            modules.storage.flush = function(...)
+                flushed = true
+                if realStorageFlush then return realStorageFlush(...) end
+                return true
+            end
+
+            local ok, err = pcall(main.tick)
+            modules.storage.flush = realStorageFlush
+
+            truthy(ok, ('the tick must survive a failing %s.%s: %s')
+                :format(module, name, tostring(err)))
+            truthy(flushed,
+                ('the storage flush must still run when %s.%s throws'):format(module, name))
+        end
+    end)
+
+    it('does not keep throwing on the same row forever', function()
+        local main, modules = boot()
+        local f = fixture(modules)
+
+        local realWrite = modules.storage.writeAudit
+        modules.storage.writeAudit = function() error('database went away') end
+        modules.audit.rejected('probe', 'CREATOR1', nil, {})
+        pcall(main.tick)
+        modules.storage.writeAudit = realWrite
+
+        eq(modules.audit.pending(), 0,
+            'an entry that cannot be written is dropped, not retried forever — '
+            .. 'otherwise every later entry is stuck behind it')
+
+        -- And the log keeps working once the database is back.
+        modules.audit.rejected('after', 'CREATOR1', nil, {})
+        pcall(main.tick)
+        local rows = modules.storage.readAudit(50)
+        local seen = false
+        for i = 1, #rows do
+            if rows[i].action == 'after' then seen = true end
+        end
+        truthy(seen, 'entries after the failure must still reach the log')
+    end)
+
+    it('counts what it could not write, rather than losing it silently', function()
+        local main, modules = boot()
+        fixture(modules)
+
+        local realWrite = modules.storage.writeAudit
+        local refused = 0
+        modules.storage.writeAudit = function(entry)
+            if entry.action == 'probe' then
+                refused = refused + 1
+                error('database went away')
+            end
+            return realWrite(entry)
+        end
+        modules.audit.rejected('probe', 'CREATOR1', nil, {})
+        pcall(main.tick)
+        modules.storage.writeAudit = realWrite
+
+        eq(refused, 1)
+        local rows = modules.storage.readAudit(50)
+        local overflow = false
+        for i = 1, #rows do
+            if rows[i].action == 'audit_overflow' then overflow = true end
+        end
+        truthy(overflow, 'a dropped audit row must be reported, because a log with '
+            .. 'silent gaps is worse than no log')
+    end)
+end)

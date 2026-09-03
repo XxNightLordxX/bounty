@@ -329,26 +329,48 @@ end
 --- as anything else in a server config.
 local lastHostRefresh = 0
 
+--- Run one maintenance job, and report rather than abandon the rest.
+---
+--- These used to run as one statement after another. A throw in any of them
+--- skipped every job below it — including the storage flush, which is last,
+--- so a single bad row meant nothing was persisted at all. And because the
+--- thing that threw was usually still there next tick, it kept skipping them
+--- for the life of the process while the resource looked healthy.
+---
+--- Each job stands alone now. One that fails says so, on every tick, and the
+--- others still run.
+local function job(name, fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok then
+        print(('[crimson-bounty] maintenance job %q failed: %s'):format(name, tostring(err)))
+    end
+    return ok
+end
+
 function Tick()
-    modules.audit.flush()
-    modules.amendments.expire()
-    modules.bailout.processQueue()
-    modules.photo.sweep()
+    job('audit.flush', modules.audit.flush)
+    job('amendments.expire', modules.amendments.expire)
+    job('bailout.processQueue', modules.bailout.processQueue)
+    job('photo.sweep', modules.photo.sweep)
 
     local now = os.time()
     if now - lastHostRefresh >= (Config.Completion.PhotoHostRefreshSeconds or 300) then
+        -- Marked done whether or not the read succeeds: retrying a
+        -- cross-resource config read every ten seconds because it failed
+        -- once is how one broken export becomes a busy loop.
         lastHostRefresh = now
-        modules.photo.loadAllowedHosts()
+        job('photo.loadAllowedHosts', modules.photo.loadAllowedHosts)
     end
-    modules.death.sweep()
-    modules.ratelimit.sweep()
-    if Storage.prune then Storage.prune() end
-    modules.ledger.forgetOldPhotos()
+    job('death.sweep', modules.death.sweep)
+    job('ratelimit.sweep', modules.ratelimit.sweep)
+    if Storage.prune then job('storage.prune', Storage.prune) end
+    job('ledger.forgetOldPhotos', modules.ledger.forgetOldPhotos)
     local app = require('server.app')
-    app.sweepHandles()
-    app.sweepFloodCounters()
-    ExpireContracts()
-    if Storage.flush then Storage.flush() end
+    job('app.sweepHandles', app.sweepHandles)
+    job('app.sweepFloodCounters', app.sweepFloodCounters)
+    job('expireContracts', ExpireContracts)
+    -- Last, and the one every other job used to stand in front of.
+    if Storage.flush then job('storage.flush', Storage.flush) end
 end
 
 --- Close contracts whose deadline has passed.

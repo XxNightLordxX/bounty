@@ -72,6 +72,18 @@ local function mirror(entry)
     return true
 end
 
+--- Drain the queue.
+---
+--- Every write is guarded, and the queue is emptied whatever happens. A row
+--- the database will not take — a connection that has gone away, a detail a
+--- future caller managed to make unencodable — used to throw out of here
+--- with the queue still holding it, so the next flush hit the same row and
+--- threw again, forever. The tick that calls this runs the audit flush
+--- first, so that one row also stopped amendment expiry, the bailout queue,
+--- contract expiry and the storage flush: the resource kept running and
+--- quietly did nothing.
+---
+--- A row that will not write is counted as dropped, which is reported.
 function Audit.flush()
     if tail < head then return 0 end
 
@@ -79,10 +91,13 @@ function Audit.flush()
     for i = head, tail do
         local entry = queue[i]
         if entry then
-            Storage.writeAudit(entry)
+            if pcall(Storage.writeAudit, entry) then
+                written = written + 1
+            else
+                dropped = dropped + 1
+            end
             pcall(mirror, entry)
             queue[i] = nil
-            written = written + 1
         end
     end
     head, tail = 1, 0
@@ -90,11 +105,12 @@ function Audit.flush()
     -- A silent drop is worse than a noisy one: if the queue overflowed, the
     -- server owner needs to know their log has gaps.
     if dropped > 0 then
-        Storage.writeAudit({
-            ts = os.time(), kind = 'system', action = 'audit_overflow',
-            detail = { dropped = dropped },
-        })
+        local count = dropped
         dropped = 0
+        pcall(Storage.writeAudit, {
+            ts = os.time(), kind = 'system', action = 'audit_overflow',
+            detail = { dropped = count },
+        })
     end
 
     return written
