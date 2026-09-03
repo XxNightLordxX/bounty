@@ -31,31 +31,38 @@ local function handler(name, action, fn)
         local actor, err = deps.identity.gate(src)
         if not actor then
             deps.audit.rejected('gate_' .. name, nil, nil, { source = src, reason = err })
-            return App.reply(src, name, false, err)
+            return App.reply(src, name, false, err, nil,
+                type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
 
         if action and not deps.ratelimit.check(actor.cid, action) then
             deps.audit.rejected('ratelimit_' .. name, actor.cid, nil, {})
-            return App.reply(src, name, false, CB.ERR.RATE_LIMITED)
+            return App.reply(src, name, false, CB.ERR.RATE_LIMITED, nil,
+                type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
 
         if type(payload) ~= 'table' then payload = {} end
 
+        -- The client's correlation id is echoed back so concurrent requests
+        -- resolve into their own callbacks. It is opaque to the server and
+        -- never used for anything else.
+        local rid = tonumber(payload.__rid)
+
         local ok, result, resultErr = pcall(fn, actor, payload)
         if not ok then
             deps.audit.rejected('error_' .. name, actor.cid, nil, { error = tostring(result) })
-            return App.reply(src, name, false, CB.ERR.INVALID_INPUT)
+            return App.reply(src, name, false, CB.ERR.INVALID_INPUT, nil, rid)
         end
 
-        return App.reply(src, name, result ~= false and result ~= nil, resultErr, result)
+        return App.reply(src, name, result ~= false and result ~= nil, resultErr, result, rid)
     end)
 end
 
 --- Send a result back to one client. Payloads are built by the projection
 --- module, so nothing leaks here that the viewer may not see.
-function App.reply(src, name, ok, err, data)
+function App.reply(src, name, ok, err, data, rid)
     TriggerClientEvent('crimson-bounty:result', src, {
-        event = name, ok = ok and true or false, err = err, data = data,
+        event = name, ok = ok and true or false, err = err, data = data, rid = rid,
     })
 end
 
@@ -204,6 +211,12 @@ function App.register()
 
     handler('addEscrow', 'amend', function(actor, payload)
         local ok, err = deps.amendments.addEscrow(actor, payload.id, payload.reward)
+        if not ok then return false, err end
+        return true
+    end)
+
+    handler('improve', 'amend', function(actor, payload)
+        local ok, err = deps.amendments.improve(actor, payload.id, payload.kind, payload.payload)
         if not ok then return false, err end
         return true
     end)

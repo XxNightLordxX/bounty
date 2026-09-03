@@ -35,12 +35,25 @@ function RateLimit.check(cid, action)
     return true
 end
 
---- Drop a player's buckets on disconnect so the table cannot grow without
---- bound across a long uptime.
+--- Buckets are NOT cleared on disconnect: reconnecting would then reset
+--- every limit, which turns a rejoin into a way to bypass them. They are
+--- swept once they have been idle long enough to have refilled anyway.
 function RateLimit.clear(cid)
-    for key in pairs(buckets) do
-        if key:sub(1, #cid + 1) == cid .. ':' then buckets[key] = nil end
+    return false
+end
+
+--- Drop buckets nobody has touched for a while. A refilled bucket holds no
+--- information, so removing it changes nothing except memory.
+function RateLimit.sweep()
+    local ms = now()
+    local removed = 0
+    for key, bucket in pairs(buckets) do
+        if ms - bucket.last > 600000 then
+            buckets[key] = nil
+            removed = removed + 1
+        end
     end
+    return removed
 end
 
 function RateLimit.count()

@@ -142,6 +142,7 @@ Config.Cooldowns = {
     --- Death and revive reports are client-driven and each one walks the
     --- contract table, so they are throttled like everything else.
     death     = { per = 5,  burst = 4 },
+    mugshot   = { per = 60, burst = 3 },
 }
 
 --------------------------------------------------------------------------
@@ -231,6 +232,9 @@ Config.Mugshot = {
     MinRefreshMinutes = 5,
     MaxConcurrentRenders = 2,
     RenderTimeoutMs = 8000,
+    --- A base64 headshot arrives from a player's client, so it is bounded
+    --- before it is cached and shown to anyone else.
+    MaxImageBytes = 262144,
 }
 
 Config.Listing = {

@@ -97,6 +97,7 @@ function StartCrimsonBounty()
     local informant  = require('server.informant')
     local amendments = require('server.amendments')
     local comms      = require('server.comms')
+    local mugshot    = require('server.mugshot')
     local projection = require('server.projection')
     local app        = require('server.app')
 
@@ -112,20 +113,22 @@ function StartCrimsonBounty()
     kidnap.init({ storage = Storage, identity = identity, contracts = contracts,
                   audit = audit, notify = notify, ledger = ledger })
     bailout.init({ storage = Storage, identity = identity, contracts = contracts,
-                   escrow = escrow, audit = audit, notify = notify })
+                   escrow = escrow, audit = audit, notify = notify, kidnap = kidnap })
     informant.init({ storage = Storage, identity = identity, audit = audit })
     amendments.init({ storage = Storage, identity = identity, contracts = contracts,
                       escrow = escrow, audit = audit, notify = notify })
     comms.init({ storage = Storage, identity = identity, audit = audit,
                  notify = notify, ratelimit = ratelimit })
-    projection.init({ storage = Storage, identity = identity, escrow = escrow, kidnap = kidnap })
+    mugshot.init({ identity = identity, audit = audit })
+    projection.init({ storage = Storage, identity = identity, escrow = escrow,
+                      kidnap = kidnap, mugshot = mugshot })
 
     modules = {
         storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,
         notify = notify, escrow = escrow, contracts = contracts, ledger = ledger,
         death = death, photo = photo, kidnap = kidnap, bailout = bailout,
         informant = informant, amendments = amendments, comms = comms,
-        projection = projection,
+        projection = projection, mugshot = mugshot,
     }
 
     app.init(modules)
@@ -202,6 +205,8 @@ function Tick()
     modules.bailout.processQueue()
     modules.photo.sweep()
     modules.death.sweep()
+    modules.ratelimit.sweep()
+    if Storage.prune then Storage.prune() end
     require('server.app').sweepHandles()
     ExpireContracts()
     if Storage.flush then Storage.flush() end

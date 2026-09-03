@@ -14,6 +14,7 @@ local Storage, Identity, Contracts, Escrow, Audit, Notify
 function Bailout.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
         deps.storage, deps.identity, deps.contracts, deps.escrow, deps.audit, deps.notify
+    Bailout.kidnap = deps.kidnap
 end
 
 --- Queued buyouts live on the contract row, not in a process-local table.
@@ -30,6 +31,19 @@ local function readQueue()
         if contracts[i].bailout_queued_at then out[#out + 1] = contracts[i] end
     end
     return out
+end
+
+--- True when any hunter has an armed countdown running on this contract.
+function Bailout.kidnapInProgress(contractId)
+    if not Bailout.kidnap then return false end
+    local hunters = Storage.readHunters(contractId)
+    for i = 1, #hunters do
+        if hunters[i].state == 'active'
+            and Bailout.kidnap.progress(contractId, hunters[i].hunter_cid) then
+            return true
+        end
+    end
+    return false
 end
 
 --- Contracts the caller may buy out — those naming them as target.
@@ -72,6 +86,10 @@ function Bailout.buy(actor, contractId)
         local dead, lastStand = Identity.deathState(actor.source)
         if dead or lastStand then return false, CB.ERR.BAD_STATE end
     end
+
+    -- Nor out from under a handover already in progress: the hunter has the
+    -- target in hand and is seconds from delivering.
+    if Bailout.kidnapInProgress(contractId) then return false, CB.ERR.BAD_STATE end
 
     local amount = contract.bailout_amount
 

@@ -7,11 +7,11 @@
 
 local Projection = {}
 
-local Storage, Identity, Escrow, Kidnap
+local Storage, Identity, Escrow, Kidnap, Mugshot
 
 function Projection.init(deps)
-    Storage, Identity, Escrow, Kidnap =
-        deps.storage, deps.identity, deps.escrow, deps.kidnap
+    Storage, Identity, Escrow, Kidnap, Mugshot =
+        deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot
 end
 
 --- Roles a viewer can hold relative to a contract. The role decides the key
@@ -80,6 +80,10 @@ function Projection.contract(contract, viewerCid)
         huntersActive = activeHunters,
         huntersMax    = Config.Limits.MaxHuntersPerContract,
         targetName    = contract.target_name,
+        -- The listing carries a live headshot of the target (§7.2). Asking
+        -- for it here is what schedules the refresh; the cached image is
+        -- returned immediately and a newer one arrives on a later poll.
+        targetImage   = Mugshot and Mugshot.request(contract.target_cid) or nil,
         targetProtected = contract.target_protected or false,
         deadline      = contract.deadline_at,
         role          = role,
@@ -218,7 +222,7 @@ Projection.ALLOWED_KEYS = {
         id = true, reason = true, mode = true, state = true, reward = true,
         bonusPercent = true, slots = true, slotsClaimed = true, currentSlot = true,
         huntersActive = true, huntersMax = true, targetName = true,
-        targetProtected = true, deadline = true, role = true,
+        targetProtected = true, deadline = true, role = true, targetImage = true,
         creatorName = true, creatorAnonymous = true,
     },
     creator = { bailoutAmount = true, penaltyAmount = true, hunters = true },

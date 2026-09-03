@@ -285,3 +285,44 @@ describe('failure penalty', function()
         eq(Env.players[3].PlayerData.money.bank, 50000)
     end)
 end)
+
+describe('spam and rollback', function()
+    it('throttles create-and-cancel list spam', function()
+        local s = newStack()
+        local f = fixture(s)
+        local first = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        truthy(first)
+        s.contracts.resolve(first.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+
+        -- A different target, so the cancel throttle is what is being
+        -- measured rather than the per-target cooldown.
+        Env.addPlayer({ source = 8, citizenid = 'TARGET02', license = 'license:t2' })
+        local second, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET02', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        falsy(second, 'cancelling should not be a free way back onto the board')
+        eq(err, CB.ERR.RATE_LIMITED)
+
+        Env.advance(Config.Amendments.CancelCooldownSeconds + 10)
+        truthy(s.contracts.create(f.creator, {
+            targetCid = 'TARGET02', reason = 'x', reward = { baseline = { cash = 1000 } },
+        }), 'allowed once the cooldown passes')
+    end)
+
+    it('leaves no contract behind when escrow cannot be taken', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = #s.storage.allContracts()
+
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000, items = { { name = 'lockpick', count = 99 } } } },
+        })
+        falsy(c)
+        eq(err, CB.ERR.INSUFFICIENT)
+        eq(#s.storage.allContracts(), before, 'no shell row was written')
+        eq(Env.players[1].PlayerData.money.cash, 100000, 'and nothing was charged')
+    end)
+end)

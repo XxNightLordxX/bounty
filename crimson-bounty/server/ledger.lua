@@ -34,19 +34,11 @@ function Ledger.record(contract, hunterCid, photoRef, fulfilment, result)
         Storage.writeLedger(row)
     end
 
+    -- Depth is enforced by the storage backends on write, so there is no
+    -- separate trim step to forget to call.
     entry(contract.creator_cid, 'creator', true)
     entry(hunterCid, 'hunter', true)
     entry(contract.target_cid, 'target', Config.Ledger.ShowPhotoToTarget)
-
-    Ledger.trim(contract.creator_cid, depth)
-    Ledger.trim(hunterCid, depth)
-    Ledger.trim(contract.target_cid, depth)
-end
-
-function Ledger.trim(cid, depth)
-    -- readLedger already returns newest-first and caps at depth; storage
-    -- backends prune beyond it on their own schedule.
-    return Storage.readLedger(cid, depth)
 end
 
 function Ledger.read(cid)

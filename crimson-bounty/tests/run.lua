@@ -76,6 +76,7 @@ function _G.newStack()
     package.loaded['crimson-bounty.server.comms'] = nil
     package.loaded['crimson-bounty.server.projection'] = nil
     package.loaded['crimson-bounty.server.bridges'] = nil
+    package.loaded['crimson-bounty.server.mugshot'] = nil
     package.loaded['crimson-bounty.server.amendments'] = nil
     package.loaded['crimson-bounty.server.informant'] = nil
     package.loaded['crimson-bounty.server.bailout'] = nil
@@ -97,6 +98,7 @@ function _G.newStack()
     local comms      = require('crimson-bounty.server.comms')
     local projection = require('crimson-bounty.server.projection')
     local bridges    = require('crimson-bounty.server.bridges')
+    local mugshot    = require('crimson-bounty.server.mugshot')
 
     storage.open()
     audit.init(storage)
@@ -120,20 +122,23 @@ function _G.newStack()
     })
 
     bailout.init({ storage = storage, identity = identity, contracts = contracts,
-        escrow = escrow, audit = audit, notify = notify })
+        escrow = escrow, audit = audit, notify = notify, kidnap = kidnap })
     informant.init({ storage = storage, identity = identity, audit = audit })
     amendments.init({ storage = storage, identity = identity, contracts = contracts,
         escrow = escrow, audit = audit, notify = notify })
     comms.init({ storage = storage, identity = identity, audit = audit,
         notify = notify, ratelimit = ratelimit })
 
-    projection.init({ storage = storage, identity = identity, escrow = escrow, kidnap = kidnap })
+    mugshot.init({ identity = identity, audit = audit })
+    projection.init({ storage = storage, identity = identity, escrow = escrow,
+                      kidnap = kidnap, mugshot = mugshot })
 
     return {
         storage = storage, audit = audit, kidnap = kidnap, projection = projection,
         bailout = bailout, informant = informant, amendments = amendments, comms = comms, identity = identity, notify = notify,
         escrow = escrow, contracts = contracts, ratelimit = ratelimit,
         ledger = ledger, death = death, photo = photo, bridges = bridges,
+        mugshot = mugshot,
     }
 end
 

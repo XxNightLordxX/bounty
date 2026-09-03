@@ -400,3 +400,155 @@ describe('bailout money survives everything', function()
         eq(Env.players[1].PlayerData.money.bank, 100000, 'and no bank money appeared')
     end)
 end)
+
+describe('additive improvements apply without approval', function()
+    local function seededImprove()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } },
+            bonusPercent = 50, penaltyAmount = 10000,
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        return s, f, c
+    end
+
+    it('extends the deadline immediately', function()
+        local s, f, c = seededImprove()
+        local before = s.storage.readContract(c.id).deadline_at
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE, { seconds = 600 }))
+        eq(s.storage.readContract(c.id).deadline_at, before + 600)
+    end)
+
+    it('never extends past the absolute lifetime', function()
+        local s, f, c = seededImprove()
+        s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE,
+            { seconds = Config.Limits.ContractLifetimeSeconds })
+        local stored = s.storage.readContract(c.id)
+        truthy(stored.deadline_at <= stored.expires_at, 'the lifetime ceiling holds')
+    end)
+
+    it('raises the bonus but never lowers it', function()
+        local s, f, c = seededImprove()
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 80 }))
+        eq(s.storage.readContract(c.id).bonus_percent, 80)
+        falsy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 20 }),
+            'lowering a bonus is not an improvement')
+    end)
+
+    it('returns the difference to the hunter when the penalty is lowered', function()
+        local s, f, c = seededImprove()
+        eq(Env.players[3].PlayerData.money.bank, 40000, 'staked 10000')
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 4000 }))
+        eq(Env.players[3].PlayerData.money.bank, 46000, 'the 6000 difference comes back')
+    end)
+
+    it('refuses improvements from anyone but the creator', function()
+        local s, f, c = seededImprove()
+        local ok, err = s.amendments.improve(f.hunter, c.id, CB.AMENDMENT.EXTEND_DEADLINE, { seconds = 60 })
+        falsy(ok)
+        eq(err, CB.ERR.NOT_PARTICIPANT)
+    end)
+end)
+
+describe('amendment guards', function()
+    local function competitive()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = {
+                { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } },
+                { baseline = { cash = 1000 } },
+            } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        return s, f, c
+    end
+
+    it('refuses to switch to exclusive while several hunters hold it', function()
+        local s, f, c = competitive()
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+        local second = s.identity.resolve(4)
+        s.contracts.accept(second, c.id, false)
+
+        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_MODE,
+            { mode = CB.MODE.EXCLUSIVE })
+        truthy(proposal)
+        s.amendments.respond(f.hunter, proposal.id, true)
+        local ok = s.amendments.respond(second, proposal.id, true)
+        falsy(ok, 'exclusive means one hunter; the contract cannot land in a state it forbids')
+        eq(s.storage.readContract(c.id).mode, CB.MODE.COMPETITIVE)
+    end)
+
+    it('refuses to empty the slot hunters are competing for', function()
+        local s, f, c = competitive()
+        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.REDUCE_REWARD, { slot = 1 })
+        truthy(proposal)
+        local ok = s.amendments.respond(f.hunter, proposal.id, true)
+        falsy(ok, 'the live slot must stay funded')
+        eq(s.escrow.moneyValue(c.id, { slot = 1 }), 1000, 'still funded')
+    end)
+
+    it('allows withdrawing a later slot nobody is competing for', function()
+        local s, f, c = competitive()
+        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.REDUCE_REWARD, { slot = 3 })
+        truthy(s.amendments.respond(f.hunter, proposal.id, true))
+        eq(s.escrow.moneyValue(c.id, { slot = 3 }), 0, 'returned to the creator')
+        eq(s.escrow.moneyValue(c.id, { slot = 1 }), 1000, 'the live slot is untouched')
+    end)
+
+    it('binds a hunter who joins after a proposal, only once they respond', function()
+        local s, f, c = competitive()
+        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_REASON,
+            { reason = 'new reason' })
+
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+        local second = s.identity.resolve(4)
+        s.contracts.accept(second, c.id, false)
+
+        local _, _, outcome = s.amendments.respond(f.hunter, proposal.id, true)
+        eq(outcome, 'pending', 'the newcomer has not agreed yet')
+        local _, _, final = s.amendments.respond(second, proposal.id, true)
+        eq(final, 'applied')
+    end)
+
+    it('does not let a hunter who left keep a veto', function()
+        local s, f, c = competitive()
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+        local second = s.identity.resolve(4)
+        s.contracts.accept(second, c.id, false)
+
+        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_REASON,
+            { reason = 'new reason' })
+        s.contracts.abandon(second, c.id)
+
+        local _, _, outcome = s.amendments.respond(f.hunter, proposal.id, true)
+        eq(outcome, 'applied', 'the remaining participants are enough')
+    end)
+end)
+
+describe('bailout timing', function()
+    it('cannot be bought while a handover is under way', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 10000,
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+
+        for _, src in ipairs({ 1, 2, 3 }) do
+            Env.players[src]._coords = { x = 10.0, y = 10.0, z = 30.0 }
+        end
+        Env.players[2].PlayerData.metadata.ishandcuffed = true
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+
+        local ok, err = s.bailout.buy(f.target, c.id)
+        falsy(ok, 'the hunter has them in hand; no buying out from there')
+        eq(err, CB.ERR.BAD_STATE)
+        eq(Env.players[2].PlayerData.money.bank, 20000, 'and nothing was charged')
+    end)
+end)

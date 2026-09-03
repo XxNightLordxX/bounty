@@ -135,3 +135,66 @@ describe('projection', function()
         truthy(row.targetProtected, 'no hunter accepts a police contract by accident')
     end)
 end)
+
+describe('target mugshots', function()
+    local function seededMug()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        return s, f, c
+    end
+
+    local VALID = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
+
+    it('asks the target to render their own headshot', function()
+        local s, f, c = seededMug()
+        s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+
+        local asked = false
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:renderMugshot' and event.target == 2 then asked = true end
+        end
+        truthy(asked, 'only the target can reliably render their own ped')
+    end)
+
+    it('serves the cached image to every viewer once rendered', function()
+        local s, f, c = seededMug()
+        truthy(s.mugshot.store('TARGET01', VALID))
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        eq(row.targetImage, VALID)
+    end)
+
+    it('rejects an oversized or malformed image', function()
+        local s = newStack()
+        fixture(s)
+        falsy(s.mugshot.store('TARGET01', string.rep('a', Config.Mugshot.MaxImageBytes + 1)))
+        falsy(s.mugshot.store('TARGET01', 'javascript:alert(1)'))
+        falsy(s.mugshot.store('TARGET01', 'https://evil.tld/x.png'))
+        falsy(s.mugshot.store('TARGET01', 12345))
+        falsy(s.mugshot.get('TARGET01'), 'nothing bad was cached')
+    end)
+
+    it('does not re-render inside the refresh floor', function()
+        local s, f, c = seededMug()
+        s.mugshot.store('TARGET01', VALID)
+        Env.clientEvents = {}
+
+        s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        for _, event in ipairs(Env.clientEvents) do
+            falsy(event.name == 'crimson-bounty:renderMugshot',
+                'a fresh image must not trigger another render')
+        end
+    end)
+
+    it('re-renders after an appearance change once the floor has passed', function()
+        local s, f, c = seededMug()
+        s.mugshot.store('TARGET01', VALID)
+
+        falsy(s.mugshot.invalidate('TARGET01'), 'too soon after the last render')
+        Env.advance((Config.Mugshot.MinRefreshMinutes * 60) + 10)
+        truthy(s.mugshot.invalidate('TARGET01'), 'now the appearance change takes effect')
+        falsy(s.mugshot.get('TARGET01'))
+    end)
+end)

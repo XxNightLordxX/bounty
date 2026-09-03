@@ -84,6 +84,18 @@ function Contracts.canCreate(actor, targetActor)
         end
     end
 
+    -- Cancelling and re-listing is otherwise free, which makes the board
+    -- spammable without ever paying anything (§12.4).
+    if Config.Amendments.CancelCooldownSeconds > 0 then
+        for i = 1, #contracts do
+            local c = contracts[i]
+            if c.creator_cid == actor.cid and c.state == CB.STATE.CANCELLED and c.resolved_at
+                and (now - c.resolved_at) < Config.Amendments.CancelCooldownSeconds then
+                return false, CB.ERR.RATE_LIMITED
+            end
+        end
+    end
+
     if byCreator >= Config.Limits.MaxActiveContractsPerCreator then return false, CB.ERR.LIMIT_REACHED end
     if byTarget >= Config.Limits.MaxActiveContractsPerTarget then return false, CB.ERR.TARGET_PROTECTED end
 
@@ -197,15 +209,17 @@ function Contracts.create(actor, req)
         paused_ms     = 0,
     }
 
-    if not Storage.writeContract(contract) then return nil, CB.ERR.BAD_STATE end
-
+    -- Escrow is taken before the contract is persisted, so a failure leaves
+    -- no row behind at all rather than a cancelled shell that still counts
+    -- against the creator's cooldowns.
     local took
     took, err = Escrow.take(actor, contract.id, lines)
-    if not took then
-        -- Roll the contract back out of existence; escrow.take already
-        -- returned everything it had taken.
-        Storage.compareSetContractState(contract.id, CB.STATE.ACTIVE, CB.STATE.CANCELLED)
-        return nil, err
+    if not took then return nil, err end
+
+    if not Storage.writeContract(contract) then
+        -- The contract could not be stored, so the escrow must come back.
+        Escrow.release(contract.id, actor.cid, nil, 'contract_write_failed')
+        return nil, CB.ERR.BAD_STATE
     end
 
     Audit.action('contract_created', actor.cid, contract.id, {
@@ -257,6 +271,11 @@ function Contracts.accept(actor, contractId, anonymous)
         if existing[i].state == 'active' then activeCount = activeCount + 1 end
     end
 
+    -- Aliases are numbered from everyone who has ever held this contract,
+    -- not from the live count: reusing "Operative #2" after someone abandons
+    -- makes two different people indistinguishable in the creator's threads.
+    local aliasNumber = #existing + 1
+
     if contract.mode == CB.MODE.EXCLUSIVE then
         if activeCount > 0 then return false, CB.ERR.BAD_STATE end
         if not Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted') then
@@ -303,7 +322,7 @@ function Contracts.accept(actor, contractId, anonymous)
         hunter_cid    = actor.cid,
         hunter_account = actor.account,
         hunter_name   = actor.name,
-        alias         = 'Operative #' .. tostring(activeCount + 1),
+        alias         = 'Operative #' .. tostring(aliasNumber),
         anon          = anonymous == true,
         accepted_at   = os.time(),
         state         = 'active',
@@ -341,6 +360,9 @@ function Contracts.abandon(actor, contractId)
         if hunters[i].state == 'active' then remaining = remaining + 1 end
     end
 
+    -- With nobody left holding it, an exclusive contract goes back on the
+    -- board. A contract mid-settlement is left alone: claimSlot owns that
+    -- transition and will land it in ACCEPTED or COMPLETED itself.
     if remaining == 0 and contract.state == CB.STATE.ACCEPTED then
         Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'abandoned')
     end
@@ -381,6 +403,14 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment)
 
     local slot = contract.next_slot or 1
     if slot > (contract.payout_slots or 1) then return false, CB.ERR.ALREADY_SETTLED end
+
+    -- Eligibility is re-checked here, not just at creation: a multi-slot
+    -- contract is claimed repeatedly over time, and the target's post-respawn
+    -- protection has to hold for every claim (§14.39).
+    local targetActor = Identity.byCitizenId(contract.target_cid)
+    if targetActor and Contracts.isImmune(targetActor) then
+        return false, CB.ERR.TARGET_PROTECTED
+    end
 
     -- Take the contract's lock for the duration of the settlement, so the
     -- slot cannot be claimed twice (§14.3).
@@ -474,6 +504,11 @@ function Contracts.resolve(contractId, terminal, recipientCid, filter, reason)
             { portion = CB.PORTION.STAKE, staker = hunter.hunter_cid },
             toCreator and 'penalty_forfeited' or 'stake_returned')
     end
+
+    -- Per-contract caches are released here rather than growing for the
+    -- life of the process.
+    Notify.clearContract(contractId)
+    if Contracts.onResolved then Contracts.onResolved(contractId) end
 
     local _, result = Escrow.release(contractId, recipientCid, filter, reason)
 

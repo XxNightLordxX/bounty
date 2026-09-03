@@ -76,6 +76,76 @@ function Amendments.addEscrow(actor, contractId, rewardSpec)
     return true
 end
 
+--- Improve a contract in a way that cannot disadvantage a hunter, applied
+--- at once with no approval (§12.1). Reward increases go through
+--- addEscrow; these are the non-monetary improvements.
+---@return boolean ok
+---@return string|nil err
+function Amendments.improve(actor, contractId, kind, payload)
+    contractId = Util.toId(contractId)
+    if not contractId then return false, CB.ERR.INVALID_INPUT end
+    if not CB.ADDITIVE[kind] then return false, CB.ERR.INVALID_INPUT end
+
+    local contract = Storage.readContract(contractId)
+    if not contract then return false, CB.ERR.NOT_FOUND end
+    if contract.creator_cid ~= actor.cid then return false, CB.ERR.NOT_PARTICIPANT end
+    if CB.TERMINAL[contract.state] then return false, CB.ERR.BAD_STATE end
+
+    payload = type(payload) == 'table' and payload or {}
+
+    if kind == CB.AMENDMENT.EXTEND_DEADLINE then
+        local seconds = Util.toPositive(payload.seconds, Config.Limits.ContractLifetimeSeconds)
+        if not seconds then return false, CB.ERR.INVALID_INPUT end
+        contract.deadline_at = (contract.deadline_at or os.time()) + seconds
+        -- The absolute lifetime is a ceiling, not a suggestion.
+        if contract.expires_at and contract.deadline_at > contract.expires_at then
+            contract.deadline_at = contract.expires_at
+        end
+
+    elseif kind == CB.AMENDMENT.RAISE_BONUS then
+        local percent = Util.toPositive(payload.percent, Config.Bonus.maxPercent)
+        if not percent or percent <= (contract.bonus_percent or 0) then
+            return false, CB.ERR.INVALID_INPUT
+        end
+        contract.bonus_percent = percent
+
+    elseif kind == CB.AMENDMENT.LOWER_PENALTY then
+        local amount = Util.toCount(payload.amount, Config.MaxContractValue)
+        if not amount or amount >= (contract.penalty_amount or 0) then
+            return false, CB.ERR.INVALID_INPUT
+        end
+        -- Lowering the penalty returns the difference to every hunter who
+        -- staked the old, higher figure.
+        local difference = (contract.penalty_amount or 0) - amount
+        local hunters = Storage.readHunters(contractId)
+        for i = 1, #hunters do
+            if hunters[i].state == 'active' then
+                local hunter = Identity.byCitizenId(hunters[i].hunter_cid)
+                if hunter then hunter.player.Functions.AddMoney('bank', difference) end
+                Audit.financial('stake_reduced', hunters[i].hunter_cid, contractId,
+                    { returned = difference })
+            end
+        end
+        contract.penalty_amount = amount
+
+    else
+        return false, CB.ERR.INVALID_INPUT
+    end
+
+    Storage.writeContract(contract)
+    Audit.action('contract_improved', actor.cid, contractId, { kind = kind })
+
+    local people = participants(contract)
+    for cid, role in pairs(people) do
+        if role == 'hunter' then
+            Notify.toCitizen(cid, 'Contract improved',
+                'The client has improved the terms of a contract you hold.')
+        end
+    end
+
+    return true
+end
+
 --------------------------------------------------------------------------
 -- Material changes (§12.2)
 --------------------------------------------------------------------------
@@ -263,6 +333,16 @@ function Amendments.apply(proposal)
 
     elseif kind == CB.AMENDMENT.CHANGE_MODE then
         local mode = payload.mode == CB.MODE.COMPETITIVE and CB.MODE.COMPETITIVE or CB.MODE.EXCLUSIVE
+        if mode == CB.MODE.EXCLUSIVE then
+            -- Exclusive means one hunter. Switching while several hold it
+            -- would leave a contract in a state its own rules forbid.
+            local active = 0
+            local hunters = Storage.readHunters(proposal.contract_id)
+            for i = 1, #hunters do
+                if hunters[i].state == 'active' then active = active + 1 end
+            end
+            if active > 1 then return false, CB.ERR.BAD_STATE end
+        end
         contract.mode = mode
 
     elseif kind == CB.AMENDMENT.CHANGE_REASON then
@@ -281,8 +361,11 @@ function Amendments.apply(proposal)
     elseif kind == CB.AMENDMENT.REDUCE_REWARD then
         -- Reducing a reward means returning part of the escrow to the
         -- creator. Only an unclaimed slot may be given back.
+        -- Only a slot nobody is competing for yet may be withdrawn. Emptying
+        -- the live slot would leave a claimable payout funded with nothing.
         local slot = Util.toPositive(payload.slot, Config.Limits.MaxPayoutSlots)
-        if not slot or slot < (contract.next_slot or 1) then return false, CB.ERR.INVALID_INPUT end
+        if not slot or slot <= (contract.next_slot or 1) then return false, CB.ERR.INVALID_INPUT end
+        if slot > (contract.payout_slots or 1) then return false, CB.ERR.INVALID_INPUT end
         Escrow.release(proposal.contract_id, contract.creator_cid, { slot = slot }, 'reward_reduced')
 
     else

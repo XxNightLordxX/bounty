@@ -168,6 +168,18 @@ end
 
 function Memory.writeLedger(entry)
     db.ledger[#db.ledger + 1] = entry
+
+    -- Prune past the configured depth, as the other backends do. Without
+    -- this the table grows for the life of the process.
+    local depth = math.min(Config.Ledger.Depth, Config.Ledger.MaxDepthHardCap)
+    local seen = 0
+    for i = #db.ledger, 1, -1 do
+        if db.ledger[i].cid == entry.cid then
+            seen = seen + 1
+            if seen > depth then table.remove(db.ledger, i) end
+        end
+    end
+
     return true
 end
 function Memory.readLedger(cid, depth)

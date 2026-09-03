@@ -10,6 +10,8 @@
 
   /* ---------- transport ---------- */
 
+  // Each call is answered by its own reply; the client bridge correlates
+  // them, so two searches in flight cannot resolve into each other.
   function post(name, data) {
     return fetch('https://' + RESOURCE + '/crimson:' + name, {
       method: 'POST',

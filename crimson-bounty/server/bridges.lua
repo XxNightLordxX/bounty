@@ -66,6 +66,7 @@ function Bridges.onPlayerDropped(modules, cid)
     modules.kidnap.clearPlayer(cid)
     modules.notify.clearPlayer(cid)
     modules.comms.clearPlayer(cid)
+    modules.mugshot.clearPlayer(cid)
 
     -- Memory mode holds no durable escrow, so a creator disconnecting would
     -- strand it. Refund and close rather than risk losing their property.
@@ -85,6 +86,13 @@ end
 
 --- Register every bridge against the live runtime.
 function Bridges.install(modules)
+    -- Per-contract caches in modules that contracts.lua cannot see are
+    -- released through this hook when a contract resolves.
+    modules.contracts.onResolved = function(contractId)
+        modules.informant.clearContract(contractId)
+        modules.comms.clearContract(contractId)
+    end
+
     -- Citizen ids are remembered while players are connected, so disconnect
     -- cleanup does not depend on the framework still knowing them.
     local connected = {}
@@ -114,6 +122,21 @@ function Bridges.install(modules)
         SetTimeout(Config.PendingEscrow.LoginRetryDelayMs or 5000, function()
             Bridges.onPlayerReady(modules, src)
         end)
+    end)
+
+    -- A player's own client is the only one that can reliably render their
+    -- headshot, so the image arrives from them and is bounded on arrival.
+    RegisterNetEvent('crimson-bounty:mugshot', function(image)
+        local actor = modules.identity.resolve(source)
+        if not actor then return end
+        if not modules.ratelimit.check(actor.cid, 'mugshot') then return end
+        modules.mugshot.store(actor.cid, image)
+    end)
+
+    RegisterNetEvent('crimson-bounty:appearanceChanged', function()
+        local actor = modules.identity.resolve(source)
+        if not actor then return end
+        modules.mugshot.invalidate(actor.cid)
     end)
 
     AddEventHandler('playerDropped', function()

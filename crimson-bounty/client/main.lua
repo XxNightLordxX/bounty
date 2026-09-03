@@ -6,7 +6,11 @@
 
 local App = {}
 
-local pending = {}   -- [event] = callback awaiting a server reply
+--- Outstanding requests, keyed by a per-request id rather than by event
+--- name: two searches in flight at once would otherwise resolve into each
+--- other's callbacks and show the wrong results.
+local pending = {}
+local requestSeq = 0
 local appReady = false
 
 --------------------------------------------------------------------------
@@ -49,16 +53,31 @@ end)
 
 --- Ask the server for something and hand the answer to the UI.
 function App.request(event, payload, cb)
-    pending[event] = pending[event] or {}
-    if cb then table.insert(pending[event], cb) end
-    TriggerServerEvent('crimson-bounty:' .. event, payload or {})
+    requestSeq = requestSeq + 1
+    local id = requestSeq
+
+    payload = payload or {}
+    payload.__rid = id
+
+    if cb then
+        pending[id] = cb
+        -- Never leak a callback: if the server never answers, drop it.
+        SetTimeout(15000, function()
+            if pending[id] then
+                pending[id] = nil
+                cb({ ok = false, err = 'timeout', event = event })
+            end
+        end)
+    end
+
+    TriggerServerEvent('crimson-bounty:' .. event, payload)
 end
 
 RegisterNetEvent('crimson-bounty:result', function(result)
-    local waiting = pending[result.event]
-    if waiting then
-        pending[result.event] = nil
-        for i = 1, #waiting do waiting[i](result) end
+    local cb = result.rid and pending[result.rid]
+    if cb then
+        pending[result.rid] = nil
+        cb(result)
     end
 
     -- Everything also goes to the UI, which decides what to render.
@@ -93,7 +112,7 @@ local UI_EVENTS = {
     'create', 'accept', 'abandon',
     'requestPhotoToken', 'armKidnap', 'kidnapProgress',
     'bailout', 'informant',
-    'addEscrow', 'propose', 'respondAmendment',
+    'addEscrow', 'improve', 'propose', 'respondAmendment',
     'threads', 'readThread', 'sendMessage', 'requestCall',
 }
 

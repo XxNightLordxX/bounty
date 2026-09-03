@@ -1,71 +1,53 @@
---- Live target mugshots (§7.2, §14.26).
+--- Client half of the mugshot pipeline (§7.2).
 ---
---- Rendered on demand and cached, refreshed when appearance actually changes
---- rather than on a timer: a per-frame or per-listing render is the dominant
---- frame cost of a script like this.
+--- A player renders only their OWN ped, on request, and sends the image back.
+--- Rendering another player's ped only works while they are streamed in, so
+--- doing it here is what makes a mugshot work at any distance — and one
+--- render then serves every viewer instead of one per listing.
 
 local Mugshot = {}
 
-local cache = {}       -- [cid] = { data = base64, at = ms }
-local rendering = 0
+local lastRender = 0
 
-local function canRender()
-    return GetResourceState('MugShotBase64') == 'started'
-        and rendering < Config.Mugshot.MaxConcurrentRenders
-end
+--- Render this player's headshot and hand it to the server.
+local function renderSelf()
+    if GetResourceState('MugShotBase64') ~= 'started' then return false end
 
---- Render the given player's headshot, or return the cached one if it is
---- still fresh enough.
----@param serverId number
----@param cid string
----@return string|nil base64
-function Mugshot.of(serverId, cid)
-    local cached = cache[cid]
-    local floorMs = (Config.Mugshot.MinRefreshMinutes or 5) * 60000
+    -- A floor here as well as on the server: a client cannot be made to
+    -- render in a loop by a flood of requests.
+    local now = GetGameTimer()
+    if now - lastRender < 30000 then return false end
+    lastRender = now
 
-    if cached and (GetGameTimer() - cached.at) < floorMs then
-        return cached.data
-    end
-    if not canRender() then
-        return cached and cached.data or nil
-    end
+    local ped = PlayerPedId()
+    if not ped or ped == 0 then return false end
 
-    local ped = GetPlayerPed(GetPlayerFromServerId(serverId))
-    if not ped or ped == 0 or not DoesEntityExist(ped) then
-        return cached and cached.data or nil
-    end
-
-    rendering = rendering + 1
     local ok, image = pcall(function()
         return exports['MugShotBase64']:GetMugShotBase64(ped, true)
     end)
-    rendering = rendering - 1
+    if not ok or type(image) ~= 'string' then return false end
 
-    if not ok or not image then return cached and cached.data or nil end
-
-    cache[cid] = { data = image, at = GetGameTimer() }
-    return image
+    TriggerServerEvent('crimson-bounty:mugshot', image)
+    return true
 end
 
---- Invalidate a cached mugshot. Called when the player's appearance changes,
---- so the next request re-renders rather than a timer doing it for everyone.
-function Mugshot.invalidate(cid)
-    cache[cid] = nil
-end
-
-RegisterNetEvent('crimson-bounty:invalidateMugshot', function(cid)
-    Mugshot.invalidate(cid)
+RegisterNetEvent('crimson-bounty:renderMugshot', function()
+    renderSelf()
 end)
 
--- Clothing resources fire their own events on a change; hooking them keeps
--- the refresh event-driven.
+--- Appearance changes invalidate the cached image rather than a timer
+--- re-rendering every listed bounty (§14.26).
+local function announceAppearanceChange()
+    TriggerServerEvent('crimson-bounty:appearanceChanged')
+end
+
 for _, event in ipairs({
-    'qb-clothing:client:loadOutfit', 'illenium-appearance:client:reloadSkin',
+    'qb-clothing:client:loadOutfit',
+    'illenium-appearance:client:reloadSkin',
     'rcore_clothing:outfitChanged',
+    'crimson-bounty:appearanceChanged',
 }) do
-    AddEventHandler(event, function()
-        TriggerServerEvent('crimson-bounty:appearanceChanged')
-    end)
+    AddEventHandler(event, announceAppearanceChange)
 end
 
 return Mugshot
