@@ -176,12 +176,19 @@ end
 --- Record money owed to an offline player as a real escrow line, so
 --- Escrow.retryPending can deliver it on their next login (§9.3).
 function Bailout.owe(cid, contractId, amount, account, reason)
-    local lineId = ('%s:owed%d'):format(contractId, os.time() % 100000)
+    -- The id comes from the store's own sequence, not a truncated clock:
+    -- two owes in the same second would otherwise share an id and the second
+    -- would overwrite the first.
+    local lineId = Storage.nextId('owe')
+
     Storage.writeEscrow(contractId, { {
         id = lineId,
         contract_id = contractId,
         slot = 0,                       -- outside the payout slots: not claimable
-        portion = CB.PORTION.BASELINE,
+        -- Its own portion and an explicit owner, so no general release can
+        -- sweep money that is already promised to someone.
+        portion = CB.PORTION.OWED,
+        owed_to = cid,
         source = account == 'cash' and 'cash' or 'bank',
         amount = amount,
         state = CB.ESCROW_STATE.HELD,

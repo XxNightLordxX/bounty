@@ -139,7 +139,11 @@ function Escrow.validate(actor, spec)
             if part ~= nil then
                 if type(part) ~= 'table' then return nil, CB.ERR.INVALID_REWARD end
                 for _, source in ipairs({ 'cash', 'bank', 'dirty' }) do
-                    if part[source] ~= nil then
+                    -- A zero means the creator did not pick this source, not
+                    -- that the whole contract is invalid. Treating it as a
+                    -- rejection made every submission from a form that sends
+                    -- all its fields fail, which is every form.
+                    if part[source] ~= nil and part[source] ~= 0 and part[source] ~= '0' then
                         local err = addMoney(portion, source, part[source])
                         if err then return nil, err end
                     end
@@ -325,8 +329,14 @@ function Escrow.release(contractId, recipientCid, filter, reason)
             if filter.staker and line.staker ~= filter.staker then matches = false end
             -- A release that names no portion is a general refund, and must
             -- not sweep up a hunter's stake along with the creator's escrow.
-            if not filter.portion and line.portion == CB.PORTION.STAKE then matches = false end
-        elseif line.portion == CB.PORTION.STAKE then
+            -- A release that names no portion is a general refund. It must
+            -- not sweep up a hunter's stake, nor money already promised to a
+            -- named person.
+            if not filter.portion
+                and (line.portion == CB.PORTION.STAKE or line.portion == CB.PORTION.OWED) then
+                matches = false
+            end
+        elseif line.portion == CB.PORTION.STAKE or line.portion == CB.PORTION.OWED then
             matches = false
         end
 
@@ -428,7 +438,9 @@ function Escrow.moneyValue(contractId, filter)
             if filter.portion and line.portion ~= filter.portion then matches = false end
             if filter.slot and line.slot ~= filter.slot then matches = false end
         end
-        if matches and line.portion ~= CB.PORTION.STAKE and CB.MONEY_SOURCES[line.source] then
+        if matches and line.portion ~= CB.PORTION.STAKE
+            and line.portion ~= CB.PORTION.OWED
+            and CB.MONEY_SOURCES[line.source] then
             if line.state ~= CB.ESCROW_STATE.SETTLED then
                 total = total + (line.amount or 0)
             end
@@ -447,7 +459,8 @@ function Escrow.retryPending(cid)
     for i = 1, math.min(#queued, Config.PendingEscrow.MaxRetriesPerLogin) do
         local entry = queued[i]
         local line = Storage.readEscrowLine(entry.line_id)
-        if line and line.state == CB.ESCROW_STATE.HELD then
+        if line and line.state == CB.ESCROW_STATE.HELD
+            and (line.owed_to == nil or line.owed_to == cid) then
             local claimed = Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING)
             if claimed then
                 if Escrow.deliver(cid, line) then

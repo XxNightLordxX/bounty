@@ -237,8 +237,11 @@ function MySQLStore.writeEscrow(contractId, lines)
                 (id, contract_id, slot, portion, source, amount, item, quantity, metadata,
                  staker, inv_slot, owed_to, state)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON DUPLICATE KEY UPDATE
-                state = VALUES(state), amount = VALUES(amount), owed_to = VALUES(owed_to)
+            -- State and amount are NOT written here: they move only through
+            -- claimEscrowLine / settleEscrowLine / setEscrowAmount, which are
+            -- guarded. Writing them from a caller-held copy could resurrect a
+            -- line that settled while the caller was reading.
+            ON DUPLICATE KEY UPDATE owed_to = VALUES(owed_to)
         ]], {
             l.id, contractId, l.slot or 1, l.portion, l.source, l.amount or 0,
             l.item, l.quantity or 0, l.metadata and json.encode(l.metadata) or nil,
@@ -274,6 +277,22 @@ function MySQLStore.claimEscrowLine(id, expected, next_)
     local affected = MySQL.update.await(
         'UPDATE crimson_escrow SET state = ? WHERE id = ? AND state = ?',
         { next_, id, expected })
+    return (tonumber(affected) or 0) > 0
+end
+
+--- Guarded amount change, in one statement so the check and the write
+--- cannot be interleaved. State is deliberately not written here.
+function MySQLStore.setEscrowAmount(id, expectedState, amount, expectedAmount)
+    local affected
+    if expectedAmount ~= nil then
+        affected = MySQL.update.await(
+            'UPDATE crimson_escrow SET amount = ? WHERE id = ? AND state = ? AND amount = ?',
+            { amount, id, expectedState, expectedAmount })
+    else
+        affected = MySQL.update.await(
+            'UPDATE crimson_escrow SET amount = ? WHERE id = ? AND state = ?',
+            { amount, id, expectedState })
+    end
     return (tonumber(affected) or 0) > 0
 end
 

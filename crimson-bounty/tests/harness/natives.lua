@@ -69,6 +69,13 @@ function Natives.install()
         local p = Env.players[ped - 1000]
         return p and p._health or 0
     end
+    _G.GetPedSourceOfDeath = function(ped)
+        local p = Env.players[ped - 1000]
+        return p and p._killerPed or 0
+    end
+    _G.IsPedAPlayer = function(ped) return Env.players[ped - 1000] ~= nil end
+    _G.NetworkGetPlayerIndexFromPed = function(ped) return ped - 1000 end
+    _G.GetPlayerServerId = function(index) return index end
     _G.GetPedArmour = function(ped)
         local p = Env.players[ped - 1000]
         return p and p._armour or 0

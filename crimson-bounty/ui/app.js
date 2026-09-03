@@ -6,7 +6,10 @@
   'use strict';
 
   var RESOURCE = 'crimson-bounty';
-  var state = { tab: 'board', board: null, mine: null, ledger: null, busy: false, notice: null };
+  var state = {
+    tab: 'board', board: null, mine: null, ledger: null,
+    progress: {}, busy: false, notice: null
+  };
 
   /* ---------- transport ---------- */
 
@@ -155,11 +158,13 @@
       talk.onclick = function () { openThread(contract, null); };
       row.appendChild(talk);
 
-      if (contract.kidnapProgress) {
-        row.parentNode = null;
+      // Live progress if the countdown is running, otherwise the snapshot
+      // that came with the projection.
+      var progress = state.progress[contract.id] || contract.kidnapProgress;
+      if (progress) {
         var wrap = el('div');
         wrap.appendChild(row);
-        wrap.appendChild(countdown(contract.kidnapProgress));
+        wrap.appendChild(countdown(progress));
         return wrap;
       }
       return row;
@@ -261,11 +266,18 @@
     var timer = setInterval(function () {
       post('kidnapProgress', { id: id }).then(function (r) {
         if (!r.ok || !r.data || r.data.elapsed === undefined) { clearInterval(timer); return; }
+        // Keep the answer. Rendering from the projection's snapshot draws
+        // the same frozen bar every second no matter how often we poll.
+        state.progress[id] = r.data;
         render();
-        if (r.data.elapsed >= r.data.required) { clearInterval(timer); refresh(); }
+        if (r.data.elapsed >= r.data.required) {
+          clearInterval(timer);
+          delete state.progress[id];
+          refresh();
+        }
       });
     }, 1000);
-    setTimeout(function () { clearInterval(timer); }, 120000);
+    setTimeout(function () { clearInterval(timer); delete state.progress[id]; }, 120000);
   }
 
   function bailout(contract) {
@@ -487,6 +499,9 @@
 
     form.appendChild(labelled('Kidnapping bonus %', numberInput('bonus', 50)));
     form.appendChild(labelled('Buyout price (0 for none)', numberInput('bailout', 0)));
+    form.appendChild(labelled('Failure penalty (0 for none)', numberInput('penalty', 0)));
+    form.appendChild(el('div', 'hint',
+      'A hunter stakes this when they accept, and forfeits it to you if they walk away.'));
 
     var anon = document.createElement('input');
     anon.type = 'checkbox'; anon.id = 'anon';
@@ -528,13 +543,22 @@
     var count = parseInt(document.getElementById('slots-count').value, 10) || 1;
     var slots = [];
     for (var i = 1; i <= count; i++) {
-      slots.push({
-        baseline: {
-          cash: num('slot-cash-' + i),
-          bank: num('slot-bank-' + i),
-          dirty: num('slot-dirty-' + i)
-        }
-      });
+      // Only sources the creator actually funded are sent. A zero is not a
+      // reward, and a contract offering one is rejected server-side — which
+      // is why sending all three keys unconditionally made every contract
+      // creation fail.
+      var baseline = {};
+      var cash = num('slot-cash-' + i);
+      var bank = num('slot-bank-' + i);
+      var dirty = num('slot-dirty-' + i);
+      if (cash) baseline.cash = cash;
+      if (bank) baseline.bank = bank;
+      if (dirty) baseline.dirty = dirty;
+
+      if (!cash && !bank && !dirty) {
+        return say('Payout ' + i + ' has no reward in it.');
+      }
+      slots.push({ baseline: baseline });
     }
 
     var protectedTarget = document.getElementById('target-handle').dataset.protected === 'true';
@@ -551,6 +575,7 @@
       reward: { slots: slots },
       bonusPercent: num('bonus'),
       bailoutAmount: num('bailout'),
+      penaltyAmount: num('penalty'),
       anonymous: document.getElementById('anon').checked
     }).then(function (r) {
       if (!r.ok) return fail(r);
@@ -597,13 +622,15 @@
     var results = el('div');
 
     input.oninput = function () {
-      if (input.value.length < 3) { results.innerHTML = ''; return; }
+      // Matches Config.Targeting.MinQueryLength. A shorter query is rejected
+      // server-side and burns a rate-limit token for nothing.
+      if (input.value.length < 4) { results.innerHTML = ''; return; }
       post('searchTargets', { query: input.value }).then(function (r) {
         results.innerHTML = '';
         if (!r.ok || !r.data) return;
         r.data.forEach(function (person) {
           var pick = el('button', 'ghost',
-            person.name + (person.protected ? '  ·  ' + (person.job || 'LEO') : ''));
+            person.name + (person.protected ? '  ·  LAW ENFORCEMENT' : ''));
           pick.style.marginTop = '0.3rem';
           pick.onclick = function () {
             handle.value = person.handle;
@@ -656,9 +683,13 @@
     tab.onclick = function () { state.tab = tab.dataset.tab; render(); };
   });
 
+  // The client mirrors every server reply here as well as resolving the
+  // fetch that asked for it. Refreshing on those is a loop: one refresh
+  // sends three requests, each reply triggers another refresh, and the app
+  // buries itself within seconds. Only an unsolicited push is acted on.
   window.addEventListener('message', function (event) {
     var data = event.data || {};
-    if (data.type === 'result') refresh();
+    if (data.type === 'push') refresh();
   });
 
   render();

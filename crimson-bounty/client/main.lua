@@ -139,7 +139,21 @@ CreateThread(function()
 
         if dead and not wasDead then
             wasDead = true
-            TriggerServerEvent('crimson-bounty:iDied')
+
+            -- The victim reports who killed them, read from their own game.
+            -- A killer's claim about their own kill is exactly what an
+            -- attacker forges; a victim has no reason to hand credit to
+            -- their killer, and the server corroborates it either way.
+            local killer = GetPedSourceOfDeath(ped)
+            local killerServerId
+            if killer and killer ~= 0 and killer ~= ped and IsPedAPlayer(killer) then
+                local killerPlayer = NetworkGetPlayerIndexFromPed(killer)
+                if killerPlayer and killerPlayer ~= -1 then
+                    killerServerId = GetPlayerServerId(killerPlayer)
+                end
+            end
+
+            TriggerServerEvent('crimson-bounty:iDied', killerServerId)
         elseif not dead and wasDead then
             wasDead = false
             TriggerServerEvent('crimson-bounty:iRevived')

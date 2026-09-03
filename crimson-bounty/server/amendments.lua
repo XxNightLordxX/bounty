@@ -126,20 +126,39 @@ function Amendments.improve(actor, contractId, kind, payload)
         local lines = Storage.readEscrow(contractId)
         for i = 1, #lines do
             local line = lines[i]
+            -- A stake already owed to someone belongs to them: a stake
+            -- forfeited to an offline creator is still `held`, and refunding
+            -- its difference to the hunter who forfeited it hands the
+            -- creator's money back to the person who walked away.
+            local claimedByOther = line.owed_to ~= nil and line.owed_to ~= line.staker
+
+            -- And only a hunter still on the contract has a live stake.
+            local hunter = line.staker and Storage.readHunter(contractId, line.staker)
+            local stillActive = hunter and hunter.state == 'active'
+
             if line.portion == CB.PORTION.STAKE
                 and line.state == CB.ESCROW_STATE.HELD
+                and not claimedByOther
+                and stillActive
                 and (line.amount or 0) > amount then
 
                 local returned = line.amount - amount
                 local staker = Identity.byCitizenId(line.staker)
 
                 if staker then
-                    -- Back to the account it came from, not always bank.
-                    staker.player.Functions.AddMoney(line.source, returned)
-                    line.amount = amount
-                    Storage.writeEscrow(contractId, { line })
-                    Audit.financial('stake_reduced', line.staker, contractId,
-                        { returned = returned, remaining = amount })
+                    -- Guarded write: the line must still be exactly as it
+                    -- was read. Writing a caller-held copy back would let a
+                    -- settlement that landed in between be undone, putting a
+                    -- settled line back on the board as claimable.
+                    local reduced = Storage.setEscrowAmount(
+                        line.id, CB.ESCROW_STATE.HELD, amount, line.amount)
+
+                    if reduced then
+                        -- Back to the account it came from, not always bank.
+                        staker.player.Functions.AddMoney(line.source, returned)
+                        Audit.financial('stake_reduced', line.staker, contractId,
+                            { returned = returned, remaining = amount })
+                    end
                 else
                     -- The staker is offline: their stake stays as it is
                     -- rather than being reduced against a player who cannot

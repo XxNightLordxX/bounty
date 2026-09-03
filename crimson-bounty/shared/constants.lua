@@ -60,7 +60,13 @@ CB.MONEY_SOURCES = { cash = true, bank = true, dirty = true }
 
 --- A stake is escrow held from the *hunter*, not the creator: the failure
 --- penalty they agreed to when accepting an exclusive contract (§3.6).
-CB.PORTION = { BASELINE = 'baseline', BONUS = 'bonus', STAKE = 'stake' }
+---
+--- An owed line is money already promised to one named person — a premium
+--- for an offline creator, a refund for an offline target. It is its own
+--- portion so that no general release can sweep it up by accident.
+CB.PORTION = {
+    BASELINE = 'baseline', BONUS = 'bonus', STAKE = 'stake', OWED = 'owed',
+}
 
 CB.MODE = { EXCLUSIVE = 'exclusive', COMPETITIVE = 'competitive' }
 

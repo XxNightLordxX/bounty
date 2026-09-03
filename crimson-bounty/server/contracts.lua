@@ -487,9 +487,11 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment)
     Storage.writeContract(contract)
     Storage.updateHunter(hunter.id, { last_claim_at = os.time(), claims = (hunter.claims or 0) + 1 })
 
-    -- Delivered: the stake goes back to the hunter who put it up.
-    Escrow.release(contractId, hunterCid,
-        { portion = CB.PORTION.STAKE, staker = hunterCid }, 'stake_returned')
+    -- The stake is NOT returned here. On a multi-slot contract the hunter
+    -- is still on the hook for the slots that remain, and handing it back
+    -- after the first claim would let them collect a payout, recover the
+    -- penalty and walk away at no cost. Stakes settle when the contract
+    -- ends, in finalise() and resolve().
 
     if Progression then Progression.onCompleted(hunterCid, fulfilment) end
 

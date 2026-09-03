@@ -207,3 +207,47 @@ describe('escrow top-ups', function()
         eq(Env.players[1].PlayerData.money.cash, start, 'every line returned')
     end)
 end)
+
+describe('a form that sends every field still works', function()
+    --- A web form sends all of its inputs, blank ones included. Treating a
+    --- zero as a rejection rather than as "not selected" made every single
+    --- contract creation fail while every unit test passed, because the
+    --- tests hand-built payloads containing only the sources they meant.
+
+    it('accepts a submission carrying zeroed sources alongside a funded one', function()
+        local s = newStack()
+        local f = fixture(s)
+        local lines, err = s.escrow.validate(f.creator, {
+            slots = { { baseline = { cash = 5000, bank = 0, dirty = 0 } } },
+        })
+        truthy(lines, 'zeroed fields must not reject the contract: ' .. tostring(err))
+        eq(#lines, 1, 'and only the funded source is escrowed')
+        eq(lines[1].source, 'cash')
+    end)
+
+    it('still rejects a submission where every source is zero', function()
+        local s = newStack()
+        local f = fixture(s)
+        local lines, err = s.escrow.validate(f.creator, {
+            slots = { { baseline = { cash = 0, bank = 0, dirty = 0 } } },
+        })
+        falsy(lines, 'a contract offering nothing is not a contract')
+        eq(err, CB.ERR.INVALID_REWARD)
+    end)
+
+    it('creates a contract end to end from a form-shaped payload', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CB.MODE.EXCLUSIVE,
+            reward = { slots = {
+                { baseline = { cash = 5000, bank = 0, dirty = 0 } },
+                { baseline = { cash = 0, bank = 2500, dirty = 0 } },
+            } },
+            bonusPercent = 50, bailoutAmount = 0, penaltyAmount = 0,
+        })
+        truthy(c, 'the app must be able to place a contract: ' .. tostring(err))
+        eq(c.payout_slots, 2)
+        eq(s.escrow.moneyValue(c.id), 7500)
+    end)
+end)

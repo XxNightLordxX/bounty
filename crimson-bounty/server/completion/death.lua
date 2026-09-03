@@ -198,6 +198,21 @@ function Death.watchTargets(contracts)
     return watched
 end
 
+--- The most recent damage record from one specific attacker.
+function Death.recordFor(victimCid, attackerCid)
+    Death.prune(victimCid)
+    local list = damage[victimCid]
+    if not list then return nil end
+
+    local best
+    for i = 1, #list do
+        if list[i].attackerCid == attackerCid then
+            if not best or list[i].at > best.at then best = list[i] end
+        end
+    end
+    return best
+end
+
 --- Reset the health baseline for a player, so a respawn is not read as a
 --- decrease and the next real hit is measured from full.
 function Death.resetHealth(cid, source)
@@ -216,10 +231,31 @@ end
 --- (§14.2); everything else about it is verified server-side.
 ---
 ---@param victimSource number the engine-supplied source of the reporting client
+---@param killerServerId number|nil who the victim's own game says killed them
 ---@return integer opened number of pending completions opened
-function Death.onVictimReport(victimSource)
+function Death.onVictimReport(victimSource, killerServerId)
     local victim = Identity.resolve(victimSource)
     if not victim then return 0 end
+
+    -- The victim's account of who killed them, resolved and range-checked
+    -- server-side. It is preferred over the damage log because a killer
+    -- describing their own kill is the claim an attacker forges, while a
+    -- victim has no reason to credit their killer falsely.
+    local named
+    if killerServerId then
+        local killer = Identity.resolve(killerServerId)
+        if killer and killer.cid ~= victim.cid then
+            local distance = math.sqrt(Util.dist2(
+                GetEntityCoords(GetPlayerPed(killerServerId)),
+                GetEntityCoords(GetPlayerPed(victimSource))))
+            if distance <= Config.Completion.MaxWeaponRange then
+                named = killer.cid
+            else
+                Audit.rejected('killer_out_of_range', killer.cid, nil,
+                    { victim = victim.cid, distance = math.floor(distance) })
+            end
+        end
+    end
 
     -- The victim must actually be dead by the medical resource's own reading,
     -- not merely claiming to be, and a downed player is not a kill.
@@ -240,7 +276,18 @@ function Death.onVictimReport(victimSource)
                 if hunters[j].state == 'active' then active[hunters[j].hunter_cid] = true end
             end
 
-            local hit = Death.lastAttackerAmong(victim.cid, active)
+            -- Prefer the killer the victim named, when they are on this
+            -- contract; otherwise fall back to the observed damage log.
+            local hit
+            if named and active[named] then
+                hit = Death.recordFor(victim.cid, named) or {
+                    attackerCid = named,
+                    coords = GetEntityCoords(GetPlayerPed(victimSource)),
+                }
+            else
+                hit = Death.lastAttackerAmong(victim.cid, active)
+            end
+
             if hit then
                 pending[contract.id .. ':' .. hit.attackerCid] = {
                     contractId = contract.id,
@@ -251,7 +298,9 @@ function Death.onVictimReport(victimSource)
                     weapon     = hit.weapon,
                 }
                 Audit.action('death_attributed', hit.attackerCid, contract.id, {
-                    victim = victim.cid, distance = math.floor(hit.distance),
+                    victim = victim.cid,
+                    distance = hit.distance and math.floor(hit.distance) or nil,
+                    source = named == hit.attackerCid and 'victim_report' or 'damage_log',
                 })
                 opened = opened + 1
             else

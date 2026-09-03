@@ -60,6 +60,18 @@ function App.sweepFloodCounters()
     end
 end
 
+--- The flood gate, exposed for the events registered outside handler().
+--- Those are the highest-frequency events in the resource and skipping the
+--- gate on them defeats the point of having one.
+function App.floodOk(src, name)
+    local allowed, shouldLog = floodCheck(src)
+    if not allowed then
+        if shouldLog then deps.audit.rejected('flood_' .. name, nil, nil, { source = src }) end
+        return false
+    end
+    return true
+end
+
 local function handler(name, action, fn)
     RegisterNetEvent('crimson-bounty:' .. name, function(payload)
         local src = source
@@ -315,20 +327,28 @@ function App.register()
     -- These carry no payload but are still gated and throttled: a client can
     -- fire them as fast as it likes, and each one walks the contract table.
 
-    RegisterNetEvent('crimson-bounty:iDied', function()
+    RegisterNetEvent('crimson-bounty:iDied', function(killerServerId)
         local src = source
+        if not App.floodOk(src, 'iDied') then return end
+
         local actor = deps.identity.resolve(src)
         if not actor then return end
         if not deps.ratelimit.check(actor.cid, 'death') then
             deps.audit.rejected('ratelimit_iDied', actor.cid, nil, {})
             return
         end
-        local ok, err = pcall(deps.death.onVictimReport, src)
+
+        -- The killer id is a hint from the victim, not an instruction: the
+        -- server still checks they accepted the contract, were in range, and
+        -- that the condition loss was observed.
+        local ok, err = pcall(deps.death.onVictimReport, src, tonumber(killerServerId))
         if not ok then deps.audit.rejected('error_iDied', actor.cid, nil, { error = tostring(err) }) end
     end)
 
     RegisterNetEvent('crimson-bounty:iRevived', function()
         local src = source
+        if not App.floodOk(src, 'iRevived') then return end
+
         local actor = deps.identity.resolve(src)
         if not actor then return end
         if not deps.ratelimit.check(actor.cid, 'death') then

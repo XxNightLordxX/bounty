@@ -435,3 +435,63 @@ describe('corroboration does not punish legitimate hits', function()
         eq(s.death.onVictimReport(2), 0)
     end)
 end)
+
+describe('the victim names the killer, the server checks the claim', function()
+    local function armed()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        Env.players[3]._coords = { x = 10.0, y = 10.0, z = 30.0 }
+        Env.players[2]._coords = { x = 11.0, y = 10.0, z = 30.0 }
+        return s, f, c
+    end
+
+    it('credits the hunter the victims own game names', function()
+        local s, f, c = armed()
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2, 3), 1, 'the victim named an accepted hunter')
+        truthy(s.death.getPending(c.id, 'HUNTER01'))
+    end)
+
+    it('ignores a named killer who never accepted the contract', function()
+        local s, f, c = armed()
+        Env.addPlayer({ source = 9, citizenid = 'RANDOM01', license = 'license:r',
+            coords = { x = 12.0, y = 10.0, z = 30.0 } })
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2, 9), 0, 'an outsider kill still pays nobody')
+    end)
+
+    it('ignores a named killer who was nowhere near', function()
+        local s, f, c = armed()
+        Env.players[3]._coords = { x = 9000.0, y = 0.0, z = 0.0 }
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2, 3), 0, 'a kill from 9km away did not happen')
+    end)
+
+    it('ignores a victim naming themselves', function()
+        local s, f, c = armed()
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2, 2), 0)
+    end)
+
+    it('does not let a hunter claim a kill by naming themselves', function()
+        local s, f, c = armed()
+        -- The hunter's own client fires the report. `source` is the hunter,
+        -- so the server treats it as the hunter dying, not the target.
+        Env.players[3].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(3, 3), 0, 'reporting your own death credits nobody')
+        falsy(s.death.getPending(c.id, 'HUNTER01'))
+    end)
+
+    it('still falls back to observed damage when no killer is named', function()
+        local s, f, c = armed()
+        Env.players[2]._health = 140
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2), 1, 'the damage log still works on its own')
+    end)
+end)

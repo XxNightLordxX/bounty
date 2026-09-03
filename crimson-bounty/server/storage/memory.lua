@@ -62,8 +62,22 @@ end
 -- Escrow
 --------------------------------------------------------------------------
 
+--- Insert new lines, or update the mutable fields of existing ones. State
+--- and amount are preserved from the stored row: they move only through the
+--- guarded helpers, so a caller writing back a copy it read earlier cannot
+--- undo a settlement that happened in between.
 function Memory.writeEscrow(contractId, lines)
-    for i = 1, #lines do db.escrow[lines[i].id] = lines[i] end
+    for i = 1, #lines do
+        local incoming = lines[i]
+        local existing = db.escrow[incoming.id]
+        if existing and existing ~= incoming then
+            existing.owed_to = incoming.owed_to
+        elseif existing == incoming then
+            db.escrow[incoming.id] = incoming
+        else
+            db.escrow[incoming.id] = incoming
+        end
+    end
     return true
 end
 
@@ -85,6 +99,17 @@ function Memory.claimEscrowLine(id, expected, next_)
     local line = db.escrow[id]
     if not line or line.state ~= expected then return false end
     line.state = next_
+    return true
+end
+
+--- Change a line's amount only if it is still in the expected state and
+--- still holds the amount the caller read. State is never written here:
+--- it moves through claimEscrowLine alone.
+function Memory.setEscrowAmount(id, expectedState, amount, expectedAmount)
+    local line = db.escrow[id]
+    if not line or line.state ~= expectedState then return false end
+    if expectedAmount ~= nil and line.amount ~= expectedAmount then return false end
+    line.amount = amount
     return true
 end
 

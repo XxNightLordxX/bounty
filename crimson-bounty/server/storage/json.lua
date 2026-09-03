@@ -134,8 +134,18 @@ end
 -- Escrow
 --------------------------------------------------------------------------
 
+--- State and amount are preserved from the stored row; see the memory
+--- backend for why.
 function JsonStore.writeEscrow(contractId, lines)
-    for i = 1, #lines do db.escrow[lines[i].id] = lines[i] end
+    for i = 1, #lines do
+        local incoming = lines[i]
+        local existing = db.escrow[incoming.id]
+        if existing and existing ~= incoming then
+            existing.owed_to = incoming.owed_to
+        else
+            db.escrow[incoming.id] = incoming
+        end
+    end
     touch(true)
     return true
 end
@@ -155,6 +165,16 @@ function JsonStore.claimEscrowLine(id, expected, next_)
     local line = db.escrow[id]
     if not line or line.state ~= expected then return false end
     line.state = next_
+    touch(true)
+    return true
+end
+
+--- Guarded amount change; state is never written here.
+function JsonStore.setEscrowAmount(id, expectedState, amount, expectedAmount)
+    local line = db.escrow[id]
+    if not line or line.state ~= expectedState then return false end
+    if expectedAmount ~= nil and line.amount ~= expectedAmount then return false end
+    line.amount = amount
     touch(true)
     return true
 end

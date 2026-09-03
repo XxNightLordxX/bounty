@@ -129,7 +129,9 @@ function Bridges.install(modules)
     -- A player's own client is the only one that can reliably render their
     -- headshot, so the image arrives from them and is bounded on arrival.
     RegisterNetEvent('crimson-bounty:mugshot', function(image)
-        local actor = modules.identity.resolve(source)
+        local src = source
+        if not modules.app.floodOk(src, 'mugshot') then return end
+        local actor = modules.identity.resolve(src)
         if not actor then return end
         if not modules.ratelimit.check(actor.cid, 'mugshot') then return end
         modules.mugshot.store(actor.cid, image)
@@ -137,6 +139,7 @@ function Bridges.install(modules)
 
     RegisterNetEvent('crimson-bounty:appearanceChanged', function()
         local src = source
+        if not modules.app.floodOk(src, 'appearanceChanged') then return end
         local actor = modules.identity.resolve(src)
         if not actor then return end
         if not modules.ratelimit.check(actor.cid, 'mugshot') then return end

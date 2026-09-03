@@ -397,3 +397,103 @@ describe('stakes survive every ending', function()
         eq(total(), opening, 'completion must neither create nor destroy value')
     end)
 end)
+
+describe('a stake stays at risk until the contract ends', function()
+    local function multiSlotWithPenalty()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = {
+                { baseline = { cash = 1000 } },
+                { baseline = { cash = 1000 } },
+            } },
+            penaltyAmount = 10000,
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        return s, f, c
+    end
+
+    it('does not hand the stake back after the first of several payouts', function()
+        local s, f, c = multiSlotWithPenalty()
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+
+        eq(Env.players[3].PlayerData.money.bank, 40000,
+            'the hunter is still on the hook for the remaining payout')
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED)
+    end)
+
+    it('still forfeits the stake if they walk away after collecting once', function()
+        local s, f, c = multiSlotWithPenalty()
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        local creatorBefore = Env.players[1].PlayerData.money.bank
+
+        s.contracts.abandon(f.hunter, c.id)
+        eq(Env.players[1].PlayerData.money.bank, creatorBefore + 10000,
+            'collect-then-abandon must not be free')
+        eq(Env.players[3].PlayerData.money.bank, 40000)
+    end)
+
+    it('returns the stake once the last payout is collected', function()
+        local s, f, c = multiSlotWithPenalty()
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        Env.advance(Config.Limits.SlotCooldownSeconds + 1)
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+
+        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+        eq(Env.players[3].PlayerData.money.bank, 50000, 'stake returned when the job is done')
+        eq(Env.players[3].PlayerData.money.cash, 7000, 'plus both payouts')
+    end)
+end)
+
+describe('money already promised to someone is not swept away', function()
+    it('does not refund a forfeited stake to the hunter who forfeited it', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 1000 } }, penaltyAmount = 5000,
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+
+        -- The creator is offline, so the forfeited stake is owed to them
+        -- rather than paid immediately.
+        Env.removePlayer(1)
+        s.contracts.abandon(f.hunter, c.id)
+        eq(Env.players[3].PlayerData.money.bank, 45000, 'the hunter forfeited it')
+
+        -- The creator returns and lowers the penalty for whoever comes next.
+        Env.addPlayer({ source = 1, citizenid = 'CREATOR1', license = 'license:aaa',
+            cash = 0, bank = 0 })
+        s.amendments.improve(s.identity.resolve(1), c.id, CB.AMENDMENT.LOWER_PENALTY,
+            { amount = 1 })
+
+        eq(Env.players[3].PlayerData.money.bank, 45000,
+            'an ordinary penalty reduction must not refund a stake already forfeited')
+    end)
+
+    it('keeps a bailout premium owed to an offline creator out of general refunds', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 5000,
+        })
+
+        Env.removePlayer(1)
+        truthy(s.bailout.buy(f.target, c.id))
+
+        local owed = s.storage.readPending('CREATOR1')
+        truthy(#owed > 0, 'the premium is owed to the creator')
+
+        -- Any later general release must not carry it off to someone else.
+        s.escrow.release(c.id, 'HUNTER01', nil, 'a general sweep')
+
+        local stillOwed = s.storage.readPending('CREATOR1')
+        eq(#stillOwed, #owed, 'the premium is still the creator\'s')
+        eq(Env.players[3].PlayerData.money.bank, 5000, 'and nobody else was paid it')
+    end)
+end)
