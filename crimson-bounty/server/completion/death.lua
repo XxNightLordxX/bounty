@@ -185,6 +185,40 @@ function Death.watch(cid, source, refresh)
     return true
 end
 
+--- Sample the condition of every live contract's target on its own clock.
+---
+--- Each damage event is credited with the drop since the last sample. On
+--- the ten-second maintenance tick that meant a hunter who landed one shot
+--- inherited whatever else had happened to the target in the meantime — an
+--- explosion, a fall, someone else's firefight — none of which raise a
+--- weapon damage event of their own to consume it first.
+---
+--- The cost is a narrow race: a sample landing between a shot connecting
+--- and its event arriving erases that shot's evidence. The window is a few
+--- milliseconds against a one-second period, the hunter's other shots still
+--- register, and the alternative is crediting damage nobody can attribute.
+local sampling = false
+
+function Death.startSampler()
+    if sampling then return false end
+    sampling = true
+
+    CreateThread(function()
+        while true do
+            Wait(Config.Completion.ConditionSampleMs or 1000)
+            local ok = pcall(function()
+                Death.watchTargets(Storage.allContracts())
+            end)
+            -- A sampler that dies takes attribution with it, and silently.
+            if not ok then
+                print('[crimson-bounty] condition sampler errored; retrying next tick')
+            end
+        end
+    end)
+
+    return true
+end
+
 --- Refresh baselines for every player who is the target of a live contract.
 --- Bounded by the number of live contracts, not the player count.
 function Death.watchTargets(contracts)
@@ -291,10 +325,26 @@ function Death.onVictimReport(victimSource, killerServerId)
             -- contract; otherwise fall back to the observed damage log.
             local hit
             if named and active[named] then
-                hit = Death.recordFor(victim.cid, named) or {
-                    attackerCid = named,
-                    coords = GetEntityCoords(GetPlayerPed(victimSource)),
-                }
+                -- The victim's word plus the server's own observation. A
+                -- record was synthesised here when the damage log held
+                -- nothing for the named killer, which credits a hunter the
+                -- server never saw touch the target — the victim's client
+                -- is the one naming them, and it is a client.
+                hit = Death.recordFor(victim.cid, named)
+
+                if not hit and not Config.Completion.RequireObservedDamage then
+                    hit = {
+                        attackerCid = named,
+                        coords = GetEntityCoords(GetPlayerPed(victimSource)),
+                    }
+                elseif not hit then
+                    Audit.rejected('named_killer_unobserved', named, contract.id,
+                        { victim = victim.cid })
+                end
+
+                -- Falling back to the damage log would hand the kill to
+                -- whoever else happened to be shooting, which is worse than
+                -- paying nobody.
             else
                 hit = Death.lastAttackerAmong(victim.cid, active)
             end

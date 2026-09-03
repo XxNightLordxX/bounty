@@ -203,6 +203,24 @@ Config.Completion = {
     --- verification photo being rejected.
     PhotoHostRefreshSeconds = 300,
     DeathReportWindowMs = 30000,
+    --- A killer named by their victim must also appear in the damage log
+    --- the server built for itself. The victim naming them is a client
+    --- saying so; without this a hunter can be credited for a target the
+    --- server never observed them touch.
+    ---
+    --- The cost is that a kill by something that raises no weapon damage
+    --- event — a vehicle, a fall, fire — pays nobody, which is the safer
+    --- side of the trade. Turn it off only if that matters more than the
+    --- attribution being observed.
+    RequireObservedDamage = true,
+    --- How often the condition of a live contract's target is sampled.
+    ---
+    --- Each damage event is credited with the drop since the last sample,
+    --- so a slow sampler lets a hunter who lands one shot inherit whatever
+    --- else happened to the target in between — an explosion, a fall, or
+    --- somebody else's firefight, none of which raise a weapon damage event
+    --- of their own. Bounded by the number of live contracts.
+    ConditionSampleMs = 1000,
     MaxWeaponRange      = 250.0,
     PhotoRadius         = 5.0,
     PhotoTokenLifetimeSeconds = 120,

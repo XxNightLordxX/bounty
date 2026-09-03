@@ -467,11 +467,56 @@ describe('the victim names the killer, the server checks the claim', function()
         return s, f, c
     end
 
+    --- A real kill: the hunter's shot lands and the server sees the target
+    --- lose condition, then the victim's game names them. A named killer
+    --- the server never observed is a separate case, tested below.
+    local function shoot(s, attackerSource)
+        Env.players[2]._health = 200
+        s.death.watch('TARGET01', 2, true)
+        Env.players[2]._health = 40
+        s.death.recordDamage(attackerSource or 3, 2, 123456)
+    end
+
     it('credits the hunter the victims own game names', function()
         local s, f, c = armed()
+        shoot(s)
         Env.players[2].PlayerData.metadata.isdead = true
         eq(s.death.onVictimReport(2, 3), 1, 'the victim named an accepted hunter')
         truthy(s.death.getPending(c.id, 'HUNTER01'))
+    end)
+
+    it('pays nobody for a named killer the server never saw touch them', function()
+        local s, f, c = armed()
+        -- No shot, no observed loss of condition — only the victim's client
+        -- saying who did it. A record used to be synthesised here, which
+        -- credits a hunter on a claim nothing corroborates.
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2, 3), 0, 'an unobserved kill pays nobody')
+        falsy(s.death.getPending(c.id, 'HUNTER01'))
+    end)
+
+    it('does not quietly credit somebody else instead', function()
+        local s, f, c = armed()
+        -- A second hunter who did shoot. The named killer being unobserved
+        -- must not hand the kill to whoever else was firing.
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+            cash = 5000, bank = 5000, coords = { x = 10.0, y = 10.0, z = 30.0 } })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        shoot(s, 4)
+
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2, 3), 0, 'the victim named the unobserved one')
+        falsy(s.death.getPending(c.id, 'HUNTER01'))
+        falsy(s.death.getPending(c.id, 'HUNTER02'),
+            'and the fallback must not run behind the victims own account')
+    end)
+
+    it('can be turned off for servers where vehicle kills matter more', function()
+        local s, f, c = armed()
+        withConfig({ { Config.Completion, 'RequireObservedDamage', false } }, function()
+            Env.players[2].PlayerData.metadata.isdead = true
+            eq(s.death.onVictimReport(2, 3), 1, 'the victims word alone is enough')
+        end)
     end)
 
     it('ignores a named killer who never accepted the contract', function()
@@ -530,6 +575,15 @@ describe('a respawn does not take a kill away from the hunter', function()
 
         Env.players[3]._coords = { x = 20.0, y = 20.0, z = 30.0 }
         Env.players[2]._coords = { x = 21.0, y = 20.0, z = 30.0 }
+
+        -- A real kill: the shot lands and the server sees the condition go,
+        -- then the victim's game names the hunter. The victim's word alone
+        -- is not enough — that is what RequireObservedDamage is for.
+        Env.players[2]._health = 200
+        s.death.watch('TARGET01', 2, true)
+        Env.players[2]._health = 30
+        s.death.recordDamage(3, 2, 123456)
+
         Env.players[2].PlayerData.metadata.isdead = true
         eq(s.death.onVictimReport(2, 3), 1, 'the kill should be attributed')
 
@@ -649,5 +703,72 @@ describe('photo host allowlist', function()
         local before = s.photo.hostsChangedAt
         s.photo.loadAllowedHosts()
         eq(s.photo.hostsChangedAt, before, 'a steady allowlist is not news')
+    end)
+end)
+
+
+--- Sampling. Attribution is only as precise as the last condition sample:
+--- a hunter who lands one shot must not inherit whatever else happened to
+--- the target since the sampler last looked.
+describe('condition sampling', function()
+    local function armed()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        Env.players[3]._coords = { x = 10.0, y = 10.0, z = 30.0 }
+        Env.players[2]._coords = { x = 11.0, y = 10.0, z = 30.0 }
+        Env.players[2]._health = 200
+        s.death.watch('TARGET01', 2, true)
+        return s, f, c
+    end
+
+    it('credits a hunter only the drop since the last sample', function()
+        local s, f, c = armed()
+
+        -- Something the server cannot attribute takes most of the target's
+        -- health: a fall, an explosion, another player's car.
+        Env.players[2]._health = 60
+        s.death.watchTargets(s.storage.allContracts())
+
+        -- Then the hunter lands one shot.
+        Env.players[2]._health = 40
+        s.death.recordDamage(3, 2, 123456)
+
+        local record = s.death.recordFor('TARGET01', 'HUNTER01')
+        truthy(record, 'the shot is recorded')
+        eq(record.damage, 20, 'their shot, not the fall before it')
+    end)
+
+    it('lets a hunter inherit the lot when nothing samples in between', function()
+        local s, f, c = armed()
+        -- The same sequence with no sample: this is what the maintenance
+        -- tick's ten seconds looked like, and why the sampler exists.
+        Env.players[2]._health = 60
+        Env.players[2]._health = 40
+        s.death.recordDamage(3, 2, 123456)
+
+        eq(s.death.recordFor('TARGET01', 'HUNTER01').damage, 160,
+            'unsampled, the whole drop is attributed to whoever fires next')
+    end)
+
+    it('samples only the targets of live contracts', function()
+        local s, f, c = armed()
+        eq(s.death.watchTargets(s.storage.allContracts()), 1, 'one live contract')
+
+        truthy(s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
+        eq(s.death.watchTargets(s.storage.allContracts()), 0,
+            'a resolved contract is not worth sampling for')
+    end)
+
+    it('starts exactly one sampler', function()
+        local s = newStack()
+        local before = #Env.threads
+        truthy(s.death.startSampler(), 'the first call starts it')
+        falsy(s.death.startSampler(), 'the second must not start a second one')
+        eq(#Env.threads - before, 1)
     end)
 end)

@@ -235,6 +235,10 @@ function StartCrimsonBounty()
     admin.init(modules)
     require('server.bridges').install(modules)
 
+    -- Its own clock, faster than the maintenance tick: attribution is only
+    -- as precise as the last condition sample.
+    death.startSampler()
+
     Recover()
     amendments.reindex()
     StartTick()
@@ -333,7 +337,6 @@ function Tick()
         modules.photo.loadAllowedHosts()
     end
     modules.death.sweep()
-    modules.death.watchTargets(Storage.allContracts())
     modules.ratelimit.sweep()
     if Storage.prune then Storage.prune() end
     local app = require('server.app')
