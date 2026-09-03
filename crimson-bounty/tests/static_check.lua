@@ -635,6 +635,45 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 19. Every credit to a player is checked
+--------------------------------------------------------------------------
+--
+-- qbx_core's AddMoney and ox_inventory's AddItem both return a boolean:
+-- false for an account or an inventory that will not take what it is given,
+-- and servers routinely patch balance ceilings and carry limits into them.
+--
+-- Four payout paths called one of these as a bare statement and carried on
+-- as though it had worked. The money left escrow, never arrived, and nothing
+-- recorded that anyone was owed it. Each of them already had a correct
+-- recovery — owe it, defer it, or write an audit row — and the only thing
+-- missing was asking.
+--
+-- A call whose answer is thrown away is refused here. The answer has to go
+-- somewhere: returned, assigned, or tested.
+
+do
+    for _, path in ipairs(files) do
+        local src = read(path) or ''
+        local line = 0
+        for text in src:gmatch('[^\n]*') do
+            line = line + 1
+            local body = text:match('^%s*(.-)%s*$')
+            -- A bare call statement: the line begins with the call itself,
+            -- so nothing receives what it returns.
+            local bare = body:match('^[%w_%.:%[%]\'"]-[%.:]AddMoney%s*%(')
+                or body:match('^[%w_%.:%[%]\'"]-[%.:]AddItem%s*%(')
+            if bare and not body:match('^%-%-') then
+                failures[#failures + 1] =
+                    ('%s:%d credits a player and discards the answer. AddMoney and AddItem '
+                     .. 'return false when the account or inventory will not take it; a '
+                     .. 'payout that reports success regardless is money gone from escrow '
+                     .. 'and never delivered.'):format(path, line)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

@@ -165,9 +165,11 @@ function Bailout.settle(contractId, amount, targetCid, account, opts)
         -- during the delay). Refund the premium to the account it came from;
         -- if the target is offline, it is owed rather than lost.
         local target = Identity.byCitizenId(targetCid)
-        if target then
-            target.player.Functions.AddMoney(account, amount)
-        else
+        -- A refusal is the same situation as being offline: the money has
+        -- not been delivered. AddMoney returns false for an account
+        -- qbx_core will not credit, and a server with a balance ceiling
+        -- refuses on exactly the payouts that matter most.
+        if not (target and target.player.Functions.AddMoney(account, amount)) then
             Bailout.owe(targetCid, contractId, amount, account, 'bailout_refund')
         end
         Audit.financial('bailout_refunded', targetCid, contractId, { amount = amount, reason = err })
@@ -176,12 +178,11 @@ function Bailout.settle(contractId, amount, targetCid, account, opts)
     end
 
     local creator = Identity.byCitizenId(contract.creator_cid)
-    if creator then
-        creator.player.Functions.AddMoney(account, amount)
-    else
-        -- Offline creator: the premium is owed, not lost. It is written as a
-        -- real escrow line so the normal retry path can deliver it — a
-        -- placeholder id would be read back as a missing line and dropped.
+    -- Offline, or a credit the framework refused: either way the premium is
+    -- owed, not lost. It is written as a real escrow line so the normal
+    -- retry path can deliver it — a placeholder id would be read back as a
+    -- missing line and dropped.
+    if not (creator and creator.player.Functions.AddMoney(account, amount)) then
         Bailout.owe(contract.creator_cid, contractId, amount, account, 'bailout_premium')
     end
 

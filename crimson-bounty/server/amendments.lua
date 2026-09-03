@@ -153,7 +153,12 @@ function Amendments.improve(actor, contractId, kind, payload)
                 and stillActive
                 and (line.amount or 0) > amount then
 
-                local returned = line.amount - amount
+                -- Read out of the line before anything is written. On the
+                -- in-process backend `line` IS the stored row rather than a
+                -- copy of it, so the reduction below changes line.amount
+                -- underneath us and any later read of it is the new value.
+                local original = line.amount
+                local returned = original - amount
                 local staker = Identity.byCitizenId(line.staker)
 
                 if staker then
@@ -162,13 +167,25 @@ function Amendments.improve(actor, contractId, kind, payload)
                     -- settlement that landed in between be undone, putting a
                     -- settled line back on the board as claimable.
                     local reduced = Storage.setEscrowAmount(
-                        line.id, CB.ESCROW_STATE.HELD, amount, line.amount)
+                        line.id, CB.ESCROW_STATE.HELD, amount, original)
 
                     if reduced then
                         -- Back to the account it came from, not always bank.
-                        staker.player.Functions.AddMoney(line.source, returned)
-                        Audit.financial('stake_reduced', line.staker, contractId,
-                            { returned = returned, remaining = amount })
+                        if staker.player.Functions.AddMoney(line.source, returned) then
+                            Audit.financial('stake_reduced', line.staker, contractId,
+                                { returned = returned, remaining = amount })
+                        else
+                            -- The line was reduced before the money moved, so
+                            -- a refused credit would take the difference out
+                            -- of escrow and pay nobody. Put it back, under the
+                            -- same guard, and treat it exactly like an offline
+                            -- staker: they keep the higher stake and get it
+                            -- back in full when the contract resolves.
+                            Storage.setEscrowAmount(
+                                line.id, CB.ESCROW_STATE.HELD, original, amount)
+                            Audit.action('stake_reduction_deferred', line.staker, contractId,
+                                { returned = returned, reason = 'credit_refused' })
+                        end
                     end
                 else
                     -- The staker is offline: their stake stays as it is

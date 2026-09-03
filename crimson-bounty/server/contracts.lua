@@ -237,6 +237,28 @@ end
 --- the whole thing succeeds.
 ---@return table|nil contract
 ---@return string|nil err
+--- Put an anonymity fee back after a failed creation.
+---
+--- The last rollback in the chain, where there is nothing else left to undo.
+--- AddMoney can refuse — an account qbx_core will not credit, or a balance
+--- ceiling a server has patched in — and losing the fee quietly is the one
+--- thing that must not happen here: the audit row is what tells staff to
+--- return it by hand.
+---@param actor table
+---@param contractId string
+---@param anonymous boolean whether the fee was charged at all
+local function refundAnonymityFee(actor, contractId, anonymous)
+    local fee = Config.Anonymity.CreatorFee or 0
+    if not anonymous or fee <= 0 then return true end
+
+    local account = Config.Anonymity.FeeAccount or 'bank'
+    if actor.player.Functions.AddMoney(account, fee) then return true end
+
+    Audit.financial('anonymity_fee_refund_failed', actor.cid, contractId,
+        { amount = fee, account = account })
+    return false
+end
+
 function Contracts.create(actor, req)
     local targetActor = Identity.byCitizenId(req.targetCid)
     local ok, err = Contracts.canCreate(actor, targetActor)
@@ -340,10 +362,7 @@ function Contracts.create(actor, req)
     took, err = Escrow.take(actor, contract.id, lines)
     if not took then
         -- Put the anonymity fee back: nothing else was charged.
-        if contract.anon_creator and (Config.Anonymity.CreatorFee or 0) > 0 then
-            actor.player.Functions.AddMoney(
-                Config.Anonymity.FeeAccount or 'bank', Config.Anonymity.CreatorFee)
-        end
+        refundAnonymityFee(actor, contract.id, contract.anon_creator)
         return nil, err
     end
 
@@ -351,10 +370,7 @@ function Contracts.create(actor, req)
         -- The contract could not be stored, so everything taken comes back:
         -- the escrow, and the anonymity fee charged before it.
         Escrow.release(contract.id, actor.cid, nil, 'contract_write_failed')
-        if contract.anon_creator and (Config.Anonymity.CreatorFee or 0) > 0 then
-            actor.player.Functions.AddMoney(
-                Config.Anonymity.FeeAccount or 'bank', Config.Anonymity.CreatorFee)
-        end
+        refundAnonymityFee(actor, contract.id, contract.anon_creator)
         return nil, CB.ERR.BAD_STATE
     end
 

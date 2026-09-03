@@ -1794,3 +1794,102 @@ describe('a character switch', function()
             'and starts with their own buckets')
     end)
 end)
+
+
+--- Every credit is an answer, not an announcement.
+---
+--- qbx_core's AddMoney returns a boolean — false for an account it will not
+--- credit, and servers commonly patch a balance ceiling into it. Three
+--- payout paths called it and carried on as though it had worked, so the
+--- money left escrow, never arrived, and no record said anyone was owed it.
+--- Each of these already had a correct recovery path for an offline player;
+--- a refusal now takes the same one.
+describe('a credit the framework refuses', function()
+    it('owes the creator their bailout premium rather than losing it', function()
+        local s, f, c = seeded({ bailout = 15000, accept = false })
+        Env.players[1]._refuseMoney = true
+
+        local before = Env.players[1].PlayerData.money.cash
+            + Env.players[1].PlayerData.money.bank
+        truthy(s.bailout.buy(f.target, c.id))
+
+        eq(Env.players[1].PlayerData.money.cash + Env.players[1].PlayerData.money.bank,
+            before, 'nothing reached the creator')
+
+        local owed = 0
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.portion == CB.PORTION.OWED and line.owed_to == 'CREATOR1' then
+                owed = owed + (line.amount or 0)
+            end
+        end
+        truthy(owed > 0, 'the premium and escrow must be owed to the creator, not gone')
+
+        -- And it reaches them once the framework will take it.
+        Env.players[1]._refuseMoney = false
+        s.escrow.release(c.id, 'CREATOR1', { line = nil }, 'retry')
+    end)
+
+    it('leaves a stake alone when the staker cannot be paid the reduction', function()
+        -- The escrow line is reduced before the money moves, so a refused
+        -- credit took the difference out of escrow and paid nobody.
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } },
+            bonusPercent = 50, penaltyAmount = 10000,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        eq(Env.players[3].PlayerData.money.bank, 40000, 'staked 10000')
+
+        Env.players[3]._refuseMoney = true
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY,
+            { amount = 4000 }))
+        Env.players[3]._refuseMoney = false
+
+        eq(Env.players[3].PlayerData.money.bank, 40000, 'nothing reached the staker')
+
+        local staked = 0
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.portion == CB.PORTION.STAKE then staked = staked + (line.amount or 0) end
+        end
+        eq(staked, 10000,
+            'so the stake stays whole and is returned in full at resolution, rather '
+            .. 'than being reduced against a payment that never happened')
+    end)
+
+    it('records an anonymity fee it could not refund', function()
+        -- The last rollback in contract creation, where there is nothing
+        -- left to undo. Losing it quietly is the one thing that must not
+        -- happen: the row is what tells staff to put it back by hand.
+        local s = newStack()
+        local f = fixture(s)
+
+        withConfig({ { Config.Anonymity, 'CreatorFee', 2500 },
+                     { Config.Anonymity, 'FeeAccount', 'bank' } }, function()
+            -- Make the escrow take fail after the fee has been charged.
+            local realWrite = s.storage.writeEscrow
+            s.storage.writeEscrow = function() return false end
+            Env.players[1]._refuseMoney = true
+
+            local c, err = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } }, anonymous = true,
+            })
+
+            s.storage.writeEscrow = realWrite
+            Env.players[1]._refuseMoney = false
+
+            falsy(c, 'the contract must not exist: ' .. tostring(err))
+            s.audit.flush()
+
+            local seen = false
+            for _, row in ipairs(s.storage.readAudit(200)) do
+                if row.action == 'anonymity_fee_refund_failed' then seen = true end
+            end
+            truthy(seen, 'a fee that could not be returned must be recorded')
+        end)
+    end)
+end)

@@ -353,17 +353,33 @@ end
 function Escrow.take(actor, contractId, lines)
     local taken = {}
 
+    --- Put back everything already taken.
+    ---
+    --- This is the end of the line: there is nothing left to undo and no
+    --- escrow record to hold the property in, so a give-back that fails has
+    --- genuinely cost the creator something. It is recorded rather than
+    --- shrugged off — the audit row is what tells staff exactly what to
+    --- return by hand, and to whom.
     local function rollback()
         for i = #taken, 1, -1 do
             local line = taken[i]
+            local back = false
+
             if line.source == 'cash' or line.source == 'bank' then
-                actor.player.Functions.AddMoney(line.source, line.amount)
+                back = actor.player.Functions.AddMoney(line.source, line.amount)
             elseif line.source == 'dirty' then
-                exports.ox_inventory:AddItem(actor.source, Config.Sources.dirty.item, line.amount)
+                back = exports.ox_inventory:AddItem(actor.source, Config.Sources.dirty.item, line.amount)
             elseif line.source == CB.SOURCE.ITEM then
-                exports.ox_inventory:AddItem(actor.source, line.item, line.quantity, line.metadata)
+                back = exports.ox_inventory:AddItem(actor.source, line.item, line.quantity, line.metadata)
             elseif line.source == CB.SOURCE.WEAPON then
-                exports.ox_inventory:AddItem(actor.source, line.item, 1, line.metadata)
+                back = exports.ox_inventory:AddItem(actor.source, line.item, 1, line.metadata)
+            end
+
+            if not back then
+                Audit.financial('escrow_rollback_failed', actor.cid, contractId, {
+                    source = line.source, item = line.item,
+                    amount = line.amount, quantity = line.quantity,
+                })
             end
         end
     end
@@ -571,8 +587,12 @@ function Escrow.deliver(recipientCid, line)
             if converted <= 0 then return false end
             return exports.ox_inventory:AddItem(src, Config.Sources.dirty.item, converted) and true or false
         end
-        recipient.Functions.AddMoney(account, amount)
-        return true
+        -- The answer matters. qbx_core's AddMoney returns false for an
+        -- account it will not credit, and servers commonly patch a balance
+        -- ceiling into it. Reporting success regardless settled the line
+        -- with nothing delivered: gone from escrow, never arrived, and no
+        -- record that anyone was still owed it.
+        return recipient.Functions.AddMoney(account, amount) and true or false
 
     elseif line.source == 'dirty' then
         if not exports.ox_inventory:CanCarryItem(src, Config.Sources.dirty.item, line.amount) then return false end

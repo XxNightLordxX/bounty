@@ -983,3 +983,131 @@ describe('a bonus derived from a percentage', function()
         eq(bonusFor(50, 99), 49)
     end)
 end)
+
+
+--- Delivery either happens or the line stays owed. There is no third answer.
+describe('a payout the framework refuses', function()
+    local function owedLine(s, f)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        return c
+    end
+
+    it('does not mark a line settled when AddMoney says no', function()
+        -- The item branches ask whether the inventory took the goods; the
+        -- cash branch called AddMoney and reported success regardless. A
+        -- server with a balance ceiling — or any qbx_core refusal — would
+        -- have settled the line with nothing delivered, and the money is
+        -- then gone from escrow and never arrived.
+        local s = newStack()
+        local f = fixture(s)
+        local c = owedLine(s, f)
+
+        Env.players[3]._refuseMoney = true
+        local before = Env.players[3].PlayerData.money.cash
+        eq(before, 5000, 'the hunter starts with their own money and nothing else')
+
+        local ok, result = s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'test')
+
+        eq(Env.players[3].PlayerData.money.cash, before, 'nothing was actually paid')
+        falsy(ok, 'so the release did not settle anything')
+        eq(result.settled, 0)
+        eq(result.pending, 1, 'and the line is owed, to be retried on next login')
+    end)
+
+    it('keeps the line claimable once the framework will take it', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = owedLine(s, f)
+
+        Env.players[3]._refuseMoney = true
+        s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'test')
+
+        Env.players[3]._refuseMoney = false
+        local ok, result = s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'retry')
+        truthy(ok, 'the retry must pay')
+        eq(result.settled, 1)
+        eq(Env.players[3].PlayerData.money.cash, 10000,
+            'and the hunter is paid the 5000 baseline exactly once, on top of their own 5000')
+    end)
+
+    it('does not let anyone else collect the line in the meantime', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = owedLine(s, f)
+
+        Env.players[3]._refuseMoney = true
+        s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'test')
+        Env.players[3]._refuseMoney = false
+
+        -- An unfiltered refund to the creator must not sweep up a payout
+        -- that is owed to the hunter.
+        local before = Env.players[1].PlayerData.money.cash
+        s.escrow.release(c.id, 'CREATOR1', nil, 'refund')
+        eq(Env.players[1].PlayerData.money.cash, before,
+            'the creator must not be handed the hunter money')
+
+        -- And it is still there for the hunter afterwards.
+        local ok, result = s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'retry')
+        truthy(ok)
+        eq(result.settled, 1)
+        eq(Env.players[3].PlayerData.money.cash, 10000)
+    end)
+end)
+
+
+describe('a rollback that cannot return what it took', function()
+    it('records what the creator is still owed', function()
+        -- The end of the line: escrow was taken, the write failed, and the
+        -- give-back failed too. There is no escrow record left to hold the
+        -- property, so the audit row is the only thing that says who is
+        -- owed what.
+        local s = newStack()
+        local f = fixture(s)
+
+        local realWrite = s.storage.writeEscrow
+        s.storage.writeEscrow = function() return false end
+        Env.players[1]._refuseMoney = true
+
+        local ok, err = s.escrow.take(f.creator, 'CB-ROLLBACK', {
+            { slot = 1, portion = CB.PORTION.BASELINE, source = 'cash', amount = 5000 },
+        })
+
+        s.storage.writeEscrow = realWrite
+        Env.players[1]._refuseMoney = false
+
+        falsy(ok, 'the take must fail: ' .. tostring(err))
+        s.audit.flush()
+
+        local seen = false
+        for _, row in ipairs(s.storage.readAudit(200)) do
+            if row.action == 'escrow_rollback_failed' then seen = true end
+        end
+        truthy(seen, 'property that could not be returned must be recorded, not lost quietly')
+    end)
+
+    it('says nothing when the rollback works', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        local realWrite = s.storage.writeEscrow
+        s.storage.writeEscrow = function() return false end
+        local before = Env.players[1].PlayerData.money.cash
+
+        local ok = s.escrow.take(f.creator, 'CB-ROLLBACK2', {
+            { slot = 1, portion = CB.PORTION.BASELINE, source = 'cash', amount = 5000 },
+        })
+        s.storage.writeEscrow = realWrite
+
+        falsy(ok)
+        eq(Env.players[1].PlayerData.money.cash, before, 'the creator is whole again')
+        s.audit.flush()
+        for _, row in ipairs(s.storage.readAudit(200)) do
+            falsy(row.action == 'escrow_rollback_failed',
+                'a rollback that worked must not raise an alarm')
+        end
+    end)
+end)

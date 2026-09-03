@@ -82,6 +82,12 @@ function Env.addPlayer(opts)
     player.Functions = {
         SetMetaData = function(key, value) player.PlayerData.metadata[key] = value end,
         AddMoney = function(account, amount)
+            -- qbx_core's AddMoney returns a boolean: false for an account it
+            -- does not know or an amount it will not take, and servers
+            -- commonly patch a balance ceiling into it. A harness that
+            -- always succeeded made the one branch that ignores the answer
+            -- untestable.
+            if player._refuseMoney then return false end
             player.PlayerData.money[account] = (player.PlayerData.money[account] or 0) + amount
             return true
         end,
