@@ -359,3 +359,118 @@ describe('an explicit bonus is not doubled by a percentage', function()
         eq(s.escrow.moneyValue(c.id, { slot = 2, portion = CB.PORTION.BONUS }), 5000)
     end)
 end)
+
+
+--- A claim must not write back what it read before it yielded.
+---
+--- claimSlot held a contract snapshot from the top of the function and wrote
+--- the whole thing back after several yielding reads. Anything stored in
+--- between was erased by that copy — and a bailout queuing during the window
+--- is the target's money.
+describe('a claim does not erase what happened while it ran', function()
+    it('does not write back a snapshot taken before it yielded', function()
+        -- Against a store that returns copies, as a real database does. On
+        -- the sharing backend the snapshot claimSlot holds IS the stored
+        -- row, so this bug cannot be reproduced there at all.
+        local s = newCopyingStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 5000 } },
+                                 { baseline = { cash = 5000 } } } },
+            bailoutAmount = 15000,
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        -- Something else writes the contract in the window between the read
+        -- at the top of claimSlot and the write at the end. On a live server
+        -- that window is several yielding database calls wide; here it is
+        -- forced at the first of them.
+        --
+        -- A queued buyout was the case review raised. That one turns out to
+        -- be unreachable — the contract is locked in COMPLETING for the whole
+        -- window and Bailout.buy refuses that state — but the pattern is the
+        -- bug, and the next writer added may not be so lucky.
+        local realReadEscrow = s.storage.readEscrow
+        local fired = false
+        s.storage.readEscrow = function(...)
+            if not fired then
+                fired = true
+                local row = s.storage.readContract(c.id)
+                row.resolution = 'written mid-claim'
+                s.storage.writeContract(row)
+            end
+            return realReadEscrow(...)
+        end
+
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        s.storage.readEscrow = realReadEscrow
+        truthy(fired, 'the write must have landed mid-claim')
+
+        local row = s.storage.readContract(c.id)
+        eq(row.resolution, 'written mid-claim',
+            'a claim must not erase what was written while it ran')
+        eq(row.slots_claimed, 1, 'and must still record its own claim')
+        eq(row.next_slot, 2)
+    end)
+
+    it('advances the slot exactly once', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 } },
+                                 { baseline = { cash = 1000 } },
+                                 { baseline = { cash = 1000 } } } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+
+        local row = s.storage.readContract(c.id)
+        eq(row.slots_claimed, 1, 'one claim, one slot')
+        eq(row.next_slot, 2)
+    end)
+
+    it('refuses to advance a slot that has already moved', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { slots = { { baseline = { cash = 1000 } },
+                                 { baseline = { cash = 1000 } } } },
+        })
+        truthy(s.storage.advanceSlot(c.id, 1), 'the first advance takes')
+        falsy(s.storage.advanceSlot(c.id, 1), 'the same one again does not')
+        eq(s.storage.readContract(c.id).slots_claimed, 1)
+    end)
+
+    it('advances the same way in every backend', function()
+        local Exec = require('crimson-bounty.tests.harness.mysql_exec')
+        for _, name in ipairs({ 'memory', 'json', 'mysql' }) do
+            local store
+            if name == 'mysql' then
+                Exec.install(Natives)
+                package.loaded['crimson-bounty.server.storage.mysql'] = nil
+                store = require('crimson-bounty.server.storage.mysql')
+            else
+                package.loaded['crimson-bounty.server.storage.' .. name] = nil
+                Natives.files = {}
+                store = require('crimson-bounty.server.storage.' .. name)
+            end
+            store.open()
+
+            store.writeContract({ id = 'ct1', creator_cid = 'C', target_cid = 'T',
+                                  mode = 'exclusive', state = 'active', created_at = 1,
+                                  payout_slots = 3, next_slot = 1, slots_claimed = 0 })
+
+            truthy(store.advanceSlot('ct1', 1), name .. ': the first advance')
+            falsy(store.advanceSlot('ct1', 1), name .. ': and not twice')
+
+            local row = store.readContract('ct1')
+            eq(row.next_slot, 2, name)
+            eq(row.slots_claimed, 1, name)
+        end
+    end)
+end)

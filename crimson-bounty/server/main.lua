@@ -292,7 +292,7 @@ function Recover()
                        'returned to held — verify it was not already paid')
                        :format(tostring(lines[j].id)))
                 if modules.audit then
-                    modules.audit.financial('release_interrupted', lines[j].settled_to,
+                    modules.audit.financial('release_interrupted', lines[j].releasing_to,
                         contract.id, { line = lines[j].id, amount = lines[j].amount,
                                        review = true })
                 end

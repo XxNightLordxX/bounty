@@ -186,9 +186,20 @@ local function update(sql, params)
     local assignments, index = {}, 0
     for column, value in setClause:gmatch("([%w_]+)%s*=%s*([^,]+)") do
         local trimmed = value:match('^%s*(.-)%s*$')
+        -- `col = col + 1`, which a real database evaluates against the row.
+        -- Stored as a literal it would put the text of the expression into
+        -- the column, which is exactly the kind of difference this exists
+        -- to surface.
+        local source, delta = trimmed:match('^([%w_]+)%s*([%+%-]%s*%d+)$')
+
         if trimmed == '?' then
             index = index + 1
             assignments[#assignments + 1] = { column = column, index = index }
+        elseif source then
+            assignments[#assignments + 1] = {
+                column = column, relative = source,
+                delta = tonumber((delta:gsub('%s', ''))),
+            }
         else
             assignments[#assignments + 1] =
                 { column = column, literal = trimmed:gsub("^'", ''):gsub("'$", '') }
@@ -226,6 +237,13 @@ local function update(sql, params)
         if eligible then
             for i = 1, #assignments do
                 local assignment = assignments[i]
+
+                if assignment.relative then
+                    row[assignment.column] =
+                        (tonumber(row[assignment.relative]) or 0) + assignment.delta
+                    goto continue
+                end
+
                 local value = assignment.literal
                 if value == nil then value = params[assignment.index] end
 
@@ -238,6 +256,8 @@ local function update(sql, params)
                     local coerced = coerce(tableName, assignment.column, value)
                     if coerced ~= nil then row[assignment.column] = coerced end
                 end
+
+                ::continue::
             end
             changed = changed + 1
         end

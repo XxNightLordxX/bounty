@@ -366,6 +366,17 @@ function JsonStore.allContracts()
     return out
 end
 
+--- Advance the payout slot, only if it is still the one the caller acted on.
+--- See the memory backend for why claimSlot may not write back a snapshot.
+function JsonStore.advanceSlot(id, expectedSlot)
+    local c = db.contracts[id]
+    if not c or (c.next_slot or 1) ~= expectedSlot then return false end
+    c.next_slot = expectedSlot + 1
+    c.slots_claimed = (c.slots_claimed or 0) + 1
+    touch(true, id)
+    return true
+end
+
 --- No yield between the read and the write, so this is atomic with respect
 --- to other handlers on the same tick (§14.3).
 function JsonStore.compareSetContractState(id, expected, next_)
@@ -388,6 +399,7 @@ function JsonStore.writeEscrow(contractId, lines)
         local existing = db.escrow[incoming.id]
         if existing and existing ~= incoming then
             existing.owed_to = incoming.owed_to
+            existing.releasing_to = incoming.releasing_to
         else
             db.escrow[incoming.id] = incoming
         end

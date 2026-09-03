@@ -579,3 +579,125 @@ describe('item instances', function()
         end
     end)
 end)
+
+
+--- Four bugs review found, each with no test until now.
+describe('the authority is the server, not the picker', function()
+    it('honours the item kill switch on a hand-written payload', function()
+        local s = newStack()
+        local f = fixture(s)
+        withConfig({ { Config.Sources.item, 'enabled', false } }, function()
+            eq(#s.app.escrowableItems(f.creator), 0, 'the picker offers nothing')
+            local lines, err = s.escrow.validate(f.creator, {
+                baseline = { items = { { name = 'lockpick', count = 1 } } },
+            })
+            falsy(lines, 'and a payload sent by hand is refused too')
+            eq(err, CB.ERR.INVALID_REWARD)
+        end)
+    end)
+
+    it('honours the weapon kill switch on a hand-written payload', function()
+        local s = newStack()
+        local f = fixture(s)
+        withConfig({ { Config.Sources.weapon, 'enabled', false } }, function()
+            eq(#s.app.escrowableWeapons(f.creator), 0)
+            local lines, err = s.escrow.validate(f.creator, {
+                baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } },
+            })
+            falsy(lines, 'a switch only the UI honours is not a switch')
+            eq(err, CB.ERR.INVALID_REWARD)
+        end)
+    end)
+
+    it('stakes the weapon that was picked, not one that shares its name', function()
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = {
+            { name = 'WEAPON_PISTOL', count = 1, slot = 3,
+              metadata = { serial = 'PLAIN1' } },
+            { name = 'WEAPON_PISTOL', count = 1, slot = 4,
+              metadata = { serial = 'KITTED', components = { 'suppressor' } } },
+        } })
+
+        local lines = s.escrow.validate(f.creator, {
+            baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 4 } } },
+        })
+        truthy(lines)
+        eq(lines[1].metadata.serial, 'KITTED', 'the one they chose')
+    end)
+
+    it('refuses a weapon slot the creator does not hold', function()
+        local s = newStack()
+        local f = fixture(s)
+        -- Slot 3 is the pistol; slot 9 is nothing. This used to fall back to
+        -- "the first weapon of that name", staking an object the creator
+        -- never picked.
+        local lines, err = s.escrow.validate(f.creator, {
+            baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 9 } } },
+        })
+        falsy(lines, 'a slot they do not hold is not a near-enough answer')
+        eq(err, CB.ERR.INSUFFICIENT)
+    end)
+end)
+
+describe('ids the rest of the resource will accept', function()
+    local Util = require('crimson-bounty.shared.util')
+
+    it('mints ids every handler accepts, whatever the clock says', function()
+        local Exec = require('crimson-bounty.tests.harness.mysql_exec')
+        Exec.install(Natives)
+        package.loaded['crimson-bounty.server.storage.mysql'] = nil
+        local store = require('crimson-bounty.server.storage.mysql')
+        store.open()
+
+        -- The clock component is taken modulo 100000, so it is a single
+        -- digit for ten seconds out of every twenty-eight hours. Unpadded,
+        -- every contract minted in that window had an id Util.toId refuses
+        -- as malformed, and nothing could act on it.
+        local realTime = os.time
+        for _, moment in ipairs({ 0, 5, 99, 1234, 99999 }) do
+            os.time = function() return moment end
+            local id = store.nextId('ct')
+            os.time = realTime
+            truthy(Util.toId(id),
+                ('id %q minted at clock %d is rejected by every handler'):format(id, moment))
+        end
+    end)
+
+    it('agrees with the other backends on what an id looks like', function()
+        for _, name in ipairs({ 'memory', 'json' }) do
+            package.loaded['crimson-bounty.server.storage.' .. name] = nil
+            Natives.files = {}
+            local store = require('crimson-bounty.server.storage.' .. name)
+            store.open()
+            truthy(Util.toId(store.nextId('ct')), name)
+        end
+    end)
+end)
+
+describe('a hunter who cannot afford anonymity', function()
+    it('is recorded as named in every backend', function()
+        local Exec = require('crimson-bounty.tests.harness.mysql_exec')
+        for _, name in ipairs({ 'memory', 'json', 'mysql' }) do
+            local store
+            if name == 'mysql' then
+                Exec.install(Natives)
+                package.loaded['crimson-bounty.server.storage.mysql'] = nil
+                store = require('crimson-bounty.server.storage.mysql')
+            else
+                package.loaded['crimson-bounty.server.storage.' .. name] = nil
+                Natives.files = {}
+                store = require('crimson-bounty.server.storage.' .. name)
+            end
+            store.open()
+
+            store.addHunter({ id = 'h1', contract_id = 'ct1', hunter_cid = 'HUNTER01',
+                              hunter_name = 'Rook Ash', alias = 'Operative #1',
+                              anon = true, state = 'active', accepted_at = 1, claims = 0 })
+
+            -- They could not cover the fee, so they are simply named.
+            truthy(store.updateHunter('h1', { anon = false }), name)
+            eq(store.readHunter('ct1', 'HUNTER01').anon, false,
+                name .. ': a hunter who paid nothing must not stay anonymous')
+        end
+    end)
+end)

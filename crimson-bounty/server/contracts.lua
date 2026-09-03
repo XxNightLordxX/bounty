@@ -604,9 +604,21 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment, opts)
         Escrow.release(contractId, contract.creator_cid, { slot = slot, portion = CB.PORTION.BONUS }, 'bonus_unearned')
     end
 
-    contract.slots_claimed = (contract.slots_claimed or 0) + 1
-    contract.next_slot = slot + 1
-    Storage.writeContract(contract)
+    -- Only the two fields that changed, guarded on the slot still being the
+    -- one this claim acted on. Writing back the whole contract read at the
+    -- top of this function erased anything stored in between — a bailout
+    -- queuing during the yielding reads above is the target's money.
+    if not Storage.advanceSlot(contractId, slot) then
+        -- The slot moved under this claim. The escrow for it is already
+        -- released above, so this cannot be unwound — but it must not be
+        -- compounded by writing a slot count nothing agrees with.
+        Audit.financial('slot_advance_lost', hunterCid, contractId, { slot = slot })
+    end
+
+    -- Re-read rather than mutating the copy: on a backend that hands out
+    -- references, that copy IS the stored row, and incrementing it here
+    -- counted the claim twice.
+    contract = Storage.readContract(contractId) or contract
     Storage.updateHunter(hunter.id, { last_claim_at = os.time(), claims = (hunter.claims or 0) + 1 })
 
     -- The stake is NOT returned here. On a multi-slot contract the hunter

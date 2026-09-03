@@ -205,11 +205,66 @@ describe('interrupted releases', function()
         local before = Env.players[3].PlayerData.money.cash
 
         -- The line records who the interrupted release was paying.
-        line.settled_to = 'HUNTER01'
+        line.releasing_to = 'HUNTER01'
         s.storage.writeEscrow(c.id, { line })
 
         truthy(s.admin.settleLine(0, line.id, 'pay'))
         eq(Env.players[3].PlayerData.money.cash - before, 5000)
+    end)
+
+    --- The real path: a release that actually starts and is interrupted.
+    --- The stranded() helper above fakes the states; this drives Escrow
+    --- itself, which is where the recipient has to be recorded.
+    it('remembers who a genuinely interrupted release was paying', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        -- The hunter cannot be paid, so the release stalls exactly where a
+        -- shutdown would leave it.
+        Env.players[3]._inventoryFull = true
+        Env.players[3].PlayerData.money._refuse = true
+
+        local lineId = s.storage.readEscrow(c.id)[1].id
+        truthy(s.storage.claimEscrowLine(lineId, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING))
+        -- Recovery's half.
+        truthy(s.storage.claimEscrowLine(lineId, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD))
+        Env.players[3]._inventoryFull = false
+
+        -- Now do it for real and check what the line remembers.
+        s.escrow.release(c.id, 'HUNTER01', { portion = CB.PORTION.BASELINE }, 'payout')
+        eq(s.storage.readEscrowLine(lineId).releasing_to, 'HUNTER01',
+            'a line must name who it was going to, before the money moves')
+    end)
+
+    it('carries the intended recipient through storage in every backend', function()
+        local Exec = require('crimson-bounty.tests.harness.mysql_exec')
+        for _, name in ipairs({ 'memory', 'json', 'mysql' }) do
+            local store
+            if name == 'mysql' then
+                Exec.install(Natives)
+                package.loaded['crimson-bounty.server.storage.mysql'] = nil
+                store = require('crimson-bounty.server.storage.mysql')
+            else
+                package.loaded['crimson-bounty.server.storage.' .. name] = nil
+                Natives.files = {}
+                store = require('crimson-bounty.server.storage.' .. name)
+            end
+            store.open()
+
+            store.writeEscrow('ct1', { {
+                id = 'ct1:1', contract_id = 'ct1', slot = 1, portion = 'baseline',
+                source = 'cash', amount = 5000, state = CB.ESCROW_STATE.HELD,
+                releasing_to = 'HUNTER01',
+            } })
+            eq(store.readEscrowLine('ct1:1').releasing_to, 'HUNTER01',
+                name .. ': without this, staff cannot pay the person it was for')
+        end
     end)
 
     it('returns it to the creator when staff say to', function()

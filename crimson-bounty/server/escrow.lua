@@ -80,6 +80,11 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
     local function addItems(portion, list)
         if list == nil then return nil end
         if type(list) ~= 'table' then return CB.ERR.INVALID_REWARD end
+        -- The kill switch was read only where the picker is built, so an
+        -- operator who turned item escrow off still had it work for anyone
+        -- sending the payload by hand. A config switch that only the UI
+        -- honours is not a switch.
+        if not Config.Sources.item.enabled then return CB.ERR.INVALID_REWARD end
         if #list > Config.Sources.item.maxStacks then return CB.ERR.INVALID_REWARD end
 
         for i = 1, #list do
@@ -144,6 +149,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
     local function addWeapons(portion, list)
         if list == nil then return nil end
         if type(list) ~= 'table' then return CB.ERR.INVALID_REWARD end
+        if not Config.Sources.weapon.enabled then return CB.ERR.INVALID_REWARD end
         if #list > Config.Sources.weapon.max then return CB.ERR.INVALID_REWARD end
 
         for i = 1, #list do
@@ -163,8 +169,12 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
             local found
             local slots = exports.ox_inventory:Search(actor.source, 'slots', name) or {}
             for j = 1, #slots do
-                if slots[j].slot == invSlot or not found then found = slots[j] end
+                if slots[j].slot == invSlot then found = slots[j] end
             end
+            -- No fallback to "some weapon of that name". The creator picked
+            -- a specific object out of a list the server itself built, and
+            -- staking a different one — a kitted rifle instead of a bare
+            -- one — is not a near-enough answer.
             if not found then return CB.ERR.INSUFFICIENT end
             if stagedWeaponSlots[found.slot] then return CB.ERR.INVALID_REWARD end
             stagedWeaponSlots[found.slot] = true
@@ -455,6 +465,14 @@ function Escrow.release(contractId, recipientCid, filter, reason)
             if not claimed then
                 result.skipped = result.skipped + 1
             else
+                -- Who this release is for, written before the money moves.
+                -- A line caught mid-release at a shutdown otherwise recorded
+                -- nobody, and staff settling it afterwards had no way to pay
+                -- the person it was going to — which is the case the whole
+                -- recovery path exists for.
+                line.releasing_to = recipientCid
+                Storage.writeEscrow(contractId, { line })
+
                 local delivered = Escrow.deliver(recipientCid, line)
                 if delivered then
                     Storage.settleEscrowLine(line.id, recipientCid)

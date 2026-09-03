@@ -142,6 +142,39 @@ _G.Env, _G.Natives, _G.Suite = Env, Natives, Suite
 
 --- Build a fully wired server stack against fresh in-memory storage.
 --- Every suite starts from this, so no test can be polluted by another.
+--- Build a stack whose storage returns copies from every read, the way a
+--- real database does. The memory backend hands back live references, so a
+--- bug that depends on writing back a stale snapshot cannot be reproduced
+--- against it — the snapshot IS the stored row.
+---@return table stack
+function _G.newCopyingStack()
+    local stack = newStack()
+    local wrap = require('crimson-bounty.tests.harness.copying_store')
+    local copying = wrap(stack.storage)
+
+    -- Rewire every module that holds the store, so nothing is left talking
+    -- to the sharing one behind the wrapper's back.
+    for _, module in ipairs({ 'audit', 'escrow', 'ledger' }) do
+        local _ = module
+    end
+
+    stack.audit.init(copying)
+    stack.escrow.init(copying, stack.audit)
+    stack.progression.init({ storage = copying, identity = stack.identity, audit = stack.audit })
+    stack.contracts.init({ storage = copying, escrow = stack.escrow, identity = stack.identity,
+                           audit = stack.audit, notify = stack.notify,
+                           progression = stack.progression, death = stack.death })
+    stack.ledger.init(copying)
+    stack.bailout.init({ storage = copying, identity = stack.identity,
+                         contracts = stack.contracts, escrow = stack.escrow,
+                         audit = stack.audit, notify = stack.notify, kidnap = stack.kidnap })
+    stack.death.init({ storage = copying, identity = stack.identity,
+                       contracts = stack.contracts, audit = stack.audit })
+
+    stack.storage = copying
+    return stack
+end
+
 function _G.newStack()
     Env.reset()
     Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }

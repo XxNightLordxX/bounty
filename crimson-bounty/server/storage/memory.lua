@@ -95,6 +95,20 @@ function Memory.contractsBy(cid)
     return out
 end
 
+--- Advance the payout slot, only if it is still the one the caller acted on.
+---
+--- claimSlot used to write back the whole contract it had read at the top,
+--- after several yielding reads. Anything written in between — a bailout
+--- queuing, which is the target's money — was erased by that stale copy.
+--- Only the two fields that actually change move here.
+function Memory.advanceSlot(id, expectedSlot)
+    local c = db.contracts[id]
+    if not c or (c.next_slot or 1) ~= expectedSlot then return false end
+    c.next_slot = expectedSlot + 1
+    c.slots_claimed = (c.slots_claimed or 0) + 1
+    return true
+end
+
 --- Conditional state write. Returns false when the contract is not in the
 --- expected state, which is how two simultaneous actions are serialised
 --- without either of them silently winning (§9.7).
@@ -121,6 +135,7 @@ function Memory.writeEscrow(contractId, lines)
             -- A separate copy of a line we already hold: take only the
             -- fields a caller is allowed to change.
             existing.owed_to = incoming.owed_to
+            existing.releasing_to = incoming.releasing_to
         else
             db.escrow[incoming.id] = incoming
         end

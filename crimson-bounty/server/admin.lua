@@ -176,7 +176,11 @@ function Admin.settleLine(src, lineId, disposition)
 
     -- Who it goes to. `settled_to` is who the interrupted release was
     -- paying; without one there is nobody to pay and it can only go back.
-    local recipient = disposition == 'pay' and (line.owed_to or line.settled_to) or contract.creator_cid
+    -- `releasing_to` is written before the money moves, so a line caught
+    -- mid-release at a shutdown still names who it was going to.
+    local recipient = disposition == 'pay'
+        and (line.owed_to or line.releasing_to or line.settled_to)
+        or contract.creator_cid
     if not recipient then return false, CB.ERR.INVALID_INPUT end
 
     -- Through the normal release path, filtered to this one line, so the

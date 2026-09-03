@@ -57,6 +57,7 @@ local SCHEMA = {
         staker VARCHAR(32),
         inv_slot INT,
         owed_to VARCHAR(32),
+        releasing_to VARCHAR(32),
         state VARCHAR(16) NOT NULL,
         settled_to VARCHAR(32),
         settled_at INT,
@@ -286,7 +287,11 @@ end
 
 function MySQLStore.nextId(prefix)
     seq = seq + 1
-    return string.format('%s%d%04d', prefix, os.time() % 100000, seq % 10000)
+    -- Zero-padded, because Util.toId refuses anything under eight
+    -- characters. Unpadded, the clock component is a single digit for ten
+    -- seconds out of every twenty-eight hours, and every contract minted in
+    -- that window carried an id the handlers would reject as malformed.
+    return string.format('%s%05d%04d', prefix, os.time() % 100000, seq % 10000)
 end
 
 --------------------------------------------------------------------------
@@ -383,6 +388,18 @@ end
 
 --- Conditional state write, done in one statement so it is atomic at the
 --- database rather than in Lua (§9.7).
+--- Advance the payout slot, only if it is still the one the caller acted on.
+--- One guarded UPDATE rather than writing back a contract read before
+--- several yielding calls; see the memory backend for what that erased.
+function MySQLStore.advanceSlot(id, expectedSlot)
+    local affected = MySQL.update.await([[
+        UPDATE crimson_contracts
+        SET next_slot = ?, slots_claimed = slots_claimed + 1
+        WHERE id = ? AND next_slot = ?
+    ]], { expectedSlot + 1, id, expectedSlot })
+    return (tonumber(affected) or 0) > 0
+end
+
 function MySQLStore.compareSetContractState(id, expected, next_)
     local affected = MySQL.update.await(
         'UPDATE crimson_contracts SET state = ? WHERE id = ? AND state = ?',
@@ -400,17 +417,18 @@ function MySQLStore.writeEscrow(contractId, lines)
         MySQL.query.await([[
             INSERT INTO crimson_escrow
                 (id, contract_id, slot, portion, source, amount, item, quantity, metadata,
-                 staker, inv_slot, owed_to, state)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 staker, inv_slot, owed_to, releasing_to, state)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             -- State and amount are NOT written here: they move only through
             -- claimEscrowLine / settleEscrowLine / setEscrowAmount, which are
             -- guarded. Writing them from a caller-held copy could resurrect a
             -- line that settled while the caller was reading.
-            ON DUPLICATE KEY UPDATE owed_to = VALUES(owed_to)
+            ON DUPLICATE KEY UPDATE owed_to = VALUES(owed_to),
+                releasing_to = VALUES(releasing_to)
         ]], {
             l.id, contractId, l.slot or 1, l.portion, l.source, l.amount or 0,
             l.item, l.quantity or 0, l.metadata and json.encode(l.metadata) or nil,
-            l.staker, l.inv_slot, l.owed_to, l.state,
+            l.staker, l.inv_slot, l.owed_to, l.releasing_to, l.state,
         })
     end
     return true
@@ -518,6 +536,18 @@ function MySQLStore.updateHunter(id, fields)
     end
     if fields.claims ~= nil then
         MySQL.update.await('UPDATE crimson_hunters SET claims = ? WHERE id = ?', { fields.claims, id })
+    end
+    -- A hunter who could not cover the anonymity fee is named instead. This
+    -- branch was missing, so on the backend that ships by default the write
+    -- was dropped: the hunter stayed listed as anonymous having paid nothing
+    -- for it, and only on mysql.
+    if fields.anon ~= nil then
+        MySQL.update.await('UPDATE crimson_hunters SET anon = ? WHERE id = ?',
+            { fields.anon and 1 or 0, id })
+    end
+    if fields.alias ~= nil then
+        MySQL.update.await('UPDATE crimson_hunters SET alias = ? WHERE id = ?',
+            { fields.alias, id })
     end
     return true
 end
