@@ -67,7 +67,7 @@ You said to use my judgement. These are the ones that were mine:
 sh crimson-bounty/tests/all.sh
 ```
 
-- **293 server tests** — escrow arithmetic, the state machine, every payout
+- **301 server tests** — escrow arithmetic, the state machine, every payout
   and refund path, deliberate exploit attempts, storage conformance across
   all three backends, and a randomised simulation asserting that no sequence
   of operations creates or destroys value.
@@ -79,9 +79,15 @@ sh crimson-bounty/tests/all.sh
   the MySQL schema holds every field the code writes, no production read of a
   test-harness field, and no native browser dialogs.
 
-Beyond that, five rounds of adversarial review by independent agents, each
-finding verified or refuted by a second pass. Roughly seventy defects were
-found and fixed. The ones worth knowing about:
+Beyond that, **four completed rounds** of adversarial review by independent
+agents, each finding verified or refuted by a second pass. A fifth round
+could not run — the model capacity for it was unavailable, and four attempts
+all failed with server errors — so that round is my own reading of the code
+rather than an independent one. Treat it as weaker evidence than the four
+before it.
+
+Roughly seventy defects were found and fixed across those rounds. The ones
+worth knowing about:
 
 - The app **could not create a contract at all** — the form sent blank fields
   as zeroes and validation rejected them. Every unit test passed.
@@ -114,6 +120,11 @@ in-game. What remains unproven:
 `docs/in-game-checklist.md` covers exactly these. Work through it on a test
 server before going live — particularly sections 3 to 6, which are the money
 paths.
+
+Given that every completed review round found something real, the honest
+expectation is that a live server will find more. The audit log is there for
+exactly that: `SELECT * FROM crimson_audit ORDER BY id DESC LIMIT 50` shows
+every financial movement and every refused attempt, with the reason.
 
 ## What I would want you to look at
 

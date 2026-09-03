@@ -287,3 +287,64 @@ describe('the mysql schema holds every field the code writes', function()
         eq(#missing, 0, 'crimson_hunters cannot store: ' .. table.concat(missing, ', '))
     end)
 end)
+
+describe('owed escrow survives in every backend', function()
+    --- Money owed to a named person is the newest escrow shape, and the one
+    --- it would be worst to lose: the player has already been charged.
+
+    local function line(id)
+        return {
+            id = id, contract_id = 'ct1', slot = 0, portion = CB.PORTION.OWED,
+            source = 'bank', amount = 5000, owed_to = 'CREATOR1',
+            state = CB.ESCROW_STATE.HELD,
+        }
+    end
+
+    it('round-trips its owner in memory and json', function()
+        package.loaded['crimson-bounty.server.storage.memory'] = nil
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        Natives.files = {}
+
+        for _, name in ipairs({ 'memory', 'json' }) do
+            local store = require('crimson-bounty.server.storage.' .. name)
+            store.open()
+            store.writeEscrow('ct1', { line('ct1:owed1') })
+
+            local read = store.readEscrowLine('ct1:owed1')
+            truthy(read, name .. ': line not found')
+            eq(read.owed_to, 'CREATOR1', name .. ': the owner must survive the round trip')
+            eq(read.portion, CB.PORTION.OWED, name)
+            eq(read.amount, 5000, name)
+        end
+    end)
+
+    it('survives a restart in json mode', function()
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        Natives.files = {}
+        local store = require('crimson-bounty.server.storage.json')
+        store.open()
+        store.writeEscrow('ct1', { line('ct1:owed1') })
+        store.queuePending('CREATOR1', 'ct1', 'ct1:owed1')
+        store.close()
+
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        local reopened = require('crimson-bounty.server.storage.json')
+        reopened.open()
+
+        local read = reopened.readEscrowLine('ct1:owed1')
+        truthy(read, 'money already charged must not vanish on a restart')
+        eq(read.owed_to, 'CREATOR1')
+        eq(#reopened.readPending('CREATOR1'), 1, 'and the claim on it survives too')
+    end)
+
+    it('has a column for it in the mysql schema', function()
+        local Sim = require('crimson-bounty.tests.harness.mysql_sim')
+        Sim.install(Natives)
+        package.loaded['crimson-bounty.server.storage.mysql'] = nil
+        local store = require('crimson-bounty.server.storage.mysql')
+        store.open()
+
+        local missing = Sim.missingColumns('crimson_escrow', line('ct1:owed1'))
+        eq(#missing, 0, 'crimson_escrow cannot store: ' .. table.concat(missing, ', '))
+    end)
+end)
