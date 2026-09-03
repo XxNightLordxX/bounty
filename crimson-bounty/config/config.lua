@@ -252,8 +252,9 @@ Config.Listing = {
 
 Config.Targeting = {
     Mode = 'search',
-    MinQueryLength = 3,
-    MaxResults = 8,
+    --- Long enough that the search is a lookup rather than an enumeration.
+    MinQueryLength = 4,
+    MaxResults = 5,
     AllowBrowseList = false,
     --- Protected-job players may be targeted by default: hunting a cop is
     --- legitimate criminal roleplay. What makes it fair is the advisory

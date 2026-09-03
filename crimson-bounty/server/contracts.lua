@@ -8,7 +8,7 @@ local Util = require_shared('util')
 
 local Contracts = {}
 
-local Storage, Escrow, Identity, Audit, Notify, Progression
+local Storage, Escrow, Identity, Audit, Notify, Progression, Death
 
 function Contracts.init(deps)
     Storage     = deps.storage
@@ -17,6 +17,7 @@ function Contracts.init(deps)
     Audit       = deps.audit
     Notify      = deps.notify
     Progression = deps.progression
+    Death       = deps.death
 end
 
 local LIVE_STATES = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true, [CB.STATE.COMPLETING] = true }
@@ -368,6 +369,13 @@ function Contracts.accept(actor, contractId, anonymous)
         state         = 'active',
     }
     Storage.addHunter(record)
+
+    -- Start watching the target's health now, so damage claimed against
+    -- them from this point can be corroborated (§14.2).
+    if Death then
+        local targetActor = Identity.byCitizenId(contract.target_cid)
+        if targetActor then Death.watch(targetActor.cid, targetActor.source) end
+    end
 
     Audit.action('contract_accepted', actor.cid, contractId, { anonymous = record.anon })
     Notify.contractAccepted(contract, record, activeCount + 1)

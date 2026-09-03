@@ -28,9 +28,17 @@ end
 -- Damage observation
 --------------------------------------------------------------------------
 
---- Record a damage event the server observed. Called from the
---- weaponDamageEvent handler, whose arguments come from the engine rather
---- than from a script payload.
+--- Health last seen for a player, so a damage claim can be checked against
+--- a decrease the server observed for itself.
+local health = {}
+
+--- Record a damage event.
+---
+--- Only `sender` is engine-supplied. The entity list, weapon and damage
+--- figure inside the payload are written by that client, so a claim is
+--- corroborated here against the victim's health as the server reads it: a
+--- player who never fired cannot produce a decrease, and a claim without one
+--- is discarded.
 ---@param attackerSource number
 ---@param victimSource number
 ---@param weaponHash number|nil
@@ -39,6 +47,23 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
     local victim = Identity.resolve(victimSource)
     if not attacker or not victim then return end
     if attacker.cid == victim.cid then return end
+
+    -- Corroboration: the victim must actually have lost health. Without
+    -- this, a hunter standing anywhere within weapon range can fabricate a
+    -- hit and inherit attribution for a death they had no part in.
+    local current = GetEntityHealth(GetPlayerPed(victimSource)) or 0
+    local previous = health[victim.cid]
+    health[victim.cid] = current
+
+    -- No baseline means nothing to corroborate against, and the baseline is
+    -- established the moment a contract on this player is accepted. Failing
+    -- closed here is what stops a forged first event from landing before any
+    -- real damage has been observed.
+    if not previous or current >= previous then
+        Audit.rejected('damage_unsupported', attacker.cid, nil,
+            { victim = victim.cid, health = current, baseline = previous })
+        return
+    end
 
     local attackerCoords = GetEntityCoords(GetPlayerPed(attackerSource))
     local victimCoords = GetEntityCoords(GetPlayerPed(victimSource))
@@ -62,6 +87,9 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
         weapon = weaponHash,
         distance = distance,
         coords = victimCoords,
+        -- How much health the server saw disappear, so the hunter who did
+        -- the most damage wins attribution rather than whoever claimed last.
+        damage = previous and (previous - current) or 0,
     }
 
     -- Keep the window small: old damage cannot corroborate a later death.
@@ -78,7 +106,11 @@ function Death.prune(victimCid)
     if #list == 0 then damage[victimCid] = nil end
 end
 
---- The most recent corroborated damage from any of the given hunters.
+--- The best-supported attributable damage from any of the given hunters.
+---
+--- Chosen by how much health the server actually saw the victim lose, not by
+--- who reported last: attributing to the latest claimant hands the kill to
+--- whoever fires an event a second after someone else's real shot.
 ---@param victimCid string
 ---@param hunterCids table set of citizen ids
 ---@return table|nil
@@ -87,14 +119,63 @@ function Death.lastAttackerAmong(victimCid, hunterCids)
     local list = damage[victimCid]
     if not list then return nil end
 
-    local best
+    local totals, latest = {}, {}
     for i = 1, #list do
         local record = list[i]
         if hunterCids[record.attackerCid] then
-            if not best or record.at > best.at then best = record end
+            totals[record.attackerCid] = (totals[record.attackerCid] or 0) + (record.damage or 0)
+            if not latest[record.attackerCid] or record.at > latest[record.attackerCid].at then
+                latest[record.attackerCid] = record
+            end
         end
     end
-    return best
+
+    local bestCid, bestDamage
+    for cid, total in pairs(totals) do
+        if not bestDamage or total > bestDamage then bestCid, bestDamage = cid, total end
+    end
+
+    return bestCid and latest[bestCid] or nil
+end
+
+--- Begin watching a player's health, so damage claims against them can be
+--- corroborated. Called when a contract naming them is accepted, and topped
+--- up on the maintenance tick.
+---@param cid string
+---@param source number
+function Death.watch(cid, source)
+    if not cid or not source then return false end
+    if health[cid] == nil then
+        health[cid] = GetEntityHealth(GetPlayerPed(source)) or 200
+    end
+    return true
+end
+
+--- Refresh baselines for every player who is the target of a live contract.
+--- Bounded by the number of live contracts, not the player count.
+function Death.watchTargets(contracts)
+    local watched = 0
+    for i = 1, #contracts do
+        local c = contracts[i]
+        if c.state == CB.STATE.ACTIVE or c.state == CB.STATE.ACCEPTED then
+            local target = Identity.byCitizenId(c.target_cid)
+            if target then
+                Death.watch(target.cid, target.source)
+                watched = watched + 1
+            end
+        end
+    end
+    return watched
+end
+
+--- Reset the health baseline for a player, so a respawn is not read as a
+--- decrease and the next real hit is measured from full.
+function Death.resetHealth(cid, source)
+    if source then
+        health[cid] = GetEntityHealth(GetPlayerPed(source)) or 200
+    else
+        health[cid] = nil
+    end
 end
 
 --------------------------------------------------------------------------
@@ -182,10 +263,18 @@ function Death.onRevivedVerified(source, cid)
         Audit.rejected('revive_claim_while_dead', cid, nil, {})
         return 0
     end
+    -- A revived player is back at full health; the next hit measures from
+    -- there rather than being read as a decrease from their dying value.
+    Death.resetHealth(cid, source)
     return Death.onRevived(cid)
 end
 
 function Death.onRevived(cid)
+    -- A revive ends the fight. Damage recorded before it must not
+    -- corroborate a death that happens afterwards, or a hunter who shot
+    -- someone an hour ago inherits their next death.
+    damage[cid] = nil
+
     local cleared = 0
     for key, record in pairs(pending) do
         if record.victimCid == cid then
@@ -232,6 +321,7 @@ end
 
 function Death.clearPlayer(cid)
     damage[cid] = nil
+    health[cid] = nil
     for key, record in pairs(pending) do
         if record.victimCid == cid or record.hunterCid == cid then pending[key] = nil end
     end

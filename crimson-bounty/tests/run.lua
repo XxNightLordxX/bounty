@@ -111,7 +111,7 @@ function _G.newStack()
     progression.init({ storage = storage, identity = identity, audit = audit })
     contracts.init({
         storage = storage, escrow = escrow, identity = identity,
-        audit = audit, notify = notify, progression = progression,
+        audit = audit, notify = notify, progression = progression, death = death,
     })
 
     ledger.init(storage)

@@ -55,6 +55,7 @@ local SCHEMA = {
         metadata TEXT,
         staker VARCHAR(32),
         inv_slot INT,
+        owed_to VARCHAR(32),
         state VARCHAR(16) NOT NULL,
         settled_to VARCHAR(32),
         settled_at INT,
@@ -234,13 +235,14 @@ function MySQLStore.writeEscrow(contractId, lines)
         MySQL.query.await([[
             INSERT INTO crimson_escrow
                 (id, contract_id, slot, portion, source, amount, item, quantity, metadata,
-                 staker, inv_slot, state)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-            ON DUPLICATE KEY UPDATE state = VALUES(state)
+                 staker, inv_slot, owed_to, state)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON DUPLICATE KEY UPDATE
+                state = VALUES(state), amount = VALUES(amount), owed_to = VALUES(owed_to)
         ]], {
             l.id, contractId, l.slot or 1, l.portion, l.source, l.amount or 0,
             l.item, l.quantity or 0, l.metadata and json.encode(l.metadata) or nil,
-            l.staker, l.inv_slot, l.state,
+            l.staker, l.inv_slot, l.owed_to, l.state,
         })
     end
     return true

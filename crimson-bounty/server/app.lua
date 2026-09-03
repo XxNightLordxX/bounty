@@ -157,8 +157,11 @@ function App.register()
                 out[#out + 1] = {
                     handle = App.mintTargetHandle(actor.cid, candidate.cid),
                     name = candidate.name,
+                    -- Whether the target is law enforcement is disclosed, so
+                    -- nobody places a contract on an officer unaware (§7.5).
+                    -- Which force they serve is not: that would make search
+                    -- a roster of who is on duty tonight.
                     protected = deps.identity.isProtectedJob(candidate.job),
-                    job = deps.identity.isProtectedJob(candidate.job) and candidate.job.name or nil,
                 }
                 if #out >= Config.Targeting.MaxResults then break end
             end

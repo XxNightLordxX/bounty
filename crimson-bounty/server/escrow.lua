@@ -330,6 +330,10 @@ function Escrow.release(contractId, recipientCid, filter, reason)
             matches = false
         end
 
+        -- A line already owed to someone belongs to them, whatever this
+        -- release is for.
+        if line.owed_to and line.owed_to ~= recipientCid then matches = false end
+
         if matches then
             -- Compare-and-set: only a line still `held` may be claimed, and
             -- the claim is what authorises moving the funds.
@@ -344,7 +348,14 @@ function Escrow.release(contractId, recipientCid, filter, reason)
                 else
                     -- Could not deliver (offline, or inventory full). The line
                     -- stays owed rather than being destroyed (§9.3): it goes
-                    -- back to `held` and is queued for retry on next login.
+                    -- back to `held`, is marked as owed to this player, and
+                    -- is queued for retry on next login.
+                    --
+                    -- The mark matters: without it a later unfiltered refund
+                    -- would sweep a hunter's undelivered payout to the
+                    -- creator, quietly paying the wrong person.
+                    line.owed_to = recipientCid
+                    Storage.writeEscrow(contractId, { line })
                     Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
                     Storage.queuePending(recipientCid, contractId, line.id)
                     result.pending = result.pending + 1

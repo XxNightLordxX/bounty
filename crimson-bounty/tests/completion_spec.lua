@@ -23,6 +23,9 @@ local function killTarget(s, opts)
     Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
     Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
     if not opts.skipDamage then
+        -- Real damage: the server sees the victim's health fall. A claim
+        -- without an observed decrease is not corroborated.
+        Env.players[2]._health = (Env.players[2]._health or 200) - 60
         s.death.recordDamage(opts.attackerSource or 3, 2, 123456)
     end
     Env.players[2].PlayerData.metadata.isdead = not opts.downedOnly
@@ -60,6 +63,7 @@ describe('death attribution', function()
         local s, f, c = seeded()
         Env.players[3]._coords = { x = 0.0, y = 0.0, z = 0.0 }
         Env.players[2]._coords = { x = 5000.0, y = 0.0, z = 0.0 }
+        Env.players[2]._health = 140
         s.death.recordDamage(3, 2, 123456)
         Env.players[2].PlayerData.metadata.isdead = true
         eq(s.death.onVictimReport(2), 0, 'a hit from 5km away did not happen')
@@ -69,6 +73,7 @@ describe('death attribution', function()
         local s, f, c = seeded()
         Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
         Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 140
         s.death.recordDamage(3, 2, 123456)
         Env.advance((Config.Completion.DeathReportWindowMs / 1000) + 5)
         Env.players[2].PlayerData.metadata.isdead = true
@@ -249,6 +254,7 @@ describe('damage observation is actually wired', function()
 
         Env.players[3]._coords = { x = 50.0, y = 50.0, z = 30.0 }
         Env.players[2]._coords = { x = 51.0, y = 50.0, z = 30.0 }
+        Env.players[2]._health = 120   -- the server sees the health drop
 
         -- The engine reports the hit; nothing here is asserted by a player.
         Env.handlers['weaponDamageEvent'](3, {
@@ -271,6 +277,7 @@ describe('damage observation is actually wired', function()
     it('ignores self-damage', function()
         local s = wiredStack()
         fixture(s)
+        Env.players[2]._health = 120
         eq(s.bridges.onWeaponDamage(s, 2, { weaponDamage = 50, hitGlobalIds = { 1002 } }), 0,
             'the attacker and victim are the same player')
     end)
@@ -292,5 +299,78 @@ describe('damage observation is actually wired', function()
         -- Cleanup must not depend on the framework still knowing the player.
         Env.removePlayer(3)
         truthy(s.bridges.onPlayerDropped(s, 'HUNTER01'), 'still cleans up after they are gone')
+    end)
+end)
+
+describe('damage claims are corroborated, not trusted', function()
+    local function armed()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)   -- starts watching the target
+        Env.players[3]._coords = { x = 10.0, y = 10.0, z = 30.0 }
+        Env.players[2]._coords = { x = 11.0, y = 10.0, z = 30.0 }
+        return s, f, c
+    end
+
+    it('watches the target from the moment a contract is accepted', function()
+        local s, f, c = armed()
+        -- No health drop: the claim has nothing behind it.
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2), 0, 'a claim with no observed damage is discarded')
+    end)
+
+    it('rejects a fabricated hit from a hunter who never fired', function()
+        local s, f, c = armed()
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+            coords = { x = 12.0, y = 10.0, z = 30.0 } })
+        s.contracts.accept(s.identity.resolve(4), c.id, false)
+
+        -- Hunter one genuinely shoots.
+        Env.players[2]._health = 140
+        s.death.recordDamage(3, 2, 123456)
+
+        -- Hunter two fires an event immediately afterwards without shooting.
+        s.death.recordDamage(4, 2, 123456)
+
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2), 1)
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the hunter who actually shot is credited')
+        falsy(s.death.getPending(c.id, 'HUNTER02'), 'the one who only claimed is not')
+    end)
+
+    it('credits the hunter who did the most damage, not the last to report', function()
+        local s, f, c = armed()
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+            coords = { x = 12.0, y = 10.0, z = 30.0 } })
+        s.contracts.accept(s.identity.resolve(4), c.id, false)
+
+        Env.players[2]._health = 120           -- hunter one takes 80
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2]._health = 110           -- hunter two chips 10 off later
+        s.death.recordDamage(4, 2, 123456)
+
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.onVictimReport(2)
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the real killer keeps the kill')
+        falsy(s.death.getPending(c.id, 'HUNTER02'), 'a late chip does not steal it')
+    end)
+
+    it('does not read a respawn as damage', function()
+        local s, f, c = armed()
+        Env.players[2]._health = 120
+        s.death.recordDamage(3, 2, 123456)
+
+        Env.players[2].PlayerData.metadata.isdead = false
+        s.death.onRevivedVerified(2, 'TARGET01')
+        Env.players[2]._health = 200            -- back on their feet
+
+        s.death.recordDamage(3, 2, 123456)      -- no new damage since
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2), 0, 'a heal is not a hit')
     end)
 end)

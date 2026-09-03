@@ -107,7 +107,8 @@ function StartCrimsonBounty()
     escrow.init(Storage, audit)
     progression.init({ storage = Storage, identity = identity, audit = audit })
     contracts.init({ storage = Storage, escrow = escrow, identity = identity,
-                     audit = audit, notify = notify, progression = progression })
+                     audit = audit, notify = notify, progression = progression,
+                     death = death })
     ledger.init(Storage)
     death.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit })
     photo.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
@@ -170,10 +171,25 @@ function Recover()
         local lines = Storage.readEscrow(contract.id)
         for j = 1, #lines do
             if lines[j].state == CB.ESCROW_STATE.RELEASING then
-                -- Claimed but never settled: the delivery did not complete,
-                -- so the line is owed again rather than lost.
+                -- Claimed but never settled. The server stopped between
+                -- handing the money over and recording that it had, so we
+                -- cannot know which happened.
+                --
+                -- The line is returned to `held` so it is owed rather than
+                -- stuck forever. That is the deliberate trade: the window is
+                -- a few instructions wide, and a line left `releasing` is
+                -- money no code path can ever reach again. Every one of
+                -- these is logged with everything staff need to check it.
                 Storage.claimEscrowLine(lines[j].id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
                 unstuck = unstuck + 1
+                print(('[crimson-bounty] escrow line %s was mid-release at shutdown; ' ..
+                       'returned to held — verify it was not already paid')
+                       :format(tostring(lines[j].id)))
+                if modules.audit then
+                    modules.audit.financial('release_interrupted', lines[j].settled_to,
+                        contract.id, { line = lines[j].id, amount = lines[j].amount,
+                                       review = true })
+                end
             end
         end
     end
@@ -208,6 +224,7 @@ function Tick()
     modules.bailout.processQueue()
     modules.photo.sweep()
     modules.death.sweep()
+    modules.death.watchTargets(Storage.allContracts())
     modules.ratelimit.sweep()
     if Storage.prune then Storage.prune() end
     local app = require('server.app')
@@ -290,6 +307,16 @@ AddEventHandler('onResourceStop', function(name)
         for i = 1, #contracts do
             local c = contracts[i]
             if not CB.TERMINAL[c.state] then
+                -- Stakes belong to the hunters who put them up, and an
+                -- unfiltered release deliberately skips them — so they are
+                -- returned explicitly here rather than destroyed with the
+                -- tables.
+                local hunters = Storage.readHunters(c.id)
+                for j = 1, #hunters do
+                    modules.escrow.release(c.id, hunters[j].hunter_cid,
+                        { portion = CB.PORTION.STAKE, staker = hunters[j].hunter_cid },
+                        'resource_stopping')
+                end
                 modules.escrow.release(c.id, c.creator_cid, nil, 'resource_stopping')
             end
         end
