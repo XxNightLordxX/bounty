@@ -12,6 +12,13 @@ Natives.install()
 -- Module loader used by the server files.
 _G.require_shared = function(name) return require('crimson-bounty.shared.' .. name) end
 
+-- The resource's own require (server/boot.lua) resolves 'server.escrow'
+-- against the resource root. Teaching the harness the same shape is what
+-- lets main.lua — the real wiring, the tick and the expiry pass — be loaded
+-- and tested rather than reimplemented here. Reimplementing it is how
+-- app.init came to be missing from newStack for the life of the build.
+package.path = './crimson-bounty/?.lua;' .. package.path
+
 _G.CB = require('crimson-bounty.shared.constants')
 _G.Config = require('crimson-bounty.config.config')
 
@@ -274,7 +281,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec',
 }
 
 for _, name in ipairs(suites) do

@@ -60,6 +60,9 @@ end
 function Bridges.onPlayerDropped(modules, cid)
     if not cid then return false end
 
+    -- Someone leaving pauses the clock on every contract they are party to.
+    if modules.scheduler then modules.scheduler.presenceChanged() end
+
     modules.identity.endSession(cid)
     modules.ratelimit.clear(cid)
     modules.death.clearPlayer(cid)
@@ -96,6 +99,11 @@ function Bridges.install(modules)
         modules.comms.clearContract(contractId)
     end
 
+    -- The expiry pass skips itself when nothing could have changed since the
+    -- last one. Creating or ending a contract can move the earliest
+    -- deadline, so it is told.
+    modules.contracts.onChanged = modules.scheduler and modules.scheduler.contractsChanged or nil
+
     -- Citizen ids are remembered while players are connected, so disconnect
     -- cleanup does not depend on the framework still knowing them.
     local connected = {}
@@ -108,6 +116,8 @@ function Bridges.install(modules)
         local actor = modules.identity.resolve(src)
         if actor then
             connected[src] = actor.cid
+            -- Someone arriving can unpause a contract's clock.
+            if modules.scheduler then modules.scheduler.presenceChanged() end
             -- A session we watched begin, so its length is known exactly.
             -- Identity.resolve may already have noted them as observed; this
             -- replaces that with the real thing.

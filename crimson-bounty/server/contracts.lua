@@ -102,6 +102,7 @@ local function finalise(contractId, contract, forfeitStakes)
 
     Notify.clearContract(contractId)
     if Contracts.onResolved then Contracts.onResolved(contractId) end
+    if Contracts.onChanged then Contracts.onChanged() end
 end
 
 --------------------------------------------------------------------------
@@ -365,6 +366,11 @@ function Contracts.create(actor, req)
     if Progression then Progression.onContractPlaced(actor.cid) end
 
     Notify.contractCreated(contract, targetActor)
+
+    -- A new contract can hold the earliest deadline on the server, and the
+    -- expiry pass is allowed to skip ahead when it believes nothing is due.
+    if Contracts.onChanged then Contracts.onChanged() end
+
     return contract
 end
 

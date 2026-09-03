@@ -129,6 +129,10 @@ Config.Limits = {
     --- property is the creator's own, so this is not an economy limit — it
     --- bounds the work a single contract can cost the database.
     MaxEscrowLines               = 60,
+    --- The longest the expiry pass will skip ahead when no contract has a
+    --- nearer deadline. A ceiling rather than a target: it bounds how stale
+    --- the cached "nothing to do until" answer can get.
+    MaxDeadlineSkipSeconds       = 600,
     --- The same hunter may not claim two slots inside this window. Without
     --- it a multi-slot contract becomes a respawn-camping machine.
     SlotCooldownSeconds          = 600,

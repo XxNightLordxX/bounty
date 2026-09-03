@@ -85,77 +85,6 @@ local function selectStorage()
     if mode == 'json' then return require('server.storage.json') end
     return require('server.storage.memory')
 end
-
-function StartCrimsonBounty()
-    validateConfig()
-
-    Storage = selectStorage()
-    Storage.open()
-
-    local identity   = require('server.identity')
-    local ratelimit  = require('server.ratelimit')
-    local audit      = require('server.audit')
-    local notify     = require('server.notify')
-    local escrow     = require('server.escrow')
-    local contracts  = require('server.contracts')
-    local ledger     = require('server.ledger')
-    local death      = require('server.completion.death')
-    local photo      = require('server.completion.photo')
-    local kidnap     = require('server.completion.kidnap')
-    local bailout    = require('server.bailout')
-    local informant  = require('server.informant')
-    local amendments = require('server.amendments')
-    local comms      = require('server.comms')
-    local mugshot    = require('server.mugshot')
-    local progression = require('server.progression')
-    local projection = require('server.projection')
-    local app        = require('server.app')
-
-    audit.init(Storage)
-    notify.init({ identity = identity })
-    escrow.init(Storage, audit)
-    progression.init({ storage = Storage, identity = identity, audit = audit })
-    contracts.init({ storage = Storage, escrow = escrow, identity = identity,
-                     audit = audit, notify = notify, progression = progression,
-                     death = death })
-    ledger.init(Storage)
-    death.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit })
-    photo.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
-                 death = death, notify = notify, ledger = ledger })
-    kidnap.init({ storage = Storage, identity = identity, contracts = contracts,
-                  audit = audit, notify = notify, ledger = ledger })
-    bailout.init({ storage = Storage, identity = identity, contracts = contracts,
-                   escrow = escrow, audit = audit, notify = notify, kidnap = kidnap })
-    informant.init({ storage = Storage, identity = identity, audit = audit })
-    amendments.init({ storage = Storage, identity = identity, contracts = contracts,
-                      escrow = escrow, audit = audit, notify = notify })
-    comms.init({ storage = Storage, identity = identity, audit = audit,
-                 notify = notify, ratelimit = ratelimit })
-    mugshot.init({ identity = identity, audit = audit })
-    projection.init({ storage = Storage, identity = identity, escrow = escrow,
-                      kidnap = kidnap, mugshot = mugshot, progression = progression })
-
-    modules = {
-        storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,
-        notify = notify, escrow = escrow, contracts = contracts, ledger = ledger,
-        death = death, photo = photo, kidnap = kidnap, bailout = bailout,
-        informant = informant, amendments = amendments, comms = comms,
-        projection = projection, mugshot = mugshot, progression = progression,
-        app = app,
-    }
-
-    app.init(modules)
-    require('server.bridges').install(modules)
-
-    Recover()
-    amendments.reindex()
-    StartTick()
-
-    reportIntegrations()
-    print(('[crimson-bounty] started in %s mode'):format(Config.Database.Mode))
-    return modules
-end
-
 --------------------------------------------------------------------------
 -- Integration report (§4.2 of the improvements document)
 --------------------------------------------------------------------------
@@ -233,6 +162,84 @@ local function reportIntegrations()
     end
 
     return integrations
+end
+
+
+
+function StartCrimsonBounty()
+    validateConfig()
+
+    Storage = selectStorage()
+    Storage.open()
+
+    local identity   = require('server.identity')
+    local ratelimit  = require('server.ratelimit')
+    local audit      = require('server.audit')
+    local notify     = require('server.notify')
+    local escrow     = require('server.escrow')
+    local contracts  = require('server.contracts')
+    local ledger     = require('server.ledger')
+    local death      = require('server.completion.death')
+    local photo      = require('server.completion.photo')
+    local kidnap     = require('server.completion.kidnap')
+    local bailout    = require('server.bailout')
+    local informant  = require('server.informant')
+    local amendments = require('server.amendments')
+    local comms      = require('server.comms')
+    local mugshot    = require('server.mugshot')
+    local progression = require('server.progression')
+    local projection = require('server.projection')
+    local app        = require('server.app')
+
+    audit.init(Storage)
+    notify.init({ identity = identity })
+    escrow.init(Storage, audit)
+    progression.init({ storage = Storage, identity = identity, audit = audit })
+    contracts.init({ storage = Storage, escrow = escrow, identity = identity,
+                     audit = audit, notify = notify, progression = progression,
+                     death = death })
+    ledger.init(Storage)
+    death.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit })
+    photo.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
+                 death = death, notify = notify, ledger = ledger })
+    kidnap.init({ storage = Storage, identity = identity, contracts = contracts,
+                  audit = audit, notify = notify, ledger = ledger })
+    bailout.init({ storage = Storage, identity = identity, contracts = contracts,
+                   escrow = escrow, audit = audit, notify = notify, kidnap = kidnap })
+    informant.init({ storage = Storage, identity = identity, audit = audit })
+    amendments.init({ storage = Storage, identity = identity, contracts = contracts,
+                      escrow = escrow, audit = audit, notify = notify })
+    comms.init({ storage = Storage, identity = identity, audit = audit,
+                 notify = notify, ratelimit = ratelimit })
+    mugshot.init({ identity = identity, audit = audit })
+    projection.init({ storage = Storage, identity = identity, escrow = escrow,
+                      kidnap = kidnap, mugshot = mugshot, progression = progression })
+
+    modules = {
+        storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,
+        notify = notify, escrow = escrow, contracts = contracts, ledger = ledger,
+        death = death, photo = photo, kidnap = kidnap, bailout = bailout,
+        informant = informant, amendments = amendments, comms = comms,
+        projection = projection, mugshot = mugshot, progression = progression,
+        app = app,
+        -- The expiry pass owns these; the bridge and contracts call them so
+        -- it knows when a skip is no longer safe.
+        scheduler = {
+            presenceChanged = MarkPresenceChanged,
+            contractsChanged = MarkContractsChanged,
+        },
+    }
+
+    app.init(modules)
+    require('server.bridges').install(modules)
+
+    Recover()
+    amendments.reindex()
+    StartTick()
+
+    reportIntegrations()
+    print(('[crimson-bounty] started in %s mode'):format(Config.Database.Mode))
+    return modules
 end
 
 --------------------------------------------------------------------------
@@ -344,10 +351,41 @@ end
 --- Pause bookkeeping is written only when a contract changes pause state,
 --- not on every tick: rewriting every paused contract every ten seconds is a
 --- database write per contract per tick, forever.
+--- The earliest moment any live contract could need attention, and whether
+--- a player has come or gone since the last pass.
+---
+--- The pass itself is unchanged — pause bookkeeping depends on who is
+--- online, so it genuinely has to look at every live contract when presence
+--- changes. What changed is how often that happens: with nobody connecting
+--- or disconnecting and no deadline due, there is nothing a pass could
+--- discover, so it is skipped entirely rather than reading the whole
+--- contract table every ten seconds forever.
+local nextDue = 0
+local presenceChanged = true
+
+--- Called from the connection bridge. A player arriving or leaving is the
+--- only thing besides the clock that can change a contract's pause state.
+function MarkPresenceChanged()
+    presenceChanged = true
+end
+
+--- Called when a contract is created or resolved: either can move the
+--- earliest deadline, and a new contract must not wait out a skip.
+function MarkContractsChanged()
+    nextDue = 0
+end
+
 function ExpireContracts()
-    local contracts = Storage.allContracts()
     local now = os.time()
+    if not presenceChanged and now < nextDue then return 0 end
+    presenceChanged = false
+
+    local contracts = Storage.allContracts()
     local resolved = 0
+
+    -- The soonest future moment worth waking for. Starts far out and is
+    -- pulled in by every live contract's deadline.
+    local soonest = now + (Config.Limits.MaxDeadlineSkipSeconds or 600)
 
     for i = 1, #contracts do
         local contract = contracts[i]
@@ -382,12 +420,23 @@ function ExpireContracts()
                         modules.contracts.resolve(contract.id, CB.STATE.EXPIRED,
                             contract.creator_cid, nil, 'expired')
                         resolved = resolved + 1
+                    elseif contract.deadline_at and contract.deadline_at < soonest then
+                        soonest = contract.deadline_at
                     end
+                end
+
+                -- A paused contract's deadline is not running, but its
+                -- absolute lifetime is.
+                if contract.expires_at and contract.expires_at < soonest then
+                    soonest = contract.expires_at
                 end
             end
         end
     end
 
+    -- One second past the earliest deadline, so the pass that wakes for it
+    -- finds it genuinely overdue rather than exactly due.
+    nextDue = soonest + 1
     return resolved
 end
 
@@ -427,6 +476,10 @@ end)
 
 return {
     start = StartCrimsonBounty, recover = Recover, tick = Tick, expire = ExpireContracts,
+    -- The expiry pass skips itself when nothing could have changed. These
+    -- are how it is told that something did.
+    markPresenceChanged = MarkPresenceChanged,
+    markContractsChanged = MarkContractsChanged,
     -- Exposed so the suite can assert on what the report covers rather than
     -- on printed output.
     integrations = optionalIntegrations, reportIntegrations = reportIntegrations,
