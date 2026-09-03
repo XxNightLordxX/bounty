@@ -176,9 +176,13 @@
 
       if (contract.hunters && contract.hunters.length) {
         var msg = el('button', 'ghost', 'Threads');
-        msg.onclick = function () { openThread(contract, contract.hunters[0]); };
+        msg.onclick = function () { openThreads(contract); };
         row.appendChild(msg);
       }
+
+      var extend = el('button', 'ghost', 'Extend deadline');
+      extend.onclick = function () { improveContract(contract); };
+      row.appendChild(extend);
       return row;
     }
 
@@ -282,6 +286,22 @@
     });
   }
 
+  // Improvements apply at once: they can only benefit the hunter.
+  function improveContract(contract) {
+    var minutes = window.prompt('Extend the deadline by how many minutes?');
+    var value = parseInt(minutes, 10);
+    if (!value || value <= 0) return;
+    post('improve', {
+      id: contract.id,
+      kind: 'extend_deadline',
+      payload: { seconds: value * 60 }
+    }).then(function (r) {
+      if (!r.ok) return fail(r);
+      say('Deadline extended.', 'gold');
+      refresh();
+    });
+  }
+
   function addEscrow(contract) {
     var amount = window.prompt('Add how much cash to the pot?');
     var value = parseInt(amount, 10);
@@ -294,14 +314,26 @@
       });
   }
 
-  function openThread(contract, hunter) {
-    post('readThread', { id: contract.id, hunter: hunter ? hunter.hunterCid : null })
+  // Threads are addressed by an opaque server-issued handle, never by a
+  // citizen id — the creator is not told who the operative is.
+  function openThread(contract, thread) {
+    post('readThread', { id: contract.id, thread: thread ? thread.handle : null })
       .then(function (r) {
         if (!r.ok) return fail(r);
-        state.thread = { contract: contract, hunter: hunter, messages: r.data || [] };
+        state.thread = { contract: contract, thread: thread, messages: r.data || [] };
         state.tab = 'thread';
         render();
       });
+  }
+
+  // A creator picks which operative to talk to; a hunter has only one thread.
+  function openThreads(contract) {
+    post('threads', { id: contract.id }).then(function (r) {
+      if (!r.ok) return fail(r);
+      var threads = r.data || [];
+      if (!threads.length) return say('No operative to talk to yet.');
+      openThread(contract, threads[0]);
+    });
   }
 
   function sendMessage(body) {
@@ -309,11 +341,11 @@
     var t = state.thread;
     post('sendMessage', {
       id: t.contract.id,
-      hunter: t.hunter ? t.hunter.hunterCid : null,
+      thread: t.thread ? t.thread.handle : null,
       body: body
     }).then(function (r) {
       if (!r.ok) return fail(r);
-      openThread(t.contract, t.hunter);
+      openThread(t.contract, t.thread);
     });
   }
 

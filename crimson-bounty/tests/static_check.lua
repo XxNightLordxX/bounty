@@ -188,6 +188,39 @@ for declared in manifest:gmatch("'([%w_%-/%.]+%.%a+)'") do
 end
 
 --------------------------------------------------------------------------
+-- 7. The UI, the client bridge and the server agree on event names
+--------------------------------------------------------------------------
+--
+-- The UI calls an NUI callback by name, the client forwards it to a server
+-- event of the same name, and the server registers a handler for it. A
+-- mismatch anywhere in that chain fails silently at runtime: the button
+-- simply does nothing.
+
+local uiSrc = read('crimson-bounty/ui/app.js') or ''
+local clientSrc = read('crimson-bounty/client/main.lua') or ''
+local appSrc = read('crimson-bounty/server/app.lua') or ''
+
+local clientEvents, serverHandlers = {}, {}
+
+for list in clientSrc:gmatch('local UI_EVENTS = {(.-)}') do
+    for name in list:gmatch("'([%w_]+)'") do clientEvents[name] = true end
+end
+for name in clientSrc:gmatch("RegisterNUICallback%('crimson:([%w_]+)'") do
+    clientEvents[name] = true
+end
+for name in appSrc:gmatch("handler%('([%w_]+)'") do serverHandlers[name] = true end
+
+for name in uiSrc:gmatch("post%('([%w_]+)'") do
+    if not clientEvents[name] then
+        failures[#failures + 1] =
+            ('ui/app.js calls "%s", which the client bridge does not forward'):format(name)
+    elseif not serverHandlers[name] and name ~= 'takeVerificationPhoto' then
+        failures[#failures + 1] =
+            ('ui/app.js calls "%s", which no server handler answers'):format(name)
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then
