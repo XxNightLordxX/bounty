@@ -198,6 +198,130 @@ async function main() {
     });
   })();
 
+  await (async function targetBuyout() {
+    const onMe = {
+      id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive', state: 'active',
+      reward: { baseline: 5000, bonus: 0 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1, huntersActive: 1, huntersMax: 5,
+      targetName: 'Dana Reyes', targetProtected: false, role: 'target',
+      bailoutAmount: 15000, bailoutAvailable: true
+    };
+
+    let boughtOut = null;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [onMe] } },
+      ledger: LEDGER,
+      bailout: function (body) { boughtOut = body; return { ok: true, data: true }; }
+    });
+    await settle(); await settle();
+
+    const tabs = app.document.querySelectorAll('.tab');
+    tabs.filter(function (t) { return t.dataset.tab === 'onme'; })[0].onclick();
+
+    it('tells the target there is a price on their head', function () {
+      truthy(app.view.textContent.indexOf('price on your head') !== -1,
+        'the warning should be visible: ' + app.view.textContent);
+    });
+
+    it('offers the buyout at the price the server set', function () {
+      truthy(app.view.textContent.indexOf('$15,000') !== -1,
+        'the buyout price should be shown: ' + app.view.textContent);
+    });
+
+    const buy = app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent.indexOf('Buy out') === 0;
+    });
+    it('has a buyout button', function () { eq(buy.length, 1); });
+
+    buy[0].onclick();
+    await settle();
+    it('sends the buyout for the right contract', function () {
+      truthy(boughtOut, 'nothing was sent');
+      eq(boughtOut.id, 'ct00000001');
+    });
+
+    it('never shows the target who placed it or who is hunting them', function () {
+      const text = app.view.textContent;
+      falsy(text.indexOf('Marlowe') !== -1, 'the creator must not be named');
+      falsy(text.indexOf('Operative') !== -1, 'the hunters must not be listed');
+    });
+  })();
+
+  await (async function ledgerWithProof() {
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: MINE,
+      ledger: { ok: true, data: {
+        record: { completed: 7, failed: 1, placed: 2, survived: 1, rate: 87, standing: 'Known' },
+        entries: [{
+          contract_id: 'ct00000001', target_name: 'Dana Reyes', reason: 'Unpaid debt',
+          role: 'creator', fulfilment: 'elimination',
+          photo_ref: 'https://cdn.fivemanage.com/proof.png', resolved_at: 1700000000
+        }]
+      } }
+    });
+    await settle(); await settle();
+
+    const tabs = app.document.querySelectorAll('.tab');
+    tabs.filter(function (t) { return t.dataset.tab === 'ledger'; })[0].onclick();
+
+    it('shows the standing and the counters', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('Known') !== -1, 'standing: ' + text);
+      truthy(text.indexOf('7 completed') !== -1, 'counters: ' + text);
+    });
+
+    it('renders the proof photo from the archive', function () {
+      const images = app.view.all().filter(function (n) { return n.tagName === 'IMG'; });
+      eq(images.length, 1, 'the verification photo should be on screen');
+      eq(images[0].src, 'https://cdn.fivemanage.com/proof.png');
+    });
+  })();
+
+  await (async function lawEnforcementWarning() {
+    const leo = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    leo.targetProtected = true;
+
+    const board = { ok: true, data: {
+      page: 1, pages: 1,
+      settings: { warnCreator: true, warnHunter: true, flagListing: true, minQueryLength: 4 },
+      contracts: [leo]
+    } };
+
+    let accepted = null;
+    const app = boot({
+      list: board, mine: MINE, ledger: LEDGER,
+      accept: function (body) { accepted = body; return { ok: true, data: {} }; }
+    });
+    await settle(); await settle();
+
+    it('flags a law enforcement target on the listing', function () {
+      truthy(app.view.textContent.indexOf('Law enforcement') !== -1,
+        'the flag should be visible: ' + app.view.textContent);
+    });
+
+    const take = app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
+    })[0];
+
+    // The player declines the warning.
+    app.sandbox.confirmAnswer = false;
+    take.onclick();
+    await settle();
+    it('does not accept when the player declines the warning', function () {
+      falsy(accepted, 'declining the warning must stop the acceptance');
+    });
+
+    app.sandbox.confirmAnswer = true;
+    take.onclick();
+    await settle();
+    it('accepts once the player confirms', function () {
+      truthy(accepted);
+      eq(accepted.id, 'ct00000001');
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
