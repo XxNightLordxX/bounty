@@ -529,19 +529,82 @@ end
 --- The second return distinguishes them.
 ---@return table slots
 ---@return boolean read
-function App.readInventory(actor)
-    local ok, inventory = pcall(function()
-        return exports.ox_inventory:GetInventoryItems(actor.source)
-    end)
-    if ok and type(inventory) == 'table' then return inventory, true end
+--- Which read actually answered, so the startup report can say. An empty
+--- item picker with no explanation is the symptom; this is how an operator
+--- finds out whether their build was even asked the right question.
+App.inventorySource = nil
 
-    ok, inventory = pcall(function()
-        local inv = exports.ox_inventory:GetInventory(actor.source)
+--- The reads a build might answer with, in order.
+---
+--- ox_inventory's export surface has moved: GetInventory returns a table
+--- whose `items` are keyed by slot number rather than listed, and some
+--- builds expose GetInventoryItems while others do not. Calling an export
+--- that is not there throws rather than returning nil, so each is tried
+--- under pcall — and a shape that is not a table of slots is not accepted
+--- just because the call did not fail.
+---
+--- Only exports that exist are listed. Guessing at further names would read
+--- as robustness while testing nothing: every entry here is exercised by
+--- the suite, and one that is not does not belong.
+local INVENTORY_READS = {
+    { name = 'GetInventoryItems', read = function(src)
+        return exports.ox_inventory:GetInventoryItems(src)
+    end },
+    { name = 'GetInventory.items', read = function(src)
+        local inv = exports.ox_inventory:GetInventory(src)
         return inv and inv.items or nil
-    end)
-    if ok and type(inventory) == 'table' then return inventory, true end
+    end },
+}
 
+--- Whether this looks like a list of inventory slots rather than something
+--- else that happens to be a table — an empty inventory and a wrong shape
+--- are both `{}` to a type check, and accepting the wrong one means every
+--- later read comes back empty for good.
+local function looksLikeSlots(value)
+    if type(value) ~= 'table' then return false end
+    local seen = 0
+    for _, slot in pairs(value) do
+        seen = seen + 1
+        if type(slot) ~= 'table' or type(slot.name) ~= 'string' then return false end
+        if seen >= 5 then break end
+    end
+    return true
+end
+
+--- The player's inventory, and whether it could actually be read.
+---
+--- An empty table and an unreadable inventory used to look identical to
+--- every caller, so a build whose export shape neither branch matched
+--- produced a Place form with no item or weapon section at all — nothing on
+--- screen to say the inventory could not be read, and nothing to try again.
+--- The second return distinguishes them.
+---@return table slots
+---@return boolean read
+function App.readInventory(actor)
+    for i = 1, #INVENTORY_READS do
+        local attempt = INVENTORY_READS[i]
+        local ok, inventory = pcall(attempt.read, actor.source)
+        if ok and looksLikeSlots(inventory) then
+            App.inventorySource = attempt.name
+            return inventory, true
+        end
+    end
+
+    App.inventorySource = false
     return {}, false
+end
+
+--- Ask ox_inventory which read this build answers, using somebody who is
+--- online. Reported rather than acted on: the answer is for the operator.
+---
+--- Takes the actor rather than finding one, so it can be called before the
+--- app is wired — which is exactly when the startup report runs.
+---@param actor table|nil nil when nobody is online to ask about
+---@return string|false|nil
+function App.probeInventory(actor)
+    if not actor then return nil end
+    App.readInventory(actor)
+    return App.inventorySource
 end
 
 local function isWeapon(name)

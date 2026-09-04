@@ -13,8 +13,65 @@ local modules = {}
 --- Refuse to start on a configuration that cannot behave correctly, and warn
 --- on one that is merely surprising. A silent misconfiguration here is a
 --- money bug later.
+--- Fill in settings the code needs that this config does not have.
+---
+--- config.lua is a file server owners edit, and once edited it stops
+--- tracking the shipped one. Every setting added afterwards is simply
+--- absent from their copy — and absent reads as nil, which is how
+--- "browse everyone in the city" turned into an empty list on a live
+--- server with nothing anywhere to say why.
+---
+--- Defaults are applied rather than refused: an operator who has never
+--- touched a setting has no opinion about it, and a feature that does
+--- nothing is worse than one that works the way it shipped. What was filled
+--- in is printed, so the operator knows their config has drifted.
+local DEFAULTS = {
+    Targeting = {
+        MinQueryLength = 3,
+        MaxResults = 8,
+        AllowBrowseAll = true,
+        BrowsePageSize = 30,
+        AllowNearby = true,
+        NearbyRadius = 30.0,
+        MaxNearby = 12,
+        AllowProtectedJobTargets = true,
+    },
+    Sources = {
+        -- Not the money sources: those have always been here, and an
+        -- operator who set item.enabled = false means it.
+    },
+}
+
+local function applyConfigDefaults()
+    local filled = {}
+
+    for section, defaults in pairs(DEFAULTS) do
+        if type(Config[section]) ~= 'table' then Config[section] = {} end
+        for key, value in pairs(defaults) do
+            if Config[section][key] == nil then
+                Config[section][key] = value
+                filled[#filled + 1] = section .. '.' .. key
+            end
+        end
+    end
+
+    if #filled > 0 then
+        table.sort(filled)
+        print(('[crimson-bounty] your config.lua does not set %d setting(s); the shipped '
+            .. 'defaults are being used for them: %s. Copy them across from the config '
+            .. 'that ships with this resource to set them yourself.')
+            :format(#filled, table.concat(filled, ', ')))
+    end
+
+    return filled
+end
+
 local function validateConfig()
     local fatal, warn = {}, {}
+
+    -- Before anything is read: a setting this config never had is nil, and
+    -- the checks below would report it as broken rather than as absent.
+    applyConfigDefaults()
 
     -- Every value the code puts straight into arithmetic or a comparison.
     -- A key an operator deleted or misspelled while editing their config is
@@ -230,6 +287,30 @@ local function reportIntegrations()
         print('[crimson-bounty] warning: no death-state provider is running; ' ..
             'eliminations fall back to QBox metadata for the downed check')
     end
+
+    -- Which ox_inventory read this build answers. An item picker that comes
+    -- up empty is the symptom operators actually report, and until this
+    -- line existed there was no way to tell an empty pocket from an export
+    -- that was never there.
+    local app = require('server.app')
+    local online = modules.identity and modules.identity.online() or {}
+    local read = app.probeInventory(online[1])
+    if read == nil then
+        print('[crimson-bounty] inventory read: nobody online to probe with; '
+            .. 'it is checked again the first time someone opens the app')
+    elseif read == false then
+        print('[crimson-bounty] warning: no ox_inventory read on this build answered. '
+            .. 'Items and weapons cannot be offered as rewards; money still works. '
+            .. 'The app says so on the form rather than showing an empty picker.')
+    else
+        print(('[crimson-bounty] inventory read: %s'):format(read))
+    end
+
+    -- The roster setting is the other one whose failure looks like nothing
+    -- at all: browsing off is an empty list, which reads as broken.
+    print(('[crimson-bounty] target browsing: %s, nearby: %s')
+        :format(Config.Targeting.AllowBrowseAll and 'everyone online' or 'off',
+                Config.Targeting.AllowNearby and 'on' or 'off'))
 
     return integrations
 end

@@ -417,6 +417,12 @@ function Natives.exportsProxy()
             return out
         end,
         --- The older shape: one call returning the whole inventory.
+        ---
+        --- Its items are keyed by SLOT NUMBER, not listed. That is what
+        --- ox_inventory actually returns, and a harness that handed back a
+        --- plain array would let this resource assume an array it never
+        --- gets — every read of the fallback path testing a shape that does
+        --- not exist on a live server.
         GetInventory = function(_, src)
             if Natives.noGetInventory then
                 error('ox_inventory: no such export GetInventory')
@@ -424,8 +430,8 @@ function Natives.exportsProxy()
             local p = Env.players[tonumber(src)]
             if not p then return nil end
             local items = {}
-            for _, slot in ipairs(p._inventory) do
-                items[#items + 1] = {
+            for index, slot in ipairs(p._inventory) do
+                items[slot.slot or index] = {
                     name = slot.name, count = slot.count, slot = slot.slot,
                     label = slot.label, metadata = slot.metadata,
                 }
