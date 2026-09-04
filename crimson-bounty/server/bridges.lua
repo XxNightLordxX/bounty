@@ -248,6 +248,17 @@ function Bridges.installCommands(modules)
         end, false)
     end
 
+    --- Why the app is not showing something.
+    ---
+    --- Reads only, and reads the same things the app reads, as the person
+    --- running it. Three separate causes have produced the same symptom on
+    --- a live server and none of them left anything behind to look at, so
+    --- this asks the server rather than guessing.
+    command(names.diagnose, Config.Admin.Ace, function(src)
+        local lines = Admin.diagnose(src)
+        for i = 1, #lines do reply(src, lines[i]) end
+    end)
+
     command(names.timeline, Config.Admin.Ace, function(src, args)
         local view, err = Admin.timeline(args[1])
         if not view then return reply(src, 'No such contract (' .. tostring(err) .. ').') end

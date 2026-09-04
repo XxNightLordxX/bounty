@@ -233,4 +233,92 @@ function Admin.identify(src, contractId)
     }
 end
 
+--------------------------------------------------------------------------
+-- Diagnosis
+--------------------------------------------------------------------------
+
+--- Report why the app is not showing something.
+---
+--- Three separate causes have produced the same symptom on a live server —
+--- an empty target list and an empty item picker — and none of them left
+--- anything behind to look at: a setting an older config did not have, an
+--- ox_inventory export that does not answer, and a rate limit the app's own
+--- opening sequence spent before the player touched anything.
+---
+--- Every one of those was found by guessing. This asks the server instead.
+---@param source number the player to run the checks as
+---@return string[] lines
+function Admin.diagnose(source)
+    local out = {}
+    local function say(line) out[#out + 1] = line end
+
+    say('--- crimson-bounty diagnosis ---')
+    say(('storage: %s'):format(tostring(Config.Database.Mode)))
+
+    local actor = Identity.resolve(source)
+    if not actor then
+        say('identity: COULD NOT RESOLVE this player. Nothing else can work.')
+        return out
+    end
+    say(('identity: %s (%s)'):format(tostring(actor.name), tostring(actor.cid)))
+
+    -- Targeting -----------------------------------------------------------
+    say(('browse all: %s   nearby: %s   min query: %s'):format(
+        tostring(Config.Targeting.AllowBrowseAll),
+        tostring(Config.Targeting.AllowNearby),
+        tostring(Config.Targeting.MinQueryLength)))
+
+    local online = Identity.online()
+    say(('online: %d player(s)'):format(#online))
+    local others = 0
+    for i = 1, #online do
+        local candidate = online[i]
+        if candidate.cid ~= actor.cid and candidate.account ~= actor.account then
+            others = others + 1
+        end
+    end
+    say(('targetable by you: %d  (yourself and your own account are never listed)')
+        :format(others))
+    if others == 0 and #online > 0 then
+        say('  -> the list is empty because everyone online shares your account, '
+            .. 'or you are the only one here. Try with a second player.')
+    end
+
+    -- Inventory -----------------------------------------------------------
+    local App = require('server.app')
+    local carried, readOk = App.readInventory(actor)
+    local count = 0
+    for _ in pairs(carried or {}) do count = count + 1 end
+
+    say(('inventory read: %s'):format(
+        readOk and tostring(App.inventorySource) or 'NO EXPORT ANSWERED'))
+    say(('  slots seen: %d'):format(count))
+    say(('  item escrow: %s   weapon escrow: %s'):format(
+        tostring(Config.Sources.item.enabled), tostring(Config.Sources.weapon.enabled)))
+    say(('  offerable to you: %d item(s), %d weapon(s)'):format(
+        #App.escrowableItems(actor, carried), #App.escrowableWeapons(actor, carried)))
+    if not readOk then
+        say('  -> ox_inventory answered neither read. Items and weapons cannot be '
+            .. 'offered; money still works.')
+    elseif count == 0 then
+        say('  -> you are carrying nothing. Pick something up and run this again.')
+    end
+
+    -- Rate limits ---------------------------------------------------------
+    -- Checked last and reported without spending anything a caller needs:
+    -- a diagnosis that exhausts the bucket it is diagnosing is no use.
+    local buckets = { 'load', 'search', 'wallet' }
+    local parts = {}
+    for i = 1, #buckets do
+        local rule = Config.Cooldowns[buckets[i]]
+        parts[#parts + 1] = ('%s=%s'):format(buckets[i],
+            rule and ('%d/%ds'):format(rule.burst, rule.per) or 'MISSING')
+    end
+    say(('rate limits: %s'):format(table.concat(parts, '  ')))
+    say(('  keyed on: %s'):format(tostring(Config.RateLimit.Key)))
+
+    say('--- end ---')
+    return out
+end
+
 return Admin

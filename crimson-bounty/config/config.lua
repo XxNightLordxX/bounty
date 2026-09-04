@@ -169,7 +169,27 @@ Config.Cooldowns = {
     informant = { per = 300, burst = 1 },
     message   = { per = 5,  burst = 5 },
     amend     = { per = 30, burst = 3 },
-    search    = { per = 10, burst = 5 },
+
+    --- The app reading its own state: the board, this player's contracts,
+    --- their ledger, an open thread. Opening the app is three of these at
+    --- once and every refresh is two more, so this is a budget for the app
+    --- itself rather than for anything a player chose to do.
+    ---
+    --- It used to share one bucket of five with everything below. Opening
+    --- the app and tapping Place spent the lot, and the two requests that
+    --- fire last — the wallet and the target list — were the two that came
+    --- back refused. An empty item picker and an empty city, on a form that
+    --- looked simply broken, and refreshing made it worse.
+    load      = { per = 10, burst = 20 },
+
+    --- Typing a name and paging through the result. Debounced at 300ms in
+    --- the app, so this is generous on purpose: the limit is here to stop
+    --- somebody enumerating the server, not to stop somebody typing.
+    search    = { per = 10, burst = 15 },
+
+    --- Reading what the creator is carrying. Once per Place form, plus
+    --- whatever a retry costs.
+    wallet    = { per = 10, burst = 8 },
     photo     = { per = 15, burst = 3 },
     --- Death and revive reports are client-driven and each one walks the
     --- contract table, so they are throttled like everything else.
@@ -508,7 +528,18 @@ Config.Notifications = {
 --------------------------------------------------------------------------
 
 Config.Database = {
-    Mode = 'mysql',             -- 'mysql' | 'json' | 'memory'
+    --- 'mysql' | 'json' | 'memory'
+    ---
+    --- json keeps everything in files under the Directory below and needs
+    --- no database at all. Contracts and escrow survive a restart exactly
+    --- as they do on mysql; what it does not do is scale to a server with
+    --- thousands of live contracts, and it cannot be shared between two
+    --- server instances.
+    ---
+    --- memory keeps nothing: every contract and every escrowed reward is
+    --- gone at the next restart, which is why it releases all open escrow
+    --- on shutdown rather than losing it.
+    Mode = 'json',
     Json = {
         Directory = 'data',
         SyncOnFinancialWrite = true,
@@ -588,6 +619,9 @@ Config.Admin = {
         stuck    = 'cb-stuck',
         settle   = 'cb-settle',
         whois    = 'cb-whois',
+        --- Reports why the app is not showing something. Runs the same
+        --- reads the app does and says what each one answered.
+        diagnose = 'cb-diag',
     },
     --- Rows read per contract for a timeline. A cap, because the audit log
     --- is the largest table here and a staff command should not be able to

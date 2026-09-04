@@ -36,9 +36,14 @@ local DEFAULTS = {
         MaxNearby = 12,
         AllowProtectedJobTargets = true,
     },
-    Sources = {
-        -- Not the money sources: those have always been here, and an
-        -- operator who set item.enabled = false means it.
+    Cooldowns = {
+        -- Split out of one shared bucket. On a config that predates the
+        -- split these are absent, and an absent rule is not a licence to
+        -- act — RateLimit falls back to a conservative one — but the app
+        -- deserves the allowance it was built against.
+        load   = { per = 10, burst = 20 },
+        search = { per = 10, burst = 15 },
+        wallet = { per = 10, burst = 8 },
     },
 }
 

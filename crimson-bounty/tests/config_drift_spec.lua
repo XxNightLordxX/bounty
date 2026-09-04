@@ -259,3 +259,115 @@ describe('reading an inventory', function()
         eq(next(carried), nil)
     end)
 end)
+
+
+--- The command that says why the app is not showing something.
+---
+--- Three separate causes have produced the same symptom on a live server —
+--- an empty target list and an empty item picker — and none of them left
+--- anything behind to look at. A diagnosis that reports the wrong one is
+--- worse than none, so each is checked here against a server actually in
+--- that state.
+describe('diagnosing an app that shows nothing', function()
+    local function said(lines)
+        return table.concat(lines, '\n')
+    end
+
+    it('names the storage mode and who is asking', function()
+        local s = newStack()
+        fixture(s)
+        local out = said(s.admin.diagnose(1))
+        truthy(out:find('Vic Marlowe', 1, true), out)
+        truthy(out:find('CREATOR1', 1, true), out)
+        truthy(out:find('storage:', 1, true), out)
+    end)
+
+    it('says browsing is off when it is off', function()
+        local s = newStack()
+        fixture(s)
+        withConfig({ { Config.Targeting, 'AllowBrowseAll', false } }, function()
+            local out = said(s.admin.diagnose(1))
+            truthy(out:find('browse all: false', 1, true),
+                'an operator has to be able to see this from in game: ' .. out)
+        end)
+    end)
+
+    it('counts who is actually targetable, not just who is online', function()
+        local s = newStack()
+        fixture(s)
+        -- Same account as the browser: online, and never listable.
+        Env.addPlayer({ source = 10, citizenid = 'ALT01', license = 'license:aaa',
+            firstname = 'Vic', lastname = 'Alt' })
+        local out = said(s.admin.diagnose(1))
+        truthy(out:find('targetable by you: 2', 1, true),
+            'the target and the hunter are targetable; the alt is not: ' .. out)
+    end)
+
+    it('explains an empty list rather than only reporting it', function()
+        local s = newStack()
+        local f = fixture(s)
+        -- Nobody but the browser.
+        Env.removePlayer(2)
+        Env.removePlayer(3)
+        local out = said(s.admin.diagnose(1))
+        truthy(out:find('targetable by you: 0', 1, true), out)
+        truthy(out:find('only one here', 1, true),
+            'the reason has to be there, not left to be worked out: ' .. out)
+    end)
+
+    it('names the inventory read that answered', function()
+        local s = newStack()
+        fixture(s)
+        local out = said(s.admin.diagnose(1))
+        truthy(out:find('GetInventoryItems', 1, true), out)
+        truthy(out:find('offerable to you:', 1, true), out)
+    end)
+
+    it('says plainly when no inventory read answered', function()
+        local s = newStack()
+        fixture(s)
+        Natives.noGetInventoryItems = true
+        Natives.noGetInventory = true
+        local out = said(s.admin.diagnose(1))
+        Natives.noGetInventoryItems = false
+        Natives.noGetInventory = false
+
+        truthy(out:find('NO EXPORT ANSWERED', 1, true),
+            'this is the case that looks exactly like carrying nothing: ' .. out)
+        truthy(out:find('money still works', 1, true), out)
+    end)
+
+    it('tells an empty pocket apart from a broken export', function()
+        local s = newStack()
+        local f = fixture(s, { creatorInventory = {} })
+        local out = said(s.admin.diagnose(1))
+        truthy(out:find('carrying nothing', 1, true), out)
+        falsy(out:find('NO EXPORT ANSWERED', 1, true),
+            'an empty inventory is not a broken one: ' .. out)
+    end)
+
+    it('reports the rate limits, and says when one is missing', function()
+        local s = newStack()
+        fixture(s)
+        local out = said(s.admin.diagnose(1))
+        truthy(out:find('load=20/10s', 1, true), out)
+        truthy(out:find('wallet=8/10s', 1, true), out)
+
+        withConfig({ { Config.Cooldowns, 'wallet', nil } }, function()
+            local gone = said(s.admin.diagnose(1))
+            truthy(gone:find('wallet=MISSING', 1, true),
+                'a bucket an older config does not carry has to be visible: ' .. gone)
+        end)
+    end)
+
+    it('does not spend the allowance it is reporting on', function()
+        -- A diagnosis that exhausts the bucket it is diagnosing tells you
+        -- about a server it just broke.
+        local s = newStack()
+        fixture(s)
+        for _ = 1, 5 do s.admin.diagnose(1) end
+        truthy(s.ratelimit.check(s.identity.resolve(1), 'wallet'),
+            'running it five times must leave the wallet bucket usable')
+        truthy(s.ratelimit.check(s.identity.resolve(1), 'search'))
+    end)
+end)

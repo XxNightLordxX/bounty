@@ -31,12 +31,19 @@ local function keyFor(who)
     return nil
 end
 
+--- What an action with no rule of its own gets.
+---
+--- An unknown action used to mean no limit at all, which is the wrong way
+--- round: a bucket that was renamed, or one an operator's older config does
+--- not have, silently became unlimited. Erring towards a limit costs a
+--- caller a refusal; erring the other way costs the server.
+RateLimit.FALLBACK = { per = 10, burst = 10 }
+
 --- @param who table|string resolved actor, or a citizen id
 --- @param action string key into Config.Cooldowns
 --- @return boolean allowed
 function RateLimit.check(who, action)
-    local rule = Config.Cooldowns[action]
-    if not rule then return true end
+    local rule = Config.Cooldowns[action] or RateLimit.FALLBACK
 
     local cid = keyFor(who)
     -- No identity at all is not a licence to act; it is the one case where

@@ -129,11 +129,11 @@ end
 function App.register()
     -- Listings ----------------------------------------------------------
 
-    handler('list', 'search', function(actor, payload)
+    handler('list', 'load', function(actor, payload)
         return deps.projection.listing(actor.cid, payload.page)
     end)
 
-    handler('mine', 'search', function(actor)
+    handler('mine', 'load', function(actor)
         return {
             created  = deps.projection.mine(actor.cid),
             accepted = deps.projection.accepted(actor.cid),
@@ -141,7 +141,7 @@ function App.register()
         }
     end)
 
-    handler('ledger', 'search', function(actor)
+    handler('ledger', 'load', function(actor)
         return {
             entries = deps.ledger.read(actor.cid),
             record  = deps.progression.record(actor.cid),
@@ -295,7 +295,7 @@ function App.register()
 
     -- What the creator can actually put up, read server-side so the builder
     -- never displays something they do not hold.
-    handler('rewardOptions', 'search', function(actor)
+    handler('rewardOptions', 'wallet', function(actor)
         local dirty = exports.ox_inventory:GetItem(actor.source, Config.Sources.dirty.item, nil, true) or 0
 
         -- Read once and shared: items and weapons come out of the same
@@ -423,7 +423,7 @@ function App.register()
     -- What is on the table right now. Storage.readOpenAmendments was read
     -- only by the expiry sweep, so a proposal could be made and approved
     -- and nobody could see one waiting.
-    handler('amendments', 'search', function(actor, payload)
+    handler('amendments', 'load', function(actor, payload)
         local open, err = deps.amendments.openFor(actor, payload.id)
         if not open then return false, err end
         return open
@@ -443,11 +443,11 @@ function App.register()
 
     -- Relay -------------------------------------------------------------
 
-    handler('threads', 'search', function(actor, payload)
+    handler('threads', 'load', function(actor, payload)
         return deps.comms.threads(actor, payload.id)
     end)
 
-    handler('readThread', 'search', function(actor, payload)
+    handler('readThread', 'load', function(actor, payload)
         local messages, err = deps.comms.read(actor, payload.id, payload.thread)
         if not messages then return false, err end
         return messages
