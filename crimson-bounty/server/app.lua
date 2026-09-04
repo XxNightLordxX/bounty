@@ -181,6 +181,104 @@ function App.register()
         return out
     end)
 
+    -- Everyone a player could put a contract on, without having to know a
+    -- name first.
+    --
+    -- Two scopes. `all` is every player currently online, paged and
+    -- alphabetical: this IS the roster §14.33 originally refused, and it is
+    -- here because the server owner asked for it — see
+    -- Config.Targeting.AllowBrowseAll, which turns it off. `nearby` is the
+    -- narrower one: who is within a few metres, nearest first, which is the
+    -- question a player looking at somebody across a car park actually has.
+    --
+    -- Both mint the same opaque, per-searcher, expiring handles as a name
+    -- search, so a citizen id still never reaches a client, and both refuse
+    -- to name anyone sharing the browser's own account.
+    handler('browseTargets', 'search', function(actor, payload)
+        payload = payload or {}
+        local nearby = payload.scope == 'nearby'
+
+        if nearby and not Config.Targeting.AllowNearby then return { people = {}, total = 0 } end
+        if not nearby and not Config.Targeting.AllowBrowseAll then return { people = {}, total = 0 } end
+
+        -- A name typed into the browser narrows it without a round trip per
+        -- keystroke, and without needing the full length a name search does:
+        -- the list is already bounded, so this is a filter rather than a
+        -- lookup.
+        local needle = Util.sanitizeText(payload.query, 32)
+        needle = needle and needle:lower() or nil
+
+        local origin
+        if nearby then
+            local ped = GetPlayerPed(actor.source)
+            origin = ped and ped ~= 0 and GetEntityCoords(ped) or nil
+            if not origin then return { people = {}, total = 0 } end
+        end
+
+        local found = {}
+        local online = deps.identity.online()
+
+        for i = 1, #online do
+            local candidate = online[i]
+            if candidate.cid ~= actor.cid
+                and candidate.account ~= actor.account
+                and (not needle or candidate.name:lower():find(needle, 1, true)) then
+
+                if nearby then
+                    local theirPed = GetPlayerPed(candidate.source)
+                    local coords = theirPed and theirPed ~= 0 and GetEntityCoords(theirPed) or nil
+                    if coords then
+                        local metres = math.sqrt(Util.dist2(origin, coords))
+                        if metres <= Config.Targeting.NearbyRadius then
+                            found[#found + 1] = { actor = candidate, metres = metres }
+                        end
+                    end
+                else
+                    found[#found + 1] = { actor = candidate }
+                end
+            end
+        end
+
+        if nearby then
+            -- The person you are looking at is the one you mean.
+            table.sort(found, function(a, b) return a.metres < b.metres end)
+        else
+            -- Stable and scannable, so paging through it means something.
+            table.sort(found, function(a, b)
+                if a.actor.name == b.actor.name then return a.actor.cid < b.actor.cid end
+                return a.actor.name < b.actor.name
+            end)
+        end
+
+        local total = #found
+        local perPage = nearby and Config.Targeting.MaxNearby or Config.Targeting.BrowsePageSize
+        local page = Util.toPositive(payload.page, 200) or 1
+        local first = ((page - 1) * perPage) + 1
+
+        local people = {}
+        for i = first, math.min(first + perPage - 1, total) do
+            local entry = found[i]
+            people[#people + 1] = {
+                handle = App.mintTargetHandle(actor.cid, entry.actor.cid),
+                name = entry.actor.name,
+                -- Whether the target is law enforcement is disclosed, so
+                -- nobody places a contract on an officer unaware (§7.5).
+                protected = deps.identity.isProtectedJob(entry.actor.job),
+                -- Rounded: an exact figure is a rangefinder, and a rough one
+                -- is all it takes to tell two people with the same name
+                -- apart.
+                metres = entry.metres and math.floor(entry.metres + 0.5) or nil,
+            }
+        end
+
+        return {
+            people = people,
+            total = total,
+            page = page,
+            pages = math.max(1, math.ceil(total / perPage)),
+        }
+    end)
+
     -- One target headshot, by the reference a projection handed out. The
     -- listing carries references rather than images (§7.2), so a board
     -- refresh re-sends no image bytes at all and the app fetches a face
@@ -203,7 +301,7 @@ function App.register()
         -- Read once and shared: items and weapons come out of the same
         -- inventory, and asking for it twice per request is one round trip
         -- to ox_inventory more than it takes.
-        local carried = App.readInventory(actor)
+        local carried, readOk = App.readInventory(actor)
 
         return {
             cash    = actor.player.Functions.GetMoney('cash'),
@@ -211,6 +309,9 @@ function App.register()
             dirty   = dirty,
             items   = App.escrowableItems(actor, carried),
             weapons = App.escrowableWeapons(actor, carried),
+            -- False when ox_inventory could not be read at all, which is a
+            -- different thing from carrying nothing and has to say so.
+            inventoryRead = readOk,
             caps    = {
                 cash = Config.Sources.cash.max, bank = Config.Sources.bank.max,
                 dirty = Config.Sources.dirty.max, slots = Config.Limits.MaxPayoutSlots,
@@ -218,6 +319,11 @@ function App.register()
                 maxStacks = Config.Sources.item.maxStacks,
                 maxPerStack = Config.Sources.item.maxPerStack,
                 maxWeapons = Config.Sources.weapon.max,
+                -- Whether the server takes goods at all. A form that simply
+                -- omits the section leaves the player hunting for an option
+                -- that was switched off.
+                itemsEnabled = Config.Sources.item.enabled == true,
+                weaponsEnabled = Config.Sources.weapon.enabled == true,
                 -- The total the server will accept across every payout.
                 -- Without it the form could build a contract that is always
                 -- refused, and blame the amounts.
@@ -414,19 +520,28 @@ end
 -- told it what the player was carrying. These do.
 
 --- Read a player's inventory, tolerating whichever export this build has.
+--- The player's inventory, and whether it could actually be read.
+---
+--- An empty table and an unreadable inventory used to look identical to
+--- every caller, so a build whose export shape neither branch matched
+--- produced a Place form with no item or weapon section at all — nothing on
+--- screen to say the inventory could not be read, and nothing to try again.
+--- The second return distinguishes them.
+---@return table slots
+---@return boolean read
 function App.readInventory(actor)
     local ok, inventory = pcall(function()
         return exports.ox_inventory:GetInventoryItems(actor.source)
     end)
-    if ok and type(inventory) == 'table' then return inventory end
+    if ok and type(inventory) == 'table' then return inventory, true end
 
     ok, inventory = pcall(function()
         local inv = exports.ox_inventory:GetInventory(actor.source)
         return inv and inv.items or nil
     end)
-    if ok and type(inventory) == 'table' then return inventory end
+    if ok and type(inventory) == 'table' then return inventory, true end
 
-    return {}
+    return {}, false
 end
 
 local function isWeapon(name)
@@ -440,7 +555,7 @@ function App.escrowableItems(actor, carried)
     if not Config.Sources.item.enabled then return {} end
 
     local totals, order = {}, {}
-    local slots = carried or App.readInventory(actor)
+    local slots = carried or App.readInventory(actor) or {}
 
     for _, slot in pairs(slots) do
         local name = slot and slot.name
@@ -467,7 +582,7 @@ function App.escrowableWeapons(actor, carried)
     if not Config.Sources.weapon.enabled then return {} end
 
     local out = {}
-    local slots = carried or App.readInventory(actor)
+    local slots = carried or App.readInventory(actor) or {}
 
     for _, slot in pairs(slots) do
         local name = slot and slot.name

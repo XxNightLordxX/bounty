@@ -68,7 +68,28 @@ function boot(responses) {
       if (sent.length > 500) {
         throw new Error('runaway request loop: ' + sent.length + ' calls, last was ' + name);
       }
-      const answer = responses[name];
+      let answer = responses[name];
+
+      // The picker browses by default and falls back to a name search only
+      // where the server has browsing switched off. A fixture that scripts
+      // one and not the other is describing the same people either way, so
+      // the missing half is derived rather than made to look like an empty
+      // city — a test that silently browsed nobody would pass while the
+      // player saw an empty list.
+      if (answer === undefined && name === 'browseTargets' && responses.searchTargets) {
+        const search = typeof responses.searchTargets === 'function'
+          ? responses.searchTargets(body) : responses.searchTargets;
+        const people = (search && search.data) || [];
+        const matching = body.query
+          ? people.filter(function (p) {
+              return p.name.toLowerCase().indexOf(String(body.query).toLowerCase()) !== -1;
+            })
+          : people;
+        answer = { ok: true, data: {
+          people: matching, total: matching.length, page: 1, pages: 1
+        } };
+      }
+
       const result = typeof answer === 'function' ? answer(body) : answer;
       return Promise.resolve({ json: function () { return Promise.resolve(result || { ok: true }); } });
     },
@@ -476,9 +497,18 @@ async function main() {
         'and so must what was already typed');
     });
 
-    it('debounces the search instead of firing per keystroke', function () {
-      const searches = app.sent.filter(function (s) { return s.name === 'searchTargets'; });
-      eq(searches.length, 1, 'one lookup for one debounced query');
+    it('debounces the lookup instead of firing per keystroke', function () {
+      // One for opening the picker, one for the debounced query. Six
+      // keystrokes of "Ryder" must not be six round trips against a bucket
+      // that refills twice a second.
+      const lookups = app.sent.filter(function (s) {
+        return s.name === 'browseTargets' || s.name === 'searchTargets';
+      });
+      eq(lookups.length, 2,
+        'expected the opening list and one debounced query, got: '
+        + lookups.map(function (l) { return l.name + '(' + (l.body.query || '') + ')'; })
+            .join(', '));
+      eq(lookups[1].body.query, 'Ryder', 'and the second carries what was typed');
     });
   })();
 
@@ -1452,6 +1482,307 @@ async function main() {
       falsy(app.document.getElementById('slot-item-add-1'), 'no item picker');
       falsy(app.document.getElementById('slot-weapon-add-1'), 'no weapon picker');
       truthy(app.document.getElementById('slot-cash-1'), 'money is still offerable');
+    });
+
+    it('says why, rather than leaving the section out', function () {
+      // A section that is simply absent reads as a missing feature. The
+      // player has to be told they are carrying nothing, not shown a gap
+      // where the option would be.
+      const text = app.view.textContent;
+      truthy(text.indexOf('Items & weapons') !== -1,
+        'the heading has to be there even when the list is empty: ' + text);
+      truthy(text.indexOf('not carrying anything') !== -1,
+        'and say why it is empty: ' + text);
+    });
+  })();
+
+  /* ---- why the goods section is empty --------------------------------
+   *
+   * Three different situations used to look identical: an empty section
+   * with no heading. The player cannot tell a switched-off feature from an
+   * empty inventory from a broken one, and assumes the app cannot do it. */
+  await (async function goodsAbsenceIsExplained() {
+    async function placeWith(data) {
+      const app = boot({
+        list: BOARD, mine: MINE, ledger: LEDGER,
+        rewardOptions: { ok: true, data: data },
+        searchTargets: { ok: true, data: [] }
+      });
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+      await settle(); await settle();
+      return app.view.textContent;
+    }
+
+    const carryingNothing = await placeWith({
+      cash: 500, bank: 0, dirty: 0, items: [], weapons: [],
+      inventoryRead: true, caps: { itemsEnabled: true, weaponsEnabled: true }
+    });
+    it('distinguishes carrying nothing', function () {
+      truthy(carryingNothing.indexOf('not carrying anything') !== -1, carryingNothing);
+    });
+
+    const unreadable = await placeWith({
+      cash: 500, bank: 0, dirty: 0, items: [], weapons: [],
+      inventoryRead: false, caps: { itemsEnabled: true, weaponsEnabled: true }
+    });
+    it('distinguishes an inventory it could not read', function () {
+      truthy(unreadable.indexOf('could not be read') !== -1,
+        'a build whose export shape does not match must say so: ' + unreadable);
+      truthy(unreadable.indexOf('Money still works') !== -1,
+        'and say what does still work: ' + unreadable);
+    });
+
+    const bothOff = await placeWith({
+      cash: 500, bank: 0, dirty: 0, items: [], weapons: [],
+      inventoryRead: true, caps: { itemsEnabled: false, weaponsEnabled: false }
+    });
+    it('distinguishes a server that takes money only', function () {
+      truthy(bothOff.indexOf('does not take items or weapons') !== -1, bothOff);
+    });
+
+    const itemsOff = await placeWith({
+      cash: 500, bank: 0, dirty: 0, items: [], weapons: [],
+      inventoryRead: true, caps: { itemsEnabled: false, weaponsEnabled: true }
+    });
+    it('distinguishes items being off from weapons being off', function () {
+      truthy(itemsOff.indexOf('does not take items as a reward') !== -1, itemsOff);
+    });
+
+  })();
+
+  await (async function switchedOffPickerIsNotOffered() {
+    const app = boot({
+      list: BOARD, mine: MINE, ledger: LEDGER,
+      rewardOptions: { ok: true, data: {
+        cash: 500, bank: 0, dirty: 0,
+        items: [{ name: 'lockpick', label: 'Lockpick', count: 5 }],
+        weapons: [{ name: 'WEAPON_PISTOL', label: 'Pistol', slot: 3 }],
+        inventoryRead: true,
+        caps: { itemsEnabled: false, weaponsEnabled: true }
+      } },
+      searchTargets: { ok: true, data: [] }
+    });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    it('does not offer a picker the server would refuse', function () {
+      falsy(app.document.getElementById('slot-item-add-1'),
+        'items are off, so no item picker even though the server listed one');
+      truthy(app.document.getElementById('slot-weapon-add-1'),
+        'weapons are on, so that picker stays');
+    });
+  })();
+
+  /* ---- finding somebody to put a contract on -------------------------
+   *
+   * The picker used to be a name box and nothing else: type four letters
+   * of a name you already know, or get nothing. Knowing the name is the
+   * hard part. */
+  await (async function targetBrowsing() {
+    const CITY = {
+      ok: true,
+      data: {
+        people: [
+          { handle: 'tg1', name: 'Ada Quill', protected: false },
+          { handle: 'tg2', name: 'Bo Renn', protected: true },
+          { handle: 'tg3', name: 'Cy Stark', protected: false }
+        ],
+        total: 41, page: 1, pages: 5
+      }
+    };
+
+    async function openPlace(responses) {
+      const app = boot(Object.assign({
+        list: BOARD, mine: MINE, ledger: LEDGER,
+        rewardOptions: { ok: true, data: { cash: 100000, bank: 0, dirty: 0, caps: {} } },
+        browseTargets: CITY
+      }, responses || {}));
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+      await settle(); await settle(); await settle();
+      return app;
+    }
+
+    const app = await openPlace();
+
+    it('lists the city without being asked to search first', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('Ada Quill') !== -1, 'people should be listed on open: ' + text);
+      truthy(text.indexOf('Cy Stark') !== -1, text);
+    });
+
+    it('says how many there are and how many it is showing', function () {
+      truthy(app.view.textContent.indexOf('Showing 3 of 41') !== -1,
+        'the player has to know the list is partial: ' + app.view.textContent);
+    });
+
+    it('marks law enforcement in the list, before anyone picks them', function () {
+      const row = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Bo Renn') === 0;
+      })[0];
+      truthy(row, 'Bo Renn should be listed');
+      truthy(row.textContent.indexOf('Law') !== -1,
+        'a sworn officer must be flagged in the list itself: ' + row.textContent);
+    });
+
+    it('pages rather than dumping a busy server on one screen', function () {
+      const more = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'More';
+      });
+      eq(more.length, 1, 'there are five pages, so there is a way to the next');
+      truthy(app.view.textContent.indexOf('Page 1 of 5') !== -1, app.view.textContent);
+    });
+
+    const picked = await openPlace();
+    const row = picked.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent.indexOf('Ada Quill') === 0;
+    })[0];
+    if (row) { row.onclick(); }
+
+    it('picking from the list sets the target', function () {
+      truthy(row, 'no Ada Quill row to pick; buttons on screen: ' +
+        picked.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+          .map(function (n) { return JSON.stringify(n.textContent); }).join(' | '));
+      eq(picked.document.getElementById('target-handle').value, 'tg1');
+      truthy(picked.view.textContent.indexOf('placed on Ada Quill') !== -1,
+        'and says who it is for: ' + picked.view.textContent);
+    });
+
+    const filtered = await openPlace();
+    const filterBefore = filtered.sent.filter(function (s) { return s.name === 'browseTargets'; }).length;
+    const filterBox = filtered.document.getElementById('target-query');
+    filterBox.value = 'Ad';
+    filterBox.oninput();
+    filtered.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+
+    it('filters the list instead of gating it behind a minimum length', function () {
+      const calls = filtered.sent.filter(function (s) { return s.name === 'browseTargets'; });
+      truthy(calls.length > filterBefore,
+        'two letters must still look — the list is bounded already, so the box '
+        + 'narrows it rather than unlocking it');
+      eq(calls[calls.length - 1].body.query, 'Ad');
+    });
+
+    const withoutNearby = await openPlace({
+      list: { ok: true, data: Object.assign({}, BOARD.data, {
+        settings: { minQueryLength: 3, allowBrowseAll: true, allowNearby: false }
+      }) }
+    });
+    const withNearby = await openPlace({
+      list: { ok: true, data: Object.assign({}, BOARD.data, {
+        settings: { minQueryLength: 3, allowBrowseAll: true, allowNearby: true }
+      }) }
+    });
+
+    it('offers a nearby mode only where the server has one', function () {
+      falsy(withoutNearby.document.getElementById('target-scope-nearby'),
+        'a button that always comes back empty is worse than no button');
+      truthy(withNearby.document.getElementById('target-scope-nearby'));
+      truthy(withNearby.document.getElementById('target-scope-all'));
+    });
+
+    const named = await openPlace({
+      list: { ok: true, data: Object.assign({}, BOARD.data, {
+        settings: { minQueryLength: 3, allowBrowseAll: false, allowNearby: false }
+      }) },
+      searchTargets: { ok: true, data: [{ handle: 'tg9', name: 'Dana Reyes', protected: false }] }
+    });
+    const namedBrowsed = named.sent.some(function (s) { return s.name === 'browseTargets'; });
+    const namedHint = named.view.textContent;
+
+    const namedBox = named.document.getElementById('target-query');
+    namedBox.value = 'Dana';
+    namedBox.oninput();
+    named.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+
+    it('falls back to a name search where browsing is switched off', function () {
+      falsy(namedBrowsed, 'no browsing where the server does not allow it');
+      truthy(namedHint.indexOf('at least 3 letters') !== -1,
+        'the minimum is stated rather than silently enforced: ' + namedHint);
+      truthy(named.view.textContent.indexOf('Dana Reyes') !== -1,
+        'and the older search still works: ' + named.view.textContent);
+    });
+
+    const stable = await openPlace();
+    const stableBefore = stable.sent.filter(function (s) { return s.name === 'browseTargets'; }).length;
+    // Anything that rebuilds the form. Adding a payout does.
+    const slotsField = stable.document.getElementById('slots-count');
+    slotsField.value = '2';
+    if (slotsField.oninput) { slotsField.oninput(); }
+    if (slotsField.onchange) { slotsField.onchange(); }
+    await settle(); await settle();
+
+    it('does not refetch the roster every time the form is rebuilt', function () {
+      const after = stable.sent.filter(function (s) { return s.name === 'browseTargets'; }).length;
+      eq(after, stableBefore,
+        'a rebuilt form must redraw the list it already has, not ask again');
+    });
+  })();
+
+  /* ---- choosing an item and how many --------------------------------- */
+  await (async function itemQuantity() {
+    async function placeCarrying(items) {
+      const app = boot({
+        list: BOARD, mine: MINE, ledger: LEDGER,
+        browseTargets: { ok: true, data: { people: [], total: 0, page: 1, pages: 1 } },
+        rewardOptions: { ok: true, data: {
+          cash: 100000, bank: 0, dirty: 0, items: items, weapons: [],
+          inventoryRead: true,
+          caps: { itemsEnabled: true, weaponsEnabled: true, maxStacks: 3, maxPerStack: 100 }
+        } }
+      });
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+      await settle(); await settle();
+      return app;
+    }
+
+    const many = await placeCarrying([{ name: 'lockpick', label: 'Lockpick', count: 5 }]);
+
+    it('offers the items in a dropdown, with how many are spare', function () {
+      const choose = many.document.getElementById('slot-item-1');
+      truthy(choose, 'an item dropdown');
+      truthy(choose.children.length > 0, 'with something in it');
+      truthy(choose.children[0].textContent.indexOf('Lockpick') === 0,
+        choose.children[0].textContent);
+      truthy(choose.children[0].textContent.indexOf('5 spare') !== -1,
+        'and says how many can still be staked: ' + choose.children[0].textContent);
+    });
+
+    it('asks how many when there is more than one', function () {
+      const count = many.document.getElementById('slot-item-count-1');
+      truthy(count, 'a quantity field');
+      eq(count.max, 5, 'bounded to what is spare');
+    });
+
+    it('adds the chosen quantity to the payout', function () {
+      many.document.getElementById('slot-item-count-1').value = '3';
+      many.document.getElementById('slot-item-add-1').onclick();
+      truthy(many.view.textContent.indexOf('Lockpick x3') !== -1,
+        'the payout should show what was added: ' + many.view.textContent);
+    });
+
+    const one = await placeCarrying([{ name: 'crowbar', label: 'Crowbar', count: 1 }]);
+
+    it('does not ask how many when the answer can only be one', function () {
+      const count = one.document.getElementById('slot-item-count-1');
+      const field = count && count.parentNode;
+      truthy(field && field.hidden === true,
+        'staking your only crowbar should not need a quantity confirmed');
+    });
+
+    it('still stakes the single item without being told a number', function () {
+      one.document.getElementById('slot-item-add-1').onclick();
+      truthy(one.view.textContent.indexOf('Crowbar x1') !== -1,
+        'the one crowbar should be on the payout: ' + one.view.textContent);
     });
   })();
 

@@ -311,8 +311,40 @@ Config.Listing = {
 
 Config.Targeting = {
     --- Long enough that the search is a lookup rather than an enumeration.
-    MinQueryLength = 4,
-    MaxResults = 5,
+    MinQueryLength = 3,
+    MaxResults = 8,
+
+    --- Let a player browse everyone who is currently online.
+    ---
+    --- This IS the roster §14.33 originally refused, and it is on because
+    --- the server owner asked for it. Understand what it means: anybody
+    --- holding the app can read the name of every player in the city, and
+    --- whether they are law enforcement, without knowing anything about
+    --- them first. Somebody logging in becomes visible to everyone.
+    ---
+    --- What it still does not hand out: citizen ids (the list carries the
+    --- same opaque, per-searcher, expiring handles as a name search),
+    --- positions, jobs beyond the protected flag, or anything about players
+    --- sharing the browser's own account. It is rate-limited like every
+    --- other listing.
+    ---
+    --- Set false to go back to requiring a typed name.
+    AllowBrowseAll = true,
+    --- Names per page when browsing. A page is one round trip and one
+    --- render, so this bounds both.
+    BrowsePageSize = 30,
+
+    --- Let a player list the people standing around them, nearest first.
+    ---
+    --- Narrower than the roster above and useful on its own: when you are
+    --- looking at somebody across a car park, "who is near me" answers the
+    --- question directly, and the distance tells two people with the same
+    --- name apart.
+    AllowNearby = true,
+    --- Metres. Roughly a street: close enough that you are looking at them.
+    NearbyRadius = 30.0,
+    --- How many of the nearest to name, closest first.
+    MaxNearby = 12,
     --- Protected-job players may be targeted by default: hunting a cop is
     --- legitimate criminal roleplay. What makes it fair is the advisory
     --- below, not a ban. Set false to refuse creation instead.

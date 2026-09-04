@@ -1958,3 +1958,201 @@ describe('a player name from the framework', function()
         eq(s.identity.resolve(1).name, 'Zoë Ferreira')
     end)
 end)
+
+
+--- Finding somebody to put a contract on.
+---
+--- Searching by name only works if you already know the name. Browsing is
+--- what lets a player pick somebody they can see but cannot name — and on
+--- this server that means everyone online, which is a deliberate choice
+--- made by the server owner rather than the original design.
+describe('browsing for a target', function()
+    --- Fire a registered net event as a player, and read the reply — the
+    --- same route a client takes, gate and rate limit included.
+    local function call(name, source, payload)
+        local fire = Env.events['crimson-bounty:' .. name]
+        truthy(fire, 'no handler registered for ' .. name)
+
+        Env.clientEvents = {}
+        _G.source = source
+        fire(payload or {})
+        _G.source = nil
+
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:result' then return event.args[1] end
+        end
+        return nil
+    end
+
+    local function browse(source, payload)
+        local reply = call('browseTargets', source, payload)
+        truthy(reply, 'the handler must reply')
+        return reply
+    end
+
+    --- Three strangers: two on top of the browser, one across the map.
+    local function crowd(s)
+        local f = fixture(s)
+        Env.players[1]._coords = { x = 0.0, y = 0.0, z = 0.0 }
+        Env.addPlayer({ source = 10, citizenid = 'PERSON10', license = 'license:p10',
+            firstname = 'Ada', lastname = 'Quill', coords = { x = 0.0, y = 0.0, z = 0.0 } })
+        Env.addPlayer({ source = 11, citizenid = 'PERSON11', license = 'license:p11',
+            firstname = 'Bo', lastname = 'Renn', coords = { x = 10.0, y = 0.0, z = 0.0 } })
+        Env.addPlayer({ source = 12, citizenid = 'PERSON12', license = 'license:p12',
+            firstname = 'Cy', lastname = 'Stark', coords = { x = 500.0, y = 0.0, z = 0.0 } })
+        return f
+    end
+
+    it('lists everyone online, not only the people standing next to you', function()
+        local s = newStack()
+        local f = crowd(s)
+        local reply = browse(1, { scope = 'all' })
+        truthy(reply.ok, tostring(reply.err))
+        local data = reply.data
+
+        local names = {}
+        for _, person in ipairs(data.people) do names[person.name] = true end
+        truthy(names['Cy Stark'],
+            'somebody five hundred metres away is still in the city')
+        truthy(names['Ada Quill'] and names['Bo Renn'])
+    end)
+
+    it('never lists the browser, or another of their own characters', function()
+        local s = newStack()
+        local f = crowd(s)
+        local data = browse(1, { scope = 'all' }).data
+        for _, person in ipairs(data.people) do
+            falsy(person.name == 'Vic Marlowe', 'you cannot put a contract on yourself')
+        end
+    end)
+
+    it('hands out handles rather than citizen ids', function()
+        local s = newStack()
+        crowd(s)
+        local data = browse(1, { scope = 'all' }).data
+        truthy(#data.people > 0)
+        for _, person in ipairs(data.people) do
+            truthy(person.handle, 'every row needs a handle')
+            falsy(person.handle:find('PERSON', 1, true),
+                'a citizen id must never reach a client: ' .. tostring(person.handle))
+            falsy(person.cid, 'and must not be sent alongside it')
+        end
+    end)
+
+    it('says who is law enforcement', function()
+        local s = newStack()
+        crowd(s)
+        Env.players[10].PlayerData.job = { name = 'police', type = 'leo' }
+        local data = browse(1, { scope = 'all' }).data
+        local flagged
+        for _, person in ipairs(data.people) do
+            if person.name == 'Ada Quill' then flagged = person.protected end
+        end
+        truthy(flagged, 'nobody should contract an officer unaware')
+    end)
+
+    it('pages rather than sending a whole busy server at once', function()
+        local s = newStack()
+        crowd(s)
+        for i = 20, 60 do
+            Env.addPlayer({ source = i, citizenid = 'FILLER' .. i, license = 'license:f' .. i,
+                firstname = 'Filler', lastname = 'Number' .. i })
+        end
+
+        withConfig({ { Config.Targeting, 'BrowsePageSize', 10 } }, function()
+            local first = browse(1, { scope = 'all', page = 1 }).data
+            eq(#first.people, 10, 'one page')
+            truthy(first.total > 10, 'and a count of how many there really are')
+            truthy(first.pages > 1)
+
+            local second = browse(1, { scope = 'all', page = 2 }).data
+            eq(#second.people, 10)
+            falsy(second.people[1].name == first.people[1].name,
+                'page two is not page one again')
+        end)
+    end)
+
+    it('filters by a name typed into the browser', function()
+        local s = newStack()
+        crowd(s)
+        local data = browse(1, { scope = 'all', query = 'quill' }).data
+        eq(#data.people, 1)
+        eq(data.people[1].name, 'Ada Quill')
+    end)
+
+    it('lists only who is close by, nearest first, in the nearby scope', function()
+        local s = newStack()
+        crowd(s)
+        local data = browse(1, { scope = 'nearby' }).data
+        truthy(#data.people > 0, 'somebody is standing right here')
+
+        local names, last = {}, -1
+        for _, person in ipairs(data.people) do
+            names[person.name] = true
+            truthy(person.metres ~= nil, 'a nearby row carries a distance')
+            truthy(person.metres >= last,
+                ('out of order: %d after %d'):format(person.metres, last))
+            last = person.metres
+        end
+
+        truthy(names['Ada Quill'], 'standing on top of the browser')
+        truthy(names['Bo Renn'], 'ten metres away, inside the radius')
+        falsy(names['Cy Stark'],
+            'five hundred metres away is not nearby, whatever else is on the list')
+    end)
+
+    it('reaches the whole city in the all scope, and only the street in nearby', function()
+        -- The two scopes are the same query with a different reach, so the
+        -- one thing worth holding is that the reach differs.
+        local s = newStack()
+        crowd(s)
+        local everyone = browse(1, { scope = 'all' }).data
+        local close = browse(1, { scope = 'nearby' }).data
+        truthy(everyone.total > close.total,
+            ('the city (%d) has to be bigger than the street (%d)')
+                :format(everyone.total, close.total))
+    end)
+
+    it('answers with nothing when the server has browsing switched off', function()
+        local s = newStack()
+        crowd(s)
+        withConfig({ { Config.Targeting, 'AllowBrowseAll', false } }, function()
+            local reply = browse(1, { scope = 'all' })
+            truthy(reply.ok, 'the handler still answers')
+            eq(#reply.data.people, 0, 'it just has nothing to say')
+        end)
+    end)
+
+    it('is rate limited like every other listing', function()
+        local s = newStack()
+        crowd(s)
+        local allowed = 0
+        for _ = 1, 30 do
+            local reply = call('browseTargets', 1, { scope = 'all' })
+            if reply and reply.ok then allowed = allowed + 1 end
+        end
+        truthy(allowed < 30, 'a roster must not be free to poll: ' .. allowed .. ' of 30')
+    end)
+
+    it('mints handles that actually place a contract', function()
+        -- A browse row is only useful if the handle it carries works.
+        local s = newStack()
+        local f = crowd(s)
+        local data = browse(1, { scope = 'all' }).data
+        local pick
+        for _, person in ipairs(data.people) do
+            if person.name == 'Ada Quill' then pick = person end
+        end
+        truthy(pick)
+
+        local reply = call('create', 1, {
+            target = pick.handle, reason = 'Owes me', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(reply and reply.ok,
+            'the handle from a browse must place a contract: '
+            .. tostring(reply and reply.err))
+        truthy(reply.data and reply.data.id)
+        eq(s.storage.readContract(reply.data.id).target_cid, 'PERSON10')
+    end)
+end)

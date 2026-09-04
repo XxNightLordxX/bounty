@@ -52,7 +52,10 @@ local function registerApp()
     local called, ok = phone('AddCustomApp', function()
         return exports['lb-phone']:AddCustomApp({
             identifier  = 'crimson-bounty',
-            name        = 'Crimson',
+            -- What the player reads on their home screen. The identifier
+            -- above is the key everything else is registered under and does
+            -- not follow it.
+            name        = 'Crimson-Bounty',
             description = 'Contracts, quietly arranged.',
             developer   = 'Crimson',
             defaultApp  = false,
@@ -187,7 +190,7 @@ RegisterNetEvent('crimson-bounty:notify', function(data)
     phone('SendNotification', function()
         exports['lb-phone']:SendNotification({
             app = 'crimson-bounty',
-            title = tostring(data.title or 'Crimson'),
+            title = tostring(data.title or 'Crimson-Bounty'),
             content = tostring(data.content or ''),
         })
     end)
@@ -198,7 +201,8 @@ end)
 --------------------------------------------------------------------------
 
 local UI_EVENTS = {
-    'list', 'mine', 'ledger', 'searchTargets', 'rewardOptions', 'mugshotImage',
+    'list', 'mine', 'ledger', 'searchTargets', 'browseTargets',
+    'rewardOptions', 'mugshotImage',
     'create', 'accept', 'abandon',
     'requestPhotoToken', 'armKidnap', 'kidnapProgress',
     'bailout', 'informant',

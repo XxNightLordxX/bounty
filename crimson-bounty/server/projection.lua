@@ -194,6 +194,11 @@ function Projection.listing(viewerCid, page)
             warnHunter  = Config.Advisory.WarnHunter ~= false,
             flagListing = Config.Advisory.FlagListing ~= false,
             minQueryLength = Config.Targeting.MinQueryLength,
+            -- Which ways of browsing the app should offer, rather than
+            -- offering a button that always comes back empty.
+            allowBrowseAll = Config.Targeting.AllowBrowseAll == true,
+            allowNearby = Config.Targeting.AllowNearby == true,
+            nearbyRadius = Config.Targeting.NearbyRadius,
             -- Whether the app should offer a call at all. Off, the button
             -- is not drawn rather than drawn and refused.
             calls = Config.Relay.Enabled and Config.Relay.AllowMaskedCalls,

@@ -781,6 +781,41 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 22. Every class the app renders is one the stylesheet defines
+--------------------------------------------------------------------------
+--
+-- A class name that does not exist fails in the quietest way there is: the
+-- element renders, unstyled, and nothing anywhere says so. On a phone
+-- screen that is a control the player cannot see or a list with no shape,
+-- reported as "the buttons do not show up" — which is exactly how the
+-- layout bugs in this app were found, by somebody using it rather than by
+-- anything here.
+
+do
+    local css = read('crimson-bounty/ui/app.css') or ''
+    local js = read('crimson-bounty/ui/app.js') or ''
+
+    -- Comments hold example markup and old class names; they define nothing.
+    local defined = css:gsub('/%*.-%*/', '')
+
+    local seen = {}
+    -- el('div', 'card is-protected', ...) — the second argument is the class
+    -- list, and it is the only way this app sets one.
+    for list in js:gmatch("el%('[%a%d]+',%s*'([%a%d%s_%-]+)'") do
+        for class in list:gmatch('[%a%d_%-]+') do
+            if not seen[class] then
+                seen[class] = true
+                if not defined:find('%.' .. class:gsub('%-', '%%-')) then
+                    failures[#failures + 1] =
+                        ('ui/app.js renders the class %q, which ui/app.css does not define. '
+                         .. 'It renders unstyled and says nothing.'):format(class)
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

@@ -19,6 +19,12 @@
     // in the DOM because the picker rebuilds its own markup on every add and
     // remove, and a rebuilt <select> forgets what was put in it.
     picked: {},
+    // The page of people the target picker is showing, and what was asked
+    // for to get it. The Place form is rebuilt on every keystroke that
+    // touches a payout, and refetching the roster each time is a round trip
+    // per rebuild against a rate limit — and a list that flickers away
+    // under whoever was reading it.
+    browse: { scope: 'all', query: '', page: 1, data: null, pending: null, draw: null },
     // The Place form's own values. They used to live only in the DOM, so
     // anything that re-rendered — a tab change, a push, a late reply, the
     // sworn-officer dialog — silently emptied the form the player had built.
@@ -993,7 +999,11 @@
     anon.type = 'checkbox'; anon.id = 'anon';
     anon.checked = state.draft.anon === true;
     anon.onclick = function () { state.draft.anon = anon.checked; };
-    var toggle = el('div', 'toggle');
+    // A label, so the words toggle it too. The box on its own is a twenty
+    // pixel target on a phone screen, which is a coin toss.
+    var toggle = document.createElement('label');
+    toggle.className = 'toggle';
+    toggle.htmlFor = 'anon';
     toggle.appendChild(anon);
     toggle.appendChild(el('span', null, 'Place anonymously'));
     form.appendChild(toggle);
@@ -1068,14 +1078,30 @@
     });
   }
 
+  /* The goods half of a payout.
+     
+     This used to return an empty node whenever there was nothing to offer,
+     which meant the Place form simply had no item or weapon section — no
+     heading, no explanation, nothing to say whether the player was carrying
+     nothing, the server had goods escrow switched off, or the inventory
+     could not be read at all. Three different situations that all looked
+     like a missing feature.
+     
+     The section is always here now, and always says which one it is. */
   function goodsBox(index) {
-    var wrap = el('div');
+    var wrap = el('div', 'goods-box');
     var wallet = state.wallet;
-    if (!wallet) { return wrap; }
 
-    var items = wallet.items || [];
-    var weapons = wallet.weapons || [];
-    if (items.length === 0 && weapons.length === 0) { return wrap; }
+    wrap.appendChild(el('h5', 'goods-title', 'Items & weapons'));
+
+    if (!wallet) {
+      wrap.appendChild(el('div', 'hint', 'Reading your pockets\u2026'));
+      return wrap;
+    }
+
+    var caps = wallet.caps || {};
+    var items = (caps.itemsEnabled === false) ? [] : (wallet.items || []);
+    var weapons = (caps.weaponsEnabled === false) ? [] : (wallet.weapons || []);
 
     var picked = pickedFor(index);
 
@@ -1095,7 +1121,33 @@
 
     if (items.length > 0) { wrap.appendChild(itemPicker(index, items)); }
     if (weapons.length > 0) { wrap.appendChild(weaponPicker(index, weapons)); }
+
+    if (items.length === 0 && weapons.length === 0) {
+      wrap.appendChild(el('div', 'hint', goodsAbsenceReason(wallet, caps)));
+    }
     return wrap;
+  }
+
+  /* Why there is nothing to pick. Never silence: a player who cannot see an
+     option assumes it does not exist. */
+  function goodsAbsenceReason(wallet, caps) {
+    if (wallet.inventoryRead === false) {
+      return 'Your inventory could not be read, so items and weapons cannot be '
+        + 'offered right now. Money still works. Tell an admin if this keeps happening.';
+    }
+    if (caps.itemsEnabled === false && caps.weaponsEnabled === false) {
+      return 'This server does not take items or weapons as a reward. Money only.';
+    }
+    if (caps.itemsEnabled === false) {
+      return 'This server does not take items as a reward, and you are not '
+        + 'carrying a weapon that can be put up.';
+    }
+    if (caps.weaponsEnabled === false) {
+      return 'This server does not take weapons as a reward, and you are not '
+        + 'carrying anything else that can be put up.';
+    }
+    return 'You are not carrying anything that can be put up as a reward. '
+      + 'Cash, bank and dirty money above still work.';
   }
 
   function labelOf(items, name) {
@@ -1111,15 +1163,23 @@
     return button;
   }
 
+  /* Pick an item, then say how many — and only be asked how many when
+     there is a choice to make. Somebody staking their one crowbar should
+     not have to confirm that they mean one of it. */
   function itemPicker(index, items) {
     var choose = document.createElement('select');
     choose.id = 'slot-item-' + index;
+
+    // How much of each is still unspoken for, so the quantity field can be
+    // bounded to it and the row can say so.
+    var spare = {};
     items.forEach(function (item) {
       var free = item.count - allocatedItem(item.name);
       if (free <= 0) { return; }
+      spare[item.name] = free;
       var option = document.createElement('option');
       option.value = item.name;
-      option.textContent = item.label + '  (' + free + ' spare)';
+      option.textContent = item.label + '  \u00b7  ' + free + ' spare';
       choose.appendChild(option);
     });
     if (choose.children.length === 0) { return el('div', 'hint', 'Nothing spare left to add.'); }
@@ -1127,12 +1187,37 @@
     var count = numberInput('slot-item-count-' + index, 1);
     count.min = 1;
 
-    var add = el('button', 'ghost', 'Add item');
+    var howMany = labelled('How many', count);
+    var field = el('div');
+    field.appendChild(labelled('Item', choose));
+    field.appendChild(howMany);
+
+    /* Show the quantity field only where the answer could be anything but
+       one, and bound it to what is actually spare. */
+    function follow() {
+      var free = spare[choose.value] || 1;
+      count.max = free;
+      if (free <= 1) {
+        howMany.hidden = true;
+        count.value = '1';
+      } else {
+        howMany.hidden = false;
+        if (parseInt(count.value, 10) > free) { count.value = String(free); }
+      }
+    }
+    choose.onchange = follow;
+    follow();
+
+    var add = el('button', 'ghost', 'Add this item');
     add.id = 'slot-item-add-' + index;
     add.onclick = function () {
       var name = choose.value;
-      var wanted = parseInt(count.value, 10) || 0;
-      if (!name || wanted <= 0) { return say('Choose an item and a count.'); }
+      var free = spare[name] || 0;
+      // With the field hidden there is only one sensible answer, and
+      // reading a control the player never saw is how a hidden default
+      // becomes a silent refusal.
+      var wanted = (free <= 1) ? 1 : (parseInt(count.value, 10) || 0);
+      if (!name || wanted <= 0) { return say('Choose an item and how many.'); }
 
       var caps = state.wallet.caps || {};
       var picked = pickedFor(index);
@@ -1154,11 +1239,6 @@
       renderSlots();
     };
 
-    var row = el('div', 'split');
-    row.appendChild(labelled('Item', choose));
-    row.appendChild(labelled('How many', count));
-    var field = el('div');
-    field.appendChild(row);
     field.appendChild(add);
     return field;
   }
@@ -1175,7 +1255,7 @@
     });
     if (choose.children.length === 0) { return el('div', 'hint', 'No weapons left to add.'); }
 
-    var add = el('button', 'ghost', 'Add weapon');
+    var add = el('button', 'ghost', 'Add this weapon');
     add.id = 'slot-weapon-add-' + index;
     add.onclick = function () {
       var slotNumber = parseInt(choose.value, 10);
@@ -1348,9 +1428,19 @@
     return input;
   }
 
+  /* Picking who the contract is for.
+     
+     This used to be a name box and nothing else: type four characters of a
+     name you already know, or get nothing at all. Knowing the name is the
+     hard part — you can be looking straight at somebody and have no way to
+     say who they are.
+     
+     So the list is the default now. It opens showing who is in the city,
+     paged, and the box filters it rather than gating it. */
   function targetSearch() {
-    var wrap = el('div');
-    var input = textInput('target-query', 'Search by name', 32);
+    var wrap = el('div', 'target-picker');
+
+    var input = textInput('target-query', 'Filter by name, or just browse', 32);
     input.value = state.draft.targetName || '';
 
     var handle = document.createElement('input');
@@ -1358,61 +1448,224 @@
     handle.value = state.draft.target || '';
     handle.dataset.protected = state.draft.targetProtected ? 'true' : 'false';
 
-    var results = el('div');
+    var results = el('div', 'target-results');
+    var status = el('div', 'hint');
 
-    var searchTimer = null;
-    var searchSeq = 0;
+    var browse = state.browse;
+    var timer = null;
+    var seq = 0;
+
+    /* Which ways of finding somebody this server offers. A button that
+       always comes back empty is worse than no button. */
+    var canBrowse = settings().allowBrowseAll !== false;
+    var canNearby = settings().allowNearby === true;
+
+    var modes = el('div', 'row target-modes');
+    var allButton, nearButton;
+
+    function setScope(next) {
+      browse.scope = next; browse.page = 1; browse.data = null; browse.pending = null;
+      markScope();
+      load();
+    }
+
+    function markScope() {
+      if (allButton) { allButton.className = (browse.scope === 'all') ? 'primary' : 'ghost'; }
+      if (nearButton) { nearButton.className = (browse.scope === 'nearby') ? 'primary' : 'ghost'; }
+    }
+
+    if (canBrowse) {
+      allButton = el('button', 'ghost', 'Everyone');
+      allButton.id = 'target-scope-all';
+      allButton.onclick = function () { setScope('all'); };
+      modes.appendChild(allButton);
+    }
+    if (canNearby) {
+      nearButton = el('button', 'ghost', 'Near me');
+      nearButton.id = 'target-scope-nearby';
+      nearButton.onclick = function () { setScope('nearby'); };
+      modes.appendChild(nearButton);
+    }
+    markScope();
+    if (modes.children.length > 1) { wrap.appendChild(modes); }
 
     input.oninput = function () {
-      // The server tells us its minimum; a shorter query is rejected there
-      // and burns a rate-limit token for nothing.
-      var minimum = settings().minQueryLength || 4;
-      if (input.value.length < minimum) { results.innerHTML = ''; return; }
-
+      browse.page = 1;
+      browse.query = input.value;
+      browse.data = null;
+      browse.pending = null;
       // Debounced, so typing a name is one lookup rather than one per
       // keystroke against a bucket that refills twice a second.
-      if (searchTimer) clearTimeout(searchTimer);
-      var mine = ++searchSeq;
-      searchTimer = setTimeout(function () { runSearch(mine); }, 300);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(load, 300);
     };
 
-    function runSearch(sequence) {
-      post('searchTargets', { query: input.value }).then(function (r) {
-        // A reply from a query the player has already typed past is stale.
-        if (sequence !== searchSeq) return;
-        results.innerHTML = '';
-        if (!r.ok) {
-          if (r.err === 'rate_limited') say('Searching too fast. Try again in a moment.');
+    /* Ask for a page of people.
+       
+       Browsing takes any filter length, including none — the list is
+       already bounded server-side, so the box narrows it rather than
+       unlocking it. Only the older name-only search has a minimum, and it
+       is the fallback for a server with browsing switched off. */
+    /* What this load is for, so a second build of the same form can tell
+       it is already waiting for the answer rather than asking again. */
+    function key() {
+      return browse.scope + '|' + browse.query + '|' + browse.page;
+    }
+
+    /* Draw into whichever picker is currently on screen.
+       
+       The form is rebuilt whenever anything on it changes, so the picker
+       that asked a question is often not the one that has to show the
+       answer — the first one is detached by then, and rendering into it
+       puts the list nowhere. */
+    browse.draw = function (data) {
+      renderPeople(data.people || [], data.total !== undefined ? data : null);
+    };
+
+    function load() {
+      // Each rebuild constructs a fresh picker, and without this every one
+      // of them fired its own lookup — the same question several times
+      // over, against a rate limit that refills twice a second. The
+      // in-flight request answers all of them.
+      if (browse.pending === key()) { return; }
+      browse.pending = key();
+
+      var mine = ++seq;
+      var query = browse.query;
+
+      if (!canBrowse && !canNearby) {
+        var minimum = settings().minQueryLength || 3;
+        if (query.length < minimum) {
+          browse.pending = null;
+          results.innerHTML = '';
+          show(status, 'Type at least ' + minimum + ' letters of their name.');
           return;
         }
-        if (!r.data || r.data.length === 0) {
-          results.appendChild(el('div', 'hint', 'Nobody by that name is online.'));
-          return;
-        }
-        r.data.forEach(function (person) {
-          var pick = el('button', 'ghost',
-            person.name + (person.protected ? '  ·  LAW ENFORCEMENT' : ''));
-          pick.style.marginTop = '0.3rem';
-          pick.onclick = function () {
-            handle.value = person.handle;
-            handle.dataset.protected = person.protected ? 'true' : 'false';
-            input.value = person.name;
-            state.draft.target = person.handle;
-            state.draft.targetProtected = person.protected === true;
-            state.draft.targetName = person.name;
-            results.innerHTML = '';
-            if (person.protected) {
-              say('That is a sworn officer. Placing this will alert their department.', 'gold');
-            }
-          };
-          results.appendChild(pick);
+        post('searchTargets', { query: query }).then(function (r) {
+          browse.pending = null;
+          if (mine !== seq) return;
+          if (!r.ok) { return refused(r); }
+          browse.data = { people: r.data || [] };
+          if (browse.draw) { browse.draw(browse.data); }
         });
-      });
+        return;
+      }
+
+      post('browseTargets', { scope: browse.scope, query: query, page: browse.page })
+        .then(function (r) {
+          browse.pending = null;
+          // A reply from a query the player has already typed past is stale.
+          if (mine !== seq) return;
+          if (!r.ok) { return refused(r); }
+          browse.data = r.data || { people: [] };
+          if (browse.draw) { browse.draw(browse.data); }
+        });
+    }
+
+    function refused(r) {
+      browse.data = null;
+      results.innerHTML = '';
+      show(status, r.err === 'rate_limited'
+        ? 'Looking too fast. Try again in a moment.'
+        : 'Could not read who is online.');
+    }
+
+    function show(node, text) {
+      node.textContent = '';
+      if (text) { node.textContent = text; }
+    }
+
+    function renderPeople(people, paging) {
+      results.innerHTML = '';
+
+      if (people.length === 0) {
+        show(status, input.value
+          ? 'Nobody online by that name.'
+          : (browse.scope === 'nearby'
+              ? 'Nobody is standing near you.'
+              : 'Nobody else is in the city right now.'));
+        return;
+      }
+
+      if (paging && paging.total) {
+        show(status, (browse.scope === 'nearby')
+          ? (paging.total + (paging.total === 1 ? ' person near you' : ' people near you'))
+          : ('Showing ' + people.length + ' of ' + paging.total + ' in the city'));
+      } else {
+        show(status, people.length + (people.length === 1 ? ' match' : ' matches'));
+      }
+
+      people.forEach(function (person) { results.appendChild(personRow(person)); });
+
+      // Paging, only where there is more than one page.
+      if (paging && paging.pages > 1) {
+        var nav = el('div', 'row');
+        var back = el('button', 'ghost', 'Back');
+        back.disabled = paging.page <= 1;
+        back.onclick = function () {
+          browse.page = paging.page - 1; browse.data = null; browse.pending = null; load();
+        };
+        var forward = el('button', 'ghost', 'More');
+        forward.disabled = paging.page >= paging.pages;
+        forward.onclick = function () {
+          browse.page = paging.page + 1; browse.data = null; browse.pending = null; load();
+        };
+        nav.appendChild(back);
+        nav.appendChild(el('div', 'page-of',
+          'Page ' + paging.page + ' of ' + paging.pages));
+        nav.appendChild(forward);
+        results.appendChild(nav);
+      }
+    }
+
+    function personRow(person) {
+      var pick = el('button', 'person');
+      if (state.draft.target === person.handle) { pick.className = 'person is-chosen'; }
+
+      var name = el('span', 'person-name', person.name);
+      pick.appendChild(name);
+
+      var tags = el('span', 'person-tags');
+      if (person.protected) { tags.appendChild(el('span', 'chip warn', 'Law')); }
+      if (person.metres !== undefined && person.metres !== null) {
+        tags.appendChild(el('span', 'chip', person.metres + 'm'));
+      }
+      if (tags.children.length > 0) { pick.appendChild(tags); }
+
+      pick.onclick = function () {
+        handle.value = person.handle;
+        handle.dataset.protected = person.protected ? 'true' : 'false';
+        input.value = person.name;
+        state.draft.target = person.handle;
+        state.draft.targetProtected = person.protected === true;
+        state.draft.targetName = person.name;
+        // The chosen name stays visible rather than the list vanishing, so
+        // the player can see who they picked and change their mind.
+        renderPeople([person], null);
+        show(status, 'Contract will be placed on ' + person.name + '.');
+        if (person.protected) {
+          say('That is a sworn officer. Placing this will alert their department.', 'gold');
+        }
+      };
+      return pick;
     }
 
     wrap.appendChild(input);
     wrap.appendChild(handle);
+    wrap.appendChild(status);
     wrap.appendChild(results);
+
+    // Open on the list rather than on an empty box: seeing who is out there
+    // is the whole point. A rebuild of the form redraws what was already
+    // fetched rather than asking again.
+    // Always: on a server with browsing switched off this is what states
+    // the minimum name length, rather than leaving an empty box that looks
+    // broken until the player guesses how much to type.
+    if (browse.data) {
+      browse.draw(browse.data);
+    } else {
+      load();
+    }
     return wrap;
   }
 
