@@ -409,3 +409,28 @@ button.person.is-chosen {
   background: linear-gradient(180deg, var(--crimson) 0%, var(--crimson-deep) 100%);
   box-shadow: 0 0 0.6rem rgba(200, 16, 46, 0.35);
 }
+
+/* ---------- changing what a contract pays ----------
+   A reward can be several money lines and a handful of item stacks, which
+   is more rows than a dialog can show at once on a phone. Scrolled inside
+   its own box rather than pushing the buttons under the tab bar — the same
+   rule the target list follows, and for the same reason. */
+
+.reward-lines {
+  margin: 0.4rem 0 0.6rem;
+  max-height: 13rem;
+  overflow-y: auto;
+}
+.reward-lines::-webkit-scrollbar { width: 0.3rem; }
+.reward-lines::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
+
+.reward-line {
+  border-bottom: 1px solid var(--line);
+  padding: 0.35rem 0.1rem;
+}
+.reward-line:last-child { border-bottom: none; }
+
+/* A line with nothing to tick — one already on its way to somebody — still
+   has to line up with the ones that do, or the list reads as ragged rather
+   than as one of its rows being unavailable. */
+.reward-line > span.hint { margin-top: 0; margin-left: 1.9rem; }

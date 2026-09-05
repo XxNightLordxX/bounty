@@ -2174,6 +2174,243 @@ async function main() {
     });
   })();
 
+  /* ---- changing what a contract pays -----------------------------------
+   *
+   * Adding to a reward and taking from it are one decision, so they are one
+   * screen. What can be taken back is the server's answer, not the page's
+   * guess: the page draws the lines it was given ids for and can name
+   * nothing else. */
+  await (async function rewardEditing() {
+    const BREAKDOWN = {
+      ok: true,
+      data: {
+        editable: true,
+        slots: 1, currentSlot: 1,
+        lines: [
+          { id: 'ct00000001:1', slot: 1, portion: 'baseline', source: 'cash',
+            amount: 5000, withdrawable: true },
+          { id: 'ct00000001:2', slot: 1, portion: 'bonus', source: 'cash',
+            amount: 2500, withdrawable: true },
+          { id: 'ct00000001:3', slot: 1, portion: 'bonus', source: 'item',
+            item: 'lockpick', quantity: 2, withdrawable: true }
+        ]
+      }
+    };
+
+    const MINE_AS_CREATOR = { ok: true, data: { created: [{
+      id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
+      reward: { baseline: 5000, bonus: 2500 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1,
+      huntersActive: 0, huntersMax: 5,
+      targetName: 'Dana Reyes', targetProtected: false, role: 'creator'
+    }], accepted: [], onMe: [] } };
+
+    async function openEditor(over) {
+      const app = boot(Object.assign({
+        list: BOARD, ledger: LEDGER,
+        mine: MINE_AS_CREATOR,
+        rewardBreakdown: BREAKDOWN
+      }, over || {}));
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+      await settle(); await settle();
+      click(app, 'Change reward');
+      await settle(); await settle();
+      return app;
+    }
+
+    const app = await openEditor();
+
+    it('lists every line the server said could be taken back', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('$5,000') !== -1, 'the baseline should be listed: ' + text);
+      truthy(text.indexOf('$2,500') !== -1, 'the bonus should be listed: ' + text);
+      truthy(text.indexOf('Lockpick') !== -1,
+        'an item should be listed by a readable name, not its raw id: ' + text);
+      truthy(text.indexOf('lockpick') === -1 || text.indexOf('Lockpick') !== -1,
+        'the raw item name should not be what the player reads');
+    });
+
+    it('gives each one something to tick', function () {
+      const boxes = app.view.all().filter(function (n) {
+        return n.tagName === 'INPUT' && n.type === 'checkbox';
+      });
+      eq(boxes.length, 3, 'one box per withdrawable line');
+    });
+
+    // Tick the bonus and the item, leave the baseline alone.
+    const boxes = app.view.all().filter(function (n) {
+      return n.tagName === 'INPUT' && n.type === 'checkbox';
+    });
+    boxes[1].checked = true; boxes[1].onchange();
+    boxes[2].checked = true; boxes[2].onchange();
+
+    it('says what is coming back before it is committed to', function () {
+      // Read while the dialog is still open and nothing has been sent: the
+      // point of the figure is that it is there while they decide.
+      truthy(app.view.textContent.indexOf('Coming back to you') !== -1,
+        'no running total on the editor: ' + app.view.textContent);
+      truthy(app.view.textContent.indexOf('$2,500') !== -1,
+        'the ticked money should be totalled: ' + app.view.textContent);
+      truthy(app.view.textContent.indexOf('2 items') !== -1,
+        'the ticked goods should be counted: ' + app.view.textContent);
+      truthy(app.view.textContent.indexOf('$5,000') === -1
+        || app.view.textContent.indexOf('Coming back to you: $2,500') !== -1,
+        'the total counted a line that was not ticked: ' + app.view.textContent);
+    });
+
+    click(app, 'Take back what I ticked');
+    await settle(); await settle();
+
+    it('sends exactly the lines that were ticked', function () {
+      const sent = app.sent.filter(function (s) { return s.name === 'withdrawReward'; });
+      eq(sent.length, 1, 'one request');
+      eq(sent[0].body.id, 'ct00000001');
+      const ids = sent[0].body.lines.slice().sort();
+      eq(ids.join(','), 'ct00000001:2,ct00000001:3',
+        'the ticked lines, and only those');
+    });
+
+    /* Nothing ticked is not a request. It used to be worth sending, and the
+       server answered invalid_input — an error the player had done nothing
+       to earn. */
+    const empty = await openEditor();
+    click(empty, 'Take back what I ticked');
+    await settle();
+
+    it('sends nothing when nothing is ticked, and says so', function () {
+      eq(empty.sent.filter(function (s) { return s.name === 'withdrawReward'; }).length, 0,
+        'an empty selection was sent to the server');
+      truthy(empty.notice().indexOf('Nothing ticked') !== -1,
+        'and the player should be told why nothing happened: ' + empty.notice());
+    });
+
+    /* A contract somebody is hunting can be added to but not reduced. The
+       server decides that; the page has to show the reason rather than an
+       empty list with no explanation. */
+    const held = await openEditor({
+      rewardBreakdown: { ok: true, data: {
+        editable: false,
+        reason: 'Somebody is hunting this. You can add to the reward, but not take from it.',
+        slots: 1, currentSlot: 1,
+        lines: [
+          { slot: 1, portion: 'baseline', source: 'cash', amount: 5000,
+            withdrawable: false }
+        ]
+      } }
+    });
+
+    it('says why a reward cannot be reduced, rather than showing nothing', function () {
+      truthy(held.view.textContent.indexOf('Somebody is hunting this') !== -1,
+        'the reason should be on screen: ' + held.view.textContent);
+    });
+
+    it('offers no way to tick a line the server did not name', function () {
+      const boxes2 = held.view.all().filter(function (n) {
+        return n.tagName === 'INPUT' && n.type === 'checkbox';
+      });
+      eq(boxes2.length, 0, 'a line with no id was still made tickable');
+      const labels = held.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('Take back what I ticked') === -1
+        || held.view.textContent.indexOf('$5,000') !== -1,
+        'buttons: ' + labels.join(' | '));
+    });
+
+    it('still offers to add, which is the half that is allowed', function () {
+      const labels = held.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('Add cash') !== -1,
+        'adding is allowed while somebody hunts it: ' + labels.join(' | '));
+    });
+
+    /* A double tap on the confirm while the first request is in flight. The
+       second is a refusal the creator has done nothing to deserve. */
+    let calls = 0;
+    const held2 = [];
+    const twice = boot({
+      list: BOARD, ledger: LEDGER, mine: MINE_AS_CREATOR,
+      rewardBreakdown: BREAKDOWN,
+      withdrawReward: function () {
+        calls++;
+        return new Promise(function (resolve) { held2.push(resolve); });
+      }
+    });
+    await settle(); await settle();
+    twice.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+    await settle(); await settle();
+    click(twice, 'Change reward');
+    await settle(); await settle();
+    const tb = twice.view.all().filter(function (n) {
+      return n.tagName === 'INPUT' && n.type === 'checkbox';
+    });
+    tb[1].checked = true; tb[1].onchange();
+    click(twice, 'Take back what I ticked');
+    click(twice, 'Take back what I ticked');
+    await settle();
+
+    it('sends one withdrawal however many times the button is pressed', function () {
+      eq(calls, 1, 'a double tap sent the same withdrawal ' + calls + ' times');
+    });
+
+    // And the reply still lands.
+    held2.forEach(function (resolve) {
+      resolve({ ok: true, data: { id: 'ct00000001', returned: 1, queued: 0 } });
+    });
+    await settle(); await settle();
+
+    it('tells the player what came back', function () {
+      truthy(twice.notice().indexOf('returned to you') !== -1,
+        'nothing was said about the refund: ' + twice.notice());
+    });
+
+    /* Escrow that could not be delivered is owed, not lost. Reporting a
+       plain success would have the creator counting money that is not in
+       their pockets yet and calling it a bug. */
+    const queued = boot({
+      list: BOARD, ledger: LEDGER, mine: MINE_AS_CREATOR,
+      rewardBreakdown: BREAKDOWN,
+      withdrawReward: { ok: true, data: { id: 'ct00000001', returned: 0, queued: 2 } }
+    });
+    await settle(); await settle();
+    queued.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+    await settle(); await settle();
+    click(queued, 'Change reward');
+    await settle(); await settle();
+    const qb = queued.view.all().filter(function (n) {
+      return n.tagName === 'INPUT' && n.type === 'checkbox';
+    });
+    qb[1].checked = true; qb[1].onchange();
+    click(queued, 'Take back what I ticked');
+    await settle(); await settle();
+
+    it('says when part of it is waiting rather than back', function () {
+      truthy(queued.notice().indexOf('waiting for you') !== -1,
+        'a queued refund was reported as a plain success: ' + queued.notice());
+    });
+
+    /* A refused breakdown must say so and still let them out of the dialog.
+       An error card with no way back is how a player ends up force-closing
+       the phone. */
+    const refused = await openEditor({
+      rewardBreakdown: { ok: false, err: 'rate_limited' }
+    });
+
+    it('says a refused breakdown could not be read', function () {
+      truthy(refused.view.textContent.indexOf('Asked too fast') !== -1,
+        'a refusal should be visible: ' + refused.view.textContent);
+    });
+
+    it('and still offers a way out of the dialog', function () {
+      const labels = refused.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('Done') !== -1, 'buttons: ' + labels.join(' | '));
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

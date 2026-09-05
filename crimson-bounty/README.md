@@ -53,6 +53,13 @@ items and weapons. Set how many times it can be collected — each collection
 is funded separately and all of it is escrowed up front. Optionally set a
 kidnapping bonus, a buyout price, and a failure penalty.
 
+**Changing what it pays.** While nobody is hunting it, the client can add to
+the reward or take part of it back — tick the lines to return and they come
+home as the same property, the same weapon with the same serial. A slot's
+baseline cannot be emptied, because a collection that pays nothing is not a
+contract. The moment somebody accepts, the reward can only go up: they took
+it as written, and escrow exists so it cannot be pulled out from under them.
+
 **Taking one.** Accept from the board, anonymously if you like. More hunters
 may accept than there are payouts; the first to fulfil are paid. If the
 contract carries a penalty, you stake it when you accept — walk away and the

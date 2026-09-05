@@ -447,6 +447,62 @@ function App.register()
         return { id = payload.id }
     end)
 
+    -- What the reward is made of, for the creator who is changing it.
+    --
+    -- A separate request from the listing on purpose: the listing is a money
+    -- total and a count of goods, which is what a hunter decides on, and it
+    -- is sent to everyone. This is the individual property, with the ids
+    -- that name it, and only ever to the person who put it up.
+    handler('rewardBreakdown', 'load', function(actor, payload)
+        local breakdown = deps.projection.rewardLines(Util.toId(payload.id) or '', actor.cid)
+        -- Not found and not yours are the same answer. Telling them apart
+        -- would turn this into a way to ask whether a contract id exists.
+        if not breakdown then return false, CB.ERR.NOT_FOUND end
+        return breakdown
+    end)
+
+    -- Take part of a reward back out. The other half of addEscrow, which
+    -- only ever adds.
+    handler('withdrawReward', 'amend', function(actor, payload)
+        local ids = payload.lines
+        if type(ids) ~= 'table' then return false, CB.ERR.INVALID_INPUT end
+
+        -- msgpack hands a client-sent array over as a map when its keys are
+        -- not a clean 1..n sequence, and a hand-built payload need not be an
+        -- array at all. Flattened to a list here so what follows counts what
+        -- was really sent rather than what #ids happens to say — a map's
+        -- length operator reports zero, so an unflattened one would look
+        -- like an empty request whatever it held.
+        --
+        -- The ceiling is checked while flattening rather than afterwards:
+        -- a client sending a hundred thousand keys must not become a
+        -- hundred thousand table appends before anything refuses it. This
+        -- is about what a refusal costs, not whether it happens —
+        -- Contracts.withdrawReward re-checks the length it is handed, and
+        -- that is the check the suite can see. What each entry *is* is not
+        -- checked here either: withdrawReward puts every id through
+        -- Util.toLineId, and a second shallower version of that rule here
+        -- would only be a second place to keep it in step.
+        local list = {}
+        for _, id in pairs(ids) do
+            list[#list + 1] = id
+            if #list > Config.Limits.MaxEscrowLines then
+                return false, CB.ERR.INVALID_INPUT
+            end
+        end
+
+        local ok, err, result = deps.contracts.withdrawReward(actor, payload.id, list)
+        if not ok then return false, err end
+        return {
+            id = payload.id,
+            returned = result and result.settled or 0,
+            -- A line that could not be handed back right now is not lost: it
+            -- is owed and retried on next login. The page says so rather
+            -- than reporting a smaller refund than the creator asked for.
+            queued = result and result.pending or 0,
+        }
+    end)
+
     handler('abandon', 'accept', function(actor, payload)
         local ok, err = deps.contracts.abandon(actor, Util.toId(payload.id) or '')
         if not ok then return false, err end

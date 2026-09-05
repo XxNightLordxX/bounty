@@ -86,6 +86,29 @@ function serverStub() {
       inventoryRead: true,
       caps: { itemsEnabled: true, weaponsEnabled: true, maxStacks: 3,
               maxPerStack: 100, maxWeapons: 2, slots: 5, bonusPercent: 200 } } },
+    // Deliberately more lines than fit: a reward can be several money
+    // lines and a handful of item stacks, and that is the shape that
+    // pushes a dialog's own buttons off the bottom of the screen.
+    rewardBreakdown: { ok: true, data: {
+      editable: true, slots: 1, currentSlot: 1,
+      lines: (function () {
+        const rows = [
+          { id: 'ct00000001:1', slot: 1, portion: 'baseline', source: 'cash',
+            amount: 5000, withdrawable: true },
+          { id: 'ct00000001:2', slot: 1, portion: 'baseline', source: 'bank',
+            amount: 3000, withdrawable: true },
+          { id: 'ct00000001:3', slot: 1, portion: 'bonus', source: 'dirty',
+            amount: 2500, withdrawable: true }
+        ];
+        for (let i = 4; i <= 14; i++) {
+          rows.push({ id: 'ct00000001:' + i, slot: 1, portion: 'bonus',
+            source: 'item', item: 'a_long_item_name_' + i, quantity: i,
+            withdrawable: true });
+        }
+        return rows;
+      })()
+    } },
+    withdrawReward: { ok: true, data: { id: 'ct00000001', returned: 1, queued: 0 } },
     browseTargets: { ok: true, data: { people: [
       { handle: 'tg1', name: 'Ada Quill', protected: false },
       { handle: 'tg2', name: 'Bo Renn', protected: true }
@@ -334,6 +357,85 @@ async function main() {
   it('cuts nothing off on the place form either', function () {
     truthy(placeClipped.length === 0,
       placeClipped.length + ' element(s) clipped: ' + placeClipped.slice(0, 4).join(' | '));
+  });
+
+  /* ---- changing what a contract pays ----
+   *
+   * The dialog with the most content in the app: a reward can be a dozen
+   * lines, each a tickable row. A dialog whose own buttons are pushed off
+   * the bottom is a dialog a player cannot leave, and neither the server
+   * suite nor the DOM shim can see a bottom. */
+
+  await page.click('[data-tab="mine"]');
+  await page.waitForTimeout(300);
+  await page.evaluate(function () {
+    const buttons = Array.prototype.slice.call(document.querySelectorAll('button'));
+    const change = buttons.filter(function (b) { return b.textContent === 'Change reward'; })[0];
+    if (change) change.click();
+  });
+  await page.waitForTimeout(300);
+
+  const editor = await page.evaluate(function () {
+    const nav = document.querySelector('.tabs');
+    const navTop = nav.getBoundingClientRect().top;
+    const panel = document.querySelector('.dialog');
+    if (!panel) return null;
+
+    const buttons = Array.prototype.slice.call(panel.querySelectorAll('button'));
+    const boxes = Array.prototype.slice.call(
+      panel.querySelectorAll('input[type="checkbox"]'));
+    const rows = Array.prototype.slice.call(panel.querySelectorAll('.reward-line'));
+    const list = panel.querySelector('.reward-lines');
+
+    return {
+      boxes: boxes.length,
+      labels: buttons.map(function (b) { return b.textContent; }),
+      // Every button has to be reachable: on screen, and above the tab bar
+      // rather than behind it.
+      buried: buttons.filter(function (b) {
+        const r = b.getBoundingClientRect();
+        return r.bottom > navTop + 1 || r.top < 0;
+      }).map(function (b) { return b.textContent; }),
+      shortestButton: Math.min.apply(Math, [Infinity].concat(
+        buttons.map(function (b) { return b.getBoundingClientRect().height; }))),
+      // A tickable row is a tap target like any other.
+      shortestRow: Math.min.apply(Math, [Infinity].concat(
+        rows.map(function (r) { return r.getBoundingClientRect().height; }))),
+      // The list scrolls; the dialog does not grow past the screen.
+      listScrolls: list ? list.scrollHeight > list.clientHeight : false,
+      listOverflow: list ? getComputedStyle(list).overflowY : null,
+      panelClipped: panel.scrollHeight > panel.clientHeight + 1
+        && getComputedStyle(panel).overflowY === 'hidden'
+    };
+  });
+
+  it('opens a reward editor to measure', function () {
+    truthy(editor, 'the Change reward button did not open a dialog');
+    atLeast(editor.boxes, 14, 'tickable lines');
+  });
+
+  it('keeps every button in the editor reachable', function () {
+    truthy(editor.buried.length === 0,
+      'behind the tab bar or off screen: ' + editor.buried.join(' | '));
+    atLeast(editor.shortestButton, 36, 'shortest button in the editor');
+  });
+
+  it('gives every tickable line a thumb-sized row', function () {
+    atLeast(editor.shortestRow, 40, 'shortest reward line');
+  });
+
+  it('scrolls the lines rather than growing the dialog past the screen', function () {
+    truthy(editor.listScrolls,
+      'fourteen lines should overflow the list, so this measures nothing');
+    truthy(editor.listOverflow === 'auto' || editor.listOverflow === 'scroll',
+      'the list has to scroll, not clip: overflow-y is ' + editor.listOverflow);
+    truthy(!editor.panelClipped, 'the dialog is cutting off its own contents');
+  });
+
+  const editorClipped = await clippedNodes();
+  it('cuts nothing off in the reward editor', function () {
+    truthy(editorClipped.length === 0,
+      editorClipped.length + ' element(s) clipped: ' + editorClipped.slice(0, 4).join(' | '));
   });
 
   await browser.close();

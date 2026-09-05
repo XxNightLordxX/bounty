@@ -499,12 +499,16 @@ end
 ---@param recipientCid string
 ---@param filter table|string|nil { slot = n, portion = s } — nil releases everything
 ---@param reason string audit tag
+---@param guard fun(line: table): boolean|nil called once per line, after it has
+--- been taken out of `held` and before anything moves. Returning false puts
+--- that line back and moves nothing. Use it for a condition that only
+--- becomes binding once the line cannot be paid to anyone else.
 ---@return boolean moved  true when at least one line settled here
----@return table   result { settled = n, pending = n }
-function Escrow.release(contractId, recipientCid, filter, reason)
+---@return table   result { settled = n, pending = n, skipped = n, refused = n }
+function Escrow.release(contractId, recipientCid, filter, reason, guard)
     if type(filter) == 'string' then filter = { portion = filter } end
     local lines = Storage.readEscrow(contractId)
-    local result = { settled = 0, pending = 0, skipped = 0 }
+    local result = { settled = 0, pending = 0, skipped = 0, refused = 0 }
 
     for i = 1, #lines do
         local line = lines[i]
@@ -514,12 +518,19 @@ function Escrow.release(contractId, recipientCid, filter, reason)
             if filter.slot and line.slot ~= filter.slot then matches = false end
             if filter.staker and line.staker ~= filter.staker then matches = false end
 
-            if filter.line then
-                -- One named line and nothing else. A caller that names a
-                -- specific line has said exactly what it means, so the
-                -- general-refund exclusions below do not apply — but the
-                -- name has to match, or this releases the whole contract.
-                if line.id ~= filter.line then matches = false end
+            if filter.line or filter.lines then
+                -- Named lines and nothing else. A caller that names specific
+                -- lines has said exactly what it means, so the general-refund
+                -- exclusions below do not apply — but the name has to match,
+                -- or this releases the whole contract.
+                --
+                -- `lines` is a set of ids rather than one: reducing a reward
+                -- hands several lines back at once, and doing that as several
+                -- releases would be several audit rows for one decision and
+                -- several windows for an acceptance to land in the middle of.
+                local named = filter.line and line.id == filter.line
+                if not named and filter.lines then named = filter.lines[line.id] == true end
+                if not named then matches = false end
             elseif not filter.portion
                 and (line.portion == CB.PORTION.STAKE or line.portion == CB.PORTION.OWED) then
                 -- A release that names no portion is a general refund. It
@@ -534,7 +545,8 @@ function Escrow.release(contractId, recipientCid, filter, reason)
         -- A line already owed to someone belongs to them, whatever this
         -- release is for. A staff settlement names the line explicitly and
         -- is audited, so it is the one thing that may override this.
-        if line.owed_to and line.owed_to ~= recipientCid and not (filter and filter.line) then
+        if line.owed_to and line.owed_to ~= recipientCid
+            and not (filter and (filter.line or filter.lines)) then
             matches = false
         end
 
@@ -544,6 +556,21 @@ function Escrow.release(contractId, recipientCid, filter, reason)
             local claimed = Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING)
             if not claimed then
                 result.skipped = result.skipped + 1
+            elseif guard and not guard(line) then
+                -- A release the caller wanted to make conditional on
+                -- something it could only check once the line was already
+                -- out of `held`.
+                --
+                -- A creator reducing a reward may not do it to a hunter who
+                -- has accepted, and checking that before calling here is not
+                -- enough: every storage read between the check and the money
+                -- moving is a yield, and an acceptance can land in any of
+                -- them. Claiming the line first and asking afterwards makes
+                -- the answer binding — nothing else can pay this line while
+                -- it sits in `releasing`, so a refusal can put it straight
+                -- back with nothing moved.
+                Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
+                result.refused = result.refused + 1
             else
                 -- Who this release is for, written before the money moves.
                 -- A line caught mid-release at a shutdown otherwise recorded
@@ -588,6 +615,7 @@ function Escrow.release(contractId, recipientCid, filter, reason)
 
     Audit.financial('escrow_released', recipientCid, contractId, {
         reason = reason, settled = result.settled, pending = result.pending,
+        refused = result.refused > 0 and result.refused or nil,
     })
 
     return result.settled > 0, result
@@ -658,8 +686,16 @@ function Escrow.moneyValue(contractId, filter)
             if filter.portion and line.portion ~= filter.portion then matches = false end
             if filter.slot and line.slot ~= filter.slot then matches = false end
         end
+        -- `owed_to` as well as the OWED portion. A line marked for one named
+        -- person is already spoken for: the release a hunter's claim runs
+        -- skips it, so counting it here advertises a reward bigger than
+        -- anything that will ever be paid — and prices a bailout off money
+        -- the target could never have won back. A withdrawal that could not
+        -- be handed over, because the creator's pockets were full, leaves a
+        -- line in exactly that state on a live contract.
         if matches and line.portion ~= CB.PORTION.STAKE
             and line.portion ~= CB.PORTION.OWED
+            and not line.owed_to
             and CB.MONEY_SOURCES[line.source] then
             if line.state ~= CB.ESCROW_STATE.SETTLED then
                 total = total + (line.amount or 0)
@@ -693,7 +729,10 @@ function Escrow.goodsIn(contractId, filter)
             if filter.slot and line.slot ~= filter.slot then matches = false end
         end
 
+        -- Same rule as moneyValue: goods promised to one named person are
+        -- not part of what this contract pays anybody else.
         if matches and line.state ~= CB.ESCROW_STATE.SETTLED
+            and not line.owed_to
             and line.portion ~= CB.PORTION.STAKE and line.portion ~= CB.PORTION.OWED then
 
             if line.source == CB.SOURCE.ITEM then

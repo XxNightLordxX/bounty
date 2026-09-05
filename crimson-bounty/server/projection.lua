@@ -229,6 +229,97 @@ function Projection.mine(viewerCid)
     return out
 end
 
+--- What a contract's reward is actually made of, line by line, for the
+--- creator who put it there.
+---
+--- The listing carries a money total and a count of goods, which is what a
+--- hunter needs to decide. A creator changing their own reward needs the
+--- opposite: the individual things, each with the id that names it, so they
+--- can hand one back without touching the rest.
+---
+--- Only the creator, and only their own property. A hunter's stake and a
+--- line already owed to somebody are neither shown nor named — a client
+--- that cannot see an id cannot ask to withdraw it, and Contracts.withdraw
+--- refuses those ids regardless.
+---
+--- Line ids cross to the client. They identify an escrow row and nothing
+--- else: they carry no citizen id, are useless on any other contract, and
+--- every path that accepts one re-checks that the caller owns it.
+---@param contractId string
+---@param viewerCid string
+---@return table|nil { editable = boolean, reason?: string, lines = { ... } }
+function Projection.rewardLines(contractId, viewerCid)
+    local contract = Storage.readContract(contractId)
+    if not contract then return nil end
+    if contract.creator_cid ~= viewerCid then return nil end
+
+    -- Why the withdraw controls are absent, rather than only that they are.
+    -- A creator looking at a reward they cannot change should be told which
+    -- rule is holding it, not left to guess.
+    local editable, why = true, nil
+    if CB.TERMINAL[contract.state] then
+        editable, why = false, 'This contract is closed.'
+    else
+        local hunters = Storage.readHunters(contractId)
+        for i = 1, #hunters do
+            if hunters[i].state == 'active' then
+                editable = false
+                why = 'Somebody is hunting this. You can add to the reward, '
+                    .. 'but not take from it.'
+                break
+            end
+        end
+    end
+
+    local out = {}
+    local lines = Storage.readEscrow(contractId)
+
+    for i = 1, #lines do
+        local line = lines[i]
+        local mine = (line.portion == CB.PORTION.BASELINE
+                      or line.portion == CB.PORTION.BONUS)
+            and not line.owed_to
+            and line.state ~= CB.ESCROW_STATE.SETTLED
+
+        if mine then
+            local row = {
+                slot    = line.slot or 1,
+                portion = line.portion,
+                source  = line.source,
+                -- Only a line still `held` may be withdrawn. One caught
+                -- mid-release is on its way to somebody already, and is
+                -- shown so the totals add up rather than hidden so they
+                -- do not.
+                withdrawable = editable and line.state == CB.ESCROW_STATE.HELD,
+            }
+            if row.withdrawable then row.id = line.id end
+
+            if CB.MONEY_SOURCES[line.source] then
+                row.amount = line.amount or 0
+            else
+                -- The name of an item crosses, as it already does in the
+                -- listing. A serial does not, and neither does metadata:
+                -- what a creator needs to pick a line out is what it is
+                -- and how much of it, not the identity of the object.
+                row.item = line.item
+                row.quantity = line.quantity or 1
+            end
+
+            out[#out + 1] = row
+        end
+    end
+
+    table.sort(out, function(a, b)
+        if a.slot ~= b.slot then return a.slot < b.slot end
+        if a.portion ~= b.portion then return a.portion < b.portion end
+        return tostring(a.item or a.source) < tostring(b.item or b.source)
+    end)
+
+    return { editable = editable, reason = why, lines = out,
+             slots = contract.payout_slots or 1,
+             currentSlot = contract.next_slot or 1 }
+end
+
 --- Contracts the viewer holds as hunter.
 function Projection.accepted(viewerCid)
     local involved = Storage.contractsInvolving(viewerCid)

@@ -460,8 +460,12 @@
     }
 
     if (contract.role === 'creator') {
-      var top = el('button', null, 'Add to pot');
-      top.onclick = function () { addEscrow(contract); };
+      // One button for both directions. "Add to pot" could only ever go up,
+      // and a creator who had put up too much had exactly one way down:
+      // withdraw the whole contract and place it again. The editor behind
+      // this offers both, and says which of them this contract allows.
+      var top = el('button', null, 'Change reward');
+      top.onclick = function () { editReward(contract); };
       row.appendChild(top);
 
       var buy = el('button', 'ghost', 'Buy informant data');
@@ -590,13 +594,13 @@
       });
   }
 
-  /* Change a contract nobody has taken. The reward is not editable here —
-     moving escrow is money in and out of a pocket, and there is already
-     "Add to pot" for putting more up. */
+  /* Change a contract nobody has taken. What it pays is not edited here —
+     moving escrow is money in and out of a pocket, and that has its own
+     screen behind "Change reward", which can both add and take back. */
   function editContract(contract) {
     askFields('Edit this contract',
-      'Only while nobody has taken it. To change what it pays, use Add to '
-        + 'pot — or withdraw it and place it again.',
+      'Only while nobody has taken it. To change what it pays, use Change '
+        + 'reward.',
       [
         { id: 'reason', label: 'Reason', type: 'text',
           value: contract.reason || '', max: 140 },
@@ -873,6 +877,198 @@
                   refresh();
                 });
               });
+  }
+
+  /* ---------- changing what a contract pays ----------------------------
+
+     Adding to a reward and taking from it are one decision, so they are one
+     screen. "Add to pot" on its own could only ever go up, and a creator who
+     had put up too much had exactly one way down: withdraw the whole
+     contract and place it again, which costs them their place in every
+     cooldown that keys on target and creator.
+
+     What can be taken back is decided by the server and re-decided when the
+     request arrives. The page draws what it was told and nothing else — an
+     id it was not given is an id it cannot name. */
+
+  function editReward(contract) {
+    state.reward = { contract: contract, data: null, pending: true,
+                     failed: null, chosen: {} };
+    state.dialog = { kind: 'reward' };
+    render();
+
+    post('rewardBreakdown', { id: contract.id }).then(function (r) {
+      // A second dialog may have been opened while this was in flight.
+      if (!state.reward || state.reward.contract.id !== contract.id) { return; }
+      state.reward.pending = false;
+      if (r.ok && r.data) {
+        state.reward.data = r.data;
+      } else {
+        state.reward.failed = (r.err === 'rate_limited')
+          ? 'Asked too fast. Try again in a moment.'
+          : 'Could not read what this contract is holding.';
+      }
+      redraw();
+    });
+  }
+
+  /* One escrow line, as a line of text a player can read. */
+  function rewardLineLabel(line) {
+    var what;
+    if (line.source === 'cash' || line.source === 'bank' || line.source === 'dirty') {
+      what = SOURCE_LABELS[line.source] + ' ' + money(line.amount || 0);
+    } else if (line.source === 'weapon') {
+      what = itemLabel(line.item);
+    } else {
+      what = itemLabel(line.item) + ' ×' + (line.quantity || 1);
+    }
+    return what + ' — ' + (line.portion === 'bonus' ? 'bonus' : 'base');
+  }
+
+  function renderRewardEditor(view) {
+    var edit = state.reward;
+    var panel = el('div', 'card dialog');
+    panel.appendChild(el('div', 'target', 'Change the reward'));
+
+    if (!edit) { closeDialog(); return; }
+
+    var total = el('div', 'hint');
+
+    /* Rewritten in place rather than by redrawing the dialog: a redraw
+       rebuilds every checkbox, and rebuilding a checkbox the player is
+       still tapping through is how a tick lands on the wrong row. */
+    function showTotal() {
+      // Not named `money`: that is the formatter this function calls two
+      // lines below, and shadowing it turned the whole dialog into a
+      // TypeError the moment anything was ticked.
+      var amount = 0, goods = 0;
+      asList(edit.data && edit.data.lines).forEach(function (line) {
+        if (!line.id || edit.chosen[line.id] !== true) { return; }
+        if (line.source === 'cash' || line.source === 'bank' || line.source === 'dirty') {
+          amount += line.amount || 0;
+        } else {
+          goods += (line.source === 'weapon') ? 1 : (line.quantity || 1);
+        }
+      });
+
+      if (!amount && !goods) {
+        total.textContent = 'Nothing ticked yet.';
+        return;
+      }
+
+      var parts = [];
+      if (amount) { parts.push(money(amount)); }
+      if (goods) { parts.push(goods + (goods === 1 ? ' item' : ' items')); }
+      total.textContent = 'Coming back to you: ' + parts.join(' and ') + '.';
+    }
+
+    if (edit.pending) {
+      panel.appendChild(el('div', 'reason', 'Reading what this contract is holding…'));
+    } else if (edit.failed) {
+      panel.appendChild(el('div', 'reason', edit.failed));
+    } else if (edit.data) {
+      var lines = asList(edit.data.lines);
+
+      if (edit.data.reason) {
+        panel.appendChild(el('div', 'reason', edit.data.reason));
+      } else {
+        panel.appendChild(el('div', 'reason',
+          'Tick anything you want back. The rest stays on the contract.'));
+      }
+
+      if (!lines.length) {
+        panel.appendChild(el('div', 'hint', 'Nothing here can be taken back.'));
+      }
+
+      var list = el('div', 'reward-lines');
+      lines.forEach(function (line, index) {
+        // `toggle` is the existing styled checkbox row: same tap target,
+        // same drawn box. A second look for the same control would be a
+        // second thing to keep in step.
+        var row = el('label', 'toggle reward-line');
+
+        if (line.id) {
+          var box = document.createElement('input');
+          box.type = 'checkbox';
+          box.id = 'reward-line-' + index;
+          box.checked = edit.chosen[line.id] === true;
+          box.onchange = function () {
+            // Read back off the node rather than toggling a remembered
+            // value: a redraw between the click and here would otherwise
+            // flip the wrong way.
+            if (box.checked) { edit.chosen[line.id] = true; }
+            else { delete edit.chosen[line.id]; }
+            showTotal();
+          };
+          row.appendChild(box);
+        }
+
+        row.appendChild(el('span', line.id ? null : 'hint', rewardLineLabel(line)));
+        list.appendChild(row);
+      });
+      panel.appendChild(list);
+
+      // What is actually coming back, before they commit to it. Ticking
+      // five lines and reading five separate figures off a phone screen is
+      // arithmetic nobody should have to do to get their own money back.
+      panel.appendChild(total);
+      showTotal();
+    }
+
+    var row = el('div', 'row');
+
+    if (edit.data && !edit.pending) {
+      var take = el('button', 'primary', 'Take back what I ticked');
+      take.onclick = function () { withdrawChosen(edit); };
+      row.appendChild(take);
+    }
+
+    // Adding is offered from the same screen whether or not taking back is
+    // allowed: a contract somebody is hunting can still be sweetened, and
+    // that is exactly when a creator wants to.
+    var add = el('button', 'ghost', 'Add cash');
+    add.onclick = function () {
+      var contract = edit.contract;
+      state.dialog = null; state.reward = null;
+      addEscrow(contract);
+    };
+    row.appendChild(add);
+
+    var close = el('button', 'ghost', 'Done');
+    close.onclick = function () { state.reward = null; closeDialog(); };
+    row.appendChild(close);
+
+    panel.appendChild(row);
+    view.appendChild(panel);
+  }
+
+  function withdrawChosen(edit) {
+    var ids = Object.keys(edit.chosen);
+    if (!ids.length) {
+      say('Nothing ticked, so nothing was taken back.');
+      return;
+    }
+
+    // Guarded here as well as on the server: a double tap while the first
+    // request is in flight would ask for the same lines twice, and the
+    // second answer is a refusal the creator has done nothing to deserve.
+    if (edit.sending) { return; }
+    edit.sending = true;
+
+    post('withdrawReward', { id: edit.contract.id, lines: ids }).then(function (r) {
+      edit.sending = false;
+      if (!r.ok) { return fail(r); }
+
+      var queued = (r.data && r.data.queued) || 0;
+      say(queued
+        ? 'Taken off the contract. Some of it could not fit and is waiting '
+          + 'for you — it arrives when you next have room.'
+        : 'Taken off the contract and returned to you.', 'gold');
+
+      state.reward = null;
+      state.dialog = null;
+      refresh();
+    });
   }
 
   function addEscrow(contract) {
@@ -1326,6 +1522,33 @@
     }
     return 'You are not carrying anything that can be put up as a reward. '
       + 'Cash, bank and dirty money above still work.';
+  }
+
+  var SOURCE_LABELS = { cash: 'Cash', bank: 'Bank', dirty: 'Dirty money' };
+
+  /* A readable name for something that is no longer in the player's pockets.
+
+     The wallet carries proper labels, but only for what they are carrying
+     right now — and everything in escrow is, by definition, not. So the
+     wallet is asked first and the raw name is tidied when it cannot answer:
+     WEAPON_PISTOL reads as "Pistol", black_money as "Black money". */
+  function itemLabel(name) {
+    if (!name) { return 'Something'; }
+
+    var wallet = state.wallet;
+    if (wallet) {
+      var found = labelOf(asList(wallet.items), name);
+      if (found !== name) { return found; }
+      found = labelOf(asList(wallet.weapons), name);
+      if (found !== name) { return found; }
+    }
+
+    var text = String(name)
+      .replace(/^WEAPON_/i, '')
+      .replace(/[_\-]+/g, ' ')
+      .toLowerCase().trim();
+    if (!text) { return String(name); }
+    return text.charAt(0).toUpperCase() + text.slice(1);
   }
 
   function labelOf(items, name) {
@@ -1870,6 +2093,8 @@
         renderChoice(view);
       } else if (state.dialog.kind === 'fields') {
         renderFields(view);
+      } else if (state.dialog.kind === 'reward') {
+        renderRewardEditor(view);
       } else {
         renderDialog(view);
       }

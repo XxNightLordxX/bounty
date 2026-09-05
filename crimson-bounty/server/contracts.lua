@@ -780,10 +780,10 @@ end
 --- as written, and a change from there goes through the amendment path
 --- where they get a say.
 ---
---- The reward is deliberately not editable here. Moving escrow around is
---- money in and out of a player's pocket, and there is already a path for
---- adding to it; a creator who wants less on the table cancels and places
---- again, which refunds in one guarded operation rather than several.
+--- The reward is not editable here, because moving escrow is money in and
+--- out of a player's pocket and belongs on a path built for it:
+--- Amendments.addEscrow puts more up, and Contracts.withdrawReward takes
+--- part of it back. This changes only what the contract says.
 ---@param actor table
 ---@param contractId string
 ---@param changes table { reason?: string, deadlineSeconds?: integer }
@@ -833,6 +833,189 @@ function Contracts.revise(actor, contractId, changes)
     Audit.action('contract_revised', actor.cid, contractId,
         { changed = table.concat(touched, ',') })
     return true
+end
+
+--- Take part of a reward back out of escrow.
+---
+--- The other half of changing a reward. Adding to one already existed
+--- (Amendments.addEscrow, which works even while a hunter holds the
+--- contract, because a bigger reward cannot disadvantage them). Taking
+--- value back out did not exist at all: a creator who put up too much
+--- could only cancel the whole contract and place it again, losing their
+--- place in every cooldown that keys on target and creator.
+---
+--- Refused the moment somebody is actually hunting it, for the same reason
+--- cancelling is: a hunter who has started work, and staked a penalty to do
+--- it, decided on the reward as written. Reducing it from under them is
+--- exactly what escrow exists to prevent, and there is no approval path
+--- that makes it fair, so this does not offer one.
+---
+--- What comes back is what went in. Each named line is released through the
+--- ordinary guarded path, so a stack of items returns with its own
+--- metadata and a weapon with its own serial — never a fresh clean copy.
+---
+--- Three things cannot be withdrawn, whatever the client names:
+---   * a hunter's stake, which is not the creator's property;
+---   * a line already owed to a named person, which is theirs;
+---   * a line that is not `held` — settling and settled lines are already
+---     on their way to somebody.
+---
+--- And a slot that was funded stays funded: emptying a slot's baseline
+--- would leave a collection that pays nothing, which is refused at
+--- creation and is refused here for the same reason.
+---@param actor table
+---@param contractId string
+---@param lineIds string[] escrow line ids to hand back
+---@return boolean ok
+---@return string|nil err
+---@return table|nil result
+function Contracts.withdrawReward(actor, contractId, lineIds)
+    contractId = Util.toId(contractId)
+    if not contractId then return false, CB.ERR.INVALID_INPUT end
+    if type(lineIds) ~= 'table' then return false, CB.ERR.INVALID_INPUT end
+
+    local contract = Storage.readContract(contractId)
+    if not contract then return false, CB.ERR.NOT_FOUND end
+    if contract.creator_cid ~= actor.cid then return false, CB.ERR.NOT_PARTICIPANT end
+    if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
+    if heldByAnyone(contractId) then return false, CB.ERR.BAD_STATE end
+
+    -- Bounded before anything is read: a client naming ten thousand ids
+    -- must not become ten thousand lookups.
+    if #lineIds < 1 or #lineIds > Config.Limits.MaxEscrowLines then
+        return false, CB.ERR.INVALID_INPUT
+    end
+
+    local wanted = {}
+    local count = 0
+    for i = 1, #lineIds do
+        -- toLineId, not toId: an escrow line id carries the contract id and
+        -- an index joined by a colon, which toId deliberately refuses.
+        local id = Util.toLineId(lineIds[i])
+        if not id then return false, CB.ERR.INVALID_INPUT end
+        -- A repeated id is not an extra withdrawal; it is the same line
+        -- named twice. Counted once so the totals below stay honest.
+        if not wanted[id] then
+            wanted[id] = true
+            count = count + 1
+        end
+    end
+
+    local lines = Storage.readEscrow(contractId)
+
+    -- Which of the named ids this contract actually holds, and whether each
+    -- is the creator's to take back.
+    local matched = 0
+    for i = 1, #lines do
+        local line = lines[i]
+        if wanted[line.id] then
+            matched = matched + 1
+            if line.portion ~= CB.PORTION.BASELINE and line.portion ~= CB.PORTION.BONUS then
+                return false, CB.ERR.NOT_PARTICIPANT
+            end
+            if line.owed_to then return false, CB.ERR.NOT_PARTICIPANT end
+            if line.state ~= CB.ESCROW_STATE.HELD then return false, CB.ERR.BAD_STATE end
+        end
+    end
+
+    -- An id this contract does not hold is not ignored. Silently withdrawing
+    -- the subset it recognised would tell the creator their whole request
+    -- succeeded while part of the reward stayed where it was.
+    if matched ~= count then return false, CB.ERR.NOT_FOUND end
+
+    -- Every slot that is funded now must still be funded afterwards.
+    -- Checked per slot rather than across the contract: a contract whose
+    -- first collection is fully paid out has no held lines on that slot at
+    -- all, and requiring one would refuse an ordinary withdrawal from the
+    -- slot still being competed for.
+    local before, after = {}, {}
+    for i = 1, #lines do
+        local line = lines[i]
+        if line.state == CB.ESCROW_STATE.HELD and line.portion == CB.PORTION.BASELINE then
+            local slot = line.slot or 1
+            before[slot] = before[slot] or {}
+            before[slot][#before[slot] + 1] = line
+            if not wanted[line.id] then
+                after[slot] = after[slot] or {}
+                after[slot][#after[slot] + 1] = line
+            end
+        end
+    end
+
+    for slot, slotLines in pairs(before) do
+        if not Util.escrowIsEmpty(slotLines, CB.PORTION.BASELINE)
+            and Util.escrowIsEmpty(after[slot] or {}, CB.PORTION.BASELINE) then
+            return false, CB.ERR.INVALID_REWARD
+        end
+    end
+
+    -- One release for the whole set: several would be several windows for
+    -- an acceptance to land in the middle of, and several audit rows for
+    -- one decision.
+    --
+    -- The hunter check above is not enough on its own. Every storage read
+    -- between it and the money moving is a yield, and an acceptance can land
+    -- in any of them — so the same question is asked again through the
+    -- guard, once each line is out of `held` and can no longer be paid to
+    -- anybody. At that point the answer is binding: a hunter who appeared
+    -- gets the line put straight back, with nothing moved and nothing to
+    -- unwind. Cancelling is safe from this by accident, because its state
+    -- change is itself a compare-and-set; this has no state change to hide
+    -- behind.
+    local raced = false
+    local ok, result = Escrow.release(contractId, actor.cid,
+        { lines = wanted }, 'reward_reduced', function()
+            if heldByAnyone(contractId) then
+                raced = true
+                return false
+            end
+            return true
+        end)
+
+    if raced then
+        -- Somebody accepted while this was in flight. Every line the guard
+        -- reached is back where it was.
+        Audit.action('reward_reduce_raced', actor.cid, contractId,
+            { lines = count, settled = result.settled })
+
+        -- Nothing at all got out: the ordinary case, and the hunter has the
+        -- contract exactly as they accepted it.
+        if result.settled == 0 then return false, CB.ERR.BAD_STATE end
+
+        -- Something did. The guard runs per line, so an acceptance landing
+        -- between two of them leaves the earlier ones already returned — a
+        -- hunter holding a contract worth slightly less than the one they
+        -- took. It cannot be unwound, because that money is in the
+        -- creator's pocket and is rightfully theirs, so it is told rather
+        -- than hidden: a hunter who finds out from a payout is a hunter who
+        -- reports it as theft.
+        local hunters = Storage.readHunters(contractId)
+        for i = 1, #hunters do
+            if hunters[i].state == 'active' then
+                Notify.toCitizen(hunters[i].hunter_cid, 'Reward changed',
+                    'The client was reducing the reward as you accepted this '
+                    .. 'contract. Part of it was already withdrawn. Check what '
+                    .. 'it pays now before you go to work.',
+                    { bypassBudget = true })
+            end
+        end
+    end
+
+    if not ok and result.settled == 0 then
+        -- Nothing moved. Either something else claimed the lines between
+        -- the check above and here, or delivery could not happen at all.
+        -- A queued line is still the creator's; a skipped one is not theirs
+        -- any more.
+        if result.pending > 0 then
+            return true, nil, result
+        end
+        return false, CB.ERR.LOCKED
+    end
+
+    Audit.financial('reward_reduced', actor.cid, contractId,
+        { lines = count, settled = result.settled, pending = result.pending })
+
+    return true, nil, result
 end
 
 function Contracts.resolve(contractId, terminal, recipientCid, filter, reason)

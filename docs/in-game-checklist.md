@@ -34,6 +34,18 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] A contract you cannot afford is refused and charges nothing
 - [ ] The contract appears on the board for a third character
 
+## 3a. Changing what a contract pays
+
+- [ ] "Change reward" on your own contract lists every line it is holding
+- [ ] Ticking a line and confirming returns exactly that, and nothing else
+- [ ] An item comes back **with its metadata**; a weapon with its serial
+      and attachments
+- [ ] Taking back the whole baseline of a slot is refused
+- [ ] "Add cash" from the same screen still puts more up
+- [ ] Once a hunter accepts, the screen says why the reward cannot be
+      reduced — and adding still works
+- [ ] Nothing on that screen is cut off, and its buttons clear the tab bar
+
 ## 4. Payout slots
 
 - [ ] A 3-payout contract escrows all three reward sets at creation
