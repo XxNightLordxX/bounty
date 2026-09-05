@@ -612,6 +612,18 @@ Config.Admin = {
     --- it is a different kind of act from reading a history. Give it to fewer
     --- people than the one above.
     IdentityAce = 'crimson.identity',
+    --- Extra ACEs that also open the admin commands.
+    ---
+    --- `crimson.admin` is this resource's own, and nobody has it until it
+    --- is granted. That is right for closing a contract or refunding
+    --- escrow — and wrong for the diagnosis command, which is how an owner
+    --- finds out why their app is empty and which is the one thing they
+    --- need before they have set anything up.
+    ---
+    --- Anything here is accepted as well. `command` is the ACE most admin
+    --- groups already carry.
+    ExtraAces = { 'command' },
+
     --- Command names, without the leading slash.
     Commands = {
         timeline = 'cb-timeline',

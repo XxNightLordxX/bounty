@@ -472,3 +472,102 @@ describe('a config whose reward sources predate items and weapons', function()
         resetConfig()
     end)
 end)
+
+
+--- Getting at the diagnosis in the first place.
+---
+--- crimson.admin is this resource's own ACE and nobody holds it until
+--- somebody grants it. That is right for closing a contract or refunding
+--- escrow. It is wrong for the command that says why the app is empty,
+--- which is the one thing an owner needs before they have set anything up —
+--- and which answered "Not authorised." without saying what to authorise.
+describe('who may run the admin commands', function()
+    it('accepts the resource ACE', function()
+        local s = newStack()
+        fixture(s)
+        Env.aces[1] = { ['crimson.admin'] = true }
+        truthy(s.admin.allowed(1, 'crimson.admin'))
+    end)
+
+    it('accepts an ACE the admin group already carries', function()
+        local s = newStack()
+        fixture(s)
+        Env.aces[1] = { ['command'] = true }
+        truthy(s.admin.allowed(1, 'crimson.admin'),
+            'an owner with ordinary admin rights can reach the diagnosis')
+    end)
+
+    it('still refuses somebody with neither', function()
+        local s = newStack()
+        fixture(s)
+        Env.aces[1] = {}
+        falsy(s.admin.allowed(1, 'crimson.admin'),
+            'this is not a command for every player')
+    end)
+
+    it('honours an operator who empties the extra list', function()
+        local s = newStack()
+        fixture(s)
+        Env.aces[1] = { ['command'] = true }
+        withConfig({ { Config.Admin, 'ExtraAces', {} } }, function()
+            falsy(s.admin.allowed(1, 'crimson.admin'),
+                'a server that wants only its own ACE gets only its own ACE')
+        end)
+    end)
+
+    it('always lets the server console in', function()
+        local s = newStack()
+        fixture(s)
+        truthy(s.admin.allowed(0, 'crimson.admin'),
+            'an owner locked out of their own recovery tools has no way back in')
+    end)
+
+    it('says what to grant rather than only saying no', function()
+        local s = newStack()
+        fixture(s)
+        local told = s.admin.howToAuthorise('crimson.admin')
+        truthy(told:find('add_ace', 1, true), told)
+        truthy(told:find('crimson.admin', 1, true), told)
+        truthy(told:find('server.cfg', 1, true),
+            'and where to put it: ' .. told)
+    end)
+
+    it('tells a refused player that, through the command itself', function()
+        -- Through the real command, registered the way a live server
+        -- registers it: the message an owner actually sees.
+        local _, modules = boot()
+        fixture(modules)
+        Env.addPlayer({ source = 9, citizenid = 'NOBODY01', license = 'license:n',
+            firstname = 'No', lastname = 'Body' })
+        Env.aces[9] = {}
+
+        local run = Env.commands[Config.Admin.Commands.diagnose]
+        truthy(run, 'the diagnosis command must be registered')
+        Env.chat = {}
+        run(9, {})
+
+        local told = ''
+        for _, line in ipairs(Env.chat) do told = told .. line.text end
+        truthy(told:find('add_ace', 1, true),
+            'a refusal has to say what to do about it: ' .. told)
+    end)
+
+    it('runs for a player who does hold an ordinary admin ACE', function()
+        local _, modules = boot()
+        fixture(modules)
+        Env.addPlayer({ source = 9, citizenid = 'ADMIN001', license = 'license:a',
+            firstname = 'Ad', lastname = 'Min' })
+        Env.aces[9] = { ['command'] = true }
+
+        local run = Env.commands[Config.Admin.Commands.diagnose]
+        Env.chat = {}
+        run(9, {})
+
+        local told = ''
+        for _, line in ipairs(Env.chat) do told = told .. line.text end
+        falsy(told:find('add_ace', 1, true), 'not refused: ' .. told)
+        truthy(told:find('crimson-bounty diagnosis', 1, true),
+            'the report itself has to come back: ' .. told)
+        truthy(told:find('inventory read', 1, true), told)
+    end)
+end)

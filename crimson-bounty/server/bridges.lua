@@ -241,7 +241,7 @@ function Bridges.installCommands(modules)
     local function command(name, ace, fn)
         RegisterCommand(name, function(src, args)
             if not Admin.allowed(src, ace) then
-                reply(src, 'Not authorised.')
+                reply(src, Admin.howToAuthorise(ace))
                 return
             end
             fn(src, args or {})

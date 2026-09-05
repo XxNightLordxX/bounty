@@ -36,7 +36,26 @@ end
 ---@return boolean
 function Admin.allowed(src, ace)
     if src == 0 then return true end
-    return IsPlayerAceAllowed(src, ace) == true
+    if IsPlayerAceAllowed(src, ace) == true then return true end
+
+    -- Nobody holds crimson.admin until somebody grants it, and the first
+    -- thing an owner needs is the command that says why their app is
+    -- empty. An ACE their admin group already carries opens the same door.
+    for _, extra in ipairs(Config.Admin.ExtraAces or {}) do
+        if IsPlayerAceAllowed(src, extra) == true then return true end
+    end
+    return false
+end
+
+--- What to grant somebody who was refused, said in full.
+---
+--- "Not authorised." is true and useless. An owner reading it has no way to
+--- know which ACE, or where to put it.
+---@param ace string
+---@return string
+function Admin.howToAuthorise(ace)
+    return ('Not authorised. Add this to server.cfg and restart, or paste it '
+        .. 'into the server console:  add_ace group.admin %s allow'):format(ace)
 end
 
 --- Resolve who ran a command, for the audit row. The console has no citizen
