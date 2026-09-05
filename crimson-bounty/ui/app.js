@@ -1072,30 +1072,25 @@
 
     // What the creator actually has, read server-side, so an over-budget
     // contract is obvious before they submit rather than after.
-    if (!state.wallet && !state.walletFailed) {
-      post('rewardOptions', {}).then(function (r) {
-        if (r.ok && r.data) {
-          state.wallet = r.data;
-          state.walletFailed = null;
-        } else {
-          // Silently dropping the pickers left a form that simply had no
-          // item or weapon section, with nothing saying why and no way to
-          // ask again.
-          state.walletFailed = (r.err === 'rate_limited')
-            ? 'Reading your pockets too fast. Try again in a moment.'
-            : 'Could not read what you are carrying.';
-        }
-        redraw();
-      });
-    } else if (state.walletFailed) {
+    //
+    // Each branch is chosen by exactly the thing it draws. It used to lead
+    // with "have I asked yet", which meant a render that happened while the
+    // request was in flight matched neither that nor the failure branch and
+    // fell through to the one that reads the wallet — throwing on a wallet
+    // that had not arrived, and taking the whole form with it. Rebuilds
+    // during that window are the normal case, not a rare one: the target
+    // list lands in it.
+    if (state.walletFailed) {
       var failed = el('div', 'card');
       failed.appendChild(el('div', 'hint', state.walletFailed
         + ' Money still works; items and weapons need another look.'));
       var again = el('button', 'ghost', 'Try again');
-      again.onclick = function () { state.walletFailed = null; render(); };
+      again.onclick = function () {
+        state.walletFailed = null; state.walletPending = false; render();
+      };
       failed.appendChild(again);
       form.appendChild(failed);
-    } else {
+    } else if (state.wallet) {
       var w = state.wallet;
       var wallet = el('div', 'card');
       var meta = el('div', 'meta');
@@ -1104,6 +1099,40 @@
       meta.appendChild(chip('Dirty ' + money(w.dirty)));
       wallet.appendChild(meta);
       form.appendChild(wallet);
+    } else {
+      // Nothing yet. Ask, if nobody has — once, not once per render. The
+      // form is rebuilt whenever anything on it changes, and each rebuild
+      // used to send its own request, spending the same per-player
+      // allowance the target list needs, several times over, before the
+      // first reply had even landed.
+      if (!state.walletPending) {
+        state.walletPending = true;
+        post('rewardOptions', {}).then(function (r) {
+          state.walletPending = false;
+          if (r.ok && r.data) {
+            state.wallet = r.data;
+            state.walletFailed = null;
+          } else {
+            // Silently dropping the pickers left a form that simply had no
+            // item or weapon section, with nothing saying why and no way to
+            // ask again.
+            state.walletFailed = (r.err === 'rate_limited')
+              ? 'Reading your pockets too fast. Try again in a moment.'
+              : 'Could not read what you are carrying.';
+          }
+          redraw();
+        });
+      }
+
+      // And say so meanwhile. A reply that never comes back — a callback
+      // lost on the way to the client — would otherwise leave this branch
+      // drawing nothing at all, forever, with no way to ask again.
+      var waiting = el('div', 'card');
+      waiting.appendChild(el('div', 'hint', 'Reading what you are carrying…'));
+      var retry = el('button', 'ghost', 'Try again');
+      retry.onclick = function () { state.walletPending = false; render(); };
+      waiting.appendChild(retry);
+      form.appendChild(waiting);
     }
 
     form.appendChild(labelled('Target', targetSearch()));
@@ -1588,9 +1617,16 @@
      paged, and the box filters it rather than gating it. */
   function targetSearch() {
     var wrap = el('div', 'target-picker');
+    var browse = state.browse;
 
     var input = textInput('target-query', 'Filter by name, or just browse', 32);
-    input.value = state.draft.targetName || '';
+    // Seeded from the filter, not from whoever is currently chosen. The two
+    // used to be the same box: a rebuild put the chosen name in it while the
+    // remembered filter still narrowed the list, so the box read one thing
+    // and the results were another — and with a filter that matched nobody,
+    // "Nobody else is in the city right now" on a city full of people, with
+    // no way to ask again. Who is chosen is said below the list instead.
+    input.value = browse.query || '';
 
     var handle = document.createElement('input');
     handle.type = 'hidden'; handle.id = 'target-handle';
@@ -1600,7 +1636,6 @@
     var results = el('div', 'target-results');
     var status = el('div', 'hint');
 
-    var browse = state.browse;
     var timer = null;
     var seq = 0;
 
@@ -1787,7 +1822,6 @@
       pick.onclick = function () {
         handle.value = person.handle;
         handle.dataset.protected = person.protected ? 'true' : 'false';
-        input.value = person.name;
         state.draft.target = person.handle;
         state.draft.targetProtected = person.protected === true;
         state.draft.targetName = person.name;
@@ -1806,6 +1840,10 @@
     wrap.appendChild(handle);
     wrap.appendChild(status);
     wrap.appendChild(results);
+
+    if (state.draft.targetName) {
+      show(status, 'Contract will be placed on ' + state.draft.targetName + '.');
+    }
 
     // Open on the list rather than on an empty box: seeing who is out there
     // is the whole point. A rebuild of the form redraws what was already
@@ -1892,6 +1930,13 @@
     tab.onclick = function () {
       state.tab = tab.dataset.tab;
       state.dialog = null;
+
+      // Opening the Place form is a player asking to try again. One refused
+      // wallet used to leave an error card where both pickers should be for
+      // the rest of the session, since the form only re-asks when it holds
+      // neither a wallet nor a failure.
+      if (state.tab === 'place') { state.walletFailed = null; }
+
       render();
       // Opening a tab is when a player expects to see current state.
       if (state.tab === 'board' || state.tab === 'mine' || state.tab === 'onme') refresh();

@@ -132,7 +132,15 @@ local function handler(name, action, fn)
                 type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
 
-        local actor, err = deps.identity.gate(src)
+        -- Guarded: the gate reads the framework, and a throw here is before
+        -- the handler's own pcall — so it used to take the whole net event
+        -- with it and leave the request with no reply at all. The page waits
+        -- fifteen seconds on every request it sends.
+        local gateOk, actor, err = pcall(deps.identity.gate, src)
+        if not gateOk then
+            actor, err = nil, CB.ERR.NO_PLAYER
+        end
+
         if not actor then
             -- Once per window per source, not once per request. Somebody the
             -- gate refuses can still send as fast as the flood guard allows,

@@ -242,12 +242,24 @@ end
 
 --- Every online player, resolved. Used for advisories and presence checks.
 ---@return table[] actors
+--- Everyone connected that this resource can describe.
+---
+--- Guarded per player, not per call. resolve reads the framework's own
+--- character record, and on a live server somebody is always mid-join — a
+--- source that is connected but whose record is not there yet, or an export
+--- that raises for it. One of those used to throw out of here and take the
+--- whole roster with it: the browse handler caught it, replied with an
+--- error, and the target list came back empty for everybody because one
+--- person was still loading.
+---
+--- A player who cannot be described is left out. Everyone else is still
+--- there.
 function Identity.online()
     local out = {}
     local players = GetPlayers() or {}
     for i = 1, #players do
-        local actor = Identity.resolve(tonumber(players[i]))
-        if actor then out[#out + 1] = actor end
+        local ok, actor = pcall(Identity.resolve, tonumber(players[i]))
+        if ok and actor then out[#out + 1] = actor end
     end
     return out
 end

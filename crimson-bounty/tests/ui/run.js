@@ -115,8 +115,18 @@ function boot(responses) {
       }
 
       const result = typeof answer === 'function' ? answer(body) : answer;
+
+      // A fixture may answer with a promise, meaning a server that has not
+      // replied yet. A harness that always answers instantly cannot see a
+      // form that asks again on every render, because the first answer is
+      // always back before the second render happens; on a real server the
+      // reply takes a frame or two and the renders pile up behind it.
+      const arriving = (result && typeof result.then === 'function')
+        ? result : Promise.resolve(result);
       return Promise.resolve({
-        json: function () { return Promise.resolve(acrossTheWire(result || { ok: true })); }
+        json: function () {
+          return arriving.then(function (r) { return acrossTheWire(r || { ok: true }); });
+        }
       });
     },
     setTimeout: function (fn, ms) { timers.push({ fn: fn, ms: ms }); return timers.length; },
@@ -1957,6 +1967,213 @@ async function main() {
   // before the tally is printed.
   await new Promise(function (r) { setImmediate(r); });
 
+  /* ---- one transient failure must not be permanent ---------------------
+   *
+   * Each of these turns a single refused or slow request into a picker that
+   * is empty for the rest of the session, with nothing on screen saying so
+   * and no way to make it ask again. */
+  await (async function transientFailuresRecover() {
+    function base(over) {
+      return Object.assign({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [],
+          settings: { minQueryLength: 3, allowBrowseAll: true, allowNearby: true } } },
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+        ledger: { ok: true, data: { entries: [], record: {} } }
+      }, over || {});
+    }
+
+    async function toPlace(app) {
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+      await settle(); await settle();
+    }
+
+    /* The wallet. One refusal used to leave an error card in place of both
+       pickers for the rest of the session: viewPlace only re-asks when
+       neither a wallet nor a failure is held. */
+    let walletCalls = 0;
+    const flaky = boot(base({
+      browseTargets: { ok: true, data: { people: [], total: 0, page: 1, pages: 1 } },
+      rewardOptions: function () {
+        walletCalls++;
+        if (walletCalls === 1) { return { ok: false, err: 'rate_limited' }; }
+        return { ok: true, data: { cash: 500, bank: 0, dirty: 0,
+          items: [{ name: 'lockpick', label: 'Lockpick', count: 5 }], weapons: [],
+          inventoryRead: true, caps: { itemsEnabled: true, weaponsEnabled: true } } };
+      }
+    }));
+    await settle(); await settle();
+    await toPlace(flaky);
+
+    it('says the wallet could not be read, rather than nothing', function () {
+      truthy(flaky.view.textContent.indexOf('Try again') !== -1
+        || flaky.view.textContent.indexOf('too fast') !== -1,
+        'a refused wallet has to be visible: ' + flaky.view.textContent);
+    });
+
+    // Leaving the tab and coming back is what a player does about it.
+    flaky.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'board'; })[0].onclick();
+    await settle();
+    await toPlace(flaky);
+
+    it('asks again when the player comes back to the form', function () {
+      truthy(walletCalls >= 2,
+        'it never asked again; one refusal removed the pickers for the session');
+      truthy(flaky.view.textContent.indexOf('Lockpick') !== -1,
+        'and the picker has to come back: ' + flaky.view.textContent);
+    });
+
+    /* The wallet request, sent once per render while one is already in
+       flight. The reply is held open here on purpose: the form is rebuilt
+       whenever anything on it changes, and on a real server several of those
+       rebuilds happen before the first answer lands. Each extra request
+       spends the same per-player allowance the target list needs, so the
+       page that asks hardest for its wallet is the one that ends up with no
+       people in it. */
+    let inFlightCalls = 0;
+    const held = [];
+    const chatty = boot(base({
+      browseTargets: { ok: true, data: { people: [], total: 0, page: 1, pages: 1 } },
+      rewardOptions: function () {
+        inFlightCalls++;
+        return new Promise(function (resolve) { held.push(resolve); });
+      }
+    }));
+    await settle(); await settle();
+    await toPlace(chatty);
+    // Force extra renders while the first reply is still pending.
+    chatty.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    chatty.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    it('asks for the wallet once while one is already in flight', function () {
+      eq(inFlightCalls, 1,
+        'the form asked for the wallet ' + inFlightCalls + ' times before the first '
+        + 'answer landed; each one spends the same allowance the target list needs');
+    });
+
+    // And it has to draw something in the meantime. A reply that never comes
+    // back — a callback lost between server and page — would otherwise leave
+    // the form saying nothing about its own pickers for the rest of the
+    // session, with nothing to press.
+    it('says it is still reading, and offers a way to ask again', function () {
+      truthy(chatty.view.textContent.indexOf('Reading what you are carrying') !== -1,
+        'the in-flight form said nothing about the wallet: ' + chatty.view.textContent);
+      const buttons = chatty.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Try again';
+      });
+      eq(buttons.length, 1,
+        'no way to re-ask for a wallet whose reply never arrives');
+    });
+
+    // The rest of the form is still usable while it waits: money is not
+    // what the wallet read is for.
+    it('still draws the rest of the form while it waits', function () {
+      truthy(chatty.document.getElementById('reason'),
+        'the form lost its own fields waiting for a wallet');
+      truthy(chatty.document.getElementById('mode'),
+        'the form lost its assignment picker waiting for a wallet');
+    });
+
+    // Pressing it has to actually send another request — a button that
+    // clears a flag and redraws the same waiting card is not a way out.
+    const beforeRetry = inFlightCalls;
+    click(chatty, 'Try again');
+    await settle(); await settle();
+
+    it('and pressing that asks again', function () {
+      truthy(inFlightCalls > beforeRetry,
+        'the retry redrew the card without asking the server anything');
+    });
+
+    // And the one answer, once it lands, still fills the pickers in.
+    held.forEach(function (resolve) {
+      resolve({ ok: true, data: { cash: 1, bank: 0, dirty: 0,
+        items: [{ name: 'lockpick', label: 'Lockpick', count: 2 }], weapons: [],
+        inventoryRead: true, caps: { itemsEnabled: true, weaponsEnabled: true } } });
+    });
+    await settle(); await settle();
+
+    it('and draws the pickers when that one answer arrives', function () {
+      truthy(chatty.view.textContent.indexOf('Lockpick') !== -1,
+        'the held reply never reached the form: ' + chatty.view.textContent);
+    });
+
+    // Asking again after it has one would be the same waste by another
+    // route, so the settled form must not re-ask on a later rebuild either.
+    const afterArrival = inFlightCalls;
+    await toPlace(chatty);
+    await settle();
+
+    it('and does not ask again once it has one', function () {
+      eq(inFlightCalls, afterArrival,
+        're-rendered the form and asked for a wallet it already had');
+    });
+
+    /* The filter box is rebuilt empty on every render, but the remembered
+       query is not — so a rebuild showed the result of a filter the box no
+       longer displays, and never asked again. */
+    const filtered = boot(base({
+      browseTargets: function (body) {
+        const all = [{ handle: 'tg1', name: 'Ada Quill', protected: false },
+                     { handle: 'tg2', name: 'Bo Renn', protected: false }];
+        const rows = body.query
+          ? all.filter(function (p) { return p.name.indexOf(body.query) !== -1; })
+          : all;
+        return { ok: true, data: { people: rows, total: rows.length, page: 1, pages: 1 } };
+      },
+      rewardOptions: { ok: true, data: { cash: 1, bank: 0, dirty: 0, items: [], weapons: [],
+        inventoryRead: true, caps: { itemsEnabled: true, weaponsEnabled: true } } }
+    }));
+    await settle(); await settle();
+    await toPlace(filtered);
+
+    const box = filtered.document.getElementById('target-query');
+    box.value = 'Zzz';
+    box.oninput();
+    filtered.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+
+    it('finds nobody for a filter that matches nobody', function () {
+      truthy(filtered.view.textContent.indexOf('Nobody online by that name') !== -1,
+        filtered.view.textContent);
+    });
+
+    // Now rebuild the form. The box comes back empty.
+    filtered.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'board'; })[0].onclick();
+    await settle();
+    await toPlace(filtered);
+
+    it('keeps the box and the list saying the same thing', function () {
+      // The bug was the disagreement. The box was rebuilt showing whoever
+      // was chosen while the remembered filter still narrowed the results,
+      // so a filter matching nobody read as "Nobody else is in the city
+      // right now" on a city full of people, with nothing on screen to
+      // explain it and no way to ask again.
+      const shown = filtered.document.getElementById('target-query').value;
+      const text = filtered.view.textContent;
+      eq(shown, 'Zzz', 'the filter survives a rebuild, visibly');
+      truthy(text.indexOf('Nobody online by that name') !== -1,
+        'and the list says it is filtered, not that the city is empty: ' + text);
+    });
+
+    // Clearing the box brings the city back.
+    const clearBox = filtered.document.getElementById('target-query');
+    clearBox.value = '';
+    clearBox.oninput();
+    filtered.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+
+    it('shows the city again once the filter is cleared', function () {
+      truthy(filtered.view.textContent.indexOf('Ada Quill') !== -1,
+        'clearing the filter has to ask again: ' + filtered.view.textContent);
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a
@@ -1965,4 +2182,14 @@ async function main() {
   process.exit(failures.length === 0 ? 0 : 1);
 }
 
-main();
+/* main() rejecting is itself a result worth printing. Without this the
+ * unhandledRejection handler above swallowed it and the run exited zero
+ * having said nothing at all — a suite that reports nothing is worse than
+ * one that fails. */
+main().catch(function (err) {
+  failures.push('the suite itself threw\n    ' + (err && err.stack || err));
+  console.log('');
+  failures.forEach(function (f) { console.log('FAIL  ' + f); });
+  console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
+  process.exit(1);
+});
