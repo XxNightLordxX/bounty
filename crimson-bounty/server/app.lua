@@ -72,6 +72,20 @@ function App.floodOk(src, name)
     return true
 end
 
+--- Whether a reward source is switched on.
+---
+--- Read through a helper because a config that predates a source has it
+--- absent rather than false, and indexing the absent one throws — inside a
+--- handler, where it becomes a request that never answers. Absent reads as
+--- off here, and startup fills in the shipped default so it should never
+--- come to this.
+---@param name string
+---@return boolean
+local function sourceEnabled(name)
+    local source = Config.Sources and Config.Sources[name]
+    return (source and source.enabled) == true
+end
+
 local function handler(name, action, fn)
     RegisterNetEvent('crimson-bounty:' .. name, function(payload)
         local src = source
@@ -164,7 +178,7 @@ function App.register()
         for i = 1, #online do
             local candidate = online[i]
             if candidate.cid ~= actor.cid
-                and candidate.account ~= actor.account
+                and not deps.identity.sameAccount(candidate.account, actor.account)
                 and candidate.name:lower():find(needle, 1, true) then
                 out[#out + 1] = {
                     handle = App.mintTargetHandle(actor.cid, candidate.cid),
@@ -221,7 +235,7 @@ function App.register()
         for i = 1, #online do
             local candidate = online[i]
             if candidate.cid ~= actor.cid
-                and candidate.account ~= actor.account
+                and not deps.identity.sameAccount(candidate.account, actor.account)
                 and (not needle or candidate.name:lower():find(needle, 1, true)) then
 
                 if nearby then
@@ -322,8 +336,8 @@ function App.register()
                 -- Whether the server takes goods at all. A form that simply
                 -- omits the section leaves the player hunting for an option
                 -- that was switched off.
-                itemsEnabled = Config.Sources.item.enabled == true,
-                weaponsEnabled = Config.Sources.weapon.enabled == true,
+                itemsEnabled = sourceEnabled('item'),
+                weaponsEnabled = sourceEnabled('weapon'),
                 -- The total the server will accept across every payout.
                 -- Without it the form could build a contract that is always
                 -- refused, and blame the amounts.
@@ -615,7 +629,7 @@ end
 --- and anything the server forbids.
 ---@param carried table[]|nil an already-read inventory, to save a round trip
 function App.escrowableItems(actor, carried)
-    if not Config.Sources.item.enabled then return {} end
+    if not sourceEnabled('item') then return {} end
 
     local totals, order = {}, {}
     local slots = carried or App.readInventory(actor) or {}
@@ -642,7 +656,7 @@ end
 --- own serial and attachments rather than a stack.
 ---@param carried table[]|nil an already-read inventory, to save a round trip
 function App.escrowableWeapons(actor, carried)
-    if not Config.Sources.weapon.enabled then return {} end
+    if not sourceEnabled('weapon') then return {} end
 
     local out = {}
     local slots = carried or App.readInventory(actor) or {}

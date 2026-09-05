@@ -39,6 +39,20 @@ end
 --- A weapon by name. ox_inventory names every weapon WEAPON_*, and this is
 --- the boundary between the two escrow paths: one snapshots an object's
 --- metadata, the other counts a stack.
+--- Whether a reward source is switched on.
+---
+--- Read through a helper because a config that predates a source has it
+--- absent rather than false, and indexing the absent one throws — inside a
+--- handler, where it becomes a request that never answers. Absent reads as
+--- off here, and startup fills in the shipped default so it should never
+--- come to this.
+---@param name string
+---@return boolean
+local function sourceEnabled(name)
+    local source = Config.Sources and Config.Sources[name]
+    return (source and source.enabled) == true
+end
+
 local function isWeaponName(name)
     return type(name) == 'string' and name:upper():sub(1, 7) == 'WEAPON_'
 end
@@ -99,7 +113,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
         -- operator who turned item escrow off still had it work for anyone
         -- sending the payload by hand. A config switch that only the UI
         -- honours is not a switch.
-        if not Config.Sources.item.enabled then return CB.ERR.INVALID_REWARD end
+        if not sourceEnabled('item') then return CB.ERR.INVALID_REWARD end
         if #list > Config.Sources.item.maxStacks then return CB.ERR.INVALID_REWARD end
 
         for i = 1, #list do
@@ -166,7 +180,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
     local function addWeapons(portion, list)
         if list == nil then return nil end
         if type(list) ~= 'table' then return CB.ERR.INVALID_REWARD end
-        if not Config.Sources.weapon.enabled then return CB.ERR.INVALID_REWARD end
+        if not sourceEnabled('weapon') then return CB.ERR.INVALID_REWARD end
         if #list > Config.Sources.weapon.max then return CB.ERR.INVALID_REWARD end
 
         for i = 1, #list do

@@ -36,6 +36,15 @@ local DEFAULTS = {
         MaxNearby = 12,
         AllowProtectedJobTargets = true,
     },
+    Sources = {
+        --- Items and weapons as rewards. A config that predates these has
+        --- them absent, not false — and the app reads absent as the server
+        --- refusing goods, so the Place form says "money only" and drops
+        --- both pickers. Absent is not a decision; false is, and false is
+        --- left alone.
+        item   = { enabled = true, maxStacks = 10, maxPerStack = 100 },
+        weapon = { enabled = true, max = 3 },
+    },
     Cooldowns = {
         -- Split out of one shared bucket. On a config that predates the
         -- split these are absent, and an absent rule is not a licence to
@@ -52,10 +61,25 @@ local function applyConfigDefaults()
 
     for section, defaults in pairs(DEFAULTS) do
         if type(Config[section]) ~= 'table' then Config[section] = {} end
+
         for key, value in pairs(defaults) do
-            if Config[section][key] == nil then
+            local held = Config[section][key]
+
+            if held == nil then
                 Config[section][key] = value
                 filled[#filled + 1] = section .. '.' .. key
+
+            elseif type(value) == 'table' and type(held) == 'table' then
+                -- A setting the operator has but only half of. Filling the
+                -- missing fields matters as much as the whole entry: an
+                -- item source with no maxPerStack is a source nothing can
+                -- be escrowed through.
+                for field, fallback in pairs(value) do
+                    if held[field] == nil then
+                        held[field] = fallback
+                        filled[#filled + 1] = section .. '.' .. key .. '.' .. field
+                    end
+                end
             end
         end
     end

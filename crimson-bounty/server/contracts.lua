@@ -118,7 +118,8 @@ function Contracts.canCreate(actor, targetActor)
 
     -- The three parties must be distinct people, not just distinct characters.
     if targetActor.cid == actor.cid then return false, CB.ERR.SELF_TARGET end
-    if Config.AntiCollusion.BlockSameAccount and targetActor.account == actor.account then
+    if Config.AntiCollusion.BlockSameAccount
+        and Identity.sameAccount(targetActor.account, actor.account) then
         return false, CB.ERR.SAME_ACCOUNT
     end
 
@@ -423,9 +424,13 @@ function Contracts.accept(actor, contractId, anonymous)
     if contract.target_cid == actor.cid then return false, CB.ERR.SELF_TARGET end
     if contract.creator_cid == actor.cid then return false, CB.ERR.SELF_ACCEPT end
     if Config.AntiCollusion.BlockSameAccount then
-        if contract.creator_account == actor.account then return false, CB.ERR.SAME_ACCOUNT end
+        if Identity.sameAccount(contract.creator_account, actor.account) then
+            return false, CB.ERR.SAME_ACCOUNT
+        end
         local targetActor = Identity.byCitizenId(contract.target_cid)
-        if targetActor and targetActor.account == actor.account then return false, CB.ERR.SAME_ACCOUNT end
+        if targetActor and Identity.sameAccount(targetActor.account, actor.account) then
+            return false, CB.ERR.SAME_ACCOUNT
+        end
     end
 
     if Storage.readHunter(contractId, actor.cid) then return false, CB.ERR.BAD_STATE end

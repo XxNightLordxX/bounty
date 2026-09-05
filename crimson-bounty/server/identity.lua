@@ -134,6 +134,25 @@ function Identity.accountOf(source)
     return identifiers[1]
 end
 
+--- Whether two players are the same account.
+---
+--- Only when both accounts are known and equal. An account this server
+--- could not read is nil, and `nil == nil` is true — which made every
+--- player look like another character of whoever was asking. The target
+--- list came back empty, with the whole city filtered out as one person's
+--- alts, and no contract could be accepted because every hunter read as
+--- their own creator.
+---
+--- Two unknowns are not the same person. They are two unknowns, and the
+--- citizen id is what separates them.
+---@param a string|nil
+---@param b string|nil
+---@return boolean
+function Identity.sameAccount(a, b)
+    if a == nil or b == nil then return false end
+    return a == b
+end
+
 --- True when a job is barred from the app (§2). Checked by type first so a
 --- newly added LEO job is blocked without a config edit.
 ---@param job table

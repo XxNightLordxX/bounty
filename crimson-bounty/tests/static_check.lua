@@ -816,6 +816,63 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 23. No local function is called above where it is defined
+--------------------------------------------------------------------------
+--
+-- Lua resolves a bare name at call time, so a `local function` used before
+-- its definition is nil at that point — not an error anyone sees at load,
+-- but a crash the first time that line runs. Inside a request handler that
+-- is a call which simply never answers.
+--
+-- This has shipped twice: reportIntegrations, called eighty lines above its
+-- definition, would have thrown on startup while the whole suite was green;
+-- and sourceEnabled, which took out the one handler the item picker depends
+-- on. Both were caught by luck rather than by anything here.
+--
+-- Only same-file, file-scope `local function` declarations are considered:
+-- a nested one is scoped to its enclosing function and a call to it from
+-- outside would not resolve anyway.
+
+do
+    for _, path in ipairs(files) do
+        local src = read(path) or ''
+
+        -- Where each file-scope local function is declared. Indentation is
+        -- what distinguishes it from a nested one.
+        local declaredAt, order = {}, {}
+        local line = 0
+        for text in src:gmatch('[^\n]*') do
+            line = line + 1
+            local name = text:match('^local function ([%w_]+)%s*%(')
+            if name and not declaredAt[name] then
+                declaredAt[name] = line
+                order[#order + 1] = name
+            end
+        end
+
+        for _, name in ipairs(order) do
+            local declared = declaredAt[name]
+            local at = 0
+            for text in src:gmatch('[^\n]*') do
+                at = at + 1
+                if at < declared and not text:match('^%s*%-%-') then
+                    -- A call, not a mention: the name followed by an open
+                    -- bracket, and not part of a longer identifier.
+                    local before, after = text:match('(.?)' .. name .. '%s*%((.?)')
+                    if before and not before:match('[%w_.:]') then
+                        failures[#failures + 1] =
+                            ('%s:%d calls %s(), which is declared as a local function on '
+                             .. 'line %d. Lua resolves the name at call time, so it is nil '
+                             .. 'here and this line throws the first time it runs.')
+                                :format(path, at, name, declared)
+                    end
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

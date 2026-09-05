@@ -273,12 +273,26 @@ function Admin.diagnose(source)
     local others = 0
     for i = 1, #online do
         local candidate = online[i]
-        if candidate.cid ~= actor.cid and candidate.account ~= actor.account then
+        if candidate.cid ~= actor.cid
+            and not Identity.sameAccount(candidate.account, actor.account) then
             others = others + 1
         end
     end
     say(('targetable by you: %d  (yourself and your own account are never listed)')
         :format(others))
+
+    -- An account this server cannot read used to exclude everybody, since
+    -- two unknowns compared equal. Worth naming: it is invisible otherwise
+    -- and it emptied the whole list.
+    local unknown = 0
+    for i = 1, #online do
+        if online[i].account == nil then unknown = unknown + 1 end
+    end
+    if unknown > 0 then
+        say(('  account unreadable for %d of %d online — check your server has '
+            .. 'licence identifiers enabled'):format(unknown, #online))
+    end
+
     if others == 0 and #online > 0 then
         say('  -> the list is empty because everyone online shares your account, '
             .. 'or you are the only one here. Try with a second player.')
@@ -293,8 +307,17 @@ function Admin.diagnose(source)
     say(('inventory read: %s'):format(
         readOk and tostring(App.inventorySource) or 'NO EXPORT ANSWERED'))
     say(('  slots seen: %d'):format(count))
+    -- Read defensively: a config that never had these is exactly the case
+    -- worth reporting, and a diagnosis that throws diagnoses nothing.
+    local itemSource = Config.Sources.item or {}
+    local weaponSource = Config.Sources.weapon or {}
     say(('  item escrow: %s   weapon escrow: %s'):format(
-        tostring(Config.Sources.item.enabled), tostring(Config.Sources.weapon.enabled)))
+        tostring(itemSource.enabled), tostring(weaponSource.enabled)))
+    if itemSource.enabled ~= true or weaponSource.enabled ~= true then
+        say('  -> the app tells players this server takes money only. If you did '
+            .. 'not mean that, your config.lua predates Config.Sources.item and '
+            .. '.weapon.')
+    end
     say(('  offerable to you: %d item(s), %d weapon(s)'):format(
         #App.escrowableItems(actor, carried), #App.escrowableWeapons(actor, carried)))
     if not readOk then

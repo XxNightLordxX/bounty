@@ -371,3 +371,104 @@ describe('diagnosing an app that shows nothing', function()
         truthy(s.ratelimit.check(s.identity.resolve(1), 'search'))
     end)
 end)
+
+
+--- "This server does not take items or weapons as a reward. Money only."
+---
+--- That message is what the app shows when Config.Sources.item.enabled is
+--- not true. An operator whose config predates those entries has them
+--- absent, not false — and absent is not a decision. It reads as the
+--- feature being switched off, and every item and weapon disappears from
+--- the form with a sentence saying the server does not want them.
+describe('a config whose reward sources predate items and weapons', function()
+    local function bootWith(sources)
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        package.loaded['server.main'] = nil
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Config.Database.Mode = 'memory'
+        Config.Sources = sources
+        return require('server.main').start()
+    end
+
+    --- Money only, as an early config had it.
+    local MONEY_ONLY = {
+        cash  = { enabled = true, max = 250000 },
+        bank  = { enabled = true, max = 500000 },
+        dirty = { enabled = true, max = 250000, item = 'black_money' },
+    }
+
+    it('fills in item and weapon escrow rather than reading them as off', function()
+        bootWith({
+            cash  = { enabled = true, max = 250000 },
+            bank  = { enabled = true, max = 500000 },
+            dirty = { enabled = true, max = 250000, item = 'black_money' },
+        })
+        eq(Config.Sources.item.enabled, true,
+            'a source the operator never had is not a source they turned off')
+        eq(Config.Sources.weapon.enabled, true)
+        truthy(Config.Sources.item.maxStacks, 'and it has to be usable')
+        truthy(Config.Sources.item.maxPerStack)
+        truthy(Config.Sources.weapon.max)
+        resetConfig()
+    end)
+
+    it('leaves the money sources exactly as the operator set them', function()
+        bootWith({
+            cash  = { enabled = false, max = 1 },
+            bank  = { enabled = true, max = 999 },
+            dirty = { enabled = true, max = 250000, item = 'dirty_cash' },
+        })
+        eq(Config.Sources.cash.enabled, false, 'they meant that')
+        eq(Config.Sources.bank.max, 999)
+        eq(Config.Sources.dirty.item, 'dirty_cash')
+        resetConfig()
+    end)
+
+    it('keeps item escrow off when the operator actually turned it off', function()
+        bootWith({
+            cash   = { enabled = true, max = 250000 },
+            bank   = { enabled = true, max = 500000 },
+            dirty  = { enabled = true, max = 250000, item = 'black_money' },
+            item   = { enabled = false, maxStacks = 10, maxPerStack = 100 },
+            weapon = { enabled = false, max = 3 },
+        })
+        eq(Config.Sources.item.enabled, false, 'false is a decision; absent is not')
+        eq(Config.Sources.weapon.enabled, false)
+        resetConfig()
+    end)
+
+    it('offers items on the form again once they are filled in', function()
+        -- The symptom, end to end: the form said money only, and it was the
+        -- config that never mentioned items rather than a server refusing
+        -- them.
+        local modules = bootWith(MONEY_ONLY)
+        local f = fixture(modules, { creatorInventory = {
+            { name = 'lockpick', count = 5, slot = 2, label = 'Lockpick' },
+            { name = 'WEAPON_PISTOL', count = 1, slot = 3, label = 'Pistol' },
+        } })
+
+        Env.clientEvents = {}
+        _G.source = 1
+        Env.events['crimson-bounty:rewardOptions']({})
+        _G.source = nil
+
+        local reply
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:result' then reply = event.args[1] end
+        end
+        truthy(reply and reply.ok, 'the handler must answer')
+        eq(reply.data.caps.itemsEnabled, true,
+            'the form was told the server takes no items, and it does')
+        eq(reply.data.caps.weaponsEnabled, true)
+        eq(#reply.data.items, 1, 'the lockpicks are offerable')
+        eq(#reply.data.weapons, 1, 'and the pistol')
+        resetConfig()
+    end)
+end)
