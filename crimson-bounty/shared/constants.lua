@@ -105,7 +105,21 @@ CB.ERR = {
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',
     LIMIT_REACHED    = 'limit_reached',
+    --- Kept for anything older that still sends it, and as the catch-all.
     TARGET_PROTECTED = 'target_protected',
+
+    --- Why a target cannot be listed. One code for all of these said
+    --- "That target cannot be listed right now" whether the officer was
+    --- off limits by policy, had two contracts on them already, had only
+    --- just logged in, or had been the target of one an hour ago — and a
+    --- player reading it had no way to tell which, or whether waiting
+    --- would help.
+    TARGET_IS_LEO      = 'target_is_leo',
+    TARGET_HAS_ENOUGH  = 'target_has_enough',
+    TARGET_JUST_ON     = 'target_just_on',
+    TARGET_TOO_NEW     = 'target_too_new',
+    TARGET_JUST_UP     = 'target_just_up',
+    TARGET_RECENTLY_ON = 'target_recently_on',
     INSUFFICIENT     = 'insufficient_funds',
     INVALID_REWARD   = 'invalid_reward',
     INVALID_INPUT    = 'invalid_input',

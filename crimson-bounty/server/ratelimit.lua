@@ -70,6 +70,32 @@ function RateLimit.check(who, action)
     return true
 end
 
+--- Put a token back.
+---
+--- The limit is checked before a handler runs, so a request refused by the
+--- handler itself — a bad target, a reward the creator cannot afford, a
+--- typo — cost exactly as much allowance as one that worked. Two mistakes
+--- placing a bounty and the player was told to slow down for half a minute.
+---
+--- The limit is there to bound work actually done. A refused request did
+--- none, so it is given back. The flood guard, which counts raw requests
+--- rather than successful ones, is what stops somebody spamming failures.
+---@param who table|string
+---@param action string
+function RateLimit.refund(who, action)
+    local rule = Config.Cooldowns[action] or RateLimit.FALLBACK
+    local cid = keyFor(who)
+    if not cid then return false end
+
+    local bucket = buckets[cid .. ':' .. action]
+    if not bucket then return false end
+
+    -- Never above the burst: a refund is returning what this request took,
+    -- not minting allowance that was never spent.
+    bucket.tokens = math.min(rule.burst, bucket.tokens + 1)
+    return true
+end
+
 --- Buckets are NOT cleared on disconnect: reconnecting would then reset
 --- every limit, which turns a rejoin into a way to bypass them. They are
 --- swept once they have been idle long enough to have refilled anyway.

@@ -107,18 +107,42 @@ function boot(responses) {
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox, { filename: 'app.js' });
 
-  return {
+  const booted_app = {
     document, view, sent, timers, sandbox, notices,
     // What the player is currently being told. The notice lives outside
     // #view precisely so it does not rebuild the form, so it has to be read
     // from its own node rather than from the view.
     notice: function () { return document.getElementById('notice').textContent; }
   };
+  booted.push(booted_app);
+  return booted_app;
 }
 
-/** Let queued promise callbacks run. */
+/** Every app booted in this run, so settle() can drive their timers.
+ *
+ * A browser runs a zero-delay timeout on the next tick, and the app
+ * coalesces its redraws onto exactly that — so a harness that never fired
+ * them would be testing a page that had received its data and never drawn
+ * it. Registering here rather than threading the app through every settle()
+ * keeps the call sites as they were. */
+const booted = [];
+
+/** Let queued promise callbacks run, and fire what a browser would. */
 function settle() {
-  return new Promise(function (resolve) { setImmediate(resolve); });
+  return new Promise(function (resolve) {
+    setImmediate(function () {
+      booted.forEach(function (app) {
+        // Taken out of the list first: a timer that queues another must not
+        // be run again inside this same pass.
+        const due = app.timers.filter(function (t) { return !t.repeating && !t.ms; });
+        due.forEach(function (t) { app.timers.splice(app.timers.indexOf(t), 1); });
+        due.forEach(function (t) {
+          try { t.fn(); } catch (err) { /* a broken timer is the test's to catch */ }
+        });
+      });
+      resolve();
+    });
+  });
 }
 
 /** Click a button in the rendered view by its exact label. */
@@ -1783,6 +1807,49 @@ async function main() {
       one.document.getElementById('slot-item-add-1').onclick();
       truthy(one.view.textContent.indexOf('Crowbar x1') !== -1,
         'the one crowbar should be on the payout: ' + one.view.textContent);
+    });
+  })();
+
+  /* ---- one click, one redraw ------------------------------------------
+   *
+   * A refresh asks for three things at once and each reply redrew the whole
+   * page, plus once more per contract whose proposals came back. On a phone
+   * screen inside a game that is what the lag was: not the request, the
+   * redrawing. */
+  await (async function redrawsAreCoalesced() {
+    function contract(i) {
+      return {
+        id: 'ct0000000' + i, reason: 'Debt ' + i, mode: 'competitive', state: 'active',
+        reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+        huntersActive: 0, huntersMax: 5, targetName: 'Dana ' + i,
+        targetProtected: false, creatorName: 'Vic', role: 'creator', hunters: []
+      };
+    }
+    const own = [contract(1), contract(2), contract(3), contract(4)];
+
+    const app = boot({
+      list: BOARD, ledger: LEDGER,
+      mine: { ok: true, data: { created: own, accepted: [], onMe: [] } },
+      amendments: { ok: true, data: [] }
+    });
+    // Opening the app IS the burst: list, mine and ledger at once, then one
+    // amendments call for each contract that comes back on mine.
+    await settle(); await settle(); await settle(); await settle();
+
+    const view = app.document.getElementById('view');
+    const replies = app.sent.length;
+
+    const redraws = view._clears || 0;
+
+    it('redraws a handful of times for a screenful of replies, not once each', function () {
+      truthy(replies >= 7,
+        'this measures nothing unless the app really asked for several things: '
+        + replies);
+      truthy(redraws > 0, 'it has to draw at all');
+      truthy(redraws < replies,
+        replies + ' replies caused ' + redraws + ' full rebuilds of the page. Each '
+        + 'one throws away every node on screen and builds it again, which is what '
+        + 'the lag was.');
     });
   })();
 

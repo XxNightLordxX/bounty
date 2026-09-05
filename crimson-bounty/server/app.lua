@@ -34,20 +34,46 @@ end
 --- the audit queue.
 local floodCounters = {}
 
+--- Raw requests one client may make in ten seconds.
+---
+--- Twenty was below what the app asks for by itself. Opening the board is
+--- three requests and then one headshot per contract on it, so a board of
+--- eight is eleven before the player has touched anything — and every
+--- render, every refresh and every push adds more. A guard that trips on
+--- ordinary use is a guard against the app.
+local FLOOD_WINDOW_MS = 10000
+local FLOOD_LIMIT = 90
+
+--- Whether a gate refusal for this source is worth writing down.
+---
+--- The gate refuses blocked jobs and players it cannot resolve, and it
+--- refuses them on every request they send. One row each fills the audit
+--- queue with the same fact repeated, pushing out the rows somebody would
+--- actually want.
+local gateLogged = {}
+
+local function shouldLogGate(src)
+    local now = Util.monotonicMs()
+    local last = gateLogged[src]
+    if last and now - last < FLOOD_WINDOW_MS then return false end
+    gateLogged[src] = now
+    return true
+end
+
 local function floodCheck(src)
     local now = Util.monotonicMs()
     local entry = floodCounters[src]
 
-    if not entry or now - entry.since > 10000 then
+    if not entry or now - entry.since > FLOOD_WINDOW_MS then
         floodCounters[src] = { since = now, count = 1, warned = false }
         return true, false
     end
 
     entry.count = entry.count + 1
-    if entry.count <= 20 then return true, false end
+    if entry.count <= FLOOD_LIMIT then return true, false end
 
-    -- Past the threshold: drop silently, and log once per window rather than
-    -- once per call, so a flood cannot blind the log it is recorded in.
+    -- Past the threshold. Logged once per window rather than once per call,
+    -- so a flood cannot blind the log it is recorded in.
     local shouldLog = not entry.warned
     entry.warned = true
     return false, shouldLog
@@ -57,6 +83,9 @@ function App.sweepFloodCounters()
     local now = Util.monotonicMs()
     for src, entry in pairs(floodCounters) do
         if now - entry.since > 60000 then floodCounters[src] = nil end
+    end
+    for src, at in pairs(gateLogged) do
+        if now - at > 60000 then gateLogged[src] = nil end
     end
 end
 
@@ -95,12 +124,23 @@ local function handler(name, action, fn)
             if shouldLog then
                 deps.audit.rejected('flood_' .. name, nil, nil, { source = src })
             end
-            return
+            -- Answered, not dropped. The page waits on every request it
+            -- sends and gives up after fifteen seconds, so a silent drop is
+            -- not a refusal anybody sees — it is the app sitting there
+            -- doing nothing for a quarter of a minute, once per click.
+            return App.reply(src, name, false, CB.ERR.RATE_LIMITED, nil,
+                type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
 
         local actor, err = deps.identity.gate(src)
         if not actor then
-            deps.audit.rejected('gate_' .. name, nil, nil, { source = src, reason = err })
+            -- Once per window per source, not once per request. Somebody the
+            -- gate refuses can still send as fast as the flood guard allows,
+            -- and a row for each would evict the rows worth keeping from a
+            -- queue that has a fixed size.
+            if shouldLogGate(src) then
+                deps.audit.rejected('gate_' .. name, nil, nil, { source = src, reason = err })
+            end
             return App.reply(src, name, false, err, nil,
                 type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
@@ -121,10 +161,17 @@ local function handler(name, action, fn)
         local ok, result, resultErr = pcall(fn, actor, payload)
         if not ok then
             deps.audit.rejected('error_' .. name, actor.cid, nil, { error = tostring(result) })
+            if action then deps.ratelimit.refund(actor, action) end
             return App.reply(src, name, false, CB.ERR.INVALID_INPUT, nil, rid)
         end
 
-        return App.reply(src, name, result ~= false and result ~= nil, resultErr, result, rid)
+        local succeeded = result ~= false and result ~= nil
+        -- The allowance is for work done. A request the handler refused did
+        -- none, and charging for it meant a player fixing a typo was told
+        -- to slow down.
+        if not succeeded and action then deps.ratelimit.refund(actor, action) end
+
+        return App.reply(src, name, succeeded, resultErr, result, rid)
     end)
 end
 

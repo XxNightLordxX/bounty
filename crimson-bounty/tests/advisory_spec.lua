@@ -103,7 +103,7 @@ describe('threat advisory', function()
         })
         Config.Targeting.AllowProtectedJobTargets = true
         falsy(c)
-        eq(err, CB.ERR.TARGET_PROTECTED)
+        eq(err, CB.ERR.TARGET_IS_LEO)
     end)
 end)
 

@@ -57,6 +57,17 @@
     same_account: 'Not on your own people.',
     limit_reached: 'You are holding too many contracts.',
     target_protected: 'That target cannot be listed right now.',
+
+    /* One message covered six different rules, and a player reading it had
+       no way to tell which — or whether waiting would help. */
+    target_is_leo: 'This server does not allow contracts on law enforcement.',
+    target_has_enough: 'That target already has as many contracts on them as '
+      + 'this server allows. Wait for one of them to close.',
+    target_just_on: 'They have only just come online. Give them a few minutes.',
+    target_too_new: 'They are too new to the city to be a target yet.',
+    target_just_up: 'They have only just got back on their feet. Give it a moment.',
+    target_recently_on: 'There was a contract on them very recently. There is a '
+      + 'cooling-off period before another one.',
     insufficient_funds: 'You do not have that.',
     invalid_reward: 'That reward does not add up.',
     invalid_input: 'Check what you entered.',
@@ -730,7 +741,10 @@
     post('amendments', { id: contract.id }).then(function (r) {
       if (!r.ok) { return fail(r); }
       state.proposals[contract.id] = r.data || [];
-      render();
+      // One per contract on the page. Redrawing for each meant a screen of
+      // five contracts redrew five times, on top of the three from the
+      // refresh that asked for them.
+      redraw();
     });
   }
 
@@ -1048,7 +1062,7 @@
             ? 'Reading your pockets too fast. Try again in a moment.'
             : 'Could not read what you are carrying.';
         }
-        render();
+        redraw();
       });
     } else if (state.walletFailed) {
       var failed = el('div', 'card');
@@ -1810,12 +1824,33 @@
     renderNotice();
   }
 
+  /* Draw once, however many replies land.
+     
+     A refresh asks for three things at once and each reply redrew the whole
+     page, so one click rebuilt the entire DOM three times over — plus once
+     more per contract whose proposals came back. On a phone screen inside a
+     game that is the lag: not the request, the redrawing.
+     
+     Coalesced onto a timeout of zero, which runs after the current burst of
+     replies has been handled but before the browser paints, so nothing is
+     ever drawn stale. */
+  var redrawQueued = false;
+
+  function redraw() {
+    if (redrawQueued) { return; }
+    redrawQueued = true;
+    setTimeout(function () {
+      redrawQueued = false;
+      render();
+    }, 0);
+  }
+
   function refresh() {
-    post('list', { page: 1 }).then(function (r) { if (r.ok) { state.board = r.data; render(); } });
+    post('list', { page: 1 }).then(function (r) { if (r.ok) { state.board = r.data; redraw(); } });
     post('mine', {}).then(function (r) {
       if (!r.ok) { return; }
       state.mine = r.data;
-      render();
+      redraw();
       // Only for contracts this player is actually party to, and only for
       // ones not already loaded: most contracts have no open proposal and
       // asking about every one of them every refresh would be three
@@ -1824,7 +1859,7 @@
         if (state.proposals[c.id] === undefined) { loadProposals(c); }
       });
     });
-    post('ledger', {}).then(function (r) { if (r.ok) { state.ledger = r.data; render(); } });
+    post('ledger', {}).then(function (r) { if (r.ok) { state.ledger = r.data; redraw(); } });
   }
 
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {

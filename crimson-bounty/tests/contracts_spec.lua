@@ -48,7 +48,7 @@ describe('contract creation', function()
             targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
         })
         falsy(contract)
-        eq(err, CB.ERR.TARGET_PROTECTED)
+        eq(err, CB.ERR.TARGET_TOO_NEW)
     end)
 
     it('refuses a target who only just connected', function()
@@ -62,7 +62,7 @@ describe('contract creation', function()
             targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
         })
         falsy(contract, 'someone who walked in a moment ago is not fair game')
-        eq(err, CB.ERR.TARGET_PROTECTED)
+        eq(err, CB.ERR.TARGET_JUST_ON)
 
         Env.advance((Config.Immunity.MinTargetSessionMinutes * 60) + 60)
         truthy(s.contracts.create(f.creator, {
@@ -671,7 +671,7 @@ describe('post-respawn immunity', function()
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } },
         })
         falsy(again, 'paying to be left alone should buy more than the usual cooldown')
-        eq(err, CB.ERR.TARGET_PROTECTED)
+        eq(err, CB.ERR.TARGET_RECENTLY_ON)
     end)
 end)
 

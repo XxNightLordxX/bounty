@@ -113,19 +113,35 @@ describe('cancelling a contract nobody has taken', function()
         eq(err, CB.ERR.NOT_FOUND)
     end)
 
-    it('is reachable from the app, and rate limited like everything else', function()
+    it('is reachable from the app', function()
         local s = newStack()
         local f, c = placed(s)
         local reply = call('cancel', 1, { id = c.id })
         truthy(reply and reply.ok, tostring(reply and reply.err))
         eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED)
+    end)
 
-        local refused = 0
-        for _ = 1, 40 do
-            local r = call('cancel', 1, { id = c.id })
-            if r and r.err == CB.ERR.RATE_LIMITED then refused = refused + 1 end
-        end
-        truthy(refused > 0, 'it must not be free to hammer')
+    it('is rate limited on the ones that actually go through', function()
+        -- The allowance is for work done. Cancelling an already-cancelled
+        -- contract is refused before anything moves, so it costs nothing —
+        -- but really withdrawing contracts, one after another, does.
+        local s = newStack()
+        local f = fixture(s)
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 100 } },
+        })
+        truthy(c, 'a contract to withdraw')
+
+        -- Spend the bucket cancel draws from, then try the real thing.
+        local actor = s.identity.resolve(1)
+        while s.ratelimit.check(actor, 'accept') do end
+
+        local reply = call('cancel', 1, { id = c.id })
+        eq(reply and reply.err, CB.ERR.RATE_LIMITED,
+            'a withdrawal that would really move money is limited like any other')
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'and nothing moved')
     end)
 
     it('is written to the audit log', function()

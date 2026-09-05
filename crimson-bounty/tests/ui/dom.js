@@ -46,7 +46,10 @@ Object.defineProperty(Node.prototype, 'childNodes', {
 
 Object.defineProperty(Node.prototype, 'innerHTML', {
   get: function () { return this.children.length ? '<...>' : ''; },
-  set: function (v) { if (v === '') this.children = []; }
+  // Counted, because rebuilding the view is what the app's own redraw
+  // costs and there is no other way to see how often it happens. One click
+  // used to redraw the whole page three times over.
+  set: function (v) { if (v === '') { this._clears = (this._clears || 0) + 1; this.children = []; } }
 });
 
 function ClassList(node) { this.node = node; }

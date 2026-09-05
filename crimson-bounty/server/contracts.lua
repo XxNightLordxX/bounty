@@ -124,7 +124,7 @@ function Contracts.canCreate(actor, targetActor)
     end
 
     if Identity.isProtectedJob(targetActor.job) and not Config.Targeting.AllowProtectedJobTargets then
-        return false, CB.ERR.TARGET_PROTECTED
+        return false, CB.ERR.TARGET_IS_LEO
     end
 
     -- Only the contracts these two are involved in matter here, so this asks
@@ -156,7 +156,7 @@ function Contracts.canCreate(actor, targetActor)
                     and Config.Immunity.AfterBailoutSeconds
                     or Config.Limits.TargetCooldownAfterResolveSeconds
                 if since < cooldown then
-                    return false, CB.ERR.TARGET_PROTECTED
+                    return false, CB.ERR.TARGET_RECENTLY_ON
                 end
                 if c.creator_cid == actor.cid and since < Config.Limits.SameCreatorSameTargetCooldownSeconds then
                     return false, CB.ERR.RATE_LIMITED
@@ -179,10 +179,13 @@ function Contracts.canCreate(actor, targetActor)
     end
 
     if byCreator >= Config.Limits.MaxActiveContractsPerCreator then return false, CB.ERR.LIMIT_REACHED end
-    if byTarget >= Config.Limits.MaxActiveContractsPerTarget then return false, CB.ERR.TARGET_PROTECTED end
+    if byTarget >= Config.Limits.MaxActiveContractsPerTarget then
+        return false, CB.ERR.TARGET_HAS_ENOUGH
+    end
 
     -- New and freshly-connected players are not fair game.
-    if Contracts.isImmune(targetActor) then return false, CB.ERR.TARGET_PROTECTED end
+    local immune, why = Contracts.isImmune(targetActor)
+    if immune then return false, why or CB.ERR.TARGET_PROTECTED end
 
     return true
 end
@@ -197,17 +200,19 @@ end
 ---
 ---@param targetActor table
 ---@param opts table|nil { deathAt = ms } when judging a claim on a specific death
+--- @return boolean immune
+--- @return string|nil why an ERR code naming which rule, for the player
 function Contracts.isImmune(targetActor, opts)
     -- Session length is measured by this resource, so it is always known
     -- for anyone who connected while it was running.
     local session = Identity.sessionMinutes(targetActor.cid)
     if session ~= nil and session < Config.Immunity.MinTargetSessionMinutes then
-        return true
+        return true, CB.ERR.TARGET_JUST_ON
     end
 
     local hours = Identity.playtimeHours(targetActor)
     if hours ~= nil and hours < Config.Immunity.MinTargetPlaytimeHours then
-        return true
+        return true, CB.ERR.TARGET_TOO_NEW
     end
 
     -- Someone who just got back up is not immediately fair game again:
@@ -223,7 +228,7 @@ function Contracts.isImmune(targetActor, opts)
             local deathAgo = opts and opts.deathAt
                 and ((Util.monotonicMs() - opts.deathAt) / 1000) or nil
             local claimPredatesRespawn = deathAgo ~= nil and deathAgo > respawnedAgo
-            if not claimPredatesRespawn then return true end
+            if not claimPredatesRespawn then return true, CB.ERR.TARGET_JUST_UP end
         end
     end
 
