@@ -234,6 +234,25 @@ describe('reading an inventory', function()
         eq(source, 'GetInventory.items', 'and the wrong one was not taken for an inventory')
     end)
 
+    it('reads the primary export against the shape it really returns', function()
+        -- GetInventoryItems hands back the inventory's own `items` table,
+        -- which is keyed by slot number rather than listed. The harness
+        -- returned a dense array here, so the primary read path — the one
+        -- the live server's startup log says it uses — was only ever
+        -- exercised against a shape ox_inventory does not produce.
+        local s = newStack()
+        local f = carrying(s)
+        local raw = exports.ox_inventory:GetInventoryItems(f.creator.source)
+
+        eq(raw[2] and raw[2].name, 'lockpick', 'at its slot number, not at index 1')
+        eq(raw[3] and raw[3].name, 'WEAPON_PISTOL')
+        eq(raw[1], nil, 'slot 1 is empty, so nothing is there')
+
+        -- And the resource reads it correctly, which is the point.
+        eq(#s.app.escrowableItems(f.creator), 1)
+        eq(#s.app.escrowableWeapons(f.creator), 1)
+    end)
+
     it('is tested against the shape ox_inventory really returns', function()
         -- GetInventory keys its items by slot number rather than listing
         -- them. A harness that handed back a plain array would let this

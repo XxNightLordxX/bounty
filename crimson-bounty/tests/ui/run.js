@@ -12,12 +12,12 @@ const { makeDocument } = require('./dom.js');
 
 const APP = path.join(__dirname, '..', '..', 'ui', 'app.js');
 
-let passed = 0, failed = 0;
+let passed = 0;
 const failures = [];
 
 function it(name, fn) {
   try { fn(); passed++; }
-  catch (err) { failed++; failures.push(name + '\n    ' + err.message); }
+  catch (err) { failures.push(name + '\n    ' + err.message); }
 }
 
 function eq(actual, expected, message) {
@@ -28,6 +28,30 @@ function eq(actual, expected, message) {
 }
 function truthy(v, m) { if (!v) throw new Error((m || 'expected truthy') + ', got ' + v); }
 function falsy(v, m) { if (v) throw new Error((m || 'expected falsy') + ', got ' + JSON.stringify(v)); }
+
+/** What a reply looks like after FiveM has carried it.
+ *
+ * The server writes Lua tables and they are msgpack-encoded on the way to
+ * the client and JSON-encoded on the way into the page. An empty Lua table
+ * is indistinguishable from an empty map, so a list the server meant to
+ * send empty arrives as {} rather than [] — and on this side `.length` is
+ * then undefined and `.forEach` throws.
+ *
+ * Fixtures here are hand-written JavaScript with real arrays, so without
+ * this the suite tests a boundary that does not exist: every "there is
+ * nothing here" branch was being exercised against a shape production
+ * never produces. */
+function acrossTheWire(value) {
+  if (Array.isArray(value)) {
+    return value.length === 0 ? {} : value.map(acrossTheWire);
+  }
+  if (value && typeof value === 'object') {
+    const out = {};
+    Object.keys(value).forEach(function (k) { out[k] = acrossTheWire(value[k]); });
+    return out;
+  }
+  return value;
+}
 
 /** Boot the app against a server that answers from `responses`. */
 function boot(responses) {
@@ -91,7 +115,9 @@ function boot(responses) {
       }
 
       const result = typeof answer === 'function' ? answer(body) : answer;
-      return Promise.resolve({ json: function () { return Promise.resolve(result || { ok: true }); } });
+      return Promise.resolve({
+        json: function () { return Promise.resolve(acrossTheWire(result || { ok: true })); }
+      });
     },
     setTimeout: function (fn, ms) { timers.push({ fn: fn, ms: ms }); return timers.length; },
     setInterval: function (fn, ms) { timers.push({ fn: fn, ms: ms, repeating: true }); return timers.length; },
@@ -179,6 +205,13 @@ const BOARD = {
 
 const MINE = { ok: true, data: { created: [], accepted: [], onMe: [] } };
 const LEDGER = { ok: true, data: { entries: [], record: { completed: 0, placed: 0, survived: 0, standing: 'Unproven' } } };
+
+/* An error thrown inside the app's own promise callbacks used to kill the
+ * whole run with a stack trace and no test name — which is the least useful
+ * way to learn that a render threw. Recorded as a failure instead. */
+process.on('unhandledRejection', function (err) {
+  failures.push('the app threw while rendering\n    ' + (err && err.message || err));
+});
 
 async function main() {
   await (async function rendersTheBoard() {
@@ -1853,10 +1886,83 @@ async function main() {
     });
   })();
 
+  /* ---- empty lists, as FiveM really delivers them ---------------------
+   *
+   * The server writes Lua tables. An empty Lua table is indistinguishable
+   * from an empty map once msgpack has it, so a list the server meant to
+   * send empty arrives as {} rather than []. On this side `.length` is
+   * undefined — so every "there is nothing here" branch silently fails to
+   * run — and `.forEach` throws, taking the whole render with it.
+   *
+   * An empty target list and an empty item picker, with no explanation and
+   * nothing in any log. Which is exactly what it looked like. */
+  await (async function emptyListsFromTheServer() {
+    async function open(responses, tab) {
+      const app = boot(Object.assign({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [],
+          settings: { minQueryLength: 3, allowBrowseAll: true, allowNearby: true } } },
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+        ledger: { ok: true, data: { entries: [], record: {} } },
+        rewardOptions: { ok: true, data: { cash: 500, bank: 0, dirty: 0,
+          items: [], weapons: [], inventoryRead: true,
+          caps: { itemsEnabled: true, weaponsEnabled: true } } },
+        browseTargets: { ok: true, data: { people: [], total: 0, page: 1, pages: 1 } }
+      }, responses || {}));
+      await settle(); await settle(); await settle();
+      if (tab) {
+        app.document.querySelectorAll('.tab')
+          .filter(function (t) { return t.dataset.tab === tab; })[0].onclick();
+        await settle(); await settle();
+      }
+      return app;
+    }
+
+    const board = await open();
+    it('says the board is empty rather than rendering nothing', function () {
+      truthy(board.view.textContent.length > 0,
+        'the view is blank; the render threw on an empty list');
+      truthy(board.view.textContent.indexOf('No contracts') !== -1
+        || board.view.textContent.toLowerCase().indexOf('nothing') !== -1
+        || board.view.textContent.toLowerCase().indexOf('empty') !== -1,
+        'an empty board has to say so: ' + board.view.textContent);
+    });
+
+    const mine = await open({}, 'mine');
+    it('says you have nothing active rather than rendering nothing', function () {
+      truthy(mine.view.textContent.indexOf('Nothing active') !== -1,
+        'expected the empty-state message: ' + mine.view.textContent);
+    });
+
+    const place = await open({}, 'place');
+    it('says why the item picker is empty', function () {
+      truthy(place.view.textContent.indexOf('Items & weapons') !== -1,
+        'the goods section is missing entirely: ' + place.view.textContent);
+      truthy(place.view.textContent.indexOf('not carrying anything') !== -1,
+        'and it has to say why: ' + place.view.textContent);
+    });
+
+    it('says the city is empty rather than showing a blank picker', function () {
+      truthy(place.view.textContent.indexOf('Nobody else is in the city') !== -1,
+        'an empty roster has to say so: ' + place.view.textContent);
+    });
+
+    const ledger = await open({}, 'ledger');
+    it('renders an empty ledger without throwing', function () {
+      truthy(ledger.view.textContent.length > 0,
+        'the ledger view is blank; the render threw');
+    });
+  })();
+
+  // Give any rejection queued by the last settle a chance to be recorded
+  // before the tally is printed.
+  await new Promise(function (r) { setImmediate(r); });
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
-  console.log('\n' + passed + ' passed, ' + failed + ' failed');
-  process.exit(failed === 0 ? 0 : 1);
+  // Counted from the list itself. Two counters that can disagree is how a
+  // run printed ten failures and then said none.
+  console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
+  process.exit(failures.length === 0 ? 0 : 1);
 }
 
 main();

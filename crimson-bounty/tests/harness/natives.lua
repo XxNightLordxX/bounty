@@ -403,13 +403,19 @@ function Natives.exportsProxy()
             end
             local p = Env.players[tonumber(src)]
             if not p then return {} end
+
+            -- Keyed by SLOT NUMBER, which is what ox_inventory returns: this
+            -- export hands back the inventory's own `items` table, and that
+            -- is a sparse map rather than a list. Returning a dense array
+            -- here let the resource assume an array it never gets on the
+            -- primary read path.
             local out = {}
-            for _, slot in ipairs(p._inventory) do
+            for index, slot in ipairs(p._inventory) do
                 -- Reported exactly as the fixture wrote it. Filling in a
                 -- slot number the fixture did not set would be the harness
                 -- inventing a field, and a slot is what identifies a weapon
                 -- on submit — the one thing a test must not fabricate.
-                out[#out + 1] = {
+                out[slot.slot or index] = {
                     name = slot.name, count = slot.count, slot = slot.slot,
                     label = slot.label, metadata = slot.metadata,
                 }

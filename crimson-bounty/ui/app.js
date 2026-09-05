@@ -286,6 +286,25 @@
     return '$' + (Number(n) || 0).toLocaleString('en-US');
   }
 
+  /* A list from the server, whatever shape it arrived in.
+     
+     FiveM msgpack-encodes Lua tables, and an empty Lua table is
+     indistinguishable from an empty map — so a server that meant to send an
+     empty list sends `{}`, not `[]`. On this side `.length` is then
+     undefined, so every "there is nothing here" branch silently fails to
+     run, and `.forEach` throws, which takes the whole render with it.
+     
+     That is an empty target list and an empty item picker with no
+     explanation and nothing in any log, which is exactly what it looked
+     like. The same conversion recovers a table keyed by something other
+     than 1..n — an inventory keyed by slot number, say — which crosses as
+     an object for the same reason. */
+  function asList(value) {
+    if (Array.isArray(value)) { return value; }
+    if (value && typeof value === 'object') { return Object.keys(value).map(function (k) { return value[k]; }); }
+    return [];
+  }
+
   function el(tag, className, text) {
     var node = document.createElement(tag);
     if (className) node.className = className;
@@ -740,7 +759,7 @@
   function loadProposals(contract) {
     post('amendments', { id: contract.id }).then(function (r) {
       if (!r.ok) { return fail(r); }
-      state.proposals[contract.id] = r.data || [];
+      state.proposals[contract.id] = asList(r.data);
       // One per contract on the page. Redrawing for each meant a screen of
       // five contracts redrew five times, on top of the three from the
       // refresh that asked for them.
@@ -875,7 +894,7 @@
     post('readThread', { id: contract.id, thread: thread ? thread.handle : null })
       .then(function (r) {
         if (!r.ok) return fail(r);
-        state.thread = { contract: contract, thread: thread, messages: r.data || [] };
+        state.thread = { contract: contract, thread: thread, messages: asList(r.data) };
         state.tab = 'thread';
         render();
       });
@@ -885,7 +904,7 @@
   function openThreads(contract) {
     post('threads', { id: contract.id }).then(function (r) {
       if (!r.ok) return fail(r);
-      var threads = r.data || [];
+      var threads = asList(r.data);
       if (!threads.length) return say('No operative to talk to yet.');
       openThread(contract, threads[0]);
     });
@@ -927,11 +946,12 @@
 
   function viewBoard(view) {
     var data = state.board;
-    if (!data || !data.contracts || !data.contracts.length) {
+    var contracts = asList(data && data.contracts);
+    if (!data || contracts.length === 0) {
       view.appendChild(el('div', 'empty', 'No contracts on the board.'));
       return;
     }
-    data.contracts.forEach(function (c) { view.appendChild(card(c, 'board')); });
+    contracts.forEach(function (c) { view.appendChild(card(c, 'board')); });
   }
 
   function viewMine(view) {
@@ -939,15 +959,18 @@
     if (!data) return;
     var any = false;
 
-    if (data.accepted && data.accepted.length) {
+    var accepted = asList(data.accepted);
+    var created = asList(data.created);
+
+    if (accepted.length) {
       any = true;
       view.appendChild(el('h3', null, 'Contracts you took'));
-      data.accepted.forEach(function (c) { view.appendChild(card(c, 'mine')); });
+      accepted.forEach(function (c) { view.appendChild(card(c, 'mine')); });
     }
-    if (data.created && data.created.length) {
+    if (created.length) {
       any = true;
       view.appendChild(el('h3', null, 'Contracts you placed'));
-      data.created.forEach(function (c) { view.appendChild(card(c, 'mine')); });
+      created.forEach(function (c) { view.appendChild(card(c, 'mine')); });
     }
     if (!any) view.appendChild(el('div', 'empty', 'Nothing active.'));
   }
@@ -964,7 +987,7 @@
 
   function viewLedger(view) {
     var data = state.ledger || {};
-    var rows = data.entries || [];
+    var rows = asList(data.entries);
     var record = data.record;
 
     if (record) {
@@ -1226,8 +1249,8 @@
     }
 
     var caps = wallet.caps || {};
-    var items = (caps.itemsEnabled === false) ? [] : (wallet.items || []);
-    var weapons = (caps.weaponsEnabled === false) ? [] : (wallet.weapons || []);
+    var items = (caps.itemsEnabled === false) ? [] : asList(wallet.items);
+    var weapons = (caps.weaponsEnabled === false) ? [] : asList(wallet.weapons);
 
     var picked = pickedFor(index);
 
@@ -1645,7 +1668,7 @@
        answer — the first one is detached by then, and rendering into it
        puts the list nowhere. */
     browse.draw = function (data) {
-      renderPeople(data.people || [], data.total !== undefined ? data : null);
+      renderPeople(asList(data.people), data.total !== undefined ? data : null);
     };
 
     function load() {
@@ -1671,7 +1694,7 @@
           browse.pending = null;
           if (mine !== seq) return;
           if (!r.ok) { return refused(r); }
-          browse.data = { people: r.data || [] };
+          browse.data = { people: asList(r.data) };
           if (browse.draw) { browse.draw(browse.data); }
         });
         return;
@@ -1701,7 +1724,10 @@
       if (text) { node.textContent = text; }
     }
 
-    function renderPeople(people, paging) {
+    function renderPeople(rows, paging) {
+      // Normalised here rather than at each call site: one of them reads a
+      // reply straight off the wire, where an empty list is an object.
+      var people = asList(rows);
       results.innerHTML = '';
 
       if (people.length === 0) {
@@ -1855,7 +1881,7 @@
       // ones not already loaded: most contracts have no open proposal and
       // asking about every one of them every refresh would be three
       // requests a card.
-      (r.data.created || []).concat(r.data.accepted || []).forEach(function (c) {
+      asList(r.data.created).concat(asList(r.data.accepted)).forEach(function (c) {
         if (state.proposals[c.id] === undefined) { loadProposals(c); }
       });
     });
