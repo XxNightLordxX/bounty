@@ -143,12 +143,26 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
 
 /* ---------- buttons ---------- */
 
-.row { display: flex; gap: 0.4rem; margin-top: 0.7rem; }
+/* Buttons wrap. A creator's own contract carries up to seven actions —
+   add to pot, informant, threads, extend, propose, edit, withdraw — and in
+   one non-wrapping row that is five hundred pixels of buttons inside a
+   three hundred pixel card, with `overflow: hidden` on the card quietly
+   cutting the rest off. They were not missing; they were off the edge. */
+.row {
+  display: flex; flex-wrap: wrap;
+  gap: 0.4rem; margin-top: 0.7rem;
+}
 
 button {
   font: inherit; font-weight: 600; cursor: pointer; border-radius: 0.5rem;
   border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
-  padding: 0.6rem 0.8rem; flex: 1;
+  padding: 0.6rem 0.8rem;
+  /* Grow to share a row, shrink when sharing it with too many others, and
+     never insist on being as wide as its own label — min-width defaults to
+     auto on a flex item, which is what made a row of buttons refuse to fit
+     rather than wrap. */
+  flex: 1 1 auto;
+  min-width: 6.5rem;
   min-height: var(--tap);
   transition: background 120ms ease, border-color 120ms ease;
 }

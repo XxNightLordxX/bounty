@@ -374,6 +374,24 @@ function App.register()
         return deps.projection.contract(contract, actor.cid)
     end)
 
+    -- Taking a contract back down, and changing one nobody has taken.
+    -- Both are creator-only and both are refused the moment somebody is
+    -- actually hunting it.
+    handler('cancel', 'accept', function(actor, payload)
+        local ok, err = deps.contracts.cancel(actor, payload.id)
+        if not ok then return false, err end
+        return { id = payload.id }
+    end)
+
+    handler('revise', 'amend', function(actor, payload)
+        local ok, err = deps.contracts.revise(actor, payload.id, {
+            reason = payload.reason,
+            deadlineSeconds = payload.deadlineSeconds,
+        })
+        if not ok then return false, err end
+        return { id = payload.id }
+    end)
+
     handler('abandon', 'accept', function(actor, payload)
         local ok, err = deps.contracts.abandon(actor, Util.toId(payload.id) or '')
         if not ok then return false, err end

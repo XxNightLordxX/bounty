@@ -59,10 +59,25 @@ function serverStub() {
       creatorName: 'Vic Marlowe', role: 'public'
     });
   }
+  // A creator's own contract carries the most actions of any card, which
+  // is the case that overflowed.
+  const own = contracts.slice(0, 3).map(function (c) {
+    const copy = JSON.parse(JSON.stringify(c));
+    copy.role = 'creator';
+    copy.huntersActive = 0;
+    copy.hunters = [];
+    return copy;
+  });
+  const taken = contracts.slice(3, 5).map(function (c) {
+    const copy = JSON.parse(JSON.stringify(c));
+    copy.role = 'hunter';
+    return copy;
+  });
+
   const answers = {
     list: { ok: true, data: { page: 1, pages: 1, contracts: contracts,
       settings: { minQueryLength: 3, allowBrowseAll: true, allowNearby: true } } },
-    mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+    mine: { ok: true, data: { created: own, accepted: taken, onMe: [] } },
     ledger: { ok: true, data: { entries: [],
       record: { completed: 0, placed: 0, survived: 0, standing: 'Unproven' } } },
     rewardOptions: { ok: true, data: { cash: 100000, bank: 50000, dirty: 2000,
@@ -247,6 +262,78 @@ async function main() {
   it('never makes the page scroll sideways', function () {
     truthy(!form.overflowsSideways,
       'a phone screen has no horizontal room to spare');
+  });
+
+  /* ---- nothing is cut off by its own container ----
+   *
+   * A creator's own contract carries up to seven actions, and they sat in
+   * one non-wrapping row: five hundred pixels of buttons inside a three
+   * hundred pixel card, with `overflow: hidden` on the card cutting the
+   * rest off. The buttons were not missing, they were off the edge — and
+   * neither the server suite nor the DOM shim can see an edge. */
+
+  async function clippedNodes() {
+    return page.evaluate(function () {
+      const out = [];
+      document.querySelectorAll('main *').forEach(function (n) {
+        const s = getComputedStyle(n);
+        const hidesY = s.overflow === 'hidden' || s.overflowY === 'hidden';
+        if (hidesY && n.scrollHeight > n.clientHeight + 1) {
+          out.push((n.className || n.tagName) + ' cut vertically: '
+            + n.clientHeight + 'px tall, ' + n.scrollHeight + 'px of content');
+        }
+        // Sideways is the one that bit: a row of buttons wider than the
+        // card holding it, on a screen with no horizontal room to give.
+        if (s.overflowX !== 'auto' && s.overflowX !== 'scroll'
+            && n.scrollWidth > n.clientWidth + 1) {
+          out.push((n.className || n.tagName) + ' cut sideways: '
+            + n.clientWidth + 'px wide, ' + n.scrollWidth + 'px of content');
+        }
+      });
+      return out;
+    });
+  }
+
+  await page.click('[data-tab="mine"]');
+  await page.waitForTimeout(300);
+  const mineClipped = await clippedNodes();
+
+  it('cuts nothing off on the contracts you placed and took', function () {
+    truthy(mineClipped.length === 0,
+      mineClipped.length + ' element(s) clipped: ' + mineClipped.slice(0, 4).join(' | '));
+  });
+
+  const mineButtons = await page.evaluate(function () {
+    const cards = Array.prototype.slice.call(document.querySelectorAll('.card'));
+    return cards.map(function (card) {
+      const buttons = Array.prototype.slice.call(card.querySelectorAll('button'));
+      const box = card.getBoundingClientRect();
+      return {
+        count: buttons.length,
+        outside: buttons.filter(function (b) {
+          const r = b.getBoundingClientRect();
+          return r.right > box.right + 1 || r.left < box.left - 1;
+        }).length
+      };
+    });
+  });
+
+  it('keeps every action inside the card it belongs to', function () {
+    const escaped = mineButtons.filter(function (c) { return c.outside > 0; });
+    truthy(escaped.length === 0,
+      escaped.length + ' card(s) have buttons outside their own edges: '
+      + JSON.stringify(escaped.slice(0, 3)));
+    truthy(mineButtons.some(function (c) { return c.count >= 4; }),
+      'this measures nothing unless a card carries several actions');
+  });
+
+  await page.click('[data-tab="place"]');
+  await page.waitForTimeout(300);
+  const placeClipped = await clippedNodes();
+
+  it('cuts nothing off on the place form either', function () {
+    truthy(placeClipped.length === 0,
+      placeClipped.length + ' element(s) clipped: ' + placeClipped.slice(0, 4).join(' | '));
   });
 
   await browser.close();

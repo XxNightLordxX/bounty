@@ -718,6 +718,118 @@ end
 ---@param recipientCid string who receives the escrow
 ---@param filter table|string|nil
 ---@param reason string
+--- Whether anybody is currently hunting this contract.
+---
+--- The state alone does not say: a contract stays ACCEPTED after its only
+--- hunter walks away, and a competitive one is ACCEPTED with any number of
+--- them. What matters for taking a contract back down is whether somebody
+--- is holding it right now.
+---@param contractId string
+---@return boolean
+local function heldByAnyone(contractId)
+    local hunters = Storage.readHunters(contractId)
+    for i = 1, #hunters do
+        if hunters[i].state == 'active' then return true end
+    end
+    return false
+end
+
+--- Take a contract back down and get the escrow back.
+---
+--- There was no way to do this. Cancelling existed only as an amendment
+--- both sides had to agree to — and with nobody holding the contract there
+--- is nobody to agree — or as a staff command. So a creator who thought
+--- better of it watched their money sit in escrow until the deadline ran
+--- out, on a contract nobody had even accepted.
+---
+--- Refused the moment somebody is actually hunting it. That is what escrow
+--- is for: a hunter who has started work, and staked a penalty to do it,
+--- cannot have the reward pulled out from under them.
+---@param actor table
+---@param contractId string
+---@return boolean ok
+---@return string|nil err
+function Contracts.cancel(actor, contractId)
+    contractId = Util.toId(contractId)
+    if not contractId then return false, CB.ERR.INVALID_INPUT end
+
+    local contract = Storage.readContract(contractId)
+    if not contract then return false, CB.ERR.NOT_FOUND end
+    if contract.creator_cid ~= actor.cid then return false, CB.ERR.NOT_PARTICIPANT end
+    if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
+    if heldByAnyone(contractId) then return false, CB.ERR.BAD_STATE end
+
+    local ok, err = Contracts.resolve(contractId, CB.STATE.CANCELLED,
+        actor.cid, nil, 'cancelled_by_creator')
+    if not ok then return false, err end
+
+    Audit.financial('contract_cancelled', actor.cid, contractId, {})
+    Notify.toCitizen(actor.cid, 'Contract withdrawn',
+        'Nobody had taken it, so everything you put up has been returned.')
+    return true
+end
+
+--- Change a contract nobody has taken.
+---
+--- Only while it is unclaimed: once a hunter has accepted, they accepted it
+--- as written, and a change from there goes through the amendment path
+--- where they get a say.
+---
+--- The reward is deliberately not editable here. Moving escrow around is
+--- money in and out of a player's pocket, and there is already a path for
+--- adding to it; a creator who wants less on the table cancels and places
+--- again, which refunds in one guarded operation rather than several.
+---@param actor table
+---@param contractId string
+---@param changes table { reason?: string, deadlineSeconds?: integer }
+---@return boolean ok
+---@return string|nil err
+function Contracts.revise(actor, contractId, changes)
+    contractId = Util.toId(contractId)
+    if not contractId then return false, CB.ERR.INVALID_INPUT end
+    changes = type(changes) == 'table' and changes or {}
+
+    local contract = Storage.readContract(contractId)
+    if not contract then return false, CB.ERR.NOT_FOUND end
+    if contract.creator_cid ~= actor.cid then return false, CB.ERR.NOT_PARTICIPANT end
+    if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
+    if heldByAnyone(contractId) then return false, CB.ERR.BAD_STATE end
+
+    local touched = {}
+
+    if changes.reason ~= nil then
+        -- Cleaned exactly as it was when the contract was placed: the same
+        -- cap, the same stripping. A second way in must not be a way past.
+        local reason = Util.sanitizeText(changes.reason, 140)
+        if not reason then return false, CB.ERR.INVALID_INPUT end
+        contract.reason = reason
+        touched[#touched + 1] = 'reason'
+    end
+
+    if changes.deadlineSeconds ~= nil then
+        local seconds = Util.toPositive(changes.deadlineSeconds,
+            Config.Limits.ContractLifetimeSeconds)
+        if not seconds then return false, CB.ERR.INVALID_INPUT end
+
+        -- Never past the absolute lifetime, which is what stops a contract
+        -- holding escrow forever.
+        local deadline = os.time() + seconds
+        if contract.expires_at and deadline > contract.expires_at then
+            deadline = contract.expires_at
+        end
+        contract.deadline_at = deadline
+        touched[#touched + 1] = 'deadline'
+    end
+
+    if #touched == 0 then return false, CB.ERR.INVALID_INPUT end
+
+    if not Storage.writeContract(contract) then return false, CB.ERR.BAD_STATE end
+
+    Audit.action('contract_revised', actor.cid, contractId,
+        { changed = table.concat(touched, ',') })
+    return true
+end
+
 function Contracts.resolve(contractId, terminal, recipientCid, filter, reason)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end

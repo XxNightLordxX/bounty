@@ -89,9 +89,66 @@
     render();
   }
 
+  /* A dialog that asks for more than one thing at once.
+     
+     `fields` are { id, label, type, value, min, max }. On confirm the
+     handler is given a plain object keyed by id. Editing a contract needs
+     a reason and a deadline together, and asking for them in two dialogs
+     one after another is two chances to abandon halfway. */
+  function askFields(question, detail, fields, onValues) {
+    state.dialog = {
+      kind: 'fields', question: question, detail: detail,
+      fields: fields, onValues: onValues
+    };
+    render();
+  }
+
   function closeDialog() {
     state.dialog = null;
     render();
+  }
+
+  function renderFields(view) {
+    var d = state.dialog;
+    var panel = el('div', 'card dialog');
+    panel.appendChild(el('div', 'target', d.question));
+    if (d.detail) panel.appendChild(el('div', 'reason', d.detail));
+
+    var nodes = {};
+    d.fields.forEach(function (spec) {
+      var input = document.createElement('input');
+      input.id = 'dialog-' + spec.id;
+      input.type = spec.type || 'text';
+      if (spec.value !== undefined && spec.value !== null) {
+        input.value = String(spec.value);
+      }
+      if (spec.max !== undefined) {
+        if (input.type === 'number') { input.max = spec.max; } else { input.maxLength = spec.max; }
+      }
+      if (spec.min !== undefined) { input.min = spec.min; }
+      nodes[spec.id] = input;
+      panel.appendChild(labelled(spec.label, input));
+    });
+
+    var row = el('div', 'row');
+    var yes = el('button', 'primary', d.confirmLabel || 'Save');
+    yes.onclick = function () {
+      var values = {};
+      d.fields.forEach(function (spec) {
+        var raw = nodes[spec.id].value;
+        values[spec.id] = (spec.type === 'number') ? (parseInt(raw, 10) || 0) : raw;
+      });
+      var handler = d.onValues;
+      state.dialog = null;
+      render();
+      if (handler) handler(values);
+    };
+    var no = el('button', 'ghost', 'Cancel');
+    no.onclick = closeDialog;
+    row.appendChild(yes);
+    row.appendChild(no);
+    panel.appendChild(row);
+    view.appendChild(panel);
   }
 
   function renderDialog(view) {
@@ -395,6 +452,19 @@
       change.onclick = function () { proposeChange(contract); };
       row.appendChild(change);
 
+      // Only while nobody is holding it. Once a hunter has accepted they
+      // accepted it as written, and the server refuses both of these — so
+      // offering them would be offering a guaranteed refusal.
+      if (!contract.huntersActive) {
+        var edit = el('button', 'ghost', 'Edit');
+        edit.onclick = function () { editContract(contract); };
+        row.appendChild(edit);
+
+        var scrap = el('button', 'danger', 'Withdraw');
+        scrap.onclick = function () { cancelContract(contract); };
+        row.appendChild(scrap);
+      }
+
       var creatorPanel = proposalPanel(contract);
       if (creatorPanel) {
         var creatorWrap = el('div');
@@ -473,6 +543,48 @@
 
   function settings() {
     return (state.board && state.board.settings) || {};
+  }
+
+  /* Take a contract back down. Everything staked comes home, and the
+     server refuses it outright the moment somebody is hunting it. */
+  function cancelContract(contract) {
+    ask('Withdraw this contract?',
+      'Nobody has taken it, so everything you put up comes back to you. '
+        + 'This cannot be undone.',
+      function () {
+        post('cancel', { id: contract.id }).then(function (r) {
+          if (!r.ok) { return fail(r); }
+          say('Contract withdrawn. Everything you put up has been returned.', 'gold');
+          refresh();
+        });
+      });
+  }
+
+  /* Change a contract nobody has taken. The reward is not editable here —
+     moving escrow is money in and out of a pocket, and there is already
+     "Add to pot" for putting more up. */
+  function editContract(contract) {
+    askFields('Edit this contract',
+      'Only while nobody has taken it. To change what it pays, use Add to '
+        + 'pot — or withdraw it and place it again.',
+      [
+        { id: 'reason', label: 'Reason', type: 'text',
+          value: contract.reason || '', max: 140 },
+        { id: 'hours', label: 'Hours from now to the deadline', type: 'number',
+          value: 3, min: 1, max: 48 }
+      ],
+      function (values) {
+        var seconds = (values.hours || 0) * 3600;
+        post('revise', {
+          id: contract.id,
+          reason: values.reason,
+          deadlineSeconds: seconds > 0 ? seconds : undefined
+        }).then(function (r) {
+          if (!r.ok) { return fail(r); }
+          say('Contract updated.', 'gold');
+          refresh();
+        });
+      });
   }
 
   function acceptContract(contract) {
@@ -1678,6 +1790,8 @@
     if (state.dialog) {
       if (state.dialog.kind === 'choice') {
         renderChoice(view);
+      } else if (state.dialog.kind === 'fields') {
+        renderFields(view);
       } else {
         renderDialog(view);
       }
