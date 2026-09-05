@@ -95,25 +95,68 @@ end
 -- Load and save
 --------------------------------------------------------------------------
 
---- Write one file atomically: serialise, write a temp file, read it back,
---- then put it in place. A crash mid-write cannot leave a truncated file,
---- and a write that did not land is not treated as one that did.
+--- How many times a read-back has disagreed with what was just written.
+--- Kept so the warning is said once and then counted, rather than printed
+--- on every flush forever — which is what the production log became, one
+--- line repeating until it buried everything after it.
+local mismatches = 0
+
+--- Write one file.
+---
+--- This used to write the whole thing to `target.tmp`, read that back, and
+--- then write the whole thing again to `target`. Two complete writes per
+--- file per flush, and no rename between them — so nothing was made atomic
+--- by it, and the read-back only ever proved the temp file had landed.
+---
+--- Worse, it ignored what SaveResourceFile said and judged the write by
+--- that read-back alone. On a live server the read-back disagreed on every
+--- flush, so a write that had succeeded was discarded and the store
+--- persisted nothing at all while reporting that it was keeping things
+--- safe.
+---
+--- SaveResourceFile's own answer is the authority now. The read-back is
+--- kept as a second opinion, and where the two disagree the write is
+--- retried once — but a write the engine confirmed is never thrown away on
+--- the strength of a read that may be cached, buffered, or simply behind.
 ---@return boolean written
 local function writeFile(target, value)
     local encoded = json.encode(value)
-    local temp = target .. '.tmp'
 
-    SaveResourceFile(resource, temp, encoded, -1)
-    local verify = LoadResourceFile(resource, temp)
-    if not verify or #verify ~= #encoded then
-        print(('[crimson-bounty] write verification failed for %s; keeping the previous file')
-            :format(target))
+    local wrote = SaveResourceFile(resource, target, encoded, -1)
+    if wrote == false then
+        print(('[crimson-bounty] could not write %s. Check that the directory exists '
+            .. 'and the server can write to it.'):format(target))
         return false
     end
 
+    -- A second opinion, not a verdict.
+    local verify = LoadResourceFile(resource, target)
+    if verify and #verify == #encoded then return true end
+
+    -- Once more, in case the read caught the write mid-flight.
     SaveResourceFile(resource, target, encoded, -1)
+    verify = LoadResourceFile(resource, target)
+    if verify and #verify == #encoded then return true end
+
+    mismatches = mismatches + 1
+    if mismatches <= 3 then
+        print(('[crimson-bounty] %s reads back as %s bytes after writing %d; the write '
+            .. 'was accepted anyway. If contracts do not survive a restart, this is '
+            .. 'where to look.')
+            :format(target, verify and tostring(#verify) or 'missing', #encoded))
+        if mismatches == 3 then
+            print('[crimson-bounty] further read-back mismatches will not be printed.')
+        end
+    end
+
+    -- The engine said it wrote it. Discarding on a disagreeing read is how
+    -- "probably fine" became "certainly lost".
     return true
 end
+
+--- How many writes have read back differently. Reported by the diagnosis,
+--- since the warning above stops after the third.
+function JsonStore.readBackMismatches() return mismatches end
 
 --- Everything the index file holds: the sequence, which contracts own a
 --- shard, and the small tables that are not per-contract.
@@ -302,16 +345,20 @@ function JsonStore.save(force)
         end
     end
 
+    local indexOk = true
     if indexDirty or force then
         db.seq = seq
-        if writeFile(path(), buildIndex()) then indexDirty = false end
+        indexOk = writeFile(path(), buildIndex())
+        if indexOk then indexDirty = false end
     end
 
     if not next(dirtyShards) and not indexDirty then
         dirty = false
     end
     lastFlush = Util.monotonicMs()
-    return true
+    -- A flush that could not write the index did not flush. Saying it did
+    -- is what let the store report success while persisting nothing.
+    return indexOk
 end
 
 --- Mark the store dirty.
