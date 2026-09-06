@@ -15,7 +15,7 @@ local Util = require_shared('util')
 
 local Admin = {}
 
-local Storage, Identity, Contracts, Escrow, Audit, Notify, App
+local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit
 
 function Admin.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
@@ -29,6 +29,7 @@ function Admin.init(deps)
     -- every handler as unregistered while the real ones worked, which is a
     -- diagnosis lying in the other direction.
     App = deps.app
+    RateLimit = deps.ratelimit
 end
 
 --------------------------------------------------------------------------
@@ -522,14 +523,28 @@ function Admin.diagnose(source, subjectId)
     -- Rate limits ---------------------------------------------------------
     -- Checked last and reported without spending anything a caller needs:
     -- a diagnosis that exhausts the bucket it is diagnosing is no use.
-    local buckets = { 'load', 'search', 'wallet' }
-    local parts = {}
+    -- Every bucket, not the three the app opens with. A player reporting
+    -- that most buttons say "slow down" is describing the buckets behind
+    -- the buttons, and those were the ones this never printed — so the
+    -- report agreed the server was fine while every action a player took
+    -- was being refused by a rule nobody could see.
+    local buckets = { 'load', 'search', 'wallet', 'create', 'accept', 'amend',
+                      'informant', 'bailout', 'photo', 'message', 'progress',
+                      'death', 'mugshot', 'image' }
+    local parts, missing = {}, 0
     for i = 1, #buckets do
         local rule = Config.Cooldowns[buckets[i]]
+        if not rule then missing = missing + 1 end
         parts[#parts + 1] = ('%s=%s'):format(buckets[i],
             rule and ('%d/%ds'):format(rule.burst, rule.per) or 'MISSING')
     end
     say(('rate limits: %s'):format(table.concat(parts, '  ')))
+    if missing > 0 then
+        say(('  -> %d bucket(s) your config does not set; those actions fall '
+            .. 'back to %d/%ds, which may be stricter or looser than intended')
+            :format(missing, RateLimit and RateLimit.FALLBACK.burst or 10,
+                    RateLimit and RateLimit.FALLBACK.per or 10))
+    end
     say(('  keyed on: %s'):format(tostring(Config.RateLimit.Key)))
 
     say('--- end ---')

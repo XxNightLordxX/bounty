@@ -186,3 +186,60 @@ describe('a config that predates the bucket split', function()
         resetConfig()
     end)
 end)
+
+--- How long until a refused action is allowed again.
+---
+--- "Slow down" on its own is not something a player can act on: they cannot
+--- tell a two second wait from a five minute one, so they tap again, read
+--- the same words, and conclude the button is broken.
+describe('telling a player how long to wait', function()
+    it('says nothing to wait for when the action is allowed', function()
+        local s = newStack()
+        local f = fixture(s)
+        eq(s.ratelimit.retryAfter(f.creator, 'accept'), 0,
+            'an untouched bucket has no wait')
+    end)
+
+    it('gives a wait once the bucket is spent', function()
+        local s = newStack()
+        local f = fixture(s)
+        local rule = Config.Cooldowns.accept
+
+        for _ = 1, rule.burst do
+            truthy(s.ratelimit.check(f.creator, 'accept'), 'the burst should be allowed')
+        end
+        falsy(s.ratelimit.check(f.creator, 'accept'), 'and then refused')
+
+        local wait = s.ratelimit.retryAfter(f.creator, 'accept')
+        truthy(wait > 0, 'a refused action must say how long: got ' .. wait)
+        truthy(wait <= rule.per,
+            'and never longer than the window itself: got ' .. wait
+            .. ' for a ' .. rule.per .. 's window')
+    end)
+
+    it('counts down as the bucket refills', function()
+        local s = newStack()
+        local f = fixture(s)
+        local rule = Config.Cooldowns.informant
+
+        for _ = 1, rule.burst do s.ratelimit.check(f.creator, 'informant') end
+        local first = s.ratelimit.retryAfter(f.creator, 'informant')
+        truthy(first > 0, 'spent, so there should be a wait')
+
+        Env.advance(math.max(1, math.floor((rule.per / rule.burst) / 2)))
+        local later = s.ratelimit.retryAfter(f.creator, 'informant')
+        truthy(later < first,
+            'the wait has to shrink as the bucket refills: ' .. first .. ' -> ' .. later)
+    end)
+
+    it('answers for a bucket the config does not have', function()
+        local s = newStack()
+        local f = fixture(s)
+        -- An action with no rule falls back, and the fallback still has to be
+        -- able to say how long — a wait of "nil" is a crash in the handler.
+        local ok = s.ratelimit.retryAfter(f.creator, 'no_such_action')
+        eq(ok, 0)
+        for _ = 1, 20 do s.ratelimit.check(f.creator, 'no_such_action') end
+        truthy(s.ratelimit.retryAfter(f.creator, 'no_such_action') > 0)
+    end)
+end)

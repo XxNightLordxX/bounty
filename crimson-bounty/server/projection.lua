@@ -202,6 +202,16 @@ function Projection.listing(viewerCid, page)
             -- Whether the app should offer a call at all. Off, the button
             -- is not drawn rather than drawn and refused.
             calls = Config.Relay.Enabled and Config.Relay.AllowMaskedCalls,
+            -- What buying informant data costs, and whether it is offered
+            -- at all. The app was asking a player to spend money without
+            -- telling them how much, on a purchase that is deliberately
+            -- non-refundable.
+            informant = Config.Informant.Enabled == true and {
+                cost = Config.Informant.Cost,
+                account = Config.Informant.Account,
+                maxPerContract = Config.Informant.MaxPurchasesPerContract,
+                needsProximity = Config.Informant.RequireProximity == true,
+            } or nil,
         },
     }
     local from = ((page - 1) * pageSize) + 1

@@ -2411,6 +2411,161 @@ async function main() {
     });
   })();
 
+  /* ---- saying what a refusal actually was ---------------------------- */
+  await (async function refusalsThatSayWhat() {
+    const OWN = { ok: true, data: { created: [{
+      id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
+      reward: { baseline: 5000, bonus: 2500 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1,
+      huntersActive: 1, huntersMax: 5, hunters: [{ alias: 'Grey' }],
+      targetName: 'Dana Reyes', role: 'creator',
+      deadline: Math.floor(Date.now() / 1000) + 7200
+    }], accepted: [], onMe: [] } };
+
+    function board(settings) {
+      return { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: Object.assign({ minQueryLength: 3 }, settings || {}) } };
+    }
+
+    async function onMine(over, settings) {
+      const app = boot(Object.assign({
+        list: board(settings), mine: OWN, ledger: LEDGER
+      }, over || {}));
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+      await settle(); await settle();
+      return app;
+    }
+
+    /* "Slow down" alone reads as a broken button: tapping again says exactly
+       the same thing, and a player cannot tell two seconds from five
+       minutes. */
+    const limited = await onMine({
+      informant: { ok: false, err: 'rate_limited', data: { retryAfter: 45 } }
+    });
+    click(limited, 'Buy informant data');
+    click(limited, 'Yes');
+    await settle();
+
+    it('says how long a rate limit lasts', function () {
+      truthy(limited.notice().indexOf('45 second') !== -1,
+        'a refusal with a wait must say the wait: ' + limited.notice());
+    });
+
+    const longWait = await onMine({
+      informant: { ok: false, err: 'rate_limited', data: { retryAfter: 300 } }
+    });
+    click(longWait, 'Buy informant data');
+    click(longWait, 'Yes');
+    await settle();
+
+    it('says minutes when the wait is minutes', function () {
+      truthy(longWait.notice().indexOf('minute') !== -1,
+        'five minutes should not be reported in seconds: ' + longWait.notice());
+    });
+
+    /* limit_reached means something else entirely for an informant, and the
+       shared wording for it described a rule with nothing to do with this
+       purchase. */
+    const bought = await onMine({
+      informant: { ok: false, err: 'limit_reached' }
+    });
+    click(bought, 'Buy informant data');
+    click(bought, 'Yes');
+    await settle();
+
+    it('does not blame the wrong rule when an informant is spent', function () {
+      truthy(bought.notice().indexOf('too many contracts') === -1,
+        'that is a different rule entirely: ' + bought.notice());
+      truthy(bought.notice().indexOf('informant') !== -1,
+        'and it has to say what this one was: ' + bought.notice());
+    });
+
+    /* The price, before they agree to pay it. */
+    const priced = await onMine({}, {
+      informant: { cost: 25000, account: 'bank', needsProximity: true }
+    });
+    click(priced, 'Buy informant data');
+
+    it('says what an informant costs before it is bought', function () {
+      const text = priced.view.textContent;
+      truthy(text.indexOf('$25,000') !== -1,
+        'the price has to be on the confirmation: ' + text);
+      truthy(text.indexOf('bank') !== -1, 'and where it comes from: ' + text);
+    });
+
+    it('says why an informant may find nobody', function () {
+      truthy(priced.view.textContent.indexOf('seen near the target') !== -1,
+        'the commonest reason it turns up nothing is a rule, not a fault: '
+        + priced.view.textContent);
+    });
+
+    /* An empty result is an answer, and it was paid for. */
+    const empty = await onMine({
+      informant: { ok: true, data: { found: false } }
+    }, { informant: { cost: 25000, account: 'bank', needsProximity: true } });
+    click(empty, 'Buy informant data');
+    click(empty, 'Yes');
+    await settle();
+
+    it('says an empty answer was still paid for', function () {
+      truthy(empty.notice().indexOf('paid') !== -1,
+        'a player who paid for nothing has to be told that is what happened: '
+        + empty.notice());
+    });
+  })();
+
+  /* ---- proposing a change you can actually read ----------------------- */
+  await (async function proposalsWithContext() {
+    const AS_HUNTER = { ok: true, data: { created: [], accepted: [{
+      id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'accepted',
+      reward: { baseline: 5000, bonus: 2500 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1,
+      huntersActive: 1, huntersMax: 5,
+      targetName: 'Dana Reyes', role: 'hunter',
+      deadline: Math.floor(Date.now() / 1000) + 7200
+    }], onMe: [] } };
+
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: AS_HUNTER, ledger: LEDGER,
+      amendments: { ok: true, data: [] }
+    });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+    await settle(); await settle();
+
+    click(app, 'Propose change');
+
+    it('says what each proposal would do before one is chosen', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('$7,500') !== -1,
+        'the reward has to be stated, or "reduce it" is unanswerable: ' + text);
+      truthy(text.indexOf('2h') !== -1,
+        'and the time left, for the same reason: ' + text);
+    });
+
+    click(app, 'Reduce the reward');
+
+    it('opens the reward box with the numbers around it', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('Take off') !== -1,
+        'a bare box never said what the figure meant: ' + text);
+      truthy(text.indexOf('would then pay') !== -1,
+        'and never said what it would leave: ' + text);
+    });
+
+    it('starts the box on a real figure rather than empty', function () {
+      const box = app.document.getElementById('dialog-value');
+      truthy(box, 'there should be a number field');
+      truthy(box.value && Number(box.value) > 0,
+        'an empty box is the whole complaint: got "' + box.value + '"');
+      eq(String(box.max), '7499', 'and it cannot propose away more than is there');
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

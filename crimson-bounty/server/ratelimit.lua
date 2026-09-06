@@ -39,6 +39,34 @@ end
 --- caller a refusal; erring the other way costs the server.
 RateLimit.FALLBACK = { per = 10, burst = 10 }
 
+--- How long until this action is allowed again, in whole seconds.
+---
+--- "Slow down" on its own is not something a player can act on: they cannot
+--- tell a two second wait from a five minute one, so they tap again, get
+--- the same words, and conclude the button is broken. The bucket already
+--- knows the answer.
+---@param who table|string resolved actor, or a citizen id
+---@param action string key into Config.Cooldowns
+---@return integer seconds 0 when it is allowed right now
+function RateLimit.retryAfter(who, action)
+    local rule = Config.Cooldowns[action] or RateLimit.FALLBACK
+    local cid = keyFor(who)
+    if not cid then return 0 end
+
+    local bucket = buckets[cid .. ':' .. action]
+    if not bucket then return 0 end
+
+    -- Tokens refill at burst/per per second, so the wait is however long one
+    -- whole token takes to arrive.
+    local elapsed = (now() - bucket.last) / 1000
+    local tokens = math.min(rule.burst, bucket.tokens + elapsed * (rule.burst / rule.per))
+    if tokens >= 1 then return 0 end
+
+    local perSecond = rule.burst / rule.per
+    if perSecond <= 0 then return rule.per end
+    return math.max(1, math.ceil((1 - tokens) / perSecond))
+end
+
 --- @param who table|string resolved actor, or a citizen id
 --- @param action string key into Config.Cooldowns
 --- @return boolean allowed

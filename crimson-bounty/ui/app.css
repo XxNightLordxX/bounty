@@ -456,3 +456,13 @@ button.person.is-chosen {
    has to line up with the ones that do, or the list reads as ragged rather
    than as one of its rows being unavailable. */
 .reward-line > span.hint { margin-top: 0; margin-left: 1.9rem; }
+
+/* ---------- a choice with its consequences ----------
+   Options laid out one per line rather than in a row, so each can carry the
+   figure that makes it answerable: what the contract pays now, how long is
+   left on it. A row of bare labels fits, and tells the player nothing. */
+
+.choices { display: flex; flex-direction: column; gap: 0.5rem; }
+.choices .choice { display: flex; flex-direction: column; gap: 0.15rem; }
+.choices .choice button { width: 100%; }
+.choices .choice .hint { margin-top: 0; }

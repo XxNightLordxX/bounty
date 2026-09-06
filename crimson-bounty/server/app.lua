@@ -166,7 +166,13 @@ local function handler(name, action, fn)
 
         if action and not deps.ratelimit.check(actor, action) then
             deps.audit.rejected('ratelimit_' .. name, actor.cid, nil, {})
-            return App.reply(src, name, false, CB.ERR.RATE_LIMITED, nil,
+            -- With the wait, because "slow down" on its own is not something
+            -- a player can act on: they cannot tell two seconds from five
+            -- minutes, so they tap again, read the same words, and decide
+            -- the button is broken.
+            local wait = deps.ratelimit.retryAfter and deps.ratelimit.retryAfter(actor, action) or 0
+            return App.reply(src, name, false, CB.ERR.RATE_LIMITED,
+                wait > 0 and { retryAfter = wait } or nil,
                 type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
 

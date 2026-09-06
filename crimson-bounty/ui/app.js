@@ -102,8 +102,22 @@
     render();
   }
 
-  function askNumber(question, detail, onValue) {
-    state.dialog = { kind: 'number', question: question, detail: detail, onValue: onValue };
+  /* Ask for a number, with enough around it to answer.
+     
+     `opts` may carry { label, value, min, max, unit, hint }. An empty box
+     under a bare "By how much?" is not a question anybody can answer: it
+     never said what the reward was now, what the floor was, or whether the
+     figure meant "by" or "to". The player was left guessing, and a guess
+     the server refuses reads as the app being broken.
+     
+     `hint` is called with the current value on every keystroke and returns
+     the line under the field, which is where the consequence goes: what
+     the contract will be worth, when it will now run out. */
+  function askNumber(question, detail, onValue, opts) {
+    state.dialog = {
+      kind: 'number', question: question, detail: detail, onValue: onValue,
+      opts: opts || {}
+    };
     render();
   }
 
@@ -175,22 +189,59 @@
     panel.appendChild(el('div', 'target', d.question));
     if (d.detail) panel.appendChild(el('div', 'reason', d.detail));
 
-    var input;
+    var input, consequence;
     if (d.kind === 'number') {
+      var opts = d.opts || {};
+
       input = document.createElement('input');
       input.type = 'number';
       input.id = 'dialog-value';
-      input.min = 0;
-      var field = el('div', 'field');
-      field.appendChild(input);
-      panel.appendChild(field);
+      input.min = opts.min !== undefined ? opts.min : 1;
+      if (opts.max !== undefined) { input.max = opts.max; }
+      if (opts.value !== undefined && opts.value !== null) {
+        input.value = String(opts.value);
+      }
+
+      // Named, because a bare box in a dialog is the player guessing what
+      // the number is measured in.
+      panel.appendChild(labelled(opts.label || 'Amount', input));
+
+      if (opts.hint) {
+        consequence = el('div', 'hint');
+        var showConsequence = function () {
+          var current = parseInt(input.value, 10);
+          consequence.textContent = opts.hint(isNaN(current) ? null : current) || '';
+        };
+        input.oninput = showConsequence;
+        showConsequence();
+        panel.appendChild(consequence);
+      }
     }
 
     var row = el('div', 'row');
-    var yes = el('button', 'primary', d.kind === 'number' ? 'Confirm' : 'Yes');
+    var yes = el('button', 'primary', d.kind === 'number'
+      ? ((d.opts && d.opts.confirm) || 'Confirm') : 'Yes');
     yes.onclick = function () {
       var handler = d.onYes, valueHandler = d.onValue;
       var value = input ? parseInt(input.value, 10) : null;
+
+      // A figure outside what the server will take is refused here, where
+      // the player can still see the box and the numbers around it, rather
+      // than as an error a moment later with the form already gone.
+      if (input) {
+        var bounds = d.opts || {};
+        var floor = bounds.min !== undefined ? bounds.min : 1;
+        if (!value || value < floor
+            || (bounds.max !== undefined && value > bounds.max)) {
+          if (consequence) {
+            consequence.textContent = bounds.max !== undefined
+              ? ('Enter something between ' + floor + ' and ' + bounds.max + '.')
+              : ('Enter ' + floor + ' or more.');
+          }
+          return;
+        }
+      }
+
       state.dialog = null;
       render();
       if (handler) handler();
@@ -211,7 +262,12 @@
     panel.appendChild(el('div', 'target', d.question));
     if (d.detail) panel.appendChild(el('div', 'reason', d.detail));
 
-    var row = el('div', 'row');
+    // An option that carries a note gets a line of its own, because the note
+    // is the part that makes the choice answerable: "Reduce the reward" is
+    // not a decision anybody can take without knowing what it pays now.
+    var annotated = d.options.some(function (option) { return option.note; });
+
+    var row = el('div', annotated ? 'choices' : 'row');
     d.options.forEach(function (option) {
       var button = el('button', option.primary ? 'primary' : null, option.label);
       button.onclick = function () {
@@ -219,11 +275,27 @@
         render();
         option.run();
       };
-      row.appendChild(button);
+
+      if (option.note) {
+        var block = el('div', 'choice');
+        block.appendChild(button);
+        block.appendChild(el('div', 'hint', option.note));
+        row.appendChild(block);
+      } else {
+        row.appendChild(button);
+      }
     });
+
     var cancel = el('button', 'ghost', 'Cancel');
     cancel.onclick = closeDialog;
-    row.appendChild(cancel);
+    if (annotated) {
+      var cancelBlock = el('div', 'choice');
+      cancelBlock.appendChild(cancel);
+      row.appendChild(cancelBlock);
+    } else {
+      row.appendChild(cancel);
+    }
+
     panel.appendChild(row);
     view.appendChild(panel);
   }
@@ -284,6 +356,17 @@
     // A null entry means the player did this on purpose; saying anything
     // would read as a failure.
     if (result.err in ERRORS && ERRORS[result.err] === null) return;
+
+    // A wait the player can act on. "Slow down" alone reads as a broken
+    // button, because tapping again says exactly the same thing.
+    if (result.err === 'rate_limited' && result.data && result.data.retryAfter) {
+        var wait = result.data.retryAfter;
+        return say(wait >= 60
+          ? 'Slow down — try again in about ' + Math.ceil(wait / 60) + ' minute'
+            + (wait >= 120 ? 's' : '') + '.'
+          : 'Slow down — try again in ' + wait + ' second' + (wait === 1 ? '' : 's') + '.');
+    }
+
     say(ERRORS[result.err] || 'Something went wrong.');
   }
 
@@ -717,15 +800,55 @@
   }
 
   function buyInformant(contract) {
-    ask('Buy informant data?',
-        'It is expensive, and it may turn up nothing. You pay either way.',
-        function () { doBuyInformant(contract); });
+    var rules = settings().informant;
+    if (rules === false) {
+      return say('This server does not run informants.');
+    }
+
+    // What it costs, said before they agree to pay it. The dialog used to
+    // call it "expensive" and leave the player to find the figure out by
+    // spending it — on a purchase that is deliberately not refunded.
+    var price = rules && rules.cost
+      ? money(rules.cost) + ' from your ' + (rules.account === 'cash' ? 'cash' : 'bank')
+      : 'a fee';
+
+    var detail = 'It costs ' + price + ', taken now, whether or not it turns '
+      + 'anything up.';
+    if (rules && rules.needsProximity) {
+      // The single most common reason this "does not work": an operative who
+      // accepted and has not gone near the target cannot be named, by
+      // design, so the money buys a blank.
+      detail += ' An informant can only name an operative who has actually '
+        + 'been seen near the target — one who took the contract and has not '
+        + 'moved on it yet cannot be found.';
+    }
+
+    ask('Buy informant data?', detail, function () { doBuyInformant(contract); });
   }
 
   function doBuyInformant(contract) {
     post('informant', { id: contract.id }).then(function (r) {
-      if (!r.ok) return fail(r);
-      if (!r.data || !r.data.found) return say('The informant had nothing for you.');
+      if (!r.ok) {
+        // limit_reached means something else entirely here, and the shared
+        // message for it — "You are holding too many contracts" — described
+        // a rule that has nothing to do with this purchase.
+        var reasons = {
+          limit_reached: 'You have already bought everything this informant '
+            + 'will tell you about this contract.',
+          insufficient: 'You cannot afford the informant.',
+          not_participant: 'This is not yours to ask about.',
+          bad_state: 'This server does not run informants.'
+        };
+        if (reasons[r.err]) { return say(reasons[r.err]); }
+        return fail(r);
+      }
+
+      if (!r.data || !r.data.found) {
+        var rules = settings().informant;
+        return say(rules && rules.needsProximity
+          ? 'Nobody has been seen near the target. You paid for that answer.'
+          : 'The informant had nothing for you. You paid for that answer.');
+      }
       say('Informant: ' + (r.data.name || r.data.description), 'gold');
     });
   }
@@ -827,36 +950,113 @@
 
   // Propose a change that needs the other party's agreement, as opposed to
   // `improve`, which applies at once because it can only help them.
+  /* What a contract pays right now, as a number. */
+  function rewardTotal(contract) {
+    var reward = contract.reward || {};
+    return (Number(reward.baseline) || 0) + (Number(reward.bonus) || 0);
+  }
+
+  /* Minutes left on the clock, or null when there is no deadline to read. */
+  function minutesLeft(contract) {
+    if (!contract.deadline) { return null; }
+    var seconds = contract.deadline - Math.floor(Date.now() / 1000);
+    return seconds > 0 ? Math.floor(seconds / 60) : 0;
+  }
+
+  function durationText(minutes) {
+    if (minutes === null || minutes === undefined) { return 'no set deadline'; }
+    if (minutes <= 0) { return 'no time left'; }
+    if (minutes < 60) { return minutes + ' minutes'; }
+    var hours = Math.floor(minutes / 60);
+    var rest = minutes % 60;
+    return hours + 'h' + (rest ? ' ' + rest + 'm' : '');
+  }
+
+  /* Propose a change to a contract already under way.
+     
+     Both sides have to agree, so both sides need to be able to read what is
+     being proposed. This used to be three bare labels and, behind two of
+     them, an empty number box asking "By how much?" — with no statement of
+     what the reward was, what the deadline was, or whether the figure meant
+     "by" or "to". A creator and a hunter were each being asked to commit to
+     a change neither could see the shape of. */
   function proposeChange(contract) {
+    var hunter = contract.role === 'hunter';
+    var pot = rewardTotal(contract);
+    var left = minutesLeft(contract);
+
     var options = [
-      { label: 'Shorten the deadline', kind: 'shorten_deadline', minutes: true },
-      { label: 'Reduce the reward', kind: 'reduce_reward', amount: true },
-      { label: contract.role === 'hunter' ? 'Withdraw' : 'Cancel the contract',
-        kind: contract.role === 'hunter' ? 'withdraw' : 'cancel' }
+      {
+        label: 'Shorten the deadline',
+        note: 'Runs out in ' + durationText(left) + ' now.',
+        run: function () {
+          if (left === null || left <= 1) {
+            return say('There is no deadline left to shorten.');
+          }
+          askNumber('Shorten the deadline',
+            hunter
+              ? 'You are asking the client for less time than you have.'
+              : 'You are asking the operative to finish sooner.',
+            function (minutes) {
+              sendProposal(contract, 'shorten_deadline', { seconds: minutes * 60 });
+            },
+            {
+              label: 'Cut it short by (minutes)',
+              value: Math.min(30, left - 1), min: 1, max: left - 1,
+              confirm: 'Propose',
+              hint: function (value) {
+                if (!value || value < 1 || value > left - 1) {
+                  return 'Between 1 and ' + (left - 1) + ' minutes.';
+                }
+                return 'It would then run out in ' + durationText(left - value) + '.';
+              }
+            });
+        }
+      },
+      {
+        label: 'Reduce the reward',
+        note: pot > 0 ? 'Pays ' + money(pot) + ' now.' : 'Nothing priced on it.',
+        run: function () {
+          if (pot <= 1) {
+            return say('There is nothing on this contract to reduce.');
+          }
+          askNumber('Reduce the reward',
+            hunter
+              ? 'You are offering to finish this for less than was agreed.'
+              : 'You are asking the operative to accept less than was agreed.',
+            function (amount) {
+              sendProposal(contract, 'reduce_reward', { amount: amount });
+            },
+            {
+              label: 'Take off (dollars)',
+              value: Math.floor(pot / 10) || 1, min: 1, max: pot - 1,
+              confirm: 'Propose',
+              hint: function (value) {
+                if (!value || value < 1 || value > pot - 1) {
+                  return 'Between $1 and ' + money(pot - 1) + '.';
+                }
+                return 'It would then pay ' + money(pot - value) + '.';
+              }
+            });
+        }
+      },
+      {
+        label: hunter ? 'Withdraw' : 'Cancel the contract',
+        note: hunter
+          ? 'Hand it back with no penalty, if the client agrees.'
+          : 'Close it and take back what you put up, if the operative agrees.',
+        run: function () {
+          sendProposal(contract, hunter ? 'withdraw' : 'cancel', {});
+        }
+      }
     ];
 
     state.dialog = {
       kind: 'choice',
       question: 'Propose a change',
-      detail: 'Both sides have to agree before it takes effect.',
-      options: options.map(function (option) {
-        return {
-          label: option.label,
-          run: function () {
-            if (option.minutes) {
-              return askNumber(option.label, 'By how many minutes?', function (minutes) {
-                sendProposal(contract, option.kind, { seconds: minutes * 60 });
-              });
-            }
-            if (option.amount) {
-              return askNumber(option.label, 'By how much?', function (amount) {
-                sendProposal(contract, option.kind, { amount: amount });
-              });
-            }
-            sendProposal(contract, option.kind, {});
-          }
-        };
-      })
+      detail: 'Nothing happens until '
+        + (hunter ? 'the client' : 'the operative') + ' agrees.',
+      options: options
     };
     render();
   }
