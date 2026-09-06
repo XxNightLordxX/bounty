@@ -1194,23 +1194,29 @@
       // Not named `money`: that is the formatter this function calls two
       // lines below, and shadowing it turned the whole dialog into a
       // TypeError the moment anything was ticked.
-      var amount = 0, goods = 0;
+      // Dirty money counted apart from clean. Adding them into one figure
+      // says a creator is getting back "$7,000" when three of it is black
+      // money, which does not spend the same.
+      var amount = 0, dirty = 0, goods = 0;
       asList(edit.data && edit.data.lines).forEach(function (line) {
         if (!line.id || edit.chosen[line.id] !== true) { return; }
-        if (line.source === 'cash' || line.source === 'bank' || line.source === 'dirty') {
+        if (line.source === 'cash' || line.source === 'bank') {
           amount += line.amount || 0;
+        } else if (line.source === 'dirty') {
+          dirty += line.amount || 0;
         } else {
           goods += (line.source === 'weapon') ? 1 : (line.quantity || 1);
         }
       });
 
-      if (!amount && !goods) {
+      if (!amount && !dirty && !goods) {
         total.textContent = 'Nothing ticked yet.';
         return;
       }
 
       var parts = [];
       if (amount) { parts.push(money(amount)); }
+      if (dirty) { parts.push(money(dirty) + ' black money'); }
       if (goods) { parts.push(goods + (goods === 1 ? ' item' : ' items')); }
       total.textContent = 'Coming back to you: ' + parts.join(' and ') + '.';
     }

@@ -55,6 +55,17 @@ local function sourceEnabled(name)
     return (source and source.enabled) == true
 end
 
+--- Which item a dirty-money line is denominated in.
+---
+--- The line's own name when it has one, so escrow taken before a rename
+--- comes back as what went in. Lines written by an older version carry
+--- none, and the configured name is the only answer available for those.
+---@param line table
+---@return string
+local function dirtyItemOf(line)
+    return line.item or (Config.Sources.dirty and Config.Sources.dirty.item) or 'black_money'
+end
+
 local function isWeaponName(name)
     return type(name) == 'string' and name:upper():sub(1, 7) == 'WEAPON_'
 end
@@ -88,7 +99,19 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
         end
         if held < amount then return CB.ERR.INSUFFICIENT end
 
-        lines[#lines + 1] = { slot = slotIndex, portion = portion, source = source, amount = amount }
+        local line = { slot = slotIndex, portion = portion, source = source, amount = amount }
+
+        -- Dirty money is an item, so the line remembers which one.
+        --
+        -- Every read and write of it went through Config.Sources.dirty.item
+        -- at the moment of the call, so an operator who renamed that setting
+        -- while escrow was held took one currency out of a player's pocket
+        -- and handed a different one back — destroying the first and minting
+        -- the second. Items and weapons have recorded their own identity
+        -- since §9.4; this is the same rule for the third money source.
+        if source == CB.SOURCE.DIRTY then line.item = rule.item end
+
+        lines[#lines + 1] = line
         moneyTotal = moneyTotal + amount
         return nil
     end
@@ -320,6 +343,10 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
                     derived[#derived + 1] = {
                         slot = line.slot, portion = CB.PORTION.BONUS,
                         source = line.source, amount = extra,
+                        -- Denominated in whatever the baseline it derives
+                        -- from is, so a rename cannot turn a bonus and the
+                        -- line it was computed from into two currencies.
+                        item = line.item,
                         -- Marked, so raising the percentage later can tell a
                         -- bonus this resource worked out from a percentage
                         -- apart from one the creator named themselves. A
@@ -423,7 +450,7 @@ function Escrow.take(actor, contractId, lines)
             if line.source == 'cash' or line.source == 'bank' then
                 back = actor.player.Functions.AddMoney(line.source, line.amount)
             elseif line.source == 'dirty' then
-                back = exports.ox_inventory:AddItem(actor.source, Config.Sources.dirty.item, line.amount)
+                back = exports.ox_inventory:AddItem(actor.source, dirtyItemOf(line), line.amount)
             elseif line.source == CB.SOURCE.ITEM then
                 back = exports.ox_inventory:AddItem(actor.source, line.item, line.quantity, line.metadata)
             elseif line.source == CB.SOURCE.WEAPON then
@@ -446,7 +473,7 @@ function Escrow.take(actor, contractId, lines)
         if line.source == 'cash' or line.source == 'bank' then
             ok = actor.player.Functions.RemoveMoney(line.source, line.amount) and true or false
         elseif line.source == 'dirty' then
-            ok = exports.ox_inventory:RemoveItem(actor.source, Config.Sources.dirty.item, line.amount) and true or false
+            ok = exports.ox_inventory:RemoveItem(actor.source, dirtyItemOf(line), line.amount) and true or false
         elseif line.source == CB.SOURCE.ITEM then
             -- Names the metadata, so the slot that was staged is the slot
             -- that is taken rather than any stack of the same name.
@@ -688,8 +715,9 @@ function Escrow.deliver(recipientCid, line)
         return recipient.Functions.AddMoney(account, amount) and true or false
 
     elseif line.source == 'dirty' then
-        if not exports.ox_inventory:CanCarryItem(src, Config.Sources.dirty.item, line.amount) then return false end
-        return exports.ox_inventory:AddItem(src, Config.Sources.dirty.item, line.amount) and true or false
+        local name = dirtyItemOf(line)
+        if not exports.ox_inventory:CanCarryItem(src, name, line.amount) then return false end
+        return exports.ox_inventory:AddItem(src, name, line.amount) and true or false
 
     elseif line.source == CB.SOURCE.ITEM then
         if not exports.ox_inventory:CanCarryItem(src, line.item, line.quantity) then return false end
@@ -792,6 +820,10 @@ function Escrow.bonusTopUp(contractId, fromPercent, toPercent)
                 extra[#extra + 1] = {
                     slot = line.slot, portion = CB.PORTION.BONUS,
                     source = line.source, amount = now - was, derived = true,
+                    -- Denominated in whatever the baseline it derives from
+                    -- is, so a rename cannot make the top-up and the line it
+                    -- was computed from into two different currencies.
+                    item = line.item,
                 }
             end
         end

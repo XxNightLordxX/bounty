@@ -759,3 +759,199 @@ describe('what the board says a contract is worth', function()
             .. 'pays, in the split any more than in the total')
     end)
 end)
+
+describe('dirty money remembers which item it is', function()
+    local function countOf(src, name)
+        local held = 0
+        for _, entry in ipairs(Env.players[src]._inventory or {}) do
+            if entry.name == name then held = held + (entry.count or 0) end
+        end
+        return held
+    end
+
+    --- Every read and write of dirty money went through
+    --- Config.Sources.dirty.item at the moment of the call. An operator who
+    --- renamed that setting while escrow was held took one currency out of a
+    --- player's pocket and handed a different one back — destroying the
+    --- first and minting the second. Items and weapons have recorded their
+    --- own identity since the first version; this is the same rule for the
+    --- third money source.
+    it('records the item on the line', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { dirty = 1000 } },
+        })
+        truthy(c)
+
+        local line
+        for _, entry in ipairs(s.storage.readEscrow(c.id)) do
+            if entry.source == 'dirty' then line = entry end
+        end
+        truthy(line, 'there should be a dirty line')
+        eq(line.item, Config.Sources.dirty.item,
+            'without this the line has no idea what it is denominated in')
+    end)
+
+    it('gives back what it took, even after the setting is renamed', function()
+        local s = newStack()
+        local f = fixture(s)
+        local original = Config.Sources.dirty.item
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { dirty = 1000 } },
+        })
+        truthy(c)
+        eq(countOf(1, original), 49000, 'it left the pocket')
+
+        -- The operator changes what dirty money is called, with escrow held.
+        Config.Sources.dirty.item = 'renamed_money'
+        local ok = s.contracts.cancel(f.creator, c.id)
+        Config.Sources.dirty.item = original
+
+        truthy(ok, 'the cancellation should still work')
+        eq(countOf(1, original), 50000,
+            'the escrow came back as a different currency: the one that went '
+            .. 'in was destroyed and another was minted')
+        eq(countOf(1, 'renamed_money'), 0)
+    end)
+
+    it('pays a hunter in the currency the contract was funded with', function()
+        local s = newStack()
+        local f = fixture(s)
+        local original = Config.Sources.dirty.item
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { dirty = 1000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        Config.Sources.dirty.item = 'renamed_money'
+        truthy(s.contracts.claimSlot(c.id, f.hunter.cid, CB.FULFILMENT.ELIMINATION))
+        Config.Sources.dirty.item = original
+
+        eq(countOf(3, original), 1000, 'the hunter is owed what was put up')
+        eq(countOf(3, 'renamed_money'), 0)
+    end)
+
+    it('still works for a line written before this was recorded', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { dirty = 1000 } },
+        })
+        truthy(c)
+
+        -- An older version wrote no item name. The configured one is the only
+        -- answer available for those, and they must not simply fail.
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.source == 'dirty' then line.item = nil end
+        end
+
+        truthy(s.contracts.cancel(f.creator, c.id))
+        eq(countOf(1, Config.Sources.dirty.item), 50000,
+            'a line from before this change still has to come back')
+    end)
+end)
+
+describe('a bonus top-up is denominated too', function()
+    local function countOf(src, name)
+        local held = 0
+        for _, entry in ipairs(Env.players[src]._inventory or {}) do
+            if entry.name == name then held = held + (entry.count or 0) end
+        end
+        return held
+    end
+
+    it('carries the item name of the baseline it derives from', function()
+        local s = newStack()
+        local f = fixture(s)
+        local original = Config.Sources.dirty.item
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { dirty = 10000 } },
+            bonusPercent = 10,
+        })
+        truthy(c)
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS,
+            { percent = 50 }))
+
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.source == 'dirty' then
+                eq(line.item, original,
+                    'a top-up with no name is a line the next rename can turn '
+                    .. 'into a different currency')
+            end
+        end
+
+        -- And it survives one.
+        Config.Sources.dirty.item = 'renamed_money'
+        truthy(s.contracts.cancel(f.creator, c.id))
+        Config.Sources.dirty.item = original
+
+        eq(countOf(1, original), 50000, 'everything came back as what went in')
+        eq(countOf(1, 'renamed_money'), 0)
+    end)
+end)
+
+describe('what a creator is told when a refund could not be handed over', function()
+    --- A refund the creator's pockets had no room for is owed and retried on
+    --- next login, not lost. But "everything you put up has been returned"
+    --- is untrue in exactly that case — and it is the case where a player
+    --- counts their money, finds it short, and reports it stolen.
+    it('says so, rather than that everything came back', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 }, bonus = { dirty = 1000 } },
+        })
+        truthy(c)
+
+        Natives.calls.notifications = {}
+        Env.players[1]._inventoryFull = true
+        truthy(s.contracts.cancel(f.creator, c.id))
+        Env.players[1]._inventoryFull = false
+
+        local said = ''
+        for _, note in ipairs(Natives.calls.notifications or {}) do
+            said = said .. ' ' .. tostring(note.title or '')
+                .. ' ' .. tostring(note.content or note.message or '')
+        end
+        truthy(said:find('waiting for you', 1, true),
+            'a creator whose refund would not fit was told it all came back: '
+            .. said)
+        falsy(said:find('everything you put up has been returned', 1, true),
+            'and must not be told both')
+    end)
+
+    it('still says everything came back when everything did', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        Natives.calls.notifications = {}
+        truthy(s.contracts.cancel(f.creator, c.id))
+
+        local said = ''
+        for _, note in ipairs(Natives.calls.notifications or {}) do
+            said = said .. ' ' .. tostring(note.content or note.message or '')
+        end
+        truthy(said:find('everything you put up has been returned', 1, true),
+            'the ordinary case must not be made alarming: ' .. said)
+    end)
+end)

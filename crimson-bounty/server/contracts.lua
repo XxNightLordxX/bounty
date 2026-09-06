@@ -790,8 +790,24 @@ function Contracts.cancel(actor, contractId)
     if not ok then return false, err end
 
     Audit.financial('contract_cancelled', actor.cid, contractId, {})
-    Notify.toCitizen(actor.cid, 'Contract withdrawn',
-        'Nobody had taken it, so everything you put up has been returned.')
+
+    -- What could not actually be handed back. A refund the creator's pockets
+    -- had no room for is owed and retried on next login, not lost — but
+    -- "everything you put up has been returned" is untrue in exactly that
+    -- case, and it is the case where a player counts their money, finds it
+    -- short, and reports it stolen.
+    local owed = 0
+    for _, line in ipairs(Storage.readEscrow(contractId)) do
+        if line.owed_to == actor.cid and line.state ~= CB.ESCROW_STATE.SETTLED then
+            owed = owed + 1
+        end
+    end
+
+    Notify.toCitizen(actor.cid, 'Contract withdrawn', owed > 0
+        and ('Nobody had taken it. Most of what you put up is back; %d thing(s) '
+             .. 'would not fit and are waiting for you — they arrive when you '
+             .. 'next have room.'):format(owed)
+        or 'Nobody had taken it, so everything you put up has been returned.')
     return true
 end
 
