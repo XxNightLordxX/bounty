@@ -340,3 +340,70 @@ describe('identifying an anonymous party', function()
         truthy(found, 'the point of anonymity is that looking is exceptional')
     end)
 end)
+
+describe('what a staff command calls a line of escrow', function()
+    --- Decided by the line's source, not by whether it happens to carry an
+    --- amount. The MySQL schema declares `amount INT DEFAULT 0`, so an item
+    --- or weapon line reads back with an amount of 0 rather than nothing —
+    --- and 0 is truthy in Lua, so every piece of escrowed property was
+    --- reported to staff as "$0". In the recovery tool that is the one place
+    --- it must not happen: somebody settling an interrupted release needs to
+    --- know what the property was in order to hand it back.
+    local function said(s)
+        local out = {}
+        local bridges = require('crimson-bounty.server.bridges')
+        bridges.installCommands(s)
+        return out
+    end
+
+    it('does not call a piece of property "$0"', function()
+        local describe = require('crimson-bounty.server.bridges').describeLine
+
+        -- Exactly what MySQL hands back for a line that is not money: the
+        -- column default, not nil. And 0 is truthy in Lua.
+        eq(describe({ source = 'item', item = 'lockpick', quantity = 2, amount = 0 }),
+            'lockpick x2',
+            'every escrowed item was reported to staff as $0, in the one tool '
+            .. 'that exists for handing property back')
+        eq(describe({ source = 'weapon', item = 'WEAPON_PISTOL', quantity = 1, amount = 0 }),
+            'WEAPON_PISTOL')
+    end)
+
+    it('still says what money is, and which kind', function()
+        local describe = require('crimson-bounty.server.bridges').describeLine
+        eq(describe({ source = 'cash', amount = 5000 }), '$5000')
+        eq(describe({ source = 'bank', amount = 3000 }), '$3000 bank')
+        eq(describe({ source = 'dirty', amount = 1000 }), '$1000 dirty',
+            'a staff member settling this by hand needs to know which currency')
+    end)
+
+    it('names an item that the database read back with an amount of zero', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000,
+                items = { { name = 'lockpick', count = 2 } } } },
+        })
+        truthy(c)
+
+        -- Exactly what MySQL hands back: a column default rather than nil.
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.source == 'item' then line.amount = 0 end
+        end
+
+        local view = s.admin.timeline(c.id)
+        truthy(view, 'the timeline should be readable')
+
+        local item
+        for _, line in ipairs(view.escrow) do
+            if line.source == 'item' then item = line end
+        end
+        truthy(item, 'the item line should be in the timeline')
+        eq(item.item, 'lockpick',
+            'the timeline has to carry what the property actually is, or no '
+            .. 'wording of it can be right')
+        eq(item.quantity, 2)
+    end)
+end)

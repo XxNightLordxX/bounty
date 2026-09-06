@@ -326,6 +326,30 @@ local function reply(src, line)
     end
 end
 
+--- An escrow line in words, for a staff command.
+---
+--- Decided by the line's SOURCE, not by whether it happens to carry an
+--- amount. The MySQL schema declares `amount INT DEFAULT 0`, so an item or
+--- weapon line reads back with an amount of 0 rather than nothing — and 0 is
+--- truthy in Lua, so every piece of escrowed property was reported to staff
+--- as "$0". In the recovery tool that is the one place it must not happen:
+--- somebody settling an interrupted release needs to know what the property
+--- was to hand it back.
+---@param line table
+---@return string
+local function describeLine(line)
+    if CB.MONEY_SOURCES[line.source] then
+        return ('$%s%s'):format(tostring(line.amount or 0),
+            line.source ~= 'cash' and (' ' .. tostring(line.source)) or '')
+    end
+
+    local what = tostring(line.item or line.source or 'something')
+    local many = tonumber(line.quantity) or 0
+    return many > 1 and (what .. ' x' .. many) or what
+end
+
+Bridges.describeLine = describeLine
+
 --- Register the staff commands. Kept here with the other engine bindings so
 --- there is one place that knows what this resource attaches to the runtime.
 function Bridges.installCommands(modules)
@@ -374,8 +398,7 @@ function Bridges.installCommands(modules)
         for i = 1, #view.escrow do
             local line = view.escrow[i]
             reply(src, ('  escrow %s  %s %s  %s  slot %s  %s'):format(
-                line.id, line.portion, line.source,
-                line.amount and ('$' .. line.amount) or (tostring(line.item) .. ' x' .. tostring(line.quantity)),
+                line.id, line.portion, line.source, describeLine(line),
                 tostring(line.slot), line.state))
         end
 
@@ -401,8 +424,7 @@ function Bridges.installCommands(modules)
         for i = 1, #lines do
             local line = lines[i]
             reply(src, ('  %s  contract %s  %s  was paying %s  (%s)'):format(
-                line.line, line.contract,
-                line.amount and ('$' .. line.amount) or tostring(line.item),
+                line.line, line.contract, describeLine(line),
                 tostring(line.intended), os.date('%Y-%m-%d %H:%M', line.at)))
         end
         reply(src, ('Settle each with /%s <line> pay|return'):format(names.settle))

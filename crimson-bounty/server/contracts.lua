@@ -328,12 +328,25 @@ function Contracts.create(actor, req)
     if Config.Bailout.Enabled and req.bailoutAmount then
         bailout = Util.toPositive(req.bailoutAmount) or 0
         if bailout > 0 then
+            -- Clean money only.
+            --
+            -- The target buys their way out with cash or bank — those are
+            -- the only accounts the buyout can charge. Counting black money
+            -- towards the ceiling therefore let a creator fund a contract in
+            -- a currency that sells for a fraction of its face value and
+            -- extract a multiple of that face value from the target in real
+            -- money. That is precisely the uncapped transfer rail between
+            -- two players this clamp exists to prevent; it was simply
+            -- denominated in the wrong currency.
             local moneyValue = 0
             for i = 1, #lines do
-                if CB.MONEY_SOURCES[lines[i].source] then moneyValue = moneyValue + lines[i].amount end
+                if CB.MONEY_ACCOUNTS[lines[i].source] then
+                    moneyValue = moneyValue + lines[i].amount
+                end
             end
-            -- A bailout needs a money escrow to be a multiple of; an
-            -- items-only contract cannot offer one.
+            -- A bailout needs a clean money escrow to be a multiple of. A
+            -- contract funded only in goods or only in black money cannot
+            -- offer one, for the same reason an items-only contract cannot.
             if moneyValue == 0 then return nil, CB.ERR.INVALID_INPUT end
 
             local min = math.floor(moneyValue * Config.Bailout.MinMultiplier)
