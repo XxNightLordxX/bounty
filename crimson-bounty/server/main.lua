@@ -65,6 +65,13 @@ local DEFAULTS = {
     Bonus = {
         maxPercent = 200,
     },
+    --- Read by the boot validation itself, which runs after this fills the
+    --- gaps — but only just. A config without it took the whole resource
+    --- down before it could say what was wrong.
+    Payout = {
+        AllowConversion = false,
+        DirtyConversionRate = 0.85,
+    },
     Cooldowns = {
         -- Split out of one shared bucket. On a config that predates the
         -- split these are absent, and an absent rule is not a licence to
@@ -207,9 +214,16 @@ local function validateConfig()
     end
 
     if Config.Payout.AllowConversion then
-        warn[#warn + 1] = ('Payout.AllowConversion is on at rate %.2f. Check this matches your ' ..
-            'black market rate, or the escrow becomes a laundering rail')
-            :format(Config.Payout.DirtyConversionRate)
+        -- Honest about what it currently does, which is nothing. The branch
+        -- it gates (escrow.lua, `line.convertTo == 'dirty'`) reads a field
+        -- no code in this resource ever writes, so no payout has ever been
+        -- converted. Warning about a laundering rail that does not exist
+        -- sends an operator looking for a risk they do not have, and would
+        -- have them believe a feature is live that is not.
+        warn[#warn + 1] = 'Payout.AllowConversion is on, but nothing selects a '
+            .. 'conversion: escrow always pays out in the source it was taken '
+            .. 'in. The setting has no effect today. Leave it off unless a '
+            .. 'later version wires it up'
     end
 
     if mode == 'memory' then

@@ -346,3 +346,121 @@ describe('dirty money is an item, and must not count twice', function()
         truthy(c, 'this must not have blocked normal items: ' .. tostring(err))
     end)
 end)
+
+describe('topping up a live contract in each money source', function()
+    --- The take at creation is covered above. The OTHER take —
+    --- Amendments.addEscrow, reachable from the app's "Add to the pot" — has
+    --- never been exercised with dirty money by anything in this suite:
+    --- every addEscrow test in the build passes `{ baseline = { cash = n } }`
+    --- or an item list. It is a real money movement out of a player's
+    --- pocket, on a contract a hunter may already hold, and dirty is the one
+    --- source that cannot go through the money-account API.
+    ---
+    --- The qbx_core account table is asserted on directly as well as the
+    --- inventory: RemoveMoney('dirty', n) on a framework that creates
+    --- unknown accounts would leave a `money.dirty` key behind, and a purse
+    --- check alone would read that as "nothing happened" rather than as
+    --- money moved through the wrong door.
+    local function accountsOf(src)
+        local out = {}
+        for name in pairs(Env.players[src].PlayerData.money) do out[#out + 1] = name end
+        table.sort(out)
+        return table.concat(out, ',')
+    end
+
+    for _, source in ipairs(SOURCES) do
+        it(('adds %s to a contract that is already live'):format(source), function()
+            local s = newStack()
+            local f = fixture(s)
+
+            local c, err = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'Unpaid debt',
+                mode = CB.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 1000 } },
+            })
+            truthy(c, tostring(err))
+            truthy(s.contracts.accept(f.hunter, c.id, false))
+
+            local before = purse(1)
+            local topUp = { baseline = {} }
+            topUp.baseline[source] = 2000
+
+            local ok
+            ok, err = s.amendments.addEscrow(f.creator, c.id, topUp)
+            truthy(ok, ('a top-up in %s was refused: %s'):format(source, tostring(err)))
+
+            local delta = moved(before, purse(1))
+            eq(delta[source], -2000,
+                ('the top-up must leave the pocket as %s'):format(source))
+            for _, other in ipairs(SOURCES) do
+                if other ~= source then
+                    eq(delta[other], 0,
+                        ('a %s top-up moved %s'):format(source, other))
+                end
+            end
+            eq(accountsOf(1), 'bank,cash',
+                'dirty money is an inventory item; nothing may open a qbx_core '
+                .. 'account called "dirty"')
+
+            -- And the hunter is paid it, in the source it was added in.
+            local hunterBefore = purse(3)
+            truthy(s.contracts.claimSlot(c.id, f.hunter.cid, CB.FULFILMENT.ELIMINATION))
+            eq(moved(hunterBefore, purse(3))[source], 2000 + (source == 'cash' and 1000 or 0),
+                ('the top-up must be paid out as %s'):format(source))
+        end)
+    end
+end)
+
+describe('what the form is told a server will accept', function()
+    --- Each money source has an `enabled` flag the server honours when a
+    --- contract is submitted (escrow.lua's addMoney). The form was never
+    --- told about it, so a source an operator had switched off was still
+    --- offered, with the player's balance printed above it — and the whole
+    --- contract was then refused as "That reward does not add up", a message
+    --- about the numbers when the numbers were fine.
+    it('carries an on/off flag for each money source, as it does for goods', function()
+        local s = newStack()
+        s.app.init(s)
+        local f = fixture(s)
+
+        local caps = s.app.handlers.rewardOptions(f.creator, {}).caps
+        for _, source in ipairs({ 'cash', 'bank', 'dirty' }) do
+            eq(caps[source .. 'Enabled'], true,
+                ('the form has no way to know whether %s is accepted'):format(source))
+        end
+    end)
+
+    it('reports a source the operator switched off as off', function()
+        local s = newStack()
+        s.app.init(s)
+        local f = fixture(s)
+
+        local was = Config.Sources.dirty.enabled
+        Config.Sources.dirty.enabled = false
+        local caps = s.app.handlers.rewardOptions(f.creator, {}).caps
+        Config.Sources.dirty.enabled = was
+
+        eq(caps.dirtyEnabled, false,
+            'a switch the form never hears about is not a switch')
+        eq(caps.cashEnabled, true, 'and the others are unaffected')
+    end)
+
+    it('refuses that source on submit, which is what the flag is for', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        local was = Config.Sources.dirty.enabled
+        Config.Sources.dirty.enabled = false
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { dirty = 1000 } },
+        })
+        Config.Sources.dirty.enabled = was
+
+        falsy(c, 'the server really does refuse it')
+        eq(err, CB.ERR.INVALID_REWARD,
+            'and the message the player gets blames the amount, which is why '
+            .. 'the form must not offer the source in the first place')
+    end)
+end)

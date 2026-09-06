@@ -424,6 +424,16 @@ function App.register()
                 -- that was switched off.
                 itemsEnabled = sourceEnabled('item'),
                 weaponsEnabled = sourceEnabled('weapon'),
+                -- The same for the three money sources. Each has an
+                -- `enabled` flag the server honours when the contract is
+                -- submitted, and the form was never told about it — so a
+                -- source an operator had switched off was still offered, with
+                -- the player's balance printed above it, and the whole
+                -- contract was then refused with "That reward does not add
+                -- up". The message blames the numbers; the numbers were fine.
+                cashEnabled = sourceEnabled('cash'),
+                bankEnabled = sourceEnabled('bank'),
+                dirtyEnabled = sourceEnabled('dirty'),
                 -- The total the server will accept across every payout.
                 -- Without it the form could build a contract that is always
                 -- refused, and blame the amounts.

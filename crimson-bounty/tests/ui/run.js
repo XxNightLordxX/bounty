@@ -2516,6 +2516,130 @@ async function main() {
     });
   })();
 
+  /* ---- the three money sources, on the form and after it --------------- */
+  await (async function everyMoneySource() {
+    function wallet(over) {
+      return { ok: true, data: Object.assign({
+        cash: 100000, bank: 50000, dirty: 2000,
+        items: [], weapons: [], inventoryRead: true,
+        caps: { itemsEnabled: true, weaponsEnabled: true, slots: 3,
+                cash: 250000, bank: 500000, dirty: 250000,
+                cashEnabled: true, bankEnabled: true, dirtyEnabled: true }
+      }, over || {}) };
+    }
+
+    async function place(walletData) {
+      const app = boot({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+        ledger: LEDGER,
+        browseTargets: { ok: true, data: { people: [], total: 0, page: 1, pages: 1 } },
+        rewardOptions: walletData
+      });
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+      await settle(); await settle();
+      return app;
+    }
+
+    const all = await place(wallet());
+
+    it('offers all three money sources when the server takes all three', function () {
+      ['cash', 'bank', 'dirty'].forEach(function (source) {
+        truthy(all.view.all().some(function (n) { return n.id === 'slot-' + source + '-1'; }),
+          'no field for ' + source);
+      });
+    });
+
+    it('bounds each field by the ceiling the server sent', function () {
+      eq(String(all.document.getElementById('slot-cash-1').max), '250000');
+      eq(String(all.document.getElementById('slot-bank-1').max), '500000');
+      eq(String(all.document.getElementById('slot-dirty-1').max), '250000',
+        'the ceilings were computed, sent, and never read — so an amount the '
+        + 'creator could afford came back as "That reward does not add up"');
+    });
+
+    /* A source the operator switched off. The server refuses it on submit,
+       so offering it is offering a guaranteed refusal — with a message that
+       blames the numbers. */
+    const noDirty = await place(wallet({
+      caps: { itemsEnabled: true, weaponsEnabled: true, slots: 3,
+              cash: 250000, bank: 500000, dirty: 250000,
+              cashEnabled: true, bankEnabled: true, dirtyEnabled: false }
+    }));
+
+    // Searched in the view that is on screen now. getElementById on the shim
+    // keeps returning nodes from earlier renders, which would pass whatever
+    // the form actually drew.
+    function fieldOnScreen(app, id) {
+      return app.view.all().some(function (n) { return n.id === id; });
+    }
+
+    it('does not offer a money source the server has switched off', function () {
+      truthy(fieldOnScreen(noDirty, 'slot-cash-1'), 'cash is still on');
+      falsy(fieldOnScreen(noDirty, 'slot-dirty-1'),
+        'dirty is off, so a field for it can only ever be refused');
+    });
+
+    it('does not advertise a balance it cannot take', function () {
+      truthy(noDirty.view.textContent.indexOf('Dirty') === -1,
+        'a balance beside a source that is off is an offer the form cannot '
+        + 'honour: ' + noDirty.view.textContent);
+    });
+
+    /* Adding to a contract already out there. This only ever offered cash,
+       so a creator whose money is in the bank could not sweeten one at all —
+       though the server has taken all three since the first commit. */
+    const OWN = { ok: true, data: { created: [{
+      id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
+      reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+      huntersActive: 0, huntersMax: 5, targetName: 'Dana Reyes', role: 'creator',
+      deadline: Math.floor(Date.now() / 1000) + 7200
+    }], accepted: [], onMe: [] } };
+
+    const own = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: OWN, ledger: LEDGER, rewardOptions: wallet(),
+      rewardBreakdown: { ok: true, data: { editable: true, slots: 1, currentSlot: 1,
+        lines: [{ id: 'ct00000001:1', slot: 1, portion: 'baseline',
+                  source: 'cash', amount: 5000, withdrawable: true }] } },
+      addEscrow: { ok: true }
+    });
+    await settle(); await settle();
+    own.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+    await settle(); await settle();
+    click(own, 'Change reward');
+    await settle(); await settle();
+    click(own, 'Add cash');
+    await settle();
+
+    it('offers every source a creator actually holds when adding', function () {
+      const labels = own.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('Bank') !== -1,
+        'a creator whose money is in the bank could not add to a contract at '
+        + 'all: ' + labels.join(' | '));
+      truthy(labels.indexOf('Dirty money') !== -1,
+        'nor one who deals in black money: ' + labels.join(' | '));
+    });
+
+    click(own, 'Bank');
+    await settle();
+    click(own, 'Add');
+    await settle();
+
+    it('adds it in the source that was chosen', function () {
+      const sent = own.sent.filter(function (s) { return s.name === 'addEscrow'; });
+      eq(sent.length, 1, 'one top-up');
+      truthy(sent[0].body.reward.baseline.bank > 0,
+        'it hardcoded cash whatever the creator picked: '
+        + JSON.stringify(sent[0].body.reward));
+      falsy(sent[0].body.reward.baseline.cash);
+    });
+  })();
+
   /* ---- proposing a change you can actually read ----------------------- */
   await (async function proposalsWithContext() {
     const AS_HUNTER = { ok: true, data: { created: [], accepted: [{
@@ -2547,22 +2671,69 @@ async function main() {
         'and the time left, for the same reason: ' + text);
     });
 
-    click(app, 'Reduce the reward');
-
-    it('opens the reward box with the numbers around it', function () {
-      const text = app.view.textContent;
-      truthy(text.indexOf('Take off') !== -1,
-        'a bare box never said what the figure meant: ' + text);
-      truthy(text.indexOf('would then pay') !== -1,
-        'and never said what it would leave: ' + text);
+    /* The server reduces a reward by giving back a whole unclaimed payout,
+       not by shaving an amount off the live one. The app used to send an
+       amount, which sanitize refuses outright — so this option could never
+       once have worked. On a single-payout contract there is nothing to give
+       back, and an option the server would refuse whatever is entered is not
+       an option at all. */
+    it('does not offer to give back a payout there is none of', function () {
+      const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('Give back a later payout') === -1,
+        'a one-payout contract has nothing after the live one: ' + labels.join(' | '));
+      truthy(labels.indexOf('Reduce the reward') === -1,
+        'and the old label sent a payload the server has never accepted: '
+        + labels.join(' | '));
     });
 
-    it('starts the box on a real figure rather than empty', function () {
-      const box = app.document.getElementById('dialog-value');
+    // A contract with collections still to come.
+    const MULTI = { ok: true, data: { created: [], accepted: [{
+      id: 'ct00000002', reason: 'Unpaid debt', mode: 'competitive', state: 'accepted',
+      reward: { baseline: 5000, bonus: 2500 },
+      slots: 3, slotsClaimed: 0, currentSlot: 1,
+      huntersActive: 1, huntersMax: 5,
+      targetName: 'Dana Reyes', role: 'hunter',
+      deadline: Math.floor(Date.now() / 1000) + 7200
+    }], onMe: [] } };
+
+    const multi = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: MULTI, ledger: LEDGER, amendments: { ok: true, data: [] }
+    });
+    await settle(); await settle();
+    multi.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+    await settle(); await settle();
+    click(multi, 'Propose change');
+    click(multi, 'Give back a later payout');
+
+    it('asks which collection, bounded to the ones still to come', function () {
+      const box = multi.document.getElementById('dialog-value');
       truthy(box, 'there should be a number field');
-      truthy(box.value && Number(box.value) > 0,
+      eq(String(box.min), '2', 'the live collection cannot be given back');
+      eq(String(box.max), '3', 'nor one that does not exist');
+      truthy(box.value && Number(box.value) >= 2,
         'an empty box is the whole complaint: got "' + box.value + '"');
-      eq(String(box.max), '7499', 'and it cannot propose away more than is there');
+    });
+
+    it('says what giving it back would do', function () {
+      truthy(multi.view.textContent.indexOf('goes back to the client') !== -1,
+        'the consequence has to be on screen: ' + multi.view.textContent);
+    });
+
+    click(multi, 'Propose');
+    await settle();
+
+    it('sends a slot, which is what the server reads', function () {
+      const sent = multi.sent.filter(function (s) { return s.name === 'propose'; });
+      eq(sent.length, 1, 'one proposal');
+      eq(sent[0].body.kind, 'reduce_reward');
+      truthy(sent[0].body.payload.slot >= 2,
+        'the server sanitizes on payload.slot and refuses anything without it: '
+        + JSON.stringify(sent[0].body.payload));
+      falsy(sent[0].body.payload.amount,
+        'an amount is the payload that could never work');
     });
   })();
 

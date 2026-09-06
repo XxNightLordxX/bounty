@@ -863,7 +863,11 @@
   // value, not something to put in front of a player.
   var AMENDMENT = {
     reduce_reward: function (p) {
-      return 'Reduce the reward' + (p && p.amount ? ' by ' + money(p.amount) : '');
+      // A slot, never an amount: the server gives back a whole unclaimed
+      // collection. Describing it as money was describing a payload the
+      // server has never accepted.
+      return 'Give back collection ' + ((p && p.slot) || '?')
+        + ', returning what funds it to the client';
     },
     shorten_deadline: function (p) {
       return 'Shorten the deadline'
@@ -985,6 +989,12 @@
     var pot = rewardTotal(contract);
     var left = minutesLeft(contract);
 
+    // Payouts still to come after the one being competed for. Only those can
+    // be given back, so only those are worth offering.
+    var total = Number(contract.slots) || 1;
+    var current = Number(contract.currentSlot) || 1;
+    var spare = Math.max(0, total - current);
+
     var options = [
       {
         label: 'Shorten the deadline',
@@ -1014,28 +1024,42 @@
         }
       },
       {
-        label: 'Reduce the reward',
-        note: pot > 0 ? 'Pays ' + money(pot) + ' now.' : 'Nothing priced on it.',
+        /* The server reduces a reward by giving back a whole unclaimed
+           payout, not by shaving an amount off the live one — a slot that is
+           being competed for cannot be half funded. The app used to send an
+           amount, which sanitize refuses outright, so this option could
+           never once have worked: every press was an invalid_input.
+
+           It is offered only when there is actually a later payout to give
+           back, rather than opening a box that always fails. A creator with
+           nobody hunting has the direct route instead: Change reward. */
+        label: 'Give back a later payout',
+        note: spare > 0
+          ? (spare === 1 ? 'One collection after this one.' : spare + ' collections after this one.')
+          : 'Nothing after the one being competed for.',
+        skip: spare <= 0,
         run: function () {
-          if (pot <= 1) {
-            return say('There is nothing on this contract to reduce.');
-          }
-          askNumber('Reduce the reward',
+          askNumber('Give back a later payout',
             hunter
-              ? 'You are offering to finish this for less than was agreed.'
-              : 'You are asking the operative to accept less than was agreed.',
-            function (amount) {
-              sendProposal(contract, 'reduce_reward', { amount: amount });
+              ? 'You are offering to give up one of the collections still to '
+                + 'come. What is on the table now is untouched.'
+              : 'This returns one whole later collection to you. The one being '
+                + 'competed for now is untouched.',
+            function (slot) {
+              sendProposal(contract, 'reduce_reward', { slot: slot });
             },
             {
-              label: 'Take off (dollars)',
-              value: Math.floor(pot / 10) || 1, min: 1, max: pot - 1,
+              label: 'Which collection to give back',
+              value: total, min: current + 1, max: total,
               confirm: 'Propose',
               hint: function (value) {
-                if (!value || value < 1 || value > pot - 1) {
-                  return 'Between $1 and ' + money(pot - 1) + '.';
+                if (!value || value < current + 1 || value > total) {
+                  return 'A collection after the current one: '
+                    + (current + 1) + ' to ' + total + '.';
                 }
-                return 'It would then pay ' + money(pot - value) + '.';
+                return 'Collection ' + value + ' of ' + total
+                  + ' goes back to the client. ' + (total - 1)
+                  + ' would remain.';
               }
             });
         }
@@ -1054,9 +1078,18 @@
     state.dialog = {
       kind: 'choice',
       question: 'Propose a change',
-      detail: 'Nothing happens until '
+      // The terms, in the header rather than on one option. What the
+      // contract pays and how long is left is what every one of these
+      // choices is about, and it should not disappear because the option
+      // that happened to carry it does not apply here.
+      detail: 'Pays ' + money(pot) + ', runs out in ' + durationText(left)
+        + (total > 1 ? ', ' + total + ' collections' : '')
+        + '. Nothing happens until '
         + (hunter ? 'the client' : 'the operative') + ' agrees.',
-      options: options
+      // An option the server would refuse whatever the player enters is not
+      // an option; it is a button that wastes their time and reads as a
+      // fault. Dropped rather than drawn.
+      options: options.filter(function (option) { return !option.skip; })
     };
     render();
   }
@@ -1278,17 +1311,78 @@
     });
   }
 
+  /* Put more up on a contract that is already out there.
+     
+     This only ever offered cash. A creator whose money is in the bank, or
+     who deals in black money, had no way to sweeten a contract at all —
+     the server has taken all three since the first commit. */
   function addEscrow(contract) {
-    askNumber('Add how much cash to the pot?',
-              'It is taken from you now and held with the rest.',
-              function (value) {
-                post('addEscrow', { id: contract.id, reward: { baseline: { cash: value } } })
-                  .then(function (r) {
-                    if (!r.ok) return fail(r);
-                    say('Added to the pot.', 'gold');
-                    refresh();
-                  });
-              });
+    var wallet = state.wallet;
+    if (!wallet) {
+      // The wallet is read when the Place form opens, and this can be
+      // reached without ever going there.
+      return post('rewardOptions', {}).then(function (r) {
+        if (!r.ok || !r.data) { return fail(r); }
+        state.wallet = r.data;
+        addEscrow(contract);
+      });
+    }
+
+    var caps = wallet.caps || {};
+    var usable = ['cash', 'bank', 'dirty'].filter(function (source) {
+      return caps[source + 'Enabled'] !== false && (Number(wallet[source]) || 0) > 0;
+    });
+
+    if (!usable.length) {
+      return say('You have nothing this server takes as a reward.');
+    }
+
+    function amountFrom(source) {
+      var held = Number(wallet[source]) || 0;
+      var ceiling = Math.min(held, Number(caps[source]) || held);
+      askNumber('Add ' + (SOURCE_LABELS[source] || source).toLowerCase()
+                  + ' to the reward',
+        'It is taken from you now and held with the rest.',
+        function (value) {
+          var reward = { baseline: {} };
+          reward.baseline[source] = value;
+          post('addEscrow', { id: contract.id, reward: reward }).then(function (r) {
+            if (!r.ok) return fail(r);
+            say('Added to the reward.', 'gold');
+            state.wallet = null;
+            refresh();
+          });
+        },
+        {
+          label: 'How much',
+          value: Math.min(1000, ceiling), min: 1, max: ceiling,
+          confirm: 'Add',
+          hint: function (value) {
+            if (!value || value < 1 || value > ceiling) {
+              return 'Between ' + money(1) + ' and ' + money(ceiling) + '.';
+            }
+            return 'You hold ' + money(held) + '; '
+              + money(held - value) + ' would be left.';
+          }
+        });
+    }
+
+    // One source, straight to the amount. More than one, ask which first.
+    if (usable.length === 1) { return amountFrom(usable[0]); }
+
+    state.dialog = {
+      kind: 'choice',
+      question: 'Add to the reward',
+      detail: 'Taken from you now and held with the rest.',
+      options: usable.map(function (source) {
+        return {
+          label: SOURCE_LABELS[source] || source,
+          note: 'You hold ' + money(wallet[source]) + '.',
+          run: function () { amountFrom(source); }
+        };
+      })
+    };
+    render();
   }
 
   // Threads are addressed by an opaque server-issued handle, never by a
@@ -1509,11 +1603,14 @@
       form.appendChild(failed);
     } else if (state.wallet) {
       var w = state.wallet;
+      var wcaps = w.caps || {};
       var wallet = el('div', 'card');
       var meta = el('div', 'meta');
-      meta.appendChild(chip('Cash ' + money(w.cash)));
-      meta.appendChild(chip('Bank ' + money(w.bank)));
-      meta.appendChild(chip('Dirty ' + money(w.dirty)));
+      // Only what this server will actually take. A balance shown beside a
+      // source that is switched off is an offer the form cannot honour.
+      if (wcaps.cashEnabled !== false) { meta.appendChild(chip('Cash ' + money(w.cash))); }
+      if (wcaps.bankEnabled !== false) { meta.appendChild(chip('Bank ' + money(w.bank))); }
+      if (wcaps.dirtyEnabled !== false) { meta.appendChild(chip('Dirty ' + money(w.dirty))); }
       wallet.appendChild(meta);
       form.appendChild(wallet);
     } else {
@@ -1637,14 +1734,38 @@
       var slot = el('div', 'slot');
       slot.appendChild(el('h4', null, 'Payout ' + i));
 
+      var caps = (state.wallet && state.wallet.caps) || {};
       var split = el('div', 'split');
+      var offered = 0;
+
       ['cash', 'bank', 'dirty'].forEach(function (source) {
+        // A source the server has switched off is not offered. It used to
+        // be drawn regardless, with the player's balance printed above it,
+        // and the whole contract was then refused with "That reward does not
+        // add up" — a message about the numbers, when the numbers were fine
+        // and the source was simply not accepted.
+        if (caps[source + 'Enabled'] === false) { return; }
+        offered++;
+
         var id = 'slot-' + source + '-' + i;
-        split.appendChild(labelled(
-          source.charAt(0).toUpperCase() + source.slice(1),
-          drafted(numberInput(id, 0), id, '0')));
+        var field = drafted(numberInput(id, 0), id, '0');
+
+        // The ceiling the server will enforce, applied here so it is a
+        // bounded field rather than a refusal after the fact. It was
+        // computed, sent, and never read.
+        var ceiling = caps[source];
+        if (ceiling) { field.max = ceiling; }
+
+        split.appendChild(labelled(SOURCE_LABELS[source] || source, field));
       });
-      slot.appendChild(split);
+
+      if (offered > 0) {
+        slot.appendChild(split);
+      } else {
+        slot.appendChild(el('div', 'hint',
+          'This server does not take money as a reward. Items and weapons '
+          + 'below, if it takes those.'));
+      }
 
       slot.appendChild(goodsBox(i));
       box.appendChild(slot);

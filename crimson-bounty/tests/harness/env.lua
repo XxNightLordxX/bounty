@@ -7,6 +7,19 @@ local Env = {}
 
 Env.time = 1700000000
 Env.gameTimer = 0
+
+--- The accounts qbx_core actually has.
+---
+--- The harness used to create whatever account it was handed: AddMoney
+--- ('dirty', n) invented a `money.dirty` field and returned true. Dirty
+--- money is not an account at all — it is an ox_inventory item — so the
+--- single most likely money bug in this resource, paying or charging it
+--- through the money API, moved nothing on a live server and passed here
+--- without a murmur.
+---
+--- A harness that provides what production does not is not testing this
+--- program. An unknown account is refused, exactly as qbx_core refuses it.
+Env.MONEY_ACCOUNTS = { cash = true, bank = true, crypto = true }
 Env.players = {}          -- [source] = player record
 Env.byCitizen = {}        -- [citizenid] = source
 Env.events = {}           -- registered net events
@@ -88,16 +101,21 @@ function Env.addPlayer(opts)
             -- always succeeded made the one branch that ignores the answer
             -- untestable.
             if player._refuseMoney then return false end
+            if not Env.MONEY_ACCOUNTS[account] then return false end
             player.PlayerData.money[account] = (player.PlayerData.money[account] or 0) + amount
             return true
         end,
         RemoveMoney = function(account, amount)
+            if not Env.MONEY_ACCOUNTS[account] then return false end
             local have = player.PlayerData.money[account] or 0
             if have < amount then return false end
             player.PlayerData.money[account] = have - amount
             return true
         end,
-        GetMoney = function(account) return player.PlayerData.money[account] or 0 end,
+        GetMoney = function(account)
+            if not Env.MONEY_ACCOUNTS[account] then return 0 end
+            return player.PlayerData.money[account] or 0
+        end,
     }
 
     Env.players[src] = player
