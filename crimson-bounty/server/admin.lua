@@ -310,6 +310,19 @@ function Admin.diagnose(source, subjectId)
     say('--- crimson-bounty diagnosis ---')
     say(('storage: %s'):format(tostring(Config.Database.Mode)))
 
+    -- Contracts the store could not load. They are not on the board and
+    -- their escrow cannot be returned automatically, so they belong at the
+    -- top of any report about why something is missing.
+    local held = Storage.quarantined and Storage.quarantined() or {}
+    if #held > 0 then
+        say(('  %d CONTRACT(S) COULD NOT BE LOADED:'):format(#held))
+        for i = 1, #held do
+            say(('    %s (%s)'):format(held[i].id, held[i].reason))
+        end
+        say('    -> restore those files from a backup and restart, or settle '
+            .. 'them by hand and take their ids out of data/store.json')
+    end
+
     -- Who the player-specific checks run as.
     --
     -- This used to be the caller and only the caller, which made the whole

@@ -792,3 +792,83 @@ describe('who may run the admin commands', function()
         truthy(told:find('inventory read', 1, true), told)
     end)
 end)
+
+--- Every setting the handlers index without checking must be filled.
+---
+--- config.lua is a file owners edit, so it stops tracking the shipped one
+--- the moment they do. Anything added afterwards is simply absent from
+--- their copy, and absent is nil — so a handler that indexes it throws,
+--- inside a request, where the player reads "Could not read what you are
+--- carrying" and the operator sees nothing at all. That exact symptom cost
+--- a live server days.
+describe('a config that predates settings the code now reads', function()
+    local function bootedStack()
+        local s = newStack()
+        s.app.init(s)
+        return s, fixture(s)
+    end
+
+    --- Strip one setting, fill the defaults as boot does, and run the
+    --- handler that reads it.
+    local function withoutSetting(path, fn)
+        local main = require('server.main')
+        local parts = {}
+        for part in path:gmatch('[^%.]+') do parts[#parts + 1] = part end
+
+        local holder = Config
+        for i = 1, #parts - 1 do holder = holder[parts[i]] end
+        local key = parts[#parts]
+        local saved = holder[key]
+
+        holder[key] = nil
+        main.applyConfigDefaults()
+        local ok, err = pcall(fn)
+        holder[key] = saved
+
+        return ok, err
+    end
+
+    -- The three money sources and the bonus, each indexed directly while
+    -- the Place form is built.
+    for _, path in ipairs({ 'Sources.cash', 'Sources.bank', 'Sources.dirty',
+                            'Sources.item', 'Sources.weapon', 'Bonus' }) do
+        it(('fills %s so the wallet handler still answers'):format(path), function()
+            local s, f = bootedStack()
+            local ok, err = withoutSetting(path, function()
+                return s.app.handlers.rewardOptions(f.creator, {})
+            end)
+            truthy(ok, ('a config without %s throws in the wallet handler, which '
+                .. 'the player reads as "Could not read what you are carrying": %s')
+                :format(path, tostring(err)))
+        end)
+    end
+
+    it('fills the dirty item name, which is not a money account at all', function()
+        local s, f = bootedStack()
+        local main = require('server.main')
+
+        Config.Sources.dirty = nil
+        main.applyConfigDefaults()
+        local filled = Config.Sources.dirty
+
+        truthy(filled, 'dirty must be filled in')
+        eq(filled.item, 'black_money',
+            'dirty money lives in the inventory under an item name, and every '
+            .. 'read and write of it goes through that name — a nil there moves '
+            .. 'nothing and reports success')
+        truthy(filled.max and filled.max > 0, 'and it needs a ceiling like the others')
+    end)
+
+    it('leaves a setting the operator did set alone', function()
+        local main = require('server.main')
+        local saved = Config.Sources.dirty
+        Config.Sources.dirty = { enabled = false, max = 1, item = 'their_item' }
+        main.applyConfigDefaults()
+        local after = Config.Sources.dirty
+        Config.Sources.dirty = saved
+
+        eq(after.enabled, false, 'a decision the operator made is not a gap to fill')
+        eq(after.item, 'their_item', 'nor is their own item name')
+        eq(after.max, 1)
+    end)
+end)

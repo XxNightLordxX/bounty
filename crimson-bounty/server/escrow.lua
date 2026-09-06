@@ -124,6 +124,20 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
             if not name or not count then return CB.ERR.INVALID_REWARD end
             if Config.EscrowBlacklist[name] then return CB.ERR.INVALID_REWARD end
 
+            -- Dirty money is an inventory item, so without this it can be
+            -- escrowed twice over: once as `dirty`, which is capped by
+            -- Config.Sources.dirty.max and switched by its `enabled` flag,
+            -- and again through the item picker, which is neither. A server
+            -- that had turned dirty money off entirely still took it, and a
+            -- creator could put up more of it than the ceiling allows by
+            -- offering the rest as an item. It also read as two different
+            -- things on the board.
+            --
+            -- Compared against the configured item name rather than a
+            -- literal, because that name is the operator's to choose.
+            local dirtyItem = Config.Sources.dirty and Config.Sources.dirty.item
+            if dirtyItem and name == dirtyItem then return CB.ERR.INVALID_REWARD end
+
             -- A weapon is one physical object with a serial, attachments and
             -- wear. Through this path it would be stored as a bare name and
             -- handed back as a fresh clean one: attachments destroyed, wear
@@ -194,6 +208,20 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
             local invSlot = Util.toPositive(entry.slot, 200)
             if not name or not invSlot then return CB.ERR.INVALID_REWARD end
             if Config.EscrowBlacklist[name] then return CB.ERR.INVALID_REWARD end
+
+            -- Dirty money is an inventory item, so without this it can be
+            -- escrowed twice over: once as `dirty`, which is capped by
+            -- Config.Sources.dirty.max and switched by its `enabled` flag,
+            -- and again through the item picker, which is neither. A server
+            -- that had turned dirty money off entirely still took it, and a
+            -- creator could put up more of it than the ceiling allows by
+            -- offering the rest as an item. It also read as two different
+            -- things on the board.
+            --
+            -- Compared against the configured item name rather than a
+            -- literal, because that name is the operator's to choose.
+            local dirtyItem = Config.Sources.dirty and Config.Sources.dirty.item
+            if dirtyItem and name == dirtyItem then return CB.ERR.INVALID_REWARD end
 
             -- Read the weapon's real metadata from the server-side inventory
             -- and snapshot it (§9.4). The client's copy is never stored.

@@ -742,23 +742,55 @@ describe('json sharding', function()
         eq(#reopened.readHunters('ct1'), 1, 'and its hunters')
     end)
 
-    it('refuses to start when a listed contract file is gone', function()
+    --- A shard the index names but that will not load.
+    ---
+    --- This used to abort the boot, on the grounds that the contract held
+    --- escrow nobody could return. It does — but refusing to start returns
+    --- it no better: the shard that recorded the escrow is the thing that is
+    --- missing, so the money is equally unreachable either way. All the
+    --- refusal added was the whole resource down for everybody, on a server
+    --- whose only way out was to hand-edit the store and guess which line to
+    --- remove. It happened.
+    ---
+    --- What the refusal was really buying was the operator's attention.
+    --- That is bought by the report instead.
+    it('starts without the contract whose file is gone, rather than not at all', function()
         local store = fresh()
         store.writeContract(contract('ct1'))
+        store.writeContract(contract('ct2'))
         store.close()
 
-        -- The index says the contract exists and its escrow does not load.
-        -- Starting anyway would quietly lose whatever it held.
         Natives.files['data/contracts/ct1.json'] = nil
 
         package.loaded['crimson-bounty.server.storage.json'] = nil
         local reopened = require('crimson-bounty.server.storage.json')
         local ok, err = pcall(reopened.open)
-        falsy(ok, 'a missing contract file must be fatal')
-        truthy(tostring(err):find('Refusing to start', 1, true), tostring(err))
+        truthy(ok, 'one broken shard must not take the resource down: ' .. tostring(err))
+
+        truthy(reopened.readContract('ct2'),
+            'every contract that IS readable has to survive the one that is not')
+        falsy(reopened.readContract('ct1'), 'and the missing one is simply not there')
     end)
 
-    it('refuses to start on a contract file that will not parse', function()
+    it('names what it could not load, so nobody has to guess', function()
+        local store = fresh()
+        store.writeContract(contract('ct1'))
+        store.close()
+        Natives.files['data/contracts/ct1.json'] = nil
+
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        local reopened = require('crimson-bounty.server.storage.json')
+        reopened.open()
+
+        local held = reopened.quarantined()
+        eq(#held, 1, 'the contract that could not be loaded has to be recorded')
+        eq(held[1].id, 'ct1',
+            'the id is the only handle anybody has on what was lost, and an '
+            .. 'operator restoring a backup needs to know which file to look for')
+        truthy(held[1].reason and #held[1].reason > 0, 'and why it could not be read')
+    end)
+
+    it('does the same for a file that will not parse', function()
         local store = fresh()
         store.writeContract(contract('ct1'))
         store.close()
@@ -766,7 +798,59 @@ describe('json sharding', function()
 
         package.loaded['crimson-bounty.server.storage.json'] = nil
         local reopened = require('crimson-bounty.server.storage.json')
-        falsy(pcall(reopened.open), 'unreadable is not empty')
+        truthy(pcall(reopened.open), 'unreadable is not a reason to refuse to start')
+        eq(#reopened.quarantined(), 1)
+        eq(reopened.quarantined()[1].reason, 'unreadable')
+    end)
+
+    it('reads a shard twice before believing it is gone', function()
+        local store = fresh()
+        store.writeContract(contract('ct1'))
+        store.close()
+
+        -- A single failed read is as likely to be the file being written, or
+        -- a disk hiccup, as a genuinely missing shard. Treating the first
+        -- failure as final is how a live contract gets dropped.
+        local saved = Natives.files['data/contracts/ct1.json']
+        local reads = 0
+        local realLoad = _G.LoadResourceFile
+        _G.LoadResourceFile = function(res, file)
+            if file == 'data/contracts/ct1.json' then
+                reads = reads + 1
+                if reads == 1 then return nil end
+                return saved
+            end
+            return realLoad(res, file)
+        end
+
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        local reopened = require('crimson-bounty.server.storage.json')
+        reopened.open()
+        _G.LoadResourceFile = realLoad
+
+        truthy(reads >= 2, 'it gave up after one read')
+        truthy(reopened.readContract('ct1'),
+            'a contract that was there all along was thrown away on one bad read')
+        eq(#reopened.quarantined(), 0)
+    end)
+
+    it('forgets a quarantine once the store is opened cleanly again', function()
+        local store = fresh()
+        store.writeContract(contract('ct1'))
+        store.close()
+        Natives.files['data/contracts/ct1.json'] = nil
+
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        local reopened = require('crimson-bounty.server.storage.json')
+        reopened.open()
+        eq(#reopened.quarantined(), 1)
+
+        -- A second open with nothing wrong must not still be complaining
+        -- about the last one.
+        reopened.close()
+        Natives.files = {}
+        reopened.open()
+        eq(#reopened.quarantined(), 0, 'a stale warning is one nobody reads')
     end)
 
     it('migrates a store written by the single-file version', function()

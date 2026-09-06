@@ -33,6 +33,20 @@ local indexDirty = false
 --- and the index is the only record of which files exist.
 local shardIds = {}
 
+--- Contracts the index names but whose file could not be read.
+---
+--- Kept, rather than forgotten: the id is the only handle anybody has on
+--- what was lost, and an operator restoring a backup needs to know which
+--- files to look for. Reported at boot, and by the diagnosis command, until
+--- the index no longer names them.
+local quarantined = {}
+
+--- What could not be loaded, for the boot report and cb-diag.
+---@return table[] entries
+function JsonStore.quarantined()
+    return quarantined
+end
+
 local function directory()
     return Config.Database.Json.Directory or 'data'
 end
@@ -223,7 +237,7 @@ function JsonStore.open()
 
     if raw == nil or raw == '' then
         db = json.decode(json.encode(EMPTY))
-        dirtyShards, shardIds, indexDirty = {}, {}, true
+        dirtyShards, shardIds, quarantined, indexDirty = {}, {}, {}, true
         JsonStore.save(true)
         JsonStore.assertWritable()
         return true
@@ -237,7 +251,7 @@ function JsonStore.open()
     end
 
     db = json.decode(json.encode(EMPTY))
-    dirtyShards, shardIds = {}, {}
+    dirtyShards, shardIds, quarantined = {}, {}, {}
     for key, value in pairs(decoded) do
         if key ~= 'contractIds' then db[key] = value end
     end
@@ -253,22 +267,51 @@ function JsonStore.open()
         for i = 1, #decoded.contractIds do
             local id = decoded.contractIds[i]
             local file = shardPath(id)
+
+            -- Read twice before believing it is gone. A single failed read is
+            -- as likely to be the file being written, or a disk hiccup, as it
+            -- is to be a genuinely missing shard — and treating a transient
+            -- failure as a lost contract is how a live contract gets dropped.
             local shardRaw = file and LoadResourceFile(resource, file)
-
             if not shardRaw or shardRaw == '' then
-                error(('[crimson-bounty] contract %s is listed in %s but its file is ' ..
-                       'missing or empty. Refusing to start: that contract holds escrow ' ..
-                       'nobody could return.'):format(tostring(id), path()))
+                shardRaw = file and LoadResourceFile(resource, file)
             end
 
-            local shardOk, shard = pcall(json.decode, shardRaw)
-            if not shardOk or type(shard) ~= 'table' then
-                error(('[crimson-bounty] contract file for %s is unreadable. Refusing to ' ..
-                       'start rather than discarding its escrow.'):format(tostring(id)))
+            local shard
+            if shardRaw and shardRaw ~= '' then
+                local shardOk, decodedShard = pcall(json.decode, shardRaw)
+                if shardOk and type(decodedShard) == 'table' then shard = decodedShard end
             end
 
-            absorb(shard)
-            shardIds[id] = true
+            if shard then
+                absorb(shard)
+                shardIds[id] = true
+            else
+                -- Set aside, not discarded, and not a reason to refuse to
+                -- start.
+                --
+                -- This used to abort the boot, on the grounds that the
+                -- contract held escrow nobody could return. It does — but
+                -- refusing to start returns it no better: the shard that
+                -- recorded the escrow is the thing that is missing, so the
+                -- money is equally unreachable either way. All the refusal
+                -- added was the whole resource being down for everybody, on
+                -- a server where the only way out was to edit the store by
+                -- hand and guess which line to remove.
+                --
+                -- What the refusal was really buying was the operator's
+                -- attention. That is bought here instead, by a warning that
+                -- names the contract and comes back every single boot until
+                -- somebody deals with it, and by keeping the id where it can
+                -- be read rather than dropping it silently.
+                quarantined[#quarantined + 1] = {
+                    id = tostring(id),
+                    file = file,
+                    reason = (shardRaw and shardRaw ~= '')
+                        and 'unreadable' or 'missing or empty',
+                    at = os.time(),
+                }
+            end
         end
     elseif type(decoded.contracts) == 'table' then
         -- The old single-file layout, from a version before this one. Load

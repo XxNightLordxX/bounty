@@ -44,6 +44,26 @@ local DEFAULTS = {
         --- left alone.
         item   = { enabled = true, maxStacks = 10, maxPerStack = 100 },
         weapon = { enabled = true, max = 3 },
+
+        --- The three money sources. These were left out on the assumption
+        --- that every config has them, and the code reads them without
+        --- checking: Config.Sources.dirty.item, .cash.max and .bank.max are
+        --- all indexed directly while building the Place form. Any one of
+        --- them missing throws inside the wallet handler, which the player
+        --- reads as "Could not read what you are carrying" and an operator
+        --- sees as nothing at all.
+        ---
+        --- `dirty` is the odd one: it is not a qbx_core account but an
+        --- ox_inventory item, so it carries the item name the balance is
+        --- actually stored under.
+        cash   = { enabled = true, max = 250000 },
+        bank   = { enabled = true, max = 500000 },
+        dirty  = { enabled = true, max = 250000, item = 'black_money' },
+    },
+    --- Indexed while building the same form, and absent on any config older
+    --- than the kidnapping bonus.
+    Bonus = {
+        maxPercent = 200,
     },
     Cooldowns = {
         -- Split out of one shared bucket. On a config that predates the
@@ -424,6 +444,29 @@ function StartCrimsonBounty()
     StartTick()
 
     reportIntegrations()
+    -- Loudly, and every boot, until somebody deals with it. This is what
+    -- refusing to start used to buy — the operator's attention — bought
+    -- without taking the whole resource down to get it.
+    local held = Storage.quarantined and Storage.quarantined() or {}
+    if #held > 0 then
+        print('[crimson-bounty] ============================================')
+        print(('[crimson-bounty] %d CONTRACT(S) COULD NOT BE LOADED and are not '
+            .. 'on the board:'):format(#held))
+        for i = 1, #held do
+            print(('[crimson-bounty]   %s  (%s)  %s')
+                :format(held[i].id, held[i].reason, tostring(held[i].file)))
+        end
+        print('[crimson-bounty]   Each held escrow that cannot now be returned '
+            .. 'automatically.')
+        print('[crimson-bounty]   Restore those files from a backup and restart to '
+            .. 'recover them,')
+        print('[crimson-bounty]   or settle them by hand and remove their ids from '
+            .. 'data/store.json.')
+        print('[crimson-bounty]   This resource started without them rather than '
+            .. 'not at all.')
+        print('[crimson-bounty] ============================================')
+    end
+
     print(('[crimson-bounty] started in %s mode'):format(Config.Database.Mode))
     return modules
 end
@@ -697,4 +740,10 @@ return {
     -- Exposed so the suite can assert on what the report covers rather than
     -- on printed output.
     integrations = optionalIntegrations, reportIntegrations = reportIntegrations,
+    -- Exposed so a test can strip a setting, fill the defaults, and check
+    -- the handlers still run. Which keys must be filled is not evident from
+    -- DEFAULTS on its own: what matters is which ones the code indexes
+    -- without checking, and that is only provable by removing one and
+    -- watching what breaks.
+    applyConfigDefaults = applyConfigDefaults, configDefaults = DEFAULTS,
 }
