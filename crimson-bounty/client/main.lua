@@ -76,9 +76,46 @@ function App.build()
     return buildStamp
 end
 
+--- Whether this player's job lets them have the app at all.
+---
+--- nil until the server has said. Unknown is not "yes": a player who has
+--- never been told is not shown the app, because showing it and then taking
+--- it away is worse than a second's wait, and because the answer arrives on
+--- join before the phone is ever opened.
+local accessAllowed = nil
+
+--- Take the app back off the phone.
+---
+--- A player who takes a barred job mid-session has it installed already, so
+--- refusing to register it next time is not enough — it has to go now. The
+--- export for this has moved across lb-phone releases, so each name is tried
+--- and every one of them is guarded: a build with none of them leaves the
+--- icon there, and the server still refuses every request behind it.
+local function unregisterApp()
+    if not appReady then return end
+
+    for _, name in ipairs({ 'RemoveCustomApp', 'DeleteCustomApp', 'UninstallApp' }) do
+        local called, ok = phone(name, function()
+            return exports['lb-phone'][name](exports['lb-phone'], 'crimson-bounty')
+        end)
+        if called and ok ~= false then
+            appReady = false
+            return
+        end
+    end
+
+    print('[crimson-bounty] this lb-phone build has no export for removing a '
+        .. 'custom app, so the icon stays until the player reconnects. Every '
+        .. 'request behind it is still refused.')
+end
+
 --- Register the app, once. Returns false while it is still worth retrying.
 local function registerApp()
     if appReady then return true end
+    -- Barred jobs never get it. The gate refuses their every request anyway,
+    -- so the app they were being shown installed, opened, and answered
+    -- nothing — which reads as broken rather than as not for them.
+    if accessAllowed ~= true then return true end
 
     local called, ok = phone('AddCustomApp', function()
         return exports['lb-phone']:AddCustomApp({
@@ -130,31 +167,60 @@ end
 --- console nobody reads.
 local registering = false
 
+local function attemptRegistration()
+
+    while GetResourceState('lb-phone') ~= 'started' do Wait(500) end
+    Wait(1000)
+
+    for attempt = 1, 10 do
+        if registerApp() then return end
+        print(('[crimson-bounty] app registration attempt %d failed; retrying')
+            :format(attempt))
+        Wait(2000 * attempt)
+    end
+
+    print('[crimson-bounty] lb-phone would not register the app. It will not appear '
+        .. 'on the phone until this resource or lb-phone is restarted.')
+end
+
+--- The same, with the in-progress flag released whatever happens.
+---
+--- The flag used to be cleared on each way out of the function above, which
+--- meant any throw in between left it set for the rest of the session — and
+--- a set flag makes every later attempt return immediately. lb-phone coming
+--- back would then never re-register the app, and the player would have no
+--- app until they reconnected, with nothing said. A guard whose failure mode
+--- is "this feature is now permanently off" has to be the kind that cannot
+--- leak.
 local function registerWithRetries()
     -- lb-phone restarting twice in quick succession would otherwise leave
     -- two of these looping against each other.
     if registering then return end
     registering = true
 
-    while GetResourceState('lb-phone') ~= 'started' do Wait(500) end
-    Wait(1000)
-
-    for attempt = 1, 10 do
-        if registerApp() then
-            registering = false
-            return
-        end
-        print(('[crimson-bounty] app registration attempt %d failed; retrying')
-            :format(attempt))
-        Wait(2000 * attempt)
-    end
-
+    local ok, err = pcall(attemptRegistration)
     registering = false
-    print('[crimson-bounty] lb-phone would not register the app. It will not appear '
-        .. 'on the phone until this resource or lb-phone is restarted.')
+
+    if not ok then
+        print(('[crimson-bounty] app registration threw: %s'):format(tostring(err)))
+    end
 end
 
 CreateThread(registerWithRetries)
+
+--- Ask whether this player may have the app.
+---
+--- The server pushes this on join and on every job change, but a client that
+--- started after the join push — a resource restart mid-session, most
+--- often — would otherwise wait for an event that has already been and
+--- gone, and never get the app at all. Asked until answered, then dropped.
+CreateThread(function()
+    for _ = 1, 10 do
+        if accessAllowed ~= nil then return end
+        TriggerServerEvent('crimson-bounty:whoAmI')
+        Wait(2000)
+    end
+end)
 
 --- lb-phone restarting drops every custom app it was holding, this one
 --- included. Without re-registering, the app is gone until the next server
@@ -163,6 +229,23 @@ AddEventHandler('onClientResourceStart', function(resource)
     if resource ~= 'lb-phone' then return end
     appReady = false
     CreateThread(registerWithRetries)
+end)
+
+--- The server's decision about whether this player may have the app.
+---
+--- Sent on join, on any job change, and whenever the client asks. The client
+--- never decides this for itself: the job blacklist is the server's config
+--- and a client that could answer it could grant itself the app.
+RegisterNetEvent('crimson-bounty:access', function(allowed)
+    local was = accessAllowed
+    accessAllowed = allowed == true
+    if accessAllowed == was then return end
+
+    if accessAllowed then
+        CreateThread(registerWithRetries)
+    else
+        unregisterApp()
+    end
 end)
 
 --------------------------------------------------------------------------

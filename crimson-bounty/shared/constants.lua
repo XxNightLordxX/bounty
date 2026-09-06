@@ -123,6 +123,12 @@ CB.ERR = {
     INSUFFICIENT     = 'insufficient_funds',
     INVALID_REWARD   = 'invalid_reward',
     INVALID_INPUT    = 'invalid_input',
+
+    --- The handler crashed. Distinct from INVALID_INPUT, which used to
+    --- cover this too: telling a player to check what they entered when the
+    --- fault is a nil index on the server sends them looking at their own
+    --- typing for a bug they cannot reach, and tells the operator nothing.
+    SERVER_ERROR     = 'server_error',
     NOT_PARTICIPANT  = 'not_participant',
     ALREADY_SETTLED  = 'already_settled',
     TOKEN_INVALID    = 'token_invalid',

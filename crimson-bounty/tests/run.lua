@@ -276,7 +276,10 @@ function _G.newStack()
         death = death, photo = photo, kidnap = kidnap, bailout = bailout,
         informant = informant, amendments = amendments, comms = comms,
         projection = projection, mugshot = mugshot, progression = progression,
-        admin = admin,
+        -- The app module itself: admin reads its handler table to run the
+        -- real handlers in a diagnosis, and requiring it there instead
+        -- hands back a second copy of the module under a different path.
+        app = app, admin = admin,
     }
     app.init(wiring)
     admin.init(wiring)

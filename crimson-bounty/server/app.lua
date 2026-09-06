@@ -115,7 +115,18 @@ local function sourceEnabled(name)
     return (source and source.enabled) == true
 end
 
+--- Every handler body, by name.
+---
+--- So the diagnosis can run the real thing rather than a reconstruction of
+--- it. A report that reads every config value a handler reads, and calls
+--- every export it calls, and still misses the one line where it actually
+--- throws, is a report that says "healthy" about a server whose app is
+--- empty — which is exactly what happened, for days.
+App.handlers = {}
+
 local function handler(name, action, fn)
+    App.handlers[name] = fn
+
     RegisterNetEvent('crimson-bounty:' .. name, function(payload)
         local src = source
 
@@ -169,8 +180,22 @@ local function handler(name, action, fn)
         local ok, result, resultErr = pcall(fn, actor, payload)
         if not ok then
             deps.audit.rejected('error_' .. name, actor.cid, nil, { error = tostring(result) })
+
+            -- Printed, not only audited. A handler that throws is a fault in
+            -- this resource, and the audit queue is not somewhere an
+            -- operator looks — or can look, without a command they may not
+            -- be able to run. For a long time a crashing handler produced a
+            -- shrug on the player's screen and complete silence in the
+            -- console, which is the worst pairing available: the one person
+            -- who could fix it is the one person not told.
+            print(('[crimson-bounty] the %s handler threw: %s')
+                :format(name, tostring(result)))
+
             if action then deps.ratelimit.refund(actor, action) end
-            return App.reply(src, name, false, CB.ERR.INVALID_INPUT, nil, rid)
+            -- Not INVALID_INPUT. Nothing the player typed is wrong, and
+            -- telling them to check it sends them hunting for a fault they
+            -- cannot reach.
+            return App.reply(src, name, false, CB.ERR.SERVER_ERROR, nil, rid)
         end
 
         local succeeded = result ~= false and result ~= nil

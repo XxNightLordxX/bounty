@@ -140,9 +140,52 @@ function Bridges.install(modules)
         if not (player and player.PlayerData) then return end
         local src = player.PlayerData.source
         remember(src)
+        Bridges.tellAccess(src)
         SetTimeout(Config.PendingEscrow.LoginRetryDelayMs or 5000, function()
             Bridges.onPlayerReady(modules, src)
         end)
+    end)
+
+    -- Whether this player may have the app at all.
+    --
+    -- The gate already refuses every request from a barred job, but a player
+    -- whose job is barred was still shown the app: it installed, opened, and
+    -- answered nothing, which reads as broken rather than as not-for-them.
+    -- An officer looking at a bounty board they cannot use is also a design
+    -- problem, not only a cosmetic one.
+    --
+    -- The decision is the server's, because the client cannot be trusted
+    -- with it and because the job blacklist lives in the server's config.
+    local function tellAccess(src)
+        if not src or src <= 0 then return end
+        local actor = modules.identity.resolve(src)
+        -- Unresolvable is not "allowed": a player mid-join gets told nothing
+        -- and asks again, rather than being handed the app on a job nobody
+        -- has read yet.
+        if not actor then return end
+
+        TriggerClientEvent('crimson-bounty:access', src,
+            not modules.identity.isBlockedJob(actor.job))
+    end
+
+    Bridges.tellAccess = tellAccess
+
+    -- Asked for by the client when it starts, so a client that loaded after
+    -- the push above is not left waiting for an event that has been and
+    -- gone. Rate-limited by the flood guard like anything else a client can
+    -- send.
+    RegisterNetEvent('crimson-bounty:whoAmI', function()
+        local src = source
+        if not modules.app.floodOk(src, 'whoami') then return end
+        tellAccess(src)
+    end)
+
+    -- A player who takes a barred job loses the app, and one who leaves it
+    -- gets it back, without waiting for a reconnect. qbx_core fires this
+    -- whenever a job is set.
+    AddEventHandler('qbx_core:server:onSetJob', function(src)
+        local id = tonumber(src)
+        if id then tellAccess(id) end
     end)
 
     -- A player's own client is the only one that can reliably render their

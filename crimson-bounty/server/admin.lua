@@ -15,11 +15,20 @@ local Util = require_shared('util')
 
 local Admin = {}
 
-local Storage, Identity, Contracts, Escrow, Audit, Notify
+local Storage, Identity, Contracts, Escrow, Audit, Notify, App
 
 function Admin.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
         deps.storage, deps.identity, deps.contracts, deps.escrow, deps.audit, deps.notify
+
+    -- Taken from the wiring like every other collaborator, rather than
+    -- required here. `require('server.app')` and the path the rest of the
+    -- suite loads it by are different keys for the same file, so requiring
+    -- it again hands back a SECOND copy of the module — one whose handler
+    -- table nothing ever registered into. The diagnosis would then report
+    -- every handler as unregistered while the real ones worked, which is a
+    -- diagnosis lying in the other direction.
+    App = deps.app
 end
 
 --------------------------------------------------------------------------
@@ -378,7 +387,6 @@ function Admin.diagnose(source, subjectId)
     end
 
     -- Inventory -----------------------------------------------------------
-    local App = require('server.app')
     if not actor then
         -- The config half is still worth saying: a server that has item
         -- escrow switched off shows an empty picker to everybody, and that
@@ -423,6 +431,66 @@ function Admin.diagnose(source, subjectId)
             .. 'offered; money still works.')
     elseif count == 0 then
         say('  -> you are carrying nothing. Pick something up and run this again.')
+    end
+
+    -- The gate ------------------------------------------------------------
+    --
+    -- Every request passes through it and nothing above tests it. Resolving
+    -- a player is only its first step; the job blacklist is its second, and
+    -- a player refused there gets an empty app with no other symptom.
+    local gateOk, gateActor, gateErr = pcall(Identity.gate, subject)
+    if not gateOk then
+        say(('gate: THREW  %s'):format(tostring(gateActor)))
+        say('  -> every request from this player is refused. Nothing can work.')
+    elseif not gateActor then
+        say(('gate: REFUSES this player (%s)'):format(tostring(gateErr)))
+        say('  -> their job is on Config.Blacklist, so the app is empty for them '
+            .. 'by design. Nothing else below will look wrong.')
+    else
+        say('gate: passes')
+    end
+
+    -- The handlers themselves ---------------------------------------------
+    --
+    -- Everything above reads what the handlers read. This runs them. The
+    -- difference is not academic: a report can confirm every setting and
+    -- every export a handler depends on and still miss the one line that
+    -- throws, and then it says "healthy" about a server whose app shows
+    -- nothing. Only the real call can answer whether the real call works.
+    local probes = { 'list', 'mine', 'browseTargets', 'rewardOptions' }
+    local payloads = {
+        list = { page = 1 },
+        browseTargets = { scope = 'all' },
+    }
+
+    say('handlers:')
+    for i = 1, #probes do
+        local probeName = probes[i]
+        local fn = App and App.handlers and App.handlers[probeName]
+        if not fn then
+            say(('  %s: NOT REGISTERED'):format(probeName))
+        else
+            local ok, result, resultErr = pcall(fn, actor, payloads[probeName] or {})
+            if not ok then
+                -- The whole error, including where it threw. This is the
+                -- line that was previously going nowhere an operator could
+                -- reach: the player saw a shrug and the console said
+                -- nothing at all.
+                say(('  %s: THREW  %s'):format(probeName, tostring(result)))
+            elseif result == false or result == nil then
+                say(('  %s: refused (%s)'):format(probeName, tostring(resultErr)))
+            else
+                local size
+                if type(result) == 'table' then
+                    if result.people then size = ('%d people'):format(#result.people)
+                    elseif result.contracts then size = ('%d contracts'):format(#result.contracts)
+                    elseif result.items then size = ('%d items, %d weapons')
+                        :format(#result.items, #(result.weapons or {}))
+                    end
+                end
+                say(('  %s: ok%s'):format(probeName, size and ('  ' .. size) or ''))
+            end
+        end
     end
 
     -- Rate limits ---------------------------------------------------------

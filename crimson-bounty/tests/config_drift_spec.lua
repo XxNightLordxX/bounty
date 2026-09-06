@@ -397,6 +397,61 @@ describe('diagnosing an app that shows nothing', function()
             'an absent switch should say so rather than printing nil: ' .. out)
     end)
 
+    --- The report ran everything the handlers depend on and never the
+    --- handlers, so it could confirm every setting and every export and
+    --- still say "healthy" about a server whose app showed nothing. It did,
+    --- for days. Now it calls the real thing.
+    it('runs the real handlers and reports one that throws', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+
+        local real = s.app.handlers.rewardOptions
+        s.app.handlers.rewardOptions = function()
+            error('attempt to index a nil value (field \'dirty\')')
+        end
+        local out = said(s.admin.diagnose(1))
+        s.app.handlers.rewardOptions = real
+
+        truthy(out:find('rewardOptions: THREW', 1, true),
+            'a handler that throws must be named as throwing: ' .. out)
+        truthy(out:find("field 'dirty'", 1, true),
+            'and the actual error has to reach the operator, not just a shrug: '
+            .. out)
+    end)
+
+    it('reports the handlers answering when they are well', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+        local out = said(s.admin.diagnose(1))
+
+        truthy(out:find('handlers:', 1, true), out)
+        truthy(out:find('rewardOptions: ok', 1, true),
+            'a working handler should say so: ' .. out)
+        truthy(out:find('browseTargets: ok', 1, true),
+            'including the one that lists people: ' .. out)
+        -- The counts are the point: "ok" on an empty list is the symptom,
+        -- not the all-clear.
+        truthy(out:find('people', 1, true),
+            'and say how many it found: ' .. out)
+    end)
+
+    it('says when the gate refuses the player, which nothing else showed', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+
+        local realGate = s.identity.isBlockedJob
+        s.identity.isBlockedJob = function() return true end
+        local out = said(s.admin.diagnose(1))
+        s.identity.isBlockedJob = realGate
+
+        truthy(out:find('gate: REFUSES', 1, true),
+            'a blacklisted player gets an empty app and no other symptom, so '
+            .. 'the gate has to be reported: ' .. out)
+    end)
+
     it('names the storage mode and who is asking', function()
         local s = newStack()
         fixture(s)

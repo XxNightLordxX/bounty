@@ -71,6 +71,8 @@
     insufficient_funds: 'You do not have that.',
     invalid_reward: 'That reward does not add up.',
     invalid_input: 'Check what you entered.',
+    server_error: 'Something broke on the server, not on your end. '
+      + 'An admin can see what in the server console.',
     not_participant: 'That is not yours.',
     already_settled: 'That contract is closed.',
     token_invalid: 'Verification expired. Take the photo again.',
@@ -1326,9 +1328,14 @@
             // Silently dropping the pickers left a form that simply had no
             // item or weapon section, with nothing saying why and no way to
             // ask again.
+            // The code is named, not swallowed. "Could not read what you
+            // are carrying" is true of a rate limit, a crashed handler and
+            // a refused gate alike, and a player reporting it to an admin
+            // was passing on a shrug — which cost days of guessing at a
+            // fault the server could have named in one word.
             state.walletFailed = (r.err === 'rate_limited')
               ? 'Reading your pockets too fast. Try again in a moment.'
-              : 'Could not read what you are carrying.';
+              : 'Could not read what you are carrying (' + (r.err || 'no reply') + ').';
           }
           redraw();
         });
@@ -1988,7 +1995,9 @@
       results.innerHTML = '';
       show(status, r.err === 'rate_limited'
         ? 'Looking too fast. Try again in a moment.'
-        : 'Could not read who is online.');
+        // Named for the same reason as the wallet failure above: the code
+        // is what an admin needs and the player is the one who can see it.
+        : 'Could not read who is online (' + (r.err || 'no reply') + ').');
     }
 
     function show(node, text) {

@@ -13,6 +13,9 @@ describe('the client on an ordinary phone', function()
         Env.reset()
         Client.boot()
         Natives.resourceStates = { ['lb-phone'] = 'started' }
+        -- A barred job never gets the app, so nothing registers until the
+        -- server has said this player may have it.
+        Client.fire('crimson-bounty:access', true)
         Client.runThreads()
 
         local registered
@@ -54,6 +57,9 @@ describe('the client on an ordinary phone', function()
 
         Client.boot()
         Natives.resourceStates = { ['lb-phone'] = 'started' }
+        -- A barred job never gets the app, so nothing registers until the
+        -- server has said this player may have it.
+        Client.fire('crimson-bounty:access', true)
         Client.runThreads()
         _G.GetResourceMetadata = real
 
@@ -164,11 +170,115 @@ describe('the client on a phone missing an export', function()
     end)
 end)
 
+describe('a job that is barred from the app', function()
+    --- The gate already refuses every request from a barred job, but the app
+    --- was still installed and opened for them: it answered nothing, which
+    --- reads as broken rather than as not for them. An officer should not be
+    --- looking at a bounty board at all.
+
+    local function ready()
+        Env.reset()
+        Client.boot()
+        Natives.resourceStates = { ['lb-phone'] = 'started' }
+    end
+
+    local function registrations()
+        local n = 0
+        for _, call in ipairs(Client.phone) do
+            if call.call == 'AddCustomApp' then n = n + 1 end
+        end
+        return n
+    end
+
+    it('does not put the app on the phone before the server has said', function()
+        ready()
+        Client.runThreads()
+        eq(registrations(), 0,
+            'unknown is not yes: a player is not handed the app on a job '
+            .. 'nobody has read yet')
+    end)
+
+    it('never registers it for a player the server bars', function()
+        ready()
+        Client.fire('crimson-bounty:access', false)
+        Client.runThreads()
+        eq(registrations(), 0, 'a barred job was given the app anyway')
+    end)
+
+    it('registers it once the server says they may have it', function()
+        ready()
+        Client.fire('crimson-bounty:access', true)
+        Client.runThreads()
+        eq(registrations(), 1, 'an allowed player must get the app')
+    end)
+
+    it('takes it back when they go on duty mid-session', function()
+        ready()
+        Client.fire('crimson-bounty:access', true)
+        Client.runThreads()
+        eq(registrations(), 1)
+
+        -- They take a barred job. Refusing to register it next time is not
+        -- enough: it is already on their phone.
+        Client.fire('crimson-bounty:access', false)
+        Client.runThreads()
+
+        local removed = false
+        for _, call in ipairs(Client.phone) do
+            if call.call == 'RemoveCustomApp' or call.call == 'DeleteCustomApp'
+                or call.call == 'UninstallApp' then
+                removed = true
+            end
+        end
+        truthy(removed,
+            'the app has to come off the phone, not merely stop being added: '
+            .. table.concat(Client.console, ' | '))
+    end)
+
+    it('gives it back when they come off that job', function()
+        ready()
+        Client.fire('crimson-bounty:access', true)
+        Client.runThreads()
+        Client.fire('crimson-bounty:access', false)
+        Client.runThreads()
+        Client.fire('crimson-bounty:access', true)
+        Client.runThreads()
+
+        truthy(registrations() >= 2,
+            'a player who leaves the barred job must get the app back without '
+            .. 'reconnecting, got ' .. registrations() .. ' registrations')
+    end)
+
+    it('does not churn the phone when the answer has not changed', function()
+        ready()
+        Client.fire('crimson-bounty:access', true)
+        Client.runThreads()
+        for _ = 1, 5 do Client.fire('crimson-bounty:access', true) end
+        Client.runThreads()
+        eq(registrations(), 1,
+            'the same answer repeated must not re-register the app each time')
+    end)
+
+    it('asks the server when it has not been told', function()
+        ready()
+        Client.runThreads()
+
+        local asked = false
+        for _, call in ipairs(Client.toServer) do
+            if call.name == 'crimson-bounty:whoAmI' then asked = true end
+        end
+        truthy(asked,
+            'a client that started after the join push would otherwise wait '
+            .. 'for an event that has already been and gone')
+    end)
+end)
+
 describe('app registration that does not take the first time', function()
     it('retries until lb-phone accepts', function()
         Env.reset()
         Client.boot({ refuseRegistration = true })
         Natives.resourceStates = { ['lb-phone'] = 'started' }
+        Client.fire('crimson-bounty:access', true)
 
         -- The first pass refuses throughout: ten attempts, no app.
         Client.runThreads()
@@ -187,6 +297,7 @@ describe('app registration that does not take the first time', function()
         Env.reset()
         Client.boot({ without = { 'AddCustomApp' } })
         Natives.resourceStates = { ['lb-phone'] = 'started' }
+        Client.fire('crimson-bounty:access', true)
 
         local ran = Client.runThreads()
         truthy(ran > 0, 'the registration thread must have run')
@@ -199,6 +310,9 @@ describe('app registration that does not take the first time', function()
         Env.reset()
         Client.boot()
         Natives.resourceStates = { ['lb-phone'] = 'started' }
+        -- A barred job never gets the app, so nothing registers until the
+        -- server has said this player may have it.
+        Client.fire('crimson-bounty:access', true)
         Client.runThreads()
 
         local before = 0
@@ -224,6 +338,9 @@ describe('app registration that does not take the first time', function()
         Env.reset()
         Client.boot()
         Natives.resourceStates = { ['lb-phone'] = 'started' }
+        -- A barred job never gets the app, so nothing registers until the
+        -- server has said this player may have it.
+        Client.fire('crimson-bounty:access', true)
         Client.runThreads()
 
         Client.fire('onClientResourceStart', 'some-other-resource')
@@ -234,5 +351,72 @@ describe('app registration that does not take the first time', function()
             if call.call == 'AddCustomApp' then calls = calls + 1 end
         end
         eq(calls, 1, 'only lb-phone coming back means anything here')
+    end)
+end)
+
+--- Who the server tells the client they are.
+---
+--- The decision belongs on the server: the job blacklist is its config, and
+--- a client that could answer this for itself could grant itself the app.
+describe('the servers own access decision', function()
+    local function wired()
+        local s = newStack()
+        s.app.init(s)
+        require('crimson-bounty.server.bridges').install(s)
+        return s
+    end
+
+    --- What the server last told this player.
+    local function toldOf(src)
+        local answer
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:access' and event.target == src then
+                answer = event.args[1]
+            end
+        end
+        return answer
+    end
+
+    it('tells an ordinary player they may have the app', function()
+        local s = wired()
+        fixture(s)
+        Env.clientEvents = {}
+
+        _G.source = 1
+        Env.events['crimson-bounty:whoAmI']({})
+        _G.source = nil
+
+        eq(toldOf(1), true, 'an unemployed citizen must be allowed')
+    end)
+
+    it('tells a barred job they may not', function()
+        local s = wired()
+        fixture(s)
+        Env.addPlayer({ source = 20, citizenid = 'OFFICER1', license = 'license:o',
+            firstname = 'Ann', lastname = 'Ryder',
+            job = { name = 'police', type = 'leo', onduty = true } })
+        Env.clientEvents = {}
+
+        _G.source = 20
+        Env.events['crimson-bounty:whoAmI']({})
+        _G.source = nil
+
+        eq(toldOf(20), false,
+            'a barred job must not be handed the app: the gate refuses their '
+            .. 'every request, so what they get is an app that answers nothing')
+    end)
+
+    it('says nothing about a player it cannot describe', function()
+        local s = wired()
+        fixture(s)
+        Env.clientEvents = {}
+
+        _G.source = 999
+        Env.events['crimson-bounty:whoAmI']({})
+        _G.source = nil
+
+        eq(toldOf(999), nil,
+            'unresolvable is not allowed: a player mid-join asks again rather '
+            .. 'than being handed the app on a job nobody has read yet')
     end)
 end)

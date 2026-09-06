@@ -36,6 +36,14 @@ local function defaultExports()
             if Client.refuseRegistration then return false end
             return true
         end,
+        -- Taking the app back off the phone, for a player who has just gone
+        -- on duty. The export's name has moved across lb-phone releases and
+        -- the client tries several, so the harness provides one of them and
+        -- the "no export answered" path stays reachable through `without`.
+        RemoveCustomApp = function(_, identifier)
+            table.insert(Client.phone, { call = 'RemoveCustomApp', app = identifier })
+            return true
+        end,
         SendCustomAppMessage = function(_, app, message)
             table.insert(Client.phone, { call = 'SendCustomAppMessage', app = app, message = message })
             return true
