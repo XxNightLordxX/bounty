@@ -254,8 +254,10 @@ function Bridges.installCommands(modules)
     --- running it. Three separate causes have produced the same symptom on
     --- a live server and none of them left anything behind to look at, so
     --- this asks the server rather than guessing.
-    command(names.diagnose, Config.Admin.Ace, function(src)
-        local lines = Admin.diagnose(src)
+    command(names.diagnose, Config.Admin.Ace, function(src, args)
+        -- The optional player id is what makes this runnable from the server
+        -- console, which is the one place that never refuses an owner.
+        local lines = Admin.diagnose(src, args[1])
         for i = 1, #lines do reply(src, lines[i]) end
     end)
 

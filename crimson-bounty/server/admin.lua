@@ -54,8 +54,15 @@ end
 ---@param ace string
 ---@return string
 function Admin.howToAuthorise(ace)
-    return ('Not authorised. Add this to server.cfg and restart, or paste it '
-        .. 'into the server console:  add_ace group.admin %s allow'):format(ace)
+    -- The console route matters more than the ACE for the one command an
+    -- owner needs before anything is set up. Somebody locked out in game
+    -- and told only about server.cfg has to restart their server to find
+    -- out why their app is empty; the console answers now.
+    return ('Not authorised. Right now: run it in the server console, which '
+        .. 'never refuses — name a player, %s <playerid>. To have it in game: '
+        .. 'add_ace group.admin %s allow — pasted into the console to grant it '
+        .. 'until the next restart, or put in server.cfg to keep it.'):format(
+        tostring(Config.Admin.Commands.diagnose), ace)
 end
 
 --- Resolve who ran a command, for the audit row. The console has no citizen
@@ -265,21 +272,44 @@ end
 --- opening sequence spent before the player touched anything.
 ---
 --- Every one of those was found by guessing. This asks the server instead.
----@param source number the player to run the checks as
+---@param source number who ran it. 0 is the server console.
+---@param subjectId number|string|nil a player id to run the player-specific
+--- checks as. Defaults to the caller. The console has no character of its
+--- own, so an owner running this there names somebody who is in the city.
 ---@return string[] lines
-function Admin.diagnose(source)
+function Admin.diagnose(source, subjectId)
     local out = {}
     local function say(line) out[#out + 1] = line end
 
     say('--- crimson-bounty diagnosis ---')
     say(('storage: %s'):format(tostring(Config.Database.Mode)))
 
-    local actor = Identity.resolve(source)
+    -- Who the player-specific checks run as.
+    --
+    -- This used to be the caller and only the caller, which made the whole
+    -- command useless from the server console: console is source 0, resolves
+    -- to nobody, and the report stopped at the second line. The console is
+    -- also the one place an owner can always run it, ACE or not — so the one
+    -- tool for "why is my app empty" was unreachable from the one place that
+    -- never refuses. It takes a player id now.
+    local subject = tonumber(subjectId) or (source ~= 0 and source or nil)
+
+    local actor = subject and Identity.resolve(subject) or nil
     if not actor then
-        say('identity: COULD NOT RESOLVE this player. Nothing else can work.')
-        return out
+        if subjectId then
+            say(('identity: player %s is not connected, or this server cannot '
+                .. 'describe them.'):format(tostring(subjectId)))
+        elseif source == 0 then
+            say('identity: run from the console, which has no character of its own.')
+        else
+            say('identity: COULD NOT RESOLVE this player. Nothing else can work.')
+        end
+        say(('  -> name somebody who is in the city:  %s <playerid>')
+            :format(tostring(Config.Admin.Commands.diagnose)))
+        say('  the server-wide checks below still ran.')
+    else
+        say(('identity: %s (%s)'):format(tostring(actor.name), tostring(actor.cid)))
     end
-    say(('identity: %s (%s)'):format(tostring(actor.name), tostring(actor.cid)))
 
     -- Targeting -----------------------------------------------------------
     say(('browse all: %s   nearby: %s   min query: %s'):format(
@@ -289,16 +319,30 @@ function Admin.diagnose(source)
 
     local online = Identity.online()
     say(('online: %d player(s)'):format(#online))
-    local others = 0
-    for i = 1, #online do
-        local candidate = online[i]
-        if candidate.cid ~= actor.cid
-            and not Identity.sameAccount(candidate.account, actor.account) then
-            others = others + 1
-        end
+
+    -- How many of them this resource could actually describe. A roster that
+    -- is short because the framework could not read somebody is the exact
+    -- symptom this command exists for, and it is invisible from the count
+    -- alone.
+    local connected = #(GetPlayers() or {})
+    if connected > #online then
+        say(('  -> %d of %d connected players could not be described by the '
+            .. 'framework and are left out of every list'):format(
+            connected - #online, connected))
     end
-    say(('targetable by you: %d  (yourself and your own account are never listed)')
-        :format(others))
+
+    local others = 0
+    if actor then
+        for i = 1, #online do
+            local candidate = online[i]
+            if candidate.cid ~= actor.cid
+                and not Identity.sameAccount(candidate.account, actor.account) then
+                others = others + 1
+            end
+        end
+        say(('targetable by you: %d  (yourself and your own account are never listed)')
+            :format(others))
+    end
 
     -- An account this server cannot read used to exclude everybody, since
     -- two unknowns compared equal. Worth naming: it is invisible otherwise
@@ -312,13 +356,31 @@ function Admin.diagnose(source)
             .. 'licence identifiers enabled'):format(unknown, #online))
     end
 
-    if others == 0 and #online > 0 then
+    if actor and others == 0 and #online > 0 then
         say('  -> the list is empty because everyone online shares your account, '
             .. 'or you are the only one here. Try with a second player.')
     end
 
     -- Inventory -----------------------------------------------------------
     local App = require('server.app')
+    if not actor then
+        -- The config half is still worth saying: a server that has item
+        -- escrow switched off shows an empty picker to everybody, and that
+        -- is answerable without a player.
+        local itemOff = Config.Sources.item or {}
+        local weaponOff = Config.Sources.weapon or {}
+        say(('item escrow: %s   weapon escrow: %s'):format(
+            tostring(itemOff.enabled), tostring(weaponOff.enabled)))
+        if itemOff.enabled ~= true or weaponOff.enabled ~= true then
+            say('  -> the app tells players this server takes money only. If you '
+                .. 'did not mean that, your config.lua predates '
+                .. 'Config.Sources.item and .weapon.')
+        end
+        say('  name a player to test the ox_inventory reads themselves.')
+        say('--- end ---')
+        return out
+    end
+
     local carried, readOk = App.readInventory(actor)
     local count = 0
     for _ in pairs(carried or {}) do count = count + 1 end

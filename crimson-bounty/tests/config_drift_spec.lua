@@ -292,6 +292,75 @@ describe('diagnosing an app that shows nothing', function()
         return table.concat(lines, '\n')
     end
 
+    --- The console is the one place an owner is never refused, and it was
+    --- the one place this command did not work: console is source 0, which
+    --- resolves to nobody, and the report stopped at the second line. So an
+    --- owner without the ACE — which nobody has until they grant it — had no
+    --- way at all to ask why their app was empty.
+    it('works from the server console, which has no character of its own', function()
+        local s = newStack()
+        fixture(s)
+        local out = said(s.admin.diagnose(0))
+
+        truthy(out:find('storage', 1, true), 'the report stopped early: ' .. out)
+        truthy(out:find('online: ', 1, true),
+            'the server-wide checks have to run without a player: ' .. out)
+        truthy(out:find('item escrow', 1, true),
+            'the config half of the inventory answer needs no player: ' .. out)
+        truthy(out:find('playerid', 1, true),
+            'and it has to say how to get the rest: ' .. out)
+        falsy(out:find('COULD NOT RESOLVE', 1, true),
+            'the console is not a broken player: ' .. out)
+    end)
+
+    it('runs the player checks against a named player', function()
+        local s = newStack()
+        fixture(s)
+        -- From the console, naming the player whose app is empty.
+        local out = said(s.admin.diagnose(0, 1))
+        truthy(out:find('Vic Marlowe', 1, true),
+            'the named player should be the subject: ' .. out)
+        truthy(out:find('inventory read', 1, true),
+            'and their inventory should actually be read: ' .. out)
+
+        -- The id may arrive as a string, because a console argument is one.
+        local asText = said(s.admin.diagnose(0, '1'))
+        truthy(asText:find('Vic Marlowe', 1, true),
+            'a console argument is a string and must still work: ' .. asText)
+    end)
+
+    it('says so when the named player is not there', function()
+        local s = newStack()
+        fixture(s)
+        local out = said(s.admin.diagnose(0, 999))
+        truthy(out:find('not connected', 1, true), out)
+        truthy(out:find('online: ', 1, true),
+            'the rest of the report still has to run: ' .. out)
+    end)
+
+    --- The count of people the app can list, against the count actually
+    --- connected. A roster short because the framework could not describe
+    --- somebody is exactly the reported symptom, and it is invisible from
+    --- the online count on its own.
+    it('reports players the framework could not describe', function()
+        local s = newStack()
+        fixture(s)
+        Env.addPlayer({ source = 12, citizenid = 'BROKEN12', license = 'license:b12',
+            firstname = 'Mid', lastname = 'Join' })
+
+        local real = exports.qbx_core.GetPlayer
+        exports.qbx_core.GetPlayer = function(self, src)
+            if tonumber(src) == 12 then error('qbx_core: player is not loaded') end
+            return real(self, src)
+        end
+        local out = said(s.admin.diagnose(1))
+        exports.qbx_core.GetPlayer = real
+
+        truthy(out:find('could not be described', 1, true),
+            'a player the framework cannot read is missing from every list and '
+            .. 'the diagnosis has to say so: ' .. out)
+    end)
+
     it('names the storage mode and who is asking', function()
         local s = newStack()
         fixture(s)
@@ -548,7 +617,17 @@ describe('who may run the admin commands', function()
         truthy(told:find('add_ace', 1, true), told)
         truthy(told:find('crimson.admin', 1, true), told)
         truthy(told:find('server.cfg', 1, true),
-            'and where to put it: ' .. told)
+            'and where to put it so it survives a restart: ' .. told)
+
+        -- The ACE is the permanent answer; it is not the answer to "my app
+        -- is empty right now". An owner refused in game and told only to
+        -- edit server.cfg has to restart their server before they can find
+        -- out why — so the route that works this second has to be in the
+        -- refusal too.
+        truthy(told:find('console', 1, true),
+            'a refused owner needs the route that works immediately: ' .. told)
+        truthy(told:find(Config.Admin.Commands.diagnose, 1, true),
+            'and the command to type there: ' .. told)
     end)
 
     it('tells a refused player that, through the command itself', function()
