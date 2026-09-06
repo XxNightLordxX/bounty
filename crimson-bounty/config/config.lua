@@ -30,6 +30,18 @@ Config.BlockedJobNames = {
 --- off is still a police officer to everyone they arrested this week.
 Config.BlockOffDuty = true
 
+--- Keep the app off a barred player's phone entirely, rather than letting
+--- them install an app that answers nothing.
+---
+--- Turning this OFF does not grant anybody access: the gate still refuses
+--- every request from a barred job, exactly as it did before this existed.
+--- All it changes is whether they can see the icon.
+---
+--- It is here because hiding the app is the only thing in this resource that
+--- can take something away from a player, and anything that can do that
+--- needs a switch an operator can reach without waiting for a patch.
+Config.HideAppFromBlockedJobs = true
+
 --------------------------------------------------------------------------
 -- Reward sources (§3.4)
 --------------------------------------------------------------------------

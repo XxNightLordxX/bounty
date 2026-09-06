@@ -238,20 +238,58 @@ AddEventHandler('onClientResourceStart', function(resource)
     CreateThread(registerWithRetries)
 end)
 
+--- Make what is on the phone match what the server last said, whatever it
+--- is now and however it got out of step.
+---
+--- This replaced acting on the transition — register when the answer turns
+--- true, remove when it turns false — which read well and was wrong. Every
+--- way of missing a transition ended in the same state, and it is the worst
+--- one: no app, and nothing that will ever put it back. A missed event, a
+--- removal that half worked, lb-phone restarting while the answer was not
+--- yet known, our own resource restarting mid-session — each of them
+--- stranded a player who had done nothing but keep playing. It happened
+--- twice on a live server.
+---
+--- Comparing the two states instead of watching for the moment between them
+--- has no such failure: whatever went wrong, the next pass puts it right,
+--- and a pass that has nothing to do costs one comparison.
+--- Forget that the app is registered.
+---
+--- lb-phone restarting drops every custom app it holds, and this is how it
+--- says so. Exposed because a test has to be able to produce the state the
+--- reconciler exists for: the app gone from the phone with nothing having
+--- said it went.
+function App.forgetRegistration()
+    appReady = false
+end
+
+function App.reconcile()
+    if accessAllowed == nil then return end
+
+    if accessAllowed and not appReady then
+        registerWithRetries()
+    elseif not accessAllowed and appReady then
+        unregisterApp()
+    end
+end
+
 --- The server's decision about whether this player may have the app.
 ---
---- Sent on join, on any job change, and whenever the client asks. The client
---- never decides this for itself: the job blacklist is the server's config
---- and a client that could answer it could grant itself the app.
+--- Sent on join, on any job change, on the maintenance tick, and whenever
+--- the client asks. The client never decides this for itself: the job
+--- blacklist is the server's config and a client that could answer it could
+--- grant itself the app.
 RegisterNetEvent('crimson-bounty:access', function(allowed)
-    local was = accessAllowed
     accessAllowed = allowed == true
-    if accessAllowed == was then return end
+    CreateThread(App.reconcile)
+end)
 
-    if accessAllowed then
-        CreateThread(registerWithRetries)
-    else
-        unregisterApp()
+--- And on a slow heartbeat, because an answer that never changes is exactly
+--- when a phone that lost the app has nothing coming to fix it.
+CreateThread(function()
+    while true do
+        Wait(15000)
+        App.reconcile()
     end
 end)
 

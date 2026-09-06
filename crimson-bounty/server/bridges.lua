@@ -177,7 +177,8 @@ function Bridges.install(modules)
         -- has read yet.
         if not actor then return end
 
-        local allowed = not modules.identity.isBlockedJob(actor.job)
+        local allowed = Config.HideAppFromBlockedJobs == false
+            or not modules.identity.isBlockedJob(actor.job)
         lastAccess[src] = allowed
         TriggerClientEvent('crimson-bounty:access', src, allowed)
     end
@@ -207,7 +208,8 @@ function Bridges.install(modules)
                 seen[src] = true
                 local ok, actor = pcall(modules.identity.resolve, src)
                 if ok and actor then
-                    local allowed = not modules.identity.isBlockedJob(actor.job)
+                    local allowed = Config.HideAppFromBlockedJobs == false
+                        or not modules.identity.isBlockedJob(actor.job)
                     if lastAccess[src] ~= allowed then
                         lastAccess[src] = allowed
                         TriggerClientEvent('crimson-bounty:access', src, allowed)

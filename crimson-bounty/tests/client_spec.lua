@@ -361,6 +361,67 @@ describe('a job that is barred from the app', function()
             'the same answer repeated must not re-register the app each time')
     end)
 
+    --- Acting on the transition — register when the answer turns true,
+    --- remove when it turns false — read well and was wrong. Every way of
+    --- missing that moment ended in the same state, and it is the worst one:
+    --- no app, and nothing coming that will put it back. It stranded a live
+    --- server twice. These are the ways it got stuck.
+    it('puts the app back when it went missing while the answer stayed the same', function()
+        ready()
+        Client.fire('crimson-bounty:access', true)
+        Client.runThreads()
+        eq(registrations(), 1)
+
+        -- lb-phone dropped it, or a removal half worked, or our own resource
+        -- restarted. Nothing changes on the server, so no event is coming.
+        -- lb-phone dropped it. Nothing changes on the server, so no event
+        -- is coming: only a pass that compares the two states can notice.
+        Client.appGone()
+        Client.reconcile()
+
+        truthy(registrations() >= 2,
+            'the app stayed missing because the answer had not changed: '
+            .. registrations() .. ' registrations')
+    end)
+
+    it('re-registers on its own heartbeat, with no event at all', function()
+        ready()
+        Client.fire('crimson-bounty:access', true)
+        Client.runThreads()
+
+        -- Whatever took it off the phone, nothing is going to say so, and
+        -- the server's answer never changes. The heartbeat is the only
+        -- thing left that can put it right.
+        Client.appGone()
+        Client.reconcile()
+
+        truthy(registrations() >= 2,
+            'a player who lost the app has to get it back without an event '
+            .. 'arriving at the right moment')
+    end)
+
+    it('does not register anything while the answer is still unknown', function()
+        ready()
+        -- The heartbeat runs whether or not the server has answered. It must
+        -- not take silence for a yes.
+        Client.reconcile()
+        Client.reconcile()
+        eq(registrations(), 0, 'silence was taken for permission')
+    end)
+
+    it('leaves the app alone when hiding it is switched off', function()
+        ready()
+        local was = Config.HideAppFromBlockedJobs
+        Config.HideAppFromBlockedJobs = false
+        Client.fire('crimson-bounty:access', true)
+        Client.runThreads()
+        Config.HideAppFromBlockedJobs = was
+
+        eq(registrations(), 1,
+            'with hiding off, everybody keeps the app and the gate does the '
+            .. 'refusing, as it did before any of this existed')
+    end)
+
     it('asks the server when it has not been told', function()
         ready()
         Client.runThreads()
@@ -489,6 +550,30 @@ describe('the servers own access decision', function()
         _G.source = nil
 
         eq(toldOf(1), true, 'an unemployed citizen must be allowed')
+    end)
+
+    it('tells a barred job they may have it when hiding is switched off', function()
+        local s = wired()
+        fixture(s)
+        Env.addPlayer({ source = 21, citizenid = 'OFFICER3', license = 'license:o3',
+            firstname = 'Off', lastname = 'Switch',
+            job = { name = 'police', type = 'leo', onduty = true } })
+
+        local was = Config.HideAppFromBlockedJobs
+        Config.HideAppFromBlockedJobs = false
+        Env.clientEvents = {}
+        _G.source = 21
+        Env.events['crimson-bounty:whoAmI']({})
+        _G.source = nil
+        Config.HideAppFromBlockedJobs = was
+
+        eq(toldOf(21), true,
+            'the switch must stop the hiding, not merely soften it')
+
+        -- And it grants nothing: the gate refuses them exactly as before.
+        local blocked, err = s.identity.gate(21)
+        falsy(blocked, 'the switch must not become a way past the gate')
+        eq(err, CB.ERR.BLACKLISTED_JOB)
     end)
 
     it('tells a barred job they may not', function()

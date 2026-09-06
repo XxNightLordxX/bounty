@@ -201,6 +201,21 @@ function Client.nuiCall(name, payload)
     return Client.answered, Client.answer
 end
 
+--- One pass of the client's reconciler, with this build's lb-phone in
+--- place. In the resource this runs on a heartbeat; a `while true` loop is
+--- not something the harness can run, so the pass itself is what tests
+--- drive.
+function Client.reconcile()
+    withPhone(function() Client.app.reconcile() end)
+end
+
+--- lb-phone lost the app: it is off the phone and nothing said so. The
+--- state a missed transition leaves behind, and the one the reconciler
+--- exists to recover from.
+function Client.appGone()
+    Client.app.forgetRegistration()
+end
+
 --- Hand a photo (or a cancellation) back through the camera callback, the
 --- way lb-phone does.
 ---
