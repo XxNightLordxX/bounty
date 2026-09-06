@@ -5,7 +5,7 @@ lua54 'yes'
 name 'crimson-bounty'
 author 'Crimson'
 description 'Crimson Bounty System — criminal contract board for QBox and lb-phone'
-version '1.0.0'
+version '1.1.0'
 
 shared_scripts {
     'shared/constants.lua',

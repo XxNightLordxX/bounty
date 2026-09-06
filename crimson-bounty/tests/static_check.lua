@@ -41,10 +41,18 @@ for _, path in ipairs(files) do
         local lineNo = 0
         for line in src:gmatch('[^\n]*') do
             lineNo = lineNo + 1
-            local upper = line:upper()
+            -- Matched case-sensitively, against the line as written. The
+            -- comparison used to be case-insensitive, which made every
+            -- English sentence containing "update", "delete" or "select" a
+            -- SQL line: a console message telling an operator to update
+            -- their manifest was reported as SQL injection. Every query in
+            -- this codebase writes its verbs in capitals, so requiring that
+            -- costs nothing and stops the check crying wolf — and a check
+            -- that cries wolf is one whose next real finding gets waved
+            -- through.
             local looksLikeSql = false
             for _, verb in ipairs(SQL_VERBS) do
-                if upper:find(verb, 1, true) then looksLikeSql = true end
+                if line:find(verb, 1, true) then looksLikeSql = true end
             end
             if looksLikeSql then
                 -- A SQL line that also concatenates or formats is a finding.
@@ -868,6 +876,49 @@ do
                     end
                 end
             end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
+-- 24. The phone page must be cache-busted, in both halves.
+--
+-- CEF caches app.js on its own disk keyed by URL. While the URL was a
+-- constant, a player who had opened the app once kept that copy through
+-- every update — so fixes shipped to the page reached nobody who had
+-- already used it, and neither end of a support conversation could tell.
+-- Both halves are needed and each is useless alone: the client has to put
+-- a build on the page URL, and the page has to pass it on to its assets.
+--------------------------------------------------------------------------
+
+do
+    local client = read('crimson-bounty/client/main.lua')
+    local page = read('crimson-bounty/ui/index.html')
+
+    if client then
+        local ui = client:match("ui%s*=%s*([^\n]+)")
+        if ui and not ui:find('?v=', 1, true) then
+            failures[#failures + 1] =
+                'client/main.lua registers the phone page on a URL with no build '
+                .. 'query. CEF caches it by URL, so players keep the copy they '
+                .. 'already have and updates to the page reach nobody.'
+        end
+    end
+
+    if page then
+        -- A bare src/href to app.js or app.css is one CEF will cache
+        -- forever. Both have to carry the query the page was opened with.
+        if page:match('src%s*=%s*"app%.js"') or page:match('href%s*=%s*"app%.css"') then
+            failures[#failures + 1] =
+                'ui/index.html loads app.js or app.css without a build query. '
+                .. 'Whatever the page URL carries, these are cached separately '
+                .. 'and stay stale.'
+        end
+        if not page:find('CB_BUILD', 1, true) then
+            failures[#failures + 1] =
+                'ui/index.html does not record the build it was opened with. '
+                .. 'The app cannot then say which copy of itself is running, '
+                .. 'which is the only way to tell an update landed.'
         end
     end
 end

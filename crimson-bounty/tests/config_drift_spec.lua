@@ -361,6 +361,42 @@ describe('diagnosing an app that shows nothing', function()
             .. 'the diagnosis has to say so: ' .. out)
     end)
 
+    --- The report has to be able to disagree with a broken server.
+    ---
+    --- The app's own check is `== true`, an identity test in Lua. A config
+    --- written enabled = "true" switches item escrow OFF while a report
+    --- built from tostring() prints "true" and looks perfect — which is a
+    --- diagnosis actively pointing away from the fault.
+    it('does not print a non-boolean switch as though it were on', function()
+        local s = newStack()
+        fixture(s)
+
+        local realItem = Config.Sources.item.enabled
+        Config.Sources.item.enabled = 'true'
+        local out = said(s.admin.diagnose(1))
+        Config.Sources.item.enabled = realItem
+
+        truthy(out:find('not a boolean', 1, true),
+            'a string switch was reported as though it were on: ' .. out)
+        truthy(out:find('OFF', 1, true),
+            'and it has to say which way it actually reads: ' .. out)
+        truthy(out:find('money only', 1, true),
+            'and still explain the symptom it causes: ' .. out)
+    end)
+
+    it('says when a switch is not set at all', function()
+        local s = newStack()
+        fixture(s)
+
+        local realItem = Config.Sources.item.enabled
+        Config.Sources.item.enabled = nil
+        local out = said(s.admin.diagnose(1))
+        Config.Sources.item.enabled = realItem
+
+        truthy(out:find('not set', 1, true),
+            'an absent switch should say so rather than printing nil: ' .. out)
+    end)
+
     it('names the storage mode and who is asking', function()
         local s = newStack()
         fixture(s)

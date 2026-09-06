@@ -4,7 +4,26 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Crimson-Bounty</title>
-<link rel="stylesheet" href="app.css">
+<!-- The stylesheet and the script are loaded with the same ?v= this page
+     was itself opened with, which the client sets from the resource version.
+
+     FiveM's CEF caches by URL on its own disk, and this page's URL never
+     used to change — so a player who had opened the app once kept that
+     copy of app.js through resource restarts, server restarts and updates.
+     Every fix shipped to the page did nothing for them, with no way to tell
+     from either end. Propagating the query is what makes updating the
+     resource update what they are actually running. -->
+<script>
+  (function () {
+    var build = (location.search.match(/[?&]v=([^&]+)/) || [])[1] || 'dev';
+    window.CB_BUILD = decodeURIComponent(build);
+
+    var css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = 'app.css?v=' + build;
+    document.head.appendChild(css);
+  })();
+</script>
 </head>
 <body>
 <div id="app">
@@ -29,6 +48,13 @@
     <button class="tab" data-tab="ledger" role="tab">Ledger</button>
   </nav>
 </div>
-<script src="app.js"></script>
+<script>
+  (function () {
+    var build = (location.search.match(/[?&]v=([^&]+)/) || [])[1] || 'dev';
+    var js = document.createElement('script');
+    js.src = 'app.js?v=' + build;
+    document.body.appendChild(js);
+  })();
+</script>
 </body>
 </html>

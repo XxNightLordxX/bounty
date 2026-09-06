@@ -18,6 +18,24 @@ function Natives.install()
     end
     _G.Wait = function() end
     _G.GetCurrentResourceName = function() return 'crimson-bounty' end
+
+    -- Present in production, so the harness has to have it: the client reads
+    -- the manifest version through this to stamp the phone page's URL, and a
+    -- harness missing it made registration fail in a way no live server
+    -- would. A harness that lacks what production has tests a different
+    -- program.
+    --
+    -- Answers from the real manifest rather than a made-up string, so a
+    -- version that goes missing from it is a test failure rather than
+    -- something the harness papers over.
+    _G.GetResourceMetadata = function(_, key, _)
+        if key ~= 'version' then return nil end
+        local fh = io.open('crimson-bounty/fxmanifest.lua', 'r')
+        if not fh then return nil end
+        local text = fh:read('*a')
+        fh:close()
+        return text:match("version%s+'([^']+)'")
+    end
     _G.GetResourceState = function(name) return Natives.resourceStates[name] or 'missing' end
 
     _G.RegisterNetEvent = function(name, handler)

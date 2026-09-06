@@ -45,6 +45,37 @@ end
 -- lb-phone registration
 --------------------------------------------------------------------------
 
+--- What this resource's UI build is, for cache-busting and for saying so.
+---
+--- The version in fxmanifest.lua, so a released change to the page reaches
+--- players the moment they load the updated resource. A manifest with no
+--- version still has to bust the cache rather than silently stop doing it,
+--- so the resource name stands in and the operator is told.
+local buildStamp
+function App.build()
+    if buildStamp then return buildStamp end
+
+    -- Guarded: this is read while building the registration payload, which
+    -- happens inside a pcall that reports any throw as "lb-phone rejected
+    -- the app". A native that is absent or behaves differently on some
+    -- build would take the whole app off the phone and blame lb-phone for
+    -- it. Nothing here is worth that, so a failure falls back to a stamp
+    -- that still busts the cache.
+    local ok, version = pcall(GetResourceMetadata, GetCurrentResourceName(), 'version', 0)
+    if not ok then version = nil end
+
+    if type(version) == 'string' and version ~= '' then
+        buildStamp = version
+    else
+        buildStamp = 'nover'
+        print('[crimson-bounty] fxmanifest.lua has no version line. The phone '
+            .. 'page cannot then be cache-busted by version, so players may keep '
+            .. 'an old copy of the app after an update. Add a version to the '
+            .. 'manifest.')
+    end
+    return buildStamp
+end
+
 --- Register the app, once. Returns false while it is still worth retrying.
 local function registerApp()
     if appReady then return true end
@@ -60,7 +91,17 @@ local function registerApp()
             developer   = 'Crimson',
             defaultApp  = false,
             size        = 4200,
-            ui          = GetCurrentResourceName() .. '/ui/index.html',
+            -- The build stamp is what makes an update reach the player.
+            --
+            -- CEF caches this page and everything it loads on its own disk,
+            -- keyed by URL, and the URL used to be the same string forever.
+            -- A player who had opened the app once kept that copy of app.js
+            -- through resource restarts, server restarts and updates: every
+            -- fix shipped to the page did nothing for them, and neither end
+            -- had any way to tell. index.html passes this query on to
+            -- app.js and app.css, so bumping the resource version is what
+            -- replaces what they are running.
+            ui          = GetCurrentResourceName() .. '/ui/index.html?v=' .. App.build(),
             icon        = 'https://cfx-nui-' .. GetCurrentResourceName() .. '/ui/icon.png',
             fixBlur     = true,
             -- The page loads its own data when it opens; firing the same

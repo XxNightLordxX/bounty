@@ -263,6 +263,22 @@ end
 -- Diagnosis
 --------------------------------------------------------------------------
 
+--- A config switch, with its type when that is the thing that is wrong.
+---
+--- The app's own check is `== true`, which in Lua is an identity test: the
+--- string "true" and the number 1 both switch item escrow off while a report
+--- built from tostring() says "true" and looks completely healthy. A
+--- diagnosis that can agree with a broken server is worse than none, and
+--- this one could.
+---@param value any
+---@return string
+local function describeSwitch(value)
+    if type(value) == 'boolean' then return tostring(value) end
+    if value == nil then return 'not set (reads as OFF)' end
+    return ('%s (a %s, not a boolean — this reads as OFF)')
+        :format(tostring(value), type(value))
+end
+
 --- Report why the app is not showing something.
 ---
 --- Three separate causes have produced the same symptom on a live server —
@@ -370,7 +386,7 @@ function Admin.diagnose(source, subjectId)
         local itemOff = Config.Sources.item or {}
         local weaponOff = Config.Sources.weapon or {}
         say(('item escrow: %s   weapon escrow: %s'):format(
-            tostring(itemOff.enabled), tostring(weaponOff.enabled)))
+            describeSwitch(itemOff.enabled), describeSwitch(weaponOff.enabled)))
         if itemOff.enabled ~= true or weaponOff.enabled ~= true then
             say('  -> the app tells players this server takes money only. If you '
                 .. 'did not mean that, your config.lua predates '
@@ -392,8 +408,9 @@ function Admin.diagnose(source, subjectId)
     -- worth reporting, and a diagnosis that throws diagnoses nothing.
     local itemSource = Config.Sources.item or {}
     local weaponSource = Config.Sources.weapon or {}
+
     say(('  item escrow: %s   weapon escrow: %s'):format(
-        tostring(itemSource.enabled), tostring(weaponSource.enabled)))
+        describeSwitch(itemSource.enabled), describeSwitch(weaponSource.enabled)))
     if itemSource.enabled ~= true or weaponSource.enabled ~= true then
         say('  -> the app tells players this server takes money only. If you did '
             .. 'not mean that, your config.lua predates Config.Sources.item and '

@@ -1202,6 +1202,7 @@
 
     if (!rows.length) {
       view.appendChild(el('div', 'empty', 'No history yet.'));
+      view.appendChild(buildStamp());
       return;
     }
     rows.forEach(function (row) {
@@ -1220,6 +1221,19 @@
       }
       view.appendChild(node);
     });
+
+    view.appendChild(buildStamp());
+  }
+
+  /* Which copy of this page the player is actually running.
+
+     CEF caches app.js on its own disk, so "have you updated?" and "is the
+     update running?" are different questions, and for a long time neither
+     end of a support conversation could answer the second one. Now the page
+     says so itself. */
+  function buildStamp() {
+    var build = (typeof window !== 'undefined' && window.CB_BUILD) || 'unknown';
+    return el('div', 'hint', 'Crimson-Bounty build ' + build);
   }
 
   function viewThread(view) {

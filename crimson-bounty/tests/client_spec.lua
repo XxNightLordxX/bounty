@@ -22,6 +22,50 @@ describe('the client on an ordinary phone', function()
         truthy(registered, 'the app must be registered with lb-phone')
         eq(registered.identifier, 'crimson-bounty')
         truthy(registered.ui:find('ui/index.html', 1, true), 'and point at the page')
+
+        -- The build stamp is the only thing that makes an update reach a
+        -- player who has opened the app before: CEF caches the page and its
+        -- app.js on its own disk, keyed by URL, and this URL was a constant
+        -- for the life of the resource. Every fix shipped to the page went
+        -- to nobody who had already used it.
+        truthy(registered.ui:find('?v=', 1, true),
+            'the page URL must carry a build, or CEF serves the copy the '
+            .. 'player already has forever: ' .. registered.ui)
+
+        -- And the build has to be the manifest's, not a placeholder: a stamp
+        -- that never changes caches exactly as badly as no stamp at all.
+        local manifest = io.open('crimson-bounty/fxmanifest.lua', 'r')
+        local version = manifest and manifest:read('*a'):match("version%s+'([^']+)'")
+        if manifest then manifest:close() end
+        truthy(version, 'fxmanifest.lua must carry a version to stamp with')
+        truthy(registered.ui:find(version, 1, true),
+            ('the page URL must carry the manifest version (%s): %s')
+                :format(tostring(version), registered.ui))
+    end)
+
+    it('still registers when the version cannot be read', function()
+        -- The build is read while the registration payload is being built,
+        -- inside a pcall whose failure is reported as "lb-phone rejected the
+        -- app". A native that throws would take the app off the phone
+        -- entirely and blame lb-phone for it.
+        Env.reset()
+        local real = _G.GetResourceMetadata
+        _G.GetResourceMetadata = function() error('no such native on this build') end
+
+        Client.boot()
+        Natives.resourceStates = { ['lb-phone'] = 'started' }
+        Client.runThreads()
+        _G.GetResourceMetadata = real
+
+        local registered
+        for _, call in ipairs(Client.phone) do
+            if call.call == 'AddCustomApp' then registered = call.spec end
+        end
+        truthy(registered,
+            'a missing version native must not cost the player the whole app')
+        truthy(registered.ui:find('?v=', 1, true),
+            'and it must still bust the cache rather than silently stop: '
+            .. tostring(registered.ui))
     end)
 
     it('forwards a push to the app', function()
