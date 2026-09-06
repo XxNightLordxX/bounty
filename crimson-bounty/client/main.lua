@@ -395,7 +395,22 @@ end)
 -- URL it produces is submitted with the server-issued token, so an image
 -- alone can never claim a payout.
 
-RegisterNUICallback('crimson:takeVerificationPhoto', function(data, cb)
+RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
+    -- Answered exactly once, whatever happens after.
+    --
+    -- Three paths can reach this callback — the camera cancelling, the
+    -- submission returning, and the camera failing to open — and lb-phone
+    -- has been seen to invoke a camera callback more than once. Resolving an
+    -- NUI callback twice throws inside the browser the phone is drawn in,
+    -- which does not look like a bug in this resource: it looks like the
+    -- phone crashing, in the middle of an upload, for no stated reason.
+    local answered = false
+    local function cb(payload)
+        if answered then return end
+        answered = true
+        pcall(rawCb, payload)
+    end
+
     local contractId = data and data.id
     if not contractId then return cb({ ok = false, err = 'invalid_input' }) end
 
@@ -416,17 +431,50 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, cb)
                     toggleFlash = true, flipCamera = true, takePhoto = true,
                     takeVideo = false, takeLandscapePhoto = false,
                 },
-                saveToGallery = true,
+                -- Saving the shot to the player's own gallery is a second
+                -- upload of a photograph of a body, done inside the same
+                -- operation, and it is the step this crashes in on some
+                -- builds. It is also evidence of a crime sitting in the
+                -- hunter's phone. Off unless an operator asks for it.
+                saveToGallery = Config.Completion.SavePhotoToGallery == true,
                 cb = function(src)
-                    if not src then return cb({ ok = false, err = 'cancelled' }) end
-                    App.request('submitPhoto', { token = token, url = src }, function(submitResult)
-                        cb({ ok = submitResult.ok, err = submitResult.err, data = submitResult.data })
+                    -- The override is ours and we are done with it. Left
+                    -- installed, every later use of the phone's own camera
+                    -- runs through a component this resource configured for
+                    -- one photograph of a body — including its callback,
+                    -- which by then belongs to a request that has finished.
+                    phone('SetCameraComponent reset', function()
+                        return exports['lb-phone']:SetCameraComponent(nil)
                     end)
+
+                    -- Guarded: this runs inside lb-phone's camera, so a
+                    -- throw here does not stay here — it goes back into the
+                    -- camera and takes the phone with it.
+                    local ok, err = pcall(function()
+                        if not src then return cb({ ok = false, err = 'cancelled' }) end
+                        App.request('submitPhoto', { token = token, url = src }, function(submitResult)
+                            cb({ ok = submitResult.ok, err = submitResult.err,
+                                 data = submitResult.data })
+                        end)
+                    end)
+                    if not ok then
+                        print(('[crimson-bounty] the camera callback threw: %s')
+                            :format(tostring(err)))
+                        cb({ ok = false, err = 'photo_rejected' })
+                    end
                 end,
             })
         end)
 
-        if not opened then cb({ ok = false, err = 'camera_unavailable' }) end
+        if not opened then return cb({ ok = false, err = 'camera_unavailable' }) end
+
+        -- A camera that opens and never calls back leaves the page waiting on
+        -- a request that has no timeout of its own: the server round trip has
+        -- one, the player composing a shot does not. Generous, because they
+        -- are lining up a photograph, but not forever.
+        SetTimeout((Config.Completion.PhotoTokenLifetimeSeconds or 120) * 1000, function()
+            cb({ ok = false, err = 'cancelled' })
+        end)
     end)
 end)
 

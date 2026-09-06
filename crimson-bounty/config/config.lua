@@ -224,6 +224,15 @@ Config.Immunity = {
 --------------------------------------------------------------------------
 
 Config.Completion = {
+    --- Save the verification photo to the hunter's own phone gallery.
+    ---
+    --- Off by default. It is a second upload of the same image, made inside
+    --- the operation that already uploads it once — and on some lb-phone
+    --- builds that is where the phone dies mid-upload. It also leaves a
+    --- photograph of a body in the hunter's gallery, which is evidence of a
+    --- crime they are carrying around.
+    SavePhotoToGallery = false,
+
     --- Elimination requires a genuine death. A player who is merely downed
     --- or bleeding out is not a kill, and this is re-checked when the proof
     --- photo is submitted, not only when the death is reported.

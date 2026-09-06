@@ -170,6 +170,108 @@ describe('the client on a phone missing an export', function()
     end)
 end)
 
+describe('the camera, on a phone that dies mid-upload', function()
+    --- Reported from a live server: the photo route says "uploading" and then
+    --- the phone crashes. Everything here is a way this resource could be the
+    --- one taking it down.
+
+    local function tokenIssued(app)
+        local asked = Client.toServer[#Client.toServer]
+        local rid = asked.args[1] and asked.args[1].__rid
+        Client.fire('crimson-bounty:result', {
+            rid = rid, event = 'requestPhotoToken', ok = true, data = { token = 'tok' },
+        })
+    end
+
+    it('answers the page exactly once, however often the camera calls back', function()
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued()
+        truthy(Client.cameraCallback, 'the camera must have opened')
+
+        -- lb-phone has been seen to invoke a camera callback more than once.
+        -- Resolving an NUI callback twice throws inside the browser the phone
+        -- is drawn in, which reads as the phone crashing rather than as a
+        -- bug here.
+        Client.cameraCallback(nil)
+        Client.cameraCallback(nil)
+        Client.cameraCallback('https://example.com/a.png')
+
+        eq(Client.answerCount, 1,
+            'the page was answered more than once, which is what crashes it')
+    end)
+
+    it('does not let a throw of its own reach the camera', function()
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued()
+
+        -- Whatever goes wrong inside the callback, it runs inside lb-phone's
+        -- camera: a throw there does not stay there, it goes back into the
+        -- camera and takes the phone with it.
+        local realTrigger = _G.TriggerServerEvent
+        _G.TriggerServerEvent = function() error('submission blew up') end
+        local ok = pcall(Client.cameraCallback, 'https://example.com/a.png')
+        _G.TriggerServerEvent = realTrigger
+
+        truthy(ok, 'a throw escaped into the camera')
+        truthy(Client.answered, 'and the page must still be answered')
+    end)
+
+    it('answers eventually when the camera never calls back at all', function()
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued()
+
+        falsy(Client.answered, 'the page waits while the player composes the shot')
+
+        -- The server round trip has a timeout; a player standing in front of
+        -- an open camera does not. Without one the page waits forever.
+        Client.runTimeouts()
+        truthy(Client.answered,
+            'a camera that never calls back left the page waiting for good')
+    end)
+
+    it('takes its camera override back off the phone when it is done', function()
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued()
+        truthy(Client.camera('https://example.com/a.png'))
+
+        local resets = 0
+        for _, call in ipairs(Client.phone) do
+            if call.call == 'SetCameraComponent' and call.spec == nil then
+                resets = resets + 1
+            end
+        end
+        truthy(resets > 0,
+            'the override stays installed, so every later use of the phone camera '
+            .. 'runs through a component configured for one photograph of a body, '
+            .. 'callback included')
+    end)
+
+    it('does not upload the shot to the players own gallery by default', function()
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued()
+
+        local spec
+        for _, call in ipairs(Client.phone) do
+            if call.call == 'SetCameraComponent' then spec = call.spec end
+        end
+        truthy(spec, 'the camera should have been configured')
+        falsy(spec.saveToGallery,
+            'a second upload of the same image, inside the operation that '
+            .. 'already uploads it, and a photograph of a body left in the '
+            .. 'hunters gallery')
+    end)
+end)
+
 describe('a job that is barred from the app', function()
     --- The gate already refuses every request from a barred job, but the app
     --- was still installed and opened for them: it answered nothing, which

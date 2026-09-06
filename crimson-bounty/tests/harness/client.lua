@@ -189,11 +189,41 @@ function Client.nuiCall(name, payload)
     if not handler then return nil, 'no NUI callback named ' .. tostring(name) end
 
     Client.answered, Client.answer = false, nil
+    -- Counted, not just flagged. Answering an NUI callback twice throws
+    -- inside the browser the phone is drawn in, and a boolean cannot tell
+    -- "answered" from "answered three times".
+    Client.answerCount = 0
     local ok, err = withPhone(handler, payload, function(value)
         Client.answered, Client.answer = true, value
+        Client.answerCount = Client.answerCount + 1
     end)
     if not ok then return nil, err end
     return Client.answered, Client.answer
+end
+
+--- Hand a photo (or a cancellation) back through the camera callback, the
+--- way lb-phone does.
+---
+--- With this build's exports in place, because in production this callback
+--- runs inside lb-phone's own camera and the code in it reaches for lb-phone
+--- exports. Calling it bare tests a situation that cannot happen and misses
+--- everything it does there.
+function Client.camera(src)
+    if not Client.cameraCallback then return false end
+    local cb = Client.cameraCallback
+    withPhone(function() cb(src) end)
+    return true
+end
+
+--- Fire every timer the client has queued, as the engine would once their
+--- delay has passed. The camera's own timeout lives on one of these.
+function Client.runTimeouts()
+    local timers = Env.timers
+    Env.timers = {}
+    withPhone(function()
+        for i = 1, #timers do pcall(timers[i].fn) end
+    end)
+    return #timers
 end
 
 --- Whether anything the client printed mentions this.

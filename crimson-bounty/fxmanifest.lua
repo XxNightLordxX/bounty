@@ -22,6 +22,10 @@ client_scripts {
 }
 
 server_scripts {
+    -- Loaded whatever storage mode is configured, because a manifest cannot
+    -- read config. In json mode nothing here queries a database, but the
+    -- file still has to resolve — so oxmysql must be present and started
+    -- even on a server that never uses it. qbx_core already requires it.
     '@oxmysql/lib/MySQL.lua',
     'server/boot.lua',
     'server/main.lua',
