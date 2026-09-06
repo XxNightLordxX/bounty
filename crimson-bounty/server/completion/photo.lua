@@ -201,7 +201,7 @@ function Photo.submit(actor, rawToken, rawUrl)
     if type(rawUrl) ~= 'string' or #rawUrl > Util.MAX_URL_LENGTH or not Photo.hostAllowed(rawUrl) then
         Audit.rejected('photo_host_not_allowed', actor.cid, record.contractId,
             { host = Util.urlHost(rawUrl) })
-        return false, CB.ERR.PHOTO_REJECTED
+        return false, CB.ERR.PHOTO_BAD_HOST
     end
 
     -- The hunter must be at the scene. Position is read server-side; a
@@ -210,7 +210,7 @@ function Photo.submit(actor, rawToken, rawUrl)
     local radius = Config.Completion.PhotoRadius
     if Util.dist2(hunterCoords, record.coords) > (radius * radius) then
         Audit.rejected('photo_out_of_range', actor.cid, record.contractId, {})
-        return false, CB.ERR.PHOTO_REJECTED
+        return false, CB.ERR.PHOTO_TOO_FAR
     end
 
     -- Still dead? A target revived between the kill and the photo was not
@@ -225,7 +225,7 @@ function Photo.submit(actor, rawToken, rawUrl)
                 { since = math.floor(sinceDeath) })
             Death.clearPending(record.contractId, actor.cid)
             tokens[token] = nil
-            return false, CB.ERR.PHOTO_REJECTED
+            return false, CB.ERR.PHOTO_REVIVED
         end
     end
 

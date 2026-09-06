@@ -133,6 +133,16 @@ CB.ERR = {
     ALREADY_SETTLED  = 'already_settled',
     TOKEN_INVALID    = 'token_invalid',
     PHOTO_REJECTED   = 'photo_rejected',
+
+    --- Why a photo was rejected. One code covered four unrelated causes —
+    --- a host that is not allowed, standing too far from the body, a target
+    --- who was revived, and a shot the server could not attribute — and
+    --- "The photo was not accepted" told a hunter nothing about which, so
+    --- they had no way to do anything differently. Each is something they
+    --- can act on, but only if they are told.
+    PHOTO_TOO_FAR    = 'photo_too_far',
+    PHOTO_REVIVED    = 'photo_revived',
+    PHOTO_BAD_HOST   = 'photo_bad_host',
     LOCKED           = 'locked',
 }
 

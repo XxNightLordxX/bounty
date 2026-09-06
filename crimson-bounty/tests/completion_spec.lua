@@ -146,7 +146,7 @@ describe('photo verification', function()
         }) do
             local ok, err = s.photo.submit(f.hunter, token, url)
             falsy(ok, 'accepted a foreign image host: ' .. url)
-            eq(err, CB.ERR.PHOTO_REJECTED)
+            eq(err, CB.ERR.PHOTO_BAD_HOST)
         end
     end)
 
@@ -162,7 +162,7 @@ describe('photo verification', function()
         }) do
             local ok, err = s.photo.submit(f.hunter, token, url)
             falsy(ok, 'accepted a spoofed host: ' .. url)
-            eq(err, CB.ERR.PHOTO_REJECTED)
+            eq(err, CB.ERR.PHOTO_BAD_HOST)
         end
     end)
 
@@ -171,7 +171,7 @@ describe('photo verification', function()
         local long = 'https://cdn.fivemanage.com/' .. string.rep('a', 600) .. '.png'
         local ok, err = s.photo.submit(f.hunter, token, long)
         falsy(ok, 'an over-length URL would be truncated in storage')
-        eq(err, CB.ERR.PHOTO_REJECTED)
+        eq(err, CB.ERR.PHOTO_BAD_HOST)
     end)
 
     it('accepts a subdomain of the upload host', function()
@@ -194,7 +194,7 @@ describe('photo verification', function()
         Env.players[3]._coords = { x = 900.0, y = 900.0, z = 30.0 }
         local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
         falsy(ok, 'must be at the body')
-        eq(err, CB.ERR.PHOTO_REJECTED)
+        eq(err, CB.ERR.PHOTO_TOO_FAR)
     end)
 
     it('accepts a photo taken right after the target respawned', function()
@@ -210,7 +210,7 @@ describe('photo verification', function()
         Env.advance(Config.Completion.ProofWindowSeconds + 10)
         local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
         falsy(ok, 'a target who has been up and about for a minute is not proof of death')
-        eq(err, CB.ERR.PHOTO_REJECTED)
+        eq(err, CB.ERR.PHOTO_REVIVED)
     end)
 
     it('cannot be replayed for a second payout', function()

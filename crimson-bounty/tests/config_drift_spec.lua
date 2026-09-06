@@ -452,6 +452,38 @@ describe('diagnosing an app that shows nothing', function()
             .. 'the gate has to be reported: ' .. out)
     end)
 
+    --- An elimination pays only on a target this resource can see is dead.
+    --- With nothing able to answer that, every photo of a genuine kill is
+    --- refused as "the target was revived" — a kill that simply never works,
+    --- with the fault two resources away and nothing naming it.
+    it('says when nothing can tell whether a target is dead', function()
+        local s = newStack()
+        fixture(s)
+
+        local real = exports.qbx_core.GetPlayer
+        exports.qbx_core.GetPlayer = function(self, src)
+            local player = real(self, src)
+            -- Resolvable, but with no metadata to read a death state from,
+            -- and no death provider running either.
+            if player and player.PlayerData then player.PlayerData.metadata = nil end
+            return player
+        end
+        local out = said(s.admin.diagnose(1))
+        exports.qbx_core.GetPlayer = real
+
+        truthy(out:find('NOTHING COULD ANSWER', 1, true),
+            'unreadable death state has to be reported: ' .. out)
+        truthy(out:find('providers tried', 1, true),
+            'and say what it tried: ' .. out)
+    end)
+
+    it('reports a readable death state as readable', function()
+        local s = newStack()
+        fixture(s)
+        local out = said(s.admin.diagnose(1))
+        truthy(out:find('death state: readable', 1, true), out)
+    end)
+
     it('names the storage mode and who is asking', function()
         local s = newStack()
         fixture(s)

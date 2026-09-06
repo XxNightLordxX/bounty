@@ -221,7 +221,16 @@ function Contracts.isImmune(targetActor, opts)
     -- A claim on a death that happened BEFORE the respawn is exempt: the
     -- hunter earned it while the target was still down, and the target
     -- pressing respawn must not take it away (§7.4 proof window).
-    if Death and (Config.Immunity.PostRespawnSeconds or 0) > 0 then
+    --
+    -- A live delivery is exempt too, and has to be. Taking somebody alive
+    -- means restraining them, and restraining them all but always means
+    -- putting them down first — so this rule fired on the hunter's own
+    -- doing, on nearly every kidnapping, and told them to give the target a
+    -- moment while that target was cuffed in the back of their car. The
+    -- rule is against re-killing someone who has just respawned; a target
+    -- already in hand is not being camped, they are being carried.
+    local liveDelivery = opts and opts.fulfilment == CB.FULFILMENT.KIDNAPPING
+    if not liveDelivery and Death and (Config.Immunity.PostRespawnSeconds or 0) > 0 then
         local since = Death.sinceRespawn(targetActor.cid)
         if since and since < Config.Immunity.PostRespawnSeconds then
             local respawnedAgo = since

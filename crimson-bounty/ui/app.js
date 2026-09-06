@@ -77,6 +77,11 @@
     already_settled: 'That contract is closed.',
     token_invalid: 'Verification expired. Take the photo again.',
     photo_rejected: 'The photo was not accepted.',
+    photo_too_far: 'You are too far from the body. Stand over them and take it again.',
+    photo_revived: 'They were brought back before you sent the photo, so this is '
+      + 'not an elimination any more.',
+    photo_bad_host: 'That image host is not on this server\u2019s allow list. '
+      + 'An admin sets which hosts the camera may upload to.',
     bad_state: 'Not right now.',
     locked: 'Someone got there first.',
     not_found: 'Gone.',

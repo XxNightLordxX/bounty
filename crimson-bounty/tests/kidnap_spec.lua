@@ -178,8 +178,7 @@ describe('countdown', function()
 end)
 
 describe('a protected target is refused up front', function()
-    it('will not arm a countdown the claim would refuse anyway', function()
-        local s = newStack()
+    local function held(s)
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x',
@@ -191,15 +190,88 @@ describe('a protected target is refused up front', function()
             Env.players[src]._coords = { x = 5.0, y = 5.0, z = 30.0 }
         end
         Env.players[2].PlayerData.metadata.ishandcuffed = true
+        return f, c
+    end
 
-        -- The target has just respawned, so the claim would be refused.
+    --- Taking somebody alive means restraining them, and restraining them
+    --- all but always means putting them down first. The post-respawn rule
+    --- therefore fired on the hunter's own doing, on nearly every
+    --- kidnapping: a hunter with a cuffed target in the back of their car
+    --- was told to give them a moment because they had just got up.
+    ---
+    --- The rule is against re-killing someone who has just respawned. A
+    --- target already in hand is not being camped, they are being carried.
+    it('delivers a target who has just got up, because that is the job', function()
+        local s = newStack()
+        local f, c = held(s)
+
         s.death.onRevived('TARGET01')
 
         local ok, reason = s.kidnap.arm(c.id, 'HUNTER01')
+        truthy(ok, 'a live delivery was refused because the hunter downed them '
+            .. 'first, which is how a delivery starts: ' .. tostring(reason))
+    end)
+
+    --- The whole delivery, end to end, on a target who has just got up.
+    ---
+    --- Arming is only half of it: the payout re-checks immunity when the
+    --- countdown finishes, so exempting the arm alone would let a hunter
+    --- hold somebody for the full thirty seconds and be refused at the end,
+    --- which is exactly what the check at arming exists to prevent.
+    it('pays out a delivery of a target who had just got up', function()
+        local s = newStack()
+        local f, c = held(s)
+        s.death.onRevived('TARGET01')
+
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'), 'the countdown should start')
+
+        local completions = {}
+        local ticks = math.floor((Config.Kidnap.CountdownSeconds * 1000) / Config.Kidnap.TickMs) + 2
+        for _ = 1, ticks do
+            for _, d in ipairs(s.kidnap.tick(Config.Kidnap.TickMs)) do
+                completions[#completions + 1] = d
+            end
+        end
+
+        truthy(#completions > 0, 'the countdown should have finished')
+        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED,
+            'thirty seconds of holding someone must not end in a refusal')
+        eq(Env.players[3].PlayerData.money.cash, 5000 + 5000,
+            'and the hunter must actually be paid')
+    end)
+
+    it('still refuses an elimination on somebody who just got up', function()
+        local s = newStack()
+        local f, c = held(s)
+
+        s.death.onRevived('TARGET01')
+
+        -- Same target, same moment, the other fulfilment. Respawn camping is
+        -- what the rule is for and it has to keep working.
+        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        falsy(ok, 'a kill claim on somebody who just respawned must still be refused')
+        eq(err, CB.ERR.TARGET_PROTECTED)
+    end)
+
+    --- The check at arming exists so a hunter does not hold somebody for
+    --- thirty seconds and only then be refused. The immunities that still
+    --- apply to a delivery have to be caught there.
+    it('will not arm a countdown the claim would refuse anyway', function()
+        local s = newStack()
+        local f, c = held(s)
+
+        -- A target who has only just joined is not fair game by any route,
+        -- delivery included.
+        local realSession = s.identity.sessionMinutes
+        s.identity.sessionMinutes = function(cid)
+            if cid == 'TARGET01' then return 0 end
+            return realSession(cid)
+        end
+
+        local ok, reason = s.kidnap.arm(c.id, 'HUNTER01')
+        s.identity.sessionMinutes = realSession
+
         falsy(ok, 'thirty seconds of holding someone should not end in a refusal')
         eq(reason, 'target_protected')
-
-        Env.advance(Config.Immunity.PostRespawnSeconds + 10)
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'), 'and arms once they are fair game again')
     end)
 end)

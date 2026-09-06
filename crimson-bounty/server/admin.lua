@@ -433,6 +433,32 @@ function Admin.diagnose(source, subjectId)
         say('  -> you are carrying nothing. Pick something up and run this again.')
     end
 
+    -- Death detection -----------------------------------------------------
+    --
+    -- An elimination pays only on a target this resource can see is dead.
+    -- When nothing can answer that, isTrulyDead returns false for everybody
+    -- and every photo of a genuine kill is refused as "the target was
+    -- revived" — a kill that simply never works, with the fault two
+    -- resources away and nothing naming it.
+    local dead, lastStand, resolved = Identity.deathState(subject)
+    if resolved then
+        say(('death state: readable (dead=%s, last stand=%s)')
+            :format(tostring(dead), tostring(lastStand)))
+    else
+        say('death state: NOTHING COULD ANSWER')
+        say('  -> no configured death provider responded and this player has no '
+            .. 'QBox metadata to fall back on. Eliminations cannot be verified: '
+            .. 'every photo of a real kill is refused. Deliveries alive are '
+            .. 'refused too, for the same reason.')
+        local providers = {}
+        for _, provider in ipairs(Config.Completion.DeathStateProviders or {}) do
+            providers[#providers + 1] = ('%s(%s)')
+                :format(provider.resource, tostring(GetResourceState(provider.resource)))
+        end
+        say(('  providers tried: %s'):format(
+            #providers > 0 and table.concat(providers, ', ') or 'none configured'))
+    end
+
     -- The gate ------------------------------------------------------------
     --
     -- Every request passes through it and nothing above tests it. Resolving
