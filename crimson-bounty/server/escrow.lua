@@ -33,6 +33,8 @@ end
 ---@param spec table client submission
 ---@param bonusPercent integer|nil derive a bonus from the baseline money
 ---@param existingLines integer|nil escrow lines the contract already holds
+---@param existingValue integer|nil money the contract already holds, so the
+--- total ceiling bounds the contract rather than one request to add to it
 ---@return table[]|nil lines
 ---@return string|nil err
 ---@return integer|nil slotCount
@@ -57,7 +59,7 @@ local function isWeaponName(name)
     return type(name) == 'string' and name:upper():sub(1, 7) == 'WEAPON_'
 end
 
-function Escrow.validate(actor, spec, bonusPercent, existingLines)
+function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue)
     if type(spec) ~= 'table' then return nil, CB.ERR.INVALID_REWARD end
 
     local slots = spec.slots
@@ -318,6 +320,12 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
                     derived[#derived + 1] = {
                         slot = line.slot, portion = CB.PORTION.BONUS,
                         source = line.source, amount = extra,
+                        -- Marked, so raising the percentage later can tell a
+                        -- bonus this resource worked out from a percentage
+                        -- apart from one the creator named themselves. A
+                        -- top-up must recompute the first and leave the
+                        -- second alone.
+                        derived = true,
                     }
                     moneyTotal = moneyTotal + extra
                 end
@@ -331,7 +339,12 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines)
     local err = Escrow.checkAggregate(actor, lines)
     if err then return nil, err end
 
-    if moneyTotal > Config.MaxContractValue then
+    -- Counted against what the contract already holds, not just against
+    -- this submission. The ceiling was applied to one call at a time, so a
+    -- creator could top a contract up past it in as many steps as they
+    -- liked — and the setting exists to bound what one contract can be
+    -- worth, which is a property of the contract, not of a request.
+    if moneyTotal + (existingValue or 0) > Config.MaxContractValue then
         return nil, CB.ERR.INVALID_REWARD
     end
 
@@ -694,6 +707,97 @@ function Escrow.deliver(recipientCid, line)
     end
 
     return false
+end
+
+--- What a contract holds, split by money source.
+---
+--- moneyValue adds the three together, which is what the board showed: one
+--- dollar figure covering cash, bank and black money alike. Those are not
+--- the same thing — black money sells for a fraction of its face value —
+--- so a hunter deciding on "$250,000" could be looking at a quarter of a
+--- million black_money items and have no way to tell.
+---@param contractId string
+---@param filter table|string|nil
+---@return table { cash = n, bank = n, dirty = n }
+function Escrow.moneyBySource(contractId, filter)
+    if type(filter) == 'string' then filter = { portion = filter } end
+
+    local lines = Storage.readEscrow(contractId)
+    local out = { cash = 0, bank = 0, dirty = 0 }
+
+    for i = 1, #lines do
+        local line = lines[i]
+        local matches = true
+        if filter then
+            if filter.portion and line.portion ~= filter.portion then matches = false end
+            if filter.slot and line.slot ~= filter.slot then matches = false end
+        end
+
+        -- The same exclusions moneyValue applies, so the parts add up to it.
+        if matches and line.portion ~= CB.PORTION.STAKE
+            and line.portion ~= CB.PORTION.OWED
+            and not line.owed_to
+            and CB.MONEY_SOURCES[line.source]
+            and line.state ~= CB.ESCROW_STATE.SETTLED then
+            out[line.source] = (out[line.source] or 0) + (line.amount or 0)
+        end
+    end
+
+    return out
+end
+
+--- The extra escrow needed to move a derived kidnapping bonus from one
+--- percentage to another.
+---
+--- The bonus is real escrow, taken at creation, not a number on the
+--- contract: the payout releases bonus lines, so a raise that only stored a
+--- bigger percentage told every hunter the terms had improved and paid them
+--- exactly what it did before.
+---
+--- Only slots whose bonus this resource derived are topped up. A slot where
+--- the creator named their own bonus is theirs, and recomputing it from a
+--- percentage would overwrite a figure they chose.
+---@param contractId string
+---@param fromPercent integer
+---@param toPercent integer
+---@return table[] lines  empty when there is nothing to top up
+function Escrow.bonusTopUp(contractId, fromPercent, toPercent)
+    local held = Storage.readEscrow(contractId)
+
+    -- Slots the creator funded a bonus on by hand, and slots already settled.
+    local explicit, settled = {}, {}
+    for i = 1, #held do
+        local line = held[i]
+        if line.portion == CB.PORTION.BONUS and not line.derived then
+            explicit[line.slot] = true
+        end
+        if line.state == CB.ESCROW_STATE.SETTLED then settled[line.slot] = true end
+    end
+
+    local extra = {}
+    for i = 1, #held do
+        local line = held[i]
+        if line.portion == CB.PORTION.BASELINE
+            and CB.MONEY_SOURCES[line.source]
+            and line.state ~= CB.ESCROW_STATE.SETTLED
+            and not explicit[line.slot]
+            and not settled[line.slot] then
+
+            -- The same arithmetic as creation, and the same order of
+            -- operations: multiply before dividing, because a binary
+            -- fraction of a percentage is not the percentage.
+            local was = math.floor(line.amount * fromPercent / 100)
+            local now = math.floor(line.amount * toPercent / 100)
+            if now > was then
+                extra[#extra + 1] = {
+                    slot = line.slot, portion = CB.PORTION.BONUS,
+                    source = line.source, amount = now - was, derived = true,
+                }
+            end
+        end
+    end
+
+    return extra
 end
 
 --- Money-equivalent value of what a contract holds. Items and weapons are

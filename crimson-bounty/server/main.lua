@@ -213,6 +213,31 @@ local function validateConfig()
             :format(Config.Ledger.Depth, Config.Ledger.MaxDepthHardCap)
     end
 
+    -- Settings that name a money account and are handed straight to
+    -- AddMoney or RemoveMoney. 'dirty' is a money SOURCE but not an
+    -- account, so naming it here charges nothing and returns false — which
+    -- surfaces as an anonymous contract that cannot be placed, or an
+    -- informant that always says you cannot afford it, with nothing
+    -- anywhere connecting that to a line in config.lua.
+    --
+    -- Corrected rather than fatal: the resource stays up, the operator is
+    -- told exactly which setting and what it was changed to.
+    for _, named in ipairs({
+        { table = Config.Anonymity, key = 'FeeAccount', label = 'Anonymity.FeeAccount' },
+        { table = Config.Informant, key = 'Account', label = 'Informant.Account' },
+    }) do
+        local holder = named.table
+        local value = holder and holder[named.key]
+        if holder and value ~= nil and not CB.MONEY_ACCOUNTS[value] then
+            holder[named.key] = 'bank'
+            warn[#warn + 1] = ('%s is "%s", which is not an account this '
+                .. 'framework can charge (only cash and bank are; dirty money is '
+                .. 'an inventory item). Using bank instead — set it to cash or '
+                .. 'bank to choose')
+                :format(named.label, tostring(value))
+        end
+    end
+
     if Config.Payout.AllowConversion then
         -- Honest about what it currently does, which is nothing. The branch
         -- it gates (escrow.lua, `line.convertTo == 'dirty'`) reads a field
@@ -760,4 +785,7 @@ return {
     -- without checking, and that is only provable by removing one and
     -- watching what breaks.
     applyConfigDefaults = applyConfigDefaults, configDefaults = DEFAULTS,
+    -- Exposed for the same reason: a setting that is silently corrected has
+    -- to be provable, not taken on trust.
+    validateConfig = validateConfig,
 }

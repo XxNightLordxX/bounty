@@ -435,6 +435,19 @@
       reward.appendChild(el('div', 'bonus', '+' + money(contract.reward.bonus) + ' alive'));
     }
 
+    // How much of that is black money, when any of it is.
+    //
+    // The headline is one figure covering all three money sources, and they
+    // are not worth the same: black money sells for a fraction of its face
+    // value. A hunter looking at "$250,000" could be looking at a quarter of
+    // a million black_money items with no way to tell.
+    var dirtyPart = (contract.reward.sources && contract.reward.sources.dirty || 0)
+      + (contract.reward.bonusSources && contract.reward.bonusSources.dirty || 0);
+    if (dirtyPart > 0) {
+      reward.appendChild(el('div', 'hint',
+        money(dirtyPart) + ' of it is black money'));
+    }
+
     // Goods are not priced — nobody can defend a number for a kitted rifle —
     // but a contract paying one and nothing else read as $0.
     var goods = goodsLine(contract.reward.goods);
@@ -1683,8 +1696,16 @@
     slotBox.id = 'slots';
     form.appendChild(slotBox);
 
-    form.appendChild(labelled('Kidnapping bonus %',
-      drafted(numberInput('bonus', 50), 'bonus', '50')));
+    // Bounded by the ceiling the server sent, and told to the creator.
+    // caps.bonusPercent was computed and shipped and never read, so a figure
+    // over the cap reached the server — which clamps it now, and used to
+    // drop it to no bonus at all.
+    var bonusCap = (state.wallet && state.wallet.caps && state.wallet.caps.bonusPercent) || null;
+    var bonusField = drafted(numberInput('bonus', 50), 'bonus', '50');
+    if (bonusCap) { bonusField.max = bonusCap; }
+    form.appendChild(labelled(
+      'Kidnapping bonus %' + (bonusCap ? ' (up to ' + bonusCap + ')' : ''),
+      bonusField));
     form.appendChild(labelled('Buyout price (0 for none)',
       drafted(numberInput('bailout', 0), 'bailout', '0')));
     form.appendChild(labelled('Failure penalty (0 for none)',

@@ -58,6 +58,15 @@ CB.SOURCE = {
 
 CB.MONEY_SOURCES = { cash = true, bank = true, dirty = true }
 
+--- The subset of those that are qbx_core accounts.
+---
+--- Dirty money is not one: it is an ox_inventory item, moved with AddItem
+--- and RemoveItem. Anywhere a config setting names an account that is handed
+--- straight to AddMoney or RemoveMoney — a fee, a purchase price — naming
+--- 'dirty' there does not charge black money, it charges nothing and reports
+--- failure, which reads as the feature being broken.
+CB.MONEY_ACCOUNTS = { cash = true, bank = true }
+
 --- A stake is escrow held from the *hunter*, not the creator: the failure
 --- penalty they agreed to when accepting an exclusive contract (§3.6).
 ---

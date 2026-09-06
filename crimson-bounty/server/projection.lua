@@ -54,6 +54,12 @@ local function currentReward(contract)
         -- cross; serials and metadata do not.
         goods    = Escrow.goodsIn(contract.id, { slot = slot, portion = CB.PORTION.BASELINE }),
         bonusGoods = Escrow.goodsIn(contract.id, { slot = slot, portion = CB.PORTION.BONUS }),
+        -- Split by source, because the three are not worth the same. Black
+        -- money sells for a fraction of its face value, and adding it into
+        -- the headline figure told a hunter a contract paid a quarter of a
+        -- million when a quarter of a million of it was black_money items.
+        sources  = Escrow.moneyBySource(contract.id, { slot = slot, portion = CB.PORTION.BASELINE }),
+        bonusSources = Escrow.moneyBySource(contract.id, { slot = slot, portion = CB.PORTION.BONUS }),
     }
 end
 

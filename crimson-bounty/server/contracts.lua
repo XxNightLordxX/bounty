@@ -299,7 +299,19 @@ function Contracts.create(actor, req)
 
     local mode = req.mode == CB.MODE.COMPETITIVE and CB.MODE.COMPETITIVE or CB.MODE.EXCLUSIVE
 
-    local bonusPercent = Util.toCount(req.bonusPercent, Config.Bonus.maxPercent) or 0
+    -- Clamped to the ceiling, not dropped.
+    --
+    -- Util.toCount returns nil for anything ABOVE its maximum, so `or 0`
+    -- turned a bonus over the cap into no bonus at all — and the contract
+    -- was created anyway. A creator who asked for 300% on a server capped at
+    -- 200 promised a live-delivery premium, surrendered nothing for it, and
+    -- was told nothing; a hunter who delivered alive was paid a bonus of
+    -- zero. The bailout premium three lines below is clamped for exactly
+    -- this reason, with a comment saying so.
+    local bonusPercent = Util.toCount(req.bonusPercent, Config.Bonus.maxPercent)
+    if not bonusPercent then
+        bonusPercent = Util.toCount(req.bonusPercent) and Config.Bonus.maxPercent or 0
+    end
 
     -- The bonus is escrowed at creation like everything else, so a creator
     -- cannot promise a live-delivery premium they have not surrendered.

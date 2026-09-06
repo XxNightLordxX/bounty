@@ -62,7 +62,11 @@ function Amendments.addEscrow(actor, contractId, rewardSpec)
         end
     end
 
-    local lines, err = Escrow.validate(actor, rewardSpec, nil, held)
+    -- What it is worth already, so the total ceiling bounds the contract
+    -- rather than each top-up on its own.
+    local worth = Escrow.moneyValue(contractId)
+
+    local lines, err = Escrow.validate(actor, rewardSpec, nil, held, worth)
     if not lines then return false, err end
 
     -- Added value lands on the slot currently being competed for, so it is
@@ -115,9 +119,43 @@ function Amendments.improve(actor, contractId, kind, payload)
 
     elseif kind == CB.AMENDMENT.RAISE_BONUS then
         local percent = Util.toPositive(payload.percent, Config.Bonus.maxPercent)
-        if not percent or percent <= (contract.bonus_percent or 0) then
+        local was = contract.bonus_percent or 0
+        if not percent or percent <= was then
             return false, CB.ERR.INVALID_INPUT
         end
+
+        -- The difference is escrowed now, out of the creator's pocket,
+        -- exactly as the original bonus was at creation.
+        --
+        -- This used to store the number and nothing else. The payout
+        -- releases bonus escrow LINES, and no line grew — so raising the
+        -- bonus notified every hunter that the client had improved the
+        -- terms, showed them a bigger percentage, and paid them precisely
+        -- what it would have paid before. Of all the amendments this is the
+        -- one that applies with no approval, on the stated grounds that it
+        -- can only benefit the hunter.
+        local extra = Escrow.bonusTopUp(contractId, was, percent)
+
+        -- The same ceiling the rest of the escrow answers to. This path
+        -- builds its lines itself rather than going through validate, so
+        -- nothing else would stop it.
+        local adding = 0
+        for i = 1, #extra do adding = adding + (extra[i].amount or 0) end
+        if Escrow.moneyValue(contractId) + adding > Config.MaxContractValue then
+            return false, CB.ERR.INVALID_REWARD
+        end
+
+        if #extra == 0 then
+            -- Nothing to take means nothing to pay: either the bonus was the
+            -- creator's own figure rather than a percentage, or there is no
+            -- unsettled money baseline left to derive from. Refused, rather
+            -- than recorded as an improvement that improves nothing.
+            return false, CB.ERR.INVALID_REWARD
+        end
+
+        local took, takeErr = Escrow.take(actor, contractId, extra)
+        if not took then return false, takeErr end
+
         contract.bonus_percent = percent
 
     elseif kind == CB.AMENDMENT.LOWER_PENALTY then

@@ -464,3 +464,298 @@ describe('what the form is told a server will accept', function()
             .. 'the form must not offer the source in the first place')
     end)
 end)
+
+describe('the kidnapping bonus, which is real escrow and not a number', function()
+    local function dirtyOf(src)
+        local held = 0
+        for _, entry in ipairs(Env.players[src]._inventory or {}) do
+            if entry.name == Config.Sources.dirty.item then held = held + (entry.count or 0) end
+        end
+        return held
+    end
+
+    --- Util.toCount returns nil for anything ABOVE its maximum, so `or 0`
+    --- turned a bonus over the cap into no bonus at all — and the contract
+    --- was created anyway. The creator promised a premium, surrendered
+    --- nothing, and was told nothing.
+    it('clamps a bonus over the ceiling instead of dropping it to none', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } },
+            bonusPercent = Config.Bonus.maxPercent + 500,
+        })
+        truthy(c, 'the contract should still be created')
+        eq(c.bonus_percent, Config.Bonus.maxPercent,
+            'a silly number gets the ceiling, as the bailout premium does')
+
+        local bonus = s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS })
+        truthy(bonus > 0,
+            'a bonus of zero is what the creator got while believing they had '
+            .. 'promised one')
+    end)
+
+    it('still refuses a bonus that is not a number at all', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } },
+            bonusPercent = 'lots',
+        })
+        truthy(c, 'nonsense is not a reason to refuse the contract')
+        eq(c.bonus_percent, 0, 'it simply carries no bonus')
+    end)
+
+    --- Raising the bonus is applied with no approval, on the stated grounds
+    --- that it can only benefit the hunter. It used to store the number and
+    --- escrow nothing, so it benefited them by exactly zero while telling
+    --- them the client had improved the terms.
+    it('takes the difference from the creator when the bonus is raised', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } },
+            bonusPercent = 10,
+        })
+        truthy(c)
+        local bonusBefore = s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS })
+        local pocketBefore = Env.players[1].PlayerData.money.cash
+
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS,
+            { percent = 50 }))
+
+        local bonusAfter = s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS })
+        truthy(bonusAfter > bonusBefore,
+            'the escrow has to grow, or the raise pays the hunter nothing: '
+            .. bonusBefore .. ' -> ' .. bonusAfter)
+        eq(bonusAfter, 5000, '50% of a 10,000 baseline')
+        eq(Env.players[1].PlayerData.money.cash, pocketBefore - (bonusAfter - bonusBefore),
+            'and it comes out of the creators pocket, not from nowhere')
+    end)
+
+    it('pays the raised bonus to a hunter who delivers alive', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } },
+            bonusPercent = 10,
+        })
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS,
+            { percent = 50 }))
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        local before = Env.players[3].PlayerData.money.cash
+        truthy(s.contracts.claimSlot(c.id, f.hunter.cid, CB.FULFILMENT.KIDNAPPING))
+        eq(Env.players[3].PlayerData.money.cash, before + 10000 + 5000,
+            'the hunter was told the terms improved; they have to actually have')
+    end)
+
+    it('raises a dirty-money bonus in dirty money', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { dirty = 10000 } },
+            bonusPercent = 10,
+        })
+        truthy(c)
+        local before = dirtyOf(1)
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS,
+            { percent = 50 }))
+        eq(before - dirtyOf(1), 4000,
+            'the top-up is taken in the source the baseline is in')
+    end)
+
+    it('refuses a raise it cannot escrow rather than recording it', function()
+        local s = newStack()
+        local f = fixture(s)
+        -- A bonus the creator named themselves is not a percentage to
+        -- recompute, so there is nothing to derive a top-up from.
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 }, bonus = { cash = 1000 } },
+        })
+        truthy(c)
+
+        local ok, err = s.amendments.improve(f.creator, c.id,
+            CB.AMENDMENT.RAISE_BONUS, { percent = 50 })
+        falsy(ok, 'an improvement that improves nothing must not be recorded')
+        eq(err, CB.ERR.INVALID_REWARD)
+        eq(s.storage.readContract(c.id).bonus_percent or 0, 0,
+            'and the number must not move either')
+    end)
+end)
+
+describe('what one contract may be worth in total', function()
+    --- The ceiling was applied to one submission at a time, so a creator
+    --- could top a contract up past it in as many steps as they liked. It
+    --- exists to bound what a single contract can be worth, which is a
+    --- property of the contract and not of a request.
+    it('counts a top-up against what the contract already holds', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        -- A ceiling low enough that the per-source cap is not what refuses
+        -- this: the point is the contract total, not one line.
+        local was = Config.MaxContractValue
+        Config.MaxContractValue = 6000
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c, 'a contract under the ceiling is fine')
+
+        local ok, err = s.amendments.addEscrow(f.creator, c.id,
+            { baseline = { cash = 5000 } })
+        Config.MaxContractValue = was
+
+        falsy(ok, 'two top-ups either side of the ceiling walked straight past it')
+        eq(err, CB.ERR.INVALID_REWARD)
+        eq(s.escrow.moneyValue(c.id), 5000, 'and nothing was taken')
+    end)
+
+    it('still allows a top-up that stays under it', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 1000 } }),
+            'an ordinary top-up must still work')
+        eq(s.escrow.moneyValue(c.id), 6000)
+    end)
+end)
+
+describe('a config that names an account the framework does not have', function()
+    --- 'dirty' is a money SOURCE but not a qbx account. Handed to RemoveMoney
+    --- it charges nothing and returns false, which surfaces as an anonymous
+    --- contract that cannot be placed, or an informant that always says you
+    --- cannot afford it — with nothing connecting either to config.lua.
+    local function reboot()
+        package.loaded['server.main'] = nil
+        package.loaded['crimson-bounty.server.main'] = nil
+        return require('crimson-bounty.server.main')
+    end
+
+    it('corrects a fee account that is not an account, and says so', function()
+        local was = Config.Anonymity.FeeAccount
+        Config.Anonymity.FeeAccount = 'dirty'
+        local main = reboot()
+        main.validateConfig()
+        local after = Config.Anonymity.FeeAccount
+        Config.Anonymity.FeeAccount = was
+
+        eq(after, 'bank',
+            'left as dirty, every anonymous contract is refused for a reason '
+            .. 'nobody can trace to a setting')
+    end)
+
+    it('corrects the informants account the same way', function()
+        local was = Config.Informant.Account
+        Config.Informant.Account = 'dirty'
+        local main = reboot()
+        main.validateConfig()
+        local after = Config.Informant.Account
+        Config.Informant.Account = was
+        eq(after, 'bank')
+    end)
+
+    it('leaves a real account alone', function()
+        local was = Config.Anonymity.FeeAccount
+        Config.Anonymity.FeeAccount = 'cash'
+        local main = reboot()
+        main.validateConfig()
+        local after = Config.Anonymity.FeeAccount
+        Config.Anonymity.FeeAccount = was
+        eq(after, 'cash', 'a choice the operator made is not a mistake to correct')
+    end)
+end)
+
+describe('what the board says a contract is worth', function()
+    --- The headline is one figure covering all three money sources, and they
+    --- are not worth the same: black money sells for a fraction of its face
+    --- value. A hunter looking at "$250,000" could be looking at a quarter of
+    --- a million black_money items with no way to tell.
+    it('splits the reward by source so a hunter can see what it is', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000, dirty = 2000 } },
+        })
+        truthy(c)
+
+        local view = s.projection.contract(s.storage.readContract(c.id), f.hunter.cid)
+        eq(view.reward.baseline, 7000, 'the total is unchanged')
+        truthy(view.reward.sources, 'a hunter has to be able to tell them apart')
+        eq(view.reward.sources.cash, 5000)
+        eq(view.reward.sources.dirty, 2000)
+        eq(view.reward.sources.bank, 0)
+    end)
+
+    it('splits the bonus too', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 }, bonus = { dirty = 1000 } },
+        })
+        truthy(c)
+        local view = s.projection.contract(s.storage.readContract(c.id), f.hunter.cid)
+        eq(view.reward.bonusSources.dirty, 1000)
+    end)
+
+    it('adds up to what moneyValue reports, so nothing is double counted', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000, bank = 3000, dirty = 1000 } },
+        })
+        local split = s.escrow.moneyBySource(c.id, { portion = CB.PORTION.BASELINE })
+        eq(split.cash + split.bank + split.dirty,
+            s.escrow.moneyValue(c.id, { portion = CB.PORTION.BASELINE }),
+            'the parts must equal the whole, or one of them is wrong')
+    end)
+
+    it('leaves out what is owed to somebody, as the total does', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 }, bonus = { dirty = 1000 } },
+        })
+        local bonus
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.portion == CB.PORTION.BONUS then bonus = line end
+        end
+
+        Env.players[1]._inventoryFull = true
+        s.contracts.withdrawReward(f.creator, c.id, { bonus.id })
+        Env.players[1]._inventoryFull = false
+
+        local split = s.escrow.moneyBySource(c.id, { portion = CB.PORTION.BONUS })
+        eq(split.dirty, 0,
+            'money owed back to the creator is not part of what the contract '
+            .. 'pays, in the split any more than in the total')
+    end)
+end)
