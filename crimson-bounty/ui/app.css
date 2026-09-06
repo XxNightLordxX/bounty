@@ -334,7 +334,23 @@ button.person.is-chosen {
 .dialog {
   border-color: var(--crimson-deep);
   box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.55);
+
+  /* Fits the screen it is on, whatever that is.
+     
+     A dialog is read as a modal: if its buttons are below the fold it reads
+     as cut off, and on a short phone the reward editor put both "Add cash"
+     and "Done" under the tab bar. They were reachable by scrolling, which
+     is not the same as being there. The panel is a column that never
+     outgrows the view, and the part that can be long scrolls inside it
+     while the actions stay put. */
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
 }
+/* The action row and the heading hold their size; only the middle gives. */
+.dialog > .row,
+.dialog > .target,
+.dialog > .reason { flex: none; }
 .dialog::before { background: var(--crimson-bright); }
 .dialog .target { font-size: 0.95rem; }
 
@@ -418,6 +434,12 @@ button.person.is-chosen {
 
 .reward-lines {
   margin: 0.4rem 0 0.6rem;
+  /* The flexible part of the dialog: it takes what is left after the
+     heading and the buttons, and never more than a screenful. The fixed
+     13rem it used to have was taller than the whole panel could be on a
+     short phone, which is what pushed the buttons off. */
+  flex: 1 1 auto;
+  min-height: 4rem;
   max-height: 13rem;
   overflow-y: auto;
 }

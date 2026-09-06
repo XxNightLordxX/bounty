@@ -542,6 +542,12 @@ function Tick()
     if Storage.prune then job('storage.prune', Storage.prune) end
     job('ledger.forgetOldPhotos', modules.ledger.forgetOldPhotos)
     local app = require('server.app')
+    -- Who may have the app on their phone. Recomputed here rather than
+    -- trusted to a job-change event whose name has differed across
+    -- framework versions: a wrong name fails silently in the direction that
+    -- costs a player the app with no way to ask for it back.
+    local bridges = require('server.bridges')
+    if bridges.refreshAccess then job('bridges.refreshAccess', bridges.refreshAccess) end
     job('app.sweepHandles', app.sweepHandles)
     job('app.sweepFloodCounters', app.sweepFloodCounters)
     job('expireContracts', ExpireContracts)

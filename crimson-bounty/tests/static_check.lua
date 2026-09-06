@@ -881,6 +881,30 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 25. The tick must keep re-deciding who may have the app.
+--
+-- Whether a player's job bars them from the app is answered on the
+-- maintenance tick rather than on a framework job-change event, because a
+-- wrong event name fails silently in the direction that takes the app away
+-- and never gives it back. If that job is dropped from the tick, a player
+-- who leaves a barred job has no way at all to recover the app — which is
+-- exactly the outage this replaced.
+--------------------------------------------------------------------------
+
+do
+    local main = read('crimson-bounty/server/main.lua') or ''
+    local bridges = read('crimson-bounty/server/bridges.lua') or ''
+
+    if bridges:find('function Bridges.refreshAccess', 1, true)
+        and not main:find('refreshAccess', 1, true) then
+        failures[#failures + 1] =
+            'server/main.lua never calls Bridges.refreshAccess. Nothing else '
+            .. 're-decides who may have the app, so a player who leaves a barred '
+            .. 'job never gets it back.'
+    end
+end
+
+--------------------------------------------------------------------------
 -- 24. The phone page must be cache-busted, in both halves.
 --
 -- CEF caches app.js on its own disk keyed by URL. While the URL was a

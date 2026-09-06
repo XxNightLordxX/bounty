@@ -91,6 +91,19 @@ function Bridges.onPlayerDropped(modules, cid)
 end
 
 --- Register every bridge against the live runtime.
+--- The last answer sent to each source, so the sweep below sends only
+--- changes rather than an event per player per tick.
+local lastAccess = {}
+
+--- How many sources it is holding an answer for. Bounded by who is
+--- connected, not by who has ever connected: this table is written on every
+--- tick for the life of the server, so a leak here is one that only grows.
+function Bridges.accessMemoSize()
+    local n = 0
+    for _ in pairs(lastAccess) do n = n + 1 end
+    return n
+end
+
 function Bridges.install(modules)
     -- Per-contract caches in modules that contracts.lua cannot see are
     -- released through this hook when a contract resolves.
@@ -164,11 +177,52 @@ function Bridges.install(modules)
         -- has read yet.
         if not actor then return end
 
-        TriggerClientEvent('crimson-bounty:access', src,
-            not modules.identity.isBlockedJob(actor.job))
+        local allowed = not modules.identity.isBlockedJob(actor.job)
+        lastAccess[src] = allowed
+        TriggerClientEvent('crimson-bounty:access', src, allowed)
     end
 
     Bridges.tellAccess = tellAccess
+
+    --- Re-check everyone, and tell only those whose answer changed.
+    ---
+    --- The job-change event is not enough on its own. Its name has differed
+    --- across framework versions, and a name that is wrong fails silently in
+    --- the worst possible direction: a player who takes a barred job keeps
+    --- the app, and — far worse — one who LEAVES that job never gets it back
+    --- and has no way to ask. Taking something away on an event you cannot
+    --- verify, and only restoring it on that same event, is how a fix
+    --- becomes the bug.
+    ---
+    --- So the answer is recomputed on the ordinary maintenance tick, which
+    --- depends on no framework event at all. It costs one job read per
+    --- player and sends nothing unless the answer has moved.
+    function Bridges.refreshAccess()
+        local seen = {}
+        local players = GetPlayers() or {}
+
+        for i = 1, #players do
+            local src = tonumber(players[i])
+            if src then
+                seen[src] = true
+                local ok, actor = pcall(modules.identity.resolve, src)
+                if ok and actor then
+                    local allowed = not modules.identity.isBlockedJob(actor.job)
+                    if lastAccess[src] ~= allowed then
+                        lastAccess[src] = allowed
+                        TriggerClientEvent('crimson-bounty:access', src, allowed)
+                    end
+                end
+            end
+        end
+
+        -- A source is reused by the next player to take that slot, so a
+        -- remembered answer for somebody who has gone would be applied to a
+        -- stranger.
+        for src in pairs(lastAccess) do
+            if not seen[src] then lastAccess[src] = nil end
+        end
+    end
 
     -- Asked for by the client when it starts, so a client that loaded after
     -- the push above is not left waiting for an event that has been and

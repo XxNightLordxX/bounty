@@ -438,6 +438,93 @@ async function main() {
       editorClipped.length + ' element(s) clipped: ' + editorClipped.slice(0, 4).join(' | '));
   });
 
+  /* ---- every screen this might be on ----
+   *
+   * Everything above measures one 390x720 viewport, which is how a dialog
+   * whose buttons sat under the tab bar on a shorter phone passed a suite
+   * whose whole purpose is catching that. A player reported it. The sizes
+   * below are swept for the two faults that actually strand somebody: a
+   * control that cannot be reached without scrolling a panel that reads as
+   * a modal, and anything cut off sideways on a screen with no horizontal
+   * room to give. */
+
+  const SIZES = [
+    [280, 560, 'very small'], [320, 568, 'small'], [360, 640, 'common'],
+    [390, 720, 'default'], [414, 896, 'large'], [390, 560, 'short'],
+  ];
+
+  const sizeFaults = [];
+  for (const [w, h, label] of SIZES) {
+    const p2 = await browser.newPage({ viewport: { width: w, height: h } });
+    await p2.addInitScript(serverStub);
+    await p2.goto('file://' + UI);
+    await p2.waitForTimeout(250);
+
+    const steps = [['board', null], ['mine', null], ['place', null],
+                   ['onme', null], ['ledger', null], ['mine', 'Change reward']];
+
+    for (const [tab, press] of steps) {
+      await p2.click(`[data-tab="${tab}"]`);
+      await p2.waitForTimeout(180);
+      if (press) {
+        const opened = await p2.evaluate(function (labelText) {
+          const b = Array.prototype.slice.call(document.querySelectorAll('button'))
+            .filter(function (n) { return n.textContent === labelText; })[0];
+          if (!b) return false;
+          b.click();
+          return true;
+        }, press);
+        if (!opened) continue;
+        await p2.waitForTimeout(220);
+      }
+
+      const faults = await p2.evaluate(function () {
+        const out = [];
+        const navRect = document.querySelector('.tabs').getBoundingClientRect();
+
+        if (navRect.bottom > window.innerHeight + 0.5) {
+          out.push('the tab bar runs off the bottom');
+        }
+
+        // A dialog reads as a modal, so a button of its own below the fold
+        // reads as missing rather than as needing a scroll.
+        const panel = document.querySelector('.dialog');
+        if (panel) {
+          Array.prototype.slice.call(panel.querySelectorAll('button')).forEach(function (b) {
+            const r = b.getBoundingClientRect();
+            if (r.bottom > navRect.top + 1) {
+              out.push('dialog button "' + b.textContent + '" is behind the tab bar');
+            }
+          });
+        }
+
+        // Sideways, on a screen with no room to give. Text inputs scroll
+        // their own value by design and are not clipping.
+        Array.prototype.slice.call(document.querySelectorAll('main *')).forEach(function (n) {
+          if (n.tagName === 'INPUT' || n.tagName === 'TEXTAREA' || n.tagName === 'SELECT') return;
+          const st = getComputedStyle(n);
+          if (st.overflowX !== 'auto' && st.overflowX !== 'scroll'
+              && n.scrollWidth > n.clientWidth + 1) {
+            out.push((n.className || n.tagName) + ' is cut off sideways');
+          }
+        });
+
+        return out;
+      });
+
+      faults.forEach(function (f) {
+        sizeFaults.push(label + ' ' + tab + (press ? ' > ' + press : '') + ': ' + f);
+      });
+    }
+    await p2.close();
+  }
+
+  it('fits every screen size it might be opened on', function () {
+    const unique = Array.from(new Set(sizeFaults));
+    truthy(unique.length === 0,
+      unique.length + ' fault(s): ' + unique.slice(0, 6).join(' | '));
+  });
+
   await browser.close();
 
   console.log('');

@@ -406,6 +406,72 @@ describe('the servers own access decision', function()
             .. 'every request, so what they get is an app that answers nothing')
     end)
 
+    --- The event-free path. A job-change event name that is wrong fails
+    --- silently in the direction that costs a player the app and gives them
+    --- no way to ask for it back, so the answer is recomputed on the
+    --- ordinary tick and does not depend on any framework event.
+    it('gives the app back when a player leaves the barred job', function()
+        local s = wired()
+        fixture(s)
+        Env.addPlayer({ source = 20, citizenid = 'OFFICER1', license = 'license:o',
+            firstname = 'Ann', lastname = 'Ryder',
+            job = { name = 'police', type = 'leo', onduty = true } })
+
+        local bridges = require('crimson-bounty.server.bridges')
+
+        Env.clientEvents = {}
+        bridges.refreshAccess()
+        eq(toldOf(20), false, 'on duty, they must not have it')
+
+        -- They go off the job. No event fires; the sweep is what notices.
+        Env.players[20].PlayerData.job = { name = 'unemployed', type = 'none' }
+
+        Env.clientEvents = {}
+        bridges.refreshAccess()
+        eq(toldOf(20), true,
+            'a player who leaves the barred job must get the app back without '
+            .. 'depending on an event this resource cannot verify')
+    end)
+
+    it('does not re-send an answer that has not changed', function()
+        local s = wired()
+        fixture(s)
+        local bridges = require('crimson-bounty.server.bridges')
+
+        bridges.refreshAccess()
+        Env.clientEvents = {}
+        bridges.refreshAccess()
+        bridges.refreshAccess()
+
+        local sent = 0
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:access' then sent = sent + 1 end
+        end
+        eq(sent, 0, 'the sweep must send changes, not an event per player per tick')
+    end)
+
+    it('does not remember every source that has ever connected', function()
+        local s = wired()
+        fixture(s)
+        local bridges = require('crimson-bounty.server.bridges')
+
+        -- Two hundred players come and go, one at a time, as they do over a
+        -- night on a busy server. What the sweep remembers has to be bounded
+        -- by who is here, not by who has ever been.
+        for i = 1, 200 do
+            Env.addPlayer({ source = 100 + i, citizenid = ('TRANSIT%03d'):format(i),
+                license = 'license:t' .. i, firstname = 'Pass', lastname = 'Through' })
+            bridges.refreshAccess()
+            Env.players[100 + i] = nil
+        end
+        bridges.refreshAccess()
+
+        local remembered = bridges.accessMemoSize and bridges.accessMemoSize() or 0
+        truthy(remembered <= 8,
+            'the sweep is holding an entry for every source that has ever '
+            .. 'connected, which only ever grows: ' .. remembered)
+    end)
+
     it('says nothing about a player it cannot describe', function()
         local s = wired()
         fixture(s)

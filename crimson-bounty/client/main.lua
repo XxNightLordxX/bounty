@@ -215,10 +215,17 @@ CreateThread(registerWithRetries)
 --- often — would otherwise wait for an event that has already been and
 --- gone, and never get the app at all. Asked until answered, then dropped.
 CreateThread(function()
-    for _ = 1, 10 do
-        if accessAllowed ~= nil then return end
+    -- Ten tries and then silence was a player stranded: if the server was
+    -- restarting, or they were still mid-join, the app never appeared and
+    -- there was nothing they could do about it. Withholding something has
+    -- to come with a way to ask again, and asking has to keep being
+    -- possible. It backs off to a slow heartbeat rather than stopping.
+    local waits = { 2000, 2000, 2000, 5000, 5000, 10000 }
+    local i = 0
+    while accessAllowed == nil do
+        i = i + 1
         TriggerServerEvent('crimson-bounty:whoAmI')
-        Wait(2000)
+        Wait(waits[i] or 30000)
     end
 end)
 
