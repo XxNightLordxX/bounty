@@ -77,7 +77,9 @@ function Informant.buy(actor, contractId)
 
     local cost = Config.Informant.Cost
     local account = Config.Informant.Account
-    if not actor.player.Functions.RemoveMoney(account, cost) then
+    -- Balance read first: RemoveMoney answers true on an empty bank, which
+    -- is the account this ships pointed at.
+    if not Util.charge(actor.player, account, cost) then
         return false, CB.ERR.INSUFFICIENT
     end
     Audit.financial('informant_purchased', actor.cid, contractId, { cost = cost })

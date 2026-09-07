@@ -20,6 +20,10 @@ Env.gameTimer = 0
 --- A harness that provides what production does not is not testing this
 --- program. An unknown account is refused, exactly as qbx_core refuses it.
 Env.MONEY_ACCOUNTS = { cash = true, bank = true, crypto = true }
+
+--- Accounts qbx_core will not take below zero, from its shipped
+--- config.money.dontAllowMinus. Bank is not among them.
+Env.NO_OVERDRAFT = { cash = true, crypto = true }
 Env.players = {}          -- [source] = player record
 Env.byCitizen = {}        -- [citizenid] = source
 Env.events = {}           -- registered net events
@@ -105,10 +109,20 @@ function Env.addPlayer(opts)
             player.PlayerData.money[account] = (player.PlayerData.money[account] or 0) + amount
             return true
         end,
+        --- qbx_core refuses an overdraft only on the accounts its config
+        --- lists in dontAllowMinus, which ships as cash and crypto. Bank is
+        --- deliberately allowed to go negative — the overdraft behaviour
+        --- qbx_core inherited from QBCore — so RemoveMoney('bank', n)
+        --- returns true on an empty account and leaves a negative balance.
+        ---
+        --- A harness that refused every short removal made that return
+        --- value an affordability check, which it is not, and any call site
+        --- treating it as one passed here and gave the thing away on a
+        --- live server.
         RemoveMoney = function(account, amount)
             if not Env.MONEY_ACCOUNTS[account] then return false end
             local have = player.PlayerData.money[account] or 0
-            if have < amount then return false end
+            if Env.NO_OVERDRAFT[account] and have < amount then return false end
             player.PlayerData.money[account] = have - amount
             return true
         end,

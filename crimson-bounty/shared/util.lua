@@ -328,6 +328,35 @@ function Util.resetMonotonic()
     lastRaw, carried = 0, 0
 end
 
+--- Take money from a player, refusing rather than overdrawing them.
+---
+--- RemoveMoney's return is not an affordability check. qbx_core applies its
+--- floor only to the accounts listed in config.money.dontAllowMinus, which
+--- ships as cash and crypto — bank is deliberately allowed to go negative,
+--- the overdraft behaviour it inherited from QBCore. So
+--- RemoveMoney('bank', n) returns true on an empty account and leaves the
+--- player owing it.
+---
+--- Four call sites read that return as "could they pay?": buying out a
+--- contract, buying informant data, and both anonymity fees. On a shipped
+--- server every one of them succeeded on an empty bank. The escrow path was
+--- never exposed, because it reads GetMoney through validate() before it
+--- removes anything; these did not.
+---
+--- The balance is read first here, so this is right whatever an operator
+--- has put in dontAllowMinus.
+---@param player table qbx_core player
+---@param account string
+---@param amount number
+---@return boolean paid
+function Util.charge(player, account, amount)
+    if not player or not player.Functions then return false end
+    amount = tonumber(amount) or 0
+    if amount <= 0 then return true end
+    if (player.Functions.GetMoney(account) or 0) < amount then return false end
+    return player.Functions.RemoveMoney(account, amount) and true or false
+end
+
 --- The client has no module loader — server/boot.lua's require_shared is a
 --- server-side stand-in for one — so the client half reaches these helpers
 --- through a global. The file is listed in client_scripts and loaded exactly

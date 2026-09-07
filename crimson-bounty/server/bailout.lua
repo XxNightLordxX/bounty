@@ -98,10 +98,15 @@ function Bailout.buy(actor, contractId)
     -- Which account paid is remembered, so a refund goes back where it came
     -- from rather than silently laundering cash into bank money.
     local account = 'bank'
-    local paid = actor.player.Functions.RemoveMoney('bank', amount)
+    -- Through Util.charge, which reads the balance first. RemoveMoney's
+    -- return is not an affordability check: qbx_core allows bank to go
+    -- negative, so this used to succeed on an empty account — a free
+    -- buyout, paid to the creator out of an overdraft, and the fall-through
+    -- to cash never ran either.
+    local paid = Util.charge(actor.player, 'bank', amount)
     if not paid then
         account = 'cash'
-        paid = actor.player.Functions.RemoveMoney('cash', amount)
+        paid = Util.charge(actor.player, 'cash', amount)
     end
     if not paid then return false, CB.ERR.INSUFFICIENT end
 

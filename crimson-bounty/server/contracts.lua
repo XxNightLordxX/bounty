@@ -433,7 +433,7 @@ function Contracts.create(actor, req)
     -- refused rather than half-charged (§4).
     if contract.anon_creator and (Config.Anonymity.CreatorFee or 0) > 0 then
         local account = Config.Anonymity.FeeAccount or 'bank'
-        if not actor.player.Functions.RemoveMoney(account, Config.Anonymity.CreatorFee) then
+        if not Util.charge(actor.player, account, Config.Anonymity.CreatorFee) then
             return nil, CB.ERR.INSUFFICIENT
         end
         Audit.financial('anonymity_fee', actor.cid, contract.id,
@@ -599,7 +599,7 @@ function Contracts.accept(actor, contractId, anonymous)
     -- then fails (§4).
     if anonymous and (Config.Anonymity.HunterFee or 0) > 0 then
         local account = Config.Anonymity.FeeAccount or 'bank'
-        if actor.player.Functions.RemoveMoney(account, Config.Anonymity.HunterFee) then
+        if Util.charge(actor.player, account, Config.Anonymity.HunterFee) then
             Audit.financial('anonymity_fee', actor.cid, contractId,
                 { amount = Config.Anonymity.HunterFee, role = 'hunter' })
         else
