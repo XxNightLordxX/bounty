@@ -85,6 +85,16 @@ function Memory.contractsNaming(cid)
     return out
 end
 
+--- Contracts with a buyout waiting out its delay.
+function Memory.queuedBailouts()
+    local out = {}
+    for _, c in pairs(db.contracts) do
+        if c.bailout_queued_at then out[#out + 1] = c end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 --- Contracts created by this player.
 function Memory.contractsBy(cid)
     local out = {}
@@ -364,6 +374,73 @@ function Memory.auditForContract(contractId, limit)
         return trimmed
     end
     return out
+end
+
+--- Finished contracts past the retention age that hold nobody's money.
+---
+--- Nothing pruned contracts, so every full scan in the resource walked the
+--- server's whole history rather than its live board and grew without bound
+--- for the life of the database.
+---
+--- Four conditions, and the last two are the ones that matter: terminal,
+--- older than the cutoff, holding no escrow line that is not settled, and
+--- owing nobody anything on their next login. A contract whose creator was
+--- offline when it closed holds their money in a `held` OWED line with a
+--- pending row pointing at it, and removing either would take that money
+--- with it.
+local function prunableContracts(cutoff, limit)
+    local holding, owing = {}, {}
+    for _, line in pairs(db.escrow) do
+        if line.state ~= 'settled' then holding[line.contract_id] = true end
+    end
+    for _, p in pairs(db.pending) do
+        if p.contract_id then owing[p.contract_id] = true end
+    end
+
+    local TERMINAL = {
+        completed = true, bailed_out = true, expired = true,
+        cancelled = true, voided = true,
+    }
+
+    local out = {}
+    for id, c in pairs(db.contracts) do
+        if TERMINAL[c.state] and c.resolved_at and c.resolved_at < cutoff
+            and not holding[id] and not owing[id] then
+            out[#out + 1] = id
+        end
+    end
+    table.sort(out)
+    if limit and #out > limit then
+        local trimmed = {}
+        for i = 1, limit do trimmed[i] = out[i] end
+        return trimmed
+    end
+    return out
+end
+
+function Memory.prune()
+    local days = Config.Audit.ContractRetentionDays or 0
+    if days <= 0 then return true end
+
+    local ids = prunableContracts(os.time() - (days * 86400),
+        Config.Audit.ContractsPrunedPerTick or 200)
+    for i = 1, #ids do
+        local id = ids[i]
+        for lineId, line in pairs(db.escrow) do
+            if line.contract_id == id then db.escrow[lineId] = nil end
+        end
+        for hunterId, hunter in pairs(db.hunters) do
+            if hunter.contract_id == id then db.hunters[hunterId] = nil end
+        end
+        for amendmentId, amendment in pairs(db.amendments) do
+            if amendment.contract_id == id then db.amendments[amendmentId] = nil end
+        end
+        for j = #db.messages, 1, -1 do
+            if db.messages[j].contract_id == id then table.remove(db.messages, j) end
+        end
+        db.contracts[id] = nil
+    end
+    return true
 end
 
 function Memory.flush() return true end

@@ -269,6 +269,224 @@ describe('storage conformance', function()
     end)
 end)
 
+--- Retention, run against every backend, because a store that prunes a
+--- little differently from the others is a store that loses somebody's
+--- money on one deployment and not another.
+---
+--- Nothing pruned contracts at all before this, so every full scan in the
+--- resource — the board projection per player per board open, the death
+--- sampler once a second, the bailout queue every tick — walked the
+--- server's whole history rather than its live board, and grew without
+--- bound for the life of the database.
+describe('finished contracts do not accumulate forever', function()
+    local DAY = 86400
+
+    local function settled(store, id, resolvedAt)
+        store.writeContract({
+            id = id, creator_cid = 'CREATOR1', target_cid = 'TARGET01',
+            mode = CB.MODE.EXCLUSIVE, state = CB.STATE.COMPLETED,
+            created_at = resolvedAt - DAY, resolved_at = resolvedAt,
+            payout_slots = 1, next_slot = 1,
+        })
+        -- Written held and settled through the guarded call, not written
+        -- settled. writeEscrow deliberately does not carry state, settled_to
+        -- or settled_at on the mysql backend — those move only through
+        -- settleEscrowLine — so a line written settled arrives held there
+        -- with nobody named on it. The invariant monitor caught that as
+        -- "settled to nobody", which is exactly what it was.
+        store.writeEscrow(id, { {
+            id = id .. ':1', contract_id = id, slot = 1,
+            portion = CB.PORTION.BASELINE, source = 'cash', amount = 5000,
+            state = CB.ESCROW_STATE.HELD,
+        } })
+        store.claimEscrowLine(id .. ':1', CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING)
+        store.settleEscrowLine(id .. ':1', 'HUNTER01')
+        return id
+    end
+
+    it('removes a finished contract past the retention age', function()
+        local old = os.time() - (Config.Audit.ContractRetentionDays + 1) * DAY
+        for _, backend in ipairs(backends()) do
+            settled(backend.store, 'ct00000001', old)
+            truthy(backend.store.readContract('ct00000001'),
+                backend.name .. ': the fixture must exist')
+
+            backend.store.prune()
+
+            falsy(backend.store.readContract('ct00000001'),
+                backend.name .. ': a finished contract is not kept forever')
+            eq(#backend.store.readEscrow('ct00000001'), 0,
+                backend.name .. ': and neither are its escrow rows')
+        end
+    end)
+
+    it('keeps one that has only just finished', function()
+        local recent = os.time() - DAY
+        for _, backend in ipairs(backends()) do
+            settled(backend.store, 'ct00000002', recent)
+            backend.store.prune()
+            truthy(backend.store.readContract('ct00000002'),
+                backend.name .. ': the retention window is not optional')
+        end
+    end)
+
+    it('keeps a live contract however old it is', function()
+        for _, backend in ipairs(backends()) do
+            local c = contractFixture('ct00000003')
+            c.created_at = os.time() - 3650 * DAY
+            backend.store.writeContract(c)
+            backend.store.prune()
+            truthy(backend.store.readContract('ct00000003'),
+                backend.name .. ': age is not a reason to delete a live contract')
+        end
+    end)
+
+    --- The two that matter. A contract whose creator was offline when it
+    --- closed holds their money in a `held` OWED line with a pending row
+    --- pointing at it, and removing either takes that money with it.
+    it('keeps one still holding an unsettled escrow line', function()
+        local old = os.time() - (Config.Audit.ContractRetentionDays + 1) * DAY
+        for _, backend in ipairs(backends()) do
+            settled(backend.store, 'ct00000004', old)
+            backend.store.writeEscrow('ct00000004', { {
+                id = 'owe00000001', contract_id = 'ct00000004', slot = 0,
+                portion = CB.PORTION.OWED, owed_to = 'CREATOR1',
+                source = 'bank', amount = 20000,
+                state = CB.ESCROW_STATE.HELD,
+            } })
+
+            backend.store.prune()
+
+            truthy(backend.store.readContract('ct00000004'),
+                backend.name .. ': money is still owed on this one')
+            truthy(backend.store.readEscrowLine('owe00000001'),
+                backend.name .. ': and the line holding it must survive')
+        end
+    end)
+
+    it('keeps one somebody is owed money on at their next login', function()
+        local old = os.time() - (Config.Audit.ContractRetentionDays + 1) * DAY
+        for _, backend in ipairs(backends()) do
+            settled(backend.store, 'ct00000005', old)
+            backend.store.queuePending('CREATOR1', 'ct00000005', 'ct00000005:1')
+
+            backend.store.prune()
+
+            truthy(backend.store.readContract('ct00000005'),
+                backend.name .. ': a queued payout points at this contract')
+            truthy(#backend.store.readPending('CREATOR1') > 0,
+                backend.name .. ': and the queue entry must survive')
+        end
+    end)
+
+    it('leaves the ledger alone', function()
+        -- The player's own record of what they did, with its own copy of
+        -- the target name and reason. It outlives the contract.
+        local old = os.time() - (Config.Audit.ContractRetentionDays + 1) * DAY
+        for _, backend in ipairs(backends()) do
+            settled(backend.store, 'ct00000006', old)
+            backend.store.writeLedger({
+                cid = 'HUNTER01', contract_id = 'ct00000006', role = 'hunter',
+                target_name = 'Dana Reyes', reason = 'Unpaid debt',
+                fulfilment = 'elimination', slot = 1, resolved_at = old,
+            })
+
+            backend.store.prune()
+
+            falsy(backend.store.readContract('ct00000006'))
+            eq(#backend.store.readLedger('HUNTER01', 10), 1,
+                backend.name .. ': history is the player\'s, not the contract\'s')
+        end
+    end)
+
+    it('keeps everything when retention is switched off', function()
+        local old = os.time() - 3650 * DAY
+        local stores = backends()
+        for _, backend in ipairs(stores) do settled(backend.store, 'ct00000007', old) end
+
+        withConfig({ { Config.Audit, 'ContractRetentionDays', 0 } }, function()
+            for _, backend in ipairs(stores) do
+                backend.store.prune()
+                truthy(backend.store.readContract('ct00000007'),
+                    backend.name .. ': 0 means keep them, which is what this '
+                    .. 'did before it was a setting')
+            end
+        end)
+    end)
+
+    it('removes no more than one tick is allowed to', function()
+        -- A first prune on a long-lived database has a lot to get through,
+        -- and doing it in one tick would stall the server.
+        local old = os.time() - 3650 * DAY
+        local stores = backends()
+        for _, backend in ipairs(stores) do
+            for i = 1, 6 do settled(backend.store, ('ct0000%04d'):format(i), old) end
+        end
+
+        withConfig({ { Config.Audit, 'ContractsPrunedPerTick', 2 } }, function()
+            for _, backend in ipairs(stores) do
+                backend.store.prune()
+                eq(#backend.store.allContracts(), 4,
+                    backend.name .. ': the cap is a cap')
+                backend.store.prune()
+                eq(#backend.store.allContracts(), 2, backend.name .. ': and it resumes')
+            end
+        end)
+    end)
+end)
+
+--- The executor these tests read mysql through has to be loud about a
+--- statement shape it does not understand, or every mysql test above it is
+--- worth nothing. Its condition reader used to scan for `col = value` pairs
+--- and ignore the rest of the clause, so a query whose real filtering lived
+--- in a range, an IS NOT NULL, an IN list or a subquery matched every row
+--- in the table and the test reading that result could not tell.
+describe('the mysql executor refuses a statement it cannot read', function()
+    local Exec = require('crimson-bounty.tests.harness.mysql_exec')
+
+    local function loaded()
+        Exec.install(Natives)
+        Exec.run('CREATE TABLE IF NOT EXISTS t (id VARCHAR(32) PRIMARY KEY, n INT, tag VARCHAR(8))')
+        Exec.run('INSERT INTO t (id, n, tag) VALUES (?, ?, ?)', { 'a', 1, 'x' })
+        Exec.run('INSERT INTO t (id, n, tag) VALUES (?, ?, ?)', { 'b', 2, 'y' })
+        return Exec
+    end
+
+    it('raises rather than matching every row', function()
+        local exec = loaded()
+
+        local ok, err = pcall(exec.run, 'SELECT * FROM t WHERE n BETWEEN 1 AND 2', {})
+        falsy(ok, 'BETWEEN is not a shape this reads, so it must not match silently')
+        truthy(tostring(err):find('cannot read', 1, true), tostring(err))
+
+        local orOk, orErr = pcall(exec.run, 'SELECT * FROM t WHERE id = ? OR n = ?', { 'a', 2 })
+        falsy(orOk, 'nor is OR, which as a conjunction would narrow the answer')
+        truthy(tostring(orErr):find('OR is not supported', 1, true), tostring(orErr))
+    end)
+
+    it('reads the shapes the backend actually issues', function()
+        local exec = loaded()
+        eq(#exec.run('SELECT * FROM t WHERE n < ?', { 2 }), 1, 'a range')
+        eq(#exec.run("SELECT * FROM t WHERE tag IN ('x','y')", {}), 2, 'an IN list')
+        eq(#exec.run('SELECT * FROM t WHERE tag IS NOT NULL', {}), 2, 'a null check')
+        eq(#exec.run("SELECT * FROM t WHERE tag <> 'x'", {}), 1, 'an inequality')
+    end)
+
+    it('evaluates a correlated NOT EXISTS against the other table', function()
+        local exec = loaded()
+        exec.run('CREATE TABLE IF NOT EXISTS u (id VARCHAR(32) PRIMARY KEY, t_id VARCHAR(32), state VARCHAR(8))')
+        exec.run('INSERT INTO u (id, t_id, state) VALUES (?, ?, ?)', { 'u1', 'a', 'open' })
+        exec.run('INSERT INTO u (id, t_id, state) VALUES (?, ?, ?)', { 'u2', 'b', 'done' })
+
+        local rows = exec.run([[
+            SELECT * FROM t
+            WHERE NOT EXISTS (SELECT 1 FROM u WHERE u.t_id = t.id AND u.state <> 'done')
+        ]], {})
+        eq(#rows, 1, 'only the row with nothing open against it')
+        eq(rows[1].id, 'b')
+    end)
+end)
+
 describe('json durability', function()
     it('survives a restart with escrow intact', function()
         package.loaded['crimson-bounty.server.storage.json'] = nil

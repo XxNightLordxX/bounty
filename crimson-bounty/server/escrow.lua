@@ -17,6 +17,52 @@ function Escrow.init(storage, audit)
 end
 
 --------------------------------------------------------------------------
+-- Reading the same contract several times in one request
+--------------------------------------------------------------------------
+
+--- Opening the board asks what each contract is worth about seven times per
+--- row — once for the sort key, and again for every figure the row shows —
+--- and each of those is a separate Storage.readEscrow. On the mysql backend
+--- that is a separate awaited SELECT that yields, so a single player opening
+--- a 500-contract board issued hundreds of round trips to answer the same
+--- question about the same contracts.
+---
+--- Memoised for the length of one projection and dropped afterwards. Strictly
+--- a read path: Escrow.cached wraps code that does not write, and every
+--- writer here drops the memo anyway, so nothing can read its own stale rows.
+local memo = nil
+
+local function readLines(contractId)
+    if not memo then return Storage.readEscrow(contractId) end
+    local hit = memo[contractId]
+    if hit == nil then
+        hit = Storage.readEscrow(contractId)
+        memo[contractId] = hit
+    end
+    return hit
+end
+
+--- Anything that changes escrow throws the memo away rather than trying to
+--- keep it correct. A cache that is sometimes right is worse than none.
+local function forget() memo = nil end
+
+--- Run a read-only projection with escrow reads memoised.
+---
+--- Nested calls share the outer memo, and an error inside still clears it:
+--- a memo left open would be read by the next write path to come along.
+---@param fn function
+---@return any
+function Escrow.cached(fn, ...)
+    local outer = memo
+    memo = outer or {}
+    local ok, a, b, c = pcall(fn, ...)
+    memo = outer
+    if not ok then error(a, 0) end
+    return a, b, c
+end
+
+
+--------------------------------------------------------------------------
 -- Validation
 --------------------------------------------------------------------------
 
@@ -433,6 +479,7 @@ end
 ---@return boolean ok
 ---@return string|nil err
 function Escrow.take(actor, contractId, lines)
+    forget()
     local taken = {}
 
     --- Put back everything already taken.
@@ -574,6 +621,7 @@ end
 ---@return boolean moved  true when at least one line settled here
 ---@return table   result { settled = n, pending = n, skipped = n, refused = n }
 function Escrow.release(contractId, recipientCid, filter, reason, guard)
+    forget()
     if type(filter) == 'string' then filter = { portion = filter } end
     local lines = Storage.readEscrow(contractId)
     local result = { settled = 0, pending = 0, skipped = 0, refused = 0 }
@@ -750,7 +798,7 @@ end
 function Escrow.moneyBySource(contractId, filter)
     if type(filter) == 'string' then filter = { portion = filter } end
 
-    local lines = Storage.readEscrow(contractId)
+    local lines = readLines(contractId)
     local out = { cash = 0, bank = 0, dirty = 0 }
 
     for i = 1, #lines do
@@ -841,7 +889,7 @@ end
 ---@return integer
 function Escrow.moneyValue(contractId, filter)
     if type(filter) == 'string' then filter = { portion = filter } end
-    local lines = Storage.readEscrow(contractId)
+    local lines = readLines(contractId)
     local total = 0
     for i = 1, #lines do
         local line = lines[i]
@@ -881,7 +929,7 @@ end
 function Escrow.goodsIn(contractId, filter)
     if type(filter) == 'string' then filter = { portion = filter } end
 
-    local lines = Storage.readEscrow(contractId)
+    local lines = readLines(contractId)
     local out = { items = 0, weapons = 0, labels = {} }
     local seen = {}
 

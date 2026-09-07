@@ -24,7 +24,15 @@ end
 --- Terminal contracts are deliberately included: a hunter completing during
 --- the delay is precisely the case where the premium has to be refunded, and
 --- filtering those out would destroy the target's money.
+--- Asked of the store rather than found by reading every contract there
+--- has ever been. This runs on every tick, and nothing prunes terminal
+--- contracts, so the old scan grew with the server's whole history rather
+--- than with the number of buyouts actually in flight — which is almost
+--- always none.
 local function readQueue()
+    if Storage.queuedBailouts then return Storage.queuedBailouts() end
+
+    -- A backend that predates the index still answers correctly.
     local out = {}
     local contracts = Storage.allContracts()
     for i = 1, #contracts do
@@ -49,11 +57,17 @@ end
 --- Contracts the caller may buy out — those naming them as target.
 function Bailout.available(actor)
     local out = {}
-    local contracts = Storage.allContracts()
+    -- The indexed lookup, which is the question this is asking: contracts
+    -- naming this player as target. It used to read and hydrate every
+    -- contract on the server and filter in Lua — on the mysql backend a
+    -- 'SELECT * FROM crimson_contracts' against a 'WHERE target_cid = ?' on
+    -- an indexed column. Projection.onMe has always asked it that way; this
+    -- call site, which is what /cleanse runs for a player who cannot open
+    -- the app at all, was missed.
+    local contracts = Storage.contractsNaming(actor.cid)
     for i = 1, #contracts do
         local c = contracts[i]
-        if c.target_cid == actor.cid
-            and (c.state == CB.STATE.ACTIVE or c.state == CB.STATE.ACCEPTED)
+        if (c.state == CB.STATE.ACTIVE or c.state == CB.STATE.ACCEPTED)
             and (c.bailout_amount or 0) > 0 then
             out[#out + 1] = {
                 id = c.id, amount = c.bailout_amount,

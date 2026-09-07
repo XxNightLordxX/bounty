@@ -174,7 +174,7 @@ end
 ---@param viewerCid string
 ---@param page integer|nil
 ---@return table
-function Projection.listing(viewerCid, page)
+local function buildListing(viewerCid, page)
     page = math.max(1, math.floor(tonumber(page) or 1))
     local pageSize = Config.Listing.PageSize
 
@@ -257,7 +257,7 @@ end
 --- rather than for every contract on the server: on a real database the
 --- difference is an indexed lookup against a full table scan, once per app
 --- request.
-function Projection.mine(viewerCid)
+local function buildMine(viewerCid)
     local involved = Storage.contractsBy(viewerCid)
     local out = {}
     for i = 1, #involved do
@@ -361,7 +361,7 @@ function Projection.rewardLines(contractId, viewerCid)
 end
 
 --- Contracts the viewer holds as hunter.
-function Projection.accepted(viewerCid)
+local function buildAccepted(viewerCid)
     local involved = Storage.contractsInvolving(viewerCid)
     local out = {}
     for i = 1, #involved do
@@ -377,7 +377,7 @@ function Projection.accepted(viewerCid)
 end
 
 --- Contracts naming the viewer as target — their Cleanse tab.
-function Projection.onMe(viewerCid)
+local function buildOnMe(viewerCid)
     local naming = Storage.contractsNaming(viewerCid)
     local out = {}
     for i = 1, #naming do
@@ -394,6 +394,32 @@ function Projection.onMe(viewerCid)
         end
     end
     return out
+end
+
+--- The four reads a player's app makes, each with escrow memoised for the
+--- length of the call.
+---
+--- Every one of them asks what a contract is worth several times over: the
+--- listing once for the sort key and again for each figure on the row, and
+--- all of those were separate reads of the same rows. On the mysql backend
+--- each is an awaited SELECT that yields, so one player opening a
+--- 500-contract board issued hundreds of round trips to answer the same
+--- question. None of these writes anything, which is what makes memoising
+--- them safe.
+function Projection.listing(viewerCid, page)
+    return Escrow.cached(buildListing, viewerCid, page)
+end
+
+function Projection.mine(viewerCid)
+    return Escrow.cached(buildMine, viewerCid)
+end
+
+function Projection.accepted(viewerCid)
+    return Escrow.cached(buildAccepted, viewerCid)
+end
+
+function Projection.onMe(viewerCid)
+    return Escrow.cached(buildOnMe, viewerCid)
 end
 
 --- The exact key set each role may receive. Exported so the test suite can

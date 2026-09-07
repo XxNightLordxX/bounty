@@ -610,6 +610,24 @@ Config.Audit = {
     FlushIntervalMs = 10000,
     MaxQueueSize = 5000,
     RetentionDays = 30,
+    --- How long a finished contract and its rows are kept, in days. 0 keeps
+    --- them forever, which is what this did before it was a setting.
+    ---
+    --- Nothing pruned contracts, so every full scan in the resource walked
+    --- the server's whole history rather than its live board — the board
+    --- projection per player per board open, the death sampler once a
+    --- second, the bailout queue every tick — and all of them grew without
+    --- bound for the life of the database.
+    ---
+    --- A contract is only ever removed once it is finished, past this age,
+    --- holds no escrow line that is not settled, and owes nobody anything
+    --- on login. Ledger history is not touched: it is the player's own
+    --- record and carries its own copy of what it needs.
+    ContractRetentionDays = 30,
+    --- How many contracts one maintenance tick may remove. A first prune on
+    --- a long-lived database has a lot to get through, and doing it all in
+    --- one tick would stall the server.
+    ContractsPrunedPerTick = 200,
     --- Optional staff webhook. Financial movements and rejected attempts are
     --- mirrored as a heads-up; identity is never included, because anything
     --- sent to a third party outlives this server's retention rules.

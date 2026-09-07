@@ -416,3 +416,128 @@ describe('the failure stake', function()
             'the stake taken must be the stake shown')
     end)
 end)
+
+--- What one board open costs the database.
+---
+--- These are counters, not timings: a wall clock on a laptop says nothing
+--- about a live server, but the number of round trips a request makes is
+--- the same everywhere, and on the mysql backend each one is an awaited
+--- SELECT that yields.
+describe('what opening the board costs', function()
+    --- Wrap the store so every read is counted.
+    local function counting(s)
+        local counts = {}
+        for name, fn in pairs(s.storage) do
+            if type(fn) == 'function' and name:find('^read') or name == 'allContracts' then
+                local wrapped = fn
+                s.storage[name] = function(...)
+                    counts[name] = (counts[name] or 0) + 1
+                    return wrapped(...)
+                end
+            end
+        end
+        -- Every module holds its own reference to the store.
+        s.escrow.init(s.storage, s.audit)
+        s.projection.init({ storage = s.storage, identity = s.identity,
+                            escrow = s.escrow, kidnap = s.kidnap,
+                            mugshot = s.mugshot, progression = s.progression })
+        return counts
+    end
+
+    --- A board with `count` contracts on it, each on its own target so the
+    --- per-target limit is not what is being measured.
+    local function boardWith(count)
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.cash = 100000000
+
+        local made = {}
+        withConfig({
+            { Config.Limits, 'MaxActiveContractsPerCreator', count + 1 },
+            { Config.Limits, 'MaxActiveContractsPerTarget', count + 1 },
+        }, function()
+            for i = 1, count do
+                local targetCid = i == 1 and 'TARGET01' or ('TGT%05d'):format(i)
+                if i > 1 then
+                    Env.addPlayer({ source = 20 + i, citizenid = targetCid,
+                        license = 'license:t' .. i, cash = 100, bank = 100,
+                        firstname = 'Mark', lastname = 'Number' .. i })
+                end
+                local c, err = s.contracts.create(f.creator, {
+                    targetCid = targetCid, reason = 'x',
+                    reward = { baseline = { cash = 100 + i } },
+                })
+                truthy(c, 'contract ' .. i .. ': ' .. tostring(err))
+                made[#made + 1] = c
+            end
+        end)
+        return s, f, made
+    end
+
+    it('reads a contract escrow once per row, not once per figure on it', function()
+        local s = boardWith(6)
+        local counts = counting(s)
+        s.projection.listing('HUNTER01', 1)
+
+        eq(counts.readEscrow, 6,
+            'six contracts on the board should be six escrow reads, and each '
+            .. 'row asks what it is worth several times over: got '
+            .. tostring(counts.readEscrow))
+    end)
+
+    it('asks the store for the caller\'s own contracts, not for all of them', function()
+        -- Bailout.available is what /cleanse runs, for a player barred from
+        -- the app entirely. It used to read and hydrate every contract the
+        -- server has ever held and filter in Lua, while Projection.onMe
+        -- asked the same question on an index.
+        local s, f = boardWith(4)
+        local counts = counting(s)
+        s.bailout.available(f.target)
+
+        falsy((counts.allContracts or 0) > 0,
+            'the indexed lookup answers this exactly: got '
+            .. tostring(counts.allContracts) .. ' full scans')
+    end)
+
+    it('does not scan the whole table to find a queued buyout', function()
+        local s = boardWith(4)
+        local counts = counting(s)
+        s.bailout.processQueue()
+
+        falsy((counts.allContracts or 0) > 0,
+            'this runs on every maintenance tick and is almost always empty: '
+            .. 'got ' .. tostring(counts.allContracts) .. ' full scans')
+    end)
+
+    it('still returns the same board with the reads memoised', function()
+        -- The point of the memo is that nothing about the answer changes.
+        local s = boardWith(3)
+        local before = s.projection.listing('HUNTER01', 1)
+        local after = s.escrow.cached(function()
+            return s.projection.listing('HUNTER01', 1)
+        end)
+
+        eq(#after.contracts, #before.contracts)
+        for i = 1, #before.contracts do
+            eq(after.contracts[i].id, before.contracts[i].id)
+            eq(after.contracts[i].reward.baseline, before.contracts[i].reward.baseline)
+        end
+    end)
+
+    it('drops the memo when escrow changes underneath it', function()
+        -- A cache that is sometimes right is worse than none.
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000 } },
+        })
+
+        s.escrow.cached(function()
+            eq(s.escrow.moneyValue(c.id), 1000, 'read once, memoised')
+            truthy(s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 500 } }))
+            eq(s.escrow.moneyValue(c.id), 1500,
+                'the memo must not survive a write through it')
+        end)
+    end)
+end)

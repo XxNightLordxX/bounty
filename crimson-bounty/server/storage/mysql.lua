@@ -42,7 +42,10 @@ local SCHEMA = {
         resolution VARCHAR(32),
         INDEX idx_state (state),
         INDEX idx_target (target_cid),
-        INDEX idx_creator (creator_cid)
+        INDEX idx_creator (creator_cid),
+        -- Read on every maintenance tick, and almost always empty. Added
+        -- to existing databases by MySQLStore.migrate.
+        INDEX idx_bailout_queued (bailout_queued_at)
     )]],
     [[CREATE TABLE IF NOT EXISTS crimson_escrow (
         id VARCHAR(64) PRIMARY KEY,
@@ -376,6 +379,17 @@ end
 function MySQLStore.contractsNaming(cid)
     local rows = MySQL.query.await(
         'SELECT * FROM crimson_contracts WHERE target_cid = ? ORDER BY id', { cid }) or {}
+    for i = 1, #rows do hydrateContract(rows[i]) end
+    return rows
+end
+
+--- Contracts with a buyout waiting out its delay.
+---
+--- The tick used to read every contract the server has ever held and filter
+--- in Lua. There is rarely more than one of these and usually none.
+function MySQLStore.queuedBailouts()
+    local rows = MySQL.query.await(
+        'SELECT * FROM crimson_contracts WHERE bailout_queued_at IS NOT NULL ORDER BY id') or {}
     for i = 1, #rows do hydrateContract(rows[i]) end
     return rows
 end
@@ -790,7 +804,58 @@ end
 function MySQLStore.prune()
     MySQL.query.await('DELETE FROM crimson_audit WHERE ts < ?',
         { os.time() - (Config.Audit.RetentionDays * 86400) })
+
+    local days = Config.Audit.ContractRetentionDays or 0
+    if days > 0 then MySQLStore.pruneContracts(os.time() - (days * 86400)) end
     return true
+end
+
+--- Remove finished contracts, and the rows that hang off them, past the
+--- retention age.
+---
+--- Nothing did this, so every full scan in the resource walked the server's
+--- entire history rather than its live board and grew without bound.
+---
+--- Four conditions, and the last two are the ones that matter: a contract is
+--- only removed when it is terminal, older than the cutoff, holds no escrow
+--- line that is not settled, and owes nobody anything on their next login.
+--- A contract whose creator was offline when it closed holds their money in
+--- a `held` OWED line with a crimson_pending row pointing at it, and
+--- deleting either would take that money with it.
+---
+--- The ledger is deliberately untouched: it is the player's own record of
+--- what they did and carries its own copy of the target name and reason, so
+--- it survives the contract it describes.
+---@param cutoff integer
+---@return integer removed
+function MySQLStore.pruneContracts(cutoff)
+    local rows = MySQL.query.await([[
+        SELECT c.id FROM crimson_contracts c
+        WHERE c.state IN ('completed', 'bailed_out', 'expired', 'cancelled', 'voided')
+          AND c.resolved_at IS NOT NULL
+          AND c.resolved_at < ?
+          AND NOT EXISTS (
+              SELECT 1 FROM crimson_escrow e
+              WHERE e.contract_id = c.id AND e.state <> 'settled')
+          AND NOT EXISTS (
+              SELECT 1 FROM crimson_pending p WHERE p.contract_id = c.id)
+        ORDER BY c.resolved_at
+        LIMIT ?
+    ]], { cutoff, Config.Audit.ContractsPrunedPerTick or 200 }) or {}
+
+    local removed = 0
+    for i = 1, #rows do
+        local id = rows[i].id
+        if id then
+            MySQL.query.await('DELETE FROM crimson_escrow WHERE contract_id = ?', { id })
+            MySQL.query.await('DELETE FROM crimson_hunters WHERE contract_id = ?', { id })
+            MySQL.query.await('DELETE FROM crimson_amendments WHERE contract_id = ?', { id })
+            MySQL.query.await('DELETE FROM crimson_messages WHERE contract_id = ?', { id })
+            MySQL.query.await('DELETE FROM crimson_contracts WHERE id = ?', { id })
+            removed = removed + 1
+        end
+    end
+    return removed
 end
 
 function MySQLStore.flush() return true end

@@ -626,6 +626,8 @@ ConfigDefaults.Audit = {
     FlushIntervalMs = 10000,
     MaxQueueSize = 5000,
     RetentionDays = 30,
+    ContractRetentionDays = 30,
+    ContractsPrunedPerTick = 200,
     --- Optional staff webhook. Financial movements and rejected attempts are
     --- mirrored as a heads-up; identity is never included, because anything
     --- sent to a third party outlives this server's retention rules.

@@ -106,31 +106,186 @@ end
 
 --- WHERE clauses this backend uses: `col = ?` joined by AND, or the two
 --- specific OR/JOIN shapes handled by name below.
+--- Compare the way MySQL would: numerically when both sides are numbers,
+--- as text otherwise. `resolved_at < ?` against text comparison would order
+--- timestamps lexically, which is right until the digit count changes.
+local function compare(actual, operator, expected)
+    if operator == nil or operator == '=' then
+        return tostring(actual) == tostring(expected)
+    end
+    if operator == '<>' or operator == '!=' then
+        return tostring(actual) ~= tostring(expected)
+    end
+
+    local a, b = tonumber(actual), tonumber(expected)
+    if a == nil or b == nil then
+        a, b = tostring(actual), tostring(expected)
+    end
+    if operator == '<' then return a < b end
+    if operator == '<=' then return a <= b end
+    if operator == '>' then return a > b end
+    if operator == '>=' then return a >= b end
+    error('mysql_exec: unsupported operator ' .. tostring(operator))
+end
+
 local function matches(row, conditions, params, from)
     for i = 1, #conditions do
         local condition = conditions[i]
-        local expected = condition.literal
-        if expected == nil then
-            expected = params[from + condition.index - 1]
+
+        if condition.notExists then
+            -- The correlated subquery, evaluated by scanning the other
+            -- table. Slow and exact, which is what a test executor wants.
+            local linked = row[condition.linkedTo]
+            for _, other in pairs(Exec.tables[condition.notExists] or {}) do
+                if tostring(other[condition.link]) == tostring(linked) then
+                    local hit = true
+                    for _, extra in ipairs(condition.extra) do
+                        if not compare(other[extra.column], extra.operator, extra.literal) then
+                            hit = false
+                            break
+                        end
+                    end
+                    if hit then return false end
+                end
+            end
+
+        elseif condition.notNull then
+            if row[condition.column] == nil then return false end
+        elseif condition.isNull then
+            if row[condition.column] ~= nil then return false end
+        elseif condition.anyOf then
+            if not condition.anyOf[tostring(row[condition.column])] then return false end
+        else
+            local expected = condition.literal
+            if expected == nil then
+                expected = params[from + condition.index - 1]
+            end
+            if not compare(row[condition.column], condition.operator, expected) then
+                return false
+            end
         end
-        if tostring(row[condition.column]) ~= tostring(expected) then return false end
     end
     return true
 end
 
-local function parseConditions(clause)
+--- Split a WHERE clause on its top-level ANDs, ignoring ones inside
+--- parentheses so a subquery's own conditions stay with it.
+local function andTerms(clause)
+    local terms, depth, start = {}, 0, 1
+    local i = 1
+    while i <= #clause do
+        local char = clause:sub(i, i)
+        if char == '(' then depth = depth + 1
+        elseif char == ')' then depth = depth - 1
+        elseif depth == 0 and clause:sub(i, i + 4):upper() == ' AND ' then
+            terms[#terms + 1] = clause:sub(start, i - 1)
+            i = i + 4
+            start = i + 1
+        end
+        i = i + 1
+    end
+    terms[#terms + 1] = clause:sub(start)
+
+    local out = {}
+    for j = 1, #terms do
+        local trimmed = terms[j]:match('^%s*(.-)%s*$')
+        if trimmed ~= '' then out[#out + 1] = trimmed end
+    end
+    return out
+end
+
+local function unquote(value)
+    return (value:gsub("^'", ''):gsub("'$", ''))
+end
+
+--- Parse one WHERE clause into conditions this executor can evaluate.
+---
+--- Anything it cannot account for raises. It used to scan for `col = value`
+--- pairs and silently ignore the rest of the clause, so a query whose real
+--- filtering lived in an IS NOT NULL, a range, an IN list or a subquery
+--- matched every row in the table — and the test reading that result had no
+--- way to tell. A statement shape this does not understand has to be loud,
+--- which is the whole reason this executor exists.
+local function parseConditions(clause, sql)
     local conditions, index = {}, 0
     if not clause then return conditions, 0 end
 
-    for column, value in clause:gmatch("([%w_]+)%s*=%s*([^%s]+)") do
-        if value == '?' then
-            index = index + 1
-            conditions[#conditions + 1] = { column = column, index = index }
+    for _, term in ipairs(andTerms(clause)) do
+        -- The OR in contractsInvolving is routed to its own handler; every
+        -- other clause here is a conjunction, and treating an OR as one
+        -- would silently narrow the result.
+        if term:upper():find(' OR ') then
+            error('mysql_exec: OR is not supported by the generic reader: ' .. tostring(sql))
+        end
+
+        local negatedExists = term:match('^[Nn][Oo][Tt]%s+EXISTS%s*%((.*)%)$')
+        local column, operator, value = term:match('^([%w_.]+)%s*([=<>!]+)%s*(.+)$')
+        local isNull = term:match('^([%w_.]+)%s+IS%s+NULL$')
+        local notNull = term:match('^([%w_.]+)%s+IS%s+NOT%s+NULL$')
+        local inColumn, inList = term:match('^([%w_.]+)%s+IN%s*%((.*)%)$')
+        local notInColumn = term:match('^([%w_.]+)%s+NOT%s+IN%s*%(')
+
+        local function bare(name) return name:match('([%w_]+)$') end
+
+        if negatedExists then
+            -- NOT EXISTS (SELECT 1 FROM <table> WHERE <table>.<col> = <outer>.<col> [AND ...])
+            local subTable = negatedExists:match('FROM%s+([%w_]+)')
+            local subWhere = negatedExists:match('WHERE%s+(.*)$')
+            if not subTable or not subWhere then
+                error('mysql_exec: cannot read the subquery in: ' .. tostring(sql))
+            end
+            local link, linkedTo, extra = nil, nil, {}
+            for _, inner in ipairs(andTerms(subWhere)) do
+                local left, op, right = inner:match('^([%w_.]+)%s*([=<>!]+)%s*(.+)$')
+                if not left then
+                    error('mysql_exec: cannot read `' .. inner .. '` in: ' .. tostring(sql))
+                end
+                if right:match('^[%w_]+%.[%w_]+$') then
+                    link, linkedTo = bare(left), bare(right)
+                elseif right == '?' then
+                    error('mysql_exec: a bound parameter inside a subquery is '
+                        .. 'not supported: ' .. tostring(sql))
+                else
+                    extra[#extra + 1] = { column = bare(left), operator = op,
+                                          literal = unquote(right) }
+                end
+            end
+            if not link then
+                error('mysql_exec: the subquery names no join column: ' .. tostring(sql))
+            end
+            conditions[#conditions + 1] = { notExists = subTable, link = link,
+                                            linkedTo = linkedTo, extra = extra }
+
+        elseif notNull then
+            conditions[#conditions + 1] = { column = bare(notNull), notNull = true }
+        elseif isNull then
+            conditions[#conditions + 1] = { column = bare(isNull), isNull = true }
+        elseif notInColumn then
+            error('mysql_exec: NOT IN is not supported by the generic reader: '
+                .. tostring(sql))
+        elseif inColumn then
+            local allowed = {}
+            for entry in inList:gmatch("'([^']*)'") do allowed[entry] = true end
+            if not next(allowed) then
+                error('mysql_exec: cannot read the IN list in: ' .. tostring(sql))
+            end
+            conditions[#conditions + 1] = { column = bare(inColumn), anyOf = allowed }
+        elseif column then
+            if value == '?' then
+                index = index + 1
+                conditions[#conditions + 1] =
+                    { column = bare(column), operator = operator, index = index }
+            elseif value:match("^'") or tonumber(value) then
+                conditions[#conditions + 1] =
+                    { column = bare(column), operator = operator, literal = unquote(value) }
+            else
+                error('mysql_exec: cannot read `' .. term .. '` in: ' .. tostring(sql))
+            end
         else
-            conditions[#conditions + 1] =
-                { column = column, literal = value:gsub("^'", ''):gsub("'$", '') }
+            error('mysql_exec: cannot read `' .. term .. '` in: ' .. tostring(sql))
         end
     end
+
     return conditions, index
 end
 
@@ -206,7 +361,7 @@ local function update(sql, params)
         end
     end
 
-    local conditions = parseConditions(whereClause)
+    local conditions = parseConditions(whereClause, sql)
 
     -- `col IS NOT NULL` / `col IS NULL`, which parseConditions does not read
     -- as an equality. Without these the row count comes back wrong, and the
@@ -274,7 +429,7 @@ local function select_(sql, params)
 
     local whereClause = sql:match('WHERE (.-)%s*ORDER BY') or sql:match('WHERE (.-)%s*LIMIT')
         or sql:match('WHERE (.*)$')
-    local conditions = parseConditions(whereClause)
+    local conditions = parseConditions(whereClause, sql)
 
     local out = {}
     for _, row in pairs(Exec.tables[tableName]) do
@@ -318,7 +473,7 @@ local function delete(sql, params)
                 end
             end
         else
-            local conditions = parseConditions(whereClause)
+            local conditions = parseConditions(whereClause, sql)
             if matches(row, conditions, params, 1) then Exec.tables[tableName][key] = nil end
         end
     end
