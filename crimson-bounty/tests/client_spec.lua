@@ -707,3 +707,127 @@ describe('the servers own access decision', function()
             .. 'than being handed the app on a job nobody has read yet')
     end)
 end)
+
+--- The bridges between the framework and this resource, driven the way the
+--- runtime drives them.
+---
+--- Found by line coverage rather than by reading: with the whole suite
+--- running under a debug hook, the body of Bridges.onPlayerReady never
+--- executed once, and neither did the memory-mode branch of
+--- onPlayerDropped. Escrow.retryPending is called directly by a dozen
+--- tests — which proves the function works, not that anything ever calls
+--- it on the one occasion it exists for.
+describe('what happens to a player as they arrive and leave', function()
+    local function wired()
+        local s = newStack()
+        s.bridges.install(s)
+        return s
+    end
+
+    --- Owed goods reach the player on the login that follows.
+    ---
+    --- A payout into a full inventory queues the line rather than losing
+    --- it, and this is the only thing that ever hands it over. Nothing
+    --- called it, so the whole recovery path existed on the strength of
+    --- its own unit test.
+    --- A payout into full pockets, which is what leaves something owed.
+    local function owing()
+        local s = wired()
+        local f = fixture(s)
+        local lines = s.escrow.validate(f.creator, {
+            baseline = { items = { { name = 'lockpick', count = 2 } } },
+        })
+        s.escrow.take(f.creator, 'ct1', lines)
+
+        Env.players[3]._inventoryFull = true
+        s.escrow.release('ct1', 'HUNTER01', CB.PORTION.BASELINE, 'test')
+        Env.players[3]._inventoryFull = false
+
+        local owed = s.storage.readPending('HUNTER01') or {}
+        truthy(#owed > 0, 'the fixture must actually leave something owed')
+        return s, #owed
+    end
+
+    it('hands over what was owed when the player comes back', function()
+        local s, count = owing()
+        local delivered = s.bridges.onPlayerReady(s, 3)
+        eq(delivered, count, 'everything owed has to be handed over')
+        eq(#(s.storage.readPending('HUNTER01') or {}), 0, 'and the queue emptied')
+    end)
+
+    it('tells them it happened, rather than doing it silently', function()
+        local s = owing()
+        Natives.calls.notifications = {}
+        s.bridges.onPlayerReady(s, 3)
+
+        local told = false
+        for _, note in ipairs(Natives.calls.notifications or {}) do
+            local text = tostring(note.title or '') .. ' ' .. tostring(note.message or '')
+            if text:find('utstanding') then told = true end
+        end
+        truthy(told,
+            'goods that appear in a pocket with no explanation read as a bug, '
+            .. 'and a player who does not know they were paid asks for it twice')
+    end)
+
+    it('says nothing to a player who is owed nothing', function()
+        local s = wired()
+        fixture(s)
+        Natives.calls.notifications = {}
+        eq(s.bridges.onPlayerReady(s, 3), 0)
+        eq(#(Natives.calls.notifications or {}), 0,
+            'a message about nothing is one that teaches players to ignore them')
+    end)
+
+    it('is safe for a source the framework cannot resolve', function()
+        local s = wired()
+        fixture(s)
+        eq(s.bridges.onPlayerReady(s, 999), 0,
+            'a player mid-join must not throw inside a login handler')
+    end)
+
+    --- Memory mode keeps nothing across a restart, so a creator who
+    --- disconnects would strand their own escrow. It is refunded and the
+    --- contract closed instead. Nothing exercised that branch.
+    it('refunds a creator who disconnects in memory mode', function()
+        -- The stack is opened first: newStack() resets the whole config, so
+        -- opening one inside withConfig puts the mode back and the test
+        -- measures a server nobody configured.
+        local s = wired()
+        local f = fixture(s)
+        withConfig({ { Config.Database, 'Mode', 'memory' } }, function()
+            local before = Env.players[1].PlayerData.money.cash
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'Unpaid debt',
+                mode = CB.MODE.EXCLUSIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            truthy(c)
+            truthy(Env.players[1].PlayerData.money.cash < before, 'escrow was taken')
+
+            s.bridges.onPlayerDropped(s, 'CREATOR1')
+
+            eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED,
+                'a contract nobody can pay out is not left open')
+            eq(Env.players[1].PlayerData.money.cash, before,
+                'and the creator has their money back, because memory mode '
+                .. 'would otherwise lose it at the next restart')
+        end)
+    end)
+
+    it('leaves a durable store alone when a creator disconnects', function()
+        local s = wired()
+        local f = fixture(s)
+        withConfig({ { Config.Database, 'Mode', 'json' } }, function()
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'Unpaid debt',
+                mode = CB.MODE.EXCLUSIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            s.bridges.onPlayerDropped(s, 'CREATOR1')
+            eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE,
+                'a contract that survives a restart must survive its creator '
+                .. 'going to bed')
+        end)
+    end)
+end)
