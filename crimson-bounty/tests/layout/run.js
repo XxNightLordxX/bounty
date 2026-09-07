@@ -66,6 +66,11 @@ function serverStub() {
     copy.role = 'creator';
     copy.huntersActive = 0;
     copy.hunters = [];
+    // More than one collection, so "Give back a later payout" is offered
+    // and its dialog gets measured too.
+    copy.slots = 3;
+    copy.currentSlot = 1;
+    copy.deadline = Math.floor(Date.now() / 1000) + 7200;
     return copy;
   });
   const taken = contracts.slice(3, 5).map(function (c) {
@@ -109,6 +114,8 @@ function serverStub() {
       })()
     } },
     withdrawReward: { ok: true, data: { id: 'ct00000001', returned: 1, queued: 0 } },
+    amendments: { ok: true, data: [] },
+    informant: { ok: true, data: { found: false } },
     browseTargets: { ok: true, data: { people: [
       { handle: 'tg1', name: 'Ada Quill', protected: false },
       { handle: 'tg2', name: 'Bo Renn', protected: true }
@@ -454,14 +461,28 @@ async function main() {
   ];
 
   const sizeFaults = [];
+  // A step whose button is not on screen is skipped, and a sweep that
+  // silently skipped everything would pass while measuring nothing.
+  const missedSteps = [];
+  let measuredDialogs = 0;
   for (const [w, h, label] of SIZES) {
     const p2 = await browser.newPage({ viewport: { width: w, height: h } });
     await p2.addInitScript(serverStub);
     await p2.goto('file://' + UI);
     await p2.waitForTimeout(250);
 
+    // Every screen a player can reach, including the dialogs added since
+    // this suite was written. A dialog is where things run off the bottom:
+    // it reads as a modal, so a button of its own below the fold reads as
+    // missing rather than as needing a scroll.
     const steps = [['board', null], ['mine', null], ['place', null],
-                   ['onme', null], ['ledger', null], ['mine', 'Change reward']];
+                   ['onme', null], ['ledger', null],
+                   ['mine', 'Change reward'],
+                   ['mine', 'Propose change'],
+                   ['mine', 'Buy informant data'],
+                   ['mine', 'Extend deadline'],
+                   ['mine', 'Edit'],
+                   ['mine', 'Withdraw']];
 
     for (const [tab, press] of steps) {
       await p2.click(`[data-tab="${tab}"]`);
@@ -474,8 +495,9 @@ async function main() {
           b.click();
           return true;
         }, press);
-        if (!opened) continue;
+        if (!opened) { missedSteps.push(label + ' ' + tab + ' > ' + press); continue; }
         await p2.waitForTimeout(220);
+        measuredDialogs++;
       }
 
       const faults = await p2.evaluate(function () {
@@ -518,6 +540,13 @@ async function main() {
     }
     await p2.close();
   }
+
+  it('actually opened the dialogs it claims to have measured', function () {
+    truthy(measuredDialogs >= 20,
+      'only ' + measuredDialogs + ' dialog screens were measured across '
+      + SIZES.length + ' sizes; the rest were skipped because their button '
+      + 'was not found: ' + Array.from(new Set(missedSteps)).join(' | '));
+  });
 
   it('fits every screen size it might be opened on', function () {
     const unique = Array.from(new Set(sizeFaults));
