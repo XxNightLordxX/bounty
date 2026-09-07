@@ -54,6 +54,25 @@ function falsy(v, m) { if (v) throw new Error((m || 'expected falsy') + ', got '
  * this the suite tests a boundary that does not exist: every "there is
  * nothing here" branch was being exercised against a shape production
  * never produces. */
+/** A list that crosses keyed by something other than 1..n.
+ *
+ * The other half of the same boundary, and the half nothing modelled. A Lua
+ * table keyed by inventory slot — which is exactly what ox_inventory hands
+ * back — is not a sequence, so it crosses as an object however many entries
+ * it has. asList documents recovering that case and nothing exercised it:
+ * reducing asList to `Array.isArray(value) ? value : []` left this suite
+ * green, and rule 25 in the static check only greps for the identifier.
+ *
+ * Wrap a fixture list in this to say "the server keys this by slot".
+ */
+function keyedBySlot(items, slots) {
+  const out = {};
+  items.forEach(function (item, i) {
+    out[String((slots && slots[i]) || (i + 1) * 3)] = item;
+  });
+  return out;
+}
+
 function acrossTheWire(value) {
   if (Array.isArray(value)) {
     return value.length === 0 ? {} : value.map(acrossTheWire);
@@ -3483,6 +3502,56 @@ async function main() {
       eq(freeSent.length, 1, 'one revise');
       eq(freeSent[0].body.reason, 'Unpaid debt');
       falsy(freeSent[0].body.reasonPreset);
+    });
+  })();
+
+  /* A wallet whose lists arrive keyed by inventory slot.
+   *
+   * ox_inventory hands back a table keyed by slot number, not a sequence,
+   * so it crosses as an object however many entries it holds — the same
+   * boundary as the empty list, and the half no fixture produced. asList
+   * recovers it; nothing checked that it did. */
+  await (async function walletKeyedBySlot() {
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: MINE,
+      ledger: LEDGER,
+      browseTargets: { ok: true, data: { people: [], total: 0, page: 1, pages: 1 } },
+      rewardOptions: { ok: true, data: {
+        cash: 100000, bank: 50000, dirty: 0, inventoryRead: true,
+        items: keyedBySlot([
+          { name: 'lockpick', label: 'Lockpick', count: 5 },
+          { name: 'bandage', label: 'Bandage', count: 12 }
+        ], [3, 7]),
+        weapons: keyedBySlot([
+          { name: 'WEAPON_PISTOL', label: 'Pistol', slot: 4, serial: 'C123' }
+        ], [4]),
+        caps: { itemsEnabled: true, weaponsEnabled: true, slots: 3,
+                cash: 250000, bank: 500000, maxStacks: 3, maxPerStack: 100,
+                maxWeapons: 2, cashEnabled: true, bankEnabled: true }
+      } }
+    });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    it('lists items the server keyed by slot rather than by position', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('Lockpick') !== -1 && text.indexOf('Bandage') !== -1,
+        'an inventory keyed by slot crosses as an object, and the picker '
+        + 'showed nothing: ' + text);
+    });
+
+    it('lists weapons the same way', function () {
+      truthy(app.view.textContent.indexOf('Pistol') !== -1,
+        'the weapon picker read the same shape and came back empty: '
+        + app.view.textContent);
+    });
+
+    it('draws no error card for a wallet it could read perfectly well', function () {
+      falsy(app.view.textContent.indexOf('Could not read what you are carrying') !== -1,
+        'a shape the app is written to recover must not read as a failure');
     });
   })();
 

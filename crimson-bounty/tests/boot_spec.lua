@@ -674,3 +674,91 @@ describe('a config that has drifted a key the handlers read', function()
             .. table.concat(broken, ' | '))
     end)
 end)
+
+--- Somebody is actually told about a contract that could not be loaded.
+---
+--- Refusing to start on an unreadable shard was replaced by starting and
+--- reporting it, on the argument that what the refusal really bought was
+--- the operator's attention — and that this buys it instead. Two places
+--- implement that: the boot banner and the diagnosis command.
+---
+--- Neither had a test. Replacing the lookup with an empty table in either
+--- file left the whole suite green, so the mechanism that justified
+--- removing the abort was the one thing nothing checked.
+describe('telling somebody a contract could not be loaded', function()
+    --- A store with one shard missing, opened, so quarantined() has
+    --- something in it.
+    local function withOneLost()
+        Natives.files = {}
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        local store = require('crimson-bounty.server.storage.json')
+        store.open()
+        store.writeContract({ id = 'ct00000009', creator_cid = 'CREATOR1',
+            target_cid = 'TARGET01', mode = CB.MODE.EXCLUSIVE,
+            state = CB.STATE.ACTIVE, created_at = os.time() })
+        store.close()
+        Natives.files['data/contracts/ct00000009.json'] = nil
+
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        local reopened = require('crimson-bounty.server.storage.json')
+        reopened.open()
+        return reopened
+    end
+
+    it('names it in the boot banner', function()
+        boot()
+        Config.Database.Mode = 'json'
+        withOneLost()
+
+        Env.console = {}
+        package.loaded['server.main'] = nil
+        local main = require('server.main')
+        main.start()
+
+        local said = table.concat(Env.console, '\n')
+        truthy(said:find('COULD NOT BE LOADED', 1, true),
+            'the resource started without a contract and said nothing about '
+            .. 'it: ' .. said)
+        truthy(said:find('ct00000009', 1, true),
+            'a warning that does not name the contract is one nobody can act '
+            .. 'on: ' .. said)
+        truthy(said:find('backup', 1, true),
+            'and it has to say what to do about it')
+    end)
+
+    it('names it in the diagnosis command', function()
+        boot()
+        Config.Database.Mode = 'json'
+        withOneLost()
+
+        package.loaded['server.main'] = nil
+        local main = require('server.main')
+        local modules = main.start()
+
+        local lines = table.concat(modules.admin.diagnose(1), '\n')
+        truthy(lines:find('COULD NOT BE LOADED', 1, true),
+            'the command for finding out why something is missing did not '
+            .. 'mention the contract that is missing: ' .. lines)
+        truthy(lines:find('ct00000009', 1, true), lines)
+    end)
+
+    it('says nothing on a store that opened cleanly', function()
+        boot()
+        Config.Database.Mode = 'json'
+        -- A genuinely empty store. Leaving the previous test's files in
+        -- place leaves its index still naming the lost contract, and the
+        -- warning correctly persists — which is the fix, not a failure.
+        Natives.files = {}
+        package.loaded['crimson-bounty.server.storage.json'] = nil
+        Env.console = {}
+        package.loaded['server.main'] = nil
+        local main = require('server.main')
+        local modules = main.start()
+
+        local said = table.concat(Env.console, '\n')
+        falsy(said:find('COULD NOT BE LOADED', 1, true),
+            'a banner nobody needs is one that gets ignored when it matters')
+        falsy(table.concat(modules.admin.diagnose(1), '\n')
+            :find('COULD NOT BE LOADED', 1, true))
+    end)
+end)
