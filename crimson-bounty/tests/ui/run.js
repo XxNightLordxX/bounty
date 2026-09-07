@@ -2657,18 +2657,41 @@ async function main() {
         + priced.view.textContent);
     });
 
-    /* An empty result is an answer, and it was paid for. */
+    /* An informant who could not put a name to anyone, and one who named
+       somebody, have to read the same (§14.29).
+
+       The page used to branch on a `found` flag and print "Nobody has been
+       seen near the target", which is a reliable server-side answer to "is
+       anyone on me right now?" for the price of the premium — the paid
+       oracle the charge-either-way rule exists to prevent. That the money
+       is taken regardless is said on the confirmation screen before it is
+       spent, which is where §14.29 puts it, and is asserted above. */
+    const RULES = { informant: { cost: 25000, account: 'bank', needsProximity: true } };
     const empty = await onMine({
-      informant: { ok: true, data: { found: false } }
-    }, { informant: { cost: 25000, account: 'bank', needsProximity: true } });
+      informant: { ok: true, data: { name: 'Unknown operative' } }
+    }, RULES);
     click(empty, 'Buy informant data');
     click(empty, 'Yes');
     await settle();
 
-    it('says an empty answer was still paid for', function () {
-      truthy(empty.notice().indexOf('paid') !== -1,
-        'a player who paid for nothing has to be told that is what happened: '
-        + empty.notice());
+    const named = await onMine({
+      informant: { ok: true, data: { name: 'Rook Ash' } }
+    }, RULES);
+    click(named, 'Buy informant data');
+    click(named, 'Yes');
+    await settle();
+
+    it('does not tell a target that nobody is on them', function () {
+      falsy(empty.notice().toLowerCase().indexOf('nobody') !== -1,
+        'a miss must not read as an all-clear: ' + empty.notice());
+      truthy(empty.notice().indexOf('Unknown operative') !== -1,
+        'it says what the informant came back with: ' + empty.notice());
+    });
+
+    it('words a miss and a hit the same way', function () {
+      const shape = function (text) { return text.replace(/Unknown operative|Rook Ash/, '·'); };
+      eq(shape(empty.notice()), shape(named.notice()),
+        'the two answers differ in more than the operative named');
     });
   })();
 

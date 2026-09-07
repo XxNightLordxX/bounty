@@ -97,6 +97,25 @@ Config.Anonymity = {
 }
 
 --------------------------------------------------------------------------
+-- Failure penalty (§3.6, §14.18)
+--------------------------------------------------------------------------
+
+Config.Penalty = {
+    --- The creator names the stake a hunter must put up to accept, and the
+    --- server clamps it the same way it clamps the bailout premium and for
+    --- the same reason: unclamped, an "accept" is an uncapped transfer of
+    --- the hunter's money to the creator, forfeit on abandonment or expiry,
+    --- on a contract that need only advertise a token reward. A $1,000
+    --- contract could carry a $1,000,000 stake.
+    ---
+    --- Both ceilings apply; the lower wins. The fraction is of the §9.1
+    --- money escrow value, so the stake stays proportional to what the
+    --- contract is actually worth.
+    MaxAmount = 100000,
+    MaxFractionOfEscrow = 2.0,
+}
+
+--------------------------------------------------------------------------
 -- Bailout (§5, §14.16, §14.17)
 --------------------------------------------------------------------------
 

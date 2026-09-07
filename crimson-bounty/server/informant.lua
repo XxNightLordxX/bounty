@@ -88,9 +88,18 @@ function Informant.buy(actor, contractId)
     if #candidates == 0 then
         -- Charged anyway, and deliberately: a refund on an empty result turns
         -- the purchase into a free oracle for "is anyone hunting me?".
+        --
+        -- And answered in the same words as a hunter the server has no
+        -- current description for, rather than with a distinct "nothing
+        -- found" reply. Charging either way is only half of §14.29: the
+        -- other half is that the ANSWER must not distinguish the two, or the
+        -- premium buys a target a reliable server-side yes/no on whether an
+        -- anonymous operative is on them right now — which is the paid
+        -- oracle the charge was there to prevent.
         reveals[key] = { hunterCid = nil, at = os.time(),
                          purchases = purchases + 1, seed = existing and existing.seed }
-        return true, nil, { found = false }
+        Audit.action('informant_revealed', actor.cid, contractId, { hunter = nil })
+        return true, nil, Informant.describe(nil)
     end
 
     -- Selection must not be steerable. A wall clock in the formula lets the
@@ -114,18 +123,28 @@ function Informant.buy(actor, contractId)
     return true, nil, Informant.describe(chosen.hunter_cid)
 end
 
---- What the buyer is shown. A citizen id is never returned in either mode —
---- it is an internal key, not something a player should be handed.
+--- What the buyer is shown.
+---
+--- One shape, whatever happened. There is no `found` flag on the wire: the
+--- answer for "nobody the informant could reach" is the same answer as for
+--- "somebody, whom the server cannot currently describe" — a hunter who has
+--- gone offline since they were seen produces it too. So the reply carries
+--- no reliable signal about whether anyone has accepted, which is what
+--- §14.29 asks of it, and the app has one branch to render rather than two.
+---
+--- Not a fabricated name: naming somebody who is not there would be a worse
+--- answer than an unhelpful one, because a target would act on it.
+---
+--- A citizen id is never returned in either mode — it is an internal key,
+--- not something a player should be handed.
 function Informant.describe(hunterCid)
-    if not hunterCid then return { found = false } end
+    local actor = hunterCid and Identity.byCitizenId(hunterCid)
 
-    local actor = Identity.byCitizenId(hunterCid)
     if Config.Informant.RevealMode == 'name' then
-        return { found = true, name = actor and actor.name or 'Unknown operative' }
+        return { name = actor and actor.name or 'Unknown operative' }
     end
 
     return {
-        found = true,
         description = actor
             and ('Seen recently around %s'):format(actor.job and actor.job.name or 'the city')
             or 'A face you have seen before',

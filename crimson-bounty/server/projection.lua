@@ -107,6 +107,22 @@ function Projection.contract(contract, viewerCid)
         targetProtected = contract.target_protected or false,
         deadline      = contract.deadline_at,
         role          = role,
+        -- What accepting costs, to everyone who can see the contract.
+        --
+        -- This was emitted for the creator alone, and acceptance debits it
+        -- anyway — so a hunter tapped Accept on a board listing and watched
+        -- a stake they had never been shown leave their bank, forfeit to
+        -- the creator if they later abandoned or ran out of clock. §3.6
+        -- says a hunter who cannot cover it "is told so", and §14.18 that
+        -- "the required stake is shown prominently on the listing before
+        -- the accept button"; the comment above the debit in contracts.lua
+        -- claims "the hunter is told the amount before this point", which
+        -- was a description of a rule rather than of the code. The app can
+        -- only word its own warning vaguely for the same reason.
+        --
+        -- Always present, including zero: "no stake" and "not told" are
+        -- different things and the page has to be able to tell them apart.
+        penaltyAmount = contract.penalty_amount or 0,
     }
 
     -- The creator's identity is present only when they chose to be seen.
@@ -119,7 +135,6 @@ function Projection.contract(contract, viewerCid)
 
     if role == 'creator' then
         out.bailoutAmount = contract.bailout_amount
-        out.penaltyAmount = contract.penalty_amount
         -- The creator learns how many operatives are on it, never who they
         -- are, unless a hunter chose to be seen.
         out.hunters = {}
@@ -389,10 +404,10 @@ Projection.ALLOWED_KEYS = {
         bonusPercent = true, slots = true, slotsClaimed = true, currentSlot = true,
         huntersActive = true, huntersMax = true, targetName = true,
         targetProtected = true, deadline = true, role = true,
-        targetImageId = true,
+        targetImageId = true, penaltyAmount = true,
         creatorName = true, creatorAnonymous = true,
     },
-    creator = { bailoutAmount = true, penaltyAmount = true, hunters = true },
+    creator = { bailoutAmount = true, hunters = true },
     hunter  = { myAlias = true, myClaims = true, kidnapProgress = true },
     target  = { bailoutAmount = true, bailoutAvailable = true },
     public  = {},

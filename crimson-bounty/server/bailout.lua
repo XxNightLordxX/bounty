@@ -137,6 +137,25 @@ function Bailout.buy(actor, contractId)
     return Bailout.settle(contractId, amount, actor.cid, account)
 end
 
+--- Put money into a player's hands, or on the books for them.
+---
+--- False only when neither is possible: the player is offline (or the
+--- framework refused the credit) AND the store's id sequence has nothing
+--- left to mint an owed line with.
+---
+--- Bailout.owe can return nil, and both call sites below used to discard it
+--- and carry on. This is the one id-exhaustion path in the resource with a
+--- player's money already in flight — Contracts.create refuses before it
+--- charges anyone and Contracts.accept releases the stake — so the money
+--- simply stopped existing, with an audit row the player cannot see as its
+--- only trace. Util.mintId exists for the documented case of two server
+--- instances sharing one database, where ids collide as a matter of course.
+local function deliver(cid, contractId, amount, account, reason)
+    local who = Identity.byCitizenId(cid)
+    if who and Util.credit(who.player, account, amount) then return true end
+    return Bailout.owe(cid, contractId, amount, account, reason) ~= nil
+end
+
 --- Close a bought-out contract: the creator gets their escrow back plus the
 --- premium, and the contract resolves once.
 ---@param opts table|nil { retryable = true } when driven by the queue
@@ -169,26 +188,38 @@ function Bailout.settle(contractId, amount, targetCid, account, opts)
         -- The contract resolved some other way first (a hunter completed it
         -- during the delay). Refund the premium to the account it came from;
         -- if the target is offline, it is owed rather than lost.
-        local target = Identity.byCitizenId(targetCid)
         -- A refusal is the same situation as being offline: the money has
         -- not been delivered. AddMoney returns false for an account
         -- qbx_core will not credit, and a server with a balance ceiling
         -- refuses on exactly the payouts that matter most.
-        if not (target and Util.credit(target.player, account, amount)) then
-            Bailout.owe(targetCid, contractId, amount, account, 'bailout_refund')
+        if not deliver(targetCid, contractId, amount, account, 'bailout_refund') then
+            -- Nowhere to put it and nobody to hand it to. Audited under its
+            -- own name, with everything a server owner needs to place it by
+            -- hand: the alternative is a player who paid for a buyout,
+            -- never got it, and has no way to find out why.
+            Audit.financial('bailout_refund_stranded', targetCid, contractId,
+                { amount = amount, account = account, reason = err })
         end
         Audit.financial('bailout_refunded', targetCid, contractId, { amount = amount, reason = err })
         Bailout.clearQueue(contractId)
         return false, err
     end
 
-    local creator = Identity.byCitizenId(contract.creator_cid)
     -- Offline, or a credit the framework refused: either way the premium is
     -- owed, not lost. It is written as a real escrow line so the normal
     -- retry path can deliver it — a placeholder id would be read back as a
     -- missing line and dropped.
-    if not (creator and Util.credit(creator.player, account, amount)) then
-        Bailout.owe(contract.creator_cid, contractId, amount, account, 'bailout_premium')
+    if not deliver(contract.creator_cid, contractId, amount, account, 'bailout_premium') then
+        -- The contract has closed and the creator cannot be paid by either
+        -- route. Between a creator who does not receive a premium and a
+        -- target whose money stops existing, it goes back to the person who
+        -- paid it: that is visible and recoverable, and destroyed money is
+        -- neither. The buyer is online on the immediate path by definition,
+        -- so this all but always lands.
+        if not deliver(targetCid, contractId, amount, account, 'bailout_premium_returned') then
+            Audit.financial('bailout_premium_stranded', targetCid, contractId,
+                { amount = amount, account = account, creator = contract.creator_cid })
+        end
     end
 
     Audit.financial('bailout_settled', targetCid, contractId, { amount = amount })

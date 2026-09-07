@@ -145,6 +145,27 @@ function Amendments.improve(actor, contractId, kind, payload)
             return false, CB.ERR.INVALID_REWARD
         end
 
+        -- And the LINE ceiling, which this path applied to nothing. Only the
+        -- value was bounded, and a top-up appends one fresh derived line per
+        -- unsettled money baseline every time it runs — so raising the bonus
+        -- one percentage point at a time walked a contract to hundreds of
+        -- rows while its total stayed exactly where it started. Nobody's
+        -- money moved, which is why conservation never noticed; the cost is
+        -- that Projection.listing reads every one of those rows, for every
+        -- player who opens the board, for as long as the contract lives.
+        --
+        -- Counted the way Amendments.addEscrow counts: settled lines are not
+        -- held, and neither are hunters' stakes.
+        local held = 0
+        for _, line in ipairs(Storage.readEscrow(contractId)) do
+            if line.state ~= CB.ESCROW_STATE.SETTLED and line.portion ~= CB.PORTION.STAKE then
+                held = held + 1
+            end
+        end
+        if held + #extra > Config.Limits.MaxEscrowLines then
+            return false, CB.ERR.INVALID_REWARD
+        end
+
         if #extra == 0 then
             -- Nothing to take means nothing to pay: either the bonus was the
             -- creator's own figure rather than a percentage, or there is no
@@ -490,6 +511,9 @@ function Amendments.apply(proposal)
     if not contract then return false, CB.ERR.NOT_FOUND end
     local kind, payload = proposal.kind, proposal.payload
 
+    -- Set by any branch that takes escrow back out of the contract.
+    local reclamp = false
+
     if kind == CB.AMENDMENT.SHORTEN_DEADLINE or kind == CB.AMENDMENT.EXTEND_DEADLINE then
         local seconds = Util.toPositive(payload.seconds, Config.Limits.ContractLifetimeSeconds)
         if not seconds then return false, CB.ERR.INVALID_INPUT end
@@ -523,7 +547,12 @@ function Amendments.apply(proposal)
         for i = 1, #hunters do
             if hunters[i].state == 'active' then return false, CB.ERR.BAD_STATE end
         end
-        contract.penalty_amount = Util.toCount(payload.amount, Config.MaxContractValue) or 0
+        -- Through the same clamp creation uses. An amendment that skipped
+        -- it would be the way back to an uncapped stake: raise_penalty is
+        -- only allowed on an unheld contract, so the figure it leaves is
+        -- what the next hunter is asked to put up.
+        contract.penalty_amount = Contracts.clampPenalty(payload.amount,
+            Escrow.moneyValue(proposal.contract_id))
 
     elseif kind == CB.AMENDMENT.CANCEL or kind == CB.AMENDMENT.WITHDRAW then
         -- Agreed cancellation: escrow returns to the creator in full.
@@ -539,12 +568,26 @@ function Amendments.apply(proposal)
         if not slot or slot <= (contract.next_slot or 1) then return false, CB.ERR.INVALID_INPUT end
         if slot > (contract.payout_slots or 1) then return false, CB.ERR.INVALID_INPUT end
         Escrow.release(proposal.contract_id, contract.creator_cid, { slot = slot }, 'reward_reduced')
+        -- Applied after the write below, not here: on a durable backend the
+        -- contract table this function is holding is a copy, so re-pricing
+        -- it now and writing that copy afterwards would put the unclamped
+        -- figures straight back on top. On the in-process store it is the
+        -- stored row itself and either order works, which is exactly why
+        -- getting it wrong would have gone unnoticed.
+        reclamp = true
 
     else
         return false, CB.ERR.INVALID_INPUT
     end
 
     Storage.writeContract(contract)
+
+    -- The buyout premium and the failure stake are both multiples of the
+    -- escrow, and reduce_reward just took a slot out of it. Re-priced for
+    -- the same reason withdrawReward does it: a clamp that holds only at
+    -- the moment the figure is set is a clamp with a door beside it.
+    if reclamp then Contracts.reclampToEscrow(proposal.contract_id, proposal.proposer) end
+
     Audit.action('amendment_applied', proposal.proposer, proposal.contract_id, { kind = kind })
 
     local people = participants(contract)

@@ -102,8 +102,8 @@ describe('informant data', function()
         tailing(s)
         local ok, err, data = s.informant.buy(f.creator, c.id)
         truthy(ok, tostring(err))
-        truthy(data.found)
         eq(data.name, 'Rook Ash')
+        falsy(data.found, 'no flag on the wire says whether this was a hit')
     end)
 
     it('is available to the target as well', function()
@@ -112,7 +112,7 @@ describe('informant data', function()
         Env.players[2].PlayerData.money.bank = 100000
         local ok, _, data = s.informant.buy(f.target, c.id)
         truthy(ok)
-        truthy(data.found)
+        eq(data.name, 'Rook Ash')
     end)
 
     it('names nobody when no hunter has come near', function()
@@ -124,7 +124,8 @@ describe('informant data', function()
 
         local ok, err, data = s.informant.buy(f.creator, c.id)
         truthy(ok, tostring(err))
-        falsy(data.found, 'accepting a contract is not tracking somebody')
+        eq(data.name, 'Unknown operative',
+            'accepting a contract is not tracking somebody')
     end)
 
     it('forgets an observation that has gone stale', function()
@@ -134,7 +135,8 @@ describe('informant data', function()
 
         local ok, _, data = s.informant.buy(f.creator, c.id)
         truthy(ok)
-        falsy(data.found, 'somebody who walked past yesterday is not on you now')
+        eq(data.name, 'Unknown operative',
+            'somebody who walked past yesterday is not on you now')
     end)
 
     it('names everyone active when proximity is not required', function()
@@ -142,7 +144,7 @@ describe('informant data', function()
         withConfig({ { Config.Informant, 'RequireProximity', false } }, function()
             local ok, _, data = s.informant.buy(f.creator, c.id)
             truthy(ok)
-            truthy(data.found, 'the old behaviour, for servers that prefer it')
+            eq(data.name, 'Rook Ash', 'the old behaviour, for servers that prefer it')
         end)
     end)
 
@@ -175,8 +177,40 @@ describe('informant data', function()
         Env.players[1].PlayerData.money.bank = 100000
         local ok, _, data = s.informant.buy(f.creator, c.id)
         truthy(ok)
-        falsy(data.found)
+        eq(data.name, 'Unknown operative')
         eq(Env.players[1].PlayerData.money.bank, 100000 - Config.Informant.Cost, 'still charged')
+    end)
+
+    --- §14.29's uniform response, asserted as the property rather than one
+    --- case at a time. Charging either way was implemented; answering the
+    --- same way was not, so the reply was a reliable server-side yes/no on
+    --- "is an anonymous operative on me right now?" for the price of the
+    --- premium — the paid oracle the charge exists to prevent.
+    it('answers a miss and an undescribable hit in the same words', function()
+        local function keysOf(t)
+            local out = {}
+            for k, v in pairs(t) do out[#out + 1] = k .. '=' .. tostring(v) end
+            table.sort(out)
+            return table.concat(out, ',')
+        end
+
+        -- Nobody has come near: a miss.
+        local s, f, c = seeded()
+        Env.players[2]._coords = { x = 0.0, y = 0.0, z = 30.0 }
+        Env.players[3]._coords = { x = 3000.0, y = 3000.0, z = 30.0 }
+        s.death.watchTargets(s.storage.allContracts())
+        local _, _, miss = s.informant.buy(f.creator, c.id)
+
+        -- Somebody is on the target, and has since gone offline: a hit the
+        -- server cannot put a description to.
+        local s2, f2, c2 = seeded()
+        tailing(s2)
+        Env.removePlayer(3)
+        local _, _, hit = s2.informant.buy(f2.creator, c2.id)
+
+        eq(keysOf(miss), keysOf(hit),
+            'a target who buys twice must not be able to tell which answer '
+            .. 'meant somebody and which meant nobody')
     end)
 
     it('never returns a citizen id', function()
@@ -203,7 +237,7 @@ describe('informant data', function()
                 local _, _, got = s.informant.buy(f.creator, c.id)
                 data = got
             end)
-            truthy(data and data.found)
+            truthy(data)
             eq(data.name, 'Rook Ash')
             falsy(data.description, 'one mode or the other, not both')
         end)
@@ -216,7 +250,7 @@ describe('informant data', function()
                 local _, _, got = s.informant.buy(f.creator, c.id)
                 data = got
             end)
-            truthy(data and data.found, 'a description is still a hit')
+            truthy(data, 'a description is still a hit')
             truthy(data.description and #data.description > 0,
                 'the whole point of this mode is that there is something to '
                 .. 'read, and the page renders name or description')

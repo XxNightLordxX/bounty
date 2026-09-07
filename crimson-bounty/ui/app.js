@@ -526,6 +526,13 @@
         }
       });
     }
+    // What accepting costs, on the listing, before the accept button —
+    // §14.18. The server used to send this to the creator alone while
+    // acceptance debited it anyway, so the first a hunter knew of a stake
+    // was the money leaving their bank.
+    if (contract.penaltyAmount > 0) {
+      meta.appendChild(chip(money(contract.penaltyAmount) + ' stake', 'warn'));
+    }
     meta.appendChild(chip(contract.creatorAnonymous ? 'Anonymous client' : contract.creatorName));
     if (contract.targetProtected && settings().flagListing !== false) {
       meta.appendChild(chip('Law enforcement', 'warn'));
@@ -584,7 +591,9 @@
       var quit = el('button', 'ghost', 'Abandon');
       quit.onclick = function () {
         ask('Walk away from this contract?',
-            'If you staked a penalty, the client keeps it.',
+            contract.penaltyAmount > 0
+              ? 'The client keeps the ' + money(contract.penaltyAmount) + ' you staked.'
+              : 'You staked nothing on this one, so it costs you nothing.',
             function () {
               post('abandon', { id: contract.id }).then(function (r) {
                 if (!r.ok) return fail(r);
@@ -830,7 +839,12 @@
       state.dialog = {
         kind: 'choice',
         question: 'Take this one anonymously?',
-        detail: 'The client will see an operative, not a name.',
+        detail: 'The client will see an operative, not a name.'
+          + (contract.penaltyAmount > 0
+            ? ' Accepting stakes ' + money(contract.penaltyAmount)
+              + ' of yours, returned when you finish and forfeit to the client'
+              + ' if you walk away or run out of time.'
+            : ''),
         options: [
           { label: 'Anonymously', primary: true, run: function () { take(true); } },
           { label: 'Under my name', run: function () { take(false); } }
@@ -951,13 +965,15 @@
         return fail(r);
       }
 
-      if (!r.data || !r.data.found) {
-        var rules = settings().informant;
-        return say(rules && rules.needsProximity
-          ? 'Nobody has been seen near the target. You paid for that answer.'
-          : 'The informant had nothing for you. You paid for that answer.');
-      }
-      say('Informant: ' + (r.data.name || r.data.description), 'gold');
+      // One branch, because the server sends one shape. The page used to
+      // read a `found` flag and print "Nobody has been seen near the
+      // target", which handed a target a reliable answer to "is anyone on
+      // me?" for the price of the premium — the paid oracle §14.29 exists
+      // to close. An informant who could not put a name to anyone reads
+      // the same whether that is because there was nobody or because the
+      // operative is not somewhere they could be described.
+      say('Informant: ' + ((r.data && (r.data.name || r.data.description))
+        || 'Unknown operative'), 'gold');
     });
   }
 

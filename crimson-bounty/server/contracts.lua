@@ -344,6 +344,37 @@ function Contracts.clampBailout(requested, lines)
     return bailout
 end
 
+--- The failure stake a hunter must put up, clamped to what the contract is
+--- worth (§14.18).
+---
+--- The same job Contracts.clampBailout does for the premium, and missing
+--- for the stake, which is the side with the worse failure mode: a bailout
+--- is a target choosing to pay, while a stake is taken from a hunter the
+--- moment they tap Accept and forfeits to the creator if they later abandon
+--- or run out of clock. Bounded only by Config.MaxContractValue, a contract
+--- advertising a $1,000 reward could carry a $1,000,000 stake — a transfer
+--- rail of exactly the kind the bailout clamp exists to close.
+---
+--- Clamped silently, as §14.18 asks, rather than refused: a creator who
+--- names too large a figure gets the largest one this contract can carry.
+---@param requested any
+---@param moneyValue integer the §9.1 money escrow value
+---@return integer
+function Contracts.clampPenalty(requested, moneyValue)
+    local penalty = Util.toPositive(requested) or 0
+    if penalty <= 0 then return 0 end
+
+    local max = Config.Penalty.MaxAmount or 0
+    local fraction = Config.Penalty.MaxFractionOfEscrow
+    if fraction then
+        local relative = math.floor((moneyValue or 0) * fraction)
+        if relative < max then max = relative end
+    end
+
+    if penalty > max then penalty = max end
+    return penalty
+end
+
 --- The reason a contract carries, decided the same way wherever it is set.
 ---
 --- Placing one and editing one both put text in front of every player on
@@ -416,6 +447,15 @@ function Contracts.create(actor, req)
     local bailout, bailoutErr = Contracts.clampBailout(req.bailoutAmount, lines)
     if bailoutErr then return nil, bailoutErr end
 
+    -- The stake is clamped against the same figure, for the same reason.
+    local penaltyEscrow = 0
+    for i = 1, #lines do
+        if CB.MONEY_ACCOUNTS[lines[i].source] then
+            penaltyEscrow = penaltyEscrow + (lines[i].amount or 0)
+        end
+    end
+    local penalty = Contracts.clampPenalty(req.penaltyAmount, penaltyEscrow)
+
     local contractId = Util.mintId(Storage.nextId, 'ct', Storage.readContract)
     if not contractId then
         -- Every id on offer belongs to a contract that already exists.
@@ -444,7 +484,7 @@ function Contracts.create(actor, req)
         slots_claimed = 0,
         next_slot     = 1,
         bailout_amount = bailout,
-        penalty_amount = Util.toCount(req.penaltyAmount, Config.MaxContractValue) or 0,
+        penalty_amount = penalty,
         created_at    = now,
         deadline_at   = now + Config.Limits.DefaultDeadlineSeconds,
         expires_at    = now + Config.Limits.ContractLifetimeSeconds,
@@ -547,15 +587,27 @@ function Contracts.accept(actor, contractId, anonymous)
     -- makes two different people indistinguishable in the creator's threads.
     local aliasNumber = #existing + 1
 
+    -- Whether THIS call is the one that advanced the contract, which is the
+    -- only thing that makes reverting it safe. The undo below used to test
+    -- the mode instead, so an exclusive acceptance was put back and a
+    -- competitive one was not — and every step after this can still fail.
+    -- A broke player tapping Accept flipped a competitive contract to
+    -- `accepted` for every viewer of the board, with no hunter on it and
+    -- huntersActive still zero, and left it that way.
+    local advanced = false
+
     if contract.mode == CB.MODE.EXCLUSIVE then
         if activeCount > 0 then return false, CB.ERR.BAD_STATE end
         if not Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted') then
             return false, CB.ERR.LOCKED
         end
+        advanced = true
     else
         if activeCount >= Config.Limits.MaxHuntersPerContract then return false, CB.ERR.LIMIT_REACHED end
         if contract.state == CB.STATE.ACTIVE then
-            Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted')
+            -- Only when it took. A competitive contract another hunter
+            -- advanced in the same tick is theirs to put back, not ours.
+            advanced = Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted') and true or false
         end
     end
 
@@ -567,8 +619,8 @@ function Contracts.accept(actor, contractId, anonymous)
     if stake > 0 then
         local account = (actor.player.Functions.GetMoney('bank') or 0) >= stake and 'bank' or 'cash'
         if (actor.player.Functions.GetMoney(account) or 0) < stake then
-            -- Undo the state change made for an exclusive acceptance.
-            if contract.mode == CB.MODE.EXCLUSIVE then
+            -- Undo the state change this call made, in either mode.
+            if advanced then
                 Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
             end
             return false, CB.ERR.INSUFFICIENT
@@ -579,7 +631,7 @@ function Contracts.accept(actor, contractId, anonymous)
             amount = stake, staker = actor.cid,
         } })
         if not ok then
-            if contract.mode == CB.MODE.EXCLUSIVE then
+            if advanced then
                 Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
             end
             return false, CB.ERR.INSUFFICIENT
@@ -597,7 +649,7 @@ function Contracts.accept(actor, contractId, anonymous)
             Escrow.release(contractId, actor.cid,
                 { portion = CB.PORTION.STAKE, staker = actor.cid }, 'hunter_id_exhausted')
         end
-        if contract.mode == CB.MODE.EXCLUSIVE then
+        if advanced then
             Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'accept_failed')
         end
         Audit.rejected('hunter_id_exhausted', actor.cid, contractId, {})
@@ -1143,22 +1195,66 @@ function Contracts.withdrawReward(actor, contractId, lineIds)
     -- Re-clamped rather than refused: the withdrawal is legitimate, and a
     -- creator who takes their money back should get a smaller buyout, not
     -- an error.
-    local reduced = Storage.readContract(contractId)
-    if reduced and (reduced.bailout_amount or 0) > 0 then
-        local held = {}
-        for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
-            if line.state == CB.ESCROW_STATE.HELD then held[#held + 1] = line end
-        end
-        local clamped = Contracts.clampBailout(reduced.bailout_amount, held)
-        if clamped ~= reduced.bailout_amount then
-            reduced.bailout_amount = clamped
-            Storage.writeContract(reduced)
-            Audit.financial('bailout_reclamped', actor.cid, contractId,
-                { to = clamped })
+    Contracts.reclampToEscrow(contractId, actor.cid)
+
+    return true, nil, result
+end
+
+--- Re-price both figures that are meant to be proportional to the escrow,
+--- after some of that escrow has been taken back out.
+---
+--- Both clamps hold at the moment the figure is set and nowhere else, so
+--- every path that removes escrow afterwards has to re-apply them or it is
+--- a way round them. Fund 41,000, price the buyout at the 123,000 that
+--- funding buys and the stake at 82,000, take the 40,000 back, and a
+--- contract worth 1,000 charges a target 123,000 to escape and asks each
+--- hunter for 82,000 to try — the uncapped transfer rails both clamps
+--- exist to close, reopened by doors added later.
+---
+--- There are two such doors: withdrawReward, and the reduce_reward
+--- amendment, which releases a whole unclaimed slot. The bailout was
+--- re-clamped on the first and neither figure on the second.
+---
+--- Only what the NEXT player is quoted moves. A stake already put up is its
+--- own escrow line and that line is the source of truth for what it is
+--- worth, so nobody who has already accepted is repriced.
+---@param contractId string
+---@param actorCid string|nil whose action caused it, for the audit
+function Contracts.reclampToEscrow(contractId, actorCid)
+    local contract = Storage.readContract(contractId)
+    if not contract then return end
+
+    local held, heldMoney = {}, 0
+    for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
+        if line.state == CB.ESCROW_STATE.HELD then
+            held[#held + 1] = line
+            if CB.MONEY_ACCOUNTS[line.source] then
+                heldMoney = heldMoney + (line.amount or 0)
+            end
         end
     end
 
-    return true, nil, result
+    local changed = false
+
+    if (contract.bailout_amount or 0) > 0 then
+        local clamped = Contracts.clampBailout(contract.bailout_amount, held)
+        if clamped ~= contract.bailout_amount then
+            contract.bailout_amount = clamped
+            changed = true
+            Audit.financial('bailout_reclamped', actorCid, contractId, { to = clamped })
+        end
+    end
+
+    if (contract.penalty_amount or 0) > 0 then
+        local clamped = Contracts.clampPenalty(contract.penalty_amount, heldMoney)
+        if clamped ~= contract.penalty_amount then
+            contract.penalty_amount = clamped
+            changed = true
+            Audit.financial('penalty_reclamped', actorCid, contractId, { to = clamped })
+        end
+    end
+
+    if changed then Storage.writeContract(contract) end
 end
 
 function Contracts.resolve(contractId, terminal, recipientCid, filter, reason)

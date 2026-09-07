@@ -437,8 +437,11 @@ describe('a stake stays at risk until the contract ends', function()
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
             reward = { slots = {
-                { baseline = { cash = 1000 } },
-                { baseline = { cash = 1000 } },
+                -- Funded well enough to carry the stake below: §14.18 clamps
+                -- the stake to a multiple of the money escrow, so a $2,000
+                -- contract cannot ask a hunter for $10,000.
+                { baseline = { cash = 5000 } },
+                { baseline = { cash = 5000 } },
             } },
             penaltyAmount = 10000,
         })
@@ -474,7 +477,7 @@ describe('a stake stays at risk until the contract ends', function()
 
         eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
         eq(Env.players[3].PlayerData.money.bank, 50000, 'stake returned when the job is done')
-        eq(Env.players[3].PlayerData.money.cash, 7000, 'plus both payouts')
+        eq(Env.players[3].PlayerData.money.cash, 15000, 'plus both payouts')
     end)
 end)
 
@@ -486,7 +489,7 @@ describe('money already promised to someone is not swept away', function()
 
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
-            reward = { baseline = { cash = 1000 } }, penaltyAmount = 5000,
+            reward = { baseline = { cash = 2500 } }, penaltyAmount = 5000,
         })
         s.contracts.accept(f.hunter, c.id, false)
 
@@ -610,7 +613,7 @@ describe('anonymity fees', function()
         Env.players[3].PlayerData.money.bank = 50000
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x',
-            reward = { baseline = { cash = 1000 } }, penaltyAmount = 99999,
+            reward = { baseline = { cash = 50000 } }, penaltyAmount = 99999,
         })
         local ok, err = s.contracts.accept(f.hunter, c.id, true)
 

@@ -198,6 +198,20 @@ function _G.newCopyingStack()
                          audit = stack.audit, notify = stack.notify, kidnap = stack.kidnap })
     stack.death.init({ storage = copying, identity = stack.identity,
                        contracts = stack.contracts, audit = stack.audit })
+    -- Amendments were left talking to the sharing store behind the
+    -- wrapper's back, which is the module where a stale-snapshot bug is
+    -- most likely: apply() reads the contract, mutates the copy through a
+    -- branch, and writes it back at the end. Anything a branch writes to
+    -- the store directly is undone by that write on a real database and not
+    -- on this one.
+    stack.amendments.init({ storage = copying, identity = stack.identity,
+                            contracts = stack.contracts, escrow = stack.escrow,
+                            audit = stack.audit, notify = stack.notify })
+    stack.informant.init({ storage = copying, identity = stack.identity,
+                           audit = stack.audit, death = stack.death })
+    stack.projection.init({ storage = copying, identity = stack.identity,
+                            escrow = stack.escrow, kidnap = stack.kidnap,
+                            mugshot = stack.mugshot, progression = stack.progression })
 
     stack.storage = copying
     return stack
@@ -354,7 +368,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the
