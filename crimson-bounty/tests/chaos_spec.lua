@@ -149,8 +149,12 @@ local function journeys()
                 s.contracts.accept(f.hunter, c.id, false)
                 return c
             end,
+            -- Through claimSlot. Contracts.resolve cannot take a contract
+            -- straight from accepted to completed — the state machine routes
+            -- it through completing — so calling it here was refused as
+            -- locked and this journey broke nothing.
             run = function(s, f, c)
-                return s.contracts.resolve(c.id, CB.STATE.COMPLETED, 'HUNTER01', nil, 'chaos')
+                return s.contracts.claimSlot(c.id, 'HUNTER01', 'elimination')
             end,
         },
         {
