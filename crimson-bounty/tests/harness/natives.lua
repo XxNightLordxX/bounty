@@ -478,7 +478,15 @@ function Natives.exportsProxy()
             table.insert(Natives.calls.notifications, data)
             return true
         end,
+        --- Removable, for the same reason StartCall is absent by default:
+        --- lb-phone ships its server code escrowed and its export surface
+        --- has moved across releases, so whether any given export exists is
+        --- exactly what cannot be assumed. This one was in the table
+        --- unconditionally, with no way for a test to take it away — so the
+        --- two server call sites that index it without a guard could not be
+        --- caught here.
         ContainsBlacklistedWord = function(_, src, text)
+            if Natives.noWordFilter then error('no such export') end
             return tostring(text):lower():find('slur') ~= nil
         end,
         GetEquippedPhoneNumber = function(_, src) return '555-' .. tostring(src) end,

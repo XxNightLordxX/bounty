@@ -111,3 +111,85 @@ describe('a request the gate itself cannot process', function()
             'the handler threw out to the engine: ' .. tostring(why))
     end)
 end)
+
+--- An lb-phone build without the word filter.
+---
+--- The resource states its own rule twice — in client/main.lua and in the
+--- static check that enforces it — that lb-phone ships its server code
+--- escrowed, its export surface has moved across releases, and indexing an
+--- export that is not there throws. The check walked only the client. The
+--- server broke the rule in two places, and comms.lua guards an export a
+--- hundred and ninety lines below the one it does not.
+---
+--- Both are inside handlers, so the throw is not a degraded feature: it is
+--- every contract refused with server_error and every message the same.
+describe('a phone build with no word filter', function()
+    local function withoutFilter(fn)
+        Natives.noWordFilter = true
+        local ok, err = pcall(fn)
+        Natives.noWordFilter = nil
+        if not ok then error(err, 0) end
+    end
+
+    it('still places a contract', function()
+        local s = newStack()
+        local f = fixture(s)
+        withoutFilter(function()
+            local c, err = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'Unpaid debt',
+                mode = CB.MODE.EXCLUSIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            truthy(c, 'an export this build does not have took the whole '
+                .. 'resource down: ' .. tostring(err))
+        end)
+    end)
+
+    it('still applies the rules this resource owns', function()
+        local s = newStack()
+        local f = fixture(s)
+        withoutFilter(function()
+            local c, err = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'come to discord.gg/whatever',
+                mode = CB.MODE.EXCLUSIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            falsy(c, 'the pattern denylist is this resource\'s own and does '
+                .. 'not depend on the phone')
+            eq(err, CB.ERR.INVALID_INPUT)
+        end)
+    end)
+
+    it('still carries a message between the two parties', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        -- The creator addresses a thread; only the hunter's side may leave
+        -- it implicit, because they have exactly one.
+        local threads = s.comms.threads(f.creator, c.id)
+        truthy(#threads > 0, 'there has to be somebody to write to')
+        withoutFilter(function()
+            local ok, err = s.comms.send(f.creator, c.id, threads[1].handle,
+                'Where are you?')
+            truthy(ok, 'the relay went down with an export it does not need: '
+                .. tostring(err))
+        end)
+    end)
+
+    it('still refuses what the phone refuses, where the phone is there', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'you absolute slur',
+            mode = CB.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        falsy(c, 'a build that has the filter must still use it')
+        eq(err, CB.ERR.INVALID_INPUT)
+    end)
+end)

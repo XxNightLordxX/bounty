@@ -8,6 +8,29 @@ local Util = require_shared('util')
 
 local Comms = {}
 
+--- The phone's own word blacklist, where this build has one.
+---
+--- lb-phone ships its server code escrowed and its export surface has moved
+--- across releases, so indexing an export that is not there throws — and
+--- both call sites are inside handlers, which makes that not a degraded
+--- feature but every contract refused with server_error and every message
+--- the same. The resource states this rule in two places and enforced it
+--- only on the client.
+---
+--- Open rather than closed when the export is missing: refusing everything
+--- would be the same outage with a tidier message, and the rules this
+--- resource owns — the length cap, the digit cap, the pattern denylist —
+--- are applied either way. Which build this is gets reported at startup.
+---@param source integer
+---@param text string
+---@return boolean blocked
+local function phoneRefuses(source, text)
+    local ok, blocked = pcall(function()
+        return exports['lb-phone']:ContainsBlacklistedWord(source, text)
+    end)
+    return ok and blocked == true
+end
+
 local Storage, Identity, Audit, Notify, RateLimit
 
 --- Opaque thread handles issued to clients, so a citizen id never leaves the
@@ -115,7 +138,7 @@ function Comms.send(actor, contractId, threadHandle, rawBody)
     local body = Util.sanitizeText(rawBody, Config.Relay.MaxLength)
     if not body then return false, CB.ERR.INVALID_INPUT end
 
-    if exports['lb-phone']:ContainsBlacklistedWord(actor.source, body) then
+    if phoneRefuses(actor.source, body) then
         Audit.rejected('relay_blacklisted_word', actor.cid, contractId, {})
         return false, CB.ERR.INVALID_INPUT
     end

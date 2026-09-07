@@ -682,7 +682,7 @@ do
 end
 
 --------------------------------------------------------------------------
--- 20. The client never calls an optional export unguarded
+-- 20. Nothing calls an optional export unguarded
 --------------------------------------------------------------------------
 --
 -- lb-phone ships its server code escrowed and its export surface has moved
@@ -694,11 +694,23 @@ end
 -- client/main.lua routes them through `phone`, which pcalls and says which
 -- export was missing. client/mugshot.lua pcalls its one call directly. A
 -- new call site written without either is caught here.
+--
+-- The server is walked too, which it was not. The rule was written down in
+-- two places and enforced on one half of the resource, and the server broke
+-- it twice — in Contracts.create and Comms.send, both inside handlers, so
+-- on a build without that one export every contract was refused with
+-- server_error and every message with it. comms.lua guards an export a
+-- hundred and ninety lines below the one it did not.
 
 do
     local OPTIONAL = { 'lb%-phone', 'MugShotBase64' }
 
-    for _, path in ipairs(walk('crimson-bounty/client')) do
+    local scanned = {}
+    for _, dir in ipairs({ 'crimson-bounty/client', 'crimson-bounty/server' }) do
+        for _, path in ipairs(walk(dir)) do scanned[#scanned + 1] = path end
+    end
+
+    for _, path in ipairs(scanned) do
         local src = read(path) or ''
         local line = 0
         for text in src:gmatch('[^\n]*') do
@@ -709,7 +721,11 @@ do
                     -- above, or by a pcall in the same statement.
                     local before = src:sub(1, src:find(text, 1, true) or 1)
                     local window = before:sub(-400)
-                    if not (window:find('phone%(') or window:find('pcall%(')) then
+                    -- Guarded by the client's `phone` helper, by the
+                    -- server's `phoneRefuses`, or by a pcall in the same
+                    -- statement.
+                    if not (window:find('phone%(') or window:find('pcall%(')
+                        or window:find('phoneRefuses')) then
                         failures[#failures + 1] =
                             ('%s:%d calls an optional export without a guard. The export may '
                              .. 'not exist on this build, and the throw takes the handler '
