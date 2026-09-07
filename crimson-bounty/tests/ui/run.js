@@ -16,8 +16,21 @@ let passed = 0;
 const failures = [];
 
 function it(name, fn) {
-  try { fn(); passed++; }
-  catch (err) { failures.push(name + '\n    ' + err.message); }
+  try {
+    const returned = fn();
+    // A test body that returns a promise has already returned by the time
+    // its assertions run, so it is counted as passed here and any failure
+    // surfaces later as an unhandled rejection — after the totals may
+    // already have been printed. Two tests were written that way and both
+    // would have passed with the code they were testing removed. Await the
+    // work outside the body and keep the body synchronous.
+    if (returned && typeof returned.then === 'function') {
+      throw new Error('this test body returned a promise, so its assertions '
+        + 'run after it has been counted as passed. Await outside it() and '
+        + 'assert synchronously.');
+    }
+    passed++;
+  } catch (err) { failures.push(name + '\n    ' + err.message); }
 }
 
 function eq(actual, expected, message) {
@@ -1132,11 +1145,16 @@ async function main() {
       eq(shots.length, 0, 'and show no headshot');
     });
 
-    it('asks once and does not retry a reference that failed', async function () {
-      const before = asked;
-      app.sandbox.window._message({ data: { type: 'result', event: 'list' } });
-      await settle(); await settle();
-      eq(asked, before, 'a dead reference must not be re-requested every render');
+    // Awaited out here, not inside it(): a body that returns a promise is
+    // counted as passed before its assertion runs, so this one would have
+    // gone on passing with the caching removed.
+    const askedBeforeRerender = asked;
+    app.sandbox.window._message({ data: { type: 'result', event: 'list' } });
+    await settle(); await settle();
+
+    it('asks once and does not retry a reference that failed', function () {
+      eq(asked, askedBeforeRerender,
+        'a dead reference must not be re-requested every render');
     });
   })();
 
@@ -2913,10 +2931,113 @@ async function main() {
       falsy(live(off, 'reasonPreset'));
     });
 
+    const offSent = await submit(off);
+
     it('still places a contract with no reason field on the form', function () {
-      return submit(off).then(function (sent) {
-        eq(sent.length, 1, 'one create');
+      eq(offSent.length, 1, 'one create');
+    });
+  })();
+
+  /* A refusal the player can act on has to reach the screen as words.
+   *
+   * no_player is what the gate returns while the framework is still loading
+   * a character, and the app fires three requests the moment it opens — so
+   * anybody who opened it while still joining got it three times. With no
+   * entry in ERRORS it fell through to "Something went wrong", which reads
+   * as a broken app rather than as "not yet", and sent them looking for a
+   * fault that would clear on its own in seconds. */
+  await (async function refusalsReachTheScreen() {
+    /* The responses object is held here rather than passed by value, so a
+       test can make the server start answering and press Try again — which
+       is the only way to see the failure card actually clear. */
+    async function refusedWithReply(reply) {
+      const responses = { list: reply, mine: reply, ledger: reply };
+      const app = boot(responses);
+      await settle(); await settle();
+      app.responses = responses;
+      return app;
+    }
+
+    function refusedWith(err) {
+      return refusedWithReply({ ok: false, err: err });
+    }
+
+    const joining = await refusedWith('no_player');
+
+    it('says the character is still loading, not that something went wrong', function () {
+      const shown = joining.view.textContent;
+      truthy(shown.indexOf('still loading') !== -1,
+        'a player who opened the app mid-join has to be told to wait, not '
+        + 'handed a fault to chase: ' + JSON.stringify(shown));
+      falsy(shown.indexOf('Something went wrong') !== -1,
+        'the catch-all is what this code used to fall through to');
+    });
+
+    it('does not claim the board is empty when it could not be read', function () {
+      falsy(joining.view.textContent.indexOf('No contracts on the board') !== -1,
+        '"there is nothing here" and "I could not ask" are different '
+        + 'statements, and a player acts on the first by concluding the app '
+        + 'is broken');
+    });
+
+    it('offers a way to ask again', function () {
+      truthy(joining.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Try again';
+      }), 'a refusal with no way to retry is a dead screen');
+    });
+
+    it('says the same on the other tabs the refusal covered', function () {
+      ['mine', 'onme', 'ledger'].forEach(function (name) {
+        joining.document.querySelectorAll('.tab')
+          .filter(function (t) { return t.dataset.tab === name; })[0].onclick();
+        const shown = joining.view.textContent;
+        truthy(shown.indexOf('still loading') !== -1,
+          name + ' reported no failure at all: ' + JSON.stringify(shown));
       });
+      // The most reassuring thing this app can say, and the worst to say
+      // wrongly: a refused read must not read as "nobody is looking for you".
+      joining.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'onme'; })[0].onclick();
+      falsy(joining.view.textContent.indexOf('Nobody is looking for you') !== -1,
+        'a refused read told the player they were safe');
+    });
+
+    const limited = await refusedWithReply({ ok: false, err: 'rate_limited',
+                                             data: { retryAfter: 7 } });
+
+    it('carries the wait when the refusal is a rate limit', function () {
+      const shown = limited.view.textContent;
+      truthy(shown.indexOf('7 second') !== -1,
+        '"slow down" with no number is what has a player tapping again: '
+        + JSON.stringify(shown));
+    });
+
+    const unknown = await refusedWith('a_code_from_the_future');
+
+    it('says something rather than nothing for a code it has never seen', function () {
+      truthy(unknown.view.textContent.indexOf('Something went wrong') !== -1,
+        'an unmapped code is exactly what the catch-all is for: '
+        + JSON.stringify(unknown.view.textContent));
+    });
+
+    const recovered = await refusedWith('no_player');
+    recovered.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'board'; })[0].onclick();
+    await settle();
+    recovered.responses.list = { ok: true, data: {
+      page: 1, pages: 1, contracts: [], settings: {} } };
+    recovered.responses.mine = { ok: true, data: { created: [], accepted: [], onMe: [] } };
+    recovered.responses.ledger = { ok: true, data: { entries: [] } };
+    recovered.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Try again';
+    })[0].onclick();
+    await settle(); await settle();
+
+    it('clears the failure once the server answers', function () {
+      truthy(recovered.view.textContent.indexOf('No contracts on the board') !== -1,
+        'once the read succeeds the failure card has to go, or the player is '
+        + 'stuck looking at a stale complaint: '
+        + JSON.stringify(recovered.view.textContent));
     });
   })();
 

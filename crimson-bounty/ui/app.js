@@ -10,6 +10,9 @@
     tab: 'board', board: null, mine: null, ledger: null,
     progress: {}, dialog: null, leoConfirmed: false, wallet: null,
     busy: false, notice: null, walletFailed: null,
+    // Why the board, Mine or the ledger has nothing in it, when the reason
+    // is that the server refused rather than that there is nothing to show.
+    loadFailed: {},
     // Target headshots, keyed by the reference a projection gave us. The
     // listing carries references, not images, so a board refresh re-sends
     // nothing and a face is fetched once per render. `null` marks a fetch in
@@ -50,6 +53,14 @@
   }
 
   var ERRORS = {
+    /* The framework has not finished loading this character. Ordinary
+       rather than exceptional: the app fires three requests the moment it
+       opens, and somebody who opens it while still joining gets this on all
+       three. It had no message here, so it fell through to "Something went
+       wrong" — which reads as a broken app rather than as "not yet", and
+       sends the player looking for a fault that will clear on its own. */
+    no_player: 'The server is still loading your character. Give it a few '
+      + 'seconds and open this again.',
     blacklisted_job: 'This app is not for you.',
     rate_limited: 'Slow down.',
     self_target: 'You cannot put a price on yourself.',
@@ -1468,7 +1479,23 @@
 
   /* ---------- views ---------- */
 
+  /* The card that goes where the missing thing should be. Returns true when
+     it drew one, so the caller stops rather than also claiming the section
+     is empty. */
+  function drewFailure(view, section) {
+    var why = state.loadFailed[section];
+    if (!why) { return false; }
+    var failed = el('div', 'card');
+    failed.appendChild(el('div', 'hint', why));
+    var again = el('button', 'ghost', 'Try again');
+    again.onclick = function () { delete state.loadFailed[section]; refresh(); render(); };
+    failed.appendChild(again);
+    view.appendChild(failed);
+    return true;
+  }
+
   function viewBoard(view) {
+    if (drewFailure(view, 'board')) { return; }
     var data = state.board;
     var contracts = asList(data && data.contracts);
     if (!data || contracts.length === 0) {
@@ -1479,6 +1506,7 @@
   }
 
   function viewMine(view) {
+    if (drewFailure(view, 'mine')) { return; }
     var data = state.mine;
     if (!data) return;
     var any = false;
@@ -1500,6 +1528,10 @@
   }
 
   function viewOnMe(view) {
+    // Same reply as Mine — a refused read must not read as "nobody is
+    // looking for you", which is the most reassuring thing this app can
+    // say and the worst thing to say wrongly.
+    if (drewFailure(view, 'mine')) { return; }
     var rows = (state.mine && state.mine.onMe) || [];
     if (!rows.length) {
       view.appendChild(el('div', 'empty', 'Nobody is looking for you. That you know of.'));
@@ -1510,6 +1542,7 @@
   }
 
   function viewLedger(view) {
+    if (drewFailure(view, 'ledger')) { return; }
     var data = state.ledger || {};
     var rows = asList(data.entries);
     var record = data.record;
@@ -2559,10 +2592,36 @@
     }, 0);
   }
 
+  /* Why a section is empty, when the reason is a refusal.
+   *
+   * These three used to be `if (r.ok)` with no else, so a refused board, a
+   * refused Mine and a refused ledger all rendered as "there is nothing
+   * here" — which is a different statement from "I could not ask", and the
+   * one a player acts on by concluding the app is broken. Rate limited
+   * while joining, a character the framework had not loaded yet, a blocked
+   * job, a handler that threw: every one of them looked like an empty city.
+   *
+   * Recorded per section rather than raised as a notice, so it stays on
+   * screen where the missing thing should be, next to a way to ask again —
+   * the same shape the wallet already used. */
+  function loadResult(section, r) {
+    if (r.ok) { delete state.loadFailed[section]; return true; }
+    state.loadFailed[section] = (r.err === 'rate_limited' && r.data && r.data.retryAfter)
+      ? 'Asked too fast. Try again in ' + r.data.retryAfter + ' second'
+        + (r.data.retryAfter === 1 ? '' : 's') + '.'
+      : (ERRORS[r.err] || 'Something went wrong.');
+    redraw();
+    return false;
+  }
+
   function refresh() {
-    post('list', { page: 1 }).then(function (r) { if (r.ok) { state.board = r.data; redraw(); } });
+    post('list', { page: 1 }).then(function (r) {
+      if (!loadResult('board', r)) { return; }
+      state.board = r.data;
+      redraw();
+    });
     post('mine', {}).then(function (r) {
-      if (!r.ok) { return; }
+      if (!loadResult('mine', r)) { return; }
       state.mine = r.data;
       redraw();
       // Only for contracts this player is actually party to, and only for
@@ -2573,7 +2632,11 @@
         if (state.proposals[c.id] === undefined) { loadProposals(c); }
       });
     });
-    post('ledger', {}).then(function (r) { if (r.ok) { state.ledger = r.data; redraw(); } });
+    post('ledger', {}).then(function (r) {
+      if (!loadResult('ledger', r)) { return; }
+      state.ledger = r.data;
+      redraw();
+    });
   }
 
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {

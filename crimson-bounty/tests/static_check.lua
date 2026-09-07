@@ -1278,6 +1278,66 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 30. Every refusal the server can send has words on the page.
+--------------------------------------------------------------------------
+--
+-- A code with no entry in ERRORS falls through to "Something went wrong",
+-- which is the message a player reads as a broken app. no_player had no
+-- entry: the app fires three requests the moment it opens, so anybody who
+-- opened it while still joining got that three times, for something that
+-- would have cleared on its own in seconds.
+--
+-- The reverse matters less and is not an error — the page also names codes
+-- the client raises for itself (a request that timed out, one the player
+-- cancelled), which no server sends.
+
+do
+    local constSrc = read('crimson-bounty/shared/constants.lua') or ''
+
+    local codes = {}
+    local errBlock = constSrc:match('CB%.ERR%s*=%s*(%b{})') or ''
+    for name, value in errBlock:gmatch("([%u_]+)%s*=%s*'([%w_]+)'") do
+        codes[value] = name
+    end
+
+    -- Comments stripped first: a key pattern anchored on the preceding
+    -- comma cannot see past a comment between the two, and this map is
+    -- heavily commented.
+    local messages = {}
+    local mapBlock = (uiSrc:match('var ERRORS%s*=%s*(%b{})') or '')
+        :gsub('/%*.-%*/', ' '):gsub('([^:])//[^\n]*', '%1')
+    for key in mapBlock:gmatch("[{,]%s*([%w_]+)%s*:") do messages[key] = true end
+
+    local codeCount, messageCount = 0, 0
+    for _ in pairs(codes) do codeCount = codeCount + 1 end
+    for _ in pairs(messages) do messageCount = messageCount + 1 end
+
+    -- The same anti-vacuity guard as checks 28 and 29: a parser that stops
+    -- matching reports a clean tree.
+    if codeCount < 20 or messageCount < 20 then
+        failures[#failures + 1] = ((
+            'the refusal-message check read %d error codes and %d messages. '
+            .. 'Both are read by pattern, so this is the parser having '
+            .. 'stopped matching rather than either list having shrunk.')
+            :format(codeCount, messageCount))
+    end
+
+    local unworded = {}
+    for value, name in pairs(codes) do
+        if not messages[value] then
+            unworded[#unworded + 1] = ('%s (CB.ERR.%s)'):format(value, name)
+        end
+    end
+    table.sort(unworded)
+    for _, entry in ipairs(unworded) do
+        failures[#failures + 1] =
+            ('the server can refuse with %s and the page has no words for it, '
+             .. 'so a player is told "Something went wrong" about something '
+             .. 'they could have acted on.'):format(entry)
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then
