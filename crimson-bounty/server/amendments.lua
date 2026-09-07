@@ -209,7 +209,7 @@ function Amendments.improve(actor, contractId, kind, payload)
 
                     if reduced then
                         -- Back to the account it came from, not always bank.
-                        if staker.player.Functions.AddMoney(line.source, returned) then
+                        if Util.credit(staker.player, line.source, returned) then
                             Audit.financial('stake_reduced', line.staker, contractId,
                                 { returned = returned, remaining = amount })
                         else

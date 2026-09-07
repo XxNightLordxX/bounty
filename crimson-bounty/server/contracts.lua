@@ -267,7 +267,7 @@ local function refundAnonymityFee(actor, contractId, anonymous)
     if not anonymous or fee <= 0 then return true end
 
     local account = Config.Anonymity.FeeAccount or 'bank'
-    if actor.player.Functions.AddMoney(account, fee) then return true end
+    if Util.credit(actor.player, account, fee) then return true end
 
     Audit.financial('anonymity_fee_refund_failed', actor.cid, contractId,
         { amount = fee, account = account })

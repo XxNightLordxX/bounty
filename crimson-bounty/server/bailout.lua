@@ -174,7 +174,7 @@ function Bailout.settle(contractId, amount, targetCid, account, opts)
         -- not been delivered. AddMoney returns false for an account
         -- qbx_core will not credit, and a server with a balance ceiling
         -- refuses on exactly the payouts that matter most.
-        if not (target and target.player.Functions.AddMoney(account, amount)) then
+        if not (target and Util.credit(target.player, account, amount)) then
             Bailout.owe(targetCid, contractId, amount, account, 'bailout_refund')
         end
         Audit.financial('bailout_refunded', targetCid, contractId, { amount = amount, reason = err })
@@ -187,7 +187,7 @@ function Bailout.settle(contractId, amount, targetCid, account, opts)
     -- owed, not lost. It is written as a real escrow line so the normal
     -- retry path can deliver it — a placeholder id would be read back as a
     -- missing line and dropped.
-    if not (creator and creator.player.Functions.AddMoney(account, amount)) then
+    if not (creator and Util.credit(creator.player, account, amount)) then
         Bailout.owe(contract.creator_cid, contractId, amount, account, 'bailout_premium')
     end
 

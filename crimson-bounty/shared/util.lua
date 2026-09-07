@@ -357,6 +357,32 @@ function Util.charge(player, account, amount)
     return player.Functions.RemoveMoney(account, amount) and true or false
 end
 
+--- Give money to a player, treating a raise like a refusal.
+---
+--- Every caller already handles AddMoney returning false: the credit did
+--- not happen, so the money is owed rather than lost. None of them handled
+--- it throwing, and a patched AddMoney — a balance ceiling, a logging
+--- wrapper, an anticheat — can do that on exactly the edge cases that
+--- matter.
+---
+--- The difference destroys money. A buyout charges the target first and
+--- pays the creator second; a refusal on that second step queues the
+--- premium as owed, while a raise unwinds out of the function before the
+--- queueing runs, and the target's payment is simply gone.
+---
+--- Found by breaking one call at a time under a conservation check rather
+--- than by reading: 144 pairings of a broken dependency with an operation
+--- that moves money, and this was the one that did not add up.
+---@param player table qbx_core player
+---@param account string
+---@param amount number
+---@return boolean credited
+function Util.credit(player, account, amount)
+    if not player or not player.Functions then return false end
+    local ok, gave = pcall(player.Functions.AddMoney, account, amount)
+    return (ok and gave) and true or false
+end
+
 --- The client has no module loader — server/boot.lua's require_shared is a
 --- server-side stand-in for one — so the client half reaches these helpers
 --- through a global. The file is listed in client_scripts and loaded exactly

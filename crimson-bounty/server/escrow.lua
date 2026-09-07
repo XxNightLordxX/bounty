@@ -448,7 +448,7 @@ function Escrow.take(actor, contractId, lines)
             local back = false
 
             if line.source == 'cash' or line.source == 'bank' then
-                back = actor.player.Functions.AddMoney(line.source, line.amount)
+                back = Util.credit(actor.player, line.source, line.amount)
             elseif line.source == 'dirty' then
                 back = exports.ox_inventory:AddItem(actor.source, dirtyItemOf(line), line.amount)
             elseif line.source == CB.SOURCE.ITEM then
@@ -712,7 +712,7 @@ function Escrow.deliver(recipientCid, line)
         -- ceiling into it. Reporting success regardless settled the line
         -- with nothing delivered: gone from escrow, never arrived, and no
         -- record that anyone was still owed it.
-        return recipient.Functions.AddMoney(account, amount) and true or false
+        return Util.credit(recipient, account, amount)
 
     elseif line.source == 'dirty' then
         local name = dirtyItemOf(line)
