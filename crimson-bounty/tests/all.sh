@@ -2,6 +2,7 @@
 # Every check, in one place.
 #
 #   lua5.4 tests/run.lua          server logic against a stubbed runtime
+#   lua5.4 tests/invariants.lua   the same suite, watched by a store monitor
 #   lua5.4 tests/static_check.lua source-level rules a unit test cannot see
 #   node    tests/ui/run.js       the real app.js against a scripted server
 #   node    tests/layout/run.js   the real page in a real browser, measured
@@ -13,6 +14,12 @@ status=0
 
 echo "── server suite ─────────────────────────────────────────"
 lua5.4 crimson-bounty/tests/run.lua || status=1
+
+# The same suite again, with a monitor watching the store after every write
+# and after every test. It asserts what must be true of the store whatever
+# ran, which is the half no individual spec is responsible for.
+echo "── store invariants ─────────────────────────────────────"
+lua5.4 crimson-bounty/tests/invariants.lua || status=1
 
 echo "── static checks ────────────────────────────────────────"
 lua5.4 crimson-bounty/tests/static_check.lua || status=1
