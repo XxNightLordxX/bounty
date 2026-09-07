@@ -61,6 +61,7 @@ local SCHEMA = {
         state VARCHAR(16) NOT NULL,
         settled_to VARCHAR(32),
         settled_at INT,
+        derived TINYINT(1) DEFAULT 0,
         INDEX idx_contract (contract_id),
         INDEX idx_state (state)
     )]],
@@ -417,8 +418,8 @@ function MySQLStore.writeEscrow(contractId, lines)
         MySQL.query.await([[
             INSERT INTO crimson_escrow
                 (id, contract_id, slot, portion, source, amount, item, quantity, metadata,
-                 staker, inv_slot, owed_to, releasing_to, state)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 staker, inv_slot, owed_to, releasing_to, state, derived)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             -- State and amount are NOT written here: they move only through
             -- claimEscrowLine / settleEscrowLine / setEscrowAmount, which are
             -- guarded. Writing them from a caller-held copy could resurrect a
@@ -429,17 +430,48 @@ function MySQLStore.writeEscrow(contractId, lines)
             l.id, contractId, l.slot or 1, l.portion, l.source, l.amount or 0,
             l.item, l.quantity or 0, l.metadata and json.encode(l.metadata) or nil,
             l.staker, l.inv_slot, l.owed_to, l.releasing_to, l.state,
+            -- Whether this resource worked the bonus out, or the creator
+            -- named it. Escrow.bonusTopUp raises only the former, so a line
+            -- that loses this flag is a slot raise_bonus will not touch —
+            -- and with no column at all, that was every slot on this
+            -- backend.
+            l.derived and 1 or 0,
         })
     end
     return true
 end
 
 local function hydrateEscrow(row)
-    if row and row.metadata and type(row.metadata) == 'string' then
+    if not row then return row end
+    if row.metadata and type(row.metadata) == 'string' then
         local ok, decoded = pcall(json.decode, row.metadata)
         row.metadata = ok and decoded or nil
     end
+    -- Back to the boolean the rest of the resource compares against. A 0
+    -- from the database is truthy in Lua, so leaving it as a number would
+    -- make every line look derived rather than none of them.
+    row.derived = (tonumber(row.derived) or 0) ~= 0 or nil
     return row
+end
+
+--- The audit detail, as the table it was written as.
+---
+--- Stored as JSON text and handed straight back as text. Indexing a string
+--- in Lua is nil rather than an error, so every reader of a detail field
+--- quietly found nothing: /cb-stuck walks the log for release_interrupted
+--- rows and reads detail.line, and reported "No interrupted releases" every
+--- time, on every server, however much escrow was actually stuck.
+local function hydrateAudit(row)
+    if row and type(row.detail) == 'string' then
+        local ok, decoded = pcall(json.decode, row.detail)
+        row.detail = (ok and type(decoded) == 'table') and decoded or nil
+    end
+    return row
+end
+
+local function hydrateAuditRows(rows)
+    for i = 1, #rows do hydrateAudit(rows[i]) end
+    return rows
 end
 
 function MySQLStore.readEscrow(contractId)
@@ -733,16 +765,17 @@ function MySQLStore.writeAudit(entry)
 end
 
 function MySQLStore.readAudit(limit)
-    return MySQL.query.await('SELECT * FROM crimson_audit ORDER BY id DESC LIMIT ?',
-        { limit or 100 }) or {}
+    return hydrateAuditRows(
+        MySQL.query.await('SELECT * FROM crimson_audit ORDER BY id DESC LIMIT ?',
+            { limit or 100 }) or {})
 end
 
 --- Every audit row naming one contract, oldest first. Indexed, so the
 --- admin timeline is a lookup rather than a scan of the whole log.
 function MySQLStore.auditForContract(contractId, limit)
-    return MySQL.query.await(
+    return hydrateAuditRows(MySQL.query.await(
         'SELECT * FROM crimson_audit WHERE contract_id = ? ORDER BY id ASC LIMIT ?',
-        { contractId, limit or 200 }) or {}
+        { contractId, limit or 200 }) or {})
 end
 
 --- Drop the photo reference from rows older than the cutoff (§14.43).

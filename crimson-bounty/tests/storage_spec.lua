@@ -95,6 +95,86 @@ describe('storage conformance', function()
         end
     end)
 
+    --- A flag that decides whether a feature runs at all.
+    ---
+    --- Escrow.bonusTopUp raises a percentage bonus only on slots this
+    --- resource derived the bonus for; a slot where the creator named their
+    --- own figure is theirs and must not be recomputed. It reads
+    --- line.derived to tell them apart.
+    ---
+    --- crimson_escrow had no column for it, so on the backend that ships by
+    --- default every bonus line read back as one the creator had named,
+    --- every slot was skipped, the top-up was always empty, and raise_bonus
+    --- was refused as invalid_reward — permanently, on mysql only.
+    it('round-trips the derived flag on an escrow line in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeEscrow('ct1', {
+                { id = 'ct1:1', contract_id = 'ct1', slot = 1, portion = CB.PORTION.BONUS,
+                  source = 'cash', amount = 500, state = CB.ESCROW_STATE.HELD,
+                  derived = true },
+                { id = 'ct1:2', contract_id = 'ct1', slot = 2, portion = CB.PORTION.BONUS,
+                  source = 'cash', amount = 500, state = CB.ESCROW_STATE.HELD },
+            })
+
+            local derived = b.store.readEscrowLine('ct1:1')
+            local named = b.store.readEscrowLine('ct1:2')
+            truthy(derived and derived.derived,
+                b.name .. ': a bonus this resource worked out came back looking '
+                .. 'like one the creator named, so raising it does nothing')
+            falsy(named and named.derived,
+                b.name .. ': a bonus the creator named came back looking derived, '
+                .. 'so raising it would overwrite their figure')
+        end
+    end)
+
+    --- The audit detail, as a table rather than the text it is stored in.
+    ---
+    --- /cb-stuck walks the log for release_interrupted rows and reads
+    --- detail.line to find the escrow that was left mid-release. On mysql
+    --- the column came back as the JSON string it is stored as, and
+    --- indexing a string in Lua is nil rather than an error — so the command
+    --- for finding stuck escrow reported "No interrupted releases" every
+    --- time, on every server, however much was stuck.
+    it('round-trips an audit detail as a table in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ct1'))
+            b.store.writeAudit({
+                action = 'release_interrupted', actor_cid = 'HUNTER01',
+                contract_id = 'ct1', ts = os.time(),
+                detail = { line = 'ct1:1', reason = 'inventory full' },
+            })
+
+            local rows = b.store.auditForContract('ct1', 50) or {}
+            local found
+            for _, row in ipairs(rows) do
+                if row.action == 'release_interrupted' then found = row end
+            end
+            truthy(found, b.name .. ': the row has to come back at all')
+            eq(type(found.detail), 'table',
+                b.name .. ': detail came back as ' .. type(found.detail)
+                .. ', and indexing a string is nil rather than an error, so '
+                .. 'every reader of it silently found nothing')
+            eq(found.detail.line, 'ct1:1', b.name)
+        end
+    end)
+
+    it('round-trips an audit detail through the general read too', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeAudit({
+                action = 'release_interrupted', actor_cid = 'HUNTER01',
+                contract_id = 'ct2', ts = os.time(),
+                detail = { line = 'ct2:1' },
+            })
+            local rows = b.store.readAudit(50) or {}
+            local found
+            for _, row in ipairs(rows) do
+                if row.contract_id == 'ct2' then found = row end
+            end
+            truthy(found, b.name .. ': the row has to come back')
+            eq(type(found.detail), 'table', b.name .. ': readAudit too')
+        end
+    end)
+
     it('honours the conditional state write in every backend', function()
         for _, b in ipairs(backends()) do
             b.store.writeContract(contractFixture('ct1'))
