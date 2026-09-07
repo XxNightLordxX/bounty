@@ -468,6 +468,16 @@ describe('a config that has drifted a key at a time', function()
         return names
     end
 
+    --- Both storage backends the harness can run.
+    ---
+    --- The first version of this swept memory mode only, because boot()
+    --- forces it — and json mode reads Config.Database.Json.Directory from
+    --- the first line of its open(), which memory mode never touches. So
+    --- the one hole this sweep was written to close stayed open: a Database
+    --- section without its Json block took the resource down at boot, past
+    --- the validation meant to catch exactly that.
+    local MODES = { 'memory', 'json' }
+
     it('starts, or says what is wrong, with any one key removed', function()
         local sections = sectionsOf()
         truthy(#sections > 10,
@@ -475,27 +485,30 @@ describe('a config that has drifted a key at a time', function()
             .. 'anything, got ' .. #sections .. ' sections')
 
         local crashed, tried = {}, 0
-        for _, section in ipairs(sections) do
-            local keys = {}
-            for key in pairs(ConfigDefaults[section]) do keys[#keys + 1] = tostring(key) end
-            table.sort(keys)
+        for _, mode in ipairs(MODES) do
+            for _, section in ipairs(sections) do
+                local keys = {}
+                for key in pairs(ConfigDefaults[section]) do keys[#keys + 1] = tostring(key) end
+                table.sort(keys)
 
-            for _, key in ipairs(keys) do
-                boot()
-                if type(Config[section]) == 'table' then
-                    tried = tried + 1
-                    Config[section][key] = nil
-                    local ok, err = pcall(function()
-                        package.loaded['server.main'] = nil
-                        local main = require('server.main')
-                        return main.start()
-                    end)
-                    if not ok then
-                        local message = tostring(err)
-                        -- A refusal names the setting. A crash does not.
-                        if not message:find('refusing to start on an invalid configuration', 1, true) then
-                            crashed[#crashed + 1] =
-                                ('Config.%s.%s -> %s'):format(section, key, message)
+                for _, key in ipairs(keys) do
+                    boot()
+                    Config.Database.Mode = mode
+                    if type(Config[section]) == 'table' then
+                        tried = tried + 1
+                        Config[section][key] = nil
+                        local ok, err = pcall(function()
+                            package.loaded['server.main'] = nil
+                            local main = require('server.main')
+                            return main.start()
+                        end)
+                        if not ok then
+                            local message = tostring(err)
+                            -- A refusal names the setting. A crash does not.
+                            if not message:find('refusing to start on an invalid configuration', 1, true) then
+                                crashed[#crashed + 1] =
+                                    ('[%s] Config.%s.%s -> %s'):format(mode, section, key, message)
+                            end
                         end
                     end
                 end
@@ -504,13 +517,160 @@ describe('a config that has drifted a key at a time', function()
 
         -- Counted, so a loop that stopped matching cannot read as a clean
         -- result: this sweep says nothing if it swept nothing.
-        truthy(tried > 100,
-            'this swept only ' .. tried .. ' keys, which is the loop having '
-            .. 'stopped rather than the config having shrunk')
+        truthy(tried > 200,
+            'this swept only ' .. tried .. ' keys across ' .. #MODES .. ' storage '
+            .. 'modes, which is the loop having stopped rather than the config '
+            .. 'having shrunk')
 
         resetConfig()
         eq(#crashed, 0,
             'a config missing one setting has to be filled or reported, never '
             .. 'crashed on: ' .. table.concat(crashed, ' | '))
+    end)
+end)
+
+--- The same sweep, but measured at the handlers rather than at boot.
+---
+--- A key can be absent, boot cleanly, and take a request down the first
+--- time somebody opens the app. Config.Listing.PageSize is read straight
+--- into arithmetic in Projection.listing, so without it `list` throws — the
+--- home screen, for every player, on every request — while the boot sweep
+--- above reports a clean start.
+---
+--- Memory mode only: which backend is behind the handler does not change
+--- which config key it indexes, and this is already the most expensive
+--- test in the suite.
+describe('a config that has drifted a key the handlers read', function()
+    --- Enough of the surface to reach the config the app actually touches
+    --- on a normal session, with a contract to talk about.
+    local CALLS = {
+        { 'list', { page = 1 } }, { 'mine', {} }, { 'ledger', {} },
+        { 'rewardOptions', {} }, { 'searchTargets', { query = 'Dana' } },
+        { 'browseTargets', { scope = 'all', page = 1 } },
+        { 'browseTargets', { scope = 'nearby', page = 1 } },
+        -- Placing one is the only path that reads the advisory recipient
+        -- job sets, and it needs a handle the browse above actually minted:
+        -- an invented one is refused before it gets anywhere near them.
+        { 'create', function(handle)
+            return { target = handle, reason = 'Unpaid debt', mode = 'exclusive',
+                     reward = { slots = { { baseline = { cash = 1000 } } } } }
+        end },
+        { 'threads', { id = 'ct00000001' } },
+        { 'amendments', { id = 'ct00000001' } },
+        { 'rewardBreakdown', { id = 'ct00000001' } },
+        { 'informant', { id = 'ct00000001' } },
+        { 'bailout', { id = 'ct00000001' } },
+        { 'accept', { id = 'ct00000001' } },
+        { 'cancel', { id = 'ct00000001' } },
+        { 'armKidnap', { id = 'ct00000001' } },
+        { 'kidnapProgress', { id = 'ct00000001' } },
+        { 'requestPhotoToken', { id = 'ct00000001' } },
+    }
+
+    --- A refusal is fine. A crash is not.
+    ---
+    --- Read from the reply rather than from pcall: handler() wraps every
+    --- body in its own pcall and answers server_error, precisely so one bad
+    --- request cannot take the net event down. That also means firing the
+    --- event never raises, so a sweep watching for a raised error watches
+    --- for something that cannot happen and passes on a handler that throws
+    --- every time.
+    local function drive()
+        local broke = {}
+        local handle
+
+        for _, call in ipairs(CALLS) do
+            local fire = Env.events['crimson-bounty:' .. call[1]]
+            if fire then
+                local payload = call[2]
+                if type(payload) == 'function' then payload = payload(handle) end
+
+                Env.clientEvents = {}
+                _G.source = 1
+                local ok, err = pcall(fire, payload)
+                _G.source = nil
+
+                if not ok then
+                    broke[#broke + 1] = call[1] .. ' threw: ' .. tostring(err)
+                else
+                    for _, event in ipairs(Env.clientEvents) do
+                        local reply = event.args and event.args[1]
+                        if event.name == 'crimson-bounty:result' and reply then
+                            if reply.err == CB.ERR.SERVER_ERROR then
+                                broke[#broke + 1] = call[1] .. ' answered server_error'
+                            end
+                            -- Remember a real target handle for the create
+                            -- below. They are minted per searcher and expire,
+                            -- so one written into the test would be refused
+                            -- before reaching the code this is measuring.
+                            local people = reply.data and reply.data.people
+                            if type(people) == 'table' then
+                                for _, person in ipairs(people) do
+                                    handle = person.handle or handle
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return broke
+    end
+
+    it('answers every request with any one key removed', function()
+        local sections = {}
+        for section in pairs(ConfigDefaults) do
+            if type(ConfigDefaults[section]) == 'table' then sections[#sections + 1] = section end
+        end
+        table.sort(sections)
+
+        local broken, tried = {}, 0
+        for _, section in ipairs(sections) do
+            local keys = {}
+            for key in pairs(ConfigDefaults[section]) do keys[#keys + 1] = tostring(key) end
+            table.sort(keys)
+
+            for _, key in ipairs(keys) do
+                boot()
+                Config.Database.Mode = 'memory'
+                if type(Config[section]) == 'table' then
+                    Config[section][key] = nil
+                    local started, modules = pcall(function()
+                        package.loaded['server.main'] = nil
+                        local main = require('server.main')
+                        return main.start()
+                    end)
+                    -- A config that cannot boot is the sweep above's
+                    -- business, not this one's.
+                    if started and modules and modules.identity then
+                        tried = tried + 1
+                        fixture(modules)
+                        -- An officer on duty, so the advisory recipient
+                        -- rules are actually reached. Without one,
+                        -- Identity.isAdvisoryRecipient is never called and
+                        -- the two job sets it indexes read as covered while
+                        -- nothing touches them.
+                        Env.addPlayer({ source = 20, citizenid = 'OFFICER1',
+                            license = 'license:leo', firstname = 'Kay',
+                            lastname = 'Mercer',
+                            job = { name = 'police', type = 'leo', onduty = true } })
+                        local threw = drive()
+                        for _, message in ipairs(threw) do
+                            broken[#broken + 1] =
+                                ('Config.%s.%s -> %s'):format(section, key, message)
+                        end
+                    end
+                end
+            end
+        end
+
+        truthy(tried > 100,
+            'this drove handlers for only ' .. tried .. ' keys, which is the '
+            .. 'loop having stopped rather than the config having shrunk')
+
+        resetConfig()
+        eq(#broken, 0,
+            'a missing setting must not throw inside a request: '
+            .. table.concat(broken, ' | '))
     end)
 end)

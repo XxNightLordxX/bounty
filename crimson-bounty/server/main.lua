@@ -108,6 +108,69 @@ local DEFAULTS = {
     Immunity = {
         MinTargetPlaytimeHours = 5,
     },
+    --- Read while validating the text on every contract placed. A missing
+    --- one is not a relaxed rule but a comparison or an ipairs against nil,
+    --- so nobody can place a contract at all.
+    Reason = {
+        MaxLength = 140,
+        MaxDigits = 6,
+        PatternDenylist = { 'https?://', 'discord%.gg', 'www%.', '@%w+' },
+    },
+    --- The notification budget, consulted before every message the resource
+    --- sends. Absent, placing or cancelling a contract answers server_error
+    --- on the notify rather than on anything the player did.
+    Notifications = {
+        MaxPerRecipientPerMinute = 6,
+        MaxPerRecipientPerHour = 40,
+    },
+    --- Read on the create path, where a nil cooldown is a comparison
+    --- against nil rather than no cooldown.
+    Amendments = {
+        CancelCooldownSeconds = 300,
+    },
+    --- Both read inside the purchase. A missing price is not a free
+    --- informant; it is one nobody can buy.
+    Informant = {
+        Cost = 25000,
+        MaxPurchasesPerContract = 2,
+    },
+    --- Compared against a count in Kidnap.arm, so a missing one is not a
+    --- disabled cap but a comparison against nil: every attempt to start a
+    --- live delivery answers server_error.
+    Kidnap = {
+        MaxConcurrentCountdowns = 20,
+    },
+    --- The board's page size, read straight into arithmetic in
+    --- Projection.listing. Absent, it takes down `list` — the app's home
+    --- screen, for every player, on every request.
+    Listing = {
+        PageSize = 15,
+    },
+    --- The four job sets the advisory rules read. Indexed directly in
+    --- Identity.isProtectedJob and isAdvisoryRecipient, which run inside
+    --- searchTargets and browseTargets, so a missing one empties the whole
+    --- target picker rather than merely switching an advisory off.
+    Advisory = {
+        TriggerJobTypes = { leo = true, police = true, ems = true, fire = true },
+        TriggerJobNames = { doj = true, lawyer = true, ranger = true },
+        RecipientJobTypes = { leo = true, police = true },
+        RecipientJobNames = {
+            police = true, sheriff = true, bcso = true, fib = true,
+            trooper = true, sasp = true, ranger = true,
+        },
+    },
+    --- What the json backend needs before it can open at all. Read from the
+    --- first line of JsonStore.open(), so a Database section written before
+    --- this block existed — or trimmed — took the resource down at boot,
+    --- past the validation meant to catch exactly that.
+    Database = {
+        Json = {
+            Directory = 'data',
+            SyncOnFinancialWrite = true,
+            WarnContractCount = 2000,
+            MaxDirtyShardsPerFlush = 25,
+        },
+    },
 }
 
 local function applyConfigDefaults()
