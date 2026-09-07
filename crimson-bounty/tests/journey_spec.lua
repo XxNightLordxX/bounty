@@ -476,3 +476,72 @@ describe('how many separate rewards one contract may hold', function()
                 :format(worst, Config.Limits.MaxEscrowLines))
     end)
 end)
+
+
+--- The stake echo, through the event the Accept button actually fires.
+---
+--- ceilings_spec asserts the rule; this asserts that the net event applies
+--- it, which is the only surface a player has. A rule enforced in a
+--- predicate nothing calls is not enforced.
+describe('accepting a contract that carries a stake', function()
+    local function staked(amount)
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } },
+            penaltyAmount = amount,
+        })
+        truthy(c)
+        eq(c.penalty_amount, amount, 'the stake must survive the clamp')
+        Env.players[3].PlayerData.money.bank = 50000
+        return s, f, c
+    end
+
+    it('takes it when the page echoes the stake it was shown', function()
+        local s, _, c = staked(2000)
+        -- ui/app.js — post('accept', { id, anonymous, penaltyAmount })
+        ok('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 2000 })
+        eq(Env.players[3].PlayerData.money.bank, 48000, 'the stake was taken')
+    end)
+
+    it('refuses when the stake moved while the page was showing it', function()
+        local s, f, c = staked(2000)
+
+        local proposal = s.amendments.propose(f.creator, c.id,
+            CB.AMENDMENT.RAISE_PENALTY, { amount = 15000 })
+        truthy(proposal)
+        truthy(s.amendments.respond(f.creator, proposal.id, true))
+
+        local reply = call('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 2000 })
+        truthy(reply, 'the handler must answer')
+        falsy(reply.ok, 'a stale figure must not be charged')
+        eq(reply.err, CB.ERR.TERMS_CHANGED)
+        eq(Env.players[3].PlayerData.money.bank, 50000, 'and nothing was taken')
+        eq(#s.storage.readHunters(c.id), 0, 'and nobody is on the contract')
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE,
+            'nor did the refusal move the contract')
+    end)
+
+    it('refuses a page that sends no figure at all for a staked contract', function()
+        local s, _, c = staked(2000)
+        local reply = call('accept', 3, { id = c.id, anonymous = false })
+        falsy(reply.ok, 'silence is not disclosure')
+        eq(reply.err, CB.ERR.TERMS_CHANGED)
+        eq(Env.players[3].PlayerData.money.bank, 50000)
+    end)
+
+    it('asks nothing of a contract with no stake on it', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } },
+        })
+        ok('accept', 3, { id = c.id, anonymous = false },
+            'a page that predates the echo must still work where there is '
+            .. 'nothing to disclose')
+    end)
+end)

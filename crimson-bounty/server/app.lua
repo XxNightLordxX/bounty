@@ -464,6 +464,14 @@ function App.register()
     end)
 
     handler('accept', 'accept', function(actor, payload)
+        -- penaltyAmount is what the page had on screen when the player
+        -- tapped Accept, echoed back so a stake that has moved since is
+        -- refused rather than charged (§14.18).
+        local standing = deps.storage.readContract(Util.toId(payload.id))
+        if not deps.contracts.stakeWasDisclosed(standing, payload.penaltyAmount) then
+            return false, CB.ERR.TERMS_CHANGED
+        end
+
         local ok, err = deps.contracts.accept(actor, payload.id, payload.anonymous)
         if not ok then return false, err end
         local contract = deps.storage.readContract(Util.toId(payload.id))

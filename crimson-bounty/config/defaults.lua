@@ -129,6 +129,7 @@ ConfigDefaults.Penalty = {
     --- contract is actually worth.
     MaxAmount = 100000,
     MaxFractionOfEscrow = 2.0,
+    RequireDisclosureOnAccept = true,
 }
 
 --------------------------------------------------------------------------

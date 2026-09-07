@@ -113,6 +113,18 @@ Config.Penalty = {
     --- contract is actually worth.
     MaxAmount = 100000,
     MaxFractionOfEscrow = 2.0,
+    --- Acceptance must echo back the stake the hunter was shown (§14.18).
+    ---
+    --- Disclosure that is not binding is disclosure with a race in it: the
+    --- figure on the board is read, the creator repriced the contract, and
+    --- Accept charges the new one. The echo makes the two the same number by
+    --- construction — a page showing a stale figure is refused rather than
+    --- silently repriced, and told to look again.
+    ---
+    --- Only ever applied to a contract that carries a stake, so a page that
+    --- predates this cannot be locked out of the contracts where there is
+    --- nothing to disclose.
+    RequireDisclosureOnAccept = true,
 }
 
 --------------------------------------------------------------------------

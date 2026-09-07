@@ -344,6 +344,31 @@ function Contracts.clampBailout(requested, lines)
     return bailout
 end
 
+--- Is the stake this caller agreed to the stake on the contract (§14.18)?
+---
+--- Disclosure that is not binding is disclosure with a race in it: the
+--- figure is read off the board, the creator reprices a contract nobody
+--- holds, and Accept charges the new one. Every other repricing a player
+--- can meet is fixed by looking again; this one is not, because the stake
+--- is taken the moment Accept is tapped and forfeits to that creator if the
+--- hunter later walks away or runs out of clock.
+---
+--- Asked at the net event rather than inside Contracts.accept, because it
+--- is a property of what a client sent, not of the operation: an admin
+--- path or a test driving the module directly is not a page that was shown
+--- a figure.
+---
+--- Only where a stake exists. A contract with none has nothing to disclose,
+--- so a page that predates this is refused nothing.
+---@param contract table
+---@param disclosed any what the client says it had on screen
+---@return boolean
+function Contracts.stakeWasDisclosed(contract, disclosed)
+    if not Config.Penalty.RequireDisclosureOnAccept then return true end
+    if not contract or (contract.penalty_amount or 0) <= 0 then return true end
+    return Util.toCount(disclosed, Config.MaxContractValue) == contract.penalty_amount
+end
+
 --- The failure stake a hunter must put up, clamped to what the contract is
 --- worth (§14.18).
 ---

@@ -395,6 +395,64 @@ describe('the failure stake', function()
         eq(row.penaltyAmount, 0)
     end)
 
+    --- Disclosure that is not binding is disclosure with a race in it.
+    ---
+    --- §14.18: "acceptance is refused server-side unless the payload echoes
+    --- back the current amount ... so acceptance without disclosure is
+    --- structurally impossible and a creator-side edit invalidates in-flight
+    --- accept dialogs rather than silently repricing them."
+    it('refuses an acceptance that echoes a stake that has moved', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        Env.players[3].PlayerData.money.bank = 50000
+
+        -- The hunter is reading a board that says 2,000. The creator
+        -- reprices while they read: allowed, because nobody holds it.
+        local proposal = s.amendments.propose(f.creator, c.id,
+            CB.AMENDMENT.RAISE_PENALTY, { amount = 15000 })
+        truthy(proposal)
+        truthy(s.amendments.respond(f.creator, proposal.id, true))
+        eq(s.storage.readContract(c.id).penalty_amount, 15000)
+
+        falsy(s.contracts.stakeWasDisclosed(s.storage.readContract(c.id), 2000),
+            'the figure the page had is not the figure on the contract')
+        eq(Env.players[3].PlayerData.money.bank, 50000,
+            'and nothing has been taken from the hunter')
+    end)
+
+    it('accepts an acceptance that echoes the standing stake', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        truthy(s.contracts.stakeWasDisclosed(s.storage.readContract(c.id), 2000))
+        truthy(s.contracts.stakeWasDisclosed(s.storage.readContract(c.id), '2000'),
+            'the wire carries numbers as text on some paths')
+    end)
+
+    it('asks nothing of a contract that carries no stake', function()
+        -- A page that predates the echo must not be locked out of the
+        -- contracts where there is nothing to disclose, which is most of
+        -- them.
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 10000 } },
+        })
+        local standing = s.storage.readContract(c.id)
+        eq(standing.penalty_amount, 0)
+        truthy(s.contracts.stakeWasDisclosed(standing, nil),
+            'nothing to disclose, so nothing to echo')
+        truthy(s.contracts.stakeWasDisclosed(standing, 0))
+    end)
+
     it('is what acceptance actually charges', function()
         -- The disclosed figure and the debited figure have to be the same
         -- number, or disclosure is theatre.

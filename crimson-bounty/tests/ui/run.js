@@ -4239,6 +4239,99 @@ async function main() {
     }
   })();
 
+  /* The stake, shown before it is agreed to and echoed back when it is. */
+  await (async function theStakeOnTheBoard() {
+    const STAKED = JSON.parse(JSON.stringify(BOARD));
+    STAKED.data.contracts[0].penaltyAmount = 4000;
+
+    const app = boot({ list: STAKED, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+
+    it('says what accepting costs, on the listing', function () {
+      const shown = app.view.textContent;
+      truthy(shown.indexOf('$4,000') !== -1,
+        'a hunter must not learn the stake from their bank balance: ' + shown);
+      truthy(shown.toLowerCase().indexOf('stake') !== -1, shown);
+    });
+
+    click(app, 'Accept contract');
+    await settle();
+
+    it('says it again in the dialog that takes the contract', function () {
+      const shown = app.view.textContent;
+      truthy(shown.indexOf('$4,000') !== -1,
+        'the last screen before the money moves has to carry the figure: '
+        + shown);
+    });
+
+    click(app, 'Under my name');
+    await settle(); await settle();
+
+    it('echoes the figure it showed back with the acceptance', function () {
+      // Without this the server refuses every staked acceptance with
+      // "the stake changed", so the contract simply cannot be taken — and a
+      // page that has stopped complying looks exactly like one that has not.
+      const sent = app.sent.filter(function (c) { return c.name === 'accept'; });
+      eq(sent.length, 1, 'one acceptance was sent');
+      eq(sent[0].body.penaltyAmount, 4000,
+        'the acceptance must carry the stake the player was shown: '
+        + JSON.stringify(sent[0].body));
+    });
+
+    /* And a contract with no stake says nothing about one. */
+    const free = boot({ list: BOARD, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+
+    it('says nothing about a stake when there is none', function () {
+      const shown = free.view.textContent;
+      falsy(shown.toLowerCase().indexOf('stake') !== -1,
+        'a contract with no stake must not advertise one: ' + shown);
+    });
+
+    click(free, 'Accept contract');
+    await settle();
+    click(free, 'Under my name');
+    await settle(); await settle();
+
+    it('still sends a figure of zero, so the server sees an answer', function () {
+      const sent = free.sent.filter(function (c) { return c.name === 'accept'; });
+      eq(sent.length, 1);
+      eq(sent[0].body.penaltyAmount, 0);
+    });
+  })();
+
+  /* A stake that moved while the page was showing it. */
+  await (async function theStakeMovedUnderneath() {
+    const STAKED = JSON.parse(JSON.stringify(BOARD));
+    STAKED.data.contracts[0].penaltyAmount = 4000;
+
+    const app = boot({
+      list: STAKED, mine: MINE, ledger: LEDGER,
+      accept: { ok: false, err: 'terms_changed' }
+    });
+    await settle(); await settle();
+    const before = app.sent.filter(function (c) { return c.name === 'list'; }).length;
+
+    click(app, 'Accept contract');
+    await settle();
+    click(app, 'Under my name');
+    await settle(); await settle();
+
+    it('tells the player the stake changed rather than that something went wrong', function () {
+      const said = app.notice();
+      truthy(said.toLowerCase().indexOf('stake') !== -1,
+        'the refusal has to name what changed: ' + said);
+      falsy(said.indexOf('Something went wrong') !== -1, said);
+    });
+
+    it('asks again, so the new figure is on screen with the message', function () {
+      const after = app.sent.filter(function (c) { return c.name === 'list'; }).length;
+      truthy(after > before,
+        'a message saying the figure changed, with the old figure still on '
+        + 'screen, is half an answer');
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

@@ -75,6 +75,12 @@
     self_accept: 'You cannot take your own contract.',
     same_account: 'Not on your own people.',
     limit_reached: 'You are holding too many contracts.',
+    /* The stake moved between reading the board and tapping Accept. Refused
+       rather than charged, because a stake is taken on the tap and forfeits
+       to the client if the hunter later walks away — the one repricing a
+       player cannot undo by looking again. */
+    terms_changed: 'The stake on this contract changed while you were looking '
+      + 'at it. Refreshing now — check the new figure before you take it.',
     target_protected: 'That target cannot be listed right now.',
 
     /* One message covered six different rules, and a player reading it had
@@ -828,8 +834,20 @@
 
   function acceptContract(contract) {
     function take(anonymous) {
-      post('accept', { id: contract.id, anonymous: anonymous }).then(function (r) {
-        if (!r.ok) return fail(r);
+      // The stake this player was shown, sent back with the acceptance.
+      // The server refuses if it is not the stake on the contract, so the
+      // figure on the dialog and the figure debited are the same number by
+      // construction rather than by timing.
+      post('accept', {
+        id: contract.id, anonymous: anonymous,
+        penaltyAmount: contract.penaltyAmount || 0
+      }).then(function (r) {
+        if (!r.ok) {
+          // Told and shown. A message saying the figure changed, with the
+          // old figure still on screen, is half an answer.
+          if (r.err === 'terms_changed') { refresh(); }
+          return fail(r);
+        }
         say(anonymous ? 'Contract accepted, anonymously.' : 'Contract accepted.', 'gold');
         refresh();
       });

@@ -129,6 +129,13 @@ CB.ERR = {
     TARGET_TOO_NEW     = 'target_too_new',
     TARGET_JUST_UP     = 'target_just_up',
     TARGET_RECENTLY_ON = 'target_recently_on',
+    --- The stake on the contract is not the one the hunter was shown.
+    ---
+    --- Refused rather than charged. A stake is taken the moment Accept is
+    --- tapped and forfeits to the creator if the hunter later walks away or
+    --- runs out of clock, so charging a figure the player did not agree to
+    --- is the one repricing that cannot be undone by refreshing (§14.18).
+    TERMS_CHANGED    = 'terms_changed',
     INSUFFICIENT     = 'insufficient_funds',
     INVALID_REWARD   = 'invalid_reward',
     INVALID_INPUT    = 'invalid_input',
