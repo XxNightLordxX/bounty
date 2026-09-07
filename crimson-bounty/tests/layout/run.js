@@ -81,7 +81,11 @@ function serverStub() {
 
   const answers = {
     list: { ok: true, data: { page: 1, pages: 1, contracts: contracts,
-      settings: { minQueryLength: 3, allowBrowseAll: true, allowNearby: true } } },
+      settings: { minQueryLength: 3, allowBrowseAll: true, allowNearby: true,
+        // This suite measures the most crowded card there is, so it has to
+        // be a server that offers every button that card can carry.
+        informant: { cost: 25000, account: 'bank', maxPerContract: 2 },
+        reasonMode: 'freetext', reasonMaxLength: 140 } } },
     mine: { ok: true, data: { created: own, accepted: taken, onMe: [] } },
     ledger: { ok: true, data: { entries: [],
       record: { completed: 0, placed: 0, survived: 0, standing: 'Unproven' } } },
@@ -121,10 +125,40 @@ function serverStub() {
       { handle: 'tg2', name: 'Bo Renn', protected: true }
     ], total: 41, page: 1, pages: 5 } }
   };
+  /* What FiveM actually delivers.
+   *
+   * The server writes Lua tables; they are msgpack-encoded on the way to
+   * the client and JSON-encoded on the way into the page. An empty Lua
+   * table is indistinguishable from an empty map, so a list the server
+   * meant to send empty arrives as {} rather than [] — and on this side
+   * .length is then undefined and .forEach throws, taking the render with
+   * it.
+   *
+   * The UI suite has converted its fixtures for exactly this reason since
+   * it was written. This one did not, and it matters most here: the Mine
+   * tab is where this file does most of its work, and a creator's own
+   * contract carries hunters = [] from the moment it is placed. So this
+   * suite was measuring layout, at every viewport, on a page that on a
+   * real server threw before it drew anything — and reported 23/23 on the
+   * exact contract shape the Mine tab had to be fixed for. */
+  function acrossTheWire(value) {
+    if (Array.isArray(value)) {
+      return value.length === 0 ? {} : value.map(acrossTheWire);
+    }
+    if (value && typeof value === 'object') {
+      const out = {};
+      Object.keys(value).forEach(function (k) { out[k] = acrossTheWire(value[k]); });
+      return out;
+    }
+    return value;
+  }
+
   window.fetch = function (url) {
     const name = url.split('/crimson:')[1];
     return Promise.resolve({
-      json: function () { return Promise.resolve(answers[name] || { ok: true }); }
+      json: function () {
+        return Promise.resolve(acrossTheWire(answers[name] || { ok: true }));
+      }
     });
   };
 }
