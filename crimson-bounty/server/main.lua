@@ -65,6 +65,19 @@ local DEFAULTS = {
     Bonus = {
         maxPercent = 200,
     },
+    --- Contract retention, added long after Config.Audit itself.
+    ---
+    --- The whole-section fill above does not reach this: an operator who has
+    --- an Audit section — which is every operator who ever edited their
+    --- config — keeps the section they wrote, and a key added to it later is
+    --- simply absent. Absent reads as off here, so without this entry
+    --- nothing prunes contracts on any upgraded server and every full scan
+    --- goes on growing with the server's whole history, which is the thing
+    --- retention was added to stop.
+    Audit = {
+        ContractRetentionDays = 30,
+        ContractsPrunedPerTick = 200,
+    },
     --- Read by the boot validation itself, which runs after this fills the
     --- gaps — but only just. A config without it took the whole resource
     --- down before it could say what was wrong.
@@ -303,6 +316,11 @@ local function validateConfig()
         { 'Kidnap', 'MaxTotalGraceMs' },
         { 'Audit', 'MaxQueueSize' },
         { 'Audit', 'RetentionDays' },
+        { 'Audit', 'ContractRetentionDays' },
+        { 'Audit', 'ContractsPrunedPerTick' },
+        -- Both go straight into math.min on every contract creation.
+        { 'Penalty', 'MaxAmount' },
+        { 'Penalty', 'MaxFractionOfEscrow' },
         { 'Ledger', 'Depth' },
         { 'Ledger', 'MaxDepthHardCap' },
         { 'Informant', 'RerollLockMinutes' },

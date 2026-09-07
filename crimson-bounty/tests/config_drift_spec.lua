@@ -95,6 +95,90 @@ describe('starting on a config that predates a setting', function()
         end
     end)
 
+    --- Two shapes of drift, and only one of them is covered by filling
+    --- whole missing sections.
+    ---
+    --- A section the operator does not have at all is copied in from
+    --- config/defaults.lua. A KEY added to a section they DO have is not —
+    --- deliberately, because their table is theirs and topping it up would
+    --- restore entries they removed on purpose. So a new key in an existing
+    --- section has to be listed in DEFAULTS or it is simply absent on every
+    --- upgraded server, and absent reads as off.
+    it('fills a new key in a section the operator already had', function()
+        boot(function()
+            -- An Audit section as it was before contract retention existed.
+            Config.Audit = {
+                LogAllActions = true, LogReasonText = true,
+                FlushIntervalMs = 10000, MaxQueueSize = 5000,
+                RetentionDays = 30, Webhook = false,
+            }
+        end)
+        truthy((Config.Audit.ContractRetentionDays or 0) > 0,
+            'contract retention is silently off on every server that ever '
+            .. 'edited its Audit section')
+        truthy((Config.Audit.ContractsPrunedPerTick or 0) > 0,
+            'and the per-tick cap with it')
+        eq(Config.Audit.RetentionDays, 30, 'their own value stands')
+        resetConfig()
+    end)
+
+    it('fills the failure-stake ceilings on a config that never had them', function()
+        -- Config.Penalty is a whole new section, so the section fill covers
+        -- it — but Contracts.clampPenalty indexes MaxAmount on every
+        -- contract creation, so getting this wrong is not a missing feature,
+        -- it is every creator on the server unable to place a contract.
+        boot(function() Config.Penalty = nil end)
+        truthy(type(Config.Penalty) == 'table', 'the section must be filled in')
+        truthy((Config.Penalty.MaxAmount or 0) > 0)
+        truthy((Config.Penalty.MaxFractionOfEscrow or 0) > 0)
+        resetConfig()
+    end)
+
+    it('clamps a stake on a config that never had the ceilings', function()
+        -- Contracts.clampPenalty indexes Config.Penalty.MaxAmount on every
+        -- contract creation, so a section that is not filled in is not a
+        -- missing feature: it is every creator on the server unable to
+        -- place a contract, with the error landing in a request handler.
+        boot(function() Config.Penalty = nil end)
+        local contracts = require('server.contracts')
+        local ok, clamped = pcall(contracts.clampPenalty, 99999999, 1000)
+        truthy(ok, 'clamping must not throw on a config that predates it: '
+            .. tostring(clamped))
+        eq(clamped, math.min(Config.Penalty.MaxAmount,
+            math.floor(1000 * Config.Penalty.MaxFractionOfEscrow)))
+        resetConfig()
+    end)
+
+    it('says so when the operator emptied a section rather than removing it', function()
+        -- The section fill only covers a section that is missing entirely.
+        -- A table the operator wrote and then emptied is theirs, so it is
+        -- left alone — and every number the code reads out of it is nil.
+        -- Boot has to name it, or the first player to place a contract
+        -- finds out instead.
+        local said = {}
+        local realPrint = _G.print
+        _G.print = function(...)
+            local parts = {}
+            for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+            said[#said + 1] = table.concat(parts, ' ')
+        end
+
+        -- Through pcall, because boot refuses to start on an invalid
+        -- configuration rather than carrying on — and a test that lets that
+        -- error escape never restores print, so every spec after it runs
+        -- against a stubbed one. Which is what happened.
+        local started, err = pcall(boot,
+            function() Config.Penalty = { MaxFractionOfEscrow = 2.0 } end)
+        _G.print = realPrint
+        resetConfig()
+
+        falsy(started, 'a server missing a number the code does arithmetic on '
+            .. 'must not start')
+        local told = table.concat(said, ' | ') .. ' | ' .. tostring(err)
+        truthy(told:find('Penalty.MaxAmount', 1, true),
+            'and the refusal has to name the setting: ' .. told)
+    end)
+
     it('browsing still finds people on a config that never had the setting', function()
         -- The whole point. Before this, an operator upgrading the resource
         -- without touching their config got an empty list and no reason.
