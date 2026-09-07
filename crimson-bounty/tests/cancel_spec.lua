@@ -166,12 +166,120 @@ describe('editing a contract nobody has taken', function()
         eq(s.storage.readContract(c.id).reason, 'Actually, theft')
     end)
 
-    it('cleans the new reason the same way the first one was', function()
-        local s = newStack()
-        local f, c = placed(s)
-        s.contracts.revise(f.creator, c.id, { reason = '  ' .. string.rep('x', 400) .. '  ' })
-        local stored = s.storage.readContract(c.id).reason
-        truthy(#stored <= 140, 'a reason is capped wherever it is set: ' .. #stored)
+    --- Every rule the first reason had to pass, the second one has to pass.
+    ---
+    --- revise ran one of the four checks create runs, against a hardcoded
+    --- 140 rather than Config.Reason.MaxLength, and did not look at
+    --- Config.Reason.Mode at all. So the Edit button was a way to put a
+    --- discord link, a phone number or a slur on the public board, and to
+    --- write free text on a server whose operator had turned free text off
+    --- — past every rule they had set.
+    ---
+    --- The test that covered this asserted the reason came back under 140,
+    --- with 140 hardcoded on both sides. It could not see any of that.
+    describe('cleaning the new reason the way the first one was cleaned', function()
+        --- What create refuses, expressed once, so the two cannot drift.
+        local REFUSED = {
+            { 'a link',            'pay me at https://example.com' },
+            { 'a discord invite',  'come to discord.gg/whatever' },
+            { 'a bare host',       'see www.example.com for details' },
+            { 'an @ handle',       'message @someone about it' },
+            { 'a word the phone blacklists', 'you absolute slur' },
+            { 'too many digits',   'call 5551234567 now' },
+        }
+
+        for _, case in ipairs(REFUSED) do
+            it('refuses ' .. case[1] .. ', as placing one would', function()
+                local s = newStack()
+                local f, c = placed(s)
+
+                -- The same string through the front door, to prove this is a
+                -- rule and not just something revise happens to dislike.
+                local made = s.contracts.create(f.creator, {
+                    targetCid = 'TARGET01', reason = case[2],
+                    mode = CB.MODE.EXCLUSIVE,
+                    reward = { baseline = { cash = 1000 } },
+                })
+                falsy(made, 'the fixture is wrong: create allows ' .. case[1])
+
+                local before = s.storage.readContract(c.id).reason
+                local ok, err = s.contracts.revise(f.creator, c.id, { reason = case[2] })
+                falsy(ok, 'the Edit button let ' .. case[1] .. ' onto the board')
+                eq(err, CB.ERR.INVALID_INPUT)
+                eq(s.storage.readContract(c.id).reason, before, 'and left it alone')
+            end)
+        end
+
+        it('caps at the length the operator set, not one written into the code', function()
+            local s = newStack()
+            local f, c = placed(s)
+            withConfig({ { Config.Reason, 'MaxLength', 20 } }, function()
+                s.contracts.revise(f.creator, c.id, { reason = string.rep('x', 400) })
+                local stored = s.storage.readContract(c.id).reason
+                truthy(#stored <= 20,
+                    'revise capped at its own hardcoded 140 rather than the '
+                    .. 'configured length, got ' .. #stored)
+            end)
+        end)
+
+        it('still accepts an ordinary reason', function()
+            local s = newStack()
+            local f, c = placed(s)
+            local ok, err = s.contracts.revise(f.creator, c.id, { reason = 'Actually, theft' })
+            truthy(ok, 'the rules must not swallow a normal edit: ' .. tostring(err))
+            eq(s.storage.readContract(c.id).reason, 'Actually, theft')
+        end)
+    end)
+
+    --- The mode an operator chose applies to both ways in, or to neither.
+    describe('editing on a server that does not take free text', function()
+        it('refuses free text where the operator chose presets', function()
+            local s = newStack()
+            local f, c = placed(s)
+            withConfig({ { Config.Reason, 'Mode', 'preset' } }, function()
+                local ok, err = s.contracts.revise(f.creator, c.id,
+                    { reason = 'anything I like' })
+                falsy(ok, 'preset mode exists so the text is the operators')
+                eq(err, CB.ERR.INVALID_INPUT)
+            end)
+        end)
+
+        it('takes a preset index where the operator chose presets', function()
+            local s = newStack()
+            local f, c = placed(s)
+            withConfig({ { Config.Reason, 'Mode', 'preset' } }, function()
+                local ok, err = s.contracts.revise(f.creator, c.id, { reasonPreset = 2 })
+                truthy(ok, 'a real choice has to work: ' .. tostring(err))
+                eq(s.storage.readContract(c.id).reason, Config.Reason.Presets[2])
+            end)
+        end)
+
+        --- A reason is not a thing that can be changed on a server that
+        --- stores none, so an edit carrying only one has changed nothing
+        --- and must say so rather than report success.
+        it('refuses a reason-only edit where the server stores no reason', function()
+            local s = newStack()
+            local f, c = placed(s)
+            withConfig({ { Config.Reason, 'Mode', 'off' } }, function()
+                local ok, err = s.contracts.revise(f.creator, c.id, { reason = 'anything' })
+                falsy(ok, 'nothing was changed, so this is not a success')
+                eq(err, CB.ERR.INVALID_INPUT)
+            end)
+        end)
+
+        --- The app's Edit dialog always sends a reason alongside the hours.
+        --- On a server storing no reason that made the whole edit fail, so
+        --- the deadline could never be moved through the app at all.
+        it('still moves a deadline where the server stores no reason', function()
+            local s = newStack()
+            local f, c = placed(s)
+            withConfig({ { Config.Reason, 'Mode', 'off' } }, function()
+                local ok, err = s.contracts.revise(f.creator, c.id,
+                    { reason = '', deadlineSeconds = 7200 })
+                truthy(ok, 'a reason field the server ignores must not block '
+                    .. 'the edit it came with: ' .. tostring(err))
+            end)
+        end)
     end)
 
     it('moves the deadline in either direction', function()

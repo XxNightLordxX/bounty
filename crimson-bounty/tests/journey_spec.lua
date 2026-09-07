@@ -350,17 +350,52 @@ describe('the reason a contract gives, in every mode the operator can pick', fun
 
     --- The one that was broken. The page is told the mode and the list, so
     --- it can send an index; without that this is unplaceable.
-    it('places a contract on a preset server, using what the form was offered', function()
+    --- Carried on the board's settings rather than the wallet's caps: the
+    --- Edit dialog needs the same policy and is reachable without ever
+    --- having read a wallet, and a second copy would be two sources to
+    --- drift apart.
+    it('tells the page which reason control to draw', function()
         local s = newStack()
         fixture(s)
         withConfig({ { Config.Reason, 'Mode', 'preset' } }, function()
-            local wallet = call('rewardOptions', 1, {})
-            truthy(wallet and wallet.ok, 'the form has to be able to read the wallet')
-            local caps = wallet.data.caps
-            eq(caps.reasonMode, 'preset',
-                'the form cannot draw a picker for a mode it is never told about')
-            truthy(caps.reasonPresets and #caps.reasonPresets > 0,
+            local board = call('list', 1, { page = 1 })
+            truthy(board and board.ok, 'the page has to be able to read the board')
+            local set = board.data.settings
+            eq(set.reasonMode, 'preset',
+                'the page cannot draw a picker for a mode it is never told about')
+            truthy(set.reasonPresets and #set.reasonPresets > 0,
                 'a picker with nothing in it is not a picker')
+        end)
+    end)
+
+    --- Through the event, because the handler forwards named fields and a
+    --- field it does not name is one the page can send forever without it
+    --- ever arriving. That is how the picker in the Edit dialog came to send
+    --- a choice the server never saw.
+    it('carries a preset choice from the Edit dialog to the contract', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.EXCLUSIVE, reward = { baseline = { cash = 5000 } },
+        })
+        withConfig({ { Config.Reason, 'Mode', 'preset' } }, function()
+            -- ui/app.js editContract — post('revise', { id, reasonPreset, ... })
+            ok('revise', 1, { id = c.id, reasonPreset = 3 })
+            eq(s.storage.readContract(c.id).reason, Config.Reason.Presets[3],
+                'the picked preset has to reach the contract')
+        end)
+    end)
+
+    it('sends no preset list on a server that does not use presets', function()
+        local s = newStack()
+        fixture(s)
+        withConfig({ { Config.Reason, 'Mode', 'freetext' } }, function()
+            local board = call('list', 1, { page = 1 })
+            local set = board.data.settings
+            eq(set.reasonMode, 'freetext')
+            falsy(set.reasonPresets, 'a list nothing will draw is a list not to send')
+            truthy(set.reasonMaxLength, 'the box has to know what it is capped at')
         end)
     end)
 

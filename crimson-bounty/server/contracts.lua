@@ -274,28 +274,52 @@ local function refundAnonymityFee(actor, contractId, anonymous)
     return false
 end
 
+--- The reason a contract carries, decided the same way wherever it is set.
+---
+--- Placing one and editing one both put text in front of every player on
+--- the board, so both answer to the same rules: the mode the operator
+--- chose, the length they set, the patterns they banned, and the words the
+--- phone refuses.
+---
+--- They did not. revise ran one of the four checks, against a length
+--- written into the code rather than the configured one, and did not look
+--- at the mode at all — so the Edit button was a way to put a link, a
+--- phone number or a slur on the board, and to write free text on a server
+--- whose operator had switched free text off. The comment there claimed
+--- the opposite: "a second way in must not be a way past".
+---
+---@return string|nil reason  '' where the server stores none
+---@return string|nil err
+local function reasonFor(actor, req)
+    local mode = Config.Reason.Mode
+
+    if mode == 'preset' then
+        local index = Util.toPositive(req.reasonPreset, #Config.Reason.Presets)
+        if not index then return nil, CB.ERR.INVALID_INPUT end
+        return Config.Reason.Presets[index]
+    end
+
+    if mode ~= 'freetext' then return '' end
+
+    local reason = Util.sanitizeText(req.reason, Config.Reason.MaxLength)
+    if not reason then return nil, CB.ERR.INVALID_INPUT end
+    if Util.digitCount(reason) > Config.Reason.MaxDigits then return nil, CB.ERR.INVALID_INPUT end
+    for _, pattern in ipairs(Config.Reason.PatternDenylist) do
+        if reason:lower():find(pattern) then return nil, CB.ERR.INVALID_INPUT end
+    end
+    if exports['lb-phone']:ContainsBlacklistedWord(actor.source, reason) then
+        return nil, CB.ERR.INVALID_INPUT
+    end
+    return reason
+end
+
 function Contracts.create(actor, req)
     local targetActor = Identity.byCitizenId(req.targetCid)
     local ok, err = Contracts.canCreate(actor, targetActor)
     if not ok then return nil, err end
 
-    local reason
-    if Config.Reason.Mode == 'preset' then
-        local index = Util.toPositive(req.reasonPreset, #Config.Reason.Presets)
-        if not index then return nil, CB.ERR.INVALID_INPUT end
-        reason = Config.Reason.Presets[index]
-    elseif Config.Reason.Mode == 'freetext' then
-        reason = Util.sanitizeText(req.reason, Config.Reason.MaxLength)
-        if not reason then return nil, CB.ERR.INVALID_INPUT end
-        if Util.digitCount(reason) > Config.Reason.MaxDigits then return nil, CB.ERR.INVALID_INPUT end
-        for _, pattern in ipairs(Config.Reason.PatternDenylist) do
-            if reason:lower():find(pattern) then return nil, CB.ERR.INVALID_INPUT end
-        end
-        local blocked = exports['lb-phone']:ContainsBlacklistedWord(actor.source, reason)
-        if blocked then return nil, CB.ERR.INVALID_INPUT end
-    else
-        reason = ''
-    end
+    local reason, reasonErr = reasonFor(actor, req)
+    if reasonErr then return nil, reasonErr end
 
     local mode = req.mode == CB.MODE.COMPETITIVE and CB.MODE.COMPETITIVE or CB.MODE.EXCLUSIVE
 
@@ -852,13 +876,20 @@ function Contracts.revise(actor, contractId, changes)
 
     local touched = {}
 
-    if changes.reason ~= nil then
-        -- Cleaned exactly as it was when the contract was placed: the same
-        -- cap, the same stripping. A second way in must not be a way past.
-        local reason = Util.sanitizeText(changes.reason, 140)
-        if not reason then return false, CB.ERR.INVALID_INPUT end
-        contract.reason = reason
-        touched[#touched + 1] = 'reason'
+    if changes.reason ~= nil or changes.reasonPreset ~= nil then
+        -- Through the same function placing one goes through, so the two
+        -- cannot drift apart again.
+        local reason, reasonErr = reasonFor(actor, changes)
+        if reasonErr then return false, reasonErr end
+
+        -- Where the server stores no reason there is nothing here to
+        -- change. The app's Edit dialog sends the field whatever the mode
+        -- is, so refusing the whole request over it would make the deadline
+        -- it arrived with unchangeable too — which is what happened.
+        if Config.Reason.Mode ~= 'off' then
+            contract.reason = reason
+            touched[#touched + 1] = 'reason'
+        end
     end
 
     if changes.deadlineSeconds ~= nil then

@@ -159,6 +159,26 @@
 
     var nodes = {};
     d.fields.forEach(function (spec) {
+      // A choice, where the server takes one. Without this the only control
+      // a dialog could offer was a text box, so the Edit dialog asked for
+      // free text on servers that refuse it.
+      if (spec.type === 'select') {
+        var choose = document.createElement('select');
+        choose.id = 'dialog-' + spec.id;
+        (spec.options || []).forEach(function (option) {
+          var node = document.createElement('option');
+          node.value = String(option.value);
+          node.textContent = option.label;
+          choose.appendChild(node);
+        });
+        if (spec.value !== undefined && spec.value !== null) {
+          choose.value = String(spec.value);
+        }
+        nodes[spec.id] = choose;
+        panel.appendChild(labelled(spec.label, choose));
+        return;
+      }
+
       var input = document.createElement('input');
       input.id = 'dialog-' + spec.id;
       input.type = spec.type || 'text';
@@ -720,21 +740,51 @@
      moving escrow is money in and out of a pocket, and that has its own
      screen behind "Change reward", which can both add and take back. */
   function editContract(contract) {
+    /* The same reason control the Place form draws, for the same reason.
+     *
+     * This dialog asked for free text whatever the server took, and always
+     * sent it. On a preset server that was refused as invalid_input; on a
+     * server storing no reason at all it made the whole edit fail, so the
+     * deadline it came with could never be changed either. The rules are
+     * the operator's and apply to both ways in. */
+    var mode = settings().reasonMode || 'freetext';
+    var presets = asList(settings().reasonPresets);
+    var fields = [];
+
+    if (mode === 'preset' && presets.length) {
+      fields.push({
+        id: 'reasonPreset', label: 'Reason', type: 'select',
+        // One-based, as the server indexes its own list.
+        options: presets.map(function (text, i) {
+          return { value: i + 1, label: text };
+        })
+      });
+    } else if (mode !== 'off') {
+      fields.push({ id: 'reason', label: 'Reason', type: 'text',
+                    value: contract.reason || '',
+                    max: settings().reasonMaxLength || 140 });
+    }
+
+    fields.push({ id: 'hours', label: 'Hours from now to the deadline',
+                  type: 'number', value: 3, min: 1, max: 48 });
+
     askFields('Edit this contract',
       'Only while nobody has taken it. To change what it pays, use Change '
         + 'reward.',
-      [
-        { id: 'reason', label: 'Reason', type: 'text',
-          value: contract.reason || '', max: 140 },
-        { id: 'hours', label: 'Hours from now to the deadline', type: 'number',
-          value: 3, min: 1, max: 48 }
-      ],
+      fields,
       function (values) {
         var seconds = (values.hours || 0) * 3600;
+        // Only whichever field this server actually reads. The dialog draws
+        // one or the other or neither, so the rest are undefined and do not
+        // survive being encoded — sending the wrong one is how the deadline
+        // became unchangeable. Written inline so the payload-shape check can
+        // read what this site sends.
         post('revise', {
           id: contract.id,
+          deadlineSeconds: seconds > 0 ? seconds : undefined,
           reason: values.reason,
-          deadlineSeconds: seconds > 0 ? seconds : undefined
+          reasonPreset: values.reasonPreset === undefined
+            ? undefined : (parseInt(values.reasonPreset, 10) || 1)
         }).then(function (r) {
           if (!r.ok) { return fail(r); }
           say('Contract updated.', 'gold');
@@ -1726,9 +1776,8 @@
     // to correct and no way to find out. Same shape as the money sources an
     // operator had switched off, which the form went on offering until caps
     // started carrying the flags.
-    var reasonCaps = (state.wallet && state.wallet.caps) || {};
-    var reasonMode = reasonCaps.reasonMode || 'freetext';
-    var presets = asList(reasonCaps.reasonPresets);
+    var reasonMode = settings().reasonMode || 'freetext';
+    var presets = asList(settings().reasonPresets);
 
     if (reasonMode === 'preset' && presets.length) {
       var pick = document.createElement('select');
@@ -1744,7 +1793,7 @@
       form.appendChild(labelled('Reason', drafted(pick, 'reasonPreset', '1')));
     } else if (reasonMode !== 'off') {
       form.appendChild(labelled('Reason',
-        drafted(textInput('reason', 'Why?', reasonCaps.reasonMaxLength || 140),
+        drafted(textInput('reason', 'Why?', settings().reasonMaxLength || 140),
                 'reason')));
     }
 
@@ -2156,8 +2205,7 @@
   // The preset the picker is showing, as the one-based index the server
   // indexes its own list by. Null off a preset server.
   function reasonPresetIndex() {
-    var caps = (state.wallet && state.wallet.caps) || {};
-    if (caps.reasonMode !== 'preset') { return null; }
+    if (settings().reasonMode !== 'preset') { return null; }
     return parseInt(state.draft.reasonPreset, 10) || 1;
   }
 

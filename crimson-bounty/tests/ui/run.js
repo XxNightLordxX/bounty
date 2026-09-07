@@ -2805,25 +2805,29 @@ async function main() {
    * nothing on screen to explain it. Every contract on such a server was
    * unplaceable for as long as the setting stayed. */
   await (async function reasonModes() {
-    function wallet(reasonCaps) {
+    function wallet() {
       return { ok: true, data: {
         cash: 100000, bank: 50000, dirty: 0,
         items: [], weapons: [], inventoryRead: true,
-        caps: Object.assign({
+        caps: {
           itemsEnabled: false, weaponsEnabled: false, slots: 3,
           cash: 250000, bank: 500000,
           cashEnabled: true, bankEnabled: true, dirtyEnabled: false
-        }, reasonCaps)
+        }
       } };
     }
 
-    async function place(reasonCaps) {
+    /* The reason policy rides on the board's settings, not the wallet: the
+       Edit dialog needs it too and is reachable without ever having read a
+       wallet, and a second copy would be two sources to drift apart. */
+    async function place(reasonPolicy) {
       const app = boot({
-        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        list: { ok: true, data: {
+          page: 1, pages: 1, contracts: [], settings: reasonPolicy } },
         mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
         ledger: LEDGER,
         searchTargets: { ok: true, data: [{ handle: 'tg00000001', name: 'Ann Ryder' }] },
-        rewardOptions: wallet(reasonCaps),
+        rewardOptions: wallet(),
         create: { ok: true, data: { id: 'ct00000001' } }
       });
       await settle(); await settle();
@@ -3287,6 +3291,113 @@ async function main() {
       eq(noCap.sent.filter(function (x) { return x.name === 'create'; }).length, 1,
         'an older server that sends no maxLines must not have every contract '
         + 'blocked by the page');
+    });
+  })();
+
+  /* The Edit dialog, on each server the reason rules can describe.
+   *
+   * It asked for free text whatever the server took, and always sent it. On
+   * a preset server that was refused as invalid_input; on a server storing
+   * no reason at all it made the whole edit fail, so the deadline it came
+   * with could never be changed through the app either. */
+  await (async function editDialogReason() {
+    const MINE_ONE = { ok: true, data: {
+      created: [{ id: 'ct00000001', target: 'Dana Reyes', reason: 'Unpaid debt',
+                  state: 'active', role: 'creator', mode: 'exclusive',
+                  reward: { total: 5000 }, hunters: [] }],
+      accepted: [], onMe: []
+    } };
+
+    async function openEdit(reasonPolicy) {
+      const app = boot({
+        list: { ok: true, data: {
+          page: 1, pages: 1, contracts: [], settings: reasonPolicy } },
+        mine: MINE_ONE,
+        ledger: LEDGER,
+        revise: { ok: true, data: true }
+      });
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+      await settle(); await settle();
+
+      const edit = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Edit';
+      })[0];
+      truthy(edit, 'the Mine card has to offer an Edit button');
+      edit.onclick();
+      await settle();
+      return app;
+    }
+
+    function inDialog(app, id) {
+      return app.view.all().filter(function (n) { return n._id === 'dialog-' + id; })[0] || null;
+    }
+
+    async function save(app) {
+      app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Save';
+      })[0].onclick();
+      await settle(); await settle();
+      return app.sent.filter(function (x) { return x.name === 'revise'; });
+    }
+
+    const preset = await openEdit({
+      reasonMode: 'preset',
+      reasonPresets: ['Unpaid debt', 'Snitching', 'Territory dispute']
+    });
+
+    it('offers the picker, not a text box, on a preset server', function () {
+      const pick = inDialog(preset, 'reasonPreset');
+      truthy(pick, 'the dialog asked for free text a preset server refuses');
+      eq(pick.children.length, 3);
+      falsy(inDialog(preset, 'reason'), 'and must not also ask for text');
+    });
+
+    const presetSent = await save(preset);
+
+    it('sends an index, not text, on a preset server', function () {
+      eq(presetSent.length, 1, 'one revise');
+      eq(presetSent[0].body.reasonPreset, 1);
+      falsy(presetSent[0].body.reason,
+        'text alongside an index is the field the server will refuse: '
+        + JSON.stringify(presetSent[0].body));
+    });
+
+    const off = await openEdit({ reasonMode: 'off' });
+
+    it('asks for no reason where the server stores none', function () {
+      falsy(inDialog(off, 'reason'));
+      falsy(inDialog(off, 'reasonPreset'));
+      truthy(inDialog(off, 'hours'), 'the deadline is still editable');
+    });
+
+    const offSent = await save(off);
+
+    it('still changes the deadline where the server stores no reason', function () {
+      eq(offSent.length, 1, 'one revise');
+      truthy(offSent[0].body.deadlineSeconds > 0, 'the deadline has to be in it');
+      falsy(offSent[0].body.reason,
+        'a reason field the server ignores used to arrive anyway and take '
+        + 'the whole edit down with it: ' + JSON.stringify(offSent[0].body));
+    });
+
+    const free = await openEdit({ reasonMode: 'freetext', reasonMaxLength: 90 });
+
+    it('keeps the text box, capped as the operator set it', function () {
+      const box = inDialog(free, 'reason');
+      truthy(box, 'the default has to keep working');
+      eq(String(box.maxLength), '90',
+        'the cap was written into the page rather than read from the server');
+      eq(box.value, 'Unpaid debt', 'and it starts from what the contract says');
+    });
+
+    const freeSent = await save(free);
+
+    it('sends the text on a freetext server', function () {
+      eq(freeSent.length, 1, 'one revise');
+      eq(freeSent[0].body.reason, 'Unpaid debt');
+      falsy(freeSent[0].body.reasonPreset);
     });
   })();
 

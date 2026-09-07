@@ -212,6 +212,15 @@ function Projection.listing(viewerCid, page)
             -- at all. The app was asking a player to spend money without
             -- telling them how much, on a purchase that is deliberately
             -- non-refundable.
+            -- Which reason control the app should draw, and the list to
+            -- draw it from. Policy rather than wallet: the Place form and
+            -- the Edit dialog both need it, and the Edit dialog is reachable
+            -- without ever having read a wallet. Keeping a second copy in
+            -- the wallet's caps would be two sources to drift apart.
+            reasonMode = Config.Reason.Mode,
+            reasonPresets = Config.Reason.Mode == 'preset'
+                and Config.Reason.Presets or nil,
+            reasonMaxLength = Config.Reason.MaxLength,
             informant = Config.Informant.Enabled == true and {
                 cost = Config.Informant.Cost,
                 account = Config.Informant.Account,
