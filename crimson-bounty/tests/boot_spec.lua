@@ -440,3 +440,77 @@ describe('starting on a configuration with a hole in it', function()
         truthy(main)
     end)
 end)
+
+--- Boot against a config missing any single setting.
+---
+--- applyConfigDefaults fills whole sections an operator's config does not
+--- have at all, plus a curated list of individual keys. Everything else is
+--- read directly, and a config that carries a section but not one of its
+--- keys is the ordinary result of drift: config.lua stops tracking the
+--- shipped one the moment it is edited.
+---
+--- Three keys crashed boot rather than being filled or reported, and all
+--- three crashed inside the validation — the code whose whole job is to say
+--- what is wrong with a configuration was itself the thing that fell over
+--- on one, taking cb-diag down with it.
+---
+--- A deliberate refusal that names the setting is an acceptable outcome
+--- here; an unhandled error is not. Operators are told what to fix, or the
+--- gap is filled and printed. They are never handed a stack trace.
+describe('a config that has drifted a key at a time', function()
+    local function sectionsOf()
+        local names = {}
+        if type(ConfigDefaults) ~= 'table' then return names end
+        for section in pairs(ConfigDefaults) do
+            if type(ConfigDefaults[section]) == 'table' then names[#names + 1] = section end
+        end
+        table.sort(names)
+        return names
+    end
+
+    it('starts, or says what is wrong, with any one key removed', function()
+        local sections = sectionsOf()
+        truthy(#sections > 10,
+            'the shipped defaults have to be readable for this to mean '
+            .. 'anything, got ' .. #sections .. ' sections')
+
+        local crashed, tried = {}, 0
+        for _, section in ipairs(sections) do
+            local keys = {}
+            for key in pairs(ConfigDefaults[section]) do keys[#keys + 1] = tostring(key) end
+            table.sort(keys)
+
+            for _, key in ipairs(keys) do
+                boot()
+                if type(Config[section]) == 'table' then
+                    tried = tried + 1
+                    Config[section][key] = nil
+                    local ok, err = pcall(function()
+                        package.loaded['server.main'] = nil
+                        local main = require('server.main')
+                        return main.start()
+                    end)
+                    if not ok then
+                        local message = tostring(err)
+                        -- A refusal names the setting. A crash does not.
+                        if not message:find('refusing to start on an invalid configuration', 1, true) then
+                            crashed[#crashed + 1] =
+                                ('Config.%s.%s -> %s'):format(section, key, message)
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Counted, so a loop that stopped matching cannot read as a clean
+        -- result: this sweep says nothing if it swept nothing.
+        truthy(tried > 100,
+            'this swept only ' .. tried .. ' keys, which is the loop having '
+            .. 'stopped rather than the config having shrunk')
+
+        resetConfig()
+        eq(#crashed, 0,
+            'a config missing one setting has to be filled or reported, never '
+            .. 'crashed on: ' .. table.concat(crashed, ' | '))
+    end)
+end)

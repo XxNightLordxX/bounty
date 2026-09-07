@@ -81,6 +81,33 @@ local DEFAULTS = {
         search = { per = 10, burst = 15 },
         wallet = { per = 10, burst = 8 },
     },
+    --- The names the admin commands register under. Indexed directly while
+    --- registering them, so a config carrying an Admin section without this
+    --- key took the resource down at boot — including cb-diag, which is the
+    --- one command an operator needs in order to find out why.
+    Admin = {
+        Commands = {
+            timeline = 'cb-timeline',
+            void     = 'cb-void',
+            stuck    = 'cb-stuck',
+            settle   = 'cb-settle',
+            whois    = 'cb-whois',
+            diagnose = 'cb-diag',
+        },
+    },
+    --- Both read by the boot validation itself. Absent, they did not produce
+    --- a warning about a misconfigured advisory — they crashed the check
+    --- that would have reported it.
+    Advisory = {
+        RecipientJobTypes = { leo = true, police = true },
+        RecipientJobNames = {
+            police = true, sheriff = true, bcso = true, fib = true,
+            trooper = true, sasp = true, ranger = true,
+        },
+    },
+    Immunity = {
+        MinTargetPlaytimeHours = 5,
+    },
 }
 
 local function applyConfigDefaults()
@@ -281,7 +308,12 @@ local function validateConfig()
 
     -- A rule that cannot be evaluated is worse than one that is off, because
     -- nobody can tell. Say so at startup rather than silently skipping it.
-    if Config.Immunity.MinTargetPlaytimeHours > 0
+    -- Guarded rather than assumed. These checks exist to report a
+    -- configuration nobody meant to have, and a check that throws on one
+    -- reports nothing at all — it takes the resource down before it can
+    -- say what is wrong, which is the worst way to learn about a missing
+    -- setting. Defaults above should mean it never comes to this.
+    if (tonumber(Config.Immunity.MinTargetPlaytimeHours) or 0) > 0
         and not (Config.Immunity.PlaytimeProvider and Config.Immunity.PlaytimeProvider.resource) then
         warn[#warn + 1] = ('Immunity.MinTargetPlaytimeHours is %d but no PlaytimeProvider is set; ' ..
             'the rule applies only where QBox metadata carries a playtime figure')
@@ -292,8 +324,9 @@ local function validateConfig()
         warn[#warn + 1] = 'Kidnap.RequireCoercion is off: a target can be "delivered" while walking freely'
     end
 
-    if Config.Advisory.Enabled and not next(Config.Advisory.RecipientJobTypes)
-        and not next(Config.Advisory.RecipientJobNames) then
+    if Config.Advisory.Enabled
+        and not next(Config.Advisory.RecipientJobTypes or {})
+        and not next(Config.Advisory.RecipientJobNames or {}) then
         warn[#warn + 1] = 'Advisory is enabled but nobody is configured to receive it'
     end
 
