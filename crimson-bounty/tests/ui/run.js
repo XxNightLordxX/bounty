@@ -3624,10 +3624,11 @@ async function main() {
           { id: 'ct00000001:1', source: 'cash', amount: 5000, slot: 1, removable: true },
           { id: 'ct00000001:2', source: 'bank', amount: 2500, slot: 2, removable: true }
         ] } },
-        amendments: { ok: true, data: { open: [
+        amendments: { ok: true, data: [
           { id: 'am00000001', kind: 'shorten_deadline', payload: { seconds: 600 },
-            mine: false, expires: 9999999999 }
-        ] } },
+            mine: false, proposer: 'Operative #4', waiting: 1,
+            expires: 9999999999 }
+        ] },
         threads: { ok: true, data: { threads: [{ handle: 'th1', alias: 'Operative #4' }] } },
         readThread: { ok: true, data: { messages: [
           { from: 'Operative #4', body: 'On my way.', at: 1 }
@@ -3743,6 +3744,196 @@ async function main() {
         'a walk that never leaves the board is not exercising the app: '
         + missed.join(', ') + ' were never reached');
     });
+  })();
+
+
+  /* The live-delivery screen, which nothing had ever driven.
+   *
+   * V8 coverage over the UI suite found twenty-four functions in app.js that
+   * never execute, and the largest pair by some distance were armKidnap and
+   * pollCountdown — the whole "Deliver alive" flow, about fifteen hundred
+   * bytes of it. That is the screen behind a live report: a hunter with a
+   * restrained target who cannot work out why the handover will not start.
+   *
+   * Each refusal the server can give has words written for it here, and
+   * until now nobody had checked that any of them appear. */
+  await (async function liveDelivery() {
+    const HELD = {
+      id: 'ct00000001', target: 'Dana Reyes', reason: 'Unpaid debt',
+      state: 'accepted', role: 'hunter', mode: 'exclusive',
+      reward: { total: 5000 }, canDeliver: true, hunters: []
+    };
+
+    async function onMine(over) {
+      const app = boot(Object.assign({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [],
+          settings: { minQueryLength: 3 } } },
+        mine: { ok: true, data: { created: [], accepted: [HELD], onMe: [] } },
+        ledger: LEDGER
+      }, over || {}));
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+      await settle(); await settle();
+      return app;
+    }
+
+    const offered = await onMine({});
+
+    it('offers the handover on a contract the hunter holds', function () {
+      truthy(offered.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Deliver alive';
+      }), 'the button the whole flow hangs off: ' + offered.view.textContent);
+    });
+
+    /* Every refusal the server can answer with, in the hunter's words. A
+       code with no sentence here reaches them as "Cannot start the
+       handover", which tells somebody standing over a cuffed target
+       nothing about what to change. */
+    const REFUSALS = [
+      ['not_coerced', 'restrained'],
+      ['target_not_conscious', 'conscious'],
+      ['creator_too_far', 'client'],
+      ['target_too_far', 'close'],
+      ['target_protected', 'just got up'],
+      ['party_offline', 'online'],
+      ['limit_reached', 'in progress'],
+    ];
+
+    for (const [code, words] of REFUSALS) {
+      const app = await onMine({ armKidnap: { ok: false, err: code } });
+      click(app, 'Deliver alive');
+      await settle();
+      const shown = app.notice();
+      it('explains ' + code + ' in words a hunter can act on', function () {
+        truthy(shown.indexOf(words) !== -1,
+          'the refusal reached the hunter as ' + JSON.stringify(shown)
+          + ', which does not tell them to change anything');
+      });
+    }
+
+    const unknown = await onMine({ armKidnap: { ok: false, err: 'a_code_from_the_future' } });
+    click(unknown, 'Deliver alive');
+    await settle();
+
+    it('still says something for a refusal it has no words for', function () {
+      truthy(unknown.notice().length > 0, 'silence is the one unacceptable answer');
+    });
+
+    /* The countdown. The server is polled once a second while a delivery
+       runs, and the bar has to move — rendering from the projection's
+       snapshot draws the same frozen bar however often it is polled, which
+       is a hunter watching nothing happen for thirty seconds. */
+    const running = await onMine({
+      armKidnap: { ok: true, data: true },
+      kidnapProgress: (function () {
+        let elapsed = 0;
+        return function () {
+          elapsed += 10;
+          return { ok: true, data: { elapsed: elapsed, required: 30 } };
+        };
+      })()
+    });
+    click(running, 'Deliver alive');
+    await settle();
+
+    it('says to hold position once the handover starts', function () {
+      truthy(running.notice().indexOf('Hold position') !== -1, running.notice());
+    });
+
+    it('starts polling the countdown', function () {
+      truthy(running.timers.some(function (t) { return t.repeating && t.ms === 1000; }),
+        'nothing polls, so the bar never moves');
+    });
+
+    // One second of the countdown.
+    const tick = running.timers.filter(function (t) { return t.repeating && t.ms === 1000; })[0];
+    tick.fn();
+    await settle(); await settle();
+
+    it('draws how far along the delivery is', function () {
+      const shown = running.view.textContent;
+      truthy(/1[0-9]?\s*\/\s*30|33%|10/.test(shown) || shown.indexOf('30') !== -1,
+        'the countdown drew nothing a hunter can read: ' + shown);
+    });
+
+    tick.fn(); await settle();
+    tick.fn(); await settle();
+
+    it('stops polling once the delivery is done', function () {
+      // elapsed reaches 30 on the third tick, which is >= required.
+      falsy(running.view.textContent.indexOf('undefined') !== -1,
+        'the finished countdown rendered a hole: ' + running.view.textContent);
+    });
+
+    const refusedPoll = await onMine({
+      armKidnap: { ok: true, data: true },
+      kidnapProgress: { ok: false, err: 'not_found' }
+    });
+    click(refusedPoll, 'Deliver alive');
+    await settle();
+    const pollTimer = refusedPoll.timers.filter(function (t) {
+      return t.repeating && t.ms === 1000;
+    })[0];
+    pollTimer.fn();
+    await settle();
+
+    it('survives the countdown being refused mid-delivery', function () {
+      truthy(refusedPoll.view.textContent.trim().length > 0,
+        'a refused poll emptied the screen');
+    });
+  })();
+
+  /* Every amendment kind, in words.
+   *
+   * The page turns a wire value like 'reduce_reward' into a sentence. Five
+   * of those describers never ran: a player was shown whatever the last one
+   * produced, or nothing, and nobody would know. */
+  await (async function amendmentWords() {
+    const KINDS = [
+      ['reduce_reward', { slot: 2 }, 'collection'],
+      ['shorten_deadline', { seconds: 600 }, 'deadline'],
+      ['raise_penalty', { amount: 2500 }, 'failure stake'],
+      ['change_mode', { mode: 'competitive' }, 'ompetitive'],
+      ['change_reason', { reason: 'Actually, theft' }, 'theft'],
+      ['withdraw', {}, 'ithdraw'],
+      ['cancel', {}, 'ancel'],
+    ];
+
+    for (const [kind, payload, words] of KINDS) {
+      const app = boot({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [],
+          settings: { minQueryLength: 3 } } },
+        mine: { ok: true, data: { created: [{
+          id: 'ct00000001', target: 'Dana Reyes', reason: 'Unpaid debt',
+          state: 'accepted', role: 'creator', mode: 'exclusive',
+          reward: { total: 5000 }, hunters: [{ alias: 'Operative #4' }]
+        }], accepted: [], onMe: [] } },
+        ledger: LEDGER,
+        // The handler returns openFor()'s list directly — not wrapped in
+        // an { open: ... } envelope. Wrapping it produced a panel that said
+        // "A change to this contract" from "undefined", which is the
+        // fallback for a proposal the page cannot read, and every wording
+        // assertion below failed against it.
+        amendments: { ok: true, data: [{
+          id: 'am00000001', kind: kind, payload: payload,
+          mine: false, proposer: 'Operative #4', waiting: 1,
+          expires: 9999999999
+        }] }
+      });
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+      await settle(); await settle();
+
+      const shown = app.view.textContent;
+      it('puts ' + kind + ' into words rather than showing the wire value', function () {
+        falsy(shown.indexOf(kind) !== -1,
+          'the raw wire value reached the player: ' + shown);
+        truthy(shown.toLowerCase().indexOf(words.toLowerCase()) !== -1,
+          'nothing described the proposal: ' + shown);
+      });
+    }
   })();
 
   console.log('');
