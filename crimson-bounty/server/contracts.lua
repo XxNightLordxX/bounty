@@ -274,6 +274,53 @@ local function refundAnonymityFee(actor, contractId, anonymous)
     return false
 end
 
+--- The buyout premium, against the escrow it is a multiple of.
+---
+--- Clamped rather than rejected: a creator who types a silly number gets
+--- the ceiling, not a silently disabled bailout.
+---
+--- The clamp is the whole thing that stops a bailout being an uncapped,
+--- untaxed transfer rail between two cooperating players (§14.16), so it
+--- has to hold for as long as the price does — not only at the moment it
+--- is set. Taking the escrow back out after the fact left a price that was
+--- a multiple of money no longer there: fund 90,010, price it at the 270,030
+--- ceiling, withdraw the 90,000, and collect 270,040 from the target having
+--- staked 10. Every way the escrow can change answers to this.
+---
+--- Clean money only. The target buys their way out with cash or bank, so
+--- those are the only accounts the buyout can charge; counting black money
+--- towards the ceiling let a creator fund in a currency worth a fraction of
+--- its face value and extract a multiple of that face value in real money.
+---@param requested any what the creator asked for
+---@param lines table[] escrow lines to measure against
+---@return integer bailout
+---@return string|nil err
+function Contracts.clampBailout(requested, lines)
+    if not Config.Bailout.Enabled or not requested then return 0 end
+
+    local bailout = Util.toPositive(requested) or 0
+    if bailout <= 0 then return 0 end
+
+    local moneyValue = 0
+    for i = 1, #lines do
+        if CB.MONEY_ACCOUNTS[lines[i].source] then
+            moneyValue = moneyValue + (lines[i].amount or 0)
+        end
+    end
+
+    -- A bailout needs a clean money escrow to be a multiple of. A contract
+    -- funded only in goods or only in black money cannot offer one, for the
+    -- same reason an items-only contract cannot.
+    if moneyValue == 0 then return 0, CB.ERR.INVALID_INPUT end
+
+    local min = math.floor(moneyValue * Config.Bailout.MinMultiplier)
+    local max = math.floor(moneyValue * Config.Bailout.MaxMultiplier)
+    if bailout < min then bailout = min end
+    if bailout > max then bailout = max end
+    if bailout > Config.Bailout.AbsoluteMax then bailout = Config.Bailout.AbsoluteMax end
+    return bailout
+end
+
 --- The reason a contract carries, decided the same way wherever it is set.
 ---
 --- Placing one and editing one both put text in front of every player on
@@ -343,43 +390,8 @@ function Contracts.create(actor, req)
     lines, err, slotCount = Escrow.validate(actor, req.reward, bonusPercent)
     if not lines then return nil, err end
 
-    -- Bailout premium is clamped to a multiple of the money escrow so it
-    -- cannot become an uncapped transfer rail between two players (§14.16).
-    -- The premium is clamped, not rejected: a creator who types a silly
-    -- number gets the ceiling, not a silently disabled bailout. The clamp is
-    -- what stops the bailout becoming an uncapped transfer rail (§14.16).
-    local bailout = 0
-    if Config.Bailout.Enabled and req.bailoutAmount then
-        bailout = Util.toPositive(req.bailoutAmount) or 0
-        if bailout > 0 then
-            -- Clean money only.
-            --
-            -- The target buys their way out with cash or bank — those are
-            -- the only accounts the buyout can charge. Counting black money
-            -- towards the ceiling therefore let a creator fund a contract in
-            -- a currency that sells for a fraction of its face value and
-            -- extract a multiple of that face value from the target in real
-            -- money. That is precisely the uncapped transfer rail between
-            -- two players this clamp exists to prevent; it was simply
-            -- denominated in the wrong currency.
-            local moneyValue = 0
-            for i = 1, #lines do
-                if CB.MONEY_ACCOUNTS[lines[i].source] then
-                    moneyValue = moneyValue + lines[i].amount
-                end
-            end
-            -- A bailout needs a clean money escrow to be a multiple of. A
-            -- contract funded only in goods or only in black money cannot
-            -- offer one, for the same reason an items-only contract cannot.
-            if moneyValue == 0 then return nil, CB.ERR.INVALID_INPUT end
-
-            local min = math.floor(moneyValue * Config.Bailout.MinMultiplier)
-            local max = math.floor(moneyValue * Config.Bailout.MaxMultiplier)
-            if bailout < min then bailout = min end
-            if bailout > max then bailout = max end
-            if bailout > Config.Bailout.AbsoluteMax then bailout = Config.Bailout.AbsoluteMax end
-        end
-    end
+    local bailout, bailoutErr = Contracts.clampBailout(req.bailoutAmount, lines)
+    if bailoutErr then return nil, bailoutErr end
 
     local contractId = Util.mintId(Storage.nextId, 'ct', Storage.readContract)
     if not contractId then
@@ -1095,6 +1107,33 @@ function Contracts.withdrawReward(actor, contractId, lineIds)
 
     Audit.financial('reward_reduced', actor.cid, contractId,
         { lines = count, settled = result.settled, pending = result.pending })
+
+    -- The buyout price is a multiple of the escrow, so it moves with it.
+    --
+    -- Without this the clamp held only at the moment the price was set, and
+    -- this is the one path that takes escrow back out afterwards: fund
+    -- 90,010, price the buyout at the 270,030 ceiling, withdraw the 90,000,
+    -- and the target still pays 270,030 to a creator holding 10. That is
+    -- exactly the uncapped, untaxed transfer rail between two cooperating
+    -- players the clamp exists to prevent, reopened by a door added later.
+    --
+    -- Re-clamped rather than refused: the withdrawal is legitimate, and a
+    -- creator who takes their money back should get a smaller buyout, not
+    -- an error.
+    local reduced = Storage.readContract(contractId)
+    if reduced and (reduced.bailout_amount or 0) > 0 then
+        local held = {}
+        for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
+            if line.state == CB.ESCROW_STATE.HELD then held[#held + 1] = line end
+        end
+        local clamped = Contracts.clampBailout(reduced.bailout_amount, held)
+        if clamped ~= reduced.bailout_amount then
+            reduced.bailout_amount = clamped
+            Storage.writeContract(reduced)
+            Audit.financial('bailout_reclamped', actor.cid, contractId,
+                { to = clamped })
+        end
+    end
 
     return true, nil, result
 end
