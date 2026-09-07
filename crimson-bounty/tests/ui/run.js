@@ -4020,6 +4020,41 @@ async function main() {
           return n.tagName === 'BUTTON' && n.textContent === 'Try again';
         }).length === 1, 'no way to ask again: ' + shown);
       });
+
+      // One bad reply is one bad section. The board answered fine.
+      tab(app, 'board');
+      await settle(); await settle();
+      const board = app.view.textContent;
+      it('one unreadable reply does not cost the tabs that answered', function () {
+        drewCleanly(app, 'the board tab');
+        truthy(board.indexOf('Dana Reyes') !== -1,
+          'the board had its answer and should still be showing it: ' + board);
+      });
+    }
+
+    // 1b. And Try again on that failure card brings the real answer back.
+    {
+      let broken = true;
+      const app = boot({
+        list: BOARD, ledger: LEDGER,
+        mine: function () {
+          if (broken) { return { ok: true }; }
+          return { ok: true, data: { created: [], accepted: [], onMe: [] } };
+        }
+      });
+      await settle(); await settle();
+      tab(app, 'onme');
+      await settle(); await settle();
+
+      broken = false;
+      click(app, 'Try again');
+      await settle(); await settle();
+      const recovered = app.view.textContent;
+      it('Try again on a broken section brings the real answer back', function () {
+        drewCleanly(app, 'the onme tab');
+        truthy(recovered.indexOf('Nobody is looking for you') !== -1,
+          'the retry asked again and the answer should be on screen: ' + recovered);
+      });
     }
 
     // 2. A string where the payload belongs.
@@ -4049,6 +4084,14 @@ async function main() {
       tab(app, 'onme');
       await settle(); await settle();
       const shown = app.view.textContent;
+      tab(app, 'ledger');
+      await settle(); await settle();
+      const ledger = app.view.textContent;
+      it('a hostile onMe list does not cost the other tabs', function () {
+        drewCleanly(app, 'the ledger tab');
+        truthy(ledger.length > 0, 'the ledger had its own answer and drew nothing');
+      });
+
       it('a string where the onMe list belongs does not strand the warning', function () {
         drewCleanly(app, 'the onme tab');
         falsy(shown.indexOf('There is a price on your head') !== -1
@@ -4084,21 +4127,57 @@ async function main() {
 
     // 5. One board row that lost its reward. render() clears the view
     //    before it draws, so this cost the whole tab and every good row
-    //    after it, not just the bad row.
+    //    after it, not just the bad row. Put between two good rows, so
+    //    both directions are covered.
     {
       const broken = JSON.parse(JSON.stringify(BOARD));
-      const good = JSON.parse(JSON.stringify(broken.data.contracts[0]));
-      good.id = 'ct00000002';
-      good.targetName = 'Dana Reyes';
+      const before = JSON.parse(JSON.stringify(broken.data.contracts[0]));
+      const after = JSON.parse(JSON.stringify(broken.data.contracts[0]));
+      before.id = 'ct00000000';
+      before.targetName = 'Early Bird';
+      after.id = 'ct00000002';
+      after.targetName = 'Late Riser';
       delete broken.data.contracts[0].reward;
-      broken.data.contracts.push(good);
+      broken.data.contracts[0].targetName = 'Broken Row';
+      broken.data.contracts.unshift(before);
+      broken.data.contracts.push(after);
       const app = boot({ list: broken, mine: MINE, ledger: LEDGER });
       await settle(); await settle();
       const shown = app.view.textContent;
       it('a row with no reward on it costs that row, not the board', function () {
         drewCleanly(app, 'the board tab');
-        truthy(shown.indexOf('Dana Reyes') !== -1,
+        truthy(shown.indexOf('Late Riser') !== -1,
           'the good row after the broken one was lost too: ' + shown);
+        truthy(shown.indexOf('Early Bird') !== -1,
+          'and so was the one before it: ' + shown);
+      });
+    }
+
+    // 5b. An onMe list the server meant to send empty. An empty Lua table
+    //     crosses as {} rather than [], which is the boundary asList
+    //     exists for — and the all-clear is the one message that has to be
+    //     right on both sides of it.
+    {
+      const app = boot({
+        list: BOARD, ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [], onMe: acrossTheWire([]) } }
+      });
+      await settle(); await settle();
+      tab(app, 'onme');
+      await settle(); await settle();
+      const onme = app.view.textContent;
+      it('an empty roster from Lua reads as nobody, not as a crash', function () {
+        drewCleanly(app, 'the onme tab');
+        truthy(onme.indexOf('Nobody is looking for you') !== -1,
+          'an answered, empty roster is exactly when the all-clear is right: ' + onme);
+      });
+
+      tab(app, 'mine');
+      await settle(); await settle();
+      const mine = app.view.textContent;
+      it('and Mine says it is empty rather than showing nothing', function () {
+        drewCleanly(app, 'the mine tab');
+        truthy(mine.length > 0, 'Mine rendered a completely blank screen');
       });
     }
 

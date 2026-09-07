@@ -213,6 +213,67 @@ describe('informant data', function()
             .. 'meant somebody and which meant nobody')
     end)
 
+    --- Selection must not be steerable (§14.29).
+    ---
+    --- This was proved as a live exploit and fixed by seeding the pick per
+    --- (contract, buyer) rather than off the wall clock, and then nothing
+    --- kept it fixed: the proof lived in an orphaned scratch file nothing
+    --- ran. The rule is that a buyer who waits cannot walk the roster, so
+    --- the same purchase made at different moments names the same operative.
+    it('does not let the buyer choose who is named by choosing when', function()
+        local names = {}
+        for offset = 0, 2 do
+            local s = newStack()
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 1000 } },
+            })
+            truthy(c)
+            -- Three anonymous hunters, so a clock-driven index would land
+            -- on a different one as the clock moves.
+            Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+                cash = 5000, bank = 5000, firstname = 'Nel', lastname = 'Vey' })
+            Env.addPlayer({ source = 5, citizenid = 'HUNTER03', license = 'license:eee',
+                cash = 5000, bank = 5000, firstname = 'Sam', lastname = 'Orr' })
+            truthy(s.contracts.accept(f.hunter, c.id, true))
+            truthy(s.contracts.accept(s.identity.resolve(4), c.id, true))
+            truthy(s.contracts.accept(s.identity.resolve(5), c.id, true))
+
+            -- All three standing over the target, or the pool is empty and
+            -- every purchase answers the same because there is nobody to
+            -- name — which is a test that passes whatever the selection
+            -- does. It did, until putting os.time() back in the formula
+            -- left it green.
+            Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
+            for _, src in ipairs({ 3, 4, 5 }) do
+                Env.players[src]._coords = { x = 505.0, y = 500.0, z = 30.0 }
+            end
+            s.death.watchTargets(s.storage.allContracts())
+
+            local pool = 0
+            for _, h in ipairs(s.storage.readHunters(c.id)) do
+                if h.state == 'active' then pool = pool + 1 end
+            end
+            eq(pool, 3, 'three operatives to choose between, or there is no choice')
+
+            Env.advance(offset)
+            Env.players[1].PlayerData.money.bank = 999999
+            local ok, err, data = s.informant.buy(f.creator, c.id)
+            truthy(ok, tostring(err))
+            falsy(data.name == 'Unknown operative',
+                'the informant found nobody, so this measured nothing')
+            names[#names + 1] = tostring(data.name)
+        end
+
+        eq(names[2], names[1],
+            'the same purchase one second later named somebody else: '
+            .. table.concat(names, ', '))
+        eq(names[3], names[1],
+            'the same purchase two seconds later named somebody else: '
+            .. table.concat(names, ', '))
+    end)
+
     it('never returns a citizen id', function()
         local s, f, c = seeded()
         local _, _, data = s.informant.buy(f.creator, c.id)

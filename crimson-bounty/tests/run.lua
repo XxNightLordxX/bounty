@@ -368,15 +368,25 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the
 --- resource. The invariant run leaves these out: see tests/invariants.lua.
 local RAW_STORE_SPECS = { differential_spec = true }
 
+--- And the specs that exist to measure cost rather than to assert
+--- behaviour. The invariant monitor audits the whole store after every
+--- write, so a spec that deliberately builds a five-hundred contract board
+--- turns a linear build into a quadratic one — twenty seconds of suite
+--- became a run that had not finished in ten minutes. It probes nothing the
+--- other eleven hundred tests do not already probe: every rule it would
+--- exercise is exercised by the operations it is counting.
+local MEASUREMENT_SPECS = { complexity_spec = true }
+
 for _, name in ipairs(suites) do
-    local skip = _G.__SKIP_RAW_STORE_SPECS and RAW_STORE_SPECS[name]
+    local skip = _G.__SKIP_RAW_STORE_SPECS
+        and (RAW_STORE_SPECS[name] or MEASUREMENT_SPECS[name])
     local ok, err = skip and true or pcall(require, 'crimson-bounty.tests.' .. name)
     if not ok then
         Suite.failed = Suite.failed + 1

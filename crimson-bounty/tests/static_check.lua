@@ -501,6 +501,147 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 14b. And the same rule for the Lua specs
+--------------------------------------------------------------------------
+--
+-- Rule 14 read one file. Everything above it, and the eleven hundred tests
+-- underneath, went unchecked — which mattered the moment several hundred
+-- tests arrived at once from somewhere other than this file's author.
+--
+-- A Lua test body runs from `function()` to its matching `end`, and `end`
+-- closes several other things too, so the depth is counted over every
+-- keyword that opens a block. Keywords inside strings and comments are not
+-- keywords: the first version of this check read the ` end` in a test
+-- fixture's own text as the end of the test and reported four assertions it
+-- had simply stopped before reaching.
+--
+-- A test that only calls a helper is not assertion-free either. The helpers
+-- listed here all raise, so a test whose single statement is a call to one
+-- still fails when it should.
+
+do
+    local OPENS = { ['function'] = true, ['if'] = true, ['for'] = true,
+                    ['while'] = true, ['do'] = true }
+    local HELPERS = { 'ok', 'refused', 'runRow', 'conserves', 'drewCleanly',
+                      'assertRefused', 'assertOnlyAllowed', 'expectRefusal',
+                      'expectOk' }
+
+    --- Blank out every string literal and comment, keeping the length and
+    --- the newlines so positions still line up with the original.
+    local function withoutText(src)
+        local out, i, n = {}, 1, #src
+        while i <= n do
+            local char = src:sub(i, i)
+
+            if char == '-' and src:sub(i + 1, i + 1) == '-' then
+                local long = src:match('^%-%-%[(=*)%[', i)
+                local stop
+                if long then
+                    stop = src:find(']' .. long .. ']', i, true)
+                    stop = stop and stop + #long + 1 or n
+                else
+                    stop = (src:find('\n', i, true) or n + 1) - 1
+                end
+                for j = i, stop do
+                    out[#out + 1] = src:sub(j, j) == '\n' and '\n' or ' '
+                end
+                i = stop + 1
+
+            elseif char == '"' or char == "'" then
+                out[#out + 1] = ' '
+                i = i + 1
+                while i <= n do
+                    local c = src:sub(i, i)
+                    out[#out + 1] = c == '\n' and '\n' or ' '
+                    i = i + 1
+                    if c == '\\' then
+                        if i <= n then
+                            out[#out + 1] = src:sub(i, i) == '\n' and '\n' or ' '
+                            i = i + 1
+                        end
+                    elseif c == char then
+                        break
+                    end
+                end
+
+            elseif char == '[' and src:match('^%[(=*)%[', i) then
+                local eq = src:match('^%[(=*)%[', i)
+                local stop = src:find(']' .. eq .. ']', i, true)
+                stop = stop and stop + #eq + 1 or n
+                for j = i, stop do
+                    out[#out + 1] = src:sub(j, j) == '\n' and '\n' or ' '
+                end
+                i = stop + 1
+
+            else
+                out[#out + 1] = char
+                i = i + 1
+            end
+        end
+        return table.concat(out)
+    end
+
+    local specs = {}
+    for _, path in ipairs(walk('crimson-bounty/tests')) do
+        if path:find('_spec%.lua$') then specs[#specs + 1] = path end
+    end
+    table.sort(specs)
+
+    for _, path in ipairs(specs) do
+        local raw = read(path) or ''
+        -- Names come from the original; structure from the blanked copy.
+        local code = withoutText(raw)
+        local position = 1
+
+        while true do
+            local from, to, name =
+                raw:find("it%s*%(%s*'([^']+)'%s*,%s*function%s*%(%s*%)", position)
+            if not from then break end
+            position = to + 1
+
+            local depth, index, close = 1, to + 1, nil
+            while index <= #code do
+                local wordFrom, wordTo, word = code:find('([%a_]+)', index)
+                if not wordFrom then break end
+                if OPENS[word] then
+                    -- `for ... do` and `while ... do` open one block, not
+                    -- two, so the `do` that closes their header is not
+                    -- counted a second time.
+                    local header = code:sub(math.max(1, wordFrom - 120), wordFrom - 1)
+                    if word ~= 'do' or not header:find('[^%a_]for[^%a_]')
+                        and not header:find('[^%a_]while[^%a_]') then
+                        depth = depth + 1
+                    end
+                elseif word == 'end' then
+                    depth = depth - 1
+                    if depth == 0 then close = wordFrom break end
+                end
+                index = wordTo + 1
+            end
+
+            if close then
+                local body = code:sub(to, close)
+                local asserts = body:find('eq%s*%(') or body:find('truthy%s*%(')
+                    or body:find('falsy%s*%(') or body:find('error%s*%(')
+                if not asserts then
+                    for _, helper in ipairs(HELPERS) do
+                        if body:find('[^%a_]' .. helper .. '%s*%(') then
+                            asserts = true
+                            break
+                        end
+                    end
+                end
+                if not asserts then
+                    failures[#failures + 1] =
+                        ('%s: the test %q contains no assertion; it passes forever '
+                         .. 'and reads as coverage'):format(path, name)
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 -- 15. The app never builds markup from data
 --------------------------------------------------------------------------
 --
