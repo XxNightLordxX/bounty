@@ -3555,6 +3555,196 @@ async function main() {
     });
   })();
 
+
+  /* The page, driven by somebody pressing things at random.
+   *
+   * Every other test here drives a route somebody chose: open this tab,
+   * press that button, assert what appears. A player does not do that. They
+   * press the thing next to the thing they meant, go back, press it again,
+   * open a dialog and close it from the wrong side — and the reports that
+   * started this work were all of that shape: an empty screen, an app that
+   * "just stops".
+   *
+   * So: boot the real app.js against a server that answers plausibly, then
+   * press a random clickable thing, over and over, and after every single
+   * press assert the two properties that hold no matter what was pressed —
+   * the render did not throw, and there is something on screen. Which
+   * screen is not the assertion. That there IS one is.
+   *
+   * Deterministic: the seed picks the sequence, so a failure replays. */
+  await (async function randomWalk() {
+    // Every control the walk ever pressed, so it can assert its own reach.
+    // A walk that degenerates into pressing one tab forty times passes
+    // every assertion below while testing nothing.
+    const REACHED = new Set();
+
+    function rng(seed) {
+      let state = seed;
+      return function (n) {
+        state = (1103515245 * state + 12345) % 2147483648;
+        return state % n;
+      };
+    }
+
+    const CONTRACTS = [
+      { id: 'ct00000001', target: 'Dana Reyes', reason: 'Unpaid debt',
+        state: 'active', role: 'public', mode: 'competitive',
+        reward: { total: 5000 }, hunters: [], slots: 2, currentSlot: 1 },
+      { id: 'ct00000002', target: 'Ann Ryder', reason: 'Snitching',
+        state: 'active', role: 'public', mode: 'exclusive',
+        reward: { total: 12000 }, hunters: [], targetProtected: true },
+    ];
+
+    function server() {
+      return {
+        list: { ok: true, data: { page: 1, pages: 2, contracts: CONTRACTS,
+          settings: { minQueryLength: 3, allowBrowseAll: true, allowNearby: true,
+                      calls: true, reasonMode: 'freetext', reasonMaxLength: 140,
+                      informant: { cost: 25000, account: 'bank', maxPerContract: 2 } } } },
+        mine: { ok: true, data: {
+          created: [Object.assign({}, CONTRACTS[0], { role: 'creator', hunters: [] })],
+          accepted: [Object.assign({}, CONTRACTS[1], { role: 'hunter' })],
+          onMe: [Object.assign({}, CONTRACTS[0], { role: 'target', id: 'ct00000003',
+            bailoutAmount: 15000 })] } },
+        ledger: LEDGER,
+        rewardOptions: { ok: true, data: {
+          cash: 100000, bank: 50000, dirty: 2000, inventoryRead: true,
+          items: [{ name: 'lockpick', label: 'Lockpick', count: 5 }],
+          weapons: [{ name: 'WEAPON_PISTOL', label: 'Pistol', slot: 3, serial: 'C1' }],
+          caps: { itemsEnabled: true, weaponsEnabled: true, slots: 3, maxLines: 60,
+                  cash: 250000, bank: 500000, dirty: 250000, maxStacks: 3,
+                  maxPerStack: 100, maxWeapons: 2, bonusPercent: 200,
+                  cashEnabled: true, bankEnabled: true, dirtyEnabled: true } } },
+        browseTargets: { ok: true, data: { people: [
+          { handle: 'tg1', name: 'Ada Quill' },
+          { handle: 'tg2', name: 'Bo Renn', protected: true }
+        ], total: 2, page: 1, pages: 1 } },
+        searchTargets: { ok: true, data: [{ handle: 'tg1', name: 'Ada Quill' }] },
+        rewardBreakdown: { ok: true, data: { reason: 'Unpaid debt', lines: [
+          { id: 'ct00000001:1', source: 'cash', amount: 5000, slot: 1, removable: true },
+          { id: 'ct00000001:2', source: 'bank', amount: 2500, slot: 2, removable: true }
+        ] } },
+        amendments: { ok: true, data: { open: [
+          { id: 'am00000001', kind: 'shorten_deadline', payload: { seconds: 600 },
+            mine: false, expires: 9999999999 }
+        ] } },
+        threads: { ok: true, data: { threads: [{ handle: 'th1', alias: 'Operative #4' }] } },
+        readThread: { ok: true, data: { messages: [
+          { from: 'Operative #4', body: 'On my way.', at: 1 }
+        ] } },
+        informant: { ok: true, data: { found: true, name: 'Rook Ash' } },
+        mugshotImage: { ok: false, err: 'not_found' },
+        // Everything else answers plainly, so a walk that reaches an
+        // unusual button still gets a reply rather than hanging.
+        create: { ok: true, data: { id: 'ct00000009' } },
+        accept: { ok: true, data: true }, abandon: { ok: true, data: true },
+        cancel: { ok: true, data: true }, revise: { ok: true, data: true },
+        propose: { ok: true, data: { id: 'am00000002' } },
+        respondAmendment: { ok: true, data: { outcome: 'applied' } },
+        improve: { ok: true, data: true }, addEscrow: { ok: true, data: true },
+        withdrawReward: { ok: true, data: { settled: 1 } },
+        bailout: { ok: true, data: true }, sendMessage: { ok: true, data: true },
+        requestCall: { ok: true, data: { placed: true } },
+        armKidnap: { ok: true, data: true },
+        kidnapProgress: { ok: true, data: { remaining: 30, total: 60 } },
+      };
+    }
+
+    /* One walk. Returns a description of the first thing that went wrong,
+       or null. */
+    async function walk(seed, steps) {
+      const pick = rng(seed);
+      const app = boot(server());
+      await settle(); await settle();
+
+      const pressed = [];
+
+      for (let step = 0; step < steps; step++) {
+        // Everything a player could actually press: the tab bar lives
+        // outside #view, so it is gathered separately.
+        const clickable = app.document.all().filter(function (n) {
+          return typeof n.onclick === 'function';
+        });
+        if (clickable.length === 0) {
+          return { seed: seed, at: step, why: 'nothing on screen is clickable',
+                   trail: pressed };
+        }
+
+        const target = clickable[pick(clickable.length)];
+        const label = (target.textContent || target._id || target.tagName || '?')
+          .slice(0, 40);
+        pressed.push(label);
+        REACHED.add(label);
+
+        try {
+          target.onclick();
+        } catch (err) {
+          return { seed: seed, at: step, why: 'a click threw: ' + err.message,
+                   trail: pressed };
+        }
+
+        // Typing into whatever inputs exist, sometimes, because a form that
+        // is only ever clicked is not a form anybody used.
+        if (pick(4) === 0) {
+          const inputs = app.document.all().filter(function (n) {
+            return n.tagName === 'INPUT' && typeof n.oninput === 'function';
+          });
+          if (inputs.length) {
+            const box = inputs[pick(inputs.length)];
+            box.value = ['Ryder', '', '5000', '-1', 'zz'][pick(5)];
+            try { box.oninput(); } catch (err) {
+              return { seed: seed, at: step, why: 'typing threw: ' + err.message,
+                       trail: pressed };
+            }
+          }
+        }
+
+        // Any debounce the page is waiting on.
+        app.timers.filter(function (t) { return t.ms === 300; })
+          .forEach(function (t) { try { t.fn(); } catch (e) {} });
+
+        await settle();
+
+        if (app.view.textContent.trim() === '') {
+          return { seed: seed, at: step, why: 'the screen went blank',
+                   trail: pressed };
+        }
+      }
+      return null;
+    }
+
+    const WALKS = 25, STEPS = 40;
+    const broke = [];
+    for (let seed = 1; seed <= WALKS; seed++) {
+      const bad = await walk(seed, STEPS);
+      if (bad) {
+        broke.push('seed ' + bad.seed + ' step ' + bad.at + ': ' + bad.why
+          + '\n      after: ' + bad.trail.slice(-8).join(' > '));
+      }
+    }
+
+    it('survives ' + WALKS + ' walks of ' + STEPS + ' presses without breaking', function () {
+      eq(broke.length, 0,
+        'the page threw or emptied under ordinary misuse:\n    '
+        + broke.slice(0, 4).join('\n    '));
+    });
+
+    it('actually gets around the app while doing it', function () {
+      truthy(REACHED.size >= 15,
+        'the walk pressed only ' + REACHED.size + ' distinct controls, which '
+        + 'is it having degenerated into one tab rather than the app having '
+        + 'shrunk: ' + Array.from(REACHED).join(' | '));
+    });
+
+    it('reaches the screens behind the tabs, not just the tabs', function () {
+      const deep = ['Place contract', 'Propose change', 'Buy informant data'];
+      const missed = deep.filter(function (label) { return !REACHED.has(label); });
+      eq(missed.length, 0,
+        'a walk that never leaves the board is not exercising the app: '
+        + missed.join(', ') + ' were never reached');
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a
