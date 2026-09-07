@@ -834,23 +834,106 @@ describe('json sharding', function()
         eq(#reopened.quarantined(), 0)
     end)
 
-    it('forgets a quarantine once the store is opened cleanly again', function()
-        local store = fresh()
-        store.writeContract(contract('ct1'))
-        store.close()
-        Natives.files['data/contracts/ct1.json'] = nil
+    --- What the boot banner tells an operator to do, done.
+    ---
+    --- The banner names the contract and says "Restore those files from a
+    --- backup and restart to recover them". That instruction is only
+    --- followable while the index still names the id: there is no directory
+    --- listing native, so the index is the only record of which shards
+    --- exist, and a shard the index does not name is never opened again.
+    ---
+    --- open() ends by writing the index — assertWritable proves the
+    --- directory is writable by writing the real thing — so an id dropped
+    --- while loading is erased from disk by the very boot that quarantined
+    --- it. The contract, its escrow, and the warning all go with it.
+    describe('a shard that could not be read', function()
+        local function withOneMissing()
+            local store = fresh()
+            store.writeContract(contract('ct1'))
+            store.writeEscrow('ct1', { { id = 'ct1:1', contract_id = 'ct1',
+                slot = 1, source = 'cash', amount = 50000, state = CB.ESCROW_STATE.HELD } })
+            store.writeContract(contract('ct2'))
+            store.close()
 
-        package.loaded['crimson-bounty.server.storage.json'] = nil
-        local reopened = require('crimson-bounty.server.storage.json')
-        reopened.open()
-        eq(#reopened.quarantined(), 1)
+            local backup = Natives.files['data/contracts/ct1.json']
+            truthy(backup, 'the fixture has to have written a shard to lose')
+            Natives.files['data/contracts/ct1.json'] = nil
 
-        -- A second open with nothing wrong must not still be complaining
-        -- about the last one.
-        reopened.close()
-        Natives.files = {}
-        reopened.open()
-        eq(#reopened.quarantined(), 0, 'a stale warning is one nobody reads')
+            package.loaded['crimson-bounty.server.storage.json'] = nil
+            local reopened = require('crimson-bounty.server.storage.json')
+            reopened.open()
+            return reopened, backup
+        end
+
+        local function indexIds()
+            local decoded = json.decode(Natives.files['data/store.json'] or '{}')
+            local ids = {}
+            for _, id in ipairs(decoded.contractIds or {}) do ids[#ids + 1] = id end
+            table.sort(ids)
+            return ids
+        end
+
+        it('is reported', function()
+            local reopened = withOneMissing()
+            eq(#reopened.quarantined(), 1)
+            eq(reopened.quarantined()[1].id, 'ct1')
+        end)
+
+        it('keeps its id in the index the same boot reports it', function()
+            withOneMissing()
+            eq(table.concat(indexIds(), ','), 'ct1,ct2',
+                'open() writes the index before anything reports the '
+                .. 'quarantine, so an id dropped here is erased from disk by '
+                .. 'the boot that found the problem')
+        end)
+
+        it('comes back when the backup is restored, as the banner says', function()
+            local reopened, backup = withOneMissing()
+            reopened.close()
+            Natives.files['data/contracts/ct1.json'] = backup
+
+            package.loaded['crimson-bounty.server.storage.json'] = nil
+            local recovered = require('crimson-bounty.server.storage.json')
+            recovered.open()
+
+            truthy(recovered.readContract('ct1'),
+                'the operator did exactly what they were told and the '
+                .. 'contract did not come back')
+            local lines = recovered.readEscrow('ct1')
+            eq(#lines, 1, 'its escrow has to come back with it')
+            eq(lines[1].amount, 50000)
+            eq(#recovered.quarantined(), 0, 'and the warning has to clear')
+        end)
+
+        it('is still reported on the next boot while it is still missing', function()
+            local reopened = withOneMissing()
+            reopened.close()
+
+            package.loaded['crimson-bounty.server.storage.json'] = nil
+            local again = require('crimson-bounty.server.storage.json')
+            again.open()
+            eq(#again.quarantined(), 1,
+                'a warning that fires once and then goes quiet leaves the '
+                .. 'operator believing it was dealt with')
+        end)
+
+        it('stops being reported once the operator drops the id themselves', function()
+            local reopened = withOneMissing()
+            reopened.close()
+
+            -- The other half of what the banner allows: give up on it.
+            local decoded = json.decode(Natives.files['data/store.json'])
+            decoded.contractIds = { 'ct2' }
+            Natives.files['data/store.json'] = json.encode(decoded)
+
+            package.loaded['crimson-bounty.server.storage.json'] = nil
+            local after = require('crimson-bounty.server.storage.json')
+            after.open()
+            eq(#after.quarantined(), 0,
+                'an id the operator removed must not be put back, or there is '
+                .. 'no way to ever silence it')
+            truthy(after.readContract('ct2'), 'and the rest of the store is fine')
+        end)
     end)
 
     it('migrates a store written by the single-file version', function()

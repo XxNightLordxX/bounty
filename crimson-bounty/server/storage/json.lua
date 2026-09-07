@@ -180,9 +180,38 @@ function JsonStore.readBackMismatches() return mismatches end
 --- field held.
 local function buildIndex()
     local index = { seq = seq, contractIds = {} }
+    local named = {}
     for id in pairs(shardIds) do
+        named[id] = true
         index.contractIds[#index.contractIds + 1] = id
     end
+
+    -- A contract whose shard could not be read stays named here.
+    --
+    -- There is no directory listing native, so this index is the only record
+    -- of which shards exist: an id it does not name is a file nothing will
+    -- ever open again. And open() ends by writing this index — assertWritable
+    -- proves the directory is writable by writing the real thing — so an id
+    -- left out here was erased from disk by the very boot that quarantined
+    -- it, before the banner naming it had even been printed.
+    --
+    -- That made the banner's own instruction impossible to follow. An
+    -- operator restoring the file from a backup and restarting, exactly as
+    -- told, got nothing back: the contract, its held escrow and the warning
+    -- itself were already gone, and they had every reason to believe it had
+    -- worked. Refusing to start, which this replaced, at least left the id
+    -- on disk.
+    --
+    -- Removing the id is still the operator's to do, by taking it out of
+    -- this file. It is not put back once they have.
+    for i = 1, #quarantined do
+        local id = quarantined[i].id
+        if id and not named[id] then
+            named[id] = true
+            index.contractIds[#index.contractIds + 1] = id
+        end
+    end
+
     table.sort(index.contractIds)
 
     -- Everything that is not per-contract. Small, and rewritten whole.
