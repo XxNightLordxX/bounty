@@ -275,3 +275,221 @@ describe('a protected target is refused up front', function()
         eq(reason, 'target_protected')
     end)
 end)
+
+--- Every way a server can decide somebody is restrained.
+---
+--- A live delivery only counts if the target is visibly under the hunter's
+--- control, and Config.Kidnap.Coercion lets an operator choose which
+--- detectors say so: handcuff metadata, riding in the hunter's vehicle, or
+--- an export from their own rope or ziptie script. The comment above them
+--- promises that "servers with different restraint scripts all have a
+--- working path".
+---
+--- Line coverage said otherwise. The handcuff detector is exercised
+--- everywhere; the vehicle one barely; and the RestraintProvider branch
+--- never ran once in the whole suite — the same shape as the reason presets
+--- and the browse scopes, a documented option nothing had ever chosen. An
+--- operator who sets it is the only person who finds out whether it works.
+describe('deciding whether a target is restrained', function()
+    local AT = { x = 300.0, y = 300.0, z = 30.0 }
+
+    --- All three parties together, which every detector needs anyway.
+    local function together(s)
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        for _, src in ipairs({ 1, 2, 3 }) do
+            Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z }
+        end
+        return f, c
+    end
+
+    --- Only the named detectors switched on, so each is tested alone rather
+    --- than being carried by whichever one happens to be true.
+    local function onlyDetector(name)
+        local rules = { handcuffed = false, passengerOfHunter = false }
+        if name then rules[name] = true end
+        return rules
+    end
+
+    it('takes handcuff metadata where that detector is on', function()
+        local s = newStack()
+        local f, c = together(s)
+        withConfig({ { Config.Kidnap, 'Coercion', onlyDetector('handcuffed') } }, function()
+            Env.players[2].PlayerData.metadata.ishandcuffed = true
+            local ok, how = s.kidnap.isCoerced(3, 2)
+            truthy(ok, 'cuffs are the detector every server has')
+            eq(how, 'handcuffed')
+        end)
+    end)
+
+    it('ignores handcuff metadata where that detector is off', function()
+        local s = newStack()
+        local f, c = together(s)
+        withConfig({ { Config.Kidnap, 'Coercion', onlyDetector(nil) } }, function()
+            Env.players[2].PlayerData.metadata.ishandcuffed = true
+            falsy(s.kidnap.isCoerced(3, 2),
+                'an operator who switched a detector off must not still have it')
+        end)
+    end)
+
+    it('takes a target riding in the hunters own vehicle', function()
+        local s = newStack()
+        local f, c = together(s)
+        withConfig({ { Config.Kidnap, 'Coercion', onlyDetector('passengerOfHunter') } }, function()
+            Env.players[2]._vehicle = 77
+            Env.players[3]._vehicle = 77
+            local ok, how = s.kidnap.isCoerced(3, 2)
+            truthy(ok, 'in the boot of the hunters car is under their control')
+            eq(how, 'in_hunter_vehicle')
+        end)
+    end)
+
+    it('does not take a target riding in somebody elses vehicle', function()
+        local s = newStack()
+        local f, c = together(s)
+        withConfig({ { Config.Kidnap, 'Coercion', onlyDetector('passengerOfHunter') } }, function()
+            Env.players[2]._vehicle = 77
+            Env.players[3]._vehicle = 88
+            falsy(s.kidnap.isCoerced(3, 2),
+                'two people driving separately is not a kidnapping')
+        end)
+    end)
+
+    --- The branch nothing had ever run.
+    describe('a servers own restraint script', function()
+        local PROVIDER = 'rope-restraints'
+
+        local function withProvider(state, answer, fn)
+            Natives.resourceStates[PROVIDER] = state
+            exports[PROVIDER] = answer and {
+                IsRestrained = function(_, src)
+                    if answer == 'throws' then error('provider exploded', 0) end
+                    if answer == 'wrong-type' then return 'yes' end
+                    return answer == 'restrained'
+                end,
+            } or nil
+            local ok, err = pcall(fn)
+            Natives.resourceStates[PROVIDER] = nil
+            exports[PROVIDER] = nil
+            if not ok then error(err, 0) end
+        end
+
+        it('takes the providers word when it says restrained', function()
+            local s = newStack()
+            local f, c = together(s)
+            withConfig({
+                { Config.Kidnap, 'Coercion', onlyDetector(nil) },
+                { Config.Kidnap, 'RestraintProvider', PROVIDER },
+            }, function()
+                withProvider('started', 'restrained', function()
+                    local ok, how = s.kidnap.isCoerced(3, 2)
+                    truthy(ok, 'an operator who wired their own rope script has '
+                        .. 'no other way to make a delivery count')
+                    eq(how, 'restraint_provider')
+                end)
+            end)
+        end)
+
+        it('takes its word when it says not restrained', function()
+            local s = newStack()
+            local f, c = together(s)
+            withConfig({
+                { Config.Kidnap, 'Coercion', onlyDetector(nil) },
+                { Config.Kidnap, 'RestraintProvider', PROVIDER },
+            }, function()
+                withProvider('started', 'free', function()
+                    falsy(s.kidnap.isCoerced(3, 2), 'a free target is not a delivery')
+                end)
+            end)
+        end)
+
+        it('survives a provider that throws', function()
+            local s = newStack()
+            local f, c = together(s)
+            withConfig({
+                { Config.Kidnap, 'Coercion', onlyDetector(nil) },
+                { Config.Kidnap, 'RestraintProvider', PROVIDER },
+            }, function()
+                withProvider('started', 'throws', function()
+                    local ok, err = pcall(s.kidnap.isCoerced, 3, 2)
+                    truthy(ok, 'a third-party script raising must not take the '
+                        .. 'handover down with it: ' .. tostring(err))
+                end)
+            end)
+        end)
+
+        it('does not believe a provider that answers with the wrong type', function()
+            local s = newStack()
+            local f, c = together(s)
+            withConfig({
+                { Config.Kidnap, 'Coercion', onlyDetector(nil) },
+                { Config.Kidnap, 'RestraintProvider', PROVIDER },
+            }, function()
+                withProvider('started', 'wrong-type', function()
+                    -- A string is truthy in Lua, so a provider returning
+                    -- 'yes' would satisfy a bare truthiness test and let a
+                    -- free target be delivered.
+                    local ok = s.kidnap.isCoerced(3, 2)
+                    eq(type(ok), 'boolean', 'the answer handed on has to be a boolean')
+                end)
+            end)
+        end)
+
+        it('does not consult a provider whose resource is not running', function()
+            local s = newStack()
+            local f, c = together(s)
+            local asked = false
+            withConfig({
+                { Config.Kidnap, 'Coercion', onlyDetector(nil) },
+                { Config.Kidnap, 'RestraintProvider', PROVIDER },
+            }, function()
+                Natives.resourceStates[PROVIDER] = 'stopped'
+                exports[PROVIDER] = { IsRestrained = function() asked = true return true end }
+                falsy(s.kidnap.isCoerced(3, 2),
+                    'a stopped resource must not decide a delivery')
+                falsy(asked, 'and must not be called at all')
+                Natives.resourceStates[PROVIDER] = nil
+                exports[PROVIDER] = nil
+            end)
+        end)
+    end)
+
+    --- Any enabled detector is enough, which is what the comment promises.
+    it('is satisfied by whichever detector happens to be true', function()
+        local s = newStack()
+        local f, c = together(s)
+        withConfig({ { Config.Kidnap, 'Coercion',
+            { handcuffed = true, passengerOfHunter = true } } }, function()
+            Env.players[2].PlayerData.metadata.ishandcuffed = false
+            Env.players[2]._vehicle = 55
+            Env.players[3]._vehicle = 55
+            truthy(s.kidnap.isCoerced(3, 2),
+                'one detector saying no must not veto another saying yes')
+        end)
+    end)
+
+    it('refuses when no detector says so', function()
+        local s = newStack()
+        local f, c = together(s)
+        withConfig({ { Config.Kidnap, 'Coercion',
+            { handcuffed = true, passengerOfHunter = true } } }, function()
+            falsy(s.kidnap.isCoerced(3, 2),
+                'walking beside a willing friend is not a kidnapping')
+        end)
+    end)
+
+    it('needs no detector at all where coercion is not required', function()
+        local s = newStack()
+        local f, c = together(s)
+        withConfig({ { Config.Kidnap, 'RequireCoercion', false } }, function()
+            local ok, how = s.kidnap.isCoerced(3, 2)
+            truthy(ok, 'an operator who turned the requirement off has turned it off')
+            eq(how, 'not_required')
+        end)
+    end)
+end)

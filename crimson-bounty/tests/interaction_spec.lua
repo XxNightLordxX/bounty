@@ -2208,3 +2208,110 @@ describe('browsing for a target', function()
         eq(s.storage.readContract(reply.data.id).target_cid, 'PERSON10')
     end)
 end)
+
+--- More than one amendment on the table at once.
+---
+--- Config.Amendments.MaxOpenPerContract ships as 1, and every test takes it
+--- at that. So the code that handles a SECOND open proposal has never run:
+--- not the server's, which allows the limit to be raised, and not the
+--- page's, which renders open.forEach over a list and has only ever been
+--- given lists of one.
+---
+--- An operator who raises it is the first person to run any of it. That is
+--- the same shape as the reason presets and the restraint provider — a
+--- documented setting whose other value nothing has ever chosen.
+describe('two amendments open on the same contract', function()
+    local function negotiating()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 5000 } },
+                                 { baseline = { cash = 3000 } } } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        return s, f, c
+    end
+
+    it('refuses a second where the operator allows only one', function()
+        local s, f, c = negotiating()
+        truthy(s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+            { seconds = 600 }))
+        local second, err = s.amendments.propose(f.creator, c.id,
+            CB.AMENDMENT.CHANGE_REASON, { reason = 'Actually, theft' })
+        falsy(second, 'the shipped limit is one')
+        eq(err, CB.ERR.LIMIT_REACHED)
+    end)
+
+    it('allows a second where the operator allows two', function()
+        local s, f, c = negotiating()
+        withConfig({ { Config.Amendments, 'MaxOpenPerContract', 2 } }, function()
+            local first = s.amendments.propose(f.creator, c.id,
+                CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+            truthy(first, 'the first has to be accepted')
+            local second, err = s.amendments.propose(f.creator, c.id,
+                CB.AMENDMENT.CHANGE_REASON, { reason = 'Actually, theft' })
+            truthy(second, 'raising the limit has to actually raise it: '
+                .. tostring(err))
+            eq(#s.storage.readOpenAmendments(c.id), 2)
+        end)
+    end)
+
+    --- The one that matters: answering one must not answer the other.
+    it('answers each one independently', function()
+        local s, f, c = negotiating()
+        withConfig({ { Config.Amendments, 'MaxOpenPerContract', 2 } }, function()
+            local first = s.amendments.propose(f.creator, c.id,
+                CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+            local second = s.amendments.propose(f.creator, c.id,
+                CB.AMENDMENT.CHANGE_REASON, { reason = 'Actually, theft' })
+            truthy(first and second, 'the fixture needs two on the table')
+
+            truthy(s.amendments.respond(f.hunter, first.id, true),
+                'the first has to be answerable')
+
+            local stillOpen = s.storage.readOpenAmendments(c.id)
+            eq(#stillOpen, 1,
+                'approving one proposal closed the other, so a party agreed '
+                .. 'to something nobody put to them')
+            eq(stillOpen[1].id, second.id)
+            eq(s.storage.readContract(c.id).reason, 'Unpaid debt',
+                'the unanswered proposal was applied anyway')
+        end)
+    end)
+
+    it('applies only what was agreed, when both are answered', function()
+        local s, f, c = negotiating()
+        withConfig({ { Config.Amendments, 'MaxOpenPerContract', 2 } }, function()
+            local first = s.amendments.propose(f.creator, c.id,
+                CB.AMENDMENT.CHANGE_REASON, { reason = 'Actually, theft' })
+            local second = s.amendments.propose(f.creator, c.id,
+                CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+            truthy(first and second)
+
+            s.amendments.respond(f.hunter, first.id, true)
+            s.amendments.respond(f.hunter, second.id, false)
+
+            eq(s.storage.readContract(c.id).reason, 'Actually, theft',
+                'the approved one has to take effect')
+            eq(#s.storage.readOpenAmendments(c.id), 0,
+                'and a declined one is no longer on the table')
+        end)
+    end)
+
+    it('shows both to the other party', function()
+        local s, f, c = negotiating()
+        withConfig({ { Config.Amendments, 'MaxOpenPerContract', 2 } }, function()
+            s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+                { seconds = 600 })
+            s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_REASON,
+                { reason = 'Actually, theft' })
+
+            local open = s.amendments.openFor(f.hunter, c.id)
+            eq(#open, 2,
+                'the hunter can only answer what they are shown, and the page '
+                .. 'renders whatever list it is given')
+        end)
+    end)
+end)
