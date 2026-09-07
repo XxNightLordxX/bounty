@@ -2323,6 +2323,18 @@
     var canBrowse = settings().allowBrowseAll !== false;
     var canNearby = settings().allowNearby === true;
 
+    // Start on a scope this server will actually answer.
+    //
+    // The picker opened on 'all' whatever the server allowed, and the row of
+    // scope buttons is hidden when it holds only one — so on a server with
+    // AllowBrowseAll off and AllowNearby on, it asked for the one scope the
+    // server refuses and drew no button to change it. An empty target list
+    // on a city full of people, with nothing on screen to explain it and no
+    // way out of it. Both settings are documented and supported; only the
+    // default pairing had ever been looked at.
+    if (browse.scope === 'all' && !canBrowse && canNearby) { browse.scope = 'nearby'; }
+    if (browse.scope === 'nearby' && !canNearby && canBrowse) { browse.scope = 'all'; }
+
     var modes = el('div', 'row target-modes');
     var allButton, nearButton;
 

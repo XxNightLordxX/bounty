@@ -185,6 +185,58 @@ describe('informant data', function()
         falsy(data.cid, 'citizen ids are internal keys')
         falsy(data.citizenid)
     end)
+
+    --- Config.Informant.RevealMode takes 'name' or 'description'. Only the
+    --- default had ever been exercised, which is how a mode an operator can
+    --- choose goes unnoticed until somebody chooses it — the same way
+    --- Config.Reason.Mode = 'preset' made every contract unplaceable.
+    ---
+    --- The stack is opened before withConfig on purpose: newStack() resets
+    --- the whole config, so opening one inside it puts the mode back and the
+    --- test measures the default it thought it had changed.
+    describe('in each mode an operator can choose', function()
+        it('names the hunter on a server set to names', function()
+            local s, f, c = seeded()
+            tailing(s)
+            local data
+            withConfig({ { Config.Informant, 'RevealMode', 'name' } }, function()
+                local _, _, got = s.informant.buy(f.creator, c.id)
+                data = got
+            end)
+            truthy(data and data.found)
+            eq(data.name, 'Rook Ash')
+            falsy(data.description, 'one mode or the other, not both')
+        end)
+
+        it('describes the hunter on a server set to descriptions', function()
+            local s, f, c = seeded()
+            tailing(s)
+            local data
+            withConfig({ { Config.Informant, 'RevealMode', 'description' } }, function()
+                local _, _, got = s.informant.buy(f.creator, c.id)
+                data = got
+            end)
+            truthy(data and data.found, 'a description is still a hit')
+            truthy(data.description and #data.description > 0,
+                'the whole point of this mode is that there is something to '
+                .. 'read, and the page renders name or description')
+            falsy(data.name,
+                'an operator who chose descriptions did so to stop names '
+                .. 'being handed out')
+        end)
+
+        it('gives away no citizen id in either mode', function()
+            for _, mode in ipairs({ 'name', 'description' }) do
+                local s, f, c = seeded()
+                tailing(s)
+                withConfig({ { Config.Informant, 'RevealMode', mode } }, function()
+                    local _, _, data = s.informant.buy(f.creator, c.id)
+                    falsy(data.cid, mode .. ' mode leaked a citizen id')
+                    falsy(data.citizenid, mode .. ' mode leaked a citizen id')
+                end)
+            end
+        end)
+    end)
 end)
 
 describe('amendments', function()

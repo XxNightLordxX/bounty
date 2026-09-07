@@ -3041,6 +3041,161 @@ async function main() {
     });
   })();
 
+  /* The ways of finding somebody that this server actually offers.
+   *
+   * Config.Targeting.AllowBrowseAll and AllowNearby are both documented and
+   * both supported. The picker opens on 'all' regardless, and the row of
+   * scope buttons is hidden when it holds only one — so on a server that
+   * allows nearby and not browse-all, the picker asked for a scope the
+   * server refuses AND drew no button to change it. A permanently empty
+   * target list on a city full of people, which is what an operator who
+   * turned browsing off would have got and had no way to diagnose. */
+  await (async function targetingScopes() {
+    /* `targeting` is read on every request rather than captured, so a test
+       can change what the server allows mid-session and the browse fixture
+       answers by the new rules. Capturing it meant a fixture that went on
+       answering a scope the server had just stopped offering — which had
+       this very test passing with the code it tests removed. */
+    async function picker(targeting) {
+      const responses = {
+        list: { ok: true, data: {
+          page: 1, pages: 1, contracts: [],
+          settings: Object.assign({ allowBrowseAll: true, allowNearby: false }, targeting)
+        } },
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+        ledger: LEDGER,
+        browseTargets: function (body) {
+          const allowed = (body.scope === 'nearby')
+            ? (targeting.allowNearby === true)
+            : (targeting.allowBrowseAll !== false);
+          // Exactly what the server does with a scope it does not offer.
+          if (!allowed) { return { ok: true, data: { people: [], total: 0, page: 1, pages: 1 } }; }
+          return { ok: true, data: {
+            people: [{ handle: 'tg00000001', name: 'Ann Ryder' }],
+            total: 1, page: 1, pages: 1
+          } };
+        }
+      };
+      const app = boot(responses);
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+      await settle(); await settle();
+      app.responses = responses;
+      app.targeting = targeting;
+      return app;
+    }
+
+    const nearbyOnly = await picker({ allowBrowseAll: false, allowNearby: true });
+
+    it('finds somebody on a server that allows nearby and not browsing', function () {
+      truthy(nearbyOnly.view.textContent.indexOf('Ann Ryder') !== -1,
+        'the picker asked for a scope this server refuses and drew no button '
+        + 'to change it, so it was empty on a city full of people: '
+        + JSON.stringify(nearbyOnly.view.textContent));
+    });
+
+    it('asked for the scope the server actually offers', function () {
+      const asked = nearbyOnly.sent.filter(function (x) { return x.name === 'browseTargets'; });
+      truthy(asked.length > 0, 'it has to ask at all');
+      eq(asked[0].body.scope, 'nearby',
+        'the first request has to be one the server will answer, not the '
+        + 'hardcoded default');
+    });
+
+    const browseOnly = await picker({ allowBrowseAll: true, allowNearby: false });
+
+    it('still browses everyone on a default server', function () {
+      truthy(browseOnly.view.textContent.indexOf('Ann Ryder') !== -1,
+        'the default configuration has to keep working');
+      const asked = browseOnly.sent.filter(function (x) { return x.name === 'browseTargets'; });
+      eq(asked[0].body.scope, 'all');
+    });
+
+    const both = await picker({ allowBrowseAll: true, allowNearby: true });
+
+    it('offers both switches when the server offers both', function () {
+      const buttons = both.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON'
+          && (n.textContent === 'Everyone' || n.textContent === 'Near me');
+      });
+      eq(buttons.length, 2, 'both ways of looking should be offered');
+    });
+
+    /* The other direction, which a player can reach without anything odd
+       happening: they press Near me on a server that offers it, an operator
+       turns AllowNearby off, and the next board read carries the new
+       settings into a page whose remembered scope is now the refused one.
+       Without the correction the picker is empty and the button that would
+       have changed it is gone. */
+    const switched = await picker({ allowBrowseAll: true, allowNearby: true });
+    switched.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Near me';
+    })[0].onclick();
+    await settle(); await settle();
+
+    switched.targeting.allowNearby = false;
+    switched.responses.list = { ok: true, data: {
+      page: 1, pages: 1, contracts: [],
+      settings: { allowBrowseAll: true, allowNearby: false }
+    } };
+    switched.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'board'; })[0].onclick();
+    await settle(); await settle();
+    switched.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    // A filter typed after the change, which is what forces a fresh request
+    // rather than a redraw of the list the picker is still holding.
+    const filter = switched.document.getElementById('target-query');
+    filter.value = 'Ryder';
+    filter.oninput();
+    switched.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+
+    // Asserted on what was asked for, not on what is on screen: the picker
+    // keeps the last list it was given, so a stale one would answer this
+    // question with an answer from before the settings changed.
+    const askedAfter = switched.sent.filter(function (x) {
+      return x.name === 'browseTargets';
+    });
+
+    it('recovers when the scope it remembered stops being offered', function () {
+      const last = askedAfter[askedAfter.length - 1];
+      truthy(last, 'the picker has to have asked at all');
+      eq(last.body.scope, 'all',
+        'the remembered scope is the one this server now refuses and the '
+        + 'button that would change it is gone, so the picker has to move '
+        + 'itself to the one that is left');
+    });
+
+    it('and shows the people that scope finds', function () {
+      truthy(switched.view.textContent.indexOf('Ann Ryder') !== -1,
+        'after recovering, the list has to have somebody in it: '
+        + JSON.stringify(switched.view.textContent));
+    });
+
+    const neither = await picker({ allowBrowseAll: false, allowNearby: false });
+
+    // searchTargets does not read either flag — turning browsing off leaves
+    // the name search, which is what the picker falls back to. So the right
+    // behaviour here is the prompt to type a name, not a complaint.
+    it('falls back to the name search when neither way of browsing is offered', function () {
+      const shown = neither.view.textContent;
+      truthy(shown.indexOf('letters of their name') !== -1,
+        'browsing off still leaves a name search, and the picker has to say '
+        + 'so rather than sit empty: ' + JSON.stringify(shown));
+    });
+
+    it('sends no browse request it knows will come back empty', function () {
+      const browsed = neither.sent.filter(function (x) { return x.name === 'browseTargets'; });
+      eq(browsed.length, 0,
+        'a request for a scope the server has switched off is a rate-limit '
+        + 'token spent on a guaranteed empty answer');
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a
