@@ -483,8 +483,13 @@ do
 
             if close then
                 local body = src:sub(open, close)
+                -- drewCleanly is an assertion in its own right: it throws
+                -- when the app took a render throw the harness recorded.
+                -- Listed here rather than left out, because a test whose
+                -- whole point is "and nothing threw" has no other one.
                 local asserts = body:find('eq%s*%(') or body:find('truthy%s*%(')
                     or body:find('falsy%s*%(') or body:find('throw%s')
+                    or body:find('drewCleanly%s*%(')
                 if not asserts then
                     failures[#failures + 1] =
                         ('%s: the test %q contains no assertion; it passes forever and '

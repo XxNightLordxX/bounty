@@ -170,6 +170,95 @@ describe('the client on a phone missing an export', function()
     end)
 end)
 
+--- Everything that reaches the client from outside it.
+---
+--- Two ways in and both took whatever they were given. The NUI endpoints
+--- are addressable by resource name from any frame the phone draws, and net
+--- event names are a server-wide namespace that every other resource on the
+--- box shares — so "our own server always sends a table" is a statement
+--- about one of the two senders.
+describe('the client handed something it did not expect', function()
+    it('answers the page when an action is posted with something odd', function()
+        Env.reset()
+        Client.boot()
+
+        -- Every one of the generic callbacks goes through App.request, so
+        -- one of them standing for all of them is enough — and `list` is the
+        -- one the page posts on every open.
+        for _, odd in ipairs({ 42, true, 'ct00000001' }) do
+            local answered, err = Client.nuiCall('crimson:list', odd)
+            truthy(answered ~= nil,
+                ('a %s body must not throw out of the callback: %s')
+                    :format(type(odd), tostring(err)))
+
+            local asked = Client.toServer[#Client.toServer]
+            truthy(asked, 'and the server must still have been asked')
+            eq(asked.name, 'crimson-bounty:list')
+            truthy(asked.args[1] and asked.args[1].__rid,
+                'with a request id on it, or nothing can ever answer it')
+        end
+    end)
+
+    it('keeps the request answerable after an odd body', function()
+        -- The consequence is not the throw, it is what the throw skipped:
+        -- nothing was pending, so the 15s timeout had no request to rescue
+        -- and the page's promise never settled. The button stays dead for
+        -- the rest of the session.
+        Env.reset()
+        Client.boot()
+
+        Client.nuiCall('crimson:list', 42)
+        local asked = Client.toServer[#Client.toServer]
+        local rid = asked.args[1] and asked.args[1].__rid
+        truthy(rid)
+
+        truthy(Client.fire('crimson-bounty:result', {
+            rid = rid, event = 'list', ok = true, data = { contracts = {} },
+        }), 'the result handler must not throw')
+        truthy(Client.answered, 'and the page must be answered')
+        truthy(Client.answer and Client.answer.ok)
+    end)
+
+    it('survives a result that is not a table', function()
+        Env.reset()
+        Client.boot()
+
+        for _, odd in ipairs({ 42, true }) do
+            truthy(Client.fire('crimson-bounty:result', odd),
+                ('a %s result must not throw out of the handler'):format(type(odd)))
+        end
+        truthy(Client.fire('crimson-bounty:result'),
+            'nor must a result that is missing entirely')
+    end)
+
+    it('still delivers a real result after a malformed one', function()
+        -- The handler forwards every reply to the open app as well as
+        -- resolving the request that asked. A throw skipped both, so the
+        -- app was told nothing either.
+        Env.reset()
+        Client.boot()
+
+        Client.nuiCall('crimson:mine', {})
+        local asked = Client.toServer[#Client.toServer]
+        local rid = asked.args[1] and asked.args[1].__rid
+
+        truthy(Client.fire('crimson-bounty:result', 42),
+            'a malformed reply must not throw out of the handler')
+        falsy(Client.answered, 'a malformed reply answers nobody')
+
+        Client.fire('crimson-bounty:result', {
+            rid = rid, event = 'mine', ok = true, data = { created = {} },
+        })
+        truthy(Client.answered, 'and the real reply still lands')
+
+        local forwarded
+        for _, call in ipairs(Client.phone) do
+            if call.call == 'SendCustomAppMessage' then forwarded = call end
+        end
+        truthy(forwarded, 'and the open app is told about it')
+    end)
+end)
+
 describe('the camera, on a phone that dies mid-upload', function()
     --- Reported from a live server: the photo route says "uploading" and then
     --- the phone crashes. Everything here is a way this resource could be the

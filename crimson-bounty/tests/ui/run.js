@@ -177,6 +177,12 @@ function boot(responses) {
 
   const booted_app = {
     document, view, sent, timers, sandbox, notices,
+    // Throws that escaped a coalesced redraw. render() runs on a timeout of
+    // zero, so a throw inside it lands nowhere a test can see it: the app
+    // draws a blank tab and the suite reads that as an empty section. Four
+    // shipped render crashes hid behind that silence. Recorded here and
+    // asserted on by every journey below.
+    thrown: [],
     // What the player is currently being told. The notice lives outside
     // #view precisely so it does not rebuild the form, so it has to be read
     // from its own node rather than from the view.
@@ -205,7 +211,7 @@ function settle() {
         const due = app.timers.filter(function (t) { return !t.repeating && !t.ms; });
         due.forEach(function (t) { app.timers.splice(app.timers.indexOf(t), 1); });
         due.forEach(function (t) {
-          try { t.fn(); } catch (err) { /* a broken timer is the test's to catch */ }
+          try { t.fn(); } catch (err) { app.thrown.push(err); }
         });
       });
       resolve();
@@ -225,6 +231,34 @@ function click(app, label) {
   }
   match[0].onclick();
   return match[0];
+}
+
+/** Every throw the app took while drawing, as one message. */
+function threw(app) {
+  return app.thrown.map(function (e) { return e.message; }).join(' | ');
+}
+
+/** Switch tabs the way a player does.
+ *
+ * A tab click calls render() directly rather than through the coalesced
+ * redraw, so a throw in there escapes the journey entirely and takes every
+ * later test in the same block with it — the run then reports one failure
+ * ("the suite itself threw") and quietly runs six fewer tests than it has.
+ * Recorded like a redraw throw instead, so the journey continues and the
+ * test that is actually about it is the one that goes red. */
+function tab(app, name) {
+  const found = app.document.querySelectorAll('.tab')
+    .filter(function (t) { return t.dataset.tab === name; });
+  if (!found.length) { throw new Error('no tab named ' + name); }
+  try { found[0].onclick(); } catch (err) { app.thrown.push(err); }
+  return found[0];
+}
+
+/** Assert the app drew everything it was asked to draw without throwing. */
+function drewCleanly(app, where) {
+  if (app.thrown.length) {
+    throw new Error((where || 'the app') + ' threw while rendering: ' + threw(app));
+  }
 }
 
 /* ---------------------------------------------------------------- */
@@ -3932,6 +3966,173 @@ async function main() {
           'the raw wire value reached the player: ' + shown);
         truthy(shown.toLowerCase().indexOf(words.toLowerCase()) !== -1,
           'nothing described the proposal: ' + shown);
+      });
+    }
+  })();
+
+  /* What the app does when a reply is hostile rather than merely refused.
+   *
+   * Every journey here is a reply the server should never send, and every
+   * one of them used to take the render down inside the coalesced redraw —
+   * where nothing could see it. The app drew a blank tab, or worse told a
+   * hunted player they were safe, and the suite read both as an empty
+   * section and passed. */
+  await (async function hostileReplies() {
+    // 1. An ok:true carrying no payload at all. This is also what the
+    //    harness synthesises for a request nobody scripted, i.e. what a new
+    //    endpoint looks like to a page that has not reloaded.
+    {
+      const app = boot({ list: BOARD, mine: { ok: true }, ledger: LEDGER });
+      await settle(); await settle();
+      it('an ok reply with no payload does not take the render down', function () {
+        drewCleanly(app, 'the app');
+      });
+      tab(app, 'mine');
+      await settle(); await settle();
+      const shown = app.view.textContent;
+      it('an ok reply with no payload draws the failure card, not a blank tab', function () {
+        drewCleanly(app, 'the mine tab');
+        truthy(shown.length > 0, 'the tab rendered nothing at all');
+        truthy(app.view.all().filter(function (n) {
+          return n.tagName === 'BUTTON' && n.textContent === 'Try again';
+        }).length === 1, 'no way to ask again: ' + shown);
+      });
+    }
+
+    // 2. A string where the payload belongs.
+    {
+      const app = boot({ list: BOARD, mine: { ok: true, data: 'ct00000009' }, ledger: LEDGER });
+      await settle(); await settle();
+      tab(app, 'onme');
+      await settle(); await settle();
+      const shown = app.view.textContent;
+      it('a string payload does not become an all-clear', function () {
+        drewCleanly(app, 'the onme tab');
+        falsy(shown.indexOf('Nobody is looking for you') !== -1,
+          'told a player nobody is hunting them off an unreadable reply: ' + shown);
+      });
+    }
+
+    // 3. The onMe list arriving as something with a length that is not an
+    //    array — the one list site in the app that did not go through
+    //    asList. The page had already appended "There is a price on your
+    //    head." before .forEach threw.
+    {
+      const app = boot({
+        list: BOARD, ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [], onMe: 'ct00000009' } }
+      });
+      await settle(); await settle();
+      tab(app, 'onme');
+      await settle(); await settle();
+      const shown = app.view.textContent;
+      it('a string where the onMe list belongs does not strand the warning', function () {
+        drewCleanly(app, 'the onme tab');
+        falsy(shown.indexOf('There is a price on your head') !== -1
+              && shown.indexOf('Nobody is looking for you') === -1
+              && app.view.all().filter(function (n) { return n.className === 'card'; }).length === 0,
+          'announced a contract and then drew none of it: ' + shown);
+      });
+    }
+
+    // 4. The same list keyed by something other than 1..n — the shape
+    //    asList exists for, which every other list in the app survives.
+    {
+      const app = boot({
+        list: BOARD, ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [], onMe: keyedBySlot([{
+          id: 'ct00000009', targetName: 'You', reason: 'Unpaid debt',
+          mode: 'exclusive', state: 'active', reward: { baseline: 9000 },
+          slots: 1, slotsClaimed: 0, currentSlot: 1, role: 'target'
+        }]) } }
+      });
+      await settle(); await settle();
+      tab(app, 'onme');
+      await settle(); await settle();
+      const shown = app.view.textContent;
+      it('an onMe roster keyed by something other than 1..n still warns', function () {
+        drewCleanly(app, 'the onme tab');
+        falsy(shown.indexOf('Nobody is looking for you') !== -1,
+          'a roster that crossed as an object read as an all-clear: ' + shown);
+        truthy(shown.indexOf('There is a price on your head') !== -1,
+          'the warning is missing: ' + shown);
+      });
+    }
+
+    // 5. One board row that lost its reward. render() clears the view
+    //    before it draws, so this cost the whole tab and every good row
+    //    after it, not just the bad row.
+    {
+      const broken = JSON.parse(JSON.stringify(BOARD));
+      const good = JSON.parse(JSON.stringify(broken.data.contracts[0]));
+      good.id = 'ct00000002';
+      good.targetName = 'Dana Reyes';
+      delete broken.data.contracts[0].reward;
+      broken.data.contracts.push(good);
+      const app = boot({ list: broken, mine: MINE, ledger: LEDGER });
+      await settle(); await settle();
+      const shown = app.view.textContent;
+      it('a row with no reward on it costs that row, not the board', function () {
+        drewCleanly(app, 'the board tab');
+        truthy(shown.indexOf('Dana Reyes') !== -1,
+          'the good row after the broken one was lost too: ' + shown);
+      });
+    }
+
+    // 6. An answer that has not arrived. Not a hostile server at all — this
+    //    is every open of the app, for as long as the round trip takes, and
+    //    the client waits fifteen seconds before it gives up.
+    {
+      let release = null;
+      const held = new Promise(function (r) { release = r; });
+      const app = boot({ list: BOARD, mine: held, ledger: LEDGER });
+      await settle(); await settle();
+      tab(app, 'onme');
+      await settle(); await settle();
+      const waiting = app.view.textContent;
+      it('an answer still outstanding is not an all-clear', function () {
+        drewCleanly(app, 'the onme tab');
+        falsy(waiting.indexOf('Nobody is looking for you') !== -1,
+          'told a player they were safe before the server had answered: ' + waiting);
+        truthy(waiting.length > 0, 'the tab rendered nothing at all');
+      });
+
+      tab(app, 'mine');
+      await settle(); await settle();
+      const mineWaiting = app.view.textContent;
+      it('Mine says something while it waits rather than nothing', function () {
+        truthy(mineWaiting.length > 0, 'Mine rendered a completely blank screen');
+      });
+
+      // And the answer landing still gets through.
+      release({ ok: true, data: { created: [], accepted: [], onMe: [{
+        id: 'ct00000009', targetName: 'You', reason: 'Unpaid debt',
+        mode: 'exclusive', state: 'active', reward: { baseline: 9000 },
+        slots: 1, slotsClaimed: 0, currentSlot: 1, role: 'target'
+      }] } });
+      await settle(); await settle();
+      tab(app, 'onme');
+      await settle(); await settle();
+      const arrived = app.view.textContent;
+      it('the held answer landing draws the contract', function () {
+        drewCleanly(app, 'the onme tab');
+        truthy(arrived.indexOf('There is a price on your head') !== -1,
+          'the answer arrived and the warning did not: ' + arrived);
+      });
+    }
+
+    // 7. Genuinely nothing, once asked. The all-clear has to survive all of
+    //    the above, or the fix is just a message nobody ever sees.
+    {
+      const app = boot({ list: BOARD, mine: MINE, ledger: LEDGER });
+      await settle(); await settle();
+      tab(app, 'onme');
+      await settle(); await settle();
+      const shown = app.view.textContent;
+      it('an answered, empty roster still says nobody is looking', function () {
+        drewCleanly(app, 'the onme tab');
+        truthy(shown.indexOf('Nobody is looking for you') !== -1,
+          'the all-clear never appears any more: ' + shown);
       });
     }
   })();

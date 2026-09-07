@@ -302,7 +302,15 @@ function App.request(event, payload, cb)
     requestSeq = requestSeq + 1
     local id = requestSeq
 
-    payload = payload or {}
+    -- Coerced, not merely defaulted. `payload or {}` covers nil and nothing
+    -- else, and the line below indexes it: every one of the generic NUI
+    -- callbacks hands whatever the page posted straight through, so a body
+    -- that is a number, a boolean or a string threw here — before
+    -- TriggerServerEvent, so nothing was pending, the 15s timeout had no
+    -- request to rescue, and the page's promise never settled. The shipped
+    -- page always posts an object, but an NUI endpoint is addressable by
+    -- resource name from any frame the phone draws.
+    if type(payload) ~= 'table' then payload = {} end
     payload.__rid = id
 
     if cb then
@@ -320,6 +328,15 @@ function App.request(event, payload, cb)
 end
 
 RegisterNetEvent('crimson-bounty:result', function(result)
+    -- Type-checked like the notify and push handlers beside it. Net event
+    -- names are a server-wide namespace: this resource's server always
+    -- sends a table, and any other resource on the server can send anything
+    -- at all. Indexing it raw threw out of the handler, which also skipped
+    -- the SendCustomAppMessage below — so the open app was told nothing
+    -- either, and the waiting request was freed fifteen seconds later with
+    -- 'timeout' on a call the server had actually answered.
+    if type(result) ~= 'table' then return end
+
     local cb = result.rid and pending[result.rid]
     if cb then
         pending[result.rid] = nil

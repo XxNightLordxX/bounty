@@ -13,6 +13,14 @@
     // Why the board, Mine or the ledger has nothing in it, when the reason
     // is that the server refused rather than that there is nothing to show.
     loadFailed: {},
+    // Which sections have had an answer at all. Without this the app has no
+    // way to tell "asked, and there is nothing" from "have not been told
+    // yet", and every view took the second for the first: On me announced
+    // "Nobody is looking for you" on every open of the app, for as long as
+    // the round trip took — up to the fifteen seconds the client waits
+    // before it gives up. Set only on a reply that carried a payload, so
+    // Try again returns the section to asking rather than to empty.
+    loaded: {},
     // Target headshots, keyed by the reference a projection gave us. The
     // listing carries references, not images, so a board refresh re-sends
     // nothing and a face is fetched once per render. `null` marks a fetch in
@@ -460,10 +468,16 @@
     left.appendChild(who);
     head.appendChild(left);
 
+    // One row that lost its reward costs that row, not the tab. render()
+    // clears the view before it draws, so a throw in here leaves the whole
+    // board — or Mine, or On me, card() draws all three — blank, taking
+    // every good row after this one with it.
+    var paid = contract.reward || {};
+
     var reward = el('div', 'reward');
-    reward.appendChild(el('div', 'amount', money(contract.reward.baseline)));
-    if (contract.reward.bonus > 0) {
-      reward.appendChild(el('div', 'bonus', '+' + money(contract.reward.bonus) + ' alive'));
+    reward.appendChild(el('div', 'amount', money(paid.baseline)));
+    if (paid.bonus > 0) {
+      reward.appendChild(el('div', 'bonus', '+' + money(paid.bonus) + ' alive'));
     }
 
     // How much of that is black money, when any of it is.
@@ -472,8 +486,8 @@
     // are not worth the same: black money sells for a fraction of its face
     // value. A hunter looking at "$250,000" could be looking at a quarter of
     // a million black_money items with no way to tell.
-    var dirtyPart = (contract.reward.sources && contract.reward.sources.dirty || 0)
-      + (contract.reward.bonusSources && contract.reward.bonusSources.dirty || 0);
+    var dirtyPart = (paid.sources && paid.sources.dirty || 0)
+      + (paid.bonusSources && paid.bonusSources.dirty || 0);
     if (dirtyPart > 0) {
       reward.appendChild(el('div', 'hint',
         money(dirtyPart) + ' of it is black money'));
@@ -481,9 +495,9 @@
 
     // Goods are not priced — nobody can defend a number for a kitted rifle —
     // but a contract paying one and nothing else read as $0.
-    var goods = goodsLine(contract.reward.goods);
+    var goods = goodsLine(paid.goods);
     if (goods) { reward.appendChild(el('div', 'goods', goods)); }
-    var bonusGoods = goodsLine(contract.reward.bonusGoods);
+    var bonusGoods = goodsLine(paid.bonusGoods);
     if (bonusGoods) { reward.appendChild(el('div', 'goods', '+ ' + bonusGoods + ' alive')); }
     head.appendChild(reward);
     node.appendChild(head);
@@ -1556,8 +1570,24 @@
     return true;
   }
 
+  /* The card that goes where the missing thing should be while the answer
+     is still on its way.
+   
+     A section that has not been answered yet has exactly as little in it as
+     a section the server answered with nothing, and the app used to draw
+     them the same. On the board that reads as an empty city; on Mine it was
+     a blank screen with nothing on it to press; on On me it is an all-clear
+     given to a player with a live contract on them. Drawn after the failure
+     card and before the empty one, so a refusal still wins. */
+  function drewPending(view, section) {
+    if (state.loaded[section]) { return false; }
+    view.appendChild(el('div', 'empty', 'Asking the server…'));
+    return true;
+  }
+
   function viewBoard(view) {
     if (drewFailure(view, 'board')) { return; }
+    if (drewPending(view, 'board')) { return; }
     var data = state.board;
     var contracts = asList(data && data.contracts);
     if (!data || contracts.length === 0) {
@@ -1569,8 +1599,8 @@
 
   function viewMine(view) {
     if (drewFailure(view, 'mine')) { return; }
-    var data = state.mine;
-    if (!data) return;
+    if (drewPending(view, 'mine')) { return; }
+    var data = state.mine || {};
     var any = false;
 
     var accepted = asList(data.accepted);
@@ -1594,7 +1624,13 @@
     // looking for you", which is the most reassuring thing this app can
     // say and the worst thing to say wrongly.
     if (drewFailure(view, 'mine')) { return; }
-    var rows = (state.mine && state.mine.onMe) || [];
+    if (drewPending(view, 'mine')) { return; }
+    // Through asList like every other list in the app. This was the one site
+    // that read the value raw, so a roster that crossed keyed by anything
+    // but 1..n had no .length here — the all-clear below — and anything else
+    // with a length reached .forEach and took the render down after the
+    // page had already said there was a price on this player's head.
+    var rows = asList(state.mine && state.mine.onMe);
     if (!rows.length) {
       view.appendChild(el('div', 'empty', 'Nobody is looking for you. That you know of.'));
       return;
@@ -1605,6 +1641,7 @@
 
   function viewLedger(view) {
     if (drewFailure(view, 'ledger')) { return; }
+    if (drewPending(view, 'ledger')) { return; }
     var data = state.ledger || {};
     var rows = asList(data.entries);
     var record = data.record;
@@ -2706,7 +2743,20 @@
    * screen where the missing thing should be, next to a way to ask again —
    * the same shape the wallet already used. */
   function loadResult(section, r) {
-    if (r.ok) { delete state.loadFailed[section]; return true; }
+    // An ok:true is only an answer if it carries one. All three of these
+    // loads return a table from the server; a reply that claims success and
+    // carries nothing usable — a handler changed under a page that has not
+    // reloaded, a payload lost on the way across — used to be stored as
+    // state and dereferenced on the next line, which threw inside the
+    // promise callback. Nothing caught it: no failure card was drawn, no
+    // Try again appeared, and the tab was left blank with the player's only
+    // way out being to switch tabs. Refused here instead, so it lands in
+    // the failure card that already exists, with the retry already on it.
+    if (r.ok && r.data !== null && typeof r.data === 'object') {
+      delete state.loadFailed[section];
+      state.loaded[section] = true;
+      return true;
+    }
     state.loadFailed[section] = (r.err === 'rate_limited' && r.data && r.data.retryAfter)
       ? 'Asked too fast. Try again in ' + r.data.retryAfter + ' second'
         + (r.data.retryAfter === 1 ? '' : 's') + '.'
