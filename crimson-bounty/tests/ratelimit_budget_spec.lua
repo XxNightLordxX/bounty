@@ -243,3 +243,90 @@ describe('telling a player how long to wait', function()
         truthy(s.ratelimit.retryAfter(f.creator, 'no_such_action') > 0)
     end)
 end)
+
+--- What ordinary play costs, against the buckets that actually gate it.
+---
+--- Reported from a live server as "most of the buttons I click just say
+--- slow down". The opening sequence was measured here; the buttons were
+--- not, and they are on different buckets — accept, amend, informant and
+--- bailout, several of which are far tighter than the listing ones.
+describe('what a player doing ordinary things spends', function()
+    local function seeded()
+        local s = newStack()
+        s.app.init(s)
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        return s, f, c
+    end
+
+    --- Several buttons a creator can press share the 'accept' bucket:
+    --- accepting, abandoning, cancelling and arming a handover. A player
+    --- looking at their own contract and trying two of them in a row is
+    --- doing nothing unreasonable.
+    it('lets a creator use their own card without being told to slow down', function()
+        local s, f, c = seeded()
+
+        -- Open the app, open Mine, then act: the sequence a player actually
+        -- performs, not one request in isolation.
+        for _, name in ipairs({ 'list', 'mine', 'ledger' }) do
+            local reply = call(name, 1)
+            truthy(reply and reply.ok, ('opening spent too much: %s said %s')
+                :format(name, tostring(reply and reply.err)))
+        end
+
+        local answer = call('cancel', 1, { id = c.id })
+        truthy(answer, 'cancelling produced no reply at all')
+        truthy(answer.err ~= CB.ERR.RATE_LIMITED,
+            'cancelling a contract right after opening the app was rate limited')
+        truthy(answer.ok, 'cancelling a own contract failed: ' .. tostring(answer.err))
+    end)
+
+    --- The tightest bucket in the config, and the one a player is most
+    --- likely to press twice: a second attempt inside five minutes is
+    --- refused. That is deliberate, but it has to SAY so.
+    it('tells a player how long an informant refusal lasts', function()
+        local s, f, c = seeded()
+
+        -- The first purchase has to actually go through, or the handler
+        -- refunds the token and the second one is never the refusal this
+        -- test is about. That refund is why the assertion below cannot be
+        -- written as "if it happened to be refused".
+        local first = call('informant', 1, { id = c.id })
+        truthy(first, 'the handler must answer')
+        truthy(first.ok, 'the first purchase has to succeed for the bucket to '
+            .. 'be spent, but it said ' .. tostring(first.err))
+
+        local second = call('informant', 1, { id = c.id })
+        truthy(second, 'and answer again')
+        eq(second.err, CB.ERR.RATE_LIMITED,
+            'a second purchase inside the five-minute window has to be refused')
+        truthy(second.data and second.data.retryAfter and second.data.retryAfter > 0,
+            'a refusal a player will hit within seconds has to carry the '
+            .. 'wait, or "slow down" is all they ever learn')
+    end)
+
+    --- Every bucket the handlers name must exist in the config. One that
+    --- does not falls back to a rule nobody chose, which is how an action
+    --- ends up stricter or looser than the server owner intended.
+    it('has a configured rule for every action the handlers use', function()
+        local app = io.open('crimson-bounty/server/app.lua', 'r')
+        local src = app:read('*a')
+        app:close()
+
+        local missing = {}
+        for action in src:gmatch("handler%('[%w_]+',%s*'([%w_]+)'") do
+            if not Config.Cooldowns[action] then missing[action] = true end
+        end
+
+        local names = {}
+        for action in pairs(missing) do names[#names + 1] = action end
+        table.sort(names)
+        eq(#names, 0,
+            'these actions have no rule of their own and fall back to one '
+            .. 'nobody chose: ' .. table.concat(names, ', '))
+    end)
+end)
