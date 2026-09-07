@@ -144,15 +144,18 @@ describe('reducing a reward nobody has taken', function()
         s.contracts.withdrawReward(f.creator, c.id, ids)
         s.audit.flush()
 
+        -- Asserted, not skipped. The condition was written for a backend
+        -- that does not expose the audit table; the one this suite runs
+        -- always does, so the guard only ever meant the assertion could
+        -- quietly stop running if that changed.
+        truthy(s.storage.readAudit,
+            'the store has to expose its audit rows for this to check anything')
+
         local reduced = 0
-        for _, row in ipairs(s.storage.readAudit and s.storage.readAudit() or {}) do
+        for _, row in ipairs(s.storage.readAudit()) do
             if row.action == 'reward_reduced' then reduced = reduced + 1 end
         end
-        -- Storage backends that do not expose the audit table skip the
-        -- count rather than asserting nothing.
-        if s.storage.readAudit then
-            eq(reduced, 1, 'one decision should be one row')
-        end
+        eq(reduced, 1, 'one decision should be one row')
     end)
 end)
 

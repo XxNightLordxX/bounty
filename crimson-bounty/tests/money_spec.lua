@@ -886,13 +886,19 @@ describe('a bonus top-up is denominated too', function()
         truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS,
             { percent = 50 }))
 
+        -- Counted, so the assertion cannot be skipped by there being no
+        -- dirty line to check.
+        local checked = 0
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
             if line.source == 'dirty' then
+                checked = checked + 1
                 eq(line.item, original,
                     'a top-up with no name is a line the next rename can turn '
                     .. 'into a different currency')
             end
         end
+        truthy(checked >= 2,
+            'there should be a baseline and a bonus line to check, got ' .. checked)
 
         -- And it survives one.
         Config.Sources.dirty.item = 'renamed_money'

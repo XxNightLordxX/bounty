@@ -881,6 +881,39 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 27. A list from the server is iterated through asList, always.
+--
+-- FiveM msgpack-encodes Lua tables, and an EMPTY Lua table is
+-- indistinguishable from an empty map: a server that meant to send an empty
+-- list sends `{}`, not `[]`. On the page `{}` is truthy and has no .length,
+-- so `if (x && x.length)` reads as "nothing there" whether or not there is,
+-- and `x.forEach` throws outright — taking the whole tab down.
+--
+-- Two of these survived an earlier sweep for exactly this, on
+-- contract.hunters: a creator whose contract nobody had taken yet, which is
+-- every contract the moment it is placed.
+--------------------------------------------------------------------------
+
+do
+    local ui = read('crimson-bounty/ui/app.js') or ''
+    local lineNo = 0
+    for line in ui:gmatch('[^\n]*') do
+        lineNo = lineNo + 1
+        -- Anything hanging off a contract came from the projection.
+        local expr = line:match('(contract%.[A-Za-z_]+)%.forEach')
+            or line:match('(contract%.[A-Za-z_]+)%.length')
+            or line:match('(contract%.[A-Za-z_]+)%.map')
+        if expr and not line:find('asList', 1, true) then
+            failures[#failures + 1] =
+                ('ui/app.js:%d iterates %s without asList. An empty Lua table '
+                 .. 'crosses as {}, which is truthy and has no length: this '
+                 .. 'either throws or silently reads as empty.')
+                    :format(lineNo, expr)
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 -- 26. The shipped defaults and the operator's config must name the same
 -- sections.
 --

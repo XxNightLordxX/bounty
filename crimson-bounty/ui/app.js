@@ -468,8 +468,14 @@
       meta.appendChild(chip(
         contract.huntersActive + (contract.huntersActive === 1 ? ' operative' : ' operatives'), 'hot'));
     }
-    if (contract.role === 'creator' && contract.hunters) {
-      contract.hunters.forEach(function (h) {
+    if (contract.role === 'creator') {
+      // Through asList, like every other list from the server. The projection
+      // builds this as a Lua table, and an empty Lua table crosses as {} —
+      // which is truthy, so a plain `&& contract.hunters` guard passed and
+      // .forEach then threw. That is a contract nobody has taken yet: the
+      // state every contract is in the moment it is placed, and it took the
+      // whole Mine tab down with it.
+      asList(contract.hunters).forEach(function (h) {
         if (h.record) {
           meta.appendChild(chip(h.alias + ' · ' + h.record.standing));
         }
@@ -575,7 +581,9 @@
       buy.onclick = function () { buyInformant(contract); };
       row.appendChild(buy);
 
-      if (contract.hunters && contract.hunters.length) {
+      // Same shape, same reason: {} has no .length, so this read as "no
+      // hunters" whether or not there were any.
+      if (asList(contract.hunters).length) {
         var msg = el('button', 'ghost', 'Threads');
         msg.onclick = function () { openThreads(contract); };
         row.appendChild(msg);

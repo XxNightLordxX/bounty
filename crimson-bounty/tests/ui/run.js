@@ -2516,6 +2516,46 @@ async function main() {
     });
   })();
 
+  /* ---- a creator looking at a contract nobody has taken yet ------------ */
+  await (async function creatorWithNoHunters() {
+    // The server builds this list as a Lua table, and an empty Lua table
+    // crosses to JS as {} rather than []. `{}` is truthy, so a guard of
+    // `contract.hunters && ...` passes and .forEach then throws. A freshly
+    // placed contract is exactly this state.
+    const OWN = { ok: true, data: { created: [{
+      id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
+      reward: { baseline: 5000, bonus: 0 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1,
+      huntersActive: 0, huntersMax: 5,
+      targetName: 'Dana Reyes', role: 'creator',
+      hunters: acrossTheWire([]),
+      deadline: Math.floor(Date.now() / 1000) + 7200
+    }], accepted: [], onMe: [] } };
+
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: OWN, ledger: LEDGER,
+      rewardOptions: { ok: true, data: { cash: 1, bank: 0, dirty: 0, items: [],
+        weapons: [], inventoryRead: true, caps: {} } }
+    });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+    await settle(); await settle();
+
+    it('draws the card at all', function () {
+      truthy(app.view.textContent.indexOf('Dana Reyes') !== -1,
+        'the creators own contract vanished: ' + app.view.textContent);
+    });
+
+    it('offers the creator their actions', function () {
+      const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('Change reward') !== -1,
+        'the whole card threw before it got to the buttons: ' + labels.join(' | '));
+    });
+  })();
+
   /* ---- the three money sources, on the form and after it --------------- */
   await (async function everyMoneySource() {
     function wallet(over) {
