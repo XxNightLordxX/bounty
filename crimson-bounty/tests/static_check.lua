@@ -1025,6 +1025,259 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 28. The keys a caller sends are the keys the handler reads.
+--------------------------------------------------------------------------
+--
+-- Check 7 proves an event has a handler somewhere. It says nothing about
+-- whether the two agree on what is inside the payload, and that is where
+-- this app has actually broken twice.
+--
+-- reduce_reward: the page sent { amount }, the server sanitized on
+-- payload.slot, and the proposal was built with nothing in it. Every module
+-- test passed and the button did nothing.
+--
+-- create: the server read payload.reasonPreset, the page had no picker and
+-- never sent one, and Util.toPositive(nil) is nil — so on any server set to
+-- Config.Reason.Mode = 'preset' every contract was refused with
+-- invalid_input, permanently, with the reason box the player had just
+-- filled in not being the field rejected.
+--
+-- Both are invisible to a suite that calls modules directly, and both are a
+-- one-line diff away from returning. Nested objects are excluded: only the
+-- top level of each payload is this check's business, since a nested shape
+-- is passed through whole and validated by whoever reads it.
+
+do
+    --- The balanced-brace slice starting at the '{' at position i.
+    local function braced(src, i)
+        local depth, j = 0, i
+        while j <= #src do
+            local ch = src:sub(j, j)
+            if ch == '{' then depth = depth + 1
+            elseif ch == '}' then
+                depth = depth - 1
+                if depth == 0 then return src:sub(i, j) end
+            end
+            j = j + 1
+        end
+        return nil
+    end
+
+    local sent = {}
+    local function collect(src, callPattern, keyPattern)
+        local pos = 1
+        while true do
+            local s2, e2, name = src:find(callPattern, pos)
+            if not s2 then break end
+            local open = src:find('{', e2 - 1, true)
+            local body = open and braced(src, open) or nil
+            sent[name] = sent[name] or {}
+            if body then
+                local flat = body:sub(2, -2)
+                -- Comments first. A key pattern anchored on the preceding
+                -- comma cannot reach past a comment sitting between the two,
+                -- so a documented field read as an absent one — which had
+                -- this check reporting the very bug it had just been written
+                -- to catch, after the fix. The guard on ':' is so a URL in
+                -- prose is not read as the start of a comment.
+                flat = flat:gsub('/%*.-%*/', ' ')
+                flat = flat:gsub('([^:])//[^\n]*', '%1')
+                flat = flat:gsub('%-%-[^\n]*', '')
+                -- Then blank out every nested object, array and call so
+                -- their keys are not mistaken for ours.
+                flat = flat:gsub('%b{}', '_'):gsub('%b[]', '_'):gsub('%b()', '_')
+                for k in ('{' .. flat):gmatch(keyPattern) do sent[name][k] = true end
+            end
+            pos = e2
+        end
+    end
+
+    collect(uiSrc, "post%('([%w_]+)'", "[{,]%s*([%w_]+)%s*:")
+    collect(clientSrc, "App%.request%('([%w_]+)'", "[{,]%s*([%w_]+)%s*=")
+
+    -- Each handler body runs to the next handler() registration.
+    local reads, marks = {}, {}
+    for pos, name in appSrc:gmatch("()handler%('([%w_]+)'") do
+        marks[#marks + 1] = { pos = pos, name = name }
+    end
+    for i, m in ipairs(marks) do
+        local stop = marks[i + 1] and marks[i + 1].pos or #appSrc
+        reads[m.name] = reads[m.name] or {}
+        for k in appSrc:sub(m.pos, stop):gmatch('payload%.([%w_]+)') do
+            -- The correlation id is framework plumbing, not a field a
+            -- caller chooses to send.
+            if k ~= '__rid' then reads[m.name][k] = true end
+        end
+    end
+
+    local function sortedKeys(t)
+        local out = {}
+        for k in pairs(t or {}) do out[#out + 1] = k end
+        table.sort(out)
+        return out
+    end
+
+    -- A parser that stopped matching reports a clean tree, which is the one
+    -- result this check must never give by accident. Counted rather than
+    -- assumed: these numbers only move when the app really changes shape.
+    local comparable = 0
+    for name in pairs(reads) do if sent[name] then comparable = comparable + 1 end end
+    if comparable < 20 then
+        failures[#failures + 1] = ((
+            'the payload-shape check compared only %d handlers against their '
+            .. 'callers. It reads post() and App.request() sites and handler() '
+            .. 'bodies by pattern, so this means it stopped matching rather '
+            .. 'than that the app shrank — and a check that matches nothing '
+            .. 'reports no findings.'):format(comparable))
+    end
+
+    for _, name in ipairs(sortedKeys(reads)) do
+        if sent[name] then
+            for _, key in ipairs(sortedKeys(reads[name])) do
+                if not sent[name][key] then
+                    failures[#failures + 1] = ((
+                        'handler "%s" reads payload.%s, which no caller sends. '
+                        .. 'Either the page stopped sending it or the server '
+                        .. 'started asking for something nothing offers.')
+                        :format(name, key))
+                end
+            end
+        end
+    end
+
+    for _, name in ipairs(sortedKeys(sent)) do
+        if reads[name] then
+            for _, key in ipairs(sortedKeys(sent[name])) do
+                if not reads[name][key] then
+                    failures[#failures + 1] = ((
+                        'a caller sends "%s" with %s, which the handler never '
+                        .. 'reads. A field nobody reads is a control that does '
+                        .. 'nothing.'):format(name, key))
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
+-- 29. An amendment's payload is the payload its kind is sanitized on.
+--------------------------------------------------------------------------
+--
+-- Check 28 stops at the top level of a request, because a nested object is
+-- passed through whole and validated by whoever reads it. For amendments
+-- that reader is Amendments.sanitize, which switches on the kind and keeps
+-- only the fields that kind uses — so the nested payload has a contract of
+-- its own, per kind, and nothing was checking it.
+--
+-- That is where reduce_reward broke: the page sent { amount }, sanitize
+-- read payload.slot, the proposal was built holding nothing, and the button
+-- did nothing on a live server while every module test passed.
+--
+-- Only proposal sites written as a literal kind and a literal payload can
+-- be read here. One site picks its kind with a ternary (withdraw or cancel)
+-- and is not matched; both of those kinds take no parameters, so there is
+-- nothing for this check to compare on them anyway.
+
+do
+    local amendSrc = read('crimson-bounty/server/amendments.lua') or ''
+    local constSrc = read('crimson-bounty/shared/constants.lua') or ''
+
+    -- CB.AMENDMENT.SHORTEN_DEADLINE -> 'shorten_deadline'
+    local enum = {}
+    local block = constSrc:match('CB%.AMENDMENT%s*=%s*(%b{})') or ''
+    for name, value in block:gmatch("([%u_]+)%s*=%s*'([%w_]+)'") do enum[name] = value end
+
+    -- What the page proposes, by kind.
+    local proposed = {}
+    local function record(kind, body)
+        proposed[kind] = proposed[kind] or {}
+        local flat = body:sub(2, -2)
+            :gsub('/%*.-%*/', ' '):gsub('([^:])//[^\n]*', '%1')
+            :gsub('%b{}', '_'):gsub('%b[]', '_'):gsub('%b()', '_')
+        for k in ('{' .. flat):gmatch("[{,]%s*([%w_]+)%s*:") do proposed[kind][k] = true end
+    end
+    for kind, body in uiSrc:gmatch("sendProposal%([%w_.]+,%s*'([%w_]+)'%s*,%s*(%b{})") do
+        record(kind, body)
+    end
+    for kind, body in uiSrc:gmatch("kind:%s*'([%w_]+)'%s*,%s*payload:%s*(%b{})") do
+        record(kind, body)
+    end
+
+    -- What sanitize reads, by kind. Each branch runs to the next one.
+    local body = amendSrc:match('function Amendments%.sanitize.-\nend') or ''
+    local bounds = {}
+    for pos in body:gmatch('()\n%s*else?i?f?%s*kind%s*==') do bounds[#bounds + 1] = pos end
+    bounds[#bounds + 1] = #body + 1
+
+    local sanitized = {}
+    local start = body:find('if%s+kind%s*==')
+    if start then
+        local cuts = { start }
+        for _, b in ipairs(bounds) do if b > start then cuts[#cuts + 1] = b end end
+        for i = 1, #cuts - 1 do
+            local branch = body:sub(cuts[i], cuts[i + 1] - 1)
+            local kinds = {}
+            for name in branch:gmatch('CB%.AMENDMENT%.([%u_]+)') do
+                if enum[name] then kinds[#kinds + 1] = enum[name] end
+            end
+            local keys = {}
+            for k in branch:gmatch('payload%.([%w_]+)') do keys[k] = true end
+            for _, kind in ipairs(kinds) do
+                sanitized[kind] = sanitized[kind] or {}
+                for k in pairs(keys) do sanitized[kind][k] = true end
+            end
+        end
+    end
+
+    local function sortedKeys(t)
+        local out = {}
+        for k in pairs(t or {}) do out[#out + 1] = k end
+        table.sort(out)
+        return out
+    end
+
+    -- The same guard. If either side stops parsing there is nothing to
+    -- compare and the check goes quiet, which reads exactly like a pass.
+    local kindsProposed, kindsSanitized = 0, 0
+    for _ in pairs(proposed) do kindsProposed = kindsProposed + 1 end
+    for _ in pairs(sanitized) do kindsSanitized = kindsSanitized + 1 end
+    if kindsProposed < 3 or kindsSanitized < 5 then
+        failures[#failures + 1] = ((
+            'the amendment-payload check parsed %d proposed kinds and %d '
+            .. 'sanitized ones. Both sides are read by pattern, so this is '
+            .. 'the parser having stopped matching rather than the feature '
+            .. 'having shrunk.'):format(kindsProposed, kindsSanitized))
+    end
+
+    for _, kind in ipairs(sortedKeys(proposed)) do
+        if sanitized[kind] then
+            for _, key in ipairs(sortedKeys(sanitized[kind])) do
+                if not proposed[kind][key] then
+                    failures[#failures + 1] = ((
+                        'amendment "%s" is sanitized on payload.%s, which the '
+                        .. 'page does not send. The proposal is then built '
+                        .. 'holding nothing and the button does nothing.')
+                        :format(kind, key))
+                end
+            end
+            for _, key in ipairs(sortedKeys(proposed[kind])) do
+                if not sanitized[kind][key] then
+                    failures[#failures + 1] = ((
+                        'the page proposes "%s" with %s, which sanitize drops. '
+                        .. 'Whatever the player chose there is discarded.')
+                        :format(kind, key))
+                end
+            end
+        elseif enum ~= nil and next(enum) ~= nil then
+            failures[#failures + 1] = ((
+                'the page proposes "%s", which sanitize has no branch for. '
+                .. 'Every such proposal is refused as invalid input.')
+                :format(kind))
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

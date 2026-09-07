@@ -2777,6 +2777,149 @@ async function main() {
     });
   })();
 
+  /* The reason a contract gives, in each mode an operator can configure.
+   *
+   * Config.Reason.Mode takes 'freetext', 'preset' or 'off'. The form drew a
+   * text box for all three. On a server set to 'preset' the server wants an
+   * index into a list the page had never been given, so it refused every
+   * contract with invalid_input — and the box the player had just filled in
+   * was not the field being rejected, so there was nothing to correct and
+   * nothing on screen to explain it. Every contract on such a server was
+   * unplaceable for as long as the setting stayed. */
+  await (async function reasonModes() {
+    function wallet(reasonCaps) {
+      return { ok: true, data: {
+        cash: 100000, bank: 50000, dirty: 0,
+        items: [], weapons: [], inventoryRead: true,
+        caps: Object.assign({
+          itemsEnabled: false, weaponsEnabled: false, slots: 3,
+          cash: 250000, bank: 500000,
+          cashEnabled: true, bankEnabled: true, dirtyEnabled: false
+        }, reasonCaps)
+      } };
+    }
+
+    async function place(reasonCaps) {
+      const app = boot({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+        ledger: LEDGER,
+        searchTargets: { ok: true, data: [{ handle: 'tg00000001', name: 'Ann Ryder' }] },
+        rewardOptions: wallet(reasonCaps),
+        create: { ok: true, data: { id: 'ct00000001' } }
+      });
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+      await settle(); await settle();
+      return app;
+    }
+
+    /* Fill the form in and press Place, the way a player does. */
+    async function submit(app) {
+      const query = app.document.getElementById('target-query');
+      query.value = 'Ryder';
+      query.oninput();
+      app.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+      await settle(); await settle();
+
+      app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Ann Ryder') === 0;
+      })[0].onclick();
+      await settle();
+
+      app.document.getElementById('slot-cash-1').value = '5000';
+      app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Place contract';
+      })[0].onclick();
+      await settle(); await settle();
+      return app.sent.filter(function (x) { return x.name === 'create'; });
+    }
+
+    /* Searched in the live view, not through getElementById: the id
+     * registry in the DOM shim never forgets a node, and the form draws a
+     * text box on its first render — before the wallet reply carrying the
+     * mode has arrived — so the orphaned node from that render answers to
+     * the id forever after. Asking the registry would have this suite
+     * passing while the screen showed the other control. */
+    function live(app, id) {
+      return app.view.all().filter(function (n) { return n._id === id; })[0] || null;
+    }
+
+    const preset = await place({
+      reasonMode: 'preset',
+      reasonPresets: ['Unpaid debt', 'Snitching', 'Territory dispute']
+    });
+
+    it('draws a picker, not a text box, on a preset server', function () {
+      const pick = live(preset, 'reasonPreset');
+      truthy(pick, 'a server that indexes a list has to be given the list to '
+        + 'choose from, or nothing the player types can ever be right');
+      eq(pick.children.length, 3, 'every preset the server sent');
+      eq(pick.children[0].textContent, 'Unpaid debt');
+      falsy(live(preset, 'reason'),
+        'a free text box on a preset server collects something the server '
+        + 'will not read');
+    });
+
+    it('sends the index the server indexes by, one-based', function () {
+      const pick = live(preset, 'reasonPreset');
+      eq(pick.children[0].value, '1', 'a zero is not a choice the server takes');
+      eq(pick.children[2].value, '3');
+    });
+
+    const chosen = await place({
+      reasonMode: 'preset',
+      reasonPresets: ['Unpaid debt', 'Snitching', 'Territory dispute']
+    });
+    const pick = live(chosen, 'reasonPreset');
+    pick.value = '2';
+    if (pick.onchange) { pick.onchange(); }
+    const presetSent = await submit(chosen);
+
+    it('places a contract carrying the chosen preset', function () {
+      eq(presetSent.length, 1, 'one create');
+      eq(presetSent[0].body.reasonPreset, 2,
+        'the picked preset has to reach the server as the index it indexes '
+        + 'by: ' + JSON.stringify(presetSent[0].body));
+    });
+
+    const free = await place({ reasonMode: 'freetext', reasonMaxLength: 140 });
+
+    it('still draws a text box on a freetext server', function () {
+      truthy(live(free, 'reason'), 'the default has to keep working');
+      falsy(live(free, 'reasonPreset'),
+        'a picker with nothing behind it is not a control');
+    });
+
+    it('bounds the box by the length the server sent', function () {
+      eq(String(live(free, 'reason').maxLength), '140');
+    });
+
+    const freeSent = await submit(free);
+
+    it('sends no preset index off a preset server', function () {
+      eq(freeSent.length, 1, 'one create');
+      falsy(freeSent[0].body.reasonPreset,
+        'an index nobody chose is not a field to send: '
+        + JSON.stringify(freeSent[0].body));
+    });
+
+    const off = await place({ reasonMode: 'off' });
+
+    it('asks for no reason at all when the server wants none', function () {
+      falsy(live(off, 'reason'),
+        'a server that stores no reason must not ask for one');
+      falsy(live(off, 'reasonPreset'));
+    });
+
+    it('still places a contract with no reason field on the form', function () {
+      return submit(off).then(function (sent) {
+        eq(sent.length, 1, 'one create');
+      });
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

@@ -293,3 +293,81 @@ describe('what this suite really covered', function()
             .. table.concat(missing, ', '))
     end)
 end)
+
+--- A reason mode the operator can choose, and the form that has to offer it.
+---
+--- Config.Reason.Mode takes 'freetext', 'preset' or 'off'. Two of those
+--- worked. On 'preset' the server requires a reasonPreset index, the page
+--- had no picker and never sent one, and Util.toPositive(nil) is nil — so
+--- every contract placed on such a server was refused with invalid_input,
+--- for as long as the setting stayed. Nothing in the app could say why: the
+--- form draws a reason box, the player fills it in, and the server rejects
+--- a field the box does not correspond to.
+---
+--- The same shape as the money sources an operator had switched off, which
+--- the form went on offering until caps started carrying the flags.
+describe('the reason a contract gives, in every mode the operator can pick', function()
+    local function submitAs(mode, extra)
+        local s = newStack()
+        local f = fixture(s)
+        local sent = {
+            target = 'TARGET01',
+            reason = 'Unpaid debt',
+            mode = 'exclusive',
+            reward = { slots = { { baseline = { cash = 5000 } } } },
+        }
+        for k, v in pairs(extra or {}) do sent[k] = v end
+
+        local reply
+        withConfig({ { Config.Reason, 'Mode', mode } }, function()
+            -- The target handle the page posts is whatever browseTargets
+            -- handed it, so go through that rather than inventing one.
+            local list = call('browseTargets', 1, { scope = 'online', page = 1 })
+            truthy(list and list.ok, 'the form has to be able to list somebody')
+            local handle
+            for _, row in ipairs(list.data.people or {}) do
+                if row.name == 'Dana Reyes' then handle = row.handle end
+            end
+            truthy(handle, 'the target the contract names has to be listed')
+            sent.target = handle
+            reply = call('create', 1, sent)
+        end)
+        return s, reply
+    end
+
+    it('places a contract on a freetext server', function()
+        local _, reply = submitAs('freetext')
+        truthy(reply and reply.ok,
+            'freetext is the default and has to work: ' .. tostring(reply and reply.err))
+    end)
+
+    it('places a contract on a server that asks for no reason at all', function()
+        local _, reply = submitAs('off')
+        truthy(reply and reply.ok,
+            'off means the reason is not required, not that nothing can be '
+            .. 'placed: ' .. tostring(reply and reply.err))
+    end)
+
+    --- The one that was broken. The page is told the mode and the list, so
+    --- it can send an index; without that this is unplaceable.
+    it('places a contract on a preset server, using what the form was offered', function()
+        local s = newStack()
+        fixture(s)
+        withConfig({ { Config.Reason, 'Mode', 'preset' } }, function()
+            local wallet = call('rewardOptions', 1, {})
+            truthy(wallet and wallet.ok, 'the form has to be able to read the wallet')
+            local caps = wallet.data.caps
+            eq(caps.reasonMode, 'preset',
+                'the form cannot draw a picker for a mode it is never told about')
+            truthy(caps.reasonPresets and #caps.reasonPresets > 0,
+                'a picker with nothing in it is not a picker')
+        end)
+    end)
+
+    it('is placeable when the form sends the index the picker gives it', function()
+        local _, reply = submitAs('preset', { reasonPreset = 1 })
+        truthy(reply and reply.ok,
+            'a contract carrying a valid preset index has to be placeable: '
+            .. tostring(reply and reply.err))
+    end)
+end)

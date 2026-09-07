@@ -438,6 +438,21 @@ function App.register()
                 -- Without it the form could build a contract that is always
                 -- refused, and blame the amounts.
                 maxLines = Config.Limits.MaxEscrowLines,
+                -- Which of the three reason modes this server runs, and the
+                -- list to choose from when it runs on presets.
+                --
+                -- Without these the form always drew a free text box. On a
+                -- server set to 'preset' the box was the wrong control
+                -- entirely: the server wants an index into this list, the
+                -- page had no list and sent no index, and every contract was
+                -- refused with invalid_input for as long as the setting
+                -- stayed. Same shape as the money sources an operator had
+                -- switched off, which the form went on offering until these
+                -- flags started carrying them.
+                reasonMode = Config.Reason.Mode,
+                reasonPresets = Config.Reason.Mode == 'preset'
+                    and Config.Reason.Presets or nil,
+                reasonMaxLength = Config.Reason.MaxLength,
             },
         }
     end)

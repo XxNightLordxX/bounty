@@ -1682,8 +1682,38 @@
     }
 
     form.appendChild(labelled('Target', targetSearch()));
-    form.appendChild(labelled('Reason',
-      drafted(textInput('reason', 'Why?', 140), 'reason')));
+
+    // The reason control this server will actually accept.
+    //
+    // Config.Reason.Mode takes 'freetext', 'preset' or 'off', and the form
+    // drew a text box for all three. On a server set to 'preset' the server
+    // wants an index into a list the page had never been given, so it
+    // refused every contract with invalid_input — and the box the player had
+    // just filled in was not the field being rejected, so there was nothing
+    // to correct and no way to find out. Same shape as the money sources an
+    // operator had switched off, which the form went on offering until caps
+    // started carrying the flags.
+    var reasonCaps = (state.wallet && state.wallet.caps) || {};
+    var reasonMode = reasonCaps.reasonMode || 'freetext';
+    var presets = asList(reasonCaps.reasonPresets);
+
+    if (reasonMode === 'preset' && presets.length) {
+      var pick = document.createElement('select');
+      pick.id = 'reasonPreset';
+      presets.forEach(function (text, i) {
+        var opt = document.createElement('option');
+        // One-based: the server indexes its own list, and a zero is not a
+        // choice it accepts.
+        opt.value = String(i + 1);
+        opt.textContent = text;
+        pick.appendChild(opt);
+      });
+      form.appendChild(labelled('Reason', drafted(pick, 'reasonPreset', '1')));
+    } else if (reasonMode !== 'off') {
+      form.appendChild(labelled('Reason',
+        drafted(textInput('reason', 'Why?', reasonCaps.reasonMaxLength || 140),
+                'reason')));
+    }
 
     var mode = document.createElement('select');
     mode.id = 'mode';
@@ -2090,6 +2120,14 @@
     return { items: items, weapons: weapons };
   }
 
+  // The preset the picker is showing, as the one-based index the server
+  // indexes its own list by. Null off a preset server.
+  function reasonPresetIndex() {
+    var caps = (state.wallet && state.wallet.caps) || {};
+    if (caps.reasonMode !== 'preset') { return null; }
+    return parseInt(state.draft.reasonPreset, 10) || 1;
+  }
+
   function submitContract() {
     // From the draft, not the DOM: the sworn-officer confirmation renders a
     // dialog over the form, which empties #view. Reading the controls here
@@ -2134,6 +2172,9 @@
     post('create', {
       target: target,
       reason: state.draft.reason || '',
+      // Only on a server that runs on presets. Elsewhere it is not a field
+      // the server reads, and sending one would be a number nobody chose.
+      reasonPreset: reasonPresetIndex(),
       mode: state.draft.mode || 'exclusive',
       reward: { slots: slots },
       bonusPercent: num('bonus'),

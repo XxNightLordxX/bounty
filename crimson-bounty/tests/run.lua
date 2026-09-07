@@ -98,11 +98,35 @@ function Suite.withConfig(overrides, fn)
 
     local ok, err = pcall(fn)
 
+    -- Did the override survive the body?
+    --
+    -- newStack() calls resetConfig(), which puts the whole shipped config
+    -- back. A test that opens a stack inside withConfig therefore runs
+    -- against the default rather than the setting it named, and passes or
+    -- fails for a reason that has nothing to do with what it says it is
+    -- testing. Ten tests of a 'preset' server were really testing a
+    -- freetext one, and the two that should have failed did — for the
+    -- wrong reason, which is the kind of green that hides a bug.
+    local clobbered
+    if ok then
+        for i = 1, #overrides do
+            local target, key, value = overrides[i][1], overrides[i][2], overrides[i][3]
+            if target[key] ~= value then
+                clobbered = ('%s was set to %s for this test and was %s by the '
+                    .. 'time it finished. newStack() resets the whole config, '
+                    .. 'so open the stack before withConfig, not inside it.')
+                    :format(tostring(key), tostring(value), tostring(target[key]))
+                break
+            end
+        end
+    end
+
     for i = #saved, 1, -1 do
         saved[i][1][saved[i][2]] = saved[i][3]
     end
 
     if not ok then error(err, 0) end
+    if clobbered then error(clobbered, 0) end
 end
 
 function Suite.it(name, fn)
