@@ -881,6 +881,50 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 26. The shipped defaults and the operator's config must name the same
+-- sections.
+--
+-- config/defaults.lua exists so that a setting added after an operator last
+-- touched their copy still has a value. It only works while it is in step:
+-- a section added to config.lua and not to defaults.lua is a section that
+-- goes back to being nil on their server, which is the whole failure this
+-- was written to end.
+--------------------------------------------------------------------------
+
+do
+    local shipped = read('crimson-bounty/config/defaults.lua') or ''
+    local live = read('crimson-bounty/config/config.lua') or ''
+
+    local function sectionsOf(src, prefix)
+        local found = {}
+        for name in src:gmatch('\n' .. prefix .. '%.([A-Za-z]+)%s*=') do found[name] = true end
+        return found
+    end
+
+    local inShipped = sectionsOf(shipped, 'ConfigDefaults')
+    local inLive = sectionsOf(live, 'Config')
+
+    for name in pairs(inLive) do
+        if not inShipped[name] then
+            failures[#failures + 1] =
+                ('config/config.lua sets Config.%s and config/defaults.lua does '
+                 .. 'not. An operator whose config predates that setting gets nil '
+                 .. 'for it, which is what defaults.lua exists to prevent.')
+                    :format(name)
+        end
+    end
+
+    for name in pairs(inShipped) do
+        if not inLive[name] then
+            failures[#failures + 1] =
+                ('config/defaults.lua sets ConfigDefaults.%s and config/config.lua '
+                 .. 'does not. The file operators actually read should show every '
+                 .. 'setting they can change.'):format(name)
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 -- 25. The tick must keep re-deciding who may have the app.
 --
 -- Whether a player's job bars them from the app is answered on the

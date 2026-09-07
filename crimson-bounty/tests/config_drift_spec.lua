@@ -872,3 +872,104 @@ describe('a config that predates settings the code now reads', function()
         eq(after.max, 1)
     end)
 end)
+
+--- A whole section the operator's config does not have.
+---
+--- config.lua stops tracking the shipped one the moment it is edited, so
+--- every setting added afterwards is absent from their copy — and absent is
+--- nil, which the server then indexes inside a request handler. Three
+--- separate live-server outages have come from exactly that.
+describe('a config missing a section the code was built against', function()
+    local function boot()
+        local main = require('server.main')
+        main.applyConfigDefaults()
+    end
+
+    it('fills the section from the shipped configuration', function()
+        local was = Config.Bailout
+        Config.Bailout = nil
+        boot()
+        local after = Config.Bailout
+        Config.Bailout = was
+
+        truthy(after, 'a section the operator has never heard of has to have a value')
+        eq(after.Enabled, ConfigDefaults.Bailout.Enabled,
+            'and it has to be the one this resource ships')
+    end)
+
+    it('fills any of them, not a hand-kept list of a few', function()
+        -- The list of sections DEFAULTS knows about went stale three times.
+        -- Whatever the shipped config has, a missing one is filled.
+        local checked = 0
+        for section in pairs(ConfigDefaults) do
+            if type(ConfigDefaults[section]) == 'table' then
+                local was = Config[section]
+                Config[section] = nil
+                boot()
+                local filled = Config[section]
+                Config[section] = was
+
+                truthy(filled, ('Config.%s was left nil'):format(section))
+                checked = checked + 1
+            end
+        end
+        truthy(checked > 15, 'this should be covering the whole config: ' .. checked)
+    end)
+
+    --- The dangerous half. A table the operator has written is theirs.
+    it('does not put back an entry the operator deliberately removed', function()
+        local was = Config.BlockedJobNames
+
+        -- An operator who decided lawyers may use the app.
+        Config.BlockedJobNames = { police = true }
+        boot()
+        local after = Config.BlockedJobNames
+        Config.BlockedJobNames = was
+
+        falsy(after.lawyer,
+            'topping up a set restores what somebody deleted on purpose, which '
+            .. 'is worse than the gap it fills')
+        truthy(after.police, 'and leaves what they kept')
+    end)
+
+    it('does not overwrite a section the operator did write', function()
+        local was = Config.Listing
+        Config.Listing = { PageSize = 3 }
+        boot()
+        local after = Config.Listing
+        Config.Listing = was
+
+        eq(after.PageSize, 3, 'their value wins')
+    end)
+
+    it('leaves every handler working on a config stripped to almost nothing', function()
+        local s = newStack()
+        s.app.init(s)
+        local f = fixture(s)
+
+        -- The worst case: an operator's config from long before most of
+        -- this existed. Every section the shipped one has, gone.
+        local saved = {}
+        for section in pairs(ConfigDefaults) do
+            saved[section] = Config[section]
+            Config[section] = nil
+        end
+        boot()
+
+        local ok, err = pcall(function()
+            return s.app.handlers.rewardOptions(f.creator, {})
+        end)
+        local ok2 = pcall(function()
+            return s.app.handlers.browseTargets(f.creator, { scope = 'all' })
+        end)
+        local ok3 = pcall(function()
+            return s.app.handlers.list(f.creator, { page = 1 })
+        end)
+
+        for section, value in pairs(saved) do Config[section] = value end
+
+        truthy(ok, 'the wallet handler threw on a stripped config: ' .. tostring(err))
+        truthy(ok2, 'the target list threw on a stripped config')
+        truthy(ok3, 'the board threw on a stripped config')
+    end)
+end)

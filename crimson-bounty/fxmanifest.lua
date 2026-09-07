@@ -9,6 +9,9 @@ version '1.1.0'
 
 shared_scripts {
     'shared/constants.lua',
+    -- The shipped configuration, then the operator's. Theirs wins on every
+    -- setting it names; boot fills in any section it does not name at all.
+    'config/defaults.lua',
     'config/config.lua',
 }
 

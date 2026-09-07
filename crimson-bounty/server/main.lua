@@ -86,6 +86,30 @@ local DEFAULTS = {
 local function applyConfigDefaults()
     local filled = {}
 
+    -- Whole sections the operator's config does not have at all.
+    --
+    -- config.lua stops tracking the shipped one the moment it is edited, so
+    -- every setting added afterwards is absent from their copy — and absent
+    -- is nil, which the server then indexes inside a request handler. Three
+    -- separate live-server outages have come from exactly that, each one
+    -- looking to the player like "Could not read what you are carrying" and
+    -- to the operator like nothing at all.
+    --
+    -- Only sections that are missing ENTIRELY. A table the operator has
+    -- written is theirs: topping it up would put back entries they removed
+    -- on purpose, and Config.BlockedJobNames is a set, so restoring a job
+    -- somebody deleted from it would be worse than the gap. Per-key filling
+    -- is deliberate and lives in DEFAULTS below, for the handful of
+    -- record-shaped settings where it is safe.
+    if type(ConfigDefaults) == 'table' then
+        for section, shipped in pairs(ConfigDefaults) do
+            if Config[section] == nil then
+                Config[section] = shipped
+                filled[#filled + 1] = section .. ' (whole section)'
+            end
+        end
+    end
+
     for section, defaults in pairs(DEFAULTS) do
         if type(Config[section]) ~= 'table' then Config[section] = {} end
 

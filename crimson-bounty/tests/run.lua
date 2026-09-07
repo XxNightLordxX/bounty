@@ -20,6 +20,10 @@ _G.require_shared = function(name) return require('crimson-bounty.shared.' .. na
 package.path = './crimson-bounty/?.lua;' .. package.path
 
 _G.CB = require('crimson-bounty.shared.constants')
+-- The shipped defaults load first on a live server, so they do here too:
+-- boot fills a missing section from them, and a harness without them would
+-- be testing a program that cannot.
+_G.ConfigDefaults = require('crimson-bounty.config.defaults')
 _G.Config = require('crimson-bounty.config.config')
 
 -- os.time is driven by the harness clock so tests can advance time.
