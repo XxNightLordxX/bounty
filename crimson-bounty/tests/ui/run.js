@@ -2440,9 +2440,16 @@ async function main() {
       deadline: Math.floor(Date.now() / 1000) + 7200
     }], accepted: [], onMe: [] } };
 
+    /* A server that runs informants, unless a test says otherwise. The
+       button is only drawn where the settings carry the block, so a fixture
+       that omitted it was describing a server with informants switched off
+       — which is not what most of these tests are about. */
     function board(settings) {
       return { ok: true, data: { page: 1, pages: 1, contracts: [],
-        settings: Object.assign({ minQueryLength: 3 }, settings || {}) } };
+        settings: Object.assign({
+          minQueryLength: 3,
+          informant: { cost: 25000, account: 'bank', maxPerContract: 2 }
+        }, settings || {}) } };
     }
 
     async function onMine(over, settings) {
@@ -2455,6 +2462,84 @@ async function main() {
       await settle(); await settle();
       return app;
     }
+
+    /* A server that does not run informants.
+     *
+     * The projection omits the informant block entirely when it is off, so
+     * it arrives as undefined and never as false — and the page guarded on
+     * `rules === false`, which nothing can ever satisfy. The button was
+     * drawn on every card, quoted "a fee" because there was no figure to
+     * quote, took the player through a confirmation, and spent a request to
+     * be told the server does not run them.
+     *
+     * The same rule as the calls button and the money sources: off, it is
+     * not drawn rather than drawn and refused. */
+    const noInformants = await onMine({}, { informant: undefined });
+
+    it('does not offer informant data where the server has none', function () {
+      falsy(noInformants.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
+      }), 'a button whose only outcome is a refusal is worse than no button: '
+        + noInformants.view.textContent);
+    });
+
+    it('spends no request finding that out', function () {
+      eq(noInformants.sent.filter(function (x) { return x.name === 'informant'; }).length, 0,
+        'the page already knew');
+    });
+
+    /* The target's own card offers it too, and had the same button. */
+    async function onMeWith(settings) {
+      const app = boot({
+        list: board(settings),
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [{
+          id: 'ct00000002', target: 'You', reason: 'Unpaid debt',
+          state: 'active', role: 'target', mode: 'exclusive',
+          reward: { total: 5000 }, bailoutAmount: 15000, hunters: []
+        }] } },
+        ledger: LEDGER
+      });
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'onme'; })[0].onclick();
+      await settle(); await settle();
+      return app;
+    }
+
+    const targetNoInformants = await onMeWith({ informant: undefined });
+
+    it('does not offer it on the target card either', function () {
+      falsy(targetNoInformants.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
+      }), 'the person being hunted got the same dead button: '
+        + targetNoInformants.view.textContent);
+    });
+
+    const targetWithInformants = await onMeWith({});
+
+    it('offers it on the target card where the server runs them', function () {
+      truthy(targetWithInformants.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
+      }), 'a target buying data on who is following them is the feature');
+    });
+
+    const withInformants = await onMine({}, {
+      informant: { cost: 25000, account: 'bank', maxPerContract: 2 }
+    });
+
+    it('offers it where the server runs them', function () {
+      truthy(withInformants.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
+      }), 'and must still be offered where it works');
+    });
+
+    it('quotes the real price rather than "a fee"', function () {
+      click(withInformants, 'Buy informant data');
+      const shown = withInformants.view.textContent;
+      truthy(shown.indexOf('$25,000') !== -1,
+        'a purchase that is deliberately not refunded has to name its price '
+        + 'before it is agreed to: ' + shown);
+    });
 
     /* "Slow down" alone reads as a broken button: tapping again says exactly
        the same thing, and a player cannot tell two seconds from five

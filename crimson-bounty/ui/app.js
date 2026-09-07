@@ -608,9 +608,17 @@
       top.onclick = function () { editReward(contract); };
       row.appendChild(top);
 
-      var buy = el('button', 'ghost', 'Buy informant data');
-      buy.onclick = function () { buyInformant(contract); };
-      row.appendChild(buy);
+      // Only where the server runs them. The block is omitted from the
+      // settings entirely when informants are off, so it arrives undefined
+      // and never as false — and the guard inside buyInformant tested for
+      // false, which nothing could satisfy. The button was drawn, quoted
+      // "a fee" because there was no figure to quote, and spent a request
+      // to be told the server does not run them.
+      if (settings().informant) {
+        var buy = el('button', 'ghost', 'Buy informant data');
+        buy.onclick = function () { buyInformant(contract); };
+        row.appendChild(buy);
+      }
 
       // Same shape, same reason: {} has no .length, so this read as "no
       // hunters" whether or not there were any.
@@ -659,9 +667,11 @@
       } else {
         row.appendChild(el('div', 'hint', 'No buyout was offered on this contract.'));
       }
-      var informant = el('button', 'ghost', 'Buy informant data');
-      informant.onclick = function () { buyInformant(contract); };
-      row.appendChild(informant);
+      if (settings().informant) {
+        var informant = el('button', 'ghost', 'Buy informant data');
+        informant.onclick = function () { buyInformant(contract); };
+        row.appendChild(informant);
+      }
       return row;
     }
 
@@ -883,7 +893,9 @@
 
   function buyInformant(contract) {
     var rules = settings().informant;
-    if (rules === false) {
+    // Absent, not false: the projection omits the block rather than sending
+    // a flag, so anything comparing against false here was dead code.
+    if (!rules) {
       return say('This server does not run informants.');
     }
 
