@@ -409,18 +409,23 @@ describe('a job that is barred from the app', function()
         eq(registrations(), 0, 'silence was taken for permission')
     end)
 
-    it('leaves the app alone when hiding it is switched off', function()
+    --- The client obeys the answer; it does not make it.
+    ---
+    --- This used to toggle Config.HideAppFromBlockedJobs here, which the
+    --- client never reads — the setting is the server's, and the client is
+    --- told a yes or a no. Worse, it fired the yes, which registers the app
+    --- with the setting either way, so the toggle it was named for changed
+    --- nothing about what it measured. The setting is tested where it is
+    --- actually read, below.
+    it('registers the app when it is told yes', function()
         ready()
-        local was = Config.HideAppFromBlockedJobs
-        Config.HideAppFromBlockedJobs = false
         Client.fire('crimson-bounty:access', true)
         Client.runThreads()
-        Config.HideAppFromBlockedJobs = was
-
-        eq(registrations(), 1,
-            'with hiding off, everybody keeps the app and the gate does the '
-            .. 'refusing, as it did before any of this existed')
+        eq(registrations(), 1)
+        -- The no is covered above, by the test that watches the app come
+        -- off the phone rather than merely stop being added.
     end)
+
 
     it('asks the server when it has not been told', function()
         ready()
@@ -618,6 +623,35 @@ describe('the servers own access decision', function()
         eq(toldOf(20), true,
             'a player who leaves the barred job must get the app back without '
             .. 'depending on an event this resource cannot verify')
+    end)
+
+    --- The kill switch, tested where it is read.
+    ---
+    --- Config.HideAppFromBlockedJobs is a server setting: it decides what
+    --- answer goes out, and the client only obeys. Off, everybody keeps the
+    --- app and the request gate does the refusing, which is how this
+    --- behaved before hiding existed — and is the way back for an operator
+    --- whose players have lost the app.
+    it('tells a barred job yes when hiding is switched off', function()
+        local s = wired()
+        fixture(s)
+        Env.addPlayer({ source = 21, citizenid = 'OFFICER2', license = 'license:o2',
+            firstname = 'Kay', lastname = 'Mercer',
+            job = { name = 'police', type = 'leo', onduty = true } })
+        local bridges = require('crimson-bounty.server.bridges')
+
+        Env.clientEvents = {}
+        bridges.refreshAccess()
+        eq(toldOf(21), false, 'with hiding on, a barred job is told no')
+
+        withConfig({ { Config, 'HideAppFromBlockedJobs', false } }, function()
+            Env.clientEvents = {}
+            bridges.refreshAccess()
+            eq(toldOf(21), true,
+                'with hiding off, the app stays and the gate refuses the '
+                .. 'requests instead — which is the only way back for an '
+                .. 'operator whose players have lost it')
+        end)
     end)
 
     it('does not re-send an answer that has not changed', function()
