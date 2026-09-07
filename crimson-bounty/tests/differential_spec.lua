@@ -30,6 +30,18 @@ local function backends()
     local mysqlStore = require('crimson-bounty.server.storage.mysql')
     mysqlStore.open()
 
+    -- Marked as written to directly.
+    --
+    -- This spec puts rows into the store by hand to compare backends, so it
+    -- deliberately writes combinations the resource would never produce: a
+    -- creator who is also the target, escrow on a contract that is already
+    -- closed. The invariant monitor checks rules the business layer upholds,
+    -- not rules the store enforces, so auditing these stores reports the
+    -- fixture rather than a fault.
+    for _, store in ipairs({ memory, jsonStore, mysqlStore }) do
+        rawset(store, '__rawFixture', true)
+    end
+
     return {
         { name = 'memory', store = memory },
         { name = 'json', store = jsonStore },

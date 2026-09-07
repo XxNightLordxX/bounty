@@ -46,6 +46,11 @@ end
 
 --- Everything that must be true of the store at rest.
 local function audit(store)
+    -- Stores a spec writes rows into directly are not the resource's
+    -- output, so the rules below do not describe them. differential_spec
+    -- compares backends by writing combinations the business layer would
+    -- never produce; auditing those reports its fixture.
+    if rawget(store, '__rawFixture') then return end
     checked = checked + 1
     local ok, contracts = pcall(store.allContracts)
     if not ok or type(contracts) ~= 'table' then return end
@@ -107,6 +112,7 @@ end
 --- its escrow, and between the two the store is legitimately inconsistent.
 --- 190 "violations" that way, none of them real. Checked at rest instead.
 local function auditAtRest(store)
+    if rawget(store, '__rawFixture') then return end
     local ok, contracts = pcall(store.allContracts)
     if not ok or type(contracts) ~= 'table' then return end
     for _, c in ipairs(contracts) do
@@ -188,6 +194,17 @@ setmetatable(_G, {
         rawset(t, key, value)
     end,
 })
+
+--- Specs that write rows into the store by hand are left out.
+---
+--- differential_spec compares the three backends by putting rows in
+--- directly, so it deliberately writes combinations the resource would
+--- never produce — a creator who is also the target, escrow on a contract
+--- already closed. These rules describe what the business layer upholds,
+--- not what the store enforces, so running them over that spec measures
+--- its fixture. Two instruments, each meaningful on its own, and meaningless
+--- pointed at each other.
+_G.__SKIP_RAW_STORE_SPECS = true
 
 local ok, err = pcall(function()
     dofile('crimson-bounty/tests/run.lua')

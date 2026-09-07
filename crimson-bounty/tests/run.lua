@@ -357,8 +357,13 @@ local suites = {
     'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec',
 }
 
+--- Specs that write rows into the store by hand, rather than through the
+--- resource. The invariant run leaves these out: see tests/invariants.lua.
+local RAW_STORE_SPECS = { differential_spec = true }
+
 for _, name in ipairs(suites) do
-    local ok, err = pcall(require, 'crimson-bounty.tests.' .. name)
+    local skip = _G.__SKIP_RAW_STORE_SPECS and RAW_STORE_SPECS[name]
+    local ok, err = skip and true or pcall(require, 'crimson-bounty.tests.' .. name)
     if not ok then
         Suite.failed = Suite.failed + 1
         table.insert(Suite.failures, ('suite %s failed to load\n    %s'):format(name, tostring(err)))
