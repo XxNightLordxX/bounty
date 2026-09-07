@@ -869,3 +869,142 @@ describe('a revive claim needs a death behind it', function()
             'and the immunity clock is not renewed by asking again')
     end)
 end)
+
+--- The two events that decide whether a kill counts, driven as events.
+---
+--- iDied and iRevived are registered outside handler(), because they are the
+--- highest-frequency events in the resource and each one walks the contract
+--- table — so they carry their own flood guard, identity gate, rate limit
+--- and pcall rather than borrowing the wrapper's. Line coverage found that
+--- none of that had ever run: every test calls Death.onVictimReport
+--- directly, which proves the function works and nothing about the wiring
+--- that reaches it.
+---
+--- This is the same gap as Bridges.onPlayerReady, and on the path where a
+--- hunter's payout is decided.
+describe('reporting a death through the event a client actually fires', function()
+    local function fire(name, source, ...)
+        local handler = Env.events['crimson-bounty:' .. name]
+        if not handler then return nil, 'no handler registered' end
+        _G.source = source
+        local ok, err = pcall(handler, ...)
+        _G.source = nil
+        return ok, err
+    end
+
+    local function downed(s)
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = (Env.players[2]._health or 200) - 60
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        return f, c
+    end
+
+    it('is registered at all', function()
+        local s = newStack()
+        truthy(Env.events['crimson-bounty:iDied'],
+            'nothing would ever report a death, so no elimination could pay')
+        truthy(Env.events['crimson-bounty:iRevived'],
+            'and nothing would ever clear one')
+    end)
+
+    it('reaches the death module and records the victim', function()
+        local s = newStack()
+        local f, c = downed(s)
+        local ok = fire('iDied', 2, 3)
+        truthy(ok, 'the event threw')
+        truthy(s.death.wasSeenDead('TARGET01'),
+            'a death reported through the event has to reach the module that '
+            .. 'decides whether it pays')
+    end)
+
+    it('does not throw for a source the framework cannot resolve', function()
+        local s = newStack()
+        fixture(s)
+        local ok, err = fire('iDied', 999)
+        truthy(ok, 'a player mid-join must not take the event down: ' .. tostring(err))
+    end)
+
+    it('does not throw when the module beneath it raises', function()
+        local s = newStack()
+        local f, c = downed(s)
+        local real = s.death.onVictimReport
+        s.death.onVictimReport = function() error('death exploded', 0) end
+        local ok, err = fire('iDied', 2, 3)
+        s.death.onVictimReport = real
+        truthy(ok,
+            'these events are registered outside handler(), so the pcall here '
+            .. 'is the only thing between a throw and the whole net event '
+            .. 'dying for everybody: ' .. tostring(err))
+    end)
+
+    it('writes down a throw rather than swallowing it', function()
+        local s = newStack()
+        local f, c = downed(s)
+        local real = s.death.onVictimReport
+        s.death.onVictimReport = function() error('death exploded', 0) end
+        fire('iDied', 2, 3)
+        s.death.onVictimReport = real
+
+        -- The audit is a queue, so it has to be flushed before it is read.
+        s.audit.flush()
+        local recorded = false
+        for _, row in ipairs(s.storage.readAudit(200) or {}) do
+            if tostring(row.action):find('iDied') then recorded = true end
+        end
+        truthy(recorded,
+            'an error nobody records is one nobody fixes, and this is the '
+            .. 'path a hunter reports as "the kill did not count"')
+    end)
+
+    it('throttles a client firing it repeatedly', function()
+        local s = newStack()
+        local f, c = downed(s)
+
+        -- Far more than the death bucket allows, which is what a modified
+        -- client would send.
+        for _ = 1, 40 do fire('iDied', 2, 3) end
+
+        s.audit.flush()
+        local refused = false
+        for _, row in ipairs(s.storage.readAudit(400) or {}) do
+            local action = tostring(row.action)
+            if action:find('ratelimit_iDied') or action:find('flood_iDied') then
+                refused = true
+            end
+        end
+        truthy(refused,
+            'each of these walks the contract table, so an unthrottled client '
+            .. 'is a denial of service with no payload at all')
+    end)
+
+    it('clears the death when the victim reports being revived', function()
+        local s = newStack()
+        local f, c = downed(s)
+        fire('iDied', 2, 3)
+        truthy(s.death.wasSeenDead('TARGET01'), 'the fixture has to mark them dead')
+
+        Env.players[2].PlayerData.metadata.isdead = false
+        Env.players[2]._health = 200
+        local ok = fire('iRevived', 2)
+        truthy(ok, 'the revive event threw')
+    end)
+
+    it('does not throw when the revive path raises', function()
+        local s = newStack()
+        local f, c = downed(s)
+        local real = s.death.onRevivedVerified
+        s.death.onRevivedVerified = function() error('revive exploded', 0) end
+        local ok, err = fire('iRevived', 2)
+        s.death.onRevivedVerified = real
+        truthy(ok, 'the same pcall has to cover the other event: ' .. tostring(err))
+    end)
+end)
