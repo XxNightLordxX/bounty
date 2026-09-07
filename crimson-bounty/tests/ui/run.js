@@ -3196,6 +3196,100 @@ async function main() {
     });
   })();
 
+  /* The ceiling on how many separate rewards one contract may hold.
+   *
+   * caps.maxLines was computed and sent and never read, the same way
+   * caps.bonusPercent was. The server refuses anything over it as
+   * invalid_reward, which this page reads out as "That reward does not add
+   * up" — blaming amounts that are fine, about a rule the creator was never
+   * shown and could not have counted. */
+  await (async function rewardLineCeiling() {
+    async function form(maxLines, payouts) {
+      const app = boot({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+        ledger: LEDGER,
+        searchTargets: { ok: true, data: [{ handle: 'tg00000001', name: 'Ann Ryder' }] },
+        rewardOptions: { ok: true, data: {
+          cash: 500000, bank: 500000, dirty: 500000,
+          items: [], weapons: [], inventoryRead: true,
+          caps: { itemsEnabled: false, weaponsEnabled: false, slots: 5,
+                  cash: 500000, bank: 500000, dirty: 500000,
+                  cashEnabled: true, bankEnabled: true, dirtyEnabled: true,
+                  maxLines: maxLines }
+        } },
+        create: { ok: true, data: { id: 'ct00000001' } }
+      });
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+      await settle(); await settle();
+
+      const query = app.document.getElementById('target-query');
+      query.value = 'Ryder';
+      query.oninput();
+      app.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+      await settle(); await settle();
+      app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Ann Ryder') === 0;
+      })[0].onclick();
+      await settle();
+
+      // As many payouts as asked for, each funded from all three sources.
+      const count = app.view.all().filter(function (n) { return n._id === 'slots-count'; })[0];
+      count.value = String(payouts);
+      count.onchange();
+      await settle();
+      for (let i = 1; i <= payouts; i++) {
+        ['cash', 'bank', 'dirty'].forEach(function (source) {
+          const field = app.view.all().filter(function (n) {
+            return n._id === 'slot-' + source + '-' + i;
+          })[0];
+          if (field) { field.value = '1000'; }
+        });
+      }
+
+      app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Place contract';
+      })[0].onclick();
+      await settle(); await settle();
+      return app;
+    }
+
+    // Four payouts of three sources is twelve lines, against a ceiling of
+    // five: the shape a creator reaches by filling the form in.
+    const over = await form(5, 4);
+
+    it('does not send a contract the server is bound to refuse', function () {
+      eq(over.sent.filter(function (x) { return x.name === 'create'; }).length, 0,
+        'the form built twelve rewards against a ceiling of five and sent it '
+        + 'anyway, for a refusal that blames the amounts');
+    });
+
+    it('says how many there are and how many are allowed', function () {
+      const shown = over.notice();
+      truthy(shown.indexOf('12') !== -1 && shown.indexOf('5') !== -1,
+        'a creator cannot act on this without both numbers: '
+        + JSON.stringify(shown));
+    });
+
+    const within = await form(60, 4);
+
+    it('sends one that fits, with the shipped ceiling', function () {
+      eq(within.sent.filter(function (x) { return x.name === 'create'; }).length, 1,
+        'twelve lines against sixty is an ordinary contract and must go '
+        + 'through');
+    });
+
+    const noCap = await form(undefined, 4);
+
+    it('does not invent a ceiling when the server sent none', function () {
+      eq(noCap.sent.filter(function (x) { return x.name === 'create'; }).length, 1,
+        'an older server that sends no maxLines must not have every contract '
+        + 'blocked by the page');
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

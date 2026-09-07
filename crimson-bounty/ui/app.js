@@ -2193,6 +2193,35 @@
       slots.push({ baseline: baseline });
     }
 
+    /* How many separate rewards this contract would carry.
+     *
+     * One per funded money source per payout, one per item stack, one per
+     * weapon. The server bounds the total across the whole contract with
+     * Config.Limits.MaxEscrowLines and refuses anything over it as
+     * invalid_reward — which this page reads out as "That reward does not
+     * add up", blaming amounts that are perfectly fine.
+     *
+     * The ceiling was computed and sent as caps.maxLines and never read,
+     * exactly the way caps.bonusPercent was. And it is reachable without
+     * doing anything strange: the shipped caps allow five payouts of three
+     * money sources, ten item stacks and three weapons, which is eighty
+     * lines against a ceiling of sixty. */
+    var lines = 0;
+    slots.forEach(function (slot) {
+      var b = slot.baseline;
+      if (b.cash) { lines++; }
+      if (b.bank) { lines++; }
+      if (b.dirty) { lines++; }
+      lines += (b.items || []).length;
+      lines += (b.weapons || []).length;
+    });
+    var maxLines = (state.wallet && state.wallet.caps && state.wallet.caps.maxLines) || Infinity;
+    if (lines > maxLines) {
+      return say('This contract holds ' + lines + ' separate rewards and this '
+        + 'server takes at most ' + maxLines + '. Use fewer payouts, or take '
+        + 'some of the items and weapons back out.');
+    }
+
     var protectedTarget = state.draft.targetProtected === true;
     if (protectedTarget && settings().warnCreator !== false && !state.leoConfirmed) {
       ask('That target is a sworn officer.',

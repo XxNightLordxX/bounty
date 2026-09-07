@@ -371,3 +371,73 @@ describe('the reason a contract gives, in every mode the operator can pick', fun
             .. tostring(reply and reply.err))
     end)
 end)
+
+--- The ceiling on how many separate rewards a contract may hold.
+---
+--- Config.Limits.MaxEscrowLines bounds the total across the whole contract.
+--- The per-payout caps multiply into it and the shipped ones overshoot: five
+--- payouts of three money sources, ten item stacks and three weapons is
+--- eighty lines against a ceiling of sixty. The server refuses that as
+--- invalid_reward, which the page reads out as "That reward does not add
+--- up" — blaming amounts that are fine, about a rule the creator was never
+--- shown.
+describe('how many separate rewards one contract may hold', function()
+    local function build(slotCount, perSlot)
+        local slots = {}
+        for _ = 1, slotCount do
+            local baseline = {}
+            if perSlot.cash then baseline.cash = 1000 end
+            if perSlot.bank then baseline.bank = 1000 end
+            slots[#slots + 1] = { baseline = baseline }
+        end
+        return { slots = slots }
+    end
+
+    it('accepts a contract inside the ceiling', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.EXCLUSIVE,
+            reward = build(2, { cash = true, bank = true }),
+        })
+        truthy(c, 'four lines is well inside sixty: ' .. tostring(err))
+    end)
+
+    it('refuses one past it, and says the reward is the problem', function()
+        local s = newStack()
+        local f = fixture(s)
+        withConfig({ { Config.Limits, 'MaxEscrowLines', 3 } }, function()
+            local c, err = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'Unpaid debt',
+                mode = CB.MODE.EXCLUSIVE,
+                reward = build(2, { cash = true, bank = true }),
+            })
+            falsy(c, 'four lines against a ceiling of three has to be refused')
+            eq(err, CB.ERR.INVALID_REWARD)
+        end)
+    end)
+
+    --- The number the form needs in order not to build one of these. It was
+    --- computed and sent from the first commit and never read.
+    it('tells the form what the ceiling is', function()
+        local s = newStack()
+        fixture(s)
+        local reply = call('rewardOptions', 1, {})
+        truthy(reply and reply.ok, 'the form has to be able to read the wallet')
+        eq(reply.data.caps.maxLines, Config.Limits.MaxEscrowLines)
+    end)
+
+    --- The reason this is reachable rather than theoretical.
+    it('is a ceiling the shipped caps can overshoot', function()
+        local perPayout = 3                                   -- cash, bank, dirty
+            + (Config.Sources.item.maxStacks or 0)
+            + (Config.Sources.weapon.max or 0)
+        local worst = perPayout * Config.Limits.MaxPayoutSlots
+        truthy(worst > Config.Limits.MaxEscrowLines,
+            ('the shipped caps allow %d lines against a ceiling of %d. If that '
+             .. 'is no longer true this test is stale rather than wrong, but '
+             .. 'the form still has to honour the ceiling it is sent.')
+                :format(worst, Config.Limits.MaxEscrowLines))
+    end)
+end)
