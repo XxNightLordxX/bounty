@@ -173,6 +173,15 @@ local DEFAULTS = {
     },
 }
 
+--- A deep copy of a shipped default, so the live config and the fallback
+--- are never the same table.
+local function copyOf(value)
+    if type(value) ~= 'table' then return value end
+    local out = {}
+    for k, v in pairs(value) do out[k] = copyOf(v) end
+    return out
+end
+
 local function applyConfigDefaults()
     local filled = {}
 
@@ -194,7 +203,16 @@ local function applyConfigDefaults()
     if type(ConfigDefaults) == 'table' then
         for section, shipped in pairs(ConfigDefaults) do
             if Config[section] == nil then
-                Config[section] = shipped
+                -- A copy, not the shipped table itself.
+                --
+                -- Assigning it directly made Config.<section> and
+                -- ConfigDefaults.<section> the same table, so anything that
+                -- later wrote to the live config wrote through to the
+                -- fallback — and the shipped defaults stopped being the
+                -- shipped defaults for the rest of the process. A second
+                -- pass then had nothing left to fall back to, which is the
+                -- opposite of what this function is for.
+                Config[section] = copyOf(shipped)
                 filled[#filled + 1] = section .. ' (whole section)'
             end
         end
@@ -207,7 +225,10 @@ local function applyConfigDefaults()
             local held = Config[section][key]
 
             if held == nil then
-                Config[section][key] = value
+                -- Copied for the same reason the whole sections are: several
+                -- of these are tables, and handing the live config the
+                -- fallback's own table makes writes to one writes to both.
+                Config[section][key] = copyOf(value)
                 filled[#filled + 1] = section .. '.' .. key
 
             elseif type(value) == 'table' and type(held) == 'table' then
@@ -215,9 +236,12 @@ local function applyConfigDefaults()
                 -- missing fields matters as much as the whole entry: an
                 -- item source with no maxPerStack is a source nothing can
                 -- be escrowed through.
+                -- Copied like the rest. No default is currently a table
+                -- this deep, so nothing exercises it — it is here so that
+                -- adding one cannot quietly reintroduce the alias.
                 for field, fallback in pairs(value) do
                     if held[field] == nil then
-                        held[field] = fallback
+                        held[field] = copyOf(fallback)
                         filled[#filled + 1] = section .. '.' .. key .. '.' .. field
                     end
                 end

@@ -762,3 +762,83 @@ describe('telling somebody a contract could not be loaded', function()
             :find('COULD NOT BE LOADED', 1, true))
     end)
 end)
+
+--- A filled setting is a copy, never the shipped table itself.
+---
+--- Assigning the default straight into Config made the two the same table,
+--- so anything writing to the live config wrote through to the fallback and
+--- the shipped defaults stopped being the shipped defaults for the rest of
+--- the process. The second pass then had nothing left to fall back to,
+--- which is the opposite of what filling is for.
+---
+--- Every assertion here is on identity or on the defaults surviving a write
+--- to Config, because comparing the two values would compare a thing with
+--- itself and pass either way — which is exactly how this survived.
+describe('what filling a gap hands the live config', function()
+    it('gives a whole section its own table', function()
+        boot()
+        Config.Listing = nil
+        package.loaded['server.main'] = nil
+        require('server.main').start()
+
+        falsy(rawequal(Config.Listing, ConfigDefaults.Listing),
+            'the live config and the fallback are the same table, so a write '
+            .. 'to either is a write to both')
+    end)
+
+    it('leaves the shipped defaults intact when the live config is changed', function()
+        boot()
+        Config.Listing = nil
+        package.loaded['server.main'] = nil
+        require('server.main').start()
+
+        local shipped = ConfigDefaults.Listing.PageSize
+        truthy(shipped, 'the fixture needs a value to protect')
+        Config.Listing.PageSize = nil
+        eq(ConfigDefaults.Listing.PageSize, shipped,
+            'deleting a key from the live config deleted it from the shipped '
+            .. 'defaults, so nothing can be filled from them again')
+    end)
+
+    --- The per-key path and the nested-field path, asserted on identity.
+    ---
+    --- Not on the values: comparing what Config holds against what DEFAULTS
+    --- holds compares a thing with itself when they are the same table, and
+    --- passes either way. That is how this survived being written down.
+    it('gives a per-key table its own copy', function()
+        boot()
+        Config.Reason.PatternDenylist = nil
+        package.loaded['server.main'] = nil
+        local main = require('server.main')
+        main.start()
+
+        truthy(Config.Reason.PatternDenylist, 'the gap has to be filled at all')
+        falsy(rawequal(Config.Reason.PatternDenylist,
+                       main.configDefaults.Reason.PatternDenylist),
+            'the live denylist is the fallback, so an operator command that '
+            .. 'edited one would edit both')
+    end)
+
+    it('leaves a per-key default intact when the live one is emptied', function()
+        boot()
+        Config.Advisory.TriggerJobTypes = nil
+        package.loaded['server.main'] = nil
+        require('server.main').start()
+
+        -- An operator emptying the live set must not empty the fallback.
+        for key in pairs(Config.Advisory.TriggerJobTypes) do
+            Config.Advisory.TriggerJobTypes[key] = nil
+        end
+
+        boot()
+        Config.Advisory.TriggerJobTypes = nil
+        package.loaded['server.main'] = nil
+        require('server.main').start()
+
+        local refilled = 0
+        for _ in pairs(Config.Advisory.TriggerJobTypes or {}) do refilled = refilled + 1 end
+        truthy(refilled > 0,
+            'the second server to need this default got an empty set, because '
+            .. 'the first one emptied the fallback through the alias')
+    end)
+end)
