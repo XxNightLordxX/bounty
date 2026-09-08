@@ -84,26 +84,27 @@ end
 function Bailout.buy(actor, contractId)
     contractId = Util.toId(contractId)
     if not contractId then return false, CB.ERR.INVALID_INPUT end
-    if not Config.Bailout.Enabled then return false, CB.ERR.BAD_STATE end
+    if not Config.Bailout.Enabled then return false, CB.ERR.BAILOUT_OFF end
 
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
     if contract.target_cid ~= actor.cid then return false, CB.ERR.NOT_PARTICIPANT end
+    -- Each of these is a different thing to do about it, so each says which.
     if contract.state ~= CB.STATE.ACTIVE and contract.state ~= CB.STATE.ACCEPTED then
-        return false, CB.ERR.BAD_STATE
+        return false, CB.ERR.ALREADY_SETTLED
     end
-    if (contract.bailout_amount or 0) <= 0 then return false, CB.ERR.BAD_STATE end
-    if contract.bailout_queued_at then return false, CB.ERR.BAD_STATE end
+    if (contract.bailout_amount or 0) <= 0 then return false, CB.ERR.NO_BUYOUT_PRICE end
+    if contract.bailout_queued_at then return false, CB.ERR.BUYOUT_PENDING end
 
     -- A target cannot buy their way out from the floor mid-fight.
     if Config.Bailout.BlockWhileIncapacitated then
         local dead, lastStand = Identity.deathState(actor.source)
-        if dead or lastStand then return false, CB.ERR.BAD_STATE end
+        if dead or lastStand then return false, CB.ERR.INCAPACITATED end
     end
 
     -- Nor out from under a handover already in progress: the hunter has the
     -- target in hand and is seconds from delivering.
-    if Bailout.kidnapInProgress(contractId) then return false, CB.ERR.BAD_STATE end
+    if Bailout.kidnapInProgress(contractId) then return false, CB.ERR.HANDOVER_IN_PROGRESS end
 
     local amount = contract.bailout_amount
 

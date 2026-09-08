@@ -329,7 +329,9 @@ describe('buying out twice', function()
         end)
         truthy(first[1], 'the first buyout is taken')
         falsy(second[1], 'the second is refused while the first is still queued')
-        eq(second[2], CB.ERR.BAD_STATE)
+        eq(second[2], CB.ERR.BUYOUT_PENDING,
+            'the one refusal that means it is working; telling the target '
+            .. '"not right now" points them at the wrong thing entirely')
         falsy(third[1])
 
         eq(Env.players[2].PlayerData.money.bank, 20000 - 15000,

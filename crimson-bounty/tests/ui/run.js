@@ -4396,6 +4396,48 @@ async function main() {
     });
   })();
 
+  /* Each way a buyout is refused, in words a target can act on. */
+  await (async function refusedBuyouts() {
+    const ON_ME = { ok: true, data: { created: [], accepted: [], onMe: [{
+      id: 'ct00000009', targetName: 'You', reason: 'Unpaid debt',
+      mode: 'competitive', state: 'active', reward: { baseline: 9000 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1, role: 'target',
+      bailoutAmount: 15000, bailoutAvailable: true, penaltyAmount: 0
+    }] } };
+
+    const CASES = [
+      ['bailout_off',          'does not offer',  'this server never will'],
+      ['no_buyout_price',      'nothing to pay',  'the client set no price'],
+      ['buyout_pending',       'already paid',    'it is working, not failing'],
+      ['incapacitated',        'floor',           'they have to get up'],
+      ['handover_in_progress', 'hold of you',     'they are already taken'],
+    ];
+
+    for (const [code, words, why] of CASES) {
+      const app = boot({
+        list: BOARD, ledger: LEDGER, mine: ON_ME,
+        bailout: { ok: false, err: code }
+      });
+      await settle(); await settle();
+      tab(app, 'onme');
+      await settle(); await settle();
+
+      click(app, 'Buy out — $15,000');
+      await settle();
+      click(app, 'Yes');
+      await settle(); await settle();
+
+      const said = app.notice();
+      it('says why a buyout was refused: ' + code, function () {
+        falsy(said.indexOf('Not right now') !== -1,
+          '"Not right now" is the shared answer this replaced — ' + why
+          + ': ' + said);
+        truthy(said.toLowerCase().indexOf(words) !== -1,
+          'the words a target can act on are missing: ' + said);
+      });
+    }
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

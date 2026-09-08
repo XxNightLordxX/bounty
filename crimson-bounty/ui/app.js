@@ -114,6 +114,19 @@
     photo_bad_host: 'That image host is not on this server\u2019s allow list. '
       + 'An admin sets which hosts the camera may upload to.',
     bad_state: 'Not right now.',
+
+    /* The six ways a buyout is refused. They shared bad_state — "Not right
+       now" — which is wrong for four of them: three will never work however
+       long you wait, and one of them means it IS working. This is the one
+       move a target has. */
+    bailout_off: 'This server does not offer buyouts.',
+    no_buyout_price: 'The client did not put a price on closing this one. '
+      + 'There is nothing to pay.',
+    buyout_pending: 'You have already paid. It closes shortly — a hunter is '
+      + 'engaged, so it is not instant.',
+    incapacitated: 'Not from the floor. Get up first.',
+    handover_in_progress: 'Somebody has hold of you. You cannot buy your way '
+      + 'out of a handover already under way.',
     locked: 'Someone got there first.',
     not_found: 'Gone.',
     cancelled: null,

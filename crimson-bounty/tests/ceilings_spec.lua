@@ -914,3 +914,103 @@ describe('a competitive contract that is full', function()
             'the cap is already sent; the page just never read it')
     end)
 end)
+
+
+--- Why a buyout was refused.
+---
+--- Bailout.buy refuses for six different reasons and returned BAD_STATE for
+--- every one, which the app words as "Not right now." Three of the six mean
+--- stop trying — the server runs no buyouts, this contract carries no
+--- price, the contract is already over. Two mean try again shortly. One
+--- means it is already happening. "Not right now" is wrong for four of them
+--- and useless for the rest, on the one move a target has.
+---
+--- Kidnap.arm already answers with six distinct reasons and the page words
+--- all six, so this was the outlier rather than the convention.
+describe('a buyout that is refused', function()
+    local function seeded(opts)
+        opts = opts or {}
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            mode = opts.mode or CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+            bailoutAmount = opts.bailout == nil and 15000 or opts.bailout,
+        })
+        truthy(c)
+        return s, f, c
+    end
+
+    it('says the server does not run buyouts at all', function()
+        local s, f, c = seeded()
+        local ok, err
+        withConfig({ { Config.Bailout, 'Enabled', false } }, function()
+            ok, err = s.bailout.buy(f.target, c.id)
+        end)
+        falsy(ok)
+        eq(err, CB.ERR.BAILOUT_OFF,
+            'this will never work, and telling them "not right now" invites '
+            .. 'them to keep trying')
+    end)
+
+    it('says this contract carries no price', function()
+        local s, f, c = seeded({ bailout = 0 })
+        local ok, err = s.bailout.buy(f.target, c.id)
+        falsy(ok)
+        eq(err, CB.ERR.NO_BUYOUT_PRICE,
+            'the creator did not offer one; waiting will not produce it')
+    end)
+
+    it('says the contract is already over', function()
+        local s, f, c = seeded()
+        s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled')
+        local ok, err = s.bailout.buy(f.target, c.id)
+        falsy(ok)
+        eq(err, CB.ERR.ALREADY_SETTLED)
+    end)
+
+    it('says a buyout they already paid for is on its way', function()
+        -- The one refusal that means it is working. Told "not right now",
+        -- a target pays attention to the wrong thing entirely.
+        local s, f, c = seeded()
+        truthy(s.contracts.accept(f.hunter, c.id, false), 'engaged, so it queues')
+        Env.players[2].PlayerData.money.bank = 100000
+        truthy(s.bailout.buy(f.target, c.id))
+
+        local ok, err = s.bailout.buy(f.target, c.id)
+        falsy(ok)
+        eq(err, CB.ERR.BUYOUT_PENDING)
+    end)
+
+    it('says they cannot do it from the floor', function()
+        local s, f, c = seeded()
+        Env.players[2].PlayerData.metadata.isdead = true
+        local ok, err = s.bailout.buy(f.target, c.id)
+        falsy(ok)
+        eq(err, CB.ERR.INCAPACITATED, 'this one clears by getting up')
+    end)
+
+    it('says somebody already has hold of them', function()
+        local s, f, c = seeded()
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        for _, src in ipairs({ 1, 2, 3 }) do
+            Env.players[src]._coords = { x = 200.0, y = 200.0, z = 30.0 }
+        end
+        Env.players[2].PlayerData.metadata.ishandcuffed = true
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+
+        Env.players[2].PlayerData.money.bank = 100000
+        local ok, err = s.bailout.buy(f.target, c.id)
+        falsy(ok)
+        eq(err, CB.ERR.HANDOVER_IN_PROGRESS,
+            'they are seconds from being delivered; that is not "not right now"')
+    end)
+
+    it('still lets an ordinary buyout through', function()
+        local s, f, c = seeded()
+        Env.players[2].PlayerData.money.bank = 100000
+        local ok, err = s.bailout.buy(f.target, c.id)
+        truthy(ok, tostring(err))
+    end)
+end)

@@ -781,7 +781,9 @@ describe('bailout timing', function()
 
         local ok, err = s.bailout.buy(f.target, c.id)
         falsy(ok, 'the hunter has them in hand; no buying out from there')
-        eq(err, CB.ERR.BAD_STATE)
+        eq(err, CB.ERR.HANDOVER_IN_PROGRESS,
+            'and says which of the six reasons it was, because "not right '
+            .. 'now" reads as "try again" on a refusal that means "too late"')
         eq(Env.players[2].PlayerData.money.bank, 20000, 'and nothing was charged')
     end)
 end)

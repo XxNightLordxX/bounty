@@ -121,6 +121,19 @@ CB.ERR = {
     --- the hunter may hold none. It sent them off to cancel their own work
     --- to fix somebody else's contract being popular.
     CONTRACT_FULL    = 'contract_full',
+
+    --- Why a buyout was refused.
+    ---
+    --- Six reasons shared one BAD_STATE, which the app words as "Not right
+    --- now" — wrong for four of them. Three mean stop trying, two mean try
+    --- again shortly, and one means it is already happening. This is the
+    --- one move a target has, so being told the wrong thing about it costs
+    --- them the contract.
+    BAILOUT_OFF          = 'bailout_off',           -- this server runs none
+    NO_BUYOUT_PRICE      = 'no_buyout_price',       -- the creator set none
+    BUYOUT_PENDING       = 'buyout_pending',        -- already paid, processing
+    INCAPACITATED        = 'incapacitated',         -- not from the floor
+    HANDOVER_IN_PROGRESS = 'handover_in_progress',  -- somebody has hold of them
     --- Kept for anything older that still sends it, and as the catch-all.
     TARGET_PROTECTED = 'target_protected',
 
