@@ -111,6 +111,23 @@ function Bridges.install(modules)
         modules.informant.clearContract(contractId)
         modules.comms.clearContract(contractId)
         modules.death.clearProximity(contractId)
+        -- Kidnap was missing from this list. An armed handover on a contract
+        -- that then cancelled, expired, or was completed by somebody else
+        -- stayed in memory for the life of the process: it holds one of
+        -- Config.Kidnap.MaxConcurrentCountdowns and keeps the tick thread
+        -- running. Fill the cap that way and live delivery stops working for
+        -- everybody on the server, refused as limit_reached, until a
+        -- restart.
+        modules.kidnap.clearContract(contractId)
+    end
+
+    --- A hunter who is no longer on a contract has no handover on it either.
+    ---
+    --- Through a hook rather than a direct call, like onResolved above:
+    --- contracts.lua does not know about the kidnap module and should not
+    --- start to. Kidnap.cancel existed for this and had no caller.
+    modules.contracts.onHunterLeft = function(contractId, hunterCid, reason)
+        modules.kidnap.cancel(contractId, hunterCid, reason)
     end
 
     -- The expiry pass skips itself when nothing could have changed since the

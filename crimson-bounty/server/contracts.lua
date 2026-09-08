@@ -764,6 +764,14 @@ function Contracts.abandon(actor, contractId)
 
     if Progression then Progression.onFailed(actor.cid) end
 
+    -- Anything holding state for this hunter on this contract is told.
+    -- A handover they had armed is the one that matters: it does not pay
+    -- out to somebody who walked away, but it does hold a countdown slot
+    -- until the process restarts.
+    if Contracts.onHunterLeft then
+        Contracts.onHunterLeft(contractId, actor.cid, 'abandoned')
+    end
+
     Audit.action('contract_abandoned', actor.cid, contractId, {})
     return true
 end

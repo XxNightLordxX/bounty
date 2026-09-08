@@ -545,3 +545,102 @@ describe('accepting a contract that carries a stake', function()
             .. 'nothing to disclose')
     end)
 end)
+
+
+--- What happens when a handler throws.
+---
+--- The resource's last line of defence, and line coverage showed it had
+--- never once run. Everything about the app's behaviour under a fault
+--- depends on it: whether the player gets an answer at all, what they are
+--- told, whether the operator hears about it, and whether the request they
+--- could not complete still costs them their allowance.
+---
+--- The page waits fifteen seconds on every request it sends, so a handler
+--- that throws without replying is not a refusal anybody sees — it is a
+--- button that does nothing for a quarter of a minute, once per click.
+describe('a handler that throws', function()
+    local function broken()
+        local s = newStack()
+        local f = fixture(s)
+        -- Broken through a dependency the handler calls, rather than by
+        -- replacing the handler: the closure captured the real function at
+        -- registration, so swapping App.handlers would test nothing.
+        s.projection.listing = function() error('something came apart') end
+        return s, f
+    end
+
+    local function said(fn)
+        local lines = {}
+        local realPrint = _G.print
+        _G.print = function(...)
+            local parts = {}
+            for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+            lines[#lines + 1] = table.concat(parts, ' ')
+        end
+        local ok, err = pcall(fn)
+        _G.print = realPrint
+        if not ok then error(err, 0) end
+        return table.concat(lines, '\n')
+    end
+
+    it('still answers the player', function()
+        local s = broken()
+        local reply = call('list', 3, { page = 1, __rid = 77 })
+        truthy(reply, 'a request the page is waiting on must be answered')
+        falsy(reply.ok)
+        eq(reply.rid, 77, 'and answered into the callback that asked')
+    end)
+
+    it('does not tell the player to check what they typed', function()
+        -- Nothing they entered is wrong, and INVALID_INPUT sends them
+        -- hunting for a fault they cannot reach.
+        local s = broken()
+        local reply = call('list', 3, { page = 1 })
+        eq(reply.err, CB.ERR.SERVER_ERROR)
+    end)
+
+    it('tells the operator, in the console', function()
+        -- The audit queue is not somewhere an operator looks, or can look
+        -- without a command they may not be able to run. A crashing handler
+        -- producing a shrug on the player's screen and silence in the
+        -- console is the worst pairing available: the one person who could
+        -- fix it is the one person not told.
+        local s = broken()
+        local told = said(function() call('list', 3, { page = 1 }) end)
+        truthy(told:find('list', 1, true), 'the handler has to be named: ' .. told)
+        truthy(told:find('something came apart', 1, true),
+            'and the error with it: ' .. told)
+    end)
+
+    it('records it as a fault, not as a refusal', function()
+        local s = broken()
+        said(function() call('list', 3, { page = 1 }) end)
+        s.audit.flush()
+
+        local row
+        for _, entry in ipairs(s.storage.readAudit()) do
+            if entry.action == 'error_list' then row = entry end
+        end
+        truthy(row, 'a handler that threw has to be in the audit')
+        truthy(tostring(row.detail and row.detail.error or ''):find('came apart', 1, true),
+            'with what went wrong: ' .. tostring(row.detail and row.detail.error))
+    end)
+
+    it('gives the player their allowance back', function()
+        -- The allowance is for work done. A request that could not be
+        -- completed did none, and charging for it means a player meeting a
+        -- fault is then told to slow down about it.
+        local s, f = broken()
+        local before = 0
+        while s.ratelimit.check(f.hunter, 'load') do before = before + 1 end
+        truthy(before > 0, 'there is an allowance to spend')
+
+        local s2, f2 = broken()
+        said(function()
+            for _ = 1, before do call('list', 3, { page = 1 }) end
+        end)
+        truthy(s2.ratelimit.check(f2.hunter, 'load'),
+            'every one of those threw, so none of them should have cost '
+            .. 'anything')
+    end)
+end)

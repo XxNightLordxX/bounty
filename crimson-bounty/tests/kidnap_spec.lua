@@ -493,3 +493,131 @@ describe('deciding whether a target is restrained', function()
         end)
     end)
 end)
+
+
+--- An armed handover that nobody is coming to finish.
+---
+--- Kidnap.cancel and Kidnap.clearContract both existed and neither had a
+--- caller anywhere in the resource. bridges.install wires informant, comms
+--- and death into contracts.onResolved and not kidnap, and abandon says
+--- nothing about a countdown the leaving hunter had armed.
+---
+--- No money is at risk: the countdown does not complete for a hunter who is
+--- no longer active, and a resolved contract cannot be paid out twice. What
+--- leaks is the entry itself. It holds one of
+--- Config.Kidnap.MaxConcurrentCountdowns for the life of the process and
+--- keeps the tick thread running, so on a busy server live delivery quietly
+--- stops working for everybody — refused as limit_reached, which the app
+--- words as holding too many contracts, and recovered by nothing short of a
+--- restart.
+describe('a handover left behind', function()
+    local function wired()
+        local s = newStack()
+        local f = fixture(s)
+        s.bridges.install(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        for _, src in ipairs({ 1, 2, 3 }) do
+            Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z }
+        end
+        Env.players[2].PlayerData.metadata.ishandcuffed = true
+        return s, f, c
+    end
+
+    it('is released when the contract resolves', function()
+        local s, f, c = wired()
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        eq(s.kidnap.activeCount(), 1)
+
+        s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled')
+
+        eq(s.kidnap.activeCount(), 0,
+            'a contract nobody can deliver on must not hold a countdown slot '
+            .. 'for the life of the process')
+    end)
+
+    it('is released when the hunter holding it walks away', function()
+        local s, f, c = wired()
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.contracts.abandon(f.hunter, c.id))
+
+        eq(s.kidnap.activeCount(), 0)
+        falsy(s.kidnap.progress(c.id, 'HUNTER01'),
+            'and the hunter who left is not still counting down')
+    end)
+
+    it('leaves another hunter countdown on the same contract alone', function()
+        local s, f, c = wired()
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+            cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
+        Env.players[4]._coords = { x = AT.x, y = AT.y, z = AT.z }
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HUNTER02'))
+        eq(s.kidnap.activeCount(), 2)
+
+        truthy(s.contracts.abandon(f.hunter, c.id))
+
+        eq(s.kidnap.activeCount(), 1, 'one left, and it is not both')
+        truthy(s.kidnap.progress(c.id, 'HUNTER02'),
+            'the hunter who stayed is still delivering')
+    end)
+
+    it('gives the slot back, so the mechanic keeps working', function()
+        -- The consequence, stated as the consequence. Fill the cap with
+        -- contracts that then resolve, and arming has to work again.
+        local s, f = wired()
+        local cap = Config.Kidnap.MaxConcurrentCountdowns
+        truthy(cap and cap > 0)
+
+        local placed = {}
+        withConfig({
+            { Config.Limits, 'MaxActiveContractsPerCreator', cap + 2 },
+            { Config.Limits, 'MaxActiveContractsPerTarget', cap + 2 },
+            { Config.Limits, 'MaxAcceptedPerHunter', cap + 2 },
+        }, function()
+            for i = 1, cap do
+                local targetCid = ('TGT%05d'):format(i)
+                Env.addPlayer({ source = 40 + i, citizenid = targetCid,
+                    license = 'license:k' .. i, cash = 10, bank = 10,
+                    firstname = 'Mark', lastname = 'Number' .. i })
+                Env.players[40 + i]._coords = { x = AT.x, y = AT.y, z = AT.z }
+                Env.players[40 + i].PlayerData.metadata.ishandcuffed = true
+
+                local c = s.contracts.create(f.creator, {
+                    targetCid = targetCid, reason = 'x', mode = CB.MODE.COMPETITIVE,
+                    reward = { baseline = { cash = 1000 } },
+                })
+                truthy(c, 'contract ' .. i)
+                truthy(s.contracts.accept(f.hunter, c.id, false), 'accept ' .. i)
+                truthy(s.kidnap.arm(c.id, 'HUNTER01'), 'arm ' .. i)
+                placed[#placed + 1] = c
+            end
+        end)
+        eq(s.kidnap.activeCount(), cap, 'the cap is full')
+
+        for _, c in ipairs(placed) do
+            s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled')
+        end
+        eq(s.kidnap.activeCount(), 0, 'and every one of them let go')
+    end)
+
+    it('records that a countdown was cancelled and why', function()
+        local s, f, c = wired()
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.contracts.abandon(f.hunter, c.id))
+        s.audit.flush()
+
+        local row
+        for _, entry in ipairs(s.storage.readAudit()) do
+            if entry.action == 'kidnap_cancelled' then row = entry end
+        end
+        truthy(row, 'a handover that ended without a delivery is worth a row')
+        eq(row.contract_id, c.id)
+    end)
+end)
