@@ -114,6 +114,13 @@ CB.ERR = {
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',
     LIMIT_REACHED    = 'limit_reached',
+    --- This contract already carries as many operatives as it allows.
+    ---
+    --- Its own code because LIMIT_REACHED is worded as "you are holding too
+    --- many contracts", and for this rule that is not vague, it is false:
+    --- the hunter may hold none. It sent them off to cancel their own work
+    --- to fix somebody else's contract being popular.
+    CONTRACT_FULL    = 'contract_full',
     --- Kept for anything older that still sends it, and as the catch-all.
     TARGET_PROTECTED = 'target_protected',
 

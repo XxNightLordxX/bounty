@@ -628,7 +628,11 @@ function Contracts.accept(actor, contractId, anonymous)
         end
         advanced = true
     else
-        if activeCount >= Config.Limits.MaxHuntersPerContract then return false, CB.ERR.LIMIT_REACHED end
+        -- Not LIMIT_REACHED: that one is about what the CALLER is holding,
+        -- and this is about what the contract is holding.
+        if activeCount >= Config.Limits.MaxHuntersPerContract then
+            return false, CB.ERR.CONTRACT_FULL
+        end
         if contract.state == CB.STATE.ACTIVE then
             -- Only when it took. A competitive contract another hunter
             -- advanced in the same tick is theirs to put back, not ours.

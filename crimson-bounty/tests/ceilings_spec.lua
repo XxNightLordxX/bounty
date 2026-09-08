@@ -819,3 +819,98 @@ describe('an escrow take that fails partway through', function()
             'and it has to say what: ' .. tostring(named.detail and named.detail.item))
     end)
 end)
+
+
+--- A refusal that names the rule it is about.
+---
+--- LIMIT_REACHED covered three unrelated rules: a creator holding too many
+--- contracts, a hunter holding too many, and a contract already carrying as
+--- many operatives as it allows. The app words it as "You are holding too
+--- many contracts", which for the third is not merely vague — it is false.
+--- The hunter may hold none. It sends them off to cancel their own work to
+--- fix somebody else's contract being popular.
+---
+--- The same split has been made twice already here: the six reasons a
+--- target cannot be listed, and the informant's own limit.
+describe('a competitive contract that is full', function()
+    local function crowded()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+
+        -- Fill it to the cap with hunters who hold nothing else.
+        local cap = Config.Limits.MaxHuntersPerContract
+        for i = 1, cap do
+            local cid = ('HNT%05d'):format(i)
+            Env.addPlayer({ source = 50 + i, citizenid = cid,
+                license = 'license:h' .. i, cash = 5000, bank = 5000,
+                firstname = 'Hunter', lastname = 'Number' .. i })
+            truthy(s.contracts.accept(s.identity.resolve(50 + i), c.id, false),
+                'hunter ' .. i .. ' of ' .. cap)
+        end
+        return s, f, c, cap
+    end
+
+    it('refuses one more, under its own name', function()
+        local s, f, c = crowded()
+        -- Somebody holding no contracts at all.
+        Env.addPlayer({ source = 90, citizenid = 'FRESH001', license = 'license:z',
+            cash = 5000, bank = 5000, firstname = 'Wes', lastname = 'New' })
+
+        local ok, err = s.contracts.accept(s.identity.resolve(90), c.id, false)
+        falsy(ok)
+        eq(err, CB.ERR.CONTRACT_FULL,
+            'this hunter holds nothing; telling them they hold too much is a '
+            .. 'refusal about the wrong player')
+    end)
+
+    it('still says too many when the hunter really does hold too many', function()
+        -- The other rule must keep its own answer, or the split has just
+        -- moved the confusion.
+        local s = newStack()
+        local f = fixture(s)
+        local held = {}
+        withConfig({
+            { Config.Limits, 'MaxActiveContractsPerCreator', 20 },
+            { Config.Limits, 'MaxActiveContractsPerTarget', 20 },
+        }, function()
+            for i = 1, Config.Limits.MaxAcceptedPerHunter + 1 do
+                local targetCid = ('TG%06d'):format(i)
+                Env.addPlayer({ source = 60 + i, citizenid = targetCid,
+                    license = 'license:g' .. i, cash = 10, bank = 10,
+                    firstname = 'Mark', lastname = 'Number' .. i })
+                local c = s.contracts.create(f.creator, {
+                    targetCid = targetCid, reason = 'x', mode = CB.MODE.COMPETITIVE,
+                    reward = { baseline = { cash = 1000 } },
+                })
+                truthy(c, 'contract ' .. i)
+                held[#held + 1] = c
+            end
+        end)
+
+        local last
+        for i = 1, #held do
+            local ok, err = s.contracts.accept(f.hunter, held[i].id, false)
+            if not ok then last = err end
+        end
+        eq(last, CB.ERR.LIMIT_REACHED,
+            'a hunter who really is holding too many keeps that answer')
+    end)
+
+    it('shows the count against the cap before the tap', function()
+        local s, f, c, cap = crowded()
+        local board = s.projection.listing('FRESH001', 1)
+        local row
+        for _, entry in ipairs(board.contracts) do
+            if entry.id == c.id then row = entry end
+        end
+        truthy(row, 'the contract is on the board')
+        eq(row.huntersActive, cap)
+        eq(row.huntersMax, cap,
+            'the cap is already sent; the page just never read it')
+    end)
+end)

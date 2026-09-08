@@ -4332,6 +4332,70 @@ async function main() {
     });
   })();
 
+  /* A contract with no room left on it. */
+  await (async function aFullContract() {
+    function board(active, max, mode) {
+      const b = JSON.parse(JSON.stringify(BOARD));
+      b.data.contracts[0].mode = mode || 'competitive';
+      b.data.contracts[0].huntersActive = active;
+      b.data.contracts[0].huntersMax = max;
+      return b;
+    }
+
+    const room = boot({ list: board(2, 5), mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+
+    it('says how many operatives are on it and how many it takes', function () {
+      const shown = room.view.textContent;
+      truthy(shown.indexOf('2 of 5 operatives') !== -1,
+        'a count with no cap beside it does not tell a hunter whether they '
+        + 'can join: ' + shown);
+    });
+
+    const full = boot({ list: board(5, 5), mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+
+    it('says so on the card when there is no room left', function () {
+      const shown = full.view.textContent;
+      truthy(shown.indexOf('full') !== -1,
+        'the board should say this before the tap, not the server after it: '
+        + shown);
+    });
+
+    /* And if they tap anyway, the refusal is about the right thing. */
+    const refused = boot({
+      list: board(5, 5), mine: MINE, ledger: LEDGER,
+      accept: { ok: false, err: 'contract_full' }
+    });
+    await settle(); await settle();
+    click(refused, 'Accept contract');
+    await settle();
+    click(refused, 'Under my name');
+    await settle(); await settle();
+
+    it('does not tell a hunter holding nothing that they hold too much', function () {
+      const said = refused.notice();
+      falsy(said.indexOf('holding too many') !== -1,
+        'that is a rule about the caller, and this one is about the contract: '
+        + said);
+      truthy(said.toLowerCase().indexOf('operatives') !== -1,
+        'the refusal has to name what is actually full: ' + said);
+    });
+
+    /* An exclusive contract has no cap to show. */
+    const exclusive = boot({
+      list: board(1, 5, 'exclusive'), mine: MINE, ledger: LEDGER
+    });
+    await settle(); await settle();
+
+    it('says nothing about a cap on a contract that takes one operative', function () {
+      const shown = exclusive.view.textContent;
+      truthy(shown.indexOf('1 operative') !== -1, shown);
+      falsy(shown.indexOf('of 5') !== -1,
+        'an exclusive contract has no roster to be full: ' + shown);
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

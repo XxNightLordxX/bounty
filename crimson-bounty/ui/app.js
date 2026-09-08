@@ -75,6 +75,12 @@
     self_accept: 'You cannot take your own contract.',
     same_account: 'Not on your own people.',
     limit_reached: 'You are holding too many contracts.',
+    /* A different rule entirely, and it used to share the message above —
+       which told a hunter holding nothing that they were holding too much,
+       and sent them to cancel their own work over somebody else's contract
+       being popular. */
+    contract_full: 'This contract already has as many operatives on it as it '
+      + 'allows. Try another, or come back if one drops out.',
     /* The stake moved between reading the board and tapping Accept. Refused
        rather than charged, because a stake is taken on the tap and forfeits
        to the client if the hunter later walks away — the one repricing a
@@ -516,8 +522,17 @@
         'Slot ' + contract.currentSlot + ' of ' + contract.slots, 'slots'));
     }
     if (contract.huntersActive > 0) {
-      meta.appendChild(chip(
-        contract.huntersActive + (contract.huntersActive === 1 ? ' operative' : ' operatives'), 'hot'));
+      // Against the cap on a competitive contract, so a hunter can see
+      // whether there is room before they tap Accept and are refused. The
+      // server has always sent huntersMax and the page never read it.
+      var crowd = contract.mode === 'competitive' && contract.huntersMax
+        ? contract.huntersActive + ' of ' + contract.huntersMax + ' operatives'
+        : contract.huntersActive
+          + (contract.huntersActive === 1 ? ' operative' : ' operatives');
+      var full = contract.mode === 'competitive'
+        && contract.huntersMax
+        && contract.huntersActive >= contract.huntersMax;
+      meta.appendChild(chip(full ? crowd + ' — full' : crowd, full ? 'warn' : 'hot'));
     }
     if (contract.role === 'creator') {
       // Through asList, like every other list from the server. The projection
