@@ -122,6 +122,31 @@ function Bridges.install(modules)
     -- cleanup does not depend on the framework still knowing them.
     local connected = {}
 
+    --- Sources with a readiness pass already on the way.
+    ---
+    --- The pass is what delivers escrow owed to somebody who was offline
+    --- when it was released, so it has to happen on login and must not
+    --- happen a thousand times. Two things schedule it: this server may have
+    --- both framework shims present and fire both loaded events for one
+    --- login, and — the reason it is latched rather than merely
+    --- de-duplicated — QBCore:Server:OnPlayerLoaded is a RegisterNetEvent,
+    --- so any client on the server can fire it as often as it likes.
+    ---
+    --- Measured before this existed: 200 firings from one source queued 200
+    --- server timers and 200 reads of the pending-payout table, five seconds
+    --- later, with nothing to stop the next 200.
+    local readying = {}
+
+    local function scheduleReady(src)
+        if not src or readying[src] then return false end
+        readying[src] = true
+        SetTimeout(Config.PendingEscrow.LoginRetryDelayMs or 5000, function()
+            readying[src] = nil
+            Bridges.onPlayerReady(modules, src)
+        end)
+        return true
+    end
+
     AddEventHandler('weaponDamageEvent', function(sender, data)
         Bridges.onWeaponDamage(modules, sender, data)
     end)
@@ -141,22 +166,29 @@ function Bridges.install(modules)
         return actor
     end
 
+    -- A net event, not a local one, because some builds relay it from the
+    -- client. That also means any client can fire it, so it answers to the
+    -- same flood guard as this resource's own events — every one of which
+    -- has one, and this did not.
     RegisterNetEvent('QBCore:Server:OnPlayerLoaded', function()
         local src = source
+        if not modules.app.floodOk(src, 'playerLoaded') then return end
         remember(src)
-        SetTimeout(Config.PendingEscrow.LoginRetryDelayMs or 5000, function()
-            Bridges.onPlayerReady(modules, src)
-        end)
+        scheduleReady(src)
     end)
 
     AddEventHandler('qbx_core:server:playerLoaded', function(player)
-        if not (player and player.PlayerData) then return end
+        -- Type-checked, not merely truth-checked. `player and
+        -- player.PlayerData` throws for a number or a boolean, and again one
+        -- level down for a PlayerData that is not a table — and an event
+        -- name is a server-wide namespace, so this resource is not the only
+        -- thing that can put something on it. The same rule the client's own
+        -- handlers answer to.
+        if type(player) ~= 'table' or type(player.PlayerData) ~= 'table' then return end
         local src = player.PlayerData.source
         remember(src)
         Bridges.tellAccess(src)
-        SetTimeout(Config.PendingEscrow.LoginRetryDelayMs or 5000, function()
-            Bridges.onPlayerReady(modules, src)
-        end)
+        scheduleReady(src)
     end)
 
     -- Whether this player may have the app at all.
@@ -272,6 +304,7 @@ function Bridges.install(modules)
             cid = actor and actor.cid
         end
         connected[src] = nil
+        readying[src] = nil
         Bridges.onPlayerDropped(modules, cid)
     end)
 

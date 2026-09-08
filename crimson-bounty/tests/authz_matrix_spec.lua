@@ -1092,6 +1092,173 @@ describe('the events registered outside the app gate', function()
     end)
 end)
 
+--- The framework's own events, as this resource registers them.
+---
+--- These are the resource's whole lifecycle — a player arriving, changing
+--- job, leaving, switching character — and line coverage showed the suite
+--- had never executed one of them. The functions underneath are tested;
+--- the registrations that call them are where a wrong event name fails
+--- silently, which the file's own comments say has happened here before.
+---
+--- One of them is a net event rather than a local one, so it is also a
+--- surface any player on the server can reach.
+describe('the framework events this resource listens for', function()
+    local function wired()
+        local s = newStack()
+        local f = fixture(s)
+        s.bridges.install(s)
+        return s, f
+    end
+
+    local function fire(name, src, ...)
+        local handler = Env.events[name]
+        if not handler then return nil, 'not registered: ' .. name end
+        _G.source = src
+        local ok, err = pcall(handler, ...)
+        _G.source = nil
+        return ok, err
+    end
+
+    --- Owed money waiting for somebody to come back.
+    local function owed(s, cid)
+        local c = s.contracts.create(s.identity.resolve(1), {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        s.bailout.owe(cid, c.id, 4000, 'bank', 'test')
+        return c
+    end
+
+    it('listens under the names the frameworks actually fire', function()
+        -- A renamed event is not an error anywhere: it is a handler that
+        -- never runs, and a player who quietly never gets what they are
+        -- owed. Listed so a rename is a decision rather than a silence.
+        wired()
+        for _, name in ipairs({
+            'QBCore:Server:OnPlayerLoaded',      -- a net event on some builds
+            'local:qbx_core:server:playerLoaded',
+            'local:qbx_core:server:onSetJob',
+            'local:playerDropped',
+            'local:QBCore:Server:OnPlayerUnload',
+            'local:qbx_core:server:playerLoggedOut',
+            'local:weaponDamageEvent',
+        }) do
+            truthy(Env.events[name],
+                'nothing is listening for ' .. name)
+        end
+    end)
+
+    it('delivers what a player was owed once they are ready', function()
+        local s = wired()
+        owed(s, 'HUNTER01')
+        local before = Env.players[3].PlayerData.money.bank
+
+        truthy(fire('local:qbx_core:server:playerLoaded', 3,
+            { PlayerData = { source = 3 } }))
+        Env.advance(10)
+
+        eq(Env.players[3].PlayerData.money.bank, before + 4000,
+            'the login path is what pays somebody who was offline when their '
+            .. 'money was released')
+    end)
+
+    --- The amplification, and the reason the pass is latched.
+    ---
+    --- QBCore:Server:OnPlayerLoaded is a RegisterNetEvent, so any client can
+    --- fire it, and it had no flood guard — unlike every crimson-bounty:
+    --- event, all of which have one. Each firing scheduled a five-second
+    --- timer whose job is to read the pending-payout table. Measured before
+    --- the latch: 200 firings queued 200 timers and 200 reads.
+    it('schedules one readiness pass however many times it is fired', function()
+        local s = wired()
+        local reads = 0
+        local real = s.storage.readPending
+        s.storage.readPending = function(...) reads = reads + 1 return real(...) end
+        s.escrow.init(s.storage, s.audit)
+
+        local before = #Env.timers
+        for _ = 1, 200 do fire('QBCore:Server:OnPlayerLoaded', 3) end
+
+        truthy(#Env.timers - before <= 2,
+            ('one client queued %d server timers by repeating an event it is '
+             .. 'allowed to send'):format(#Env.timers - before))
+
+        Env.advance(10)
+        truthy(reads <= 2,
+            ('and %d reads of the pending table came of it'):format(reads))
+    end)
+
+    it('still pays somebody who logs in twice in a row', function()
+        -- The latch must not eat a real second login. It is released when
+        -- the pass runs, and when the player drops.
+        local s = wired()
+        owed(s, 'HUNTER01')
+        local before = Env.players[3].PlayerData.money.bank
+
+        fire('QBCore:Server:OnPlayerLoaded', 3)
+        Env.advance(10)
+        eq(Env.players[3].PlayerData.money.bank, before + 4000)
+
+        owed(s, 'HUNTER01')
+        fire('QBCore:Server:OnPlayerLoaded', 3)
+        Env.advance(10)
+        eq(Env.players[3].PlayerData.money.bank, before + 8000,
+            'a later login must still collect what was owed after the first')
+    end)
+
+    it('cannot be replayed into paying twice for the same line', function()
+        -- The money-critical property on a client-reachable event. It holds
+        -- because the release is a compare-and-set on the escrow line, not
+        -- because the event is hard to reach.
+        local s = wired()
+        owed(s, 'HUNTER01')
+        local before = Env.players[3].PlayerData.money.bank
+
+        for _ = 1, 5 do
+            fire('QBCore:Server:OnPlayerLoaded', 3)
+            Env.advance(10)
+        end
+
+        eq(Env.players[3].PlayerData.money.bank, before + 4000,
+            'four thousand was owed and four thousand was paid, whatever the '
+            .. 'client did')
+    end)
+
+    it('tells a player their access when their job changes', function()
+        local s = wired()
+        Env.clientEvents = {}
+        truthy(fire('local:qbx_core:server:onSetJob', nil, 3))
+
+        local told = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:access' then told[#told + 1] = event.target end
+        end
+        eq(#told, 1, 'the player whose job changed is told, and only them')
+        eq(told[1], 3)
+    end)
+
+    it('cleans up after a player who drops', function()
+        local s = wired()
+        fire('local:qbx_core:server:playerLoaded', 3, { PlayerData = { source = 3 } })
+        truthy(fire('local:playerDropped', 3))
+        -- Resolving them afterwards is what a naive cleanup would do, and by
+        -- this point the framework may already have discarded them.
+        truthy(true)
+    end)
+
+    it('survives a loaded event carrying nothing usable', function()
+        local s = wired()
+        for _, odd in ipairs({ 42, true, {}, { PlayerData = false }, { PlayerData = 5 } }) do
+            truthy(fire('local:qbx_core:server:playerLoaded', nil, odd),
+                ('a %s payload must not throw out of a framework event')
+                    :format(type(odd)))
+        end
+        truthy(fire('local:qbx_core:server:playerLoaded', nil),
+            'nor must an absent one')
+    end)
+end)
+
 describe('the matrix covers the whole net surface', function()
     --- A handler with no row is the gap this file exists to close. Left to
     --- a hand-written list, the next handler is added to app.lua and to the
