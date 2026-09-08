@@ -518,7 +518,24 @@ function Escrow.take(actor, contractId, lines)
         local ok = false
 
         if line.source == 'cash' or line.source == 'bank' then
-            ok = actor.player.Functions.RemoveMoney(line.source, line.amount) and true or false
+            -- Through Util.charge, which reads the balance before it
+            -- removes. RemoveMoney's return is not an affordability check:
+            -- qbx_core ships dontAllowMinus as { 'cash', 'crypto' }, so a
+            -- bank debit succeeds on an empty account and reports success.
+            --
+            -- Escrow.validate did check, against the live balance — and then
+            -- money moves between the check and here. The anonymity fee is
+            -- charged in exactly that window, out of the same account, which
+            -- is how a creator with exactly enough for the escrow funded a
+            -- contract out of an overdraft nobody offered them: checked
+            -- 10,000 against 10,000, took the 500 fee, debited 10,000 from
+            -- 9,500, and reported success with the balance at -500.
+            --
+            -- The fee is only the reachable case. Re-reading here covers
+            -- anything that moves money in that window, including another
+            -- resource, and costs one balance read on a path that is already
+            -- writing to the database.
+            ok = Util.charge(actor.player, line.source, line.amount)
         elseif line.source == 'dirty' then
             ok = exports.ox_inventory:RemoveItem(actor.source, dirtyItemOf(line), line.amount) and true or false
         elseif line.source == CB.SOURCE.ITEM then

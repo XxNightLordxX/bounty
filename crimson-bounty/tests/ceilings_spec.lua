@@ -599,3 +599,223 @@ describe('what opening the board costs', function()
         end)
     end)
 end)
+
+
+--- Nothing charges a player more than they are holding.
+---
+--- Escrow.validate reads the live balance and refuses what a creator cannot
+--- afford, and then Escrow.take does the debit — with RemoveMoney, whose
+--- return this codebase has already learned twice is not an affordability
+--- check: qbx_core ships dontAllowMinus as { 'cash', 'crypto' }, so a bank
+--- debit succeeds on an empty account and reports success.
+---
+--- Between the check and the debit, money moves. The anonymity fee is
+--- charged in exactly that window, out of the same account, which is how a
+--- creator with exactly enough ends up funding a contract from an overdraft
+--- they never agreed to.
+describe('a charge that lands between the check and the debit', function()
+    local function anonymousWithFee(bank, escrow, fee)
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = bank
+        Env.players[1].PlayerData.money.cash = 0
+
+        local created, err
+        withConfig({
+            { Config.Anonymity, 'CreatorFee', fee },
+            { Config.Anonymity, 'FeeAccount', 'bank' },
+        }, function()
+            created, err = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', anonymous = true,
+                reward = { baseline = { bank = escrow } },
+            })
+        end)
+        return s, created, err
+    end
+
+    it('does not put a creator into an overdraft to fund a contract', function()
+        -- Exactly enough for the escrow, and a fee on top. The old code
+        -- checked 10000 against 10000, took the 500 fee, then debited 10000
+        -- from 9500 and reported success: bank -500, contract funded.
+        local s, created, err = anonymousWithFee(10000, 10000, 500)
+
+        falsy(created, 'this contract is not affordable and must be refused')
+        eq(err, CB.ERR.INSUFFICIENT)
+        truthy(Env.players[1].PlayerData.money.bank >= 0,
+            'a creator must never be charged more than they hold: bank is '
+            .. tostring(Env.players[1].PlayerData.money.bank))
+    end)
+
+    it('gives the fee back when the escrow it preceded cannot be taken', function()
+        local s = anonymousWithFee(10000, 10000, 500)
+        eq(Env.players[1].PlayerData.money.bank, 10000,
+            'refused means untouched, not part-charged')
+    end)
+
+    it('still places the contract when the creator can cover both', function()
+        -- The fix must refuse the unaffordable one, not the feature.
+        local s, created, err = anonymousWithFee(10500, 10000, 500)
+        truthy(created, tostring(err))
+        eq(Env.players[1].PlayerData.money.bank, 0,
+            'ten thousand of escrow and five hundred of fee, and nothing over')
+    end)
+
+    it('refuses a debit the balance stopped covering, whoever moved it', function()
+        -- The fee is only the reachable case. The rule is that the debit
+        -- itself checks, so anything moving money in that window is covered
+        -- — another resource, a concurrent purchase, a payout landing.
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 10000
+        Env.players[1].PlayerData.money.cash = 0
+
+        local lines, err = s.escrow.validate(f.creator, { baseline = { bank = 10000 } })
+        truthy(lines, tostring(err))
+
+        -- Something else spends it after the check and before the take.
+        Env.players[1].PlayerData.money.bank = 4000
+
+        local took, takeErr = s.escrow.take(f.creator, 'ct00000099', lines)
+        falsy(took, 'the debit must re-check what is actually there')
+        eq(takeErr, CB.ERR.INSUFFICIENT)
+        eq(Env.players[1].PlayerData.money.bank, 4000,
+            'and must leave the balance exactly as it found it')
+    end)
+end)
+
+
+--- Putting back what was already taken, for every kind of thing.
+---
+--- Escrow.take confiscates line by line and undoes the lot on the first
+--- failure, so a part-charged creator is not a reachable state (§3.5). Only
+--- the money branch of that undo had ever run: line coverage showed the
+--- dirty-money, item and weapon arms of rollback() never executed once in
+--- the whole suite. A contract funded in goods is the normal case for this
+--- resource, and the failure it protects against — a slot emptying between
+--- the check and the debit — is the same one the money side just had a bug
+--- in.
+describe('an escrow take that fails partway through', function()
+    local function heldItems(src, name)
+        local total = 0
+        for _, slot in ipairs(Env.players[src]._inventory or {}) do
+            if slot.name == name then total = total + (slot.count or 0) end
+        end
+        return total
+    end
+
+    local function dirtyHeld(src)
+        return heldItems(src, Config.Sources.dirty.item)
+    end
+
+    it('hands back an item stack when a later line cannot be taken', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = heldItems(1, 'lockpick')
+        truthy(before > 0, 'the fixture creator carries lockpicks')
+
+        local ok, err = s.escrow.take(f.creator, 'ct00000091', {
+            { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'lockpick',
+              quantity = 2, slot = 1 },
+            { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'nothing_like_this',
+              quantity = 1, slot = 1 },
+        })
+
+        falsy(ok)
+        eq(err, CB.ERR.INSUFFICIENT)
+        eq(heldItems(1, 'lockpick'), before,
+            'the lockpicks taken for the first line have to come back')
+        eq(#s.storage.readEscrow('ct00000091'), 0, 'and nothing is stored')
+    end)
+
+    it('hands back dirty money when a later line cannot be taken', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = dirtyHeld(1)
+        truthy(before > 0, 'the fixture creator carries black money')
+
+        local ok = s.escrow.take(f.creator, 'ct00000092', {
+            { portion = 'baseline', source = 'dirty', amount = 5000, slot = 1 },
+            { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'nothing_like_this',
+              quantity = 1, slot = 1 },
+        })
+
+        falsy(ok)
+        eq(dirtyHeld(1), before, 'black money is an item, and it comes back too')
+    end)
+
+    it('hands back a weapon when a later line cannot be taken', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = heldItems(1, 'WEAPON_PISTOL')
+        truthy(before > 0, 'the fixture creator carries a pistol')
+
+        local ok = s.escrow.take(f.creator, 'ct00000093', {
+            { portion = 'baseline', source = CB.SOURCE.WEAPON, item = 'WEAPON_PISTOL',
+              metadata = { serial = 'ABC123', ammo = 12 }, slot = 1 },
+            { portion = 'baseline', source = 'cash', amount = 99999999, slot = 1 },
+        })
+
+        falsy(ok)
+        eq(heldItems(1, 'WEAPON_PISTOL'), before, 'the weapon comes back')
+    end)
+
+    it('hands back money and goods together', function()
+        local s = newStack()
+        local f = fixture(s)
+        local cash = Env.players[1].PlayerData.money.cash
+        local picks = heldItems(1, 'lockpick')
+        local dirty = dirtyHeld(1)
+
+        local ok = s.escrow.take(f.creator, 'ct00000094', {
+            { portion = 'baseline', source = 'cash', amount = 5000, slot = 1 },
+            { portion = 'baseline', source = 'dirty', amount = 2500, slot = 1 },
+            { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'lockpick',
+              quantity = 1, slot = 1 },
+            { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'nothing_like_this',
+              quantity = 1, slot = 1 },
+        })
+
+        falsy(ok)
+        eq(Env.players[1].PlayerData.money.cash, cash)
+        eq(dirtyHeld(1), dirty)
+        eq(heldItems(1, 'lockpick'), picks)
+    end)
+
+    --- The end of the line: there is nothing left to undo and no escrow
+    --- record to hold the property in, so a give-back that fails has
+    --- genuinely cost the creator something. The audit row is what tells
+    --- staff exactly what to return by hand, and to whom.
+    it('names what it could not give back when the pockets are full', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        local taken = false
+        local realAdd = exports.ox_inventory.AddItem
+        exports.ox_inventory.AddItem = function(...)
+            taken = true
+            return false
+        end
+
+        local ok = pcall(function()
+            s.escrow.take(f.creator, 'ct00000095', {
+                { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'lockpick',
+                  quantity = 1, slot = 1 },
+                { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'nothing_like_this',
+                  quantity = 1, slot = 1 },
+            })
+        end)
+        exports.ox_inventory.AddItem = realAdd
+        truthy(ok, 'a failed rollback must not throw')
+        truthy(taken, 'the rollback must have tried to give it back')
+
+        s.audit.flush()
+        local named
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'escrow_rollback_failed' then named = row end
+        end
+        truthy(named, 'a give-back that failed has to be recorded, or nobody '
+            .. 'can return it by hand')
+        truthy(tostring(named.detail and named.detail.item or ''):find('lockpick', 1, true),
+            'and it has to say what: ' .. tostring(named.detail and named.detail.item))
+    end)
+end)
