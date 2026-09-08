@@ -555,10 +555,6 @@ function Death.pendingCount()
     return n
 end
 
-function Death.clearSeenDead(cid)
-    seenDead[cid] = nil
-end
-
 function Death.clearPlayer(cid)
     damage[cid] = nil
     condition[cid] = nil

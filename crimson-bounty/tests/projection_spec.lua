@@ -364,3 +364,52 @@ describe('goods on a listing', function()
         eq(row.reward.goods.items, 1, 'the creator put up one item, and only that')
     end)
 end)
+
+
+--- The face cache lets go of players who left.
+---
+--- Mugshot.count exists to be asked this and nothing had ever asked it, so
+--- nothing said the cache is bounded at all. It is keyed by citizen id and
+--- released by clearPlayer on disconnect, which bridges wires — the same
+--- shape as the kidnap countdown table, where the wiring was missing and
+--- the mechanic died server-wide once the cap filled.
+describe('the headshot cache', function()
+    local PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
+
+    it('holds one entry per player it has a face for', function()
+        local s = newStack()
+        fixture(s)
+        eq(s.mugshot.count(), 0, 'nothing cached before anyone is rendered')
+
+        for _, cid in ipairs({ 'CREATOR1', 'TARGET01', 'HUNTER01' }) do
+            s.mugshot.request(cid)
+            s.mugshot.store(cid, PNG)
+        end
+        eq(s.mugshot.count(), 3)
+    end)
+
+    it('lets go when a player disconnects', function()
+        local s = newStack()
+        fixture(s)
+        s.bridges.install(s)
+        for _, cid in ipairs({ 'CREATOR1', 'TARGET01', 'HUNTER01' }) do
+            s.mugshot.request(cid)
+            s.mugshot.store(cid, PNG)
+        end
+        eq(s.mugshot.count(), 3)
+
+        s.bridges.onPlayerDropped(s, 'HUNTER01')
+        eq(s.mugshot.count(), 2, 'the player who left is not still cached')
+        truthy(s.mugshot.handleFor('CREATOR1'), 'and nobody else was dropped')
+    end)
+
+    it('does not grow when the same player is rendered again', function()
+        local s = newStack()
+        fixture(s)
+        for _ = 1, 5 do
+            s.mugshot.request('CREATOR1')
+            s.mugshot.store('CREATOR1', PNG)
+        end
+        eq(s.mugshot.count(), 1, 'one player is one entry, however many renders')
+    end)
+end)

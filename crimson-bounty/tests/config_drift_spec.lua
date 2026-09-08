@@ -381,6 +381,47 @@ describe('diagnosing an app that shows nothing', function()
     --- resolves to nobody, and the report stopped at the second line. So an
     --- owner without the ACE — which nobody has until they grant it — had no
     --- way at all to ask why their app was empty.
+    --- Two counters the resource keeps and nothing surfaced.
+    ---
+    --- The store prints its first three read-back mismatches and then goes
+    --- quiet on purpose, so a failing disk does not fill the console — which
+    --- leaves an operator with no way to learn it is still happening. The
+    --- accessor for the count was written for this report, with a comment
+    --- above it saying "reported by the diagnosis", and the diagnosis never
+    --- asked. A comment describing a behaviour the code does not have is
+    --- worse than no comment.
+    it('says how many writes read back differently', function()
+        local s = newStack()
+        fixture(s)
+
+        local quiet = said(s.admin.diagnose(0))
+        falsy(quiet:find('READ BACK DIFFERENTLY', 1, true),
+            'a healthy store says nothing about it: ' .. quiet)
+
+        -- A store that has seen them.
+        s.storage.readBackMismatches = function() return 7 end
+        local out = said(s.admin.diagnose(0))
+        truthy(out:find('7 WRITE', 1, true),
+            'the count has to reach the one report an operator can run: ' .. out)
+        truthy(out:find('restarts', 1, true),
+            'and say what it would look like if it mattered: ' .. out)
+    end)
+
+    it('says how many completions are waiting on proof', function()
+        local s = newStack()
+        fixture(s)
+
+        local quiet = said(s.admin.diagnose(0))
+        falsy(quiet:find('waiting on proof', 1, true),
+            'nothing pending, nothing said: ' .. quiet)
+
+        s.death.pendingCount = function() return 3 end
+        local out = said(s.admin.diagnose(0))
+        truthy(out:find('3 completion', 1, true),
+            'a number that only grows is a completion path that is not '
+            .. 'completing: ' .. out)
+    end)
+
     it('works from the server console, which has no character of its own', function()
         local s = newStack()
         fixture(s)

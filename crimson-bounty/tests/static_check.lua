@@ -642,6 +642,187 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 14c. No exported function that nothing calls
+--------------------------------------------------------------------------
+--
+-- Kidnap.cancel and Kidnap.clearContract both sat here unreferenced, and
+-- one of them was load-bearing: wiring it fixed live delivery dying
+-- server-wide once the countdown cap filled with entries nothing released.
+-- Neither reading the code nor running the tests found them, because a
+-- function nothing calls is a function nothing exercises. Line coverage
+-- found them by accident.
+--
+-- So: an exported server function with no reference anywhere in the
+-- resource is reported, unless it is named below as a seam the suite needs
+-- to see inside a module. That exemption is checked too — a seam no test
+-- calls is not a seam, it is dead code with a note on it.
+--
+-- Passing a function by value counts as a reference: main.lua's tick is a
+-- list of `job('name', Module.fn)`, and those are call sites.
+
+do
+    --- Functions that exist for the suite rather than for the resource, and
+    --- what each one lets a test see.
+    local SEAMS = {
+        ['App.canUseApp']              = 'whether a player may ACT, which is a '
+            .. 'different question from whether they may SEE the app — that one '
+            .. 'is Bridges.tellAccess, and the two disagree by design when '
+            .. 'Config.HideAppFromBlockedJobs is off',
+        ['Audit.droppedCount']         = 'how many audit rows the queue shed at capacity',
+        ['Bailout.queuedCount']        = 'how many buyouts are waiting out their delay',
+        ['Bridges.accessMemoSize']     = 'that the access memo does not grow without bound',
+        ['Comms.resetCallCache']       = 'a masked-call cache a test needs to start empty',
+        ['Comms.resetMaskingCache']    = 'the same, for the alias mapping',
+        ['Death.wasSeenDead']          = 'whether the sampler recorded a death',
+        ['Mugshot.get']                = 'the stored image, without going through a handle',
+        ['Notify.clearPush']           = 'the push cooldown, so a test can send twice',
+        ['Photo.allowedHosts']         = 'the host allowlist as it was actually parsed',
+        ['Photo.tokenCount']           = 'how many photo tokens are outstanding',
+        ['Audit.pending']              = 'how many rows are queued but not yet flushed',
+        ['RateLimit.count']            = 'how many buckets are held, so a test can watch them expire',
+        ['Mugshot.count']              = 'how many faces are cached, so a test can watch the '
+            .. 'cache let go of players who left',
+        -- The store's own seams. Every backend implements them so the
+        -- conformance suite can ask all three the same question.
+        ['Memory._raw']                = 'the raw tables, so a spec can assert on stored state',
+        ['JsonStore._raw']             = 'the same, on the json backend',
+        ['Memory.readAudit']           = 'the whole audit log; the resource itself only '
+            .. 'ever reads one contract worth, through auditForContract',
+        ['JsonStore.readAudit']        = 'the same, on the json backend',
+        ['MySQLStore.readAudit']       = 'the same, on the mysql backend',
+    }
+
+    local function read_all(dir, filter)
+        local out = {}
+        for _, path in ipairs(walk(dir)) do
+            if not filter or filter(path) then out[#out + 1] = read(path) or '' end
+        end
+        return table.concat(out, '\n')
+    end
+
+    -- Comments do not call anything.
+    local function code(text) return (text:gsub('%-%-[^\n]*', '')) end
+
+    local resource = code(read_all('crimson-bounty/server')
+        .. '\n' .. read_all('crimson-bounty/client')
+        .. '\n' .. read_all('crimson-bounty/shared'))
+    local suite = code(read_all('crimson-bounty/tests'))
+
+    --- The names a module is actually reached by.
+    ---
+    --- Counting every `.name` in the resource made a common name
+    --- unfalsifiable: unwiring Kidnap.cancel — the exact bug this check
+    --- exists for — left it green, because Contracts.cancel, Config.Cancel
+    --- and AMENDMENT.CANCEL all match a bare `cancel`.
+    ---
+    --- But the table a file defines is not always the name callers use. The
+    --- storage backends define MySQLStore, Memory and JsonStore and are
+    --- every one of them reached through a local called `storage`, so
+    --- qualifying on the definition name alone reported all 127 of them.
+    --- A module answers to its own table name, to its file's basename —
+    --- which is the key it is wired under — and, under storage/, to
+    --- `storage`.
+    local function aliasesOf(path, module)
+        -- Deduplicated. Photo lives in photo.lua, so the table name and the
+        -- basename are the same string, and counting both counted every
+        -- match twice — which made the definition itself look like a call
+        -- site and reported eight live seams as "the resource calls it".
+        local seen, names = {}, {}
+        local function add(value)
+            value = (value or ''):lower()
+            if value ~= '' and not seen[value] then
+                seen[value] = true
+                names[#names + 1] = value
+            end
+        end
+        add(module)
+        add(path:match('([%w_]+)%.lua$'))
+        if path:find('/storage/') then add('storage') end
+        return names
+    end
+
+    local function countCalls(text, path, module, name)
+        local lowered = text:lower()
+        local total = 0
+        for _, alias in ipairs(aliasesOf(path, module)) do
+            for _ in lowered:gmatch('[%w_]*' .. alias .. '%s*[.:]%s*'
+                .. name:lower() .. '%f[^%w_]') do
+                total = total + 1
+            end
+            -- Called straight off the require, with no local in between:
+            -- main.lua does `require('server.bridges').install(modules)`,
+            -- where the module is named by a string rather than by an
+            -- identifier the pattern above can see.
+            for _ in lowered:gmatch("require%s*%(%s*['\"][^'\"]*" .. alias
+                .. "['\"]%s*%)%s*[.:]%s*" .. name:lower() .. '%f[^%w_]') do
+                total = total + 1
+            end
+        end
+        return total
+    end
+
+    local function countDefs(text, module, name)
+        local total = 0
+        for _ in text:lower():gmatch('\nfunction%s+' .. module:lower()
+            .. '%s*%.%s*' .. name:lower() .. '%s*%(') do
+            total = total + 1
+        end
+        return total
+    end
+
+    local unreferenced, unusedSeams = {}, {}
+    local declared = {}
+    local definedIn = {}
+
+    for _, path in ipairs(walk('crimson-bounty/server')) do
+        local src = code(read(path) or '')
+        for module, name in src:gmatch('\nfunction%s+([%w_]+)%.([%w_]+)%s*%(') do
+            local full = module .. '.' .. name
+            declared[full] = true
+            definedIn[full] = path
+
+            local mentions = countCalls(resource, path, module, name)
+            local defs = countDefs(resource, module, name)
+            -- Dispatched by name rather than called: App.handlers[name].
+            local dynamic = resource:find("%['" .. name .. "'%]") ~= nil
+
+            if mentions <= defs and not dynamic and not SEAMS[full] then
+                unreferenced[#unreferenced + 1] =
+                    ('%s: %s is exported and nothing in the resource calls it')
+                        :format(path, full)
+            end
+        end
+    end
+
+    for full in pairs(SEAMS) do
+        local module, name = full:match('^([%w_]+)%.([%w_]+)$')
+        local path = definedIn[full] or ''
+        local calledByResource = countCalls(resource, path, module, name)
+        local defs = countDefs(resource, module, name)
+
+        if not declared[full] then
+            unusedSeams[#unusedSeams + 1] =
+                full .. ' is named as a test seam and no longer exists'
+        elseif not suite:find('[.:]' .. name .. '%s*%(') then
+            unusedSeams[#unusedSeams + 1] =
+                full .. ' is named as a test seam and no test calls it'
+        elseif calledByResource > defs then
+            -- Not a seam: the resource calls it. Left on the list it would
+            -- exempt live code from ever being reported as orphaned.
+            unusedSeams[#unusedSeams + 1] =
+                full .. ' is named as a test seam and the resource calls it'
+        end
+    end
+
+    table.sort(unreferenced)
+    table.sort(unusedSeams)
+    for _, line in ipairs(unreferenced) do failures[#failures + 1] = line end
+    for _, line in ipairs(unusedSeams) do
+        failures[#failures + 1] = 'crimson-bounty/tests/static_check.lua: ' .. line
+    end
+end
+
+--------------------------------------------------------------------------
 -- 15. The app never builds markup from data
 --------------------------------------------------------------------------
 --

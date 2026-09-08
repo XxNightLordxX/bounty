@@ -15,11 +15,14 @@ local Util = require_shared('util')
 
 local Admin = {}
 
-local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit
+local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit, Death
 
 function Admin.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
         deps.storage, deps.identity, deps.contracts, deps.escrow, deps.audit, deps.notify
+    -- Optional, and only for its counters: the diagnosis reports how many
+    -- completions are waiting on proof, which is otherwise invisible.
+    Death = deps.death
 
     -- Taken from the wiring like every other collaborator, rather than
     -- required here. `require('server.app')` and the path the rest of the
@@ -309,6 +312,30 @@ function Admin.diagnose(source, subjectId)
 
     say('--- crimson-bounty diagnosis ---')
     say(('storage: %s'):format(tostring(Config.Database.Mode)))
+
+    -- Writes that did not read back as what was written.
+    --
+    -- The store prints the first three and then stops, deliberately, so a
+    -- disk that is failing does not fill the console — which leaves an
+    -- operator with no way to find out it is still happening. The counter
+    -- was written for this report and the report never asked for it, so the
+    -- comment above it described a behaviour that did not exist.
+    local mismatched = Storage.readBackMismatches and Storage.readBackMismatches() or 0
+    if mismatched > 0 then
+        say(('  %d WRITE(S) READ BACK DIFFERENTLY.'):format(mismatched))
+        say('    -> the engine accepted every one of them, so nothing is known '
+            .. 'to be lost yet. If contracts stop surviving restarts, this is '
+            .. 'the first thing to believe.')
+    end
+
+    -- Fulfilments waiting on a proof that has not arrived. A number that
+    -- only grows is a completion path that is not completing.
+    if Death and Death.pendingCount then
+        local waiting = Death.pendingCount()
+        if waiting > 0 then
+            say(('  %d completion(s) waiting on proof.'):format(waiting))
+        end
+    end
 
     -- Contracts the store could not load. They are not on the board and
     -- their escrow cannot be returned automatically, so they belong at the
