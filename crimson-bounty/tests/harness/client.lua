@@ -144,6 +144,42 @@ function Client.boot(opts)
     return Client
 end
 
+--- Run the client's background threads for a bounded number of ticks.
+---
+--- The death watcher is `while true do Wait(1000) ... end`: it cannot be
+--- called, only entered and then stopped. Wait counts, and a sentinel
+--- unwinds the loop once the count is reached — the same shape boot.lua's
+--- dependency wait is driven by, for the same reason.
+---
+--- Each thread gets its own count, so the registration thread's waits do
+--- not spend the death watcher's.
+function Client.ticks(n)
+    local STOP = {}
+    local realWait = _G.Wait
+
+    -- Not drained. A watcher is re-entered on every call so a test can put
+    -- the player through dead, up, and dead again — the transitions are the
+    -- whole behaviour, and a runner that consumed the thread could only ever
+    -- see the first one.
+    local threads = {}
+    for i = 1, #Env.threads do threads[i] = Env.threads[i] end
+
+    for _, fn in ipairs(threads) do
+        local count = 0
+        _G.Wait = function()
+            count = count + 1
+            if count > (n or 1) then error(STOP) end
+        end
+        local ok, err = pcall(fn)
+        if not ok and err ~= STOP then
+            _G.Wait = realWait
+            error(err, 0)
+        end
+    end
+
+    _G.Wait = realWait
+end
+
 --- Run whatever CreateThread queued, with lb-phone's exports in place.
 ---
 --- The registration thread is the client's whole startup, and it is the one

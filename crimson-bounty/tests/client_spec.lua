@@ -1054,3 +1054,144 @@ describe('rendering your own headshot', function()
         end
     end)
 end)
+
+
+--- The client half of kill attribution.
+---
+--- A `while true` watcher that had never been entered by a test — 25 lines
+--- of the client, including who gets named as the killer, with nothing
+--- checking any of it. It is the report the server corroborates a bounty
+--- payout against, so getting it wrong is getting paid wrong.
+---
+--- The design worth holding: the VICTIM reports who killed them. A killer's
+--- claim about their own kill is exactly what an attacker forges; a victim
+--- has no reason to hand credit to the person who shot them.
+describe('reporting your own death', function()
+    local function watching(opts)
+        opts = opts or {}
+        Env.reset()
+        Natives.resetResourceStates()
+        require('crimson-bounty.shared.util').resetMonotonic()
+        -- Source 3 is the local player: PlayerPedId returns 1003.
+        Env.addPlayer({ source = 3, citizenid = 'HUNTER01', license = 'license:ccc',
+            firstname = 'Rook', lastname = 'Ash' })
+        Client.boot()
+        Client.ped = 1003
+        Client.dead = false
+        return Client
+    end
+
+    --- How many times an event was sent, and what it carried.
+    ---
+    --- Counted separately from the payload on purpose: iRevived carries no
+    --- argument and a death with nobody to name carries nil, so appending
+    --- the value to a list counts neither of them. Written that way first,
+    --- three of these tests reported zero events and looked like bugs in
+    --- the client rather than in the helper.
+    local function reported(name)
+        local count, values = 0, {}
+        for _, call in ipairs(Client.toServer) do
+            if call.name == 'crimson-bounty:' .. name then
+                count = count + 1
+                values[count] = call.args[1]
+            end
+        end
+        return count, values
+    end
+
+    it('says nothing while the player is alive', function()
+        watching()
+        Client.ticks(3)
+        eq(reported('iDied'), 0)
+        eq(reported('iRevived'), 0)
+    end)
+
+    it('reports a death, and who caused it', function()
+        watching()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k',
+            firstname = 'Vic', lastname = 'Marlowe' })
+        Client.dead = true
+        Env.players[3]._killerPed = 1004
+
+        Client.ticks(2)
+        local count, said = reported('iDied')
+        eq(count, 1, 'one death, one report')
+        eq(said[1], 4, 'the server id of whoever killed them')
+    end)
+
+    it('reports a death with nobody named when the world killed them', function()
+        watching()
+        Client.dead = true
+        Env.players[3]._killerPed = 0
+
+        Client.ticks(2)
+        local count, said = reported('iDied')
+        eq(count, 1)
+        eq(said[1], nil,
+            'falling off a building names nobody, and must not name anybody')
+    end)
+
+    it('names nobody when the player killed themselves', function()
+        -- Their own ped is not somebody else, and crediting a bounty to the
+        -- target for dying is the whole reason this check is here.
+        watching()
+        Client.dead = true
+        Env.players[3]._killerPed = 1003
+
+        Client.ticks(2)
+        local count, said = reported('iDied')
+        eq(count, 1, 'the death is still reported')
+        eq(said[1], nil, 'with nobody named')
+    end)
+
+    it('names nobody when a ped that is not a player killed them', function()
+        -- An NPC, an animal, a car. NetworkGetPlayerIndexFromPed on a ped
+        -- that is not a player does not answer "nobody" — it answers with a
+        -- number, and that number is somebody's server id. Without the
+        -- IsPedAPlayer guard a player killed by a pedestrian credits the
+        -- kill to whoever happens to hold that index, which on a bounty is
+        -- a payout to an uninvolved player.
+        watching()
+        Client.dead = true
+        Env.players[3]._killerPed = 2500
+
+        Client.ticks(2)
+        local count, said = reported('iDied')
+        eq(count, 1, 'the death is still reported')
+        eq(said[1], nil, 'and it names nobody')
+    end)
+
+    it('does not report the same death on every tick', function()
+        watching()
+        Client.dead = true
+        Env.players[3]._killerPed = 1004
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+
+        Client.ticks(25)
+        eq(reported('iDied'), 1, 'twenty-five ticks, one death')
+    end)
+
+    it('reports getting back up, once', function()
+        watching()
+        Client.dead = true
+        Client.ticks(2)
+        eq(reported('iDied'), 1)
+
+        Client.dead = false
+        Client.ticks(5)
+        eq(reported('iRevived'), 1, 'one revival, however many ticks follow it')
+    end)
+
+    it('reports a second death after a revival', function()
+        watching()
+        Client.dead = true
+        Client.ticks(2)
+        Client.dead = false
+        Client.ticks(2)
+        Client.dead = true
+        Client.ticks(2)
+
+        eq(reported('iDied'), 2, 'dying twice is two reports')
+        eq(reported('iRevived'), 1)
+    end)
+end)
