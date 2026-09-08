@@ -982,6 +982,14 @@
 
     var detail = 'It costs ' + price + ', taken now, whether or not it turns '
       + 'anything up.';
+    // How many times this contract can be asked at all. The cap is already
+    // sent; without it a player has no idea they are on their last one, and
+    // finds out by spending it.
+    if (rules && rules.maxPerContract) {
+      detail += ' An informant will answer about one contract '
+        + rules.maxPerContract
+        + (rules.maxPerContract === 1 ? ' time in total.' : ' times in total.');
+    }
     if (rules && rules.needsProximity) {
       // The single most common reason this "does not work": an operative who
       // accepted and has not gone near the target cannot be named, by
@@ -2544,7 +2552,12 @@
       modes.appendChild(allButton);
     }
     if (canNearby) {
-      nearButton = el('button', 'ghost', 'Near me');
+      // With the radius, because "near me" is not a distance. The server
+      // has always sent it and the page never read it, so a player whose
+      // target was thirty-one metres away saw an empty list and no reason.
+      var radius = settings().nearbyRadius;
+      nearButton = el('button', 'ghost',
+        radius ? 'Within ' + Math.round(radius) + 'm' : 'Near me');
       nearButton.id = 'target-scope-nearby';
       nearButton.onclick = function () { setScope('nearby'); };
       modes.appendChild(nearButton);

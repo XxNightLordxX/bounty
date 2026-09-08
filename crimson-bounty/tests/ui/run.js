@@ -4438,6 +4438,56 @@ async function main() {
     }
   })();
 
+  /* Two figures the server has always sent and the page never read. */
+  await (async function figuresAlreadySent() {
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {
+        minQueryLength: 3, allowBrowseAll: true, allowNearby: true,
+        nearbyRadius: 30.0
+      } } },
+      mine: MINE, ledger: LEDGER
+    });
+    await settle(); await settle();
+    tab(app, 'place');
+    await settle(); await settle();
+
+    it('says how near "near me" actually is', function () {
+      const shown = app.view.textContent;
+      truthy(shown.indexOf('30m') !== -1,
+        '"Near me" is not a distance: a player whose target is one metre too '
+        + 'far sees an empty list and no reason. ' + shown);
+    });
+
+    /* And how many times an informant can be asked about one contract. */
+    const OWN = { ok: true, data: { created: [{
+      id: 'ct00000001', targetName: 'Dana Reyes', reason: 'Unpaid debt',
+      mode: 'competitive', state: 'accepted', role: 'creator',
+      reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+      huntersActive: 1, huntersMax: 5, penaltyAmount: 0,
+      hunters: acrossTheWire([])
+    }], accepted: [], onMe: [] } };
+
+    const priced = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {
+        minQueryLength: 3,
+        informant: { cost: 25000, account: 'bank', maxPerContract: 3 }
+      } } },
+      mine: OWN, ledger: LEDGER
+    });
+    await settle(); await settle();
+    tab(priced, 'mine');
+    await settle(); await settle();
+    click(priced, 'Buy informant data');
+    await settle();
+
+    it('says how many times one contract can be asked', function () {
+      const shown = priced.view.textContent;
+      truthy(shown.indexOf('3 times') !== -1,
+        'without the cap a player finds out they were on their last one by '
+        + 'spending it: ' + shown);
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a
