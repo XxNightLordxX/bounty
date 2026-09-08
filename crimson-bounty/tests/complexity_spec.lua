@@ -252,13 +252,25 @@ describe('complexity: opening the board', function()
     --- police a few milliseconds — a number tight enough to be interesting
     --- is a number that flakes on a busy machine.
     it('opens a five-hundred contract board inside a sane wall clock', function()
+        -- The ceiling moves with the instrumentation rather than the test
+        -- skipping itself.
+        --
+        -- A line hook multiplies every wall clock in the process by around a
+        -- hundred, so a fixed ceiling turns "somebody is measuring coverage"
+        -- into a red suite — which is how a run of the coverage report ended
+        -- with one failure that was not a failure. Skipping under a hook
+        -- would report as a pass, which is how a check quietly stops
+        -- existing; a looser ceiling still catches the tenth-of-a-second
+        -- into a minute this is here for.
+        local ceiling = debug.gethook() and 60.0 or 2.0
+
         atScale(500, function(stack, board, counts, reset)
             local started = os.clock()
             stack.projection.listing(board.creators[1].cid, 1)
             local elapsed = os.clock() - started
-            truthy(elapsed < 2.0,
-                ('opening the board took %.3fs; the shape of this is wrong')
-                :format(elapsed))
+            truthy(elapsed < ceiling,
+                ('opening the board took %.3fs against a ceiling of %.1fs; '
+                 .. 'the shape of this is wrong'):format(elapsed, ceiling))
         end)
     end)
 end)

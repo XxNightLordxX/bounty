@@ -617,7 +617,23 @@ MATRIX.requestCall = {
 local CUSTOM = {
     iDied    = 'a death report acts on its caller and on nobody else',
     iRevived = 'a death report acts on its caller and on nobody else',
+    -- The three registered in bridges.lua rather than app.lua. Same kind of
+    -- rule and no permit/refuse cell: each acts on whoever fired it and on
+    -- nobody else, and none of them answers a request.
+    whoAmI            = 'the events registered outside the app gate',
+    mugshot           = 'the events registered outside the app gate',
+    appearanceChanged = 'the events registered outside the app gate',
 }
+
+-- Registered in bridges.lua, which is how three events any player on the
+-- server can fire came to have no row at all: the completeness guard read
+-- app.lua and the block around it said "the whole net surface".
+MATRIX.whoAmI = { custom = true,
+    why = 'asking whether you may have the app answers about you' }
+MATRIX.mugshot = { custom = true,
+    why = 'a headshot is stored against whoever sent it, never against a cid in the payload' }
+MATRIX.appearanceChanged = { custom = true,
+    why = 'a player invalidates their own face and no one else' }
 
 MATRIX.iDied = { custom = true,
     why = 'only the victim own client can report their death' }
@@ -923,6 +939,159 @@ end)
 -- The guard that keeps this a matrix
 --------------------------------------------------------------------------
 
+--- The three net events registered in bridges.lua rather than through the
+--- app gate.
+---
+--- Every one is reachable by any player on the server — a net event name is
+--- addressable by anybody, not only by the page this resource ships — and
+--- none of them had a row, because the completeness guard read app.lua and
+--- the block around it called that "the whole net surface".
+---
+--- They answer no request, so there is no permit/refuse cell to fill. The
+--- rule is the same shape as the death reports': each acts on whoever fired
+--- it, and on nobody else.
+describe('the events registered outside the app gate', function()
+    local function wired()
+        local s = newStack()
+        local f = fixture(s)
+        -- The stack does not install these; bridges.install is what
+        -- registers them on a live server, which is exactly why nothing had
+        -- ever executed them.
+        s.bridges.install(s)
+        return s, f
+    end
+
+    local function fire(name, src, ...)
+        local handler = Env.events['crimson-bounty:' .. name]
+        if not handler then return nil, 'no handler for ' .. name end
+        _G.source = src
+        local ok, err = pcall(handler, ...)
+        _G.source = nil
+        return ok, err
+    end
+
+    it('registers all three', function()
+        wired()
+        for _, name in ipairs({ 'whoAmI', 'mugshot', 'appearanceChanged' }) do
+            truthy(Env.events['crimson-bounty:' .. name],
+                name .. ' must be registered by bridges.install')
+        end
+    end)
+
+    --- A real headshot, and the smallest thing that satisfies the format.
+    local PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
+
+    it('stores a headshot against whoever sent it', function()
+        local s = wired()
+        -- Solicited: an unsolicited image is refused outright, which is a
+        -- rule of its own and already covered. This is about WHOSE face it
+        -- becomes.
+        s.mugshot.request('HUNTER01')
+        truthy(fire('mugshot', 3, PNG), 'the handler must not throw')
+
+        truthy(s.mugshot.handleFor('HUNTER01'),
+            'the sender got a face')
+        falsy(s.mugshot.handleFor('CREATOR1'),
+            'and nobody else did')
+        falsy(s.mugshot.handleFor('TARGET01'))
+    end)
+
+    it('takes the sender from the connection, never from the payload', function()
+        -- The image is the only argument, so there is no cid to forge — and
+        -- that is the property worth pinning, because an argument added
+        -- later is how it stops being true.
+        local s = wired()
+        s.mugshot.request('CREATOR1')
+        s.mugshot.request('HUNTER01')
+
+        -- Player 3 sends, naming player 1 every way an argument could.
+        truthy(fire('mugshot', 3, PNG, 'CREATOR1'))
+        truthy(fire('mugshot', 3, { cid = 'CREATOR1', image = PNG }))
+
+        falsy(s.mugshot.handleFor('CREATOR1'),
+            'a sender must not be able to put a face on somebody else')
+    end)
+
+    it('refuses a headshot from a source with no character', function()
+        local s = wired()
+        s.mugshot.request('HUNTER01')
+        truthy(fire('mugshot', 999, PNG), 'an unknown source must not throw')
+        falsy(s.mugshot.handleFor('HUNTER01'),
+            'and must not have stored anything')
+    end)
+
+    it('does not throw on a headshot that is not a string', function()
+        local s = wired()
+        s.mugshot.request('HUNTER01')
+        for _, odd in ipairs({ 42, true, {} }) do
+            truthy(fire('mugshot', 3, odd),
+                ('a %s payload must not throw out of a net event'):format(type(odd)))
+        end
+        truthy(fire('mugshot', 3), 'nor must an absent one')
+        falsy(s.mugshot.handleFor('HUNTER01'), 'and none of it is a face')
+    end)
+
+    it('invalidates only the face of whoever asked', function()
+        local s = wired()
+        for _, who in ipairs({ 'CREATOR1', 'HUNTER01' }) do
+            s.mugshot.request(who)
+        end
+        s.mugshot.store('CREATOR1', PNG)
+        s.mugshot.store('HUNTER01', PNG)
+        truthy(s.mugshot.handleFor('CREATOR1'))
+        truthy(s.mugshot.handleFor('HUNTER01'))
+
+        -- Past the refresh floor, so an invalidation is allowed at all.
+        Env.advance((Config.Mugshot.MinRefreshMinutes * 60) + 1)
+        truthy(fire('appearanceChanged', 3))
+
+        falsy(s.mugshot.handleFor('HUNTER01'), 'the sender face is dropped')
+        truthy(s.mugshot.handleFor('CREATOR1'),
+            'and a player cannot drop somebody else face')
+    end)
+
+    it('answers whoAmI about the caller and nobody else', function()
+        local s = wired()
+        Env.clientEvents = {}
+        truthy(fire('whoAmI', 3))
+
+        local told = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:access' then
+                told[#told + 1] = event.target
+            end
+        end
+        eq(#told, 1, 'exactly one player is told')
+        eq(told[1], 3, 'and it is the one who asked')
+    end)
+
+    it('never lets whoAmI carry anything but a yes or no', function()
+        -- It is the access decision, and the access decision is a boolean.
+        -- Anything else on this payload is something a player learned by
+        -- asking a question about themselves.
+        local s = wired()
+        Env.clientEvents = {}
+        fire('whoAmI', 3)
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:access' then
+                eq(type(event.args[1]), 'boolean',
+                    'the access answer must be a boolean and nothing else')
+                eq(#event.args, 1, 'and must carry nothing beside it')
+            end
+        end
+    end)
+
+    it('does not throw when a stranger fires any of them', function()
+        -- A source the resource has never seen. Every one of these is
+        -- addressable by anybody on the server.
+        local s = wired()
+        for _, name in ipairs({ 'whoAmI', 'appearanceChanged' }) do
+            truthy(fire(name, 4242),
+                name .. ' must survive a source with no character')
+        end
+    end)
+end)
+
 describe('the matrix covers the whole net surface', function()
     --- A handler with no row is the gap this file exists to close. Left to
     --- a hand-written list, the next handler is added to app.lua and to the
@@ -955,18 +1124,53 @@ describe('the matrix covers the whole net surface', function()
     end)
 
     --- App.handlers only knows about the ones registered through handler().
-    --- The two death reports are registered directly, which is exactly how a
-    --- handler comes to have no gate and no row, so the source is read for
-    --- the literal names too.
-    it('has a row for every net event registered directly in app.lua', function()
-        local missing = {}
-        for name in APP_SOURCE:gmatch("RegisterNetEvent%('crimson%-bounty:([%w_]+)'") do
-            if not MATRIX[name] then missing[#missing + 1] = name end
+    --- Anything registered directly is exactly how a handler comes to have
+    --- no gate and no row, so the source is read for the literal names too.
+    ---
+    --- Every server file, not just app.lua. This read one file and the block
+    --- around it says "the whole net surface", which it was not: three
+    --- events any player on the server can fire — whoAmI, mugshot and
+    --- appearanceChanged — are registered in bridges.lua, so none of them
+    --- had a row and nothing noticed. A net event is a net event wherever it
+    --- is written.
+    it('has a row for every net event this resource registers anywhere', function()
+        local found, missing = {}, {}
+        local listing = io.popen("find crimson-bounty/server -name '*.lua' 2>/dev/null")
+        for path in listing:lines() do
+            local source = read_file(path) or ''
+            for name in source:gmatch("RegisterNetEvent%('crimson%-bounty:([%w_]+)'") do
+                found[name] = path
+            end
+        end
+        listing:close()
+
+        for name, path in pairs(found) do
+            if not MATRIX[name] then
+                missing[#missing + 1] = name .. ' (' .. path .. ')'
+            end
         end
         table.sort(missing)
         eq(#missing, 0,
-            'app.lua registers these net events outside the handler() gate and '
+            'these net events are registered outside the handler() gate and '
             .. 'the matrix says nothing about them: ' .. table.concat(missing, ', '))
+    end)
+
+    --- And the search itself has to be able to find something, or the check
+    --- above passes because it looked nowhere.
+    it('actually reads the files it claims to search', function()
+        local names = {}
+        local listing = io.popen("find crimson-bounty/server -name '*.lua' 2>/dev/null")
+        for path in listing:lines() do
+            for name in (read_file(path) or ''):gmatch(
+                "RegisterNetEvent%('crimson%-bounty:([%w_]+)'") do
+                names[#names + 1] = name
+            end
+        end
+        listing:close()
+        truthy(#names >= 5,
+            'the resource registers more direct net events than this found ('
+            .. #names .. '), so the completeness check above is looking at '
+            .. 'nothing')
     end)
 
     --- The exemption is a closed set, or it is a way to silence a handler.
