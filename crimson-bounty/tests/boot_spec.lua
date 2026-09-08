@@ -842,3 +842,244 @@ describe('what filling a gap hands the live config', function()
             .. 'the first one emptied the fallback through the alias')
     end)
 end)
+
+
+--- The module loader, and the wait for everything this resource stands on.
+---
+--- server/boot.lua was the one server file with no coverage at all — zero
+--- lines, ever, in the whole suite — and it is the file that decides whether
+--- anything else in the resource runs.
+describe('the loader and the wait in front of it', function()
+    local function loadBoot()
+        Env.reset()
+        Natives.resetResourceStates()
+        _G.CrimsonBoot = nil
+        local realRequire, realRequireShared = _G.require, _G.require_shared
+
+        local source = io.open('crimson-bounty/server/boot.lua', 'r')
+        local text = source:read('*a')
+        source:close()
+        -- Named with the path it actually has, so a stack trace from it
+        -- points somewhere real — and so the coverage report attributes it
+        -- to the file rather than reporting the one file it does execute as
+        -- never executed.
+        assert(load(text, '@crimson-bounty/server/boot.lua'))()
+
+        -- The loader replaces the global require, which the suite itself
+        -- runs on — and the suite is mid-run. Its own loader is captured and
+        -- the real one put straight back, so the tests below drive
+        -- boot.require explicitly rather than through a global that
+        -- everything else depends on.
+        local boot = _G.CrimsonBoot
+        boot.require = _G.require
+        boot.requireShared = _G.require_shared
+        _G.require, _G.require_shared = realRequire, realRequireShared
+        return boot
+    end
+
+    local function said(fn)
+        local lines = {}
+        local realPrint = _G.print
+        _G.print = function(...)
+            local parts = {}
+            for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+            lines[#lines + 1] = table.concat(parts, ' ')
+        end
+        local ok, err = pcall(fn)
+        _G.print = realPrint
+        if not ok then error(err, 0) end
+        return table.concat(lines, '\n')
+    end
+
+    --- The loader itself. Every one of these is a message somebody reads
+    --- while trying to find out why the resource will not start, so the
+    --- message being right is the whole value.
+    it('loads a module once and hands back the same table', function()
+        local boot = loadBoot()
+        Natives.files['server/thing.lua'] = 'ThingLoads = (ThingLoads or 0) + 1 return { n = 1 }'
+        _G.ThingLoads = nil
+
+        local first = boot.require('server.thing')
+        local again = boot.require('server.thing')
+        eq(first, again, 'the same table, not a second load')
+        eq(_G.ThingLoads, 1, 'and the file ran once')
+    end)
+
+    it('names the file when a module is missing', function()
+        local boot = loadBoot()
+        local ok, err = pcall(boot.require, 'server.nothere')
+        falsy(ok)
+        truthy(tostring(err):find('server/nothere.lua', 1, true),
+            'the error has to name the file: ' .. tostring(err))
+    end)
+
+    it('reports the real error on a second attempt, not a circular require', function()
+        -- The latch that marks a load in progress stayed set when the module
+        -- threw, so the next attempt to load it reported a circular require
+        -- — a made-up diagnosis in place of the real error, at exactly the
+        -- moment somebody is trying to find out what is wrong.
+        local boot = loadBoot()
+        Natives.files['server/broken.lua'] = 'error("the real problem")'
+
+        local firstOk, firstErr = pcall(boot.require, 'server.broken')
+        falsy(firstOk)
+        truthy(tostring(firstErr):find('the real problem', 1, true), tostring(firstErr))
+
+        local againOk, againErr = pcall(boot.require, 'server.broken')
+        falsy(againOk)
+        falsy(tostring(againErr):find('circular', 1, true),
+            'the second attempt must not invent a different cause: '
+            .. tostring(againErr))
+        truthy(tostring(againErr):find('the real problem', 1, true),
+            tostring(againErr))
+    end)
+
+    it('still catches a genuine circular require', function()
+        local boot = loadBoot()
+        Natives.files['server/a.lua'] = 'require("server.b") return {}'
+        Natives.files['server/b.lua'] = 'require("server.a") return {}'
+
+        -- A module reaches its own loader through the global, so this one
+        -- test has to install it — and put the suite's back afterwards
+        -- whatever happens, because everything after it loads through that.
+        local real = _G.require
+        _G.require = boot.require
+        local ok, err = pcall(boot.require, 'server.a')
+        _G.require = real
+
+        falsy(ok)
+        truthy(tostring(err):find('circular require', 1, true), tostring(err))
+    end)
+
+    it('names the file when a module returns something that is not a module', function()
+        -- It used to cache that as `true`, so every later require handed the
+        -- caller a boolean where a table was expected and the failure
+        -- surfaced somewhere else entirely.
+        local boot = loadBoot()
+        Natives.files['server/empty.lua'] = 'local x = 1'
+        local ok, err = pcall(boot.require, 'server.empty')
+        falsy(ok)
+        truthy(tostring(err):find('server/empty.lua', 1, true), tostring(err))
+        truthy(tostring(err):find('not a module table', 1, true), tostring(err))
+    end)
+
+    it('starts at once when everything it needs is up', function()
+        local boot = loadBoot()
+        eq(#boot.missingDependencies(), 0,
+            'the default harness has every dependency started')
+        truthy(boot.awaitDependencies(5))
+    end)
+
+    it('names a dependency that never starts, rather than waiting in silence', function()
+        -- The whole point. A renamed or forked resource has a framework that
+        -- works perfectly and a name this never matches, and the old loop
+        -- printed nothing at all — for as long as the server ran.
+        local boot = loadBoot()
+        Natives.resourceStates['qbx_core'] = 'missing'
+
+        local told
+        local ready
+        told = said(function() ready = boot.awaitDependencies(60) end)
+
+        falsy(ready, 'it must not claim to be ready')
+        truthy(told:find('qbx_core', 1, true),
+            'the console has to name what is missing: ' .. told)
+        truthy(told:find('renamed', 1, true),
+            'and say the thing an operator can actually act on: ' .. told)
+    end)
+
+    --- The reporting schedule on its own.
+    ---
+    --- Note what this does NOT prove: at the constants shipped today the
+    --- grace check inside shouldReport is redundant with the modulo — remove
+    --- it and the first report still lands in the same second — so no test
+    --- can catch its removal, and one written to look like it could would be
+    --- testing the implementation rather than the behaviour. It stops being
+    --- redundant the moment the repeat interval divides differently, which is
+    --- what this pins: quiet at the start, then something, then something
+    --- again.
+    it('is quiet, then reports, then keeps reporting', function()
+        local boot = loadBoot()
+        local first
+        for waited = 0, 400 do
+            if boot.shouldReport(waited) then first = first or waited end
+        end
+        truthy(first and first > 0,
+            'reporting at second zero is reporting before it has waited')
+
+        local repeats = 0
+        for waited = 0, 400 do
+            if boot.shouldReport(waited) then repeats = repeats + 1 end
+        end
+        truthy(repeats >= 3,
+            'one message and then silence is a message nobody saw: got '
+            .. repeats .. ' in the first 400 seconds')
+
+        for waited = 0, first - 1 do
+            falsy(boot.shouldReport(waited),
+                'nothing may be said before the first report at ' .. first .. 's')
+        end
+    end)
+
+    it('says nothing while a server is merely still coming up', function()
+        -- Everything is missing for a moment on any start, and saying so
+        -- immediately is noise that teaches operators to ignore the log.
+        local boot = loadBoot()
+        Natives.resourceStates['ox_inventory'] = 'missing'
+        local told = said(function() boot.awaitDependencies(5) end)
+        eq(told, '', 'the first few seconds are quiet: ' .. told)
+    end)
+
+    it('keeps saying it, for somebody who looks at the console late', function()
+        local boot = loadBoot()
+        Natives.resourceStates['ox_inventory'] = 'stopped'
+        local told = said(function() boot.awaitDependencies(120) end)
+
+        local reports = 0
+        for _ in told:gmatch('still waiting after') do reports = reports + 1 end
+        truthy(reports >= 2,
+            'a single message two minutes ago is a message nobody saw: got '
+            .. reports)
+    end)
+
+    it('reports the state it actually found, not just the name', function()
+        local boot = loadBoot()
+        Natives.resourceStates['ox_inventory'] = 'stopped'
+        local told = said(function() boot.awaitDependencies(30) end)
+        truthy(told:find('ox_inventory is stopped', 1, true),
+            'stopped and missing are different problems: ' .. told)
+    end)
+
+    it('says so when a long wait finally ends', function()
+        -- One continuous wait, the way it runs on a server: the dependency
+        -- turns up while the loop is in it. Driven through Wait, because
+        -- calling awaitDependencies twice would start its clock again and
+        -- test nothing.
+        local boot = loadBoot()
+        Natives.resourceStates['qbx_core'] = 'missing'
+
+        local realWait, ticks = _G.Wait, 0
+        _G.Wait = function()
+            ticks = ticks + 1
+            if ticks == 20 then Natives.resourceStates['qbx_core'] = 'started' end
+        end
+        local told, ready
+        local ok, err = pcall(function()
+            told = said(function() ready = boot.awaitDependencies(120) end)
+        end)
+        _G.Wait = realWait
+        if not ok then error(err, 0) end
+
+        truthy(ready, 'the dependency arrived, so it must have started')
+        truthy(told:find('still waiting', 1, true),
+            'it should have reported the wait: ' .. told)
+        truthy(told:find('starting', 1, true),
+            'an operator who watched it wait should see it stop waiting: ' .. told)
+    end)
+
+    it('is quiet on the way out when it never had to wait', function()
+        local boot = loadBoot()
+        local told = said(function() boot.awaitDependencies(5) end)
+        eq(told, '', 'a normal start says nothing: ' .. told)
+    end)
+end)
