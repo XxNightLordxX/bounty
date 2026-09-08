@@ -1698,6 +1698,121 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 14d. No column an upsert inserts and then refuses to update
+--------------------------------------------------------------------------
+--
+-- MySQL's ON DUPLICATE KEY UPDATE names the columns a second write is
+-- allowed to change. A column left off that list is written once, at
+-- creation, and every later write to it is discarded — with no error, no
+-- warning, and nothing in the log.
+--
+-- Memory and json mode have no such list. They store what they are given.
+-- So the entire suite, which runs against memory, agrees that the field was
+-- saved, and the backend that ships by default quietly disagrees. Two
+-- columns were sitting in exactly that state:
+--
+--   bonus_percent — raise_bonus escrows the difference between the stored
+--   percentage and the new one, so a stale stored figure means the next
+--   raise takes the same band out of the creator's pocket again, and the
+--   guard against raising to a percentage already reached never fires.
+--
+--   expires_at — a contract's absolute lifetime.
+--
+-- Every inserted column must therefore be either updatable or listed below
+-- as deliberately immutable, with the reason. The allowlist is checked in
+-- both directions: naming a column that the statement does update, or one
+-- it does not insert at all, is reported too, so this list cannot rot into
+-- a blanket exemption.
+
+do
+    --- Columns an upsert deliberately writes once and never again.
+    ---@type table<string, string>
+    local IMMUTABLE = {
+        ['crimson_contracts.id']              = 'the primary key',
+        ['crimson_contracts.creator_cid']     = 'who placed it; a contract does not change hands',
+        ['crimson_contracts.creator_account'] = 'the account behind the creator, fixed with them',
+        ['crimson_contracts.creator_name']    = 'their name as it was when they placed it',
+        ['crimson_contracts.target_cid']      = 'who it names; re-targeting is a new contract',
+        ['crimson_contracts.target_name']     = 'their name as it was when it was placed',
+        ['crimson_contracts.target_protected'] = 'judged once, at creation, against the rules then',
+        ['crimson_contracts.target_job']      = 'the same: what they were doing when it was placed',
+        ['crimson_contracts.anon_creator']    = 'chosen at creation and not revisitable',
+        ['crimson_contracts.payout_slots']    = 'the shape of the contract hunters accepted',
+        ['crimson_contracts.created_at']      = 'when it was placed',
+        ['crimson_contracts.state']           = 'moves only through compareSetContractState, which '
+            .. 'is guarded; writing it from a caller-held copy could resurrect a contract that '
+            .. 'closed while the caller was reading',
+        ['crimson_escrow.id']                 = 'the primary key',
+        ['crimson_escrow.contract_id']        = 'a line does not move between contracts',
+        ['crimson_escrow.slot']               = 'which payout slot it belongs to',
+        ['crimson_escrow.portion']            = 'baseline, bonus or stake, decided when it was taken',
+        ['crimson_escrow.source']             = 'the account or inventory it came out of',
+        ['crimson_escrow.amount']             = 'moves only through setEscrowAmount, which is guarded',
+        ['crimson_escrow.item']               = 'what was taken',
+        ['crimson_escrow.quantity']           = 'how much of it',
+        ['crimson_escrow.metadata']           = 'the item as it was, serial and all',
+        ['crimson_escrow.staker']             = 'who put it up',
+        ['crimson_escrow.inv_slot']           = 'the inventory slot it came from, for returning it',
+        ['crimson_escrow.derived']            = 'whether this resource worked the bonus out or the '
+            .. 'creator named it; a property of how the line was made',
+        ['crimson_escrow.state']              = 'moves only through claimEscrowLine and '
+            .. 'settleEscrowLine, which are guarded against exactly this',
+        ['crimson_amendments.id']             = 'the primary key',
+        ['crimson_amendments.contract_id']    = 'which contract it proposes to change',
+        ['crimson_amendments.proposer']       = 'who put it forward',
+        ['crimson_amendments.kind']           = 'what it proposes; a different change is a '
+            .. 'different proposal, not an edit of this one',
+        ['crimson_amendments.payload']        = 'the terms as proposed. Rewriting these under '
+            .. 'an approval already given is the one thing this row must not allow',
+        ['crimson_pending.id']                = 'the primary key',
+        ['crimson_pending.cid']               = 'who is owed',
+        ['crimson_pending.contract_id']       = 'what it came from',
+        ['crimson_pending.line_id']           = 'the escrow line waiting to be handed over',
+        ['crimson_stats.cid']                 = 'the primary key',
+    }
+
+    local sql = read('crimson-bounty/server/storage/mysql.lua')
+    if sql then
+        local seen = {}
+        for statement in sql:gmatch('INSERT%s+INTO.-%]%]') do
+            local table_ = statement:match('INSERT%s+INTO%s+([%w_]+)')
+            local update = statement:match('ON DUPLICATE KEY UPDATE(.*)$')
+            if table_ and update then
+                -- Comments inside the clause carry column names in prose.
+                update = update:gsub('%-%-[^\n]*', '')
+
+                local updated = {}
+                for name in update:gmatch('([%w_]+)%s*=') do updated[name] = true end
+
+                local columns = statement:match('INSERT%s+INTO%s+[%w_]+%s*%((.-)%)')
+                for name in (columns or ''):gmatch('[%w_]+') do
+                    local key = table_ .. '.' .. name
+                    seen[key] = true
+                    if not updated[name] and not IMMUTABLE[key] then
+                        failures[#failures + 1] = ('%s is inserted and then left out of the '
+                            .. 'ON DUPLICATE KEY UPDATE list, so every write to it after the '
+                            .. 'first is discarded on the backend that ships by default — '
+                            .. 'silently, and only there. Add it to the update list, or to '
+                            .. 'IMMUTABLE in static_check with the reason it never changes.')
+                            :format(key)
+                    elseif updated[name] and IMMUTABLE[key] then
+                        failures[#failures + 1] = ('%s is named as deliberately immutable and '
+                            .. 'the statement updates it. One of the two is wrong.'):format(key)
+                    end
+                end
+            end
+        end
+
+        for key in pairs(IMMUTABLE) do
+            if not seen[key] then
+                failures[#failures + 1] = ('%s is named as deliberately immutable and no upsert '
+                    .. 'inserts it. A stale exemption is one that stops being checked.'):format(key)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

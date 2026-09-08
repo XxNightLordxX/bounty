@@ -1473,3 +1473,38 @@ describe('rewriting an amendment', function()
         end
     end)
 end)
+
+describe('rewriting a contract', function()
+    --- Every field the resource changes after a contract exists.
+    ---
+    --- A column left out of the MySQL upsert's update list is discarded in
+    --- silence, and memory and json mode — where the rest of this suite runs
+    --- — have no such list, so nothing anywhere failed. Two were missing.
+    local MUTABLE = {
+        reason = 'renegotiated', mode = CB.MODE.EXCLUSIVE,
+        bonus_percent = 35, bailout_amount = 12345, penalty_amount = 6789,
+        slots_claimed = 2, next_slot = 3,
+        deadline_at = 1800000001, expires_at = 1800000002,
+        paused_ms = 7000, paused_since = 1800000003,
+        bailout_queued_at = 1800000004, bailout_paid_by = 'TARGET01',
+        bailout_paid_amount = 999, bailout_paid_account = 'cash',
+        bailout_attempts = 3,
+        resolved_at = 1800000005, resolution = 'completed',
+    }
+
+    it('keeps every field the resource can change, in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ctmut01'))
+
+            local contract = b.store.readContract('ctmut01')
+            for key, value in pairs(MUTABLE) do contract[key] = value end
+            b.store.writeContract(contract)
+
+            local read = b.store.readContract('ctmut01')
+            for key, value in pairs(MUTABLE) do
+                eq(read[key], value, ('%s: %s was discarded on rewrite'):format(
+                    b.name, key))
+            end
+        end
+    end)
+end)

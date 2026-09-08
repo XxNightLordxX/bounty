@@ -317,8 +317,25 @@ function MySQLStore.writeContract(c)
              bailout_queued_at, bailout_paid_by, bailout_paid_amount, bailout_paid_account,
              bailout_attempts, resolved_at, resolution)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        -- Every column a caller can change after creation has to be in this
+        -- list. Two were missing, and both were invisible in memory and json
+        -- mode, which is where the tests ran:
+        --
+        --   bonus_percent — raise_bonus escrows the DIFFERENCE between the
+        --   stored percentage and the new one. The escrow lines were written,
+        --   the column was not, so the stored figure stayed at whatever the
+        --   contract was created with. The next raise then computed its
+        --   difference from that stale base and took the same band out of the
+        --   creator's pocket a second time, and the guard that refuses a
+        --   raise to a percentage already reached never fired, so it could be
+        --   done again and again. The board also went on showing the old
+        --   percentage to every hunter.
+        --
+        --   expires_at — the absolute lifetime. Nothing extended one until
+        --   the staff timer refresh did.
         ON DUPLICATE KEY UPDATE
             reason = VALUES(reason), mode = VALUES(mode),
+            bonus_percent = VALUES(bonus_percent), expires_at = VALUES(expires_at),
             bailout_amount = VALUES(bailout_amount), penalty_amount = VALUES(penalty_amount),
             slots_claimed = VALUES(slots_claimed), next_slot = VALUES(next_slot),
             deadline_at = VALUES(deadline_at), paused_ms = VALUES(paused_ms),
