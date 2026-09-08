@@ -195,7 +195,21 @@ function Admin.void(src, contractId, reason)
     if not contract then return false, CB.ERR.NOT_FOUND end
     if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
 
-    local ok, err = Contracts.resolve(contractId, CB.STATE.CANCELLED,
+    -- VOIDED, not CANCELLED. The state machine has declared VOIDED terminal
+    -- and reachable from ACTIVE and ACCEPTED since it was written, commented
+    -- "admin", and nothing had ever set it: this command, the only thing
+    -- that should, resolved as though the creator had cancelled.
+    --
+    -- Which is not cosmetic. Cancelling and re-listing is otherwise free, so
+    -- a creator whose own contract went CANCELLED cannot list anything for
+    -- Config.Amendments.CancelCooldownSeconds. A staff member voiding a
+    -- contract to FIX something therefore rate-limited the person they were
+    -- helping, for a cancellation they did not make.
+    --
+    -- Everything else is unchanged: resolve treats every terminal alike
+    -- except BAILED_OUT and EXPIRED, so the escrow still comes back to the
+    -- creator in full and the hunters still get their stakes.
+    local ok, err = Contracts.resolve(contractId, CB.STATE.VOIDED,
         contract.creator_cid, nil, 'voided_by_staff')
     if not ok then return false, err end
 

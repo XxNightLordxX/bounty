@@ -114,7 +114,9 @@ describe('voiding a contract', function()
         local before = Env.players[1].PlayerData.money.cash + Env.players[1].PlayerData.money.bank
 
         truthy(s.admin.void(0, c.id, 'refunded a stuck handover'))
-        eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED)
+        eq(s.storage.readContract(c.id).state, CB.STATE.VOIDED,
+            'the state the machine declares for an admin close, not the one '
+            .. 'that means the creator changed their mind')
 
         local after = Env.players[1].PlayerData.money.cash + Env.players[1].PlayerData.money.bank
         eq(after - before, 5000, 'the escrow comes back')
@@ -644,5 +646,165 @@ describe('the wait before a new character can be a target', function()
         truthy(s.contracts.create(f.creator, { targetCid = 'TARGET01',
             reason = 'x', reward = { baseline = { cash = 5000 } } }),
             'ten minutes per character is the whole afternoon on a test server')
+    end)
+end)
+
+describe('what a staff command prints', function()
+    --- The bodies below were never run.
+    ---
+    --- Every test in this file so far calls Admin.void, Admin.interrupted and
+    --- Admin.identify directly and asserts on what they RETURN. Nothing ran
+    --- the code that turns those returns into lines a staff member reads, so
+    --- the format strings were unexecuted — which is where the last defect in
+    --- this file lived: a piece of escrowed property reported as "$0", in the
+    --- one tool that exists for handing property back.
+    ---
+    --- A staff command is used at the worst moment, by somebody already
+    --- dealing with a problem. It throwing is not a cosmetic fault.
+    local function commands(s)
+        Env.commands = {}
+        require('crimson-bounty.server.bridges').installCommands(s)
+        Env.chat = {}
+        return Env.commands
+    end
+
+    local function said(target)
+        local out = {}
+        for _, line in ipairs(Env.chat) do
+            if line.target == target then out[#out + 1] = line.text end
+        end
+        return table.concat(out, '\n')
+    end
+
+    it('prints a void, and a refused void, without throwing', function()
+        local s, f, c = seeded()
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+
+        truthy(pcall(cmd[Config.Admin.Commands.void], 3, { c.id, 'duplicate', 'listing' }))
+        truthy(said(3):find('voided'), said(3))
+        eq(s.storage.readContract(c.id).state, CB.STATE.VOIDED)
+
+        Env.chat = {}
+        truthy(pcall(cmd[Config.Admin.Commands.void], 3, { 'ct-nope' }),
+            'a void of a contract that is not there must not throw')
+        truthy(said(3):find('Could not void it'), said(3))
+    end)
+
+    it('prints interrupted releases, including property and a missing timestamp', function()
+        local s, f, c = seeded({ accept = true })
+
+        -- Exactly what a shutdown mid-release leaves behind: lines claimed
+        -- for release, and the audit row that records the interruption.
+        -- The item line's amount is the MySQL column default, not nil.
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            s.storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD,
+                CB.ESCROW_STATE.RELEASING)
+            local stored = s.storage.readEscrowLine(line.id)
+            if stored and stored.source == 'item' then stored.amount = 0 end
+            s.audit.financial('release_interrupted', f.hunter.cid, c.id,
+                { line = line.id })
+        end
+        s.audit.flush()
+
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+        truthy(pcall(cmd[Config.Admin.Commands.stuck], 3, {}))
+
+        local out = said(3)
+        truthy(out:find('mid%-release'), out)
+        truthy(not out:find('lockpick%s+%$0'),
+            'the one tool for handing property back must not call it $0: ' .. out)
+        truthy(out:find('Settle each with'), out)
+    end)
+
+    it('prints an empty interrupted list rather than a header with nothing under it', function()
+        local s = newStack(); fixture(s)
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+        truthy(pcall(cmd[Config.Admin.Commands.stuck], 3, {}))
+        truthy(said(3):find('No interrupted releases'), said(3))
+    end)
+
+    it('prints an unmasking whose parties the framework cannot name', function()
+        local s, f, c = seeded({ accept = true, anonymous = true, anonHunter = true })
+
+        -- A hunter and a creator the server has no current name for: they
+        -- disconnected, or the framework never described them. The row keeps
+        -- the id, which is the whole point of the tool.
+        local contract = s.storage.readContract(c.id)
+        contract.creator_name, contract.target_name = nil, nil
+        s.storage.writeContract(contract)
+        for _, h in ipairs(s.storage.readHunters(c.id)) do
+            s.storage.updateHunter(h.id, { hunter_name = nil, alias = nil })
+        end
+
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.identity'] = true }
+        truthy(pcall(cmd[Config.Admin.Commands.whois], 3, { c.id }),
+            'unmasking a party nobody can name must still print their id')
+
+        local out = said(3)
+        truthy(out:find('CREATOR1'), 'the creator id is the answer: ' .. out)
+        truthy(out:find('HUNTER01'), 'and the hunter id: ' .. out)
+    end)
+
+    it('prints a timeline for a contract with property, a resolution and events', function()
+        local s, f, c = seeded({ accept = true })
+        s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'test')
+        s.audit.flush()
+
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+        truthy(pcall(cmd[Config.Admin.Commands.timeline], 3, { c.id }))
+
+        local out = said(3)
+        truthy(out:find(c.id), out)
+        truthy(out:find('escrow'), 'the escrow lines are the point: ' .. out)
+
+        Env.chat = {}
+        truthy(pcall(cmd[Config.Admin.Commands.timeline], 3, { 'ct-nope' }))
+        truthy(said(3):find('No such contract'), said(3))
+    end)
+end)
+
+describe('a contract staff voided', function()
+    it('does not cost the creator the cooldown for cancelling their own', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 100000
+        Config.Amendments.CancelCooldownSeconds = 300
+
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'a mistake staff will fix', reward = { baseline = { cash = 5000 } } })
+        truthy(s.admin.void(0, c.id, 'placed on the wrong person'))
+
+        -- The target cooldown is a separate rule and still applies, so this
+        -- lists somebody else — the question here is only whether the
+        -- CREATOR is being held back for a cancellation they did not make.
+        Env.addPlayer({ source = 4, citizenid = 'TARGET09', license = 'license:ddd',
+            cash = 100, bank = 100, firstname = 'Sam', lastname = 'Okonkwo' })
+        local again, err = s.contracts.create(f.creator, { targetCid = 'TARGET09',
+            reason = 'unrelated', reward = { baseline = { cash = 5000 } } })
+
+        truthy(again, 'staff fixing a problem must not rate-limit the person '
+            .. 'they were helping, got ' .. tostring(err))
+    end)
+
+    it('still returns the escrow in full, exactly as cancelling did', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 100000
+        local before = Env.players[1].PlayerData.money.cash
+                     + Env.players[1].PlayerData.money.bank
+
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 5000 } } })
+        s.contracts.accept(f.hunter, c.id)
+        truthy(s.admin.void(0, c.id, 'staff'))
+
+        eq(Env.players[1].PlayerData.money.cash
+           + Env.players[1].PlayerData.money.bank, before,
+           'changing which terminal state this lands in must not change the money')
     end)
 end)

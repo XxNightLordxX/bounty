@@ -1813,6 +1813,65 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 14e. No terminal state nothing can reach
+--------------------------------------------------------------------------
+--
+-- CB.STATE.VOIDED was declared, marked terminal, allowed as a transition
+-- from ACTIVE and ACCEPTED, and commented "admin" — and nothing ever set
+-- it. The one command that should, Admin.void, resolved to CANCELLED, which
+-- is the state that means the CREATOR changed their mind: so a staff member
+-- voiding a contract to fix something charged the person they were helping
+-- the cooldown for cancelling their own listing.
+--
+-- A state the machine declares is a promise that something reaches it.
+-- Every state named as a transition target must therefore be passed to
+-- Contracts.resolve or Contracts.transition somewhere in the server.
+
+do
+    local constants = read('crimson-bounty/shared/constants.lua') or ''
+
+    --- Every state named as the destination of a legal transition.
+    local targets = {}
+    local table_ = constants:match('CB%.TRANSITIONS%s*=%s*{(.*)\n}') or ''
+    for name in table_:gmatch('%[CB%.STATE%.(%u[%u_]*)%]%s*=%s*true') do
+        targets[name] = true
+    end
+
+    if next(targets) == nil then
+        failures[#failures + 1] = 'the transition table could not be read, so '
+            .. 'this rule is checking nothing.'
+    end
+
+    --- Where a state is actually moved to.
+    local reached = {}
+    for _, path in ipairs(walk('crimson-bounty/server')) do
+        -- Comments name states in prose; blanking them keeps a note about
+        -- CANCELLED from reading as a call that reaches it.
+        local src = (read(path) or ''):gsub('%-%-[^\n]*', '')
+        for call in src:gmatch('%.%s*resolve%s*%b()') do
+            for name in call:gmatch('CB%.STATE%.(%u[%u_]*)') do reached[name] = true end
+        end
+        for call in src:gmatch('%.%s*transition%s*%b()') do
+            for name in call:gmatch('CB%.STATE%.(%u[%u_]*)') do reached[name] = true end
+        end
+    end
+
+    local unreachable = {}
+    for name in pairs(targets) do
+        if not reached[name] then unreachable[#unreachable + 1] = name end
+    end
+    table.sort(unreachable)
+
+    for _, name in ipairs(unreachable) do
+        failures[#failures + 1] = ('CB.STATE.%s is declared as a legal transition '
+            .. 'target and nothing ever moves a contract to it. Either something '
+            .. 'should and does not — which is a contract ending in the wrong '
+            .. 'state, with whatever that state\'s cooldowns and wording bring '
+            .. 'with it — or the transition should not be declared.'):format(name)
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then
