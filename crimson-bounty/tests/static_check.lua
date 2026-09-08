@@ -690,6 +690,12 @@ do
             .. 'ever reads one contract worth, through auditForContract',
         ['JsonStore.readAudit']        = 'the same, on the json backend',
         ['MySQLStore.readAudit']       = 'the same, on the mysql backend',
+        -- Client and shared.
+        ['App.forgetRegistration']     = 'the client forgetting it registered the '
+            .. 'app, so a test can watch the reconciler put it back',
+        ['Util.resetMonotonic']        = 'the wrap-absorbing clock, which is not '
+            .. 'reloaded between stacks and would otherwise carry one test\'s '
+            .. 'elapsed time into the next',
     }
 
     local function read_all(dir, filter)
@@ -774,7 +780,18 @@ do
     local declared = {}
     local definedIn = {}
 
-    for _, path in ipairs(walk('crimson-bounty/server')) do
+    -- The whole resource, not just the server. App.refresh sat dead in the
+    -- client for as long as this check only looked at one directory: the
+    -- page drives its own refreshes through post(), and nothing had called
+    -- the client's copy since that changed.
+    local sources = {}
+    for _, dir in ipairs({ 'crimson-bounty/server', 'crimson-bounty/client',
+                           'crimson-bounty/shared' }) do
+        for _, path in ipairs(walk(dir)) do sources[#sources + 1] = path end
+    end
+    table.sort(sources)
+
+    for _, path in ipairs(sources) do
         local src = code(read(path) or '')
         for module, name in src:gmatch('\nfunction%s+([%w_]+)%.([%w_]+)%s*%(') do
             local full = module .. '.' .. name

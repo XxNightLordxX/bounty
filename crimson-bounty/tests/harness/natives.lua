@@ -370,6 +370,20 @@ function Natives.exportsProxy()
         end,
     }
 
+    --- The optional headshot renderer. Optional to the resource, but a test
+    --- of the client half needs one that behaves: it is what turns a ped
+    --- into the base64 image the server bounds and caches.
+    resources['MugShotBase64'] = {
+        GetMugShotBase64 = function(_, ped, transparent)
+            if Natives.mugshotThrows then error('MugShotBase64: render failed') end
+            if Natives.mugshotReturns ~= nil then return Natives.mugshotReturns end
+            Natives.calls.mugshots = Natives.calls.mugshots or {}
+            table.insert(Natives.calls.mugshots,
+                { ped = ped, transparent = transparent })
+            return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
+        end,
+    }
+
     resources['ox_inventory'] = {
         GetItem = function(_, src, name, metadata, returnsCount)
             local p = Env.players[tonumber(src)]

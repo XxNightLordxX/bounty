@@ -352,11 +352,6 @@ RegisterNetEvent('crimson-bounty:result', function(result)
     end)
 end)
 
-function App.refresh()
-    App.request('list', { page = 1 })
-    App.request('mine', {})
-end
-
 --- An unsolicited nudge for an open app: something the player is looking at
 --- changed. Forwarded as a message rather than a notification, because the
 --- app refreshes on this and the phone should not buzz for it.

@@ -125,9 +125,21 @@ function Client.boot(opts)
     package.loaded['crimson-bounty.client.main'] = nil
     local ok, app = withPhone(require, 'crimson-bounty.client.main')
 
+    -- The mugshot half, loaded the way the manifest loads it: after
+    -- shared/util.lua has published CrimsonUtil, and after main.lua. It had
+    -- no coverage at all — not one line, ever — which is how a file whose
+    -- own comments explain a clock-wrap guard came to have nothing checking
+    -- the guard.
+    local mugOk, mugErr = true, nil
+    if ok and not opts.withoutMugshot then
+        package.loaded['crimson-bounty.client.mugshot'] = nil
+        mugOk, mugErr = withPhone(require, 'crimson-bounty.client.mugshot')
+    end
+
     _G.RegisterNetEvent, _G.AddEventHandler = realNet, realAdd
 
     if not ok then error(app, 0) end
+    if not mugOk then error(mugErr, 0) end
     Client.app = app
     return Client
 end

@@ -920,3 +920,137 @@ describe('what happens to a player as they arrive and leave', function()
         end)
     end)
 end)
+
+
+--- The client half of the mugshot pipeline.
+---
+--- client/mugshot.lua had no coverage at all — not one line, ever — and it
+--- is the file that produces every headshot on the board. It is also the
+--- one file whose comments explain a guard against a clock that wraps, with
+--- nothing checking the guard.
+describe('rendering your own headshot', function()
+    local function booted()
+        Env.reset()
+        Natives.resetResourceStates()
+        Natives.mugshotThrows = nil
+        Natives.mugshotReturns = nil
+        Natives.calls.mugshots = {}
+        require('crimson-bounty.shared.util').resetMonotonic()
+        Client.boot()
+        return Client
+    end
+
+    local function sentImages()
+        local out = {}
+        for _, call in ipairs(Client.toServer) do
+            if call.name == 'crimson-bounty:mugshot' then out[#out + 1] = call.args[1] end
+        end
+        return out
+    end
+
+    it('renders when the server asks, and sends the image back', function()
+        booted()
+        truthy(Client.netEvents['crimson-bounty:renderMugshot'],
+            'the server has to be able to ask')
+        truthy(Client.fire('crimson-bounty:renderMugshot'))
+
+        local sent = sentImages()
+        eq(#sent, 1, 'one render, one image')
+        truthy(tostring(sent[1]):find('data:image/png', 1, true), tostring(sent[1]))
+    end)
+
+    it('renders the caller own ped, transparent', function()
+        booted()
+        Client.fire('crimson-bounty:renderMugshot')
+        local rendered = Natives.calls.mugshots[1]
+        truthy(rendered, 'the renderer must have been called')
+        eq(rendered.ped, 1003, 'a player renders themselves and nobody else')
+        eq(rendered.transparent, true)
+    end)
+
+    it('does not render again inside the floor', function()
+        -- A client must not be made to render in a loop by a flood of
+        -- requests, whoever is sending them.
+        booted()
+        for _ = 1, 20 do Client.fire('crimson-bounty:renderMugshot') end
+        eq(#sentImages(), 1, 'twenty asks, one render')
+    end)
+
+    it('renders again once the floor has passed', function()
+        booted()
+        Client.fire('crimson-bounty:renderMugshot')
+        Env.gameTimer = (Env.gameTimer or 0) + 31000
+        Client.fire('crimson-bounty:renderMugshot')
+        eq(#sentImages(), 2, 'the floor is a floor, not a one-shot')
+    end)
+
+    --- The reason the file reads the monotonic clock rather than
+    --- GetGameTimer, stated in its own comment: GetGameTimer wraps every
+    --- ~24.8 days, and after a wrap `now - lastRender` is permanently
+    --- negative, so the floor would refuse every render for the rest of the
+    --- session and this player would have no headshot at all.
+    it('still renders after the game timer wraps', function()
+        booted()
+        Env.gameTimer = 4294900000
+        require('crimson-bounty.shared.util').resetMonotonic()
+        Client.fire('crimson-bounty:renderMugshot')
+        eq(#sentImages(), 1, 'the first render lands')
+
+        -- Round the wrap, and past the floor on the far side of it.
+        Env.gameTimer = 40000
+        Client.fire('crimson-bounty:renderMugshot')
+        eq(#sentImages(), 2,
+            'a wrapped clock must not cost this player their headshot for '
+            .. 'the rest of the session')
+    end)
+
+    it('does nothing on a server with no renderer installed', function()
+        booted()
+        Natives.resourceStates['MugShotBase64'] = 'missing'
+        truthy(Client.fire('crimson-bounty:renderMugshot'),
+            'an optional integration being absent must not throw')
+        eq(#sentImages(), 0)
+    end)
+
+    it('survives a renderer that throws', function()
+        booted()
+        Natives.mugshotThrows = true
+        truthy(Client.fire('crimson-bounty:renderMugshot'),
+            'a third-party export throwing is not this resource crashing')
+        eq(#sentImages(), 0, 'and nothing half-made is sent')
+        Natives.mugshotThrows = nil
+    end)
+
+    it('sends nothing when the renderer returns something that is not an image', function()
+        for _, odd in ipairs({ 42, true, {} }) do
+            booted()
+            Natives.mugshotReturns = odd
+            truthy(Client.fire('crimson-bounty:renderMugshot'),
+                ('a %s from the renderer must not throw'):format(type(odd)))
+            eq(#sentImages(), 0, 'and must not be sent as a headshot')
+        end
+        Natives.mugshotReturns = nil
+    end)
+
+    it('tells the server when the player changes their appearance', function()
+        -- Four event names, because three different clothing resources are
+        -- in common use and any of them may be the one this server runs.
+        for _, event in ipairs({
+            'qb-clothing:client:loadOutfit',
+            'illenium-appearance:client:reloadSkin',
+            'rcore_clothing:outfitChanged',
+            'crimson-bounty:appearanceChanged',
+        }) do
+            booted()
+            local handler = Client.handlers[event]
+            truthy(handler, 'nothing is listening for ' .. event)
+            handler()
+
+            local told = false
+            for _, call in ipairs(Client.toServer) do
+                if call.name == 'crimson-bounty:appearanceChanged' then told = true end
+            end
+            truthy(told, event .. ' did not reach the server')
+        end
+    end)
+end)

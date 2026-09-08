@@ -7,7 +7,18 @@
 
 local Mugshot = {}
 
-local lastRender = 0
+--- When this client last rendered, or nil when it never has.
+---
+--- Not 0. monotonicMs counts from resource start, so on a fresh session the
+--- floor below compared 0 - 0 < 30000 and refused — which made the FIRST
+--- render of every session the one that never happened, and kept refusing
+--- for thirty seconds after that. A player who opened the board just after
+--- joining had no headshot, and the server had already marked their entry
+--- pending, so it waited out its own render timeout before asking again.
+---
+--- The floor means "not more than once per thirty seconds". It never meant
+--- "not for the first thirty seconds".
+local lastRender = nil
 
 --- Render this player's headshot and hand it to the server.
 local function renderSelf()
@@ -19,7 +30,7 @@ local function renderSelf()
     -- permanently negative, so the floor would refuse every render for the
     -- rest of the session and this player would have no mugshot at all.
     local now = CrimsonUtil.monotonicMs()
-    if now - lastRender < 30000 then return false end
+    if lastRender and now - lastRender < 30000 then return false end
     lastRender = now
 
     local ped = PlayerPedId()
