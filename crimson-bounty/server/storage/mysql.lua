@@ -640,7 +640,14 @@ function MySQLStore.writeAmendment(a)
             (id, contract_id, proposer, kind, payload, approvals, expires_at, outcome, declined_by)
         VALUES (?,?,?,?,?,?,?,?,?)
         ON DUPLICATE KEY UPDATE
-            approvals = VALUES(approvals), outcome = VALUES(outcome), declined_by = VALUES(declined_by)
+            approvals = VALUES(approvals), outcome = VALUES(outcome),
+            declined_by = VALUES(declined_by),
+            -- Left out of this list, and so silently discarded on the backend
+            -- that ships by default: a proposal re-written with a new expiry
+            -- kept the old one. Nothing rewrote an expiry until the staff
+            -- timer refresh did, and it would have worked in memory mode and
+            -- done nothing on a real server.
+            expires_at = VALUES(expires_at)
     ]], {
         a.id, a.contract_id, a.proposer, a.kind, json.encode(a.payload or {}),
         json.encode(a.approvals or {}), a.expires_at, a.outcome, a.declined_by,

@@ -272,6 +272,21 @@ function Kidnap.activeCount()
     return n
 end
 
+--- Forget every re-arm cooldown, for the staff timer refresh.
+---
+--- Only the cooldown on a FAILED handover. Countdowns in progress are left
+--- alone: they are a hold on a live player, and shortening one from a staff
+--- command would hand the hunter a delivery they had not finished.
+---@return integer cleared
+function Kidnap.clearRearmCooldowns()
+    local cleared = 0
+    for k in pairs(lastFailure) do
+        lastFailure[k] = nil
+        cleared = cleared + 1
+    end
+    return cleared
+end
+
 function Kidnap.clearPlayer(cid)
     for k, state in pairs(active) do
         if state.hunterCid == cid then active[k] = nil end

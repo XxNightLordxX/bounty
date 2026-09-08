@@ -480,6 +480,24 @@ function Bridges.installCommands(modules)
         reply(src, ('Settle each with /%s <line> pay|return'):format(names.settle))
     end)
 
+    -- Not through `command`: this one refuses the extra ACEs. `command`
+    -- most admin groups already carry opens every read-only tool here, and
+    -- that is right for them — it is not right for the one command that
+    -- moves every clock on the server.
+    if names.refresh then
+        RegisterCommand(names.refresh, function(src, args)
+            if not Admin.allowed(src, Config.Admin.Ace, true) then
+                return reply(src, Admin.howToAuthorise(Config.Admin.Ace))
+            end
+            local what = tostring((args or {})[1] or 'timers'):lower()
+            if what ~= 'timers' and what ~= 'refresh' then
+                return reply(src, ('Usage: /%s timers'):format(names.refresh))
+            end
+            local lines = Admin.refreshTimers(src)
+            for i = 1, #lines do reply(src, lines[i]) end
+        end, false)
+    end
+
     command(names.settle, Config.Admin.Ace, function(src, args)
         local ok, err = Admin.settleLine(src, args[1], args[2])
         reply(src, ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err)))

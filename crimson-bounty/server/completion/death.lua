@@ -527,6 +527,21 @@ end
 --- Drop pending completions and damage records that have aged out.
 --- Without this, entries only expire when their exact key happens to be
 --- read again, so a busy server accumulates them indefinitely.
+--- Forget when everyone last respawned, for the staff timer refresh.
+---
+--- Post-respawn immunity is a wait like any other, and it is the one that
+--- makes testing the kill path slow: a tester who has just been revived
+--- cannot be a valid target again until it lapses.
+---@return integer cleared
+function Death.clearRespawnImmunity()
+    local cleared = 0
+    for cid in pairs(respawnedAt) do
+        respawnedAt[cid] = nil
+        cleared = cleared + 1
+    end
+    return cleared
+end
+
 function Death.sweep()
     local now = Util.monotonicMs()
     local removed = 0

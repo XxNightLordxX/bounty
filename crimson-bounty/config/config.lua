@@ -704,6 +704,9 @@ Config.Admin = {
         --- Reports why the app is not showing something. Runs the same
         --- reads the app does and says what each one answered.
         diagnose = 'cb-diag',
+        --- Brings every wait forward so a test server can be tested. ACE
+        --- only — the extra ACEs above do NOT open it, because it writes.
+        refresh  = 'bountyadmin',
     },
     --- Rows read per contract for a timeline. A cap, because the audit log
     --- is the largest table here and a staff command should not be able to

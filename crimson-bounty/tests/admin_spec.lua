@@ -407,3 +407,242 @@ describe('what a staff command calls a line of escrow', function()
         eq(item.quantity, 2)
     end)
 end)
+
+describe('refreshing every timer for testing', function()
+    local function cmd(s)
+        Env.commands = {}
+        require('crimson-bounty.server.bridges').installCommands(s)
+        return Env.commands[Config.Admin.Commands.refresh]
+    end
+
+    it('is not opened by the extra aces that open every read-only tool', function()
+        local s, f, c = seeded()
+        local handler = cmd(s)
+        truthy(handler, 'the command should be registered')
+
+        -- `command` is the ace most admin groups already carry. It opens the
+        -- diagnosis on purpose. It must not open a command that writes.
+        Env.aces[3] = { ['command'] = true }
+        Env.chat = {}
+        handler(3, {})
+
+        truthy(said(3):find('Not authorised'),
+            'an ace every admin already has must not move the whole server\'s '
+            .. 'clocks: ' .. said(3))
+        eq(s.storage.readContract(c.id).deadline_at, c.deadline_at,
+            'and nothing was refreshed')
+    end)
+
+    it('refills a rate-limit bucket and ages a spent slot cooldown', function()
+        local s, f, c = seeded({ accept = true })
+        local now = os.time()
+
+        local hunter = s.storage.readHunter(c.id, f.hunter.cid)
+        s.storage.updateHunter(hunter.id, { last_claim_at = now })
+        for _ = 1, 200 do s.ratelimit.check(f.creator, 'create') end
+        eq(s.ratelimit.check(f.creator, 'create'), false, 'the bucket is spent')
+
+        Env.aces[3] = { ['crimson.admin'] = true }
+        Env.chat = {}
+        cmd(s)(3, {})
+
+        eq(s.ratelimit.check(f.creator, 'create'), true, 'the bucket was refilled')
+        local after = s.storage.readHunter(c.id, f.hunter.cid)
+        truthy(now - after.last_claim_at > Config.Limits.SlotCooldownSeconds,
+            'the slot cooldown was aged past its window')
+        truthy(said(3):find('Timers refreshed'), said(3))
+    end)
+
+    it('ages a resolved contract past the re-list cooldown', function()
+        local s, f, c = seeded()
+        s.contracts.resolve(c.id, CB.STATE.EXPIRED, f.creator.cid, nil, 'expired')
+
+        local relist = { targetCid = 'TARGET01', reason = 'Again',
+                         reward = { baseline = { cash = 1000 } } }
+        eq(select(2, s.contracts.create(f.creator, relist)),
+            CB.ERR.TARGET_RECENTLY_ON, 'the re-list cooldown is running')
+
+        Env.aces[3] = { ['crimson.admin'] = true }
+        cmd(s)(3, {})
+
+        truthy(s.contracts.create(f.creator, relist),
+            'a test server cannot be tested if every target is locked out for '
+            .. 'half an hour after each run')
+    end)
+
+    it('extends a live deadline and never brings one forward', function()
+        local s, f, c = seeded()
+        -- A contract with minutes left on a deadline the operator set to days.
+        local contract = s.storage.readContract(c.id)
+        contract.deadline_at = os.time() + 60
+        contract.expires_at = os.time() + 120
+        s.storage.writeContract(contract)
+
+        Env.aces[3] = { ['crimson.admin'] = true }
+        cmd(s)(3, {})
+
+        local after = s.storage.readContract(c.id)
+        truthy(after.deadline_at > os.time() + 60,
+            'the point of the refresh is not having to wait out the deadline')
+        truthy(after.deadline_at <= after.expires_at,
+            'the deadline is still clamped to the lifetime')
+        eq(after.state, CB.STATE.ACTIVE,
+            'refreshing must never resolve a contract, which would move money')
+    end)
+
+    it('leaves the counts that are limits rather than waits alone', function()
+        local s, f, c = seeded({ accept = true })
+        Config.Informant.MaxPurchasesPerContract = 1
+        Env.players[3].PlayerData.money.bank = 50000
+
+        local ok = s.informant.buy(f.creator, c.id)
+        truthy(ok, 'the first purchase works')
+        eq(select(2, s.informant.buy(f.creator, c.id)), nil,
+            'a second inside the lock returns the same name rather than rolling')
+
+        Env.aces[3] = { ['crimson.admin'] = true }
+        cmd(s)(3, {})
+
+        -- The lock is gone, so this is a fresh roll — and the purchase count
+        -- is not, so it is refused.
+        eq(select(2, s.informant.buy(f.creator, c.id)), CB.ERR.LIMIT_REACHED,
+            'the refresh must not hand a buyer the whole roster')
+    end)
+
+    it('writes down that somebody did it', function()
+        local s, f, c = seeded()
+        Env.aces[3] = { ['crimson.admin'] = true }
+        cmd(s)(3, {})
+
+        local found = false
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'admin_timers_refreshed' then found = true end
+        end
+        truthy(found, 'a server whose cooldowns were quietly reset is a server '
+            .. 'whose history stops explaining itself')
+    end)
+end)
+
+--- Second, independent check: drive the command the way an operator does.
+describe('bountyadmin from the console', function()
+    local function run(s, args)
+        Env.commands = {}
+        require('crimson-bounty.server.bridges').installCommands(s)
+        -- The console route replies through print, so it is captured here.
+        local out, real = {}, print
+        _G.print = function(...) out[#out + 1] = tostring((...)) end
+        local ok, err = pcall(Env.commands[Config.Admin.Commands.refresh], 0, args or {})
+        _G.print = real
+        if not ok then error(err) end
+        return table.concat(out, '\n')
+    end
+
+    it('the console is never refused and reports what it did', function()
+        local s = newStack()
+        local f = fixture(s)
+        local out = run(s)
+        truthy(not out:find('Not authorised'), out)
+        truthy(out:find('Timers refreshed'), out)
+        truthy(out:find('Purchase and slot COUNTS are untouched'), out)
+        local _ = f
+    end)
+
+    it('refuses a subcommand it does not know rather than guessing', function()
+        local s = newStack(); fixture(s)
+        local out = run(s, { 'wipe' })
+        truthy(out:find('Usage'), out)
+        truthy(not out:find('Timers refreshed'), 'a typo must not fire it: ' .. out)
+    end)
+
+    it('clears a pause so the deadline granted is the deadline kept', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 100000
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 5000 } } })
+        local contract = s.storage.readContract(c.id)
+        contract.paused_since = os.time() - 100000
+        s.storage.writeContract(contract)
+
+        run(s)
+        eq(s.storage.readContract(c.id).paused_since, nil,
+            'a pause that began before the refresh would be paid out as an '
+            .. 'extension on top of the deadline just granted')
+    end)
+
+    it('moves no money and resolves nothing', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 100000
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 5000 } } })
+        s.contracts.accept(f.hunter, c.id)
+
+        local before = {}
+        for i = 1, 3 do
+            before[i] = Env.players[i].PlayerData.money.cash
+                      + Env.players[i].PlayerData.money.bank
+        end
+        local lines = #s.storage.readEscrow(c.id)
+
+        run(s); run(s); run(s)
+
+        for i = 1, 3 do
+            eq(Env.players[i].PlayerData.money.cash
+               + Env.players[i].PlayerData.money.bank, before[i],
+               'player ' .. i .. ' balance moved')
+        end
+        eq(#s.storage.readEscrow(c.id), lines, 'escrow line count changed')
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED)
+    end)
+
+    it('is idempotent — running it ten times is running it once', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 100000
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 5000 } } })
+        run(s)
+        local first = s.storage.readContract(c.id)
+        local d, e = first.deadline_at, first.expires_at
+        for _ = 1, 9 do run(s) end
+        local after = s.storage.readContract(c.id)
+        eq(after.deadline_at, d, 'deadline drifted')
+        eq(after.expires_at, e, 'lifetime drifted')
+    end)
+end)
+
+describe('the wait before a new character can be a target', function()
+    it('is brought forward, because it is the wait before anything can be tested', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 100000
+
+        -- A character who has just walked in, watched arriving.
+        s.identity.endSession(f.target.cid)
+        s.identity.beginSession(f.target.cid, false)
+        Config.Immunity.MinTargetSessionMinutes = 10
+
+        eq(select(2, s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 5000 } } })),
+            CB.ERR.TARGET_JUST_ON, 'the new-player rule is running')
+
+        Env.commands = {}
+        require('crimson-bounty.server.bridges').installCommands(s)
+        Env.commands[Config.Admin.Commands.refresh](0, {})
+
+        -- The clock, not the flag. Marking the session unobserved would also
+        -- let the contract through, by making the session length unknown —
+        -- which is a lie about a session we did watch begin.
+        local minutes = s.identity.sessionMinutes(f.target.cid)
+        truthy(minutes ~= nil,
+            'the session is still one this resource watched begin')
+        truthy(minutes >= Config.Immunity.MinTargetSessionMinutes,
+            'the session clock itself has to be the thing that moved, got '
+            .. tostring(minutes))
+
+        truthy(s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 5000 } } }),
+            'ten minutes per character is the whole afternoon on a test server')
+    end)
+end)

@@ -16,6 +16,7 @@ local Util = require_shared('util')
 local Admin = {}
 
 local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit, Death
+local Informant, Kidnap, Mugshot
 
 function Admin.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
@@ -33,6 +34,9 @@ function Admin.init(deps)
     -- diagnosis lying in the other direction.
     App = deps.app
     RateLimit = deps.ratelimit
+
+    -- Only the timer refresh needs these, and only to age their clocks.
+    Informant, Kidnap, Mugshot = deps.informant, deps.kidnap, deps.mugshot
 end
 
 --------------------------------------------------------------------------
@@ -47,9 +51,19 @@ end
 ---@param src number
 ---@param ace string
 ---@return boolean
-function Admin.allowed(src, ace)
+--- `strict` refuses the extra ACEs and accepts only the named one. The
+--- extras exist so an owner is not locked out of a diagnosis they have not
+--- granted themselves yet; that reasoning does not carry to a command that
+--- WRITES, and `command` — which most admin groups already hold — would
+--- otherwise hand every one of them a button that skews live timers.
+---@param src number
+---@param ace string
+---@param strict boolean|nil
+---@return boolean
+function Admin.allowed(src, ace, strict)
     if src == 0 then return true end
     if IsPlayerAceAllowed(src, ace) == true then return true end
+    if strict then return false end
 
     -- Nobody holds crimson.admin until somebody grants it, and the first
     -- thing an owner needs is the command that says why their app is
@@ -261,7 +275,7 @@ function Admin.identify(src, contractId)
         }
     end
 
-    Audit.action('admin_identify', callerCid(src), contractId,
+    Audit.staff('admin_identify', callerCid(src), contractId,
         { anon_creator = contract.anon_creator == true, hunters = #operatives })
 
     return {
@@ -589,6 +603,133 @@ function Admin.diagnose(source, subjectId)
 
     say('--- end ---')
     return out
+end
+
+--------------------------------------------------------------------------
+-- Testing
+--------------------------------------------------------------------------
+
+--- Bring every wait in the resource forward to now.
+---
+--- Testing this app means waiting. A slot cooldown is ten minutes, a target
+--- cannot be re-listed for thirty, the same creator cannot re-list them for
+--- two hours, a headshot will not re-render for five, and a rate-limit
+--- bucket that has just been spent takes its full window back. None of that
+--- is wrong on a live server and all of it makes a test server unusable:
+--- the person checking whether their config works spends the afternoon
+--- watching clocks instead.
+---
+--- So this ages every one of those gates past its window rather than
+--- disabling any of them. What it deliberately does NOT touch:
+---
+---   * limits that are counts, not waits — informant purchases per
+---     contract, slots per hunter. Those are the rules being tested.
+---   * countdowns in progress. A kidnap countdown is a hold on a live
+---     player and finishing one from a console is a delivery the hunter
+---     did not make.
+---   * anything a contract's escrow depends on. Deadlines are extended,
+---     never brought forward: this must not be able to resolve a contract
+---     and move money.
+---
+--- Every run is written to the audit log. A server where somebody quietly
+--- reset the cooldowns is a server whose history stops explaining itself.
+---@param src number
+---@return string[] lines
+function Admin.refreshTimers(src)
+    local now = os.time()
+    local counts = {}
+
+    counts.buckets = RateLimit and RateLimit.resetAll() or 0
+    counts.flood = App and App.resetFloodCounters() or 0
+    counts.informant = Informant and Informant.expireRerollLocks() or 0
+    counts.rearm = Kidnap and Kidnap.clearRearmCooldowns() or 0
+    counts.mugshots = Mugshot and Mugshot.clearRefreshFloor() or 0
+    counts.respawn = Death and Death.clearRespawnImmunity() or 0
+    counts.sessions = Identity.ageSessions()
+
+    -- How far back a resolved contract has to be moved for every cooldown
+    -- keyed on it to have lapsed. The longest of them, plus a second, so
+    -- the comparison is past the boundary rather than exactly on it.
+    local back = math.max(
+        tonumber(Config.Limits.TargetCooldownAfterResolveSeconds) or 0,
+        tonumber(Config.Limits.SameCreatorSameTargetCooldownSeconds) or 0,
+        tonumber(Config.Amendments.CancelCooldownSeconds) or 0,
+        tonumber(Config.Immunity.AfterBailoutSeconds) or 0) + 1
+
+    counts.deadlines, counts.resolved, counts.slots, counts.proposals = 0, 0, 0, 0
+
+    local contracts = Storage.allContracts()
+    for i = 1, #contracts do
+        local contract = contracts[i]
+        local live = contract.state == CB.STATE.ACTIVE
+            or contract.state == CB.STATE.ACCEPTED
+            or contract.state == CB.STATE.COMPLETING
+
+        if live then
+            -- The lifetime first: the deadline is clamped to it, so setting
+            -- the deadline against a stale ceiling would clamp it straight
+            -- back to the value being refreshed.
+            contract.expires_at = now + (tonumber(Config.Limits.ContractLifetimeSeconds) or 0)
+            local deadline = now + (tonumber(Config.Limits.DefaultDeadlineSeconds) or 0)
+            if deadline > contract.expires_at then deadline = contract.expires_at end
+            contract.deadline_at = deadline
+            -- A pause that began before the refresh would be paid out as an
+            -- extension on top of the deadline just granted.
+            contract.paused_since = nil
+            Storage.writeContract(contract)
+            counts.deadlines = counts.deadlines + 1
+
+            local hunters = Storage.readHunters(contract.id)
+            for h = 1, #hunters do
+                local hunter = hunters[h]
+                if hunter.last_claim_at then
+                    Storage.updateHunter(hunter.id, {
+                        last_claim_at = now - ((tonumber(Config.Limits.SlotCooldownSeconds) or 0) + 1),
+                    })
+                    counts.slots = counts.slots + 1
+                end
+            end
+
+            local open = Storage.readOpenAmendments(contract.id)
+            for a = 1, #open do
+                local proposal = open[a]
+                proposal.expires_at = now + (tonumber(Config.Amendments.ProposalExpirySeconds) or 0)
+                Storage.writeAmendment(proposal)
+                counts.proposals = counts.proposals + 1
+            end
+        elseif contract.resolved_at then
+            contract.resolved_at = now - back
+            Storage.writeContract(contract)
+            counts.resolved = counts.resolved + 1
+        end
+    end
+
+    -- The expiry pass caches the soonest deadline it needs to wake for. It
+    -- was computed against the old ones, so without this the next pass is
+    -- skipped and the refresh looks like it did nothing.
+    if type(MarkContractsChanged) == 'function' then MarkContractsChanged() end
+
+    Audit.staff('admin_timers_refreshed', callerCid(src), nil, counts)
+    Audit.flush()
+
+    return {
+        ('Timers refreshed. %d rate-limit bucket(s) and %d flood counter(s) cleared.')
+            :format(counts.buckets, counts.flood),
+        ('%d live contract(s) given a full deadline and lifetime; %d slot cooldown(s) '
+            .. 'and %d amendment proposal(s) refreshed.')
+            :format(counts.deadlines, counts.slots, counts.proposals),
+        ('%d resolved contract(s) aged past every re-list cooldown (%ds).')
+            :format(counts.resolved, back),
+        ('%d informant reroll lock(s), %d handover re-arm cooldown(s), %d headshot '
+            .. 'refresh floor(s), %d respawn immunity window(s) and %d new-player '
+            .. 'session window(s) cleared.')
+            :format(counts.informant, counts.rearm, counts.mugshots, counts.respawn,
+                    counts.sessions),
+        ('The one wait left is total playtime (%s hours), which is read from your '
+            .. 'framework and is not this resource\'s to move.')
+            :format(tostring(Config.Immunity.MinTargetPlaytimeHours)),
+        'Purchase and slot COUNTS are untouched, and no countdown was advanced.',
+    }
 end
 
 return Admin

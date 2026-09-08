@@ -133,6 +133,21 @@ end
 
 --- Drop buckets nobody has touched for a while. A refilled bucket holds no
 --- information, so removing it changes nothing except memory.
+--- Drop every bucket, whatever its age.
+---
+--- The staff timer refresh, and nothing else. `sweep` only removes buckets
+--- that have already refilled, so it cannot help somebody testing a limit
+--- they have just spent — which is exactly the wait a tester needs gone.
+---@return integer removed
+function RateLimit.resetAll()
+    local removed = 0
+    for key in pairs(buckets) do
+        buckets[key] = nil
+        removed = removed + 1
+    end
+    return removed
+end
+
 function RateLimit.sweep()
     local ms = now()
     local removed = 0

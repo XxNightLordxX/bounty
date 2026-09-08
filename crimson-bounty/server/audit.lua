@@ -39,6 +39,15 @@ function Audit.financial(action, actorCid, contractId, detail)
     push('financial', action, actorCid, contractId, detail)
 end
 
+--- A staff member acted. Always logged, whatever Config.Audit.LogAllActions
+--- says: that switch is there to keep ordinary player conduct out of a busy
+--- log, and a staff write is not ordinary player conduct. An unmasking or a
+--- server-wide timer reset that vanishes because a switch is off is the one
+--- row somebody reviewing the server later actually needs.
+function Audit.staff(action, actorCid, contractId, detail)
+    push('conduct', action, actorCid, contractId, detail)
+end
+
 --- Player conduct: creations, acceptances, rejected claims, blocked attempts.
 function Audit.action(action, actorCid, contractId, detail)
     if not Config.Audit.LogAllActions then return end

@@ -89,6 +89,22 @@ function App.sweepFloodCounters()
     end
 end
 
+--- Forget every flood counter, for the staff timer refresh.
+---
+--- Separate from the sweep above, which only forgets windows that have
+--- already lapsed. A tester who has just tripped the guard is inside a live
+--- window, which is the one the sweep will not touch.
+---@return integer forgotten
+function App.resetFloodCounters()
+    local forgotten = 0
+    for src in pairs(floodCounters) do
+        floodCounters[src] = nil
+        forgotten = forgotten + 1
+    end
+    for src in pairs(gateLogged) do gateLogged[src] = nil end
+    return forgotten
+end
+
 --- The flood gate, exposed for the events registered outside handler().
 --- Those are the highest-frequency events in the resource and skipping the
 --- gate on them defeats the point of having one.

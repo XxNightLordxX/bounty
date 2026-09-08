@@ -183,6 +183,21 @@ function Mugshot.invalidate(cid)
     return true
 end
 
+--- Age every cached image past the refresh floor, for the staff timer
+--- refresh. The image is kept — dropping it would blank every board until
+--- each client answered — but the next request re-renders instead of being
+--- served the same face for the rest of the floor.
+---@return integer aged
+function Mugshot.clearRefreshFloor()
+    local floor = (Config.Mugshot.MinRefreshMinutes or 5) * 60
+    local aged = 0
+    for _, entry in pairs(cache) do
+        entry.at = os.time() - (floor + 1)
+        aged = aged + 1
+    end
+    return aged
+end
+
 function Mugshot.clearPlayer(cid)
     dropHandle(cache[cid])
     cache[cid] = nil

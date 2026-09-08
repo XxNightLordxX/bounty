@@ -152,6 +152,22 @@ function Informant.describe(hunterCid)
 end
 
 --- Release a player's reveals when they disconnect.
+--- Age every reroll lock past its window, for the staff timer refresh.
+---
+--- The lock only, never the purchase count: the count is a limit on how
+--- many hunters a fee can uncover, not a wait, and clearing it would turn
+--- the refresh into a way to buy the whole roster.
+---@return integer aged
+function Informant.expireRerollLocks()
+    local window = (Config.Informant.RerollLockMinutes or 0) * 60
+    local aged = 0
+    for _, reveal in pairs(reveals) do
+        reveal.at = os.time() - (window + 1)
+        aged = aged + 1
+    end
+    return aged
+end
+
 function Informant.clearPlayer(cid)
     for key, entry in pairs(reveals) do
         if key:find(':' .. cid, 1, true) or entry.hunterCid == cid then reveals[key] = nil end

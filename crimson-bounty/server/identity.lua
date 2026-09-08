@@ -30,6 +30,24 @@ function Identity.endSession(cid)
     sessionStart[cid] = nil
 end
 
+--- Backdate every watched session, for the staff timer refresh.
+---
+--- A character who has just walked in cannot be named as a target for ten
+--- minutes, which on a test server is the wait before anything can be
+--- tested at all. `observed` is left as it is: it records that we did not
+--- watch this session begin, and that is a fact about the session, not a
+--- clock.
+---@return integer aged
+function Identity.ageSessions()
+    local window = (Config.Immunity.MinTargetSessionMinutes or 0) * 60
+    local aged = 0
+    for _, began in pairs(sessionStart) do
+        began.at = os.time() - (window + 60)
+        aged = aged + 1
+    end
+    return aged
+end
+
 --- Minutes this player has been connected, or nil if we never saw them
 --- arrive (a resource restart mid-session, for instance).
 function Identity.sessionMinutes(cid)

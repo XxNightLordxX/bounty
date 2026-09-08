@@ -1453,3 +1453,23 @@ describe('an unwritable json store', function()
         end
     end)
 end)
+
+describe('rewriting an amendment', function()
+    it('keeps the new expiry in every backend', function()
+        for _, b in ipairs(backends()) do
+            local proposal = {
+                id = 'am000001', contract_id = 'ct1', proposer = 'CREATOR1',
+                kind = 'deadline', payload = { seconds = 600 }, approvals = {},
+                expires_at = 1700000000, outcome = 'open',
+            }
+            b.store.writeAmendment(proposal)
+
+            proposal.expires_at = 1700009999
+            b.store.writeAmendment(proposal)
+
+            eq(b.store.readAmendment('am000001').expires_at, 1700009999,
+                b.name .. ': a re-written expiry was discarded, so anything '
+                .. 'that extends a proposal works in memory and not on a server')
+        end
+    end)
+end)
