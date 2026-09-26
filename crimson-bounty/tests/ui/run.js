@@ -777,13 +777,26 @@ async function main() {
     });
 
     it('clears the field so a message cannot be sent twice by accident', function () {
-      eq(field.value, '', 'the field empties after sending');
+      // The live field, not the node captured before the send. Sending
+      // re-reads the thread and redraws it, so `field` is a node that is no
+      // longer on screen — and the box the player is looking at is the new
+      // one. Reading the stale node asserted that the text was cleared
+      // before the server had answered, which is the behaviour that lost a
+      // refused message.
+      const live = app.view.all().filter(function (n) {
+        return n.tagName === 'INPUT';
+      }).pop();
+      truthy(live, 'the compose box should still be there');
+      eq(live.value, '', 'the field empties after sending');
     });
 
     it('does not send on any other key', function () {
       const before = sent;
-      field.value = 'half typed';
-      field.onkeydown({ key: 'a' });
+      const live = app.view.all().filter(function (n) {
+        return n.tagName === 'INPUT';
+      }).pop();
+      live.value = 'half typed';
+      live.onkeydown({ key: 'a' });
       eq(sent, before, 'only Enter sends');
     });
 
@@ -4751,6 +4764,114 @@ async function main() {
     it('takes the dead countdown off the screen', function () {
       eq(bars().length, 0, 'the bar froze at its last value and stayed there');
     });
+  })();
+
+  /* ---------- the compose box ---------- */
+  await (async function composeBox() {
+    function threadFixture(sendAnswer) {
+      return {
+        mine: { ok: true, data: { created: [], accepted: [{
+          id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive',
+          state: 'accepted', reward: { baseline: 5000 },
+          slots: 1, slotsClaimed: 0, currentSlot: 1,
+          huntersActive: 1, huntersMax: 1,
+          targetName: 'Dana Reyes', role: 'hunter',
+          deadline: Math.floor(Date.now() / 1000) + 7200
+        }], onMe: [] } },
+        readThread: { ok: true, data: [] },
+        threads: { ok: true, data: [] },
+        sendMessage: sendAnswer
+      };
+    }
+
+    function liveField(app) {
+      return app.view.all().filter(function (n) {
+        return n.tagName === 'INPUT';
+      }).pop();
+    }
+
+    await (async function keepsARefusedMessage() {
+      const app = boot(threadFixture({ ok: false, err: 'rate_limited' }));
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Message');
+      await settle(); await settle();
+
+      const field = liveField(app);
+      it('opens a thread with somewhere to type', function () {
+        truthy(field, 'no compose box');
+      });
+
+      field.value = 'Heading over now';
+      if (field.oninput) { field.oninput(); }
+      field.onkeydown({ key: 'Enter' });
+      await settle(); await settle();
+
+      it('keeps the words the server refused', function () {
+        const again = liveField(app);
+        eq(again.value, 'Heading over now',
+          'the box emptied the instant Enter was pressed, so a message the '
+          + 'server refused took the player\'s words with it and left them '
+          + 'retyping something they could not see');
+      });
+    })();
+
+    await (async function hasASendButton() {
+      const app = boot(threadFixture({ ok: true, data: {} }));
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Message');
+      await settle(); await settle();
+
+      it('offers a Send button, not only the Enter key', function () {
+        const labels = app.view.all()
+          .filter(function (n) { return n.tagName === 'BUTTON'; })
+          .map(function (n) { return n.textContent; });
+        truthy(labels.indexOf('Send') !== -1,
+          'on a phone, whether the on-screen keyboard produces Enter is up '
+          + 'to the keyboard: ' + labels.join(' | '));
+      });
+
+      const field = liveField(app);
+      field.value = 'On my way';
+      if (field.oninput) { field.oninput(); }
+      click(app, 'Send');
+      await settle(); await settle();
+
+      it('sends what was typed when it is pressed', function () {
+        const sent = app.sent.filter(function (x) { return x.name === 'sendMessage'; });
+        truthy(sent.length >= 1, 'nothing was sent');
+        eq(sent[sent.length - 1].body.body, 'On my way');
+      });
+    })();
+
+    await (async function reloadsWhenTheOtherPartyWrites() {
+      const app = boot(threadFixture({ ok: true, data: {} }));
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Message');
+      await settle(); await settle();
+
+      const before = app.sent.filter(function (x) {
+        return x.name === 'readThread';
+      }).length;
+
+      app.sandbox.window._message({ data: { type: 'push', reason: 'message' } });
+      await settle(); await settle();
+
+      it('re-reads an open thread when the server says something changed', function () {
+        const after = app.sent.filter(function (x) {
+          return x.name === 'readThread';
+        }).length;
+        truthy(after > before,
+          'a thread was read when it was opened and after each send by this '
+          + 'player, and never otherwise — so two people could sit in the '
+          + 'same conversation, both writing, and neither see the other');
+      });
+    })();
   })();
 
   /* ---------- the resource this page belongs to ---------- */

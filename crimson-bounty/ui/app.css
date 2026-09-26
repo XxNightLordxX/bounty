@@ -654,3 +654,10 @@ button.person.is-chosen {
 .proof img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .proof.is-missing { aspect-ratio: auto; max-height: none; padding: 0.7rem; }
 .proof .hint { margin: 0; text-align: center; }
+
+/* The compose box and its Send button share a row. The box was alone and
+   Enter-only, which on a phone depends on what the on-screen keyboard
+   chooses to send. */
+.compose { display: flex; gap: 0.4rem; align-items: stretch; }
+.compose input { flex: 1 1 auto; min-width: 0; }
+.compose button { flex: 0 0 auto; min-width: 5rem; }

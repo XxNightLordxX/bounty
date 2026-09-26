@@ -2035,10 +2035,17 @@
   // Threads are addressed by an opaque server-issued handle, never by a
   // citizen id — the creator is not told who the operative is.
   function openThread(contract, thread) {
-    post('readThread', { id: contract.id, thread: thread ? thread.handle : null })
+    // Whatever is half-typed survives re-reading the thread. Re-reading is
+    // what happens after every send and on every push, so without this the
+    // box emptied itself under anyone composing a second message.
+    var keep = (state.thread && state.thread.contract
+      && state.thread.contract.id === contract.id) ? state.thread.draft : '';
+
+    return post('readThread', { id: contract.id, thread: thread ? thread.handle : null })
       .then(function (r) {
         if (!r.ok) return fail(r);
-        state.thread = { contract: contract, thread: thread, messages: asList(r.data) };
+        state.thread = { contract: contract, thread: thread,
+                         messages: asList(r.data), draft: keep };
         state.tab = 'thread';
         render();
       });
@@ -2074,15 +2081,20 @@
   }
 
   function sendMessage(body) {
-    if (!body) return;
+    if (!body) { return; }
     var t = state.thread;
-    post('sendMessage', {
+    return post('sendMessage', {
       id: t.contract.id,
       thread: t.thread ? t.thread.handle : null,
       body: body
     }).then(function (r) {
-      if (!r.ok) return fail(r);
-      openThread(t.contract, t.thread);
+      // Cleared on success and not before. It used to be emptied the
+      // instant Enter was pressed, so a message the server refused — too
+      // long, too fast, a thread that had closed — took the player's words
+      // with it and left them retyping something they could not see.
+      if (!r.ok) { return fail(r); }
+      t.draft = '';
+      return openThread(t.contract, t.thread);
     });
   }
 
@@ -2289,14 +2301,36 @@
     });
     view.appendChild(thread);
 
-    var field = el('div', 'field');
+    /* The compose box.
+    
+       It was an <input> and nothing else, cleared the instant Enter was
+       pressed and rebuilt empty by any render. So: a refused message lost
+       the text that was refused, a push landing mid-sentence emptied the
+       box under the player, and there was no Send button at all — Enter
+       only, on a phone, where whether the on-screen keyboard produces one
+       depends on the keyboard. */
+    var field = el('div', 'field compose');
     var input = document.createElement('input');
     input.placeholder = 'Say something';
     input.maxLength = 200;
-    input.onkeydown = function (e) {
-      if (e.key === 'Enter') { sendMessage(input.value); input.value = ''; }
-    };
+    input.value = t.draft || '';
+    input.oninput = function () { t.draft = input.value; };
+
+    function send() {
+      var body = input.value;
+      if (!body) { return; }
+      once('message:' + t.contract.id, function () { return sendMessage(body); });
+    }
+
+    input.onkeydown = function (e) { if (e.key === 'Enter') { send(); } };
     field.appendChild(input);
+
+    var go = el('button', 'primary',
+      isBusy('message:' + t.contract.id) ? 'Sending\u2026' : 'Send');
+    if (isBusy('message:' + t.contract.id)) { go.disabled = true; }
+    else { go.onclick = send; }
+    field.appendChild(go);
+
     view.appendChild(field);
   }
 
@@ -3480,6 +3514,18 @@
          Cleared here and nowhere else: a push is exactly the signal that
          the cache is stale, and it is the only one. */
       state.proposals = {};
+
+      /* And an open thread is re-read.
+      
+         A thread was fetched when it was opened and after each send by this
+         player, and never otherwise. So the other party's replies simply
+         did not arrive: two people could sit in the same conversation, both
+         writing, and neither would see the other until one of them left the
+         screen and came back. A push is the server saying something
+         changed, and a message is one of the things it pushes for. */
+      if (state.tab === 'thread' && state.thread) {
+        openThread(state.thread.contract, state.thread.thread);
+      }
 
       // Debounced: a contract settling pushes the creator, the target and
       // every hunter, and several of those can land in the same tick. One
