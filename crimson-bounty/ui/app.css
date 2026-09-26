@@ -246,7 +246,39 @@ button.primary {
 #place-submit { width: 100%; font-size: 1.02rem; min-height: 3rem; }
 button.primary:hover { background: var(--crimson-bright); }
 button.ghost { background: transparent; }
+
+/* An outlined button with tinted text, which is what the buyout was.
+   
+   On the On me tab a player with a price on their head saw "Buy out —
+   $90,000" and "Buy informant data" as two near-identical outlines. The
+   first is the only move the target of a contract has; the second is a
+   paid extra. Nothing said which was which, and the one that mattered was
+   drawn no louder than the one that did not — while on the board, where
+   accepting is merely one option among eight, Accept contract is a filled
+   crimson button.
+   
+   .danger stays for genuinely destructive secondary actions. The buyout
+   now carries .primary as well, and this keeps it distinguishable from an
+   ordinary primary by its border. */
 button.danger { border-color: var(--crimson-deep); color: var(--crimson-bright); }
+button.primary.danger {
+  border-color: var(--crimson-bright); color: #fff;
+}
+
+/* Section labels group cards; they do not outrank them.
+   
+   These were bare <h3> with no rule at all, so they took the browser
+   default: bold, and larger than the name of the person there is a price
+   on. "Contracts you took" was the loudest text on the screen. */
+.section {
+  font-size: var(--t-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0.9rem 0 0.1rem;
+}
+.section:first-child { margin-top: 0; }
 
 /* A chip that removes what it names. `button` sets flex: 1, which inside the
    flex .meta row would stretch one chip across the whole width. */
@@ -599,3 +631,26 @@ button.person.is-chosen {
 /* The way in. Given a hit area a thumb can find, and marked as pressable
    without advertising itself to a player who has no use for it. */
 .build-stamp { cursor: pointer; padding: 0.5rem 0; -webkit-tap-highlight-color: transparent; }
+
+/* ---------- the proof photograph in the ledger ----------------------
+   A remote image on somebody else's host, inside a phone-sized card.
+   Unbounded it rendered 590px tall for a 1080x1920 shot and made one
+   history entry taller than the whole viewport; unreserved, ten of them
+   reflowed the list under the player's thumb as each one arrived. */
+.proof {
+  margin-top: 0.6rem;
+  /* Held from the first paint, before the image has said how big it is. */
+  aspect-ratio: 16 / 9;
+  max-height: 9rem;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.proof img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.proof.is-missing { aspect-ratio: auto; max-height: none; padding: 0.7rem; }
+.proof .hint { margin: 0; text-align: center; }

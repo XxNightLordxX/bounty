@@ -141,8 +141,27 @@ function serverStub() {
         // be a server that offers every button that card can carry.
         informant: { cost: 25000, account: 'bank', maxPerContract: 2 },
         reasonMode: 'freetext', reasonMaxLength: 140 } } },
-    mine: { ok: true, data: { created: own, accepted: taken, onMe: [] } },
-    ledger: { ok: true, data: { entries: [],
+    mine: { ok: true, data: { created: own, accepted: taken, onMe: [{
+      // A price on this player's head. The buyout is the only move the
+      // target of a contract has, and it was drawn as an outline no louder
+      // than the paid extra beside it.
+      id: 'ct00000020', reason: 'Unpaid debt', mode: 'competitive',
+      state: 'active', reward: { baseline: 90000 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1,
+      huntersActive: 2, huntersMax: 5,
+      targetName: 'You', role: 'target',
+      bailoutAvailable: true, bailoutAmount: 90000,
+      deadline: Math.floor(Date.now() / 1000) + 7200
+    }] } },
+    ledger: { ok: true, data: { entries: [{
+      // A full-resolution photograph on somebody else's host, which is what
+      // a proof reference actually is. Unbounded this made one history
+      // entry taller than the whole viewport.
+      target_name: 'Dana Reyes', reason: 'Unpaid debt', role: 'hunter',
+      fulfilment: 'elimination', resolved_at: 1700000000,
+      photo_ref: 'data:image/svg+xml;base64,' + btoa(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920"></svg>')
+    }],
       record: { completed: 0, placed: 0, survived: 0, standing: 'Unproven' } } },
     rewardOptions: { ok: true, data: { cash: 100000, bank: 50000, dirty: 2000,
       items: [{ name: 'lockpick', label: 'Lockpick', count: 5 }],
@@ -664,6 +683,113 @@ async function main() {
       'only ' + measuredDialogs + ' dialog screens were measured across '
       + SIZES.length + ' sizes; the rest were skipped because their button '
       + 'was not found: ' + Array.from(new Set(missedSteps)).join(' | '));
+  });
+
+  /* ---- what reads as important ---- */
+
+  await page.click('[data-tab="ledger"]');
+  await page.waitForTimeout(300);
+
+  const proof = await page.evaluate(function () {
+    const frame = document.querySelector('.proof');
+    if (!frame) { return null; }
+    const card = frame.closest('.card');
+    return {
+      frameH: Math.round(frame.getBoundingClientRect().height),
+      cardH: Math.round(card.getBoundingClientRect().height),
+      viewportH: window.innerHeight
+    };
+  });
+
+  it('never lets one history entry fill the screen', function () {
+    truthy(proof, 'no proof photograph rendered, so this measures nothing');
+    truthy(proof.cardH < proof.viewportH * 0.7,
+      'a 1080x1920 photograph made one ledger card ' + proof.cardH + 'px tall '
+      + 'on a ' + proof.viewportH + 'px screen, so the entry above it and the '
+      + 'entry below it are both off screen');
+  });
+
+  await page.click('[data-tab="onme"]');
+  await page.waitForTimeout(300);
+
+  const hierarchy = await page.evaluate(function () {
+    const label = document.querySelector('.section');
+    const target = document.querySelector('.card .target');
+    const buttons = Array.prototype.slice.call(
+      document.querySelectorAll('.card button'));
+    function size(n) { return n ? parseFloat(getComputedStyle(n).fontSize) : null; }
+    /* Carries the primary treatment — the crimson gradient.
+    
+       An earlier version of this asked merely whether the button had a
+       background, and every button in the sheet has one: the base rule sets
+       --panel-2, so only .ghost answered no. It reported the buyout as
+       prominent whether or not it was primary, and passed against the very
+       CSS it was written to catch. The gradient is what "this is the main
+       action" is actually made of, so that is what it looks for. */
+    function primary(n) {
+      return getComputedStyle(n).backgroundImage.indexOf('gradient') !== -1;
+    }
+
+    const buyout = buttons.filter(function (b) {
+      return b.textContent.indexOf('Buy out') === 0;
+    })[0];
+    const extra = buttons.filter(function (b) {
+      return b.textContent.indexOf('Buy informant') === 0;
+    })[0];
+    return {
+      labelSize: size(label), targetSize: size(target),
+      buyoutPrimary: buyout ? primary(buyout) : null,
+      extraPrimary: extra ? primary(extra) : null,
+      othersPrimary: buttons.filter(function (b) {
+        return b !== buyout && primary(b);
+      }).map(function (b) { return b.textContent.slice(0, 20); }),
+      haveBoth: !!(buyout && extra)
+    };
+  });
+
+  it('draws the target\'s one move louder than the paid extra beside it', function () {
+    truthy(hierarchy.haveBoth,
+      'both buttons have to be on screen or this measures nothing: '
+      + JSON.stringify(hierarchy));
+    truthy(hierarchy.buyoutPrimary,
+      'the only move the target of a contract has was drawn as an outline, '
+      + 'no louder than the paid extra beside it');
+    truthy(hierarchy.extraPrimary === false,
+      'and the paid extra beside it must not be drawn the same way');
+    truthy(hierarchy.othersPrimary.length === 0,
+      'nothing else on the card should compete with it: '
+      + hierarchy.othersPrimary.join(', '));
+  });
+
+  await page.click('[data-tab="mine"]');
+  await page.waitForTimeout(300);
+  const grouping = await page.evaluate(function () {
+    function size(n) { return n ? parseFloat(getComputedStyle(n).fontSize) : null; }
+    const target = size(document.querySelector('.card .target'));
+    /* Every grouping heading in the content area, not the first one styled.
+    
+       Asking for `.section` found whichever heading still had the class, so
+       leaving one of the two unstyled passed: the query simply matched the
+       other. The headings are found by tag instead, which is what they
+       actually are, so one left behind is one that fails. */
+    const labels = Array.prototype.slice.call(
+      document.querySelectorAll('#view h3')).map(function (n) {
+        return { text: n.textContent.slice(0, 24), size: size(n) };
+      });
+    return { labels: labels, targetSize: target };
+  });
+
+  it('does not let a grouping label outrank the contracts it groups', function () {
+    truthy(grouping.labels.length >= 2 && grouping.targetSize,
+      'both groups have to be on screen or this measures one of them: '
+      + JSON.stringify(grouping));
+    const loud = grouping.labels.filter(function (l) {
+      return l.size >= grouping.targetSize;
+    });
+    truthy(loud.length === 0,
+      'a grouping label was drawn at least as large as the name of the person '
+      + 'there is a price on (' + grouping.targetSize + 'px): '
+      + JSON.stringify(loud));
   });
 
   it('fits every screen size it might be opened on', function () {

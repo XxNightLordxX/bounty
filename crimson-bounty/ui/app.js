@@ -1101,7 +1101,7 @@
 
     if (contract.role === 'target') {
       if (contract.bailoutAvailable) {
-        var out = el('button', 'danger', 'Buy out — ' + money(contract.bailoutAmount));
+        var out = el('button', 'primary danger', 'Buy out \u2014 ' + money(contract.bailoutAmount));
         out.onclick = function () { bailout(contract); };
         row.appendChild(out);
       } else {
@@ -2121,12 +2121,12 @@
 
     if (accepted.length) {
       any = true;
-      view.appendChild(el('h3', null, 'Contracts you took'));
+      view.appendChild(el('h3', 'section', 'Contracts you took'));
       accepted.forEach(function (c) { view.appendChild(card(c, 'mine')); });
     }
     if (created.length) {
       any = true;
-      view.appendChild(el('h3', null, 'Contracts you placed'));
+      view.appendChild(el('h3', 'section', 'Contracts you placed'));
       created.forEach(function (c) { view.appendChild(card(c, 'mine')); });
     }
     if (!any) view.appendChild(el('div', 'empty', 'Nothing active.'));
@@ -2187,10 +2187,32 @@
       meta.appendChild(chip(row.fulfilment === 'kidnapping' ? 'Delivered alive' : 'Eliminated', 'hot'));
       node.appendChild(meta);
       if (row.photo_ref) {
+        /* Bounded, and it says what it is while it loads.
+        
+           This was `width: 100%` and nothing else, pointed at a
+           full-resolution photograph on somebody else's CDN. A 1080x1920
+           shot rendered 590px tall inside a card 721px tall, on a viewport
+           of 720 — one history entry taller than the whole screen. Ten
+           entries meant ten simultaneous requests to a remote host and a
+           list that reflowed under the player's thumb as each one landed,
+           because nothing reserved the space.
+        
+           A fixed box, the image fitted inside it, the space held from the
+           first paint, and a host that does not answer leaves a caption
+           rather than a broken-image glyph and a card that shrinks. */
+        var frame = el('div', 'proof');
         var img = document.createElement('img');
         img.src = row.photo_ref;
-        img.style.cssText = 'width:100%;border-radius:0.5rem;margin-top:0.6rem';
-        node.appendChild(img);
+        img.alt = 'Verification photograph';
+        img.loading = 'lazy';
+        img.onerror = function () {
+          frame.classList.toggle('is-missing', true);
+          if (img.parentNode) { frame.removeChild(img); }
+          frame.appendChild(el('span', 'hint',
+            'The proof photograph is no longer on its host.'));
+        };
+        frame.appendChild(img);
+        node.appendChild(frame);
       }
       view.appendChild(node);
     });
@@ -3345,13 +3367,35 @@
     return false;
   }
 
+  /* Which load is the current one, per section.
+  
+     Two refreshes can be in flight at once — a tab change on top of a push,
+     a push on top of the opening load — and nothing said which reply was
+     newer. Replies are not ordered: the first request can answer last, and
+     when it did it overwrote the newer board with the older one. A contract
+     accepted a moment ago reappeared as available, and one that had just
+     been placed vanished, until something else happened to trigger another
+     refresh. */
+  var loadSeq = { board: 0, mine: 0, ledger: 0 };
+
+  function newestLoad(section) {
+    loadSeq[section] += 1;
+    var mine = loadSeq[section];
+    return function () { return loadSeq[section] === mine; };
+  }
+
   function refresh() {
+    var boardIsCurrent = newestLoad('board');
     post('list', { page: 1 }).then(function (r) {
+      if (!boardIsCurrent()) { return; }
       if (!loadResult('board', r)) { return; }
       state.board = r.data;
       redraw();
     });
+
+    var mineIsCurrent = newestLoad('mine');
     post('mine', {}).then(function (r) {
+      if (!mineIsCurrent()) { return; }
       if (!loadResult('mine', r)) { return; }
       state.mine = r.data;
       redraw();
@@ -3363,7 +3407,9 @@
         if (state.proposals[c.id] === undefined) { loadProposals(c); }
       });
     });
+    var ledgerIsCurrent = newestLoad('ledger');
     post('ledger', {}).then(function (r) {
+      if (!ledgerIsCurrent()) { return; }
       if (!loadResult('ledger', r)) { return; }
       state.ledger = r.data;
       redraw();
@@ -3397,6 +3443,24 @@
     var data = event.data || {};
 
     if (data.type === 'push') {
+      /* A push is the server saying something this player is looking at has
+         changed, and an open amendment is the thing most likely to have
+         changed that the page cannot work out for itself.
+      
+         Proposals are read once per contract and then cached, deliberately:
+         most contracts have none and asking about every card on every
+         refresh is three requests a card. But the cache was keyed on
+         "undefined means unasked", and an empty answer is not undefined —
+         so once a contract had been asked about and had no proposal, it was
+         never asked about again. The other party then proposed a change,
+         the server pushed, this page refreshed, and the proposal was never
+         fetched, never drawn and never answered. It expired unseen, every
+         time, on a feature that needs both parties to see it.
+      
+         Cleared here and nowhere else: a push is exactly the signal that
+         the cache is stale, and it is the only one. */
+      state.proposals = {};
+
       // Debounced: a contract settling pushes the creator, the target and
       // every hunter, and several of those can land in the same tick. One
       // refresh is three requests, so a push per party would be a burst per
