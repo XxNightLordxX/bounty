@@ -1011,3 +1011,53 @@ describe('reporting a death through the event a client actually fires', function
         truthy(ok, 'the same pcall has to cover the other event: ' .. tostring(err))
     end)
 end)
+
+describe('what one verification costs against the rate limit', function()
+    --- Asking for a token and submitting the photo both billed the `photo`
+    --- bucket, so a single verification spent two of the three attempts it
+    --- allows — and the second charge lands after the hunter has lined up
+    --- and taken the shot.
+    ---
+    --- Whether a retry sequence can actually exhaust it depends on how long
+    --- the camera stays open, because the bucket refills while it is. The
+    --- shape of the failure is what matters: a confirmed kill, photographed,
+    --- refused for going too fast at the one moment the player has already
+    --- done the work.
+    it('does not bill the same allowance twice', function()
+        local ask = Config.Cooldowns.photo
+        local send = Config.Cooldowns.photoSubmit
+        truthy(ask and send, 'both buckets have to exist')
+
+        local App = require('crimson-bounty.server.app')
+        local source = read_file('crimson-bounty/server/app.lua')
+        local askBucket = source:match("handler%('requestPhotoToken', '([%w]+)'")
+        local sendBucket = source:match("handler%('submitPhoto', '([%w]+)'")
+        eq(askBucket, 'photo')
+        truthy(sendBucket ~= askBucket,
+            'one verification would spend two attempts, and the second '
+            .. 'charge lands after the photograph has been taken')
+        local _ = App
+    end)
+
+    it('lets a hunter retry a refused photo as many times as the bucket says', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        -- Three attempts means three, not one and a half.
+        local attempts = 0
+        for _ = 1, Config.Cooldowns.photo.burst do
+            if s.ratelimit.check(f.hunter, 'photo') then attempts = attempts + 1 end
+        end
+        eq(attempts, Config.Cooldowns.photo.burst,
+            'asking for a token is what is limited')
+
+        -- And the submissions for those attempts are not refused by a
+        -- budget the asking already spent.
+        local sends = 0
+        for _ = 1, Config.Cooldowns.photo.burst do
+            if s.ratelimit.check(f.hunter, 'photoSubmit') then sends = sends + 1 end
+        end
+        eq(sends, Config.Cooldowns.photo.burst,
+            'every token that was issued can still be used')
+    end)
+end)

@@ -243,6 +243,10 @@ ConfigDefaults.Cooldowns = {
     --- whatever a retry costs.
     wallet    = { per = 10, burst = 8 },
     photo     = { per = 15, burst = 3 },
+    --- Submitting one. Separate from asking for a token, because both used
+    --- to bill `photo` and one verification therefore cost two attempts —
+    --- with the second charged after the photograph had been taken.
+    photoSubmit = { per = 15, burst = 5 },
     --- Death and revive reports are client-driven and each one walks the
     --- contract table, so they are throttled like everything else.
     death     = { per = 5,  burst = 4 },

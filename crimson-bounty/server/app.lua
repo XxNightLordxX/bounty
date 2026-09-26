@@ -610,7 +610,22 @@ function App.register()
         return { token = token }
     end)
 
-    handler('submitPhoto', 'photo', function(actor, payload)
+    -- Its own bucket, not the one requestPhotoToken bills.
+    --
+    -- Both used to charge `photo`, so one verification spent two of three
+    -- allowed attempts — and the second charge lands AFTER the hunter has
+    -- lined up and taken the shot. Whether a retry sequence can actually
+    -- exhaust it depends on how long the camera is open, because the bucket
+    -- refills while it is; the reachability is marginal. What is not
+    -- marginal is the shape of the failure when it happens: a confirmed
+    -- kill, photographed, refused for going too fast, at the one moment in
+    -- the flow where the player has already done the work.
+    --
+    -- Asking for a token is the act worth limiting — it is what somebody
+    -- probing would repeat. A submission is the completion of work the
+    -- server itself authorised, against a token it issued and that can only
+    -- be used once, so it is limited separately and more loosely.
+    handler('submitPhoto', 'photoSubmit', function(actor, payload)
         local ok, err, result = deps.photo.submit(actor, payload.token, payload.url)
         if not ok then return false, err end
         return result
