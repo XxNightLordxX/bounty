@@ -275,22 +275,70 @@ end)
 --- test after it, because a test whose assertion never runs cannot fail.
 --- This one counts what actually came back ok across the whole file.
 describe('what this suite really covered', function()
-    it('got an ok from every handler it claims to exercise', function()
-        local claimed = {
-            'accept', 'abandon', 'bailout', 'threads', 'sendMessage',
-            'readThread', 'requestCall', 'improve', 'addEscrow', 'propose',
-            'amendments', 'respondAmendment', 'armKidnap', 'kidnapProgress',
-            'requestPhotoToken', 'submitPhoto', 'mugshotImage',
-            'rewardBreakdown',
-        }
+    --- Every handler the server registers, not a list kept by hand.
+    ---
+    --- This used to name eighteen handlers and check those. The resource has
+    --- thirty, so twelve were outside the guard entirely — and a handler
+    --- added later was outside it too, which is the failure mode a guard
+    --- built on a hand-kept list always has. The set comes from
+    --- App.handlers now, and anything not driven to a successful reply here
+    --- has to be named below with the file that drives it instead.
+    local ELSEWHERE = {
+        -- Read paths, exercised to an ok in their own specs.
+        list           = 'projection_spec and the ui suite',
+        mine           = 'projection_spec and the ui suite',
+        ledger         = 'projection_spec',
+        searchTargets  = 'config_drift_spec',
+        browseTargets  = 'config_drift_spec',
+        rewardOptions  = 'config_drift_spec, against the real ox_inventory shape',
+        -- Write paths with a spec of their own, because each has more cases
+        -- than a journey can carry.
+        create         = 'contracts_spec, and further down this file',
+        cancel         = 'cancel_spec',
+        revise         = 'reward_edit_spec',
+        withdrawReward = 'reward_edit_spec',
+        informant      = 'interaction_spec',
+        -- Not a contract action at all.
+        pageError      = 'authz_matrix_spec, under "a page reporting its own fault"',
+    }
+
+    it('got an ok from every handler the server registers', function()
+        local App = require('crimson-bounty.server.app')
         local missing = {}
-        for _, name in ipairs(claimed) do
-            if not succeeded[name] then missing[#missing + 1] = name end
+        for name in pairs(App.handlers) do
+            if not succeeded[name] and not ELSEWHERE[name] then
+                missing[#missing + 1] = name
+            end
         end
+        table.sort(missing)
         eq(#missing, 0,
             'these handlers never once returned ok through the net event, so '
-            .. 'nothing here proves the page can reach them: '
+            .. 'nothing proves the page can reach them: '
             .. table.concat(missing, ', '))
+    end)
+
+    it('does not carry an exemption for a handler that no longer exists', function()
+        local App = require('crimson-bounty.server.app')
+        local stale = {}
+        for name in pairs(ELSEWHERE) do
+            if not App.handlers[name] then stale[#stale + 1] = name end
+        end
+        table.sort(stale)
+        eq(#stale, 0,
+            'an exemption for a handler that is gone is an exemption that has '
+            .. 'stopped being checked: ' .. table.concat(stale, ', '))
+    end)
+
+    it('does not exempt a handler this file already covers', function()
+        local covered = {}
+        for name in pairs(ELSEWHERE) do
+            if succeeded[name] then covered[#covered + 1] = name end
+        end
+        table.sort(covered)
+        eq(#covered, 0,
+            'these are driven to an ok right here and do not need an '
+            .. 'exemption; a live exemption is one that could hide the next '
+            .. 'gap: ' .. table.concat(covered, ', '))
     end)
 end)
 

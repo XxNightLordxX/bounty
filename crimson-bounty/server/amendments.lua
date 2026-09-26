@@ -108,6 +108,24 @@ function Amendments.improve(actor, contractId, kind, payload)
 
     payload = type(payload) == 'table' and payload or {}
 
+    -- Raising the bonus TAKES ESCROW, so it answers to the same state rule
+    -- as Amendments.addEscrow above, which refuses anything but ACTIVE and
+    -- ACCEPTED. This function guarded only TERMINAL, so COMPLETING was
+    -- permitted — and COMPLETING is a contract mid-settlement, with
+    -- Escrow.release walking its lines right now. A bonus line appended into
+    -- that walk is a line that may or may not be paid depending on where the
+    -- loop had got to, which is the exact race addEscrow's guard exists to
+    -- prevent. Two doors to the same room and only one of them locked.
+    --
+    -- Extending the deadline is not in this class and is still allowed:
+    -- COMPLETING can roll back to ACCEPTED when a settlement fails, and a
+    -- longer deadline is then a straightforward benefit to the hunter.
+    if kind == CB.AMENDMENT.RAISE_BONUS
+        and contract.state ~= CB.STATE.ACTIVE
+        and contract.state ~= CB.STATE.ACCEPTED then
+        return false, CB.ERR.BAD_STATE
+    end
+
     if kind == CB.AMENDMENT.EXTEND_DEADLINE then
         local seconds = Util.toPositive(payload.seconds, Config.Limits.ContractLifetimeSeconds)
         if not seconds then return false, CB.ERR.INVALID_INPUT end

@@ -488,10 +488,17 @@ MATRIX.kidnapProgress = {
         truthy(w.s.kidnap.arm(w.held.id, CAST.hunter.cid), 'the countdown has to be running')
     end,
     payload = function(w, role, contract) return { id = contract.id } end,
-    -- No code: the countdown is looked up by (contract, hunter) and simply
-    -- is not there for anyone else, which the app draws as "no delivery
-    -- running" rather than as an error.
-    expect = only('hunter', SILENT),
+    -- no_handover: the countdown is looked up by (contract, hunter) and
+    -- simply is not there for anyone else, which the app draws as "no
+    -- delivery running" rather than as an error.
+    --
+    -- This cell used to expect no code at all, because the handler returned
+    -- a bare nil and App.reply forwarded that as ok = false with err = nil —
+    -- a refusal with nothing in it. The page has nothing to look up for an
+    -- absent code, so a countdown that was simply not running reached the
+    -- player as "Lost track of the handover", which sounds like a fault and
+    -- is not one. The rule this cell is about is unchanged.
+    expect = only('hunter', CB.ERR.NO_HANDOVER),
     why = 'the countdown is the hunter own; where a delivery has got to is '
        .. 'not something the target gets to poll',
 }

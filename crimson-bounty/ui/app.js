@@ -405,6 +405,8 @@
     no_kill_to_verify: 'No kill on this contract is waiting for proof. Take '
       + 'the target down, then photograph them where they fell \u2014 within '
       + 'a few metres, and before they are back on their feet for long.',
+    // Not a fault. The poller stops on this and says the handover ended.
+    no_handover: 'That handover is not running.',
     token_invalid: 'Verification expired. Take the photo again.',
     photo_rejected: 'The photo was not accepted.',
     photo_too_far: 'You are too far from the body. Stand over them and take it again.',
@@ -1393,7 +1395,8 @@
           // the one thing a hunter holding a target cannot interpret.
           stopCountdown();
           delete state.progress[id];
-          say(r.err === 'not_found' || r.err === 'bad_state'
+          say(r.err === 'no_handover' || r.err === 'not_found'
+                || r.err === 'bad_state'
             ? 'The handover ended. Get them back to the client and try again.'
             : (ERRORS[r.err] || 'Lost track of the handover.'));
           refresh();

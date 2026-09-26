@@ -119,6 +119,10 @@ CB.ERR = {
     --- one the server did not attribute — was four words that explain
     --- nothing about a mechanic with a distance rule and a time limit.
     NO_KILL_TO_VERIFY = 'no_kill_to_verify',
+    --- No handover is running on this contract for this hunter. Either it
+    --- ended or it was never armed, and both are ordinary answers to an
+    --- ordinary question rather than faults.
+    NO_HANDOVER       = 'no_handover',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',

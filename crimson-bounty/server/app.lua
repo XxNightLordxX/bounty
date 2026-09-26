@@ -640,7 +640,20 @@ function App.register()
     handler('kidnapProgress', 'progress', function(actor, payload)
         -- Returned unchanged: a fabricated { elapsed = 0 } has no `required`,
         -- which draws a NaN bar and a poller that can never finish.
-        return deps.kidnap.progress(Util.toId(payload.id) or '', actor.cid)
+        local progress = deps.kidnap.progress(Util.toId(payload.id) or '', actor.cid)
+        if not progress then
+            -- Named, rather than left as a bare nil.
+            --
+            -- A handler returning nil is read as a refusal by App.reply, and
+            -- with no second return value the reply carried ok = false and
+            -- err = nil — a refusal with no reason in it. The page has
+            -- nothing to look up, so a countdown that simply is not running
+            -- reached the player as "Lost track of the handover", which
+            -- sounds like a fault and is not one. Asking about a handover
+            -- that has ended, or was never armed, is an ordinary question.
+            return false, CB.ERR.NO_HANDOVER
+        end
+        return progress
     end)
 
     -- Target counter-play ----------------------------------------------
