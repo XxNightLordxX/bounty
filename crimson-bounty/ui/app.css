@@ -466,3 +466,69 @@ button.person.is-chosen {
 .choices .choice { display: flex; flex-direction: column; gap: 0.15rem; }
 .choices .choice button { width: 100%; }
 .choices .choice .hint { margin-top: 0; }
+
+/* ---------- diagnostics panel ----------------------------------------
+   Shown over everything, because it is read when the app underneath is
+   broken and may be drawing nothing at all. Fixed rather than inside
+   #view for the same reason: a render that throws must not be able to
+   take the tool for diagnosing it with it. */
+#diag {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  background: rgba(8, 6, 8, 0.97);
+  font-size: 0.78rem;
+}
+
+.diag-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex: none;
+}
+
+.diag-head strong { font-size: 0.9rem; color: var(--crimson-bright); }
+.diag-head button { min-height: 2.2rem; padding: 0 0.8rem; flex: none; }
+
+.diag-summary { flex: none; margin: 0; color: var(--ink-faint); font-size: 0.72rem; }
+
+.diag-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  padding: 0.4rem;
+  /* Tabular figures keep the timestamps in a column that can be scanned. */
+  font-variant-numeric: tabular-nums;
+}
+
+.diag-row {
+  display: flex;
+  gap: 0.45rem;
+  padding: 0.22rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  line-height: 1.35;
+}
+
+.diag-row:last-child { border-bottom: none; }
+.diag-when { flex: none; color: var(--ink-faint); min-width: 3.1rem; text-align: right; }
+/* Long messages wrap rather than pushing the timestamp column off screen. */
+.diag-text { min-width: 0; overflow-wrap: anywhere; color: var(--ink-dim); }
+
+.diag-row.is-throw .diag-text,
+.diag-row.is-error .diag-text,
+.diag-row.is-reject .diag-text { color: var(--crimson-bright); }
+.diag-row.is-refused .diag-text,
+.diag-row.is-unreachable .diag-text { color: var(--gold); }
+
+.diag-copy { flex: none; min-height: 2.4rem; }
+
+/* The way in. Given a hit area a thumb can find, and marked as pressable
+   without advertising itself to a player who has no use for it. */
+.build-stamp { cursor: pointer; padding: 0.5rem 0; -webkit-tap-highlight-color: transparent; }

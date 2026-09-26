@@ -211,6 +211,10 @@ ConfigDefaults.RateLimit = {
 }
 
 ConfigDefaults.Cooldowns = {
+    --- Faults the page reports about itself. Generous enough that a genuinely
+    --- broken screen gets its report through, tight enough that a client
+    --- posting straight at the endpoint cannot fill the audit log with it.
+    diagnostic  = { per = 60, burst = 10 },
     create    = { per = 60, burst = 2 },
     accept    = { per = 30, burst = 3 },
     bailout   = { per = 60, burst = 1 },

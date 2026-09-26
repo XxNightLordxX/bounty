@@ -390,6 +390,10 @@ local UI_EVENTS = {
     'addEscrow', 'rewardBreakdown', 'withdrawReward',
     'improve', 'propose', 'respondAmendment', 'amendments',
     'threads', 'readThread', 'sendMessage', 'requestCall',
+    -- The page telling the server it broke. Through the same gate as
+    -- everything else: it is an NUI endpoint like any other and is
+    -- addressable from any frame the phone draws.
+    'pageError',
 }
 
 for _, event in ipairs(UI_EVENTS) do

@@ -808,3 +808,55 @@ describe('a contract staff voided', function()
            'changing which terminal state this lands in must not change the money')
     end)
 end)
+
+describe('the diagnosis and what the app itself reported', function()
+    --- Everything else the diagnosis prints is the server's view of itself.
+    --- The app runs in a browser on the player's machine, and from here that
+    --- was invisible: a page throwing on every render looked exactly like a
+    --- player who had stopped opening the app.
+    local function diagnose(s)
+        -- Naming a player: the console-only path stops before the
+        -- server-wide section this is about.
+        return table.concat(s.admin.diagnose(0, '3'), '\n')
+    end
+
+    it('says plainly when no page has reported anything', function()
+        local s = newStack(); fixture(s)
+        local out = diagnose(s)
+        truthy(out:find('app faults: none'),
+            'silence has to be reported as silence, or a reader cannot tell '
+            .. 'it from a check that was never run: ' .. out)
+    end)
+
+    it('shows what a player\'s page reported, and which build it was', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        s.app.handlers.pageError(f.hunter, {
+            what = 'contract.reward is undefined', where = 'app.js:512:8',
+            stack = 'at card', build = '2026.09.1',
+        })
+
+        local out = diagnose(s)
+        truthy(out:find('contract%.reward is undefined'),
+            'the fault itself: ' .. out)
+        truthy(out:find('app%.js:512'), 'and where it happened: ' .. out)
+        truthy(out:find('2026%.09%.1'),
+            'and which copy of the page they are running, which is the first '
+            .. 'thing to check: ' .. out)
+        truthy(out:find(f.hunter.cid), 'and who saw it: ' .. out)
+    end)
+
+    it('keeps the newest faults rather than the first twenty', function()
+        local s = newStack()
+        local f = fixture(s)
+        for i = 1, 30 do
+            s.app.handlers.pageError(f.hunter, { what = 'fault number ' .. i })
+        end
+
+        local kept = s.app.recentPageFaults()
+        truthy(#kept <= 20, 'the ring has to be bounded, got ' .. #kept)
+        eq(kept[1].what, 'fault number 30',
+            'newest first: the one that just happened is the one being looked for')
+    end)
+end)

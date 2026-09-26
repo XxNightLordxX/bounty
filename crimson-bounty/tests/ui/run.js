@@ -111,7 +111,26 @@ function boot(responses) {
   const sandbox = {
     document: document,
     window: {
-      addEventListener: function (type, fn) { sandbox.window['_' + type] = fn; }
+      // Every listener, not the last one registered.
+      //
+      // This used to keep one function per type, so a second
+      // addEventListener('message') silently replaced the first and the
+      // suite went on testing the one that no longer ran. A real browser
+      // calls both. The shim now fans out, and window._message stays
+      // callable as a single function so the existing call sites read the
+      // same.
+      addEventListener: function (type, fn) {
+        var key = '_' + type;
+        var existing = sandbox.window[key];
+        if (!existing) { sandbox.window[key] = fn; return; }
+        var all = existing.__all || [existing];
+        all.push(fn);
+        var fanout = function (event) {
+          for (var i = 0; i < all.length; i++) { all[i](event); }
+        };
+        fanout.__all = all;
+        sandbox.window[key] = fanout;
+      }
     },
     fetch: function (url, options) {
       const name = url.split('/crimson:')[1];
@@ -4486,6 +4505,174 @@ async function main() {
         'without the cap a player finds out they were on their last one by '
         + 'spending it: ' + shown);
     });
+  })();
+
+  /* ---------- diagnostics ----------
+   *
+   * The one thing this page never had: a way to say it broke. CEF has no
+   * console anybody reads, so a thrown error reached nobody — not the
+   * client, not the server log, not the operator. The symptom was a blank
+   * screen and a working tab bar, and the whole diagnosis available to
+   * anyone was a player saying "it broke". All four render crashes this
+   * resource has shipped were reported in those words. */
+  await (async function diagnostics() {
+    function reports(app) {
+      return app.sent.filter(function (s) { return s.name === 'pageError'; });
+    }
+
+    await (async function thrownRender() {
+      const app = boot({ mine: { ok: true, data: { own: [], onMe: [] } } });
+      await settle();
+
+      // Planted in appendChild rather than in the data: every view builder
+      // puts its nodes on the view with it, so this reaches inside draw()
+      // wherever the player is. Planting it in the data would only prove
+      // the page is hardened against that data, which already passes.
+      //
+      // It stays armed. Disarming after one throw let the next coalesced
+      // redraw succeed and replace the recovery card with the ordinary
+      // view, so the assertions below read a healthy screen and passed
+      // while proving nothing. The guard's own card is let through by name.
+      const die = app.document.getElementById('view');
+      const realAppend = die.appendChild.bind(die);
+      const fired = [];
+      die.appendChild = function (child) {
+        if (child && child._className === 'card') { return realAppend(child); }
+        fired.push(1);
+        throw new Error('planted render fault');
+      };
+      tab(app, 'mine');
+      await settle();
+
+      const shown = app.view.textContent;
+
+      it('the planted fault actually fired', function () {
+        truthy(fired.length >= 1,
+          'the injection never ran, so everything below it proves nothing');
+      });
+      it('draws the failure instead of leaving the screen blank', function () {
+        truthy(shown.indexOf('could not be drawn') !== -1,
+          'a blank screen with a working tab bar is not a diagnosis: ' + shown);
+      });
+      it('leaves the player a way out of a screen that will not draw', function () {
+        truthy(shown.indexOf('Back to the board') !== -1, shown);
+      });
+      it('sends the fault somewhere an owner can read it', function () {
+        const sent = reports(app);
+        truthy(sent.length >= 1,
+          'the error has to leave the browser or nobody will ever see it');
+        truthy(sent[0].body.what.indexOf('planted render fault') !== -1,
+          JSON.stringify(sent[0].body));
+      });
+      it('names where it happened, not only that it happened', function () {
+        truthy(reports(app)[0].body.where.indexOf('render') !== -1,
+          reports(app)[0].body.where);
+      });
+    })();
+
+    await (async function uncaughtError() {
+      const app = boot({});
+      await settle();
+      app.sandbox.window.onerror('x is not a function', 'app.js', 120, 9,
+        { stack: 'at card (app.js:120:9)' });
+      await settle();
+
+      it('reports an error that escaped everything else', function () {
+        const sent = reports(app);
+        eq(sent.length, 1, 'got ' + sent.length);
+        eq(sent[0].body.what, 'x is not a function');
+        truthy(sent[0].body.where.indexOf('app.js:120') !== -1, sent[0].body.where);
+      });
+    })();
+
+    await (async function cappedReporting() {
+      const app = boot({});
+      await settle();
+      // A render loop throwing every frame. Uncapped that is an audit row
+      // per frame: a denial of service on the log this exists to fill.
+      for (let i = 0; i < 40; i++) {
+        app.sandbox.window.onerror('loop ' + i, 'app.js', i, 0, { stack: '' });
+      }
+      await settle();
+
+      it('stops reporting a page that is throwing every frame', function () {
+        truthy(reports(app).length <= 10,
+          'sent ' + reports(app).length + ' reports for 40 errors');
+      });
+      it('says that it stopped rather than just going quiet', function () {
+        const what = reports(app).map(function (r) { return r.body.what; });
+        truthy(what.some(function (w) { return w.indexOf('suppressed') !== -1; }),
+          'a reader of the log has to tell "eight errors" from "eight and '
+          + 'then we stopped counting": ' + what.join(' | '));
+      });
+    })();
+
+    await (async function theePanel() {
+      const app = boot({ ledger: { ok: true, data: { entries: [] } } });
+      await settle();
+      tab(app, 'ledger');
+      await settle();
+
+      const stamp = app.view.all().filter(function (n) {
+        return n._className && n._className.indexOf('build-stamp') !== -1;
+      })[0];
+
+      it('puts the way in on the build stamp', function () {
+        truthy(stamp, 'the build number is the one thing a player is always '
+          + 'asked to read out, so it is where the tool belongs');
+      });
+
+      for (let i = 0; i < 5; i++) { stamp.onclick(); }
+      await settle();
+
+      it('opens the panel on the fifth tap', function () {
+        truthy(app.document.getElementById('diag'),
+          'five taps, the way a phone exposes a developer menu');
+      });
+      it('shows the requests the page actually made', function () {
+        const text = app.document.getElementById('diag').textContent;
+        truthy(text.indexOf('ledger') !== -1,
+          'what it has been doing is the point: ' + text);
+      });
+      it('draws over the page rather than inside the view', function () {
+        const inView = app.view.all().filter(function (n) { return n._id === 'diag'; });
+        eq(inView.length, 0,
+          'a render that throws must not be able to take the tool for '
+          + 'diagnosing it with it');
+      });
+
+      // And closes again, because a panel that cannot be dismissed is a
+      // second broken screen.
+      const close = app.document.getElementById('diag').all()
+        .filter(function (n) { return n.textContent === 'Close'; })[0];
+      close.onclick();
+      it('closes again', function () {
+        falsy(app.document.getElementById('diag'), 'the panel would not close');
+      });
+    })();
+
+    await (async function recordsWhatTheServerRefused() {
+      const app = boot({ list: { ok: false, err: 'rate_limited' },
+                         ledger: { ok: true, data: { entries: [] } } });
+      await settle();
+      tab(app, 'board');
+      await settle();
+      tab(app, 'ledger');
+      await settle();
+
+      const stamp = app.view.all().filter(function (n) {
+        return n._className && n._className.indexOf('build-stamp') !== -1;
+      })[0];
+      for (let i = 0; i < 5; i++) { stamp.onclick(); }
+      await settle();
+
+      it('records a refusal with the reason the server gave', function () {
+        const text = app.document.getElementById('diag').textContent;
+        truthy(text.indexOf('rate_limited') !== -1,
+          'the panel has to say WHICH request was refused and why, or it is '
+          + 'no better than the player saying it broke: ' + text);
+      });
+    })();
   })();
 
   console.log('');

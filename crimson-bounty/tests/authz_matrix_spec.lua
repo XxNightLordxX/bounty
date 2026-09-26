@@ -623,6 +623,11 @@ local CUSTOM = {
     whoAmI            = 'the events registered outside the app gate',
     mugshot           = 'the events registered outside the app gate',
     appearanceChanged = 'the events registered outside the app gate',
+    -- Names no contract, so there is no role to permit or refuse against:
+    -- any player may report that their own copy of the page broke. What it
+    -- must not do is let a browser put arbitrary text into the audit log,
+    -- or name somebody else, and that is what the block below checks.
+    pageError = 'a page reporting its own fault',
 }
 
 -- Registered in bridges.lua, which is how three events any player on the
@@ -639,6 +644,88 @@ MATRIX.iDied = { custom = true,
     why = 'only the victim own client can report their death' }
 MATRIX.iRevived = { custom = true,
     why = 'only the victim own client can report their revival' }
+
+MATRIX.pageError = { custom = true,
+    why = 'a fault report is about the caller own page and names no contract' }
+
+describe('a page reporting its own fault', function()
+    --- The app runs in CEF, where a JavaScript error reaches nobody. This
+    --- handler is how it reaches the server log instead — and it is an NUI
+    --- endpoint, so everything arriving on it came from a browser and some
+    --- of it may not have come from ours.
+    local function report(s, actor, payload)
+        return s.app.handlers.pageError(actor, payload)
+    end
+
+    it('records a fault against the caller and nobody else', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        truthy(report(s, f.hunter, { what = 'x is not a function',
+            where = 'app.js:120:9', stack = 'at card', build = '1.2.3' }))
+        s.audit.flush()
+
+        local found
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'page_error' then found = row end
+        end
+        truthy(found, 'the fault has to reach somewhere an owner can read it')
+        eq(found.actor_cid, f.hunter.cid,
+            'recorded against whoever reported it, never a cid from the payload')
+        eq(found.detail.what, 'x is not a function')
+    end)
+
+    it('will not let a browser write whatever it likes into the log', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        -- Everything here came over an NUI endpoint that any frame the phone
+        -- draws can post to.
+        truthy(report(s, f.hunter, {
+            what = string.rep('A', 5000),
+            where = string.rep('B', 5000),
+            stack = string.rep('C', 20000),
+            build = string.rep('D', 500),
+            cid = 'CREATOR1',
+        }))
+        s.audit.flush()
+
+        local found
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'page_error' then found = row end
+        end
+        truthy(found)
+        truthy(#found.detail.what <= 300, 'what: ' .. #found.detail.what)
+        truthy(#found.detail.where <= 200, 'where: ' .. #found.detail.where)
+        truthy(#found.detail.stack <= 900, 'stack: ' .. #found.detail.stack)
+        eq(found.actor_cid, f.hunter.cid,
+            'a cid in the payload must not become the cid on the row')
+    end)
+
+    it('survives a report carrying nothing at all', function()
+        local s = newStack()
+        local f = fixture(s)
+        -- A page broken badly enough to report may be broken badly enough to
+        -- report badly.
+        truthy(report(s, f.hunter, {}),
+            'the one path that exists for saying the app is broken must not '
+            .. 'itself be a way to break the server')
+    end)
+
+    it('is rate limited, so a render loop cannot fill the log', function()
+        local s = newStack()
+        local f = fixture(s)
+        local rule = Config.Cooldowns.diagnostic
+        truthy(rule, 'the bucket has to exist or this handler is unlimited')
+
+        local allowed = 0
+        for _ = 1, rule.burst + 5 do
+            if s.ratelimit.check(f.hunter, 'diagnostic') then allowed = allowed + 1 end
+        end
+        eq(allowed, rule.burst,
+            'a page throwing every frame would otherwise write a row every frame')
+    end)
+end)
 
 --------------------------------------------------------------------------
 -- Running the grid

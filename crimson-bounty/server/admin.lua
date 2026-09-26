@@ -615,6 +615,36 @@ function Admin.diagnose(source, subjectId)
     end
     say(('  keyed on: %s'):format(tostring(Config.RateLimit.Key)))
 
+    if Config.Debug then
+        say('debug: ON — page faults print their full stack to this console. '
+            .. 'Leave it off on a busy server; the reports are recorded either way.')
+    end
+
+    -- What the app itself has reported.
+    --
+    -- Everything above this line is the server's view. The app runs in a
+    -- browser on the player's machine, where nothing was ever visible from
+    -- here: a page that threw on every render looked, from the server, like
+    -- a player who had stopped using the app. These are the faults the page
+    -- caught and sent back.
+    local faults = App and App.recentPageFaults and App.recentPageFaults() or {}
+    if #faults == 0 then
+        say('app faults: none reported by any player\'s page this session.')
+    else
+        say(('app faults: %d reported by players\' pages, newest first:')
+            :format(#faults))
+        for i = 1, math.min(#faults, 5) do
+            local fault = faults[i]
+            say(('  %s  %s  build %s  %s'):format(
+                os.date('%H:%M:%S', fault.at), fault.cid or 'unknown',
+                fault.build or '?', fault.what))
+            if fault.where then say(('      at %s'):format(fault.where)) end
+        end
+        say('  -> a fault here is a bug in this resource, not in the player\'s '
+            .. 'game. The build number says which copy of the page they are '
+            .. 'running, which is the first thing to check.')
+    end
+
     say('--- end ---')
     return out
 end

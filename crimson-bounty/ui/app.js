@@ -46,17 +46,296 @@
     proposals: {}
   };
 
+  /* ---------- diagnostics ----------------------------------------------
+
+     Until this existed, a JavaScript error in this page went nowhere at
+     all. CEF has no console anybody looks at, no error reached the client,
+     nothing reached the server log, and render() had already emptied #view
+     before it threw — so the symptom was a blank app with a working tab
+     bar, and the only person who could see it was the player, who could
+     only say "it broke". Four render crashes shipped that way and every one
+     of them was reported in those words.
+
+     Three things, then:
+
+       * Nothing thrown in this page is lost. Errors are kept here, sent to
+         the client, and written to the server log where an owner can read
+         them.
+       * A throw inside a render does not blank the app. It draws what went
+         wrong and a way out, because a player who can still press Try again
+         is not stuck.
+       * Everything the page did recently can be read back in game, on the
+         phone, without a debugger — which is the only place this runs.
+
+     Reporting is capped per session. A render loop that throws every frame
+     would otherwise write the same row to the audit log sixty times a
+     second, which is a denial of service on the log this exists to fill. */
+
+  var Diag = (function () {
+    var MAX_EVENTS = 80;
+    var REPORT_CAP = 8;
+
+    var events = [];
+    var reported = 0;
+    var suppressed = 0;
+    var seq = 0;
+    var panelOpen = false;
+    var started = now();
+
+    function now() {
+      // performance.now over Date.now: monotonic, and the numbers stay
+      // small and readable as "ms since the app opened".
+      return (window.performance && window.performance.now)
+        ? Math.round(window.performance.now()) : 0;
+    }
+
+    function note(kind, text, detail) {
+      seq += 1;
+      events.push({ n: seq, at: now() - started, kind: kind, text: String(text),
+                    detail: detail });
+      if (events.length > MAX_EVENTS) { events.shift(); }
+      if (panelOpen) { drawPanel(); }
+      return seq;
+    }
+
+    /* Send one fault to the client, which puts it in the server log.
+
+       Capped, and the cap itself is reported once, so a reader of the log
+       can tell "eight errors" from "eight errors and then we stopped
+       counting". */
+    function report(what, where, stack) {
+      if (reported >= REPORT_CAP) {
+        suppressed += 1;
+        if (suppressed === 1) {
+          send({ what: 'further page errors suppressed', where: 'diagnostics',
+                 stack: '', build: window.CB_BUILD || 'dev' });
+        }
+        return false;
+      }
+      reported += 1;
+      send({ what: String(what).slice(0, 300),
+             where: String(where || '').slice(0, 200),
+             stack: String(stack || '').slice(0, 900),
+             tab: state && state.tab, build: window.CB_BUILD || 'dev' });
+      return true;
+    }
+
+    // Deliberately not post(): post() is instrumented by this module and a
+    // failure inside it must not recurse into reporting its own report.
+    function send(body) {
+      try {
+        fetch('https://' + RESOURCE + '/crimson:pageError', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+          body: JSON.stringify(body)
+        }).catch(function () {});
+      } catch (err) { /* nothing left to try */ }
+    }
+
+    /* Run fn, and if it throws, say so everywhere rather than unwinding
+       into a browser nobody is watching. Returns the sentinel on failure so
+       a caller can tell the two apart. */
+    var FAILED = {};
+    function guard(label, fn) {
+      try {
+        return fn();
+      } catch (err) {
+        var message = (err && err.message) || String(err);
+        note('throw', label + ': ' + message, err && err.stack);
+        report(message, label, err && err.stack);
+        return FAILED;
+      }
+    }
+
+    function install() {
+      window.onerror = function (message, source, line, column, err) {
+        note('error', message + ' (' + (source || '?') + ':' + (line || 0) + ')',
+             err && err.stack);
+        report(message, (source || '?') + ':' + (line || 0) + ':' + (column || 0),
+               err && err.stack);
+        // False: do not swallow it. Anything else watching still sees it.
+        return false;
+      };
+
+      window.addEventListener('unhandledrejection', function (event) {
+        var reason = event && event.reason;
+        var message = (reason && reason.message) || String(reason);
+        note('reject', message, reason && reason.stack);
+        report(message, 'unhandled rejection', reason && reason.stack);
+      });
+
+      note('boot', 'build ' + (window.CB_BUILD || 'dev'));
+    }
+
+    /* ---- the in-game panel ----
+
+       Opened by tapping the build stamp in the ledger five times, the way
+       a phone exposes a developer menu, because there is no keyboard here
+       and no room for a permanent control. Closed by its own button. */
+    var taps = 0, lastTap = 0;
+
+    function tapped() {
+      var t = now();
+      taps = (t - lastTap < 1200) ? taps + 1 : 1;
+      lastTap = t;
+      if (taps >= 5) { taps = 0; toggle(); }
+    }
+
+    function toggle() {
+      panelOpen = !panelOpen;
+      if (panelOpen) { drawPanel(); } else { removePanel(); }
+    }
+
+    function removePanel() {
+      var old = document.getElementById('diag');
+      if (old && old.parentNode && old.parentNode.removeChild) {
+        old.parentNode.removeChild(old);
+      }
+    }
+
+    /* Where an overlay goes. document.body in a browser; anything that
+       exists otherwise.
+
+       This runs from a click handler, so a throw here does not stay here:
+       it unwinds into the browser and leaves the tap looking like it did
+       nothing. The one screen whose job is to explain a failure must not be
+       able to cause one. */
+    function overlayHost() {
+      return document.body
+          || document.getElementById('app')
+          || document.documentElement
+          || null;
+    }
+
+    function drawPanel() {
+      var host = overlayHost();
+      if (!host) { return; }
+      removePanel();
+
+      var panel = document.createElement('div');
+      panel.id = 'diag';
+
+      var head = document.createElement('div');
+      head.className = 'diag-head';
+
+      var title = document.createElement('strong');
+      title.textContent = 'Diagnostics · ' + (window.CB_BUILD || 'dev');
+      head.appendChild(title);
+
+      var close = document.createElement('button');
+      close.className = 'ghost';
+      close.textContent = 'Close';
+      close.onclick = toggle;
+      head.appendChild(close);
+      panel.appendChild(head);
+
+      var summary = document.createElement('p');
+      summary.className = 'diag-summary';
+      summary.textContent = counts();
+      panel.appendChild(summary);
+
+      var list = document.createElement('div');
+      list.className = 'diag-log';
+      // Newest first: the thing that just went wrong is what is being
+      // looked for, and a phone shows about eight rows.
+      for (var i = events.length - 1; i >= 0; i--) {
+        list.appendChild(row(events[i]));
+      }
+      panel.appendChild(list);
+
+      var copy = document.createElement('button');
+      copy.className = 'ghost diag-copy';
+      copy.textContent = 'Send this to the server log';
+      copy.onclick = function () {
+        send({ what: 'diagnostics requested by the player', where: 'panel',
+               stack: asText(), build: window.CB_BUILD || 'dev' });
+        note('sent', 'diagnostics sent to the server log');
+      };
+      panel.appendChild(copy);
+
+      host.appendChild(panel);
+    }
+
+    function row(event) {
+      var line = document.createElement('div');
+      line.className = 'diag-row is-' + event.kind;
+
+      var when = document.createElement('span');
+      when.className = 'diag-when';
+      when.textContent = (event.at / 1000).toFixed(1) + 's';
+      line.appendChild(when);
+
+      var text = document.createElement('span');
+      text.className = 'diag-text';
+      text.textContent = event.kind + ' · ' + event.text;
+      line.appendChild(text);
+
+      return line;
+    }
+
+    function counts() {
+      var byKind = {};
+      for (var i = 0; i < events.length; i++) {
+        byKind[events[i].kind] = (byKind[events[i].kind] || 0) + 1;
+      }
+      var parts = [];
+      for (var kind in byKind) {
+        if (Object.prototype.hasOwnProperty.call(byKind, kind)) {
+          parts.push(byKind[kind] + ' ' + kind);
+        }
+      }
+      parts.push(reported + ' reported');
+      if (suppressed) { parts.push(suppressed + ' suppressed'); }
+      return parts.join(' · ');
+    }
+
+    function asText() {
+      var out = [];
+      for (var i = 0; i < events.length; i++) {
+        var e = events[i];
+        out.push((e.at / 1000).toFixed(1) + 's ' + e.kind + ' ' + e.text
+                 + (e.detail ? ' | ' + e.detail : ''));
+      }
+      return out.join('\n');
+    }
+
+    return { note: note, report: report, guard: guard, install: install,
+             tapped: tapped, toggle: toggle, asText: asText, FAILED: FAILED,
+             isOpen: function () { return panelOpen; } };
+  })();
+
   /* ---------- transport ---------- */
 
   // Each call is answered by its own reply; the client bridge correlates
   // them, so two searches in flight cannot resolve into each other.
   function post(name, data) {
+    // Timed and recorded, so the diagnostics panel can answer the question
+    // a player's "it's broken" never does: which request, how long it took,
+    // and what came back. A round trip here crosses CEF, the client, the
+    // server and back — four places a reply can be lost — and none of them
+    // used to leave a trace on this side.
+    var began = (window.performance && window.performance.now)
+      ? window.performance.now() : 0;
+
+    function done(result) {
+      var ms = Math.round(((window.performance && window.performance.now)
+        ? window.performance.now() : 0) - began);
+      Diag.note(result && result.ok ? 'ok' : 'refused',
+                name + ' ' + ms + 'ms'
+                + (result && result.ok ? '' : ' -> ' + ((result && result.err) || '?')));
+      return result;
+    }
+
     return fetch('https://' + RESOURCE + '/crimson:' + name, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json; charset=UTF-8' },
       body: JSON.stringify(data || {})
-    }).then(function (r) { return r.json(); }).catch(function () {
-      return { ok: false, err: 'unreachable' };
+    }).then(function (r) { return r.json(); }).then(done).catch(function (err) {
+      // A body that is not JSON, or a bridge that answered nothing. Both
+      // used to arrive as a bare 'unreachable' with no way to tell them
+      // apart from a client that never replied.
+      Diag.note('unreachable', name + ' -> ' + ((err && err.message) || 'no reply'));
+      return done({ ok: false, err: 'unreachable' });
     });
   }
 
@@ -1761,9 +2040,17 @@
      update running?" are different questions, and for a long time neither
      end of a support conversation could answer the second one. Now the page
      says so itself. */
+  /* The build number, and the way into the diagnostics panel.
+
+     Five taps, the way a phone exposes a developer menu. There is no
+     keyboard in here and no room on a phone screen for a permanent control,
+     and a player reading out a build number is already the first question
+     anyone asks them. */
   function buildStamp() {
     var build = (typeof window !== 'undefined' && window.CB_BUILD) || 'unknown';
-    return el('div', 'hint', 'Crimson-Bounty build ' + build);
+    var stamp = el('div', 'hint build-stamp', 'Crimson-Bounty build ' + build);
+    stamp.onclick = function () { Diag.tapped(); };
+    return stamp;
   }
 
   function viewThread(view) {
@@ -2755,7 +3042,45 @@
 
   /* ---------- shell ---------- */
 
+  /* A throw in here used to leave the app blank.
+
+     view.innerHTML is emptied on the first line, so anything that threw
+     afterwards left the player looking at nothing, with a tab bar that
+     still worked and no error anywhere. That is the shape all four of the
+     shipped render crashes took. Now the failure is drawn, reported, and
+     leaves a way out. */
   function render() {
+    var drawn = Diag.guard('render:' + state.tab, draw);
+    if (drawn !== Diag.FAILED) { return; }
+
+    var view = document.getElementById('view');
+    if (!view) { return; }
+    view.innerHTML = '';
+
+    var panel = el('div', 'card');
+    panel.appendChild(el('p', 'target', 'This screen could not be drawn.'));
+    panel.appendChild(el('p', 'reason',
+      'The fault has been sent to the server log. Nothing you did caused it '
+      + 'and nothing has been lost.'));
+
+    var row = el('div', 'row');
+    var back = el('button', 'primary', 'Back to the board');
+    back.onclick = function () {
+      state.dialog = null;
+      state.tab = 'board';
+      render();
+    };
+    row.appendChild(back);
+
+    var look = el('button', 'ghost', 'What went wrong');
+    look.onclick = Diag.toggle;
+    row.appendChild(look);
+
+    panel.appendChild(row);
+    view.appendChild(panel);
+  }
+
+  function draw() {
     var view = document.getElementById('view');
     view.innerHTML = '';
 
@@ -2890,15 +3215,34 @@
 
   window.addEventListener('message', function (event) {
     var data = event.data || {};
-    if (data.type !== 'push') { return; }
 
-    // Debounced: a contract settling pushes the creator, the target and every
-    // hunter, and several of those can land in the same tick. One refresh is
-    // three requests, so a push per party would be a burst per event.
-    if (pushTimer) { clearTimeout(pushTimer); }
-    pushTimer = setTimeout(function () { pushTimer = null; refresh(); }, 250);
+    if (data.type === 'push') {
+      // Debounced: a contract settling pushes the creator, the target and
+      // every hunter, and several of those can land in the same tick. One
+      // refresh is three requests, so a push per party would be a burst per
+      // event.
+      if (pushTimer) { clearTimeout(pushTimer); }
+      pushTimer = setTimeout(function () { pushTimer = null; refresh(); }, 250);
+      return;
+    }
+
+    // The client asks for this when a staff member runs the diagnosis
+    // command, so what the page has seen reaches the same report as what
+    // the server has seen. It is the only way to read this side of the
+    // bridge from outside the game.
+    if (data.type === 'diagnostics') {
+      Diag.note('asked', 'the server asked what this page has seen');
+      Diag.report('page diagnostics', 'requested', Diag.asText());
+      return;
+    }
   });
+
+  // Installed before the first render: a throw in that render is exactly
+  // the kind this exists to catch, and catching it needs the handler
+  // already in place.
+  Diag.install();
 
   render();
   refresh();
+
 })();

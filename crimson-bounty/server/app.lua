@@ -239,6 +239,30 @@ function App.reply(src, name, ok, err, data, rid)
 end
 
 --------------------------------------------------------------------------
+-- Faults the page reported
+--------------------------------------------------------------------------
+--
+-- Kept here as well as in the audit log, because the audit log is not
+-- somewhere an operator looks — or can look, without a command and a
+-- database. The diagnosis command reads this, so "the app is broken for my
+-- players" has an answer in the same place as every other question about
+-- why the app is not working.
+--
+-- A fixed ring. Diagnostic data with a durable copy already written does
+-- not justify growing without bound for the life of the server.
+
+local pageFaults = {}
+local PAGE_FAULTS_KEPT = 20
+
+--- The most recent faults, newest first.
+---@return table[]
+function App.recentPageFaults()
+    local out = {}
+    for i = #pageFaults, 1, -1 do out[#out + 1] = pageFaults[i] end
+    return out
+end
+
+--------------------------------------------------------------------------
 -- Handlers
 --------------------------------------------------------------------------
 
@@ -680,6 +704,59 @@ function App.register()
         -- been asked to call back. The app says which; implying a call is
         -- connecting when none is, is the worst of the three outcomes.
         return { placed = result and result.placed == true }
+    end)
+
+    -- Diagnostics ---------------------------------------------------------
+
+    --- A fault the page caught, on its way to somewhere an owner can read it.
+    ---
+    --- The app runs in CEF, which has no console anybody looks at. Until
+    --- this existed a JavaScript error in the page reached nothing: not the
+    --- client, not this log, not the operator. Every render crash this
+    --- resource has shipped was found because a player said "it broke", and
+    --- that is the entire diagnostic anyone had.
+    ---
+    --- Gated, throttled and rate-limited like every other handler, because
+    --- it is reachable from any frame the phone draws. Everything in the
+    --- payload came from a browser and is treated as such: truncated to
+    --- lengths the audit detail can hold, and never interpolated into
+    --- anything but a log line.
+    handler('pageError', 'diagnostic', function(actor, payload)
+        local what = Util.sanitizeText(payload.what, 300) or 'unspecified'
+        local where = Util.sanitizeText(payload.where, 200)
+        local stack = Util.sanitizeText(payload.stack, 900)
+        local build = Util.sanitizeText(payload.build, 40)
+
+        -- Printed as well as audited. An operator does not read the audit
+        -- table, and the whole point of this path is that somebody who can
+        -- fix the page finds out the page is broken.
+        print(('[crimson-bounty] the app reported a fault: %s (%s, build %s, %s)')
+            :format(what, where or 'nowhere named', build or 'unknown', actor.cid))
+
+        -- The stack only under Config.Debug. It is what actually locates the
+        -- fault, and it is also several lines of console per report — which
+        -- on a busy server, from a page that breaks for everyone at once, is
+        -- the console gone. Kept in the audit row either way, so turning the
+        -- switch on is about where it is convenient to read, not about
+        -- whether it was recorded.
+        if Config.Debug and stack and stack ~= '' then
+            print(('[crimson-bounty]   %s'):format(stack))
+        end
+
+        deps.audit.rejected('page_error', actor.cid, nil, {
+            what = what, where = where, stack = stack, build = build,
+        })
+
+        pageFaults[#pageFaults + 1] = {
+            at = os.time(), cid = actor.cid, what = what,
+            where = where, build = build,
+        }
+        if #pageFaults > PAGE_FAULTS_KEPT then table.remove(pageFaults, 1) end
+
+        -- Answered so the page knows it landed. It does nothing with the
+        -- reply today, but a report that silently vanishes is the thing
+        -- this handler exists to stop happening.
+        return { recorded = true }
     end)
 
     -- Death reporting ---------------------------------------------------

@@ -78,6 +78,24 @@ Node.prototype.appendChild = function (child) {
   }
   return child;
 };
+/* The other half of appendChild.
+ *
+ * Absent until now, so anything the app removes rather than rebuilds — an
+ * overlay closing, a row deleted in place — threw here while working
+ * perfectly in a browser. A shim that is missing a method does not report a
+ * gap in itself; it reports a bug in the code under test. */
+Node.prototype.removeChild = function (child) {
+  var at = this.children.indexOf(child);
+  if (at === -1) { return child; }
+  this.children.splice(at, 1);
+  child.parentNode = null;
+  return child;
+};
+
+Node.prototype.remove = function () {
+  if (this.parentNode) { this.parentNode.removeChild(this); }
+};
+
 Node.prototype.addEventListener = function (type, fn) {
   (this._listeners[type] = this._listeners[type] || []).push(fn);
 };
@@ -110,7 +128,28 @@ function makeDocument() {
     return node;
   };
 
-  doc.getElementById = function (id) { return byId[id] || null; };
+  /* Only nodes that are still in the document.
+   *
+   * The register is written on id assignment and was never cleaned, so a
+   * node the app had removed stayed findable by id forever. A test asserting
+   * that something had CLOSED read the detached node and saw it open — and
+   * the assertion helper then tried to print it, so the failure that
+   * surfaced was a circular-structure error rather than the thing that was
+   * actually wrong. */
+  function attached(node) {
+    while (node) {
+      if (node === doc) { return true; }
+      node = node.parentNode;
+    }
+    return false;
+  }
+
+  doc.getElementById = function (id) {
+    var node = byId[id];
+    if (!node) { return null; }
+    if (!attached(node)) { delete byId[id]; return null; }
+    return node;
+  };
 
   doc.querySelectorAll = function (selector) {
     var wanted = selector.replace('.', '');
@@ -118,6 +157,14 @@ function makeDocument() {
       return n._className && n._className.split(' ').indexOf(wanted) !== -1;
     });
   };
+
+  // A real document has one, and anything that draws over the page rather
+  // than inside #view appends to it — an overlay, a dialog, the
+  // diagnostics panel. Without it the shim answered undefined and every
+  // such thing threw on appendChild, which the suite could only read as
+  // "a click threw" with no idea why.
+  doc.body = doc.createElement('body');
+  doc.appendChild(doc.body);
 
   doc._byId = byId;
   return doc;
