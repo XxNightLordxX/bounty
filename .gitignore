@@ -14,3 +14,6 @@ crimson-bounty/data/contracts/.writable
 crimson-bounty/tests/_probe*.lua
 crimson-bounty/tests/zz_*.lua
 zz_*.lua
+
+# Worktrees created for isolated subagent runs. Never part of the repo.
+.claude/worktrees/
