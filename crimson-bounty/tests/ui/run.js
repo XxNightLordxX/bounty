@@ -4626,6 +4626,123 @@ async function main() {
     })();
   })();
 
+  /* ---------- a dialog under a background reply ---------- */
+  await (async function dialogsKeepWhatWasTyped() {
+    const app = boot({
+      mine: { ok: true, data: { created: [{
+        id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive',
+        state: 'active', reward: { baseline: 5000 },
+        slots: 1, slotsClaimed: 0, currentSlot: 1,
+        huntersActive: 0, huntersMax: 1, hunters: [],
+        targetName: 'Dana Reyes', role: 'creator',
+        deadline: Math.floor(Date.now() / 1000) + 7200
+      }], accepted: [], onMe: [] } },
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {
+        minQueryLength: 3, allowBrowseAll: true, reasonMode: 'freetext',
+        reasonMaxLength: 140 } } }
+    });
+    await settle(); await settle();
+    tab(app, 'mine');
+    await settle();
+
+    click(app, 'Edit');
+    await settle();
+
+    const input = app.view.all().filter(function (n) {
+      return n.tagName === 'INPUT' && String(n.id).indexOf('dialog-') === 0;
+    })[0];
+
+    it('opens a dialog with a field to type into', function () {
+      truthy(input, 'nothing to measure otherwise');
+    });
+
+    // The player types.
+    input.value = 'He took the car as well';
+    if (input.oninput) { input.oninput(); }
+
+    // And something lands: a push, a late reply, a headshot. Any of these
+    // redraw the page, and the dialog is part of the page.
+    app.sandbox.window._message({ data: { type: 'push', reason: 'accepted' } });
+    const due = app.timers.filter(function (t) { return t.ms === 250; });
+    due.forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+
+    it('still holds what the player typed after a reply lands', function () {
+      const again = app.view.all().filter(function (n) {
+        return n.tagName === 'INPUT' && String(n.id).indexOf('dialog-') === 0;
+      })[0];
+      truthy(again, 'the dialog closed under them, which is its own fault');
+      eq(again.value, 'He took the car as well',
+        'their answer was silently replaced with the default and the dialog '
+        + 'looked untouched, so the natural thing to do is press Save on a '
+        + 'value they did not choose');
+    });
+  })();
+
+  /* ---------- a handover that ends ---------- */
+  await (async function handoverThatEnds() {
+    const hunt = { ok: true, data: { created: [], accepted: [{
+      id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive',
+      state: 'accepted', reward: { baseline: 5000 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1,
+      huntersActive: 1, huntersMax: 1,
+      targetName: 'Dana Reyes', role: 'hunter',
+      deadline: Math.floor(Date.now() / 1000) + 7200
+    }], onMe: [] } };
+
+    let progress = { ok: true, data: { elapsed: 4, required: 30 } };
+    const app = boot({
+      mine: hunt,
+      armKidnap: { ok: true, data: { armed: true } },
+      kidnapProgress: function () { return progress; }
+    });
+    await settle(); await settle();
+    tab(app, 'mine');
+    await settle();
+
+    click(app, 'Deliver alive');
+    await settle(); await settle();
+
+    const ticker = app.timers.filter(function (t) { return t.repeating; })[0];
+    it('starts a countdown to watch', function () {
+      truthy(ticker, 'nothing is polling, so this measures nothing');
+    });
+
+    ticker.fn();
+    await settle();
+    function bars() {
+      return app.view.all().filter(function (n) {
+        return n._className && n._className.split(' ').indexOf('countdown') !== -1;
+      });
+    }
+
+    it('shows the countdown while it is running', function () {
+      truthy(bars().length >= 1,
+        'nothing is drawing a countdown, so the assertion below that it goes '
+        + 'away would pass against a page that never showed one: '
+        + app.view.textContent.slice(0, 120));
+      truthy(app.view.textContent.indexOf('4s of 30s') !== -1,
+        'and it should say where it has got to: '
+        + app.view.textContent.slice(0, 120));
+    });
+
+    // The target breaks loose. The server stops knowing about the handover,
+    // which is an unsuccessful reply — the same shape as a dropped packet.
+    progress = { ok: false, err: 'bad_state' };
+    ticker.fn();
+    await settle(); await settle();
+
+    it('says the handover ended rather than freezing the bar', function () {
+      const said = app.notice();
+      truthy(said.indexOf('handover ended') !== -1,
+        'a delivery that simply stops moving is the one thing a hunter '
+        + 'holding a target cannot interpret: "' + said + '"');
+    });
+    it('takes the dead countdown off the screen', function () {
+      eq(bars().length, 0, 'the bar froze at its last value and stayed there');
+    });
+  })();
+
   /* ---------- diagnostics ----------
    *
    * The one thing this page never had: a way to say it broke. CEF has no

@@ -645,6 +645,21 @@ function Admin.diagnose(source, subjectId)
             .. 'running, which is the first thing to check.')
     end
 
+    -- And ask the named player's open app what it has seen.
+    --
+    -- Everything above is what the page has already volunteered. This asks
+    -- for the rest: the requests it made, what came back, and anything it
+    -- caught. The answer does not arrive in this report — it comes back
+    -- through the ordinary reporting path a moment later and lands in the
+    -- console and the audit log — so the report says so rather than leaving
+    -- a reader waiting for something that is not coming.
+    if subject then
+        TriggerClientEvent('crimson-bounty:askDiagnostics', subject)
+        say(('  asked player %s\'s app for its own log; if it is open, the '
+            .. 'answer follows in this console within a second or two.')
+            :format(tostring(subject)))
+    end
+
     say('--- end ---')
     return out
 end

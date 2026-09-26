@@ -482,6 +482,23 @@
     panel.appendChild(el('div', 'target', d.question));
     if (d.detail) panel.appendChild(el('div', 'reason', d.detail));
 
+    /* What the player has typed, kept off the DOM.
+    
+       Every control below was seeded from spec.value — the DEFAULT — on
+       every render, and render() runs on any reply that lands: a push from
+       the server, a late board load, a headshot arriving. So a player part
+       way through a dialog had their answer silently replaced with the
+       default under them, and the dialog looked untouched, so the natural
+       thing to do is to press Save on a value they did not choose. The Place
+       form was fixed this way for the same reason; the dialogs were not. */
+    d.values = d.values || {};
+
+    function current(spec) {
+      if (d.values[spec.id] !== undefined) { return d.values[spec.id]; }
+      return (spec.value !== undefined && spec.value !== null)
+        ? String(spec.value) : '';
+    }
+
     var nodes = {};
     d.fields.forEach(function (spec) {
       // A choice, where the server takes one. Without this the only control
@@ -496,9 +513,8 @@
           node.textContent = option.label;
           choose.appendChild(node);
         });
-        if (spec.value !== undefined && spec.value !== null) {
-          choose.value = String(spec.value);
-        }
+        choose.value = current(spec);
+        choose.onchange = function () { d.values[spec.id] = choose.value; };
         nodes[spec.id] = choose;
         panel.appendChild(labelled(spec.label, choose));
         return;
@@ -507,9 +523,10 @@
       var input = document.createElement('input');
       input.id = 'dialog-' + spec.id;
       input.type = spec.type || 'text';
-      if (spec.value !== undefined && spec.value !== null) {
-        input.value = String(spec.value);
-      }
+      input.value = current(spec);
+      input.oninput = function () { d.values[spec.id] = input.value; };
+      // A number field on a phone should bring up the number pad.
+      if ((spec.type || 'text') === 'number') { input.inputMode = 'numeric'; }
       if (spec.max !== undefined) {
         if (input.type === 'number') { input.max = spec.max; } else { input.maxLength = spec.max; }
       }
@@ -523,7 +540,11 @@
     yes.onclick = function () {
       var values = {};
       d.fields.forEach(function (spec) {
-        var raw = nodes[spec.id].value;
+        // The node is the truth at the moment of pressing Save; d.values is
+        // what survives a redraw between keystrokes. They agree unless a
+        // render landed since the last input event, in which case the node
+        // is the one that was just rebuilt from d.values anyway.
+        var raw = nodes[spec.id] ? nodes[spec.id].value : current(spec);
         values[spec.id] = (spec.type === 'number') ? (parseInt(raw, 10) || 0) : raw;
       });
       var handler = d.onValues;
@@ -1309,22 +1330,70 @@
     });
   }
 
+  /* The one timer in this app, and it had three faults.
+  
+     It called render() directly, once a second, on whatever view happened to
+     be open — so a hunter who armed a handover and then went to the Place
+     tab had the whole form torn down and rebuilt under them every second for
+     two minutes, losing scroll position each time.
+  
+     It stopped on any unsuccessful reply and left state.progress alone, so
+     the bar froze at its last value and stayed there. The handover ENDING —
+     the target broke loose, the hunter wandered off, the grace ran out — is
+     an unsuccessful reply, so the most important outcome of a delivery was
+     indistinguishable from a dropped packet and neither was ever mentioned.
+  
+     And nothing cancelled it when the player left the screen, so two of them
+     could run at once against different contracts. */
+  var countdownTimer = null;
+
+  function stopCountdown() {
+    if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+  }
+
   function pollCountdown(id) {
-    var timer = setInterval(function () {
+    stopCountdown();
+
+    var deadline = Date.now() + 120000;
+
+    countdownTimer = setInterval(function () {
+      if (Date.now() > deadline) {
+        stopCountdown();
+        delete state.progress[id];
+        redraw();
+        return;
+      }
+
       post('kidnapProgress', { id: id }).then(function (r) {
-        if (!r.ok || !r.data || r.data.elapsed === undefined) { clearInterval(timer); return; }
+        if (!r.ok || !r.data || r.data.elapsed === undefined) {
+          // Over, one way or another. The bar goes rather than freezing,
+          // and the player is told — a delivery that simply stops moving is
+          // the one thing a hunter holding a target cannot interpret.
+          stopCountdown();
+          delete state.progress[id];
+          say(r.err === 'not_found' || r.err === 'bad_state'
+            ? 'The handover ended. Get them back to the client and try again.'
+            : (ERRORS[r.err] || 'Lost track of the handover.'));
+          refresh();
+          return;
+        }
+
         // Keep the answer. Rendering from the projection's snapshot draws
         // the same frozen bar every second no matter how often we poll.
         state.progress[id] = r.data;
-        render();
+
+        // Coalesced, and only where the bar is actually on screen. The
+        // countdown is drawn on Mine and On me; redrawing the Place form
+        // once a second throws away what the player is typing into it.
+        if (state.tab === 'mine' || state.tab === 'onme') { redraw(); }
+
         if (r.data.elapsed >= r.data.required) {
-          clearInterval(timer);
+          stopCountdown();
           delete state.progress[id];
           refresh();
         }
       });
     }, 1000);
-    setTimeout(function () { clearInterval(timer); delete state.progress[id]; }, 120000);
   }
 
   function bailout(contract) {

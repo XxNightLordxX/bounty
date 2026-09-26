@@ -364,6 +364,26 @@ RegisterNetEvent('crimson-bounty:push', function(data)
     end)
 end)
 
+--- Ask this player's open app what it has seen.
+---
+--- The other half of the fault reporting. A page reports what it catches on
+--- its own, but a staff member looking into "the app is broken for me" needs
+--- what the page has seen up to now — the requests it made, what came back,
+--- and anything it swallowed — and there was no way to ask for it.
+---
+--- Nothing is read here and nothing is sent from here: the request goes to
+--- the page, and the page answers through the ordinary pageError endpoint,
+--- which is gated, throttled and rate-limited like everything else. A player
+--- with the app closed simply does not answer, which is correct — there is
+--- no page to ask.
+RegisterNetEvent('crimson-bounty:askDiagnostics', function()
+    phone('SendCustomAppMessage', function()
+        exports['lb-phone']:SendCustomAppMessage('crimson-bounty', {
+            type = 'diagnostics',
+        })
+    end)
+end)
+
 --- Phone notifications. lb-phone's SendNotification is client-side only, so
 --- the server addresses the player and the client raises it locally.
 RegisterNetEvent('crimson-bounty:notify', function(data)
@@ -472,6 +492,11 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
     --- minutes ago and which answers nothing because it has already
     --- answered. The symptom is the player's camera app silently doing
     --- nothing, forever, with this resource nowhere in sight.
+    -- Whether the player has actually taken a shot. The no-answer timer is
+    -- about a camera that was never used; once there is a photo in flight
+    -- the request belongs to the upload, however long that takes.
+    local shutterPressed = false
+
     local released = false
     local function releaseCamera()
         if released then return end
@@ -521,6 +546,15 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
                     -- as well, and releasing twice is a no-op.
                     releaseCamera()
 
+                    -- The shutter has been pressed, so the no-answer timer
+                    -- below must not fire. Without this, a photo taken at
+                    -- 119 seconds is still uploading when the timer expires
+                    -- at 120: the page is told the camera never came back,
+                    -- the real answer is dropped as a second reply, and the
+                    -- hunter is told their kill went unsent while the server
+                    -- was in the middle of accepting it.
+                    shutterPressed = true
+
                     -- Guarded: this runs inside lb-phone's camera, so a
                     -- throw here does not stay here — it goes back into the
                     -- camera and takes the phone with it.
@@ -553,6 +587,7 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
         -- a tap that had already said nothing. The two are not the same
         -- event and the second one needs words.
         SetTimeout((Config.Completion.PhotoTokenLifetimeSeconds or 120) * 1000, function()
+            if shutterPressed then return end
             cb({ ok = false, err = 'camera_no_answer' })
         end)
     end)
