@@ -733,3 +733,84 @@ describe('arming the same kidnap twice', function()
             'baseline plus bonus, once')
     end)
 end)
+
+describe('what this file leaves out', function()
+    --- The blocks above name twelve actions. The resource has more, and a
+    --- hand-kept list has no way of noticing the next one — which is the
+    --- failure mode journey_spec's coverage guard had before it was derived
+    --- from App.handlers.
+    ---
+    --- So: every action a player can repeat is either tested above or named
+    --- here with the reason repeating it is not an idempotence question. The
+    --- list is checked in both directions, so an exemption for an action that
+    --- no longer exists, or for one that IS tested above, is a failure.
+    local TESTED = {
+        accept = true, cancel = true, abandon = true, bailout = true,
+        withdrawReward = true, propose = true, respondAmendment = true,
+        informant = true, submitPhoto = true, armKidnap = true,
+    }
+
+    --- Repeating these is a legitimate thing to do, not a double effect.
+    local BY_DESIGN = {
+        addEscrow = 'a creator may top up a reward as many times as they like; '
+            .. 'each call adds what it says it adds',
+        improve   = 'extending a deadline twice extends it twice, which is the '
+            .. 'point. Raising the bonus twice escrows only the difference, '
+            .. 'and refuses a percentage already reached',
+        revise    = 'editing a contract to the same values twice leaves the '
+            .. 'same values',
+        sendMessage = 'two messages is two messages',
+        requestCall = 'asking twice rings twice, and the relay rate-limits it',
+        requestPhotoToken = 'a second token deliberately invalidates the '
+            .. 'first, so a hunter cannot bank them',
+        -- Reads. Repeating a read is the definition of harmless.
+        list = true, mine = true, ledger = true, searchTargets = true,
+        browseTargets = true, mugshotImage = true, rewardOptions = true,
+        rewardBreakdown = true, amendments = true, threads = true,
+        readThread = true, kidnapProgress = true, pageError = true,
+        -- Covered above under its own name rather than the handler's.
+        create = 'covered by "cancelling twice" and the create-spam tests in '
+            .. 'contracts_spec',
+    }
+
+    it('names every action it does not test', function()
+        local source = read_file('crimson-bounty/server/app.lua')
+        local missing = {}
+        for name in source:gmatch("handler%('([%w]+)'") do
+            if not TESTED[name] and not BY_DESIGN[name] then
+                missing[#missing + 1] = name
+            end
+        end
+        table.sort(missing)
+        eq(#missing, 0,
+            'these can be repeated and nothing here says what happens: '
+            .. table.concat(missing, ', '))
+    end)
+
+    it('does not carry a note for an action that is gone', function()
+        local source = read_file('crimson-bounty/server/app.lua')
+        local exists = {}
+        for name in source:gmatch("handler%('([%w]+)'") do exists[name] = true end
+
+        local stale = {}
+        for name in pairs(BY_DESIGN) do
+            if not exists[name] then stale[#stale + 1] = name end
+        end
+        for name in pairs(TESTED) do
+            if not exists[name] then stale[#stale + 1] = name end
+        end
+        table.sort(stale)
+        eq(#stale, 0, 'a note about something that no longer exists has '
+            .. 'stopped being checked: ' .. table.concat(stale, ', '))
+    end)
+
+    it('does not claim both to test an action and to excuse it', function()
+        local both = {}
+        for name in pairs(TESTED) do
+            if BY_DESIGN[name] then both[#both + 1] = name end
+        end
+        table.sort(both)
+        eq(#both, 0, 'an excuse next to a live test is an excuse that could '
+            .. 'hide the next gap: ' .. table.concat(both, ', '))
+    end)
+end)
