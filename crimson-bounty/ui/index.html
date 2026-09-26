@@ -27,16 +27,17 @@
 </head>
 <body>
 <div id="app">
-  <header class="topbar">
-    <div class="brand">
-      <span class="mark"></span>
-      <div>
-        <h1>Crimson-Bounty</h1>
-        <p class="tagline">Contracts, quietly arranged.</p>
-      </div>
-    </div>
-  </header>
-
+  <!-- No app header.
+       
+       There used to be one: a crimson tile, an <h1> reading "Crimson-Bounty"
+       and the line "Contracts, quietly arranged." It cost 67 of 720 pixels,
+       measured, and sat immediately below lb-phone's OWN header, which
+       already shows this app's name and icon and is the thing a player uses
+       to leave. Two headers, one of them redundant, on the smallest screen
+       this will ever run on.
+       
+       Removing it gives the content 67px back — a whole contract card's
+       worth of the eight the board can hold. -->
   <div id="notice"></div>
   <main id="view"></main>
 

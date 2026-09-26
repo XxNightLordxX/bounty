@@ -5,7 +5,7 @@
   --bg: #0a0708;
   --panel: #141013;
   --panel-2: #1c161a;
-  --line: #2a2025;
+  --line: #3a2f35;
   --ink: #f2e9ec;
   --ink-dim: #b6a6ad;
   --ink-faint: #8d7d85;
@@ -14,6 +14,31 @@
   --crimson-deep: #7a0a1c;
   --gold: #d4a24c;
   --radius: 0.75rem;
+
+  /* A type scale, because there was not one.
+     
+     The sheet declared seventeen distinct font sizes, seven of them inside
+     a 1.6px band at this root size — differences below the threshold at
+     which a difference is visible. The effect is that nothing on a card
+     reads as more or less important than anything else: a size that is not
+     a step is just noise with a number on it.
+     
+     Six steps, each a clear jump from the last. Anything that needs a size
+     picks one of these. */
+  --t-xs: 0.72rem;   /* chips, timestamps, the smallest legible thing here */
+  --t-sm: 0.82rem;   /* secondary text, hints */
+  --t-md: 0.95rem;   /* body, button labels, form values */
+  --t-lg: 1.1rem;    /* the target's name */
+  --t-xl: 1.45rem;   /* the money, which is what a bounty board is for */
+
+  /* Surfaces, with steps that can actually be seen.
+     
+     Measured before this: 1.06:1 between the page background and a card.
+     That is not a contrast step, it is the same colour twice — so nothing
+     read as a raised surface and the app looked like one flat sheet of mud
+     with text scattered on it. */
+  --panel-raised: #2b2328;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.6), 0 4px 16px rgba(0, 0, 0, 0.45);
 
   /* lb-phone draws a home indicator across the bottom of its frame and
      puts no inset inside the page, so the tab bar has to hold its own
@@ -46,30 +71,10 @@ body {
 
 /* ---------- top bar ---------- */
 
-.topbar {
-  flex: none;
-  padding: 0.7rem 0.9rem 0.6rem;
-  background: linear-gradient(180deg, #1a0d11 0%, var(--bg) 100%);
-  border-bottom: 1px solid var(--line);
-}
+/* The app header is gone: lb-phone draws one, and two of them on a
+   phone-sized viewport is 67px of the 720 spent saying the name twice.
+   Its rules are removed rather than left orphaned. */
 
-.brand { display: flex; align-items: center; gap: 0.7rem; }
-
-.mark {
-  width: 1.9rem; height: 1.9rem; flex: none;
-  border-radius: 0.5rem;
-  background: linear-gradient(145deg, var(--crimson) 0%, var(--crimson-deep) 100%);
-  box-shadow: 0 0 1.2rem rgba(200, 16, 46, 0.45);
-  position: relative;
-}
-.mark::after {
-  content: ''; position: absolute; inset: 0.55rem;
-  border: 0.14rem solid rgba(255, 255, 255, 0.85);
-  border-radius: 50%;
-}
-
-h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: 0.02em; }
-.tagline { font-size: 0.75rem; color: var(--ink-faint); }
 
 /* ---------- view ---------- */
 
@@ -99,18 +104,25 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
 /* ---------- contract card ---------- */
 
 .card {
-  background: var(--panel);
+  background: var(--panel-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 0.85rem;
   position: relative;
   overflow: hidden;
+  box-shadow: var(--shadow);
 }
-.card::before {
+
+/* The stripe now means something.
+   
+   Every card wore it, so it distinguished nothing — a marker that is always
+   on is decoration. It is kept for the one case it was presumably for: a
+   target the server protects, which is the thing on a card a player most
+   needs to notice before they act. */
+.card.is-protected::before {
   content: ''; position: absolute; left: 0; top: 0; bottom: 0;
-  width: 0.18rem; background: var(--crimson);
+  width: 0.2rem; background: var(--gold);
 }
-.card.is-protected::before { background: var(--gold); }
 
 .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.6rem; }
 .card-identity { display: flex; gap: 0.6rem; align-items: flex-start; min-width: 0; }
@@ -123,17 +135,72 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
   background: var(--panel-2);
   filter: grayscale(0.35) contrast(1.1);
 }
-.target { font-weight: 650; font-size: 1.08rem; }
-.reason { color: var(--ink-dim); font-size: 0.88rem; margin-top: 0.2rem; }
+.target {
+  font-weight: 650; font-size: var(--t-lg); line-height: 1.25;
+  /* A name long enough to wrap is a name that pushes the reward off the
+     card. It wraps to two lines and then stops. */
+  overflow-wrap: anywhere;
+}
+.reason {
+  color: var(--ink-dim); font-size: var(--t-sm); margin-top: 0.2rem;
+  overflow-wrap: anywhere;
+}
 
-.reward { text-align: right; flex: none; }
-.reward .amount { color: var(--crimson-bright); font-weight: 700; font-size: 1.15rem; }
-.reward .bonus { color: var(--gold); font-size: 0.8rem; }
+/* The reward used to be `flex: none`, so it never shrank.
+   
+   Measured at 390px wide with a reward of money plus three item labels and
+   two weapons: the block's right edge landed at 466px on a card whose right
+   edge is 376px. The headline number on a bounty board — the entire reason
+   a hunter is reading the card — rendered ninety pixels outside it, behind
+   `overflow: hidden`. It was not small or badly placed. It was not there.
+   
+   It may now shrink, it may not grow past half the card, and the goods line
+   inside it wraps instead of pushing. */
+/* Does not shrink below its content, and cannot grow past 58% of the card.
+   
+   Those are two different faults and it needed both fixed. `flex: none`
+   alone let it grow to 427px on a 376px card. `flex: 0 1 auto` alone let it
+   be squeezed to 69px around 75px of content — the same number cut off, in
+   the same place, arrived at from the other direction. It holds its content
+   width; the identity beside it, which can wrap, is what gives. */
+.reward {
+  text-align: right;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 58%;
+}
+
+/* And the identity is what yields. Without an explicit basis of zero a flex
+   item will not shrink below its longest unbreakable word, which for a
+   player name is the whole name. */
+.card-identity { flex: 0 1 auto; }
+
+/* The figure scales with the screen rather than being one fixed size that
+   has to work on both a 280px phone and a 414px one.
+   
+   Fixed at var(--t-xl) it needed 82px inside a 72px box at 280px wide, so
+   the number the whole card is about was cut off again — in a different
+   place from the overflow above, and only on the narrowest screens, which
+   is exactly the kind of thing nobody finds by looking. clamp() keeps it
+   the headline it should be where there is room and shrinks it to fit
+   where there is not; the floor is still larger than any other text on the
+   card. */
+.reward .amount {
+  color: var(--crimson-bright); font-weight: 700;
+  font-size: clamp(1.05rem, 5.4vw, 1.45rem);
+  line-height: 1.15; letter-spacing: -0.01em;
+  /* Tabular figures so a column of rewards lines up down the board, and no
+     wrapping: a price broken across two lines reads as two prices. */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.reward .bonus { color: var(--gold); font-size: var(--t-sm); }
+.reward .goods { overflow-wrap: anywhere; }
 
 .meta { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.6rem; }
 
 .chip {
-  font-size: 0.72rem; letter-spacing: 0.03em; text-transform: uppercase;
+  font-size: var(--t-xs); letter-spacing: 0.03em; text-transform: uppercase;
   padding: 0.28rem 0.55rem; border-radius: 0.4rem;
   background: var(--panel-2); color: var(--ink-dim); border: 1px solid var(--line);
 }
@@ -240,7 +307,7 @@ input:focus, select:focus, textarea:focus {
 }
 .toggle span { font-size: 0.95rem; }
 
-.hint { font-size: 0.8rem; color: var(--ink-faint); margin-top: 0.3rem; line-height: 1.4; }
+.hint { font-size: var(--t-sm); color: var(--ink-faint); margin-top: 0.3rem; line-height: 1.4; }
 
 /* ---------- target picker ----------
    A list of people you can put a contract on. It opens showing the city

@@ -4507,6 +4507,125 @@ async function main() {
     });
   })();
 
+  /* ---------- the verification photo ----------
+   *
+   * The one flow that goes out of the app, into lb-phone's camera and back.
+   * Every step of it used to be silent. */
+  await (async function verificationPhoto() {
+    /* A contract this player is hunting, shaped the way the projection
+       sends one: accepted, role hunter, on the Mine tab. */
+    function mineWithAHunt() {
+      return { ok: true, data: { created: [], accepted: [{
+        id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive',
+        state: 'accepted', reward: { baseline: 5000 },
+        slots: 1, slotsClaimed: 0, currentSlot: 1,
+        huntersActive: 1, huntersMax: 1,
+        targetName: 'Dana Reyes', role: 'hunter',
+        deadline: Math.floor(Date.now() / 1000) + 7200
+      }], onMe: [] } };
+    }
+
+    await (async function busyWhileTheCameraIsOpen() {
+      // A camera the player is still composing a shot in: the reply has not
+      // arrived, and will not until they press the shutter.
+      let answer;
+      const held = new Promise(function (resolve) { answer = resolve; });
+      const app = boot({
+        mine: mineWithAHunt(),
+        takeVerificationPhoto: function () { return held; }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+
+      click(app, 'Verify kill');
+      await settle();
+
+      const labels = app.view.all()
+        .filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+
+      it('says the camera is open rather than looking untouched', function () {
+        truthy(labels.some(function (l) { return l.indexOf('Camera open') !== -1; }),
+          'the screen did not change at all for the whole round trip: '
+          + labels.join(' | '));
+      });
+
+      it('will not mint a second token while the first photo is in flight', function () {
+        const before = app.sent.filter(function (x) {
+          return x.name === 'takeVerificationPhoto';
+        }).length;
+        // The button is disabled, so a player tapping it again does nothing.
+        const button = app.view.all().filter(function (n) {
+          return n.tagName === 'BUTTON' && n.textContent.indexOf('Camera open') !== -1;
+        })[0];
+        truthy(button.disabled, 'the button stayed live through the upload');
+        const after = app.sent.filter(function (x) {
+          return x.name === 'takeVerificationPhoto';
+        }).length;
+        eq(after, before, 'a second token invalidates the photo already sent');
+      });
+
+      answer({ ok: true, data: { settled: 2, pending: 0 } });
+      await settle(); await settle();
+
+      it('gives the button back once the answer lands', function () {
+        const again = app.view.all()
+          .filter(function (n) { return n.tagName === 'BUTTON'; })
+          .map(function (n) { return n.textContent; });
+        falsy(again.some(function (l) { return l.indexOf('Camera open') !== -1; }),
+          'a button left disabled is worse than one that could be tapped twice');
+      });
+    })();
+
+    await (async function tellsTheTruthAboutAQueuedPayout() {
+      const app = boot({
+        mine: mineWithAHunt(),
+        // Verified, but the hunter's pockets were full: the server queued
+        // part of the reward instead of handing it over.
+        takeVerificationPhoto: { ok: true, data: { settled: 1, pending: 2 } }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Verify kill');
+      await settle(); await settle();
+
+      it('does not claim a payment that is still being held', function () {
+        const said = app.notice();
+        falsy(said.indexOf('Payment released') !== -1,
+          'the hunter stood there with nothing and no reason to think '
+          + 'anything was owed: ' + said);
+        truthy(said.indexOf('held for you') !== -1, said);
+      });
+    })();
+
+    await (async function saysWhatWentWrongWithTheCamera() {
+      for (const each of [
+        { err: 'camera_unavailable', expect: 'cannot open the camera' },
+        { err: 'camera_no_answer', expect: 'never came back' }
+      ]) {
+        const app = boot({
+          mine: mineWithAHunt(),
+          takeVerificationPhoto: { ok: false, err: each.err }
+        });
+        await settle(); await settle();
+        tab(app, 'mine');
+        await settle();
+        click(app, 'Verify kill');
+        await settle(); await settle();
+
+        const said = app.notice();
+        it('puts ' + each.err + ' into words a hunter can act on', function () {
+          truthy(said.indexOf(each.expect) !== -1,
+            'answered "' + said + '" — a hunter with a confirmed kill and a '
+            + 'live contract needs to know which of the two happened');
+          falsy(said.indexOf('Something went wrong') !== -1, said);
+        });
+      }
+    })();
+  })();
+
   /* ---------- diagnostics ----------
    *
    * The one thing this page never had: a way to say it broke. CEF has no

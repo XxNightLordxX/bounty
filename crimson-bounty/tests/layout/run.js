@@ -45,6 +45,37 @@ function atLeast(actual, floor, m) {
   }
 }
 
+/* Every element inside a card, measured against that card's own edges.
+ *
+ * The button check measures <button> and nothing else, and the clipping
+ * check measures scrollWidth against clientWidth — which a parent with
+ * `overflow: hidden` defeats, because the overflowing child is simply not
+ * drawn and the parent reports no overflow of its own.
+ *
+ * Between the two, a reward block 90px wider than its card passed this
+ * suite for as long as it existed: measured at 390x720, the money — the
+ * headline number on a bounty board and the entire reason a hunter reads
+ * the card — had its right edge at 466px on a card ending at 376px. It was
+ * not small and it was not badly placed. It was not on the screen. */
+function escapedFrom(page) {
+  return page.evaluate(function () {
+    const out = [];
+    document.querySelectorAll('.card').forEach(function (card) {
+      const box = card.getBoundingClientRect();
+      card.querySelectorAll('*').forEach(function (node) {
+        const r = node.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) { return; }
+        if (r.right > box.right + 1 || r.left < box.left - 1) {
+          out.push((node.className || node.tagName) + ' spans '
+            + Math.round(r.left) + '-' + Math.round(r.right)
+            + ' on a card spanning ' + Math.round(box.left) + '-' + Math.round(box.right));
+        }
+      });
+    });
+    return out;
+  });
+}
+
 /* A server, installed before the page loads. */
 function serverStub() {
   const contracts = [];
@@ -59,6 +90,30 @@ function serverStub() {
       creatorName: 'Vic Marlowe', role: 'public'
     });
   }
+  /* The widest card this app can draw.
+   *
+   * Everything above pays a round five-figure sum to a short name, which is
+   * the easy case — and it was the only case measured, so a reward block
+   * 90px wider than its own card passed this suite for as long as it
+   * existed. A reward is money AND a bonus AND black money AND a list of
+   * item and weapon labels, any of which can be long, next to a name that
+   * can be longer.
+   *
+   * Added as a real row so every measurement below sees it, rather than as
+   * a test of its own that only checks the one thing it was written for. */
+  contracts.push({
+    id: 'ct00000009',
+    reason: 'Skipped on a debt and took the car with him, which was not his',
+    mode: 'competitive', state: 'active',
+    reward: { baseline: 1250000, bonus: 500000, dirty: 300000,
+              goods: { items: 3, weapons: 2,
+                       labels: ['Lockpick', 'Pistol', 'Advanced Repair Kit'] } },
+    slots: 3, slotsClaimed: 0, currentSlot: 1,
+    huntersActive: 4, huntersMax: 5,
+    targetName: 'Maximilian Featherstonehaugh-Cholmondeley',
+    creatorName: 'Vic Marlowe', role: 'public'
+  });
+
   // A creator's own contract carries the most actions of any card, which
   // is the case that overflowed.
   const own = contracts.slice(0, 3).map(function (c) {
@@ -259,6 +314,13 @@ async function main() {
     const main = document.querySelector('main');
     return { scrollHeight: main.scrollHeight, clientHeight: main.clientHeight };
   });
+  const boardEscapees = await escapedFrom(page);
+  it('keeps every part of a board card inside the card', function () {
+    truthy(boardEscapees.length === 0,
+      boardEscapees.length + ' element(s) outside their card: '
+      + boardEscapees.slice(0, 4).join(' | '));
+  });
+
   it('gives the board a scroll rather than clipping it', function () {
     truthy(scrolls.scrollHeight > scrolls.clientHeight,
       'eight contracts should overflow a phone screen, so this measures '
@@ -389,6 +451,28 @@ async function main() {
       + JSON.stringify(escaped.slice(0, 3)));
     truthy(mineButtons.some(function (c) { return c.count >= 4; }),
       'this measures nothing unless a card carries several actions');
+  });
+
+  /* Nothing at all outside the card, not only buttons.
+   *
+   * The check above measures <button> and nothing else, and the clipping
+   * check measures scrollWidth against clientWidth — which a parent with
+   * `overflow: hidden` defeats, because the overflowing child is simply not
+   * drawn and the parent reports no overflow of its own.
+   *
+   * Between the two, a reward block 90px wider than its card passed this
+   * suite: measured at 390x720, the money — the headline number on a bounty
+   * board and the entire reason a hunter reads the card — had its right
+   * edge at 466px on a card ending at 376px. It was not small, and it was
+   * not badly placed. It was not on the screen.
+   *
+   * So: every element inside a card, against the card's own edges. */
+  const escapees = await escapedFrom(page);
+
+  it('keeps every part of a card inside the card', function () {
+    truthy(escapees.length === 0,
+      escapees.length + ' element(s) outside their card: '
+      + escapees.slice(0, 4).join(' | '));
   });
 
   await page.click('[data-tab="place"]');

@@ -408,7 +408,20 @@
       + 'out of a handover already under way.',
     locked: 'Someone got there first.',
     not_found: 'Gone.',
+    // The player closed the camera themselves. They know; saying so is
+    // telling them what they just did.
     cancelled: null,
+    // The phone has no camera this resource can drive. Nothing the hunter
+    // can do about it, so it says who can.
+    camera_unavailable: 'This phone cannot open the camera for the app. Tell '
+      + 'an admin — the server\u2019s phone resource is missing the camera '
+      + 'component this needs.',
+    // Distinct from cancelling: the camera was asked for and never came
+    // back. Before this had its own code it answered as a cancel, which the
+    // page is deliberately silent about — so two minutes after a tap that
+    // said nothing, nothing else was said either.
+    camera_no_answer: 'The camera never came back. Nothing was sent and the '
+      + 'kill is still yours to claim — try again.',
     no_token: 'Nothing to verify yet.',
     timeout: 'No answer. Try again.',
     unreachable: 'No answer. Try again.'
@@ -713,6 +726,70 @@
     say(ERRORS[result.err] || 'Something went wrong.');
   }
 
+  /* ---------- actions already running ----------------------------------
+
+     Not one button in this app had a busy state. Every action was
+     post(...).then(...), the screen was identical for the whole round trip,
+     and the button stayed live throughout — so the honest reading of a tap
+     that appears to do nothing is to tap it again.
+
+     What that cost, by action: a second contract placed and a second escrow
+     charged; a second photo token minted, invalidating the one the photo
+     already in flight was taken against; two of three photo attempts spent
+     before the hunter had seen a single answer; an amendment answered twice,
+     the second reply reporting the change that actually applied as "Gone."
+
+     Keyed rather than held on the element, because render() rebuilds the
+     DOM: a disabled attribute set here is gone on the next redraw, and a
+     redraw is exactly what a reply triggers. The key survives, so a button
+     rebuilt mid-flight is rebuilt already disabled. */
+  var inFlight = {};
+
+  function isBusy(key) { return inFlight[key] === true; }
+
+  /* Run work once. Returns false if it was already running, so a caller can
+     tell "started" from "ignored" — and a tap that is ignored still says
+     something, because a button that goes quiet twice is a broken button. */
+  function once(key, work) {
+    if (inFlight[key]) { return false; }
+    inFlight[key] = true;
+    redraw();
+
+    function finished(result) {
+      delete inFlight[key];
+      redraw();
+      return result;
+    }
+
+    // Both arms: a rejection that left the key set would disable the button
+    // for the rest of the session, which is a worse failure than the one
+    // this prevents.
+    var running = work();
+    if (running && typeof running.then === 'function') {
+      running.then(finished, function (err) {
+        finished();
+        Diag.note('throw', 'action ' + key + ': ' + ((err && err.message) || err));
+        throw err;
+      });
+    } else {
+      finished();
+    }
+    return true;
+  }
+
+  /* A button wired to `once`. Disabled and relabelled while its work runs,
+     so the answer to "did my tap register" is on the button itself. */
+  function actionButton(className, label, key, busyLabel, work) {
+    var button = el('button', className, isBusy(key) ? (busyLabel || label) : label);
+    if (isBusy(key)) {
+      button.disabled = true;
+      button.classList.toggle('is-busy', true);
+      return button;
+    }
+    button.onclick = function () { once(key, work); };
+    return button;
+  }
+
   /* ---------- helpers ---------- */
 
   function money(n) {
@@ -889,13 +966,19 @@
     }
 
     if (contract.role === 'hunter') {
-      var photo = el('button', 'primary', 'Verify kill');
-      photo.onclick = function () { verifyKill(contract); };
-      row.appendChild(photo);
+      // Both through `once`. The camera takes as long as the hunter takes
+      // to line up a shot, and until now the button stayed live throughout:
+      // a second tap minted a second photo token, which invalidates the one
+      // the photo already being uploaded was taken against, and spent a
+      // second of the three attempts the rate limit allows — so a hunter
+      // could burn their whole allowance before seeing a single answer.
+      row.appendChild(actionButton('primary', 'Verify kill',
+        'photo:' + contract.id, 'Camera open\u2026',
+        function () { return verifyKill(contract); }));
 
-      var deliver = el('button', null, 'Deliver alive');
-      deliver.onclick = function () { armKidnap(contract); };
-      row.appendChild(deliver);
+      row.appendChild(actionButton(null, 'Deliver alive',
+        'kidnap:' + contract.id, 'Arming\u2026',
+        function () { return armKidnap(contract); }));
 
       var talk = el('button', 'ghost', 'Message');
       talk.onclick = function () { openThread(contract, null); };
@@ -1188,15 +1271,27 @@
   }
 
   function verifyKill(contract) {
-    post('takeVerificationPhoto', { id: contract.id }).then(function (r) {
+    // Returned, so `once` knows when the camera and the upload are done.
+    return post('takeVerificationPhoto', { id: contract.id }).then(function (r) {
       if (!r.ok) return fail(r);
-      say('Verified. Payment released.', 'gold');
+
+      // Not "Payment released" unconditionally. A reward that includes items
+      // or a weapon can be verified and then fail to reach a hunter whose
+      // pockets are full: the server queues it and hands it over later,
+      // which is right — but the app said the money had been released, so
+      // the hunter stood there with nothing and no reason to think anything
+      // was owed. The server says which happened; this now reads it.
+      var owed = r.data && r.data.pending;
+      say(owed
+        ? 'Verified. Some of the reward would not fit and is being held for '
+          + 'you \u2014 make room and it will be handed over.'
+        : 'Verified. Payment released.', 'gold');
       refresh();
     });
   }
 
   function armKidnap(contract) {
-    post('armKidnap', { id: contract.id }).then(function (r) {
+    return post('armKidnap', { id: contract.id }).then(function (r) {
       if (!r.ok) {
         var reasons = {
           target_not_conscious: 'The target must be alive and conscious.',
@@ -2258,10 +2353,20 @@
     toggle.appendChild(el('span', null, 'Place anonymously'));
     form.appendChild(toggle);
 
-    var submit = el('button', 'primary', 'Place contract');
+    // Through `once`, because this one charges money. Nothing on screen
+    // changed for the whole round trip and the button stayed live, so a
+    // second tap placed a second contract and took a second escrow — the
+    // most expensive tap in the app, and the one most likely to be made.
+    var submit = el('button', 'primary',
+      isBusy('create') ? 'Placing\u2026' : 'Place contract');
     submit.id = 'place-submit';
     submit.style.marginTop = '0.8rem';
-    submit.onclick = submitContract;
+    if (isBusy('create')) {
+      submit.disabled = true;
+      submit.classList.toggle('is-busy', true);
+    } else {
+      submit.onclick = submitContract;
+    }
     form.appendChild(submit);
 
     view.appendChild(form);
@@ -2685,7 +2790,12 @@
     }
     state.leoConfirmed = false;
 
-    post('create', {
+    // Guarded here rather than at the top of the function: everything above
+    // is client-side validation that answers instantly, and locking the
+    // button for those would leave a player unable to fix the thing they
+    // were just told to fix.
+    once('create', function () {
+    return post('create', {
       target: target,
       reason: state.draft.reason || '',
       // Only on a server that runs on presets. Elsewhere it is not a field
@@ -2723,6 +2833,7 @@
       state.walletFailed = null;
       state.tab = 'mine';
       refresh();
+    });
     });
   }
 

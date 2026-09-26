@@ -459,9 +459,32 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
     -- which does not look like a bug in this resource: it looks like the
     -- phone crashing, in the middle of an upload, for no stated reason.
     local answered = false
+
+    --- Take our camera override back off the phone.
+    ---
+    --- Idempotent, and called from EVERY path that ends this request rather
+    --- than only from the camera's own callback, which is where it used to
+    --- live. A camera that never calls back — the player closes the phone,
+    --- walks away, or the build never opens it — left this installed for the
+    --- rest of the session. Every later use of the phone's own camera then
+    --- ran through a component this resource configured for one photograph
+    --- of a body, calling a callback belonging to a request that finished
+    --- minutes ago and which answers nothing because it has already
+    --- answered. The symptom is the player's camera app silently doing
+    --- nothing, forever, with this resource nowhere in sight.
+    local released = false
+    local function releaseCamera()
+        if released then return end
+        released = true
+        phone('SetCameraComponent reset', function()
+            return exports['lb-phone']:SetCameraComponent(nil)
+        end)
+    end
+
     local function cb(payload)
         if answered then return end
         answered = true
+        releaseCamera()
         pcall(rawCb, payload)
     end
 
@@ -492,14 +515,11 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
                 -- hunter's phone. Off unless an operator asks for it.
                 saveToGallery = Config.Completion.SavePhotoToGallery == true,
                 cb = function(src)
-                    -- The override is ours and we are done with it. Left
-                    -- installed, every later use of the phone's own camera
-                    -- runs through a component this resource configured for
-                    -- one photograph of a body — including its callback,
-                    -- which by then belongs to a request that has finished.
-                    phone('SetCameraComponent reset', function()
-                        return exports['lb-phone']:SetCameraComponent(nil)
-                    end)
+                    -- Released here too, before anything that can fail: the
+                    -- override is ours and we are done with it the moment
+                    -- the shutter has been pressed. cb() below releases it
+                    -- as well, and releasing twice is a no-op.
+                    releaseCamera()
 
                     -- Guarded: this runs inside lb-phone's camera, so a
                     -- throw here does not stay here — it goes back into the
@@ -526,8 +546,14 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
         -- a request that has no timeout of its own: the server round trip has
         -- one, the player composing a shot does not. Generous, because they
         -- are lining up a photograph, but not forever.
+        --
+        -- Its own code, not 'cancelled'. Cancelling is the player's own
+        -- decision and the page is deliberately silent about it — so a
+        -- camera that never came back said nothing at all, two minutes after
+        -- a tap that had already said nothing. The two are not the same
+        -- event and the second one needs words.
         SetTimeout((Config.Completion.PhotoTokenLifetimeSeconds or 120) * 1000, function()
-            cb({ ok = false, err = 'cancelled' })
+            cb({ ok = false, err = 'camera_no_answer' })
         end)
     end)
 end)
