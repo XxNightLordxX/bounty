@@ -123,6 +123,17 @@ CB.ERR = {
     --- ended or it was never armed, and both are ordinary answers to an
     --- ordinary question rather than faults.
     NO_HANDOVER       = 'no_handover',
+    --- The creator placed a contract on this same person recently.
+    ---
+    --- A policy cooldown measured in hours, not a token bucket. It shared
+    --- RATE_LIMITED with the throttle, which the page words as "Slow down."
+    --- and which three of its recovery paths read as a transient condition
+    --- worth retrying — so a creator with two hours to wait was told to slow
+    --- down, and the app quietly treated the refusal as a hiccup.
+    SAME_TARGET_TOO_SOON = 'same_target_too_soon',
+    --- The creator cancelled a contract recently. Same story: minutes of
+    --- policy wait, reported as throttling.
+    CANCELLED_TOO_SOON   = 'cancelled_too_soon',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',

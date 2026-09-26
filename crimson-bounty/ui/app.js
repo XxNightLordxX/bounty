@@ -365,6 +365,15 @@
       + 'seconds and open this again.',
     blacklisted_job: 'This app is not for you.',
     rate_limited: 'Slow down.',
+    // Policy waits, not throttling. Both shared rate_limited, so a creator
+    // with two hours to wait read "Slow down." — and three of this page's
+    // recovery paths treat rate_limited as a transient condition worth
+    // retrying, which these are not.
+    same_target_too_soon: 'You placed a contract on this person recently. '
+      + 'Somebody else could list them now \u2014 you have to leave it longer.',
+    cancelled_too_soon: 'You cancelled a contract recently. Placing another '
+      + 'has to wait a few minutes: cancelling and re-listing would otherwise '
+      + 'be free.',
     self_target: 'You cannot put a price on yourself.',
     self_accept: 'You cannot take your own contract.',
     same_account: 'Not on your own people.',

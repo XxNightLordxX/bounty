@@ -334,7 +334,11 @@ describe('spam and rollback', function()
             targetCid = 'TARGET02', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
         falsy(second, 'cancelling should not be a free way back onto the board')
-        eq(err, CB.ERR.RATE_LIMITED)
+        eq(err, CB.ERR.CANCELLED_TOO_SOON,
+            'its own code, not the token bucket\'s. This is a policy wait of '
+            .. 'minutes and the page words rate_limited as "Slow down." — and '
+            .. 'reads it as a transient condition worth retrying, which this '
+            .. 'is not')
 
         Env.advance(Config.Amendments.CancelCooldownSeconds + 10)
         truthy(s.contracts.create(f.creator, {

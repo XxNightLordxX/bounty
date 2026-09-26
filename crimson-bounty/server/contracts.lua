@@ -158,8 +158,11 @@ function Contracts.canCreate(actor, targetActor)
                 if since < cooldown then
                     return false, CB.ERR.TARGET_RECENTLY_ON
                 end
+                -- Its own code. This is a policy wait of hours, and sharing
+                -- RATE_LIMITED with the token bucket told the creator to
+                -- "slow down" about it.
                 if c.creator_cid == actor.cid and since < Config.Limits.SameCreatorSameTargetCooldownSeconds then
-                    return false, CB.ERR.RATE_LIMITED
+                    return false, CB.ERR.SAME_TARGET_TOO_SOON
                 end
             end
         end
@@ -173,7 +176,7 @@ function Contracts.canCreate(actor, targetActor)
             local c = contracts[i]
             if c.creator_cid == actor.cid and c.state == CB.STATE.CANCELLED and c.resolved_at
                 and (now - c.resolved_at) < Config.Amendments.CancelCooldownSeconds then
-                return false, CB.ERR.RATE_LIMITED
+                return false, CB.ERR.CANCELLED_TOO_SOON
             end
         end
     end

@@ -442,3 +442,190 @@ describe('raising the bonus answers to the same state rule as adding escrow', fu
             'extending a deadline takes no money and helps the hunter')
     end)
 end)
+
+describe('an amendment answered after the contract has ended', function()
+    --- Nothing on the answering path checked the contract's state.
+    ---
+    --- respond() checked the PROPOSAL's expiry; apply() checked only that the
+    --- contract existed. So a proposal left open while the contract completed,
+    --- was cancelled, expired or was bought out could then be agreed, and
+    --- apply() ran on a finished contract — reporting "applied" to both
+    --- parties and writing the change into the stored row.
+    ---
+    --- No money moved, and the reason is an accident rather than a rule:
+    --- reduce_reward releases escrow, and the release found nothing because
+    --- finalise had already settled every line. One ordering change away from
+    --- paying out of a contract that had ended.
+    local function proposalOn(kind, payload)
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        Env.players[3].PlayerData.money.bank = 400000
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 5000 } },
+                                 { baseline = { cash = 7000 } } } },
+        })
+        truthy(c, 'the fixture needs a contract with a spare payout slot')
+        truthy(s.contracts.accept(f.hunter, c.id), 'and a hunter to agree with')
+
+        local proposal, err = s.amendments.propose(f.creator, c.id, kind, payload)
+        truthy(proposal, 'propose ' .. kind .. ': ' .. tostring(err))
+        return s, f, c, proposal
+    end
+
+    local function purse(i)
+        local p = Env.players[i].PlayerData
+        return p.money.cash + p.money.bank
+    end
+
+    local function endIt(s, f, c, state)
+        if state == CB.STATE.COMPLETED then
+            truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED,
+                CB.STATE.COMPLETING, 'fixture'))
+            truthy(s.contracts.resolve(c.id, state, f.hunter.cid, nil, 'fixture'))
+        else
+            truthy(s.contracts.resolve(c.id, state, f.creator.cid, nil, 'fixture'))
+        end
+    end
+
+    for _, state in ipairs({ CB.STATE.COMPLETED, CB.STATE.CANCELLED,
+                             CB.STATE.EXPIRED, CB.STATE.BAILED_OUT,
+                             CB.STATE.VOIDED }) do
+        it('is refused once the contract is ' .. state, function()
+            local s, f, c, proposal = proposalOn(CB.AMENDMENT.REDUCE_REWARD,
+                { slot = 2 })
+            endIt(s, f, c, state)
+
+            local before = purse(1)
+            local ok, err, outcome = s.amendments.respond(f.hunter, proposal.id, true)
+
+            falsy(ok, 'agreeing a change to a contract that has ended applied it')
+            eq(err, CB.ERR.ALREADY_SETTLED)
+            eq(outcome, 'stale')
+            eq(purse(1), before, 'and nothing moved')
+        end)
+    end
+
+    it('does not write the change onto the finished contract', function()
+        local s, f, c, proposal = proposalOn(CB.AMENDMENT.SHORTEN_DEADLINE,
+            { seconds = 60 })
+        endIt(s, f, c, CB.STATE.CANCELLED)
+        local was = s.storage.readContract(c.id).deadline_at
+
+        s.amendments.respond(f.hunter, proposal.id, true)
+
+        eq(s.storage.readContract(c.id).deadline_at, was,
+            'a shortened deadline landed on a cancelled contract, and both '
+            .. 'parties were told the terms had changed')
+    end)
+
+    it('closes the proposal out rather than leaving a button that can only fail', function()
+        local s, f, c, proposal = proposalOn(CB.AMENDMENT.REDUCE_REWARD,
+            { slot = 2 })
+        endIt(s, f, c, CB.STATE.CANCELLED)
+        s.amendments.respond(f.hunter, proposal.id, true)
+
+        eq(s.storage.readAmendment(proposal.id).outcome, 'stale',
+            'the contract will never be live again, so an open proposal on it '
+            .. 'is a button that can only ever fail')
+        eq(#s.storage.readOpenAmendments(c.id), 0,
+            'and it is no longer listed as open')
+    end)
+
+    it('still applies to a contract that is still live', function()
+        -- The guard must not have closed the door it was not about.
+        local s, f, c, proposal = proposalOn(CB.AMENDMENT.REDUCE_REWARD,
+            { slot = 2 })
+        local before = purse(1)
+        local ok, err, outcome = s.amendments.respond(f.hunter, proposal.id, true)
+        truthy(ok, 'the ordinary case: ' .. tostring(err))
+        eq(outcome, 'applied')
+        truthy(purse(1) > before,
+            'the withdrawn payout should come back to the creator')
+    end)
+end)
+
+describe('the three rules that stop a creator re-listing', function()
+    --- Three different waits, and two of them answered with the token
+    --- bucket's code.
+    ---
+    --- A creator refused for a cooldown of two hours read "Slow down." — and
+    --- three of the page's recovery paths treat rate_limited as a transient
+    --- condition worth retrying, so the app also quietly filed a two-hour
+    --- policy wait as a hiccup. Each rule names itself now.
+    local function creatorWith(kind)
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        Env.addPlayer({ source = 9, citizenid = 'TARGET55', license = 'license:t55',
+                        cash = 100, bank = 100, firstname = 'Kit', lastname = 'Bell' })
+
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 1000 } } })
+        truthy(c, 'the first contract')
+
+        if kind == 'expired' then
+            truthy(s.contracts.resolve(c.id, CB.STATE.EXPIRED, f.creator.cid,
+                nil, 'expired'))
+        else
+            truthy(s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid,
+                nil, 'cancelled'))
+        end
+        return s, f
+    end
+
+    it('says so when somebody else listed this target recently', function()
+        -- Anyone's contract on this target, so the target cooldown bites
+        -- before the creator-specific one.
+        local s, f = creatorWith('expired')
+        local _, err = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'again', reward = { baseline = { cash = 1000 } } })
+        eq(err, CB.ERR.TARGET_RECENTLY_ON,
+            'this one already had its own code')
+    end)
+
+    it('says so when it was THIS creator who listed them', function()
+        local s, f = creatorWith('expired')
+        -- Past the target cooldown, inside the same-creator one.
+        Env.advance(Config.Limits.TargetCooldownAfterResolveSeconds + 10)
+
+        local made, err = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'again', reward = { baseline = { cash = 1000 } } })
+        falsy(made, 'the same creator has a longer wait on the same target')
+        eq(err, CB.ERR.SAME_TARGET_TOO_SOON,
+            'a wait of hours must not be reported as throttling')
+
+        Env.advance(Config.Limits.SameCreatorSameTargetCooldownSeconds + 10)
+        truthy(s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'again', reward = { baseline = { cash = 1000 } } }),
+            'and it does lapse')
+    end)
+
+    it('says so when the creator cancelled something recently', function()
+        local s, f = creatorWith('cancelled')
+        -- A different target, so the cancel rule is what answers.
+        local made, err = s.contracts.create(f.creator, { targetCid = 'TARGET55',
+            reason = 'someone else', reward = { baseline = { cash = 1000 } } })
+        falsy(made, 'cancelling is not a free way back onto the board')
+        eq(err, CB.ERR.CANCELLED_TOO_SOON)
+    end)
+
+    it('gives each of the three a different code', function()
+        -- The point of the whole block: three rules, three answers. Two of
+        -- them used to be the same answer as being throttled.
+        local codes = {
+            CB.ERR.TARGET_RECENTLY_ON,
+            CB.ERR.SAME_TARGET_TOO_SOON,
+            CB.ERR.CANCELLED_TOO_SOON,
+            CB.ERR.RATE_LIMITED,
+        }
+        local seen = {}
+        for _, code in ipairs(codes) do
+            truthy(code, 'every code has to exist')
+            falsy(seen[code], 'two of these rules share the code ' .. tostring(code))
+            seen[code] = true
+        end
+    end)
+end)

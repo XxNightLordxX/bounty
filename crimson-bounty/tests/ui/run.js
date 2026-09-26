@@ -2909,7 +2909,19 @@ async function main() {
       slots: 1, slotsClaimed: 0, currentSlot: 1,
       huntersActive: 1, huntersMax: 5,
       targetName: 'Dana Reyes', role: 'hunter',
-      deadline: Math.floor(Date.now() / 1000) + 7200
+      /* 2h05m, not exactly 2h.
+       *
+       * The assertion below looks for "2h" in what the page draws.
+       * minutesLeft() floors (deadline - now) / 60, so at exactly 7200 a
+       * single second of drift between building this fixture and reading the
+       * screen gives 119 minutes, which durationText writes as "1h 59m" —
+       * and the test failed, once, in a full run. A suite that fails one run
+       * in ten teaches everybody to re-run it, which is how a real failure
+       * gets waved through.
+       *
+       * Five minutes of slack puts the hours component out of reach of any
+       * plausible run time. */
+      deadline: Math.floor(Date.now() / 1000) + 7500
     }], onMe: [] } };
 
     const app = boot({
@@ -4774,7 +4786,13 @@ async function main() {
       slots: 1, slotsClaimed: 0, currentSlot: 1,
       huntersActive: 1, huntersMax: 5, hunters: [{ alias: 'Grey' }],
       targetName: 'Dana Reyes', role: 'creator',
-      deadline: Math.floor(Date.now() / 1000) + 5400
+      /* 90m30s, not exactly 90m — the same trap as the fixture above.
+       *
+       * The assertion looks for "1h 30m". minutesLeft() floors the
+       * remainder, so at exactly 5400 one second of drift between building
+       * this and reading the screen gives 89 minutes and "1h 29m". I wrote
+       * this test today and it carried the flake it was written beside. */
+      deadline: Math.floor(Date.now() / 1000) + 5430
     };
 
     await (async function extendSaysWhereTheDeadlineStands() {

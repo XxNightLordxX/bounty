@@ -491,6 +491,33 @@ function Amendments.respond(actor, amendmentId, approve)
     local contract = Storage.readContract(proposal.contract_id)
     if not contract then return false, CB.ERR.NOT_FOUND end
 
+    --- The contract has to still be live.
+    ---
+    --- This was not checked anywhere on the answering path: respond checked
+    --- the PROPOSAL's expiry and apply checked only that the contract
+    --- existed. So a proposal left open while the contract completed, was
+    --- cancelled, expired or was bought out could then be agreed, and
+    --- apply() ran on a finished contract — reporting "applied" to both
+    --- parties and writing the change into the stored row. A shortened
+    --- deadline landed on a cancelled contract; raise_penalty would set a
+    --- stake figure on a closed one.
+    ---
+    --- No money moved, and the reason it did not is an accident rather than
+    --- a rule: reduce_reward releases escrow, and the release found nothing
+    --- because finalise had already settled every line. One ordering change
+    --- away from paying out of a contract that had ended.
+    ---
+    --- Closed out rather than merely refused. The contract it belongs to
+    --- will never be live again, so leaving the proposal open would leave
+    --- both parties a button that can only ever fail.
+    if CB.TERMINAL[contract.state] then
+        proposal.outcome = 'stale'
+        Storage.writeAmendment(proposal)
+        Audit.action('amendment_stale', actor.cid, proposal.contract_id,
+            { kind = proposal.kind, state = contract.state })
+        return false, CB.ERR.ALREADY_SETTLED, 'stale'
+    end
+
     -- Live participants, not the set captured when the proposal was made.
     local people = participants(contract)
     if not people[actor.cid] then return false, CB.ERR.NOT_PARTICIPANT end
