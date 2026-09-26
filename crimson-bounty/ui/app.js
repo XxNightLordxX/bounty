@@ -1021,9 +1021,11 @@
         'kidnap:' + contract.id, 'Arming\u2026',
         function () { return armKidnap(contract); }));
 
-      var talk = el('button', 'ghost', 'Message');
-      talk.onclick = function () { openThread(contract, null); };
-      row.appendChild(talk);
+      // Opening a thread is a round trip that changes nothing on screen
+      // until it lands, so the button read as dead and got tapped again.
+      row.appendChild(actionButton('ghost', 'Message',
+        'thread:' + contract.id, 'Opening\u2026',
+        function () { return openThread(contract, null); }));
 
       var quit = el('button', 'ghost', 'Abandon');
       quit.onclick = function () {
@@ -1083,9 +1085,9 @@
       // Same shape, same reason: {} has no .length, so this read as "no
       // hunters" whether or not there were any.
       if (asList(contract.hunters).length) {
-        var msg = el('button', 'ghost', 'Threads');
-        msg.onclick = function () { openThreads(contract); };
-        row.appendChild(msg);
+        row.appendChild(actionButton('ghost', 'Threads',
+          'threads:' + contract.id, 'Opening\u2026',
+          function () { return openThreads(contract); }));
       }
 
       var extend = el('button', 'ghost', 'Extend deadline');
@@ -1547,7 +1549,7 @@
   }
 
   function answerProposal(proposal, approve) {
-    post('respondAmendment', { id: proposal.id, approve: approve }).then(function (r) {
+    return post('respondAmendment', { id: proposal.id, approve: approve }).then(function (r) {
       if (!r.ok) { return fail(r); }
       var outcome = r.data && r.data.outcome;
       say(outcome === 'applied' ? 'Agreed — the change is in effect.'
@@ -1577,13 +1579,16 @@
           : 'Waiting on ' + proposal.waiting
               + (proposal.waiting === 1 ? ' other party.' : ' other parties.')));
       } else {
+        // Both keyed on the proposal, so answering it disables BOTH — a
+        // second tap on either used to send a second answer, and the reply
+        // to that one reports the change that actually applied as "Gone."
         var row = el('div', 'row');
-        var yes = el('button', 'primary', 'Agree');
-        yes.onclick = function () { answerProposal(proposal, true); };
-        var no = el('button', 'danger', 'Decline');
-        no.onclick = function () { answerProposal(proposal, false); };
-        row.appendChild(yes);
-        row.appendChild(no);
+        row.appendChild(actionButton('primary', 'Agree',
+          'amend:' + proposal.id, 'Sending\u2026',
+          function () { return answerProposal(proposal, true); }));
+        row.appendChild(actionButton('danger', 'Decline',
+          'amend:' + proposal.id, 'Sending\u2026',
+          function () { return answerProposal(proposal, false); }));
         item.appendChild(row);
       }
 
@@ -1745,8 +1750,23 @@
   }
 
   function improveContract(contract) {
+    /* Says what the deadline currently is.
+    
+       It asked "by how many minutes?" against a blank box, with no statement
+       of where the deadline stands, no ceiling, and no sense of scale. A
+       creator deciding how much to add has to know what they are adding to —
+       and the one thing the app already knows and was not saying is how long
+       is left. */
+    var left = minutesLeft(contract);
+    var standing = (left === null)
+      ? 'This contract has no deadline set.'
+      : (left > 0
+          ? 'It currently has ' + durationText(left) + ' left.'
+          : 'Its deadline has already passed.');
+
     askNumber('Extend the deadline by how many minutes?',
-              'This applies at once — it can only help whoever is hunting.',
+              standing + ' This applies at once \u2014 it can only help '
+              + 'whoever is hunting.',
               function (minutes) {
                 post('improve', {
                   id: contract.id,
@@ -2053,7 +2073,7 @@
 
   // A creator picks which operative to talk to; a hunter has only one thread.
   function openThreads(contract) {
-    post('threads', { id: contract.id }).then(function (r) {
+    return post('threads', { id: contract.id }).then(function (r) {
       if (!r.ok) return fail(r);
       var threads = asList(r.data);
       if (!threads.length) return say('No operative to talk to yet.');

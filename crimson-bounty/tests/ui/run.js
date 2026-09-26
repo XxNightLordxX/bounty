@@ -4766,6 +4766,60 @@ async function main() {
     });
   })();
 
+  /* ---------- buttons that answer a tap ---------- */
+  await (async function everyActionAnswersATap() {
+    const own = {
+      id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive',
+      state: 'active', reward: { baseline: 5000 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1,
+      huntersActive: 1, huntersMax: 5, hunters: [{ alias: 'Grey' }],
+      targetName: 'Dana Reyes', role: 'creator',
+      deadline: Math.floor(Date.now() / 1000) + 5400
+    };
+
+    await (async function extendSaysWhereTheDeadlineStands() {
+      const app = boot({ mine: { ok: true, data: { created: [own], accepted: [], onMe: [] } } });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Extend deadline');
+      await settle();
+
+      it('says how long is left before asking how much to add', function () {
+        const shown = app.view.textContent;
+        truthy(shown.indexOf('1h 30m') !== -1,
+          'a creator deciding how much to add has to know what they are '
+          + 'adding to, and the app already knew: ' + shown.slice(0, 200));
+      });
+    })();
+
+    await (async function threadsAnswersTheTap() {
+      let answer;
+      const held = new Promise(function (resolve) { answer = resolve; });
+      const app = boot({
+        mine: { ok: true, data: { created: [own], accepted: [], onMe: [] } },
+        threads: function () { return held; }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Threads');
+      await settle();
+
+      it('shows the tap registered instead of looking dead', function () {
+        const labels = app.view.all()
+          .filter(function (n) { return n.tagName === 'BUTTON'; })
+          .map(function (n) { return n.textContent; });
+        truthy(labels.some(function (l) { return l.indexOf('Opening') !== -1; }),
+          'the screen was identical until the reply landed, so the button '
+          + 'read as dead: ' + labels.join(' | '));
+      });
+
+      answer({ ok: true, data: [] });
+      await settle(); await settle();
+    })();
+  })();
+
   /* ---------- the compose box ---------- */
   await (async function composeBox() {
     function threadFixture(sendAnswer) {
