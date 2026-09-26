@@ -660,7 +660,9 @@ describe('submitting the same photo token twice', function()
 
         local reissued, err = s.photo.issue(f.hunter, c.id)
         falsy(reissued, 'nothing is pending any more: ' .. tostring(reissued))
-        eq(err, CB.ERR.BAD_STATE)
+        eq(err, CB.ERR.NO_KILL_TO_VERIFY,
+            'the pending kill is gone, which is the same answer a hunter gets '
+            .. 'for asking before there was one')
         same(before, world(s), 'reissuing a token after the payout moved something')
     end)
 end)

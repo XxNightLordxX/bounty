@@ -130,8 +130,11 @@ function Photo.issue(actor, contractId)
     contractId = Util.toId(contractId)
     if not contractId then return nil, CB.ERR.INVALID_INPUT end
 
+    -- Its own code. This is the ordinary outcome of tapping Verify kill at
+    -- any moment other than standing over a body the server saw this hunter
+    -- put there, and it needs to say so.
     local record = Death.getPending(contractId, actor.cid)
-    if not record then return nil, CB.ERR.BAD_STATE end
+    if not record then return nil, CB.ERR.NO_KILL_TO_VERIFY end
 
     for token, existing in pairs(tokens) do
         if existing.contractId == contractId and existing.hunterCid == actor.cid then

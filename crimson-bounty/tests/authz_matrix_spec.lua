@@ -441,9 +441,11 @@ MATRIX.improve = {
 MATRIX.requestPhotoToken = {
     arrange = eliminate,
     payload = function(w, role, contract) return { id = contract.id } end,
-    -- bad_state: there is no pending kill in this caller's name, which is
-    -- the same sentence as "you did not do this".
-    expect = only('hunter', CB.ERR.BAD_STATE),
+    -- no_kill_to_verify: there is no pending kill in this caller's name,
+    -- which is the same sentence as "you did not do this". It shared
+    -- bad_state with every other refusal in the resource until the page
+    -- needed to word the commonest one; the rule here is unchanged.
+    expect = only('hunter', CB.ERR.NO_KILL_TO_VERIFY),
     why = 'the proof token belongs to the hunter the server saw make the kill',
 }
 

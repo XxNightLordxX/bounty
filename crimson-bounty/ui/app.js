@@ -5,7 +5,22 @@
 (function () {
   'use strict';
 
-  var RESOURCE = 'crimson-bounty';
+  /* The resource this page belongs to, asked for rather than assumed.
+  
+     This was the literal 'crimson-bounty'. Every NUI call posts to
+     https://<resource>/..., and renaming a resource folder is an ordinary
+     thing for a server owner to do — at which point every request in the
+     app goes to a resource that does not exist, every one of them answers
+     'unreachable', and the app is a set of buttons that do nothing with no
+     clue anywhere as to why. The client derives every other URL from
+     GetCurrentResourceName(); this is the one place that did not.
+  
+     GetParentResourceName is what CEF provides for exactly this. The
+     literal stays as the fallback for anywhere it is absent — the test
+     harness, a browser opened on the file directly — because a page that
+     cannot work out its own name should still behave as it did before. */
+  var RESOURCE = (typeof GetParentResourceName === 'function'
+    && GetParentResourceName()) || 'crimson-bounty';
   var state = {
     tab: 'board', board: null, mine: null, ledger: null,
     progress: {}, dialog: null, leoConfirmed: false, wallet: null,
@@ -385,6 +400,11 @@
       + 'An admin can see what in the server console.',
     not_participant: 'That is not yours.',
     already_settled: 'That contract is closed.',
+    // The rules are on the server and the numbers are configurable, so the
+    // words carry what the settings say rather than figures hardcoded here.
+    no_kill_to_verify: 'No kill on this contract is waiting for proof. Take '
+      + 'the target down, then photograph them where they fell \u2014 within '
+      + 'a few metres, and before they are back on their feet for long.',
     token_invalid: 'Verification expired. Take the photo again.',
     photo_rejected: 'The photo was not accepted.',
     photo_too_far: 'You are too far from the body. Stand over them and take it again.',

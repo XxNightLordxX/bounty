@@ -139,7 +139,14 @@ local function registerApp()
             -- app.js and app.css, so bumping the resource version is what
             -- replaces what they are running.
             ui          = GetCurrentResourceName() .. '/ui/index.html?v=' .. App.build(),
-            icon        = 'https://cfx-nui-' .. GetCurrentResourceName() .. '/ui/icon.png',
+            -- Stamped like the page and its stylesheet. This was the one
+            -- asset loaded without it, so CEF kept the first icon it ever
+            -- saw: an icon change shipped with a resource update reached
+            -- nobody who had opened the app before, with no way to tell
+            -- from either end — the same fault the page itself had, left
+            -- behind when that one was fixed.
+            icon        = 'https://cfx-nui-' .. GetCurrentResourceName()
+                          .. '/ui/icon.png?v=' .. App.build(),
             fixBlur     = true,
             -- The page loads its own data when it opens; firing the same
             -- requests here would duplicate them and drain the rate limit

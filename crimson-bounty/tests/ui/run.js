@@ -89,6 +89,7 @@ function acrossTheWire(value) {
 function boot(responses) {
   const document = makeDocument();
   const sent = [];
+  const urls = [];
   const timers = [];
   const notices = [];
 
@@ -133,6 +134,7 @@ function boot(responses) {
       }
     },
     fetch: function (url, options) {
+      urls.push(url);
       const name = url.split('/crimson:')[1];
       const body = JSON.parse(options.body);
       sent.push({ name: name, body: body });
@@ -180,6 +182,14 @@ function boot(responses) {
         }
       });
     },
+    /* What CEF provides so a page can address its own resource.
+     *
+     * Absent from this shim until the page started using it, which is the
+     * shape of shim gap that reports a bug in the code under test: the page
+     * would fall back to the literal and the suite would agree with itself.
+     * Named here as something other than the shipped name, so a page that
+     * ignores it and uses the literal is a page that fails. */
+    GetParentResourceName: function () { return 'renamed-by-the-operator'; },
     setTimeout: function (fn, ms) { timers.push({ fn: fn, ms: ms }); return timers.length; },
     setInterval: function (fn, ms) { timers.push({ fn: fn, ms: ms, repeating: true }); return timers.length; },
     clearInterval: function () {},
@@ -195,7 +205,7 @@ function boot(responses) {
   vm.runInContext(source, sandbox, { filename: 'app.js' });
 
   const booted_app = {
-    document, view, sent, timers, sandbox, notices,
+    document, view, sent, urls, timers, sandbox, notices,
     // Throws that escaped a coalesced redraw. render() runs on a timeout of
     // zero, so a throw inside it lands nowhere a test can see it: the app
     // draws a blank tab and the suite reads that as an empty section. Four
@@ -4740,6 +4750,29 @@ async function main() {
     });
     it('takes the dead countdown off the screen', function () {
       eq(bars().length, 0, 'the bar froze at its last value and stayed there');
+    });
+  })();
+
+  /* ---------- the resource this page belongs to ---------- */
+  await (async function addressesItsOwnResource() {
+    const seen = [];
+    const app = boot({ list: { ok: true, data: { page: 1, pages: 1,
+      contracts: [], settings: { minQueryLength: 3 } } } });
+    await settle();
+
+    it('posts to the resource it is actually running in', function () {
+      // Renaming a resource folder is an ordinary thing for a server owner
+      // to do. With the name hardcoded, every request in the app goes to a
+      // resource that does not exist, every one answers 'unreachable', and
+      // the app is a set of buttons that do nothing with no clue anywhere
+      // as to why.
+      truthy(app.urls.length > 0, 'nothing was requested, so this measures nothing');
+      const wrong = app.urls.filter(function (u) {
+        return u.indexOf('https://renamed-by-the-operator/') !== 0;
+      });
+      truthy(wrong.length === 0,
+        'requests went to the wrong resource: ' + wrong.slice(0, 2).join(' | '));
+      void seen;
     });
   })();
 

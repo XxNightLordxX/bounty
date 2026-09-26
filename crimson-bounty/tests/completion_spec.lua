@@ -102,7 +102,10 @@ describe('capture tokens', function()
         local s, f, c = seeded()
         local token, err = s.photo.issue(f.hunter, c.id)
         falsy(token, 'no kill, no token')
-        eq(err, CB.ERR.BAD_STATE)
+        eq(err, CB.ERR.NO_KILL_TO_VERIFY,
+            'the commonest tap of Verify kill: the button is on every '
+            .. 'accepted contract whether or not a kill has happened, so '
+            .. 'this answer needs to say what is actually required')
 
         killTarget(s)
         truthy(s.photo.issue(f.hunter, c.id), 'issued after a corroborated kill')

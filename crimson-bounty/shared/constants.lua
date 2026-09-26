@@ -110,6 +110,15 @@ CB.ERR = {
     RATE_LIMITED     = 'rate_limited',
     NOT_FOUND        = 'not_found',
     BAD_STATE        = 'bad_state',
+    --- The server has no kill by this hunter on this contract to verify.
+    ---
+    --- Shared bad_state until now, which the page words as "Not right now."
+    --- That is the answer to the MOST COMMON tap of Verify kill: the button
+    --- is drawn on every accepted contract whether or not a kill has
+    --- happened, so the ordinary case — tapping it before the kill, or after
+    --- one the server did not attribute — was four words that explain
+    --- nothing about a mechanic with a distance rule and a time limit.
+    NO_KILL_TO_VERIFY = 'no_kill_to_verify',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',
