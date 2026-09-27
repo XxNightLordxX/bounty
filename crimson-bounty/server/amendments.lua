@@ -394,9 +394,12 @@ local function checkAgainst(contract, kind, payload)
         end
     elseif kind == CB.AMENDMENT.SHORTEN_DEADLINE then
         -- There has to be a deadline, and cutting it by this much has to
-        -- leave some of it.
-        if not contract.deadline_at
-            or (contract.deadline_at - os.time()) <= (payload.seconds or 0) then
+        -- leave some of it: as much as a cut may ever leave, told now
+        -- rather than when everybody has agreed. A stopped clock has what
+        -- it had when it stopped.
+        local left = contract.deadline_at
+            and contract.deadline_at - (contract.paused_since or os.time())
+        if not left or left - (payload.seconds or 0) < Contracts.MIN_LEFT_AFTER_CUT then
             return false, CB.ERR.INVALID_INPUT
         end
     end
@@ -454,14 +457,20 @@ function Amendments.propose(actor, contractId, kind, payload)
     -- who leaves does not keep a veto over a contract they abandoned.
     local approvals = { [actor.cid] = true }
 
+    -- Neither the id nor the expiry says when this was proposed, to the
+    -- second: both reach every participant, and a proposal from an anonymous
+    -- client is a moment that client was online (§14.32). See Util.randomId.
+    local proposalId = Util.mintId(Util.randomId, 'am', Storage.readAmendment)
+    if not proposalId then return nil, CB.ERR.BAD_STATE end
+
     local proposal = {
-        id          = Storage.nextId('am'),
+        id          = proposalId,
         contract_id = contractId,
         proposer    = actor.cid,
         kind        = kind,
         payload     = clean,
         approvals   = approvals,
-        expires_at  = os.time() + Config.Amendments.ProposalExpirySeconds,
+        expires_at  = Util.roundClock(os.time() + Config.Amendments.ProposalExpirySeconds),
         outcome     = 'open',
     }
     Storage.writeAmendment(proposal)

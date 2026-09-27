@@ -195,9 +195,32 @@ end
 ---@param at integer os.time()
 ---@return integer
 function Util.roundClock(at)
-    local step = 300
+    local step = Util.CLOCK_STEP
     return at + ((step - (at % step)) % step)
 end
+
+--- An id that says nothing about when it was made.
+---
+--- The store's ids are a sequence, and on mysql the clock to the second as
+--- well, and a contract's id goes to everybody who sees it on the board: an
+--- anonymous client's placement could be read off it (§14.32), or bracketed
+--- between two ids the viewer minted themselves. Random instead, and minted
+--- through Util.mintId so a collision is tried again rather than written.
+---@param prefix string
+---@return string
+local ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
+function Util.randomId(prefix)
+    local out = { prefix }
+    for i = 2, 13 do
+        local k = math.random(1, #ID_ALPHABET)
+        out[i] = ID_ALPHABET:sub(k, k)
+    end
+    return table.concat(out)
+end
+
+--- The step a deadline is rounded to, in seconds. Also the least one may be
+--- left with when it is brought in (Contracts.bringDeadlineIn).
+Util.CLOCK_STEP = 300
 
 --- Whether law enforcement is told at this stage: 'posted' or 'accepted'.
 ---

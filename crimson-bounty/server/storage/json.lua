@@ -755,6 +755,14 @@ function JsonStore.setDeadline(id, expected, deadline)
     return true
 end
 
+function JsonStore.setReason(id, reason)
+    local c = db.contracts[id]
+    if not c then return false end
+    c.reason = reason
+    touch(true, id)
+    return true
+end
+
 function JsonStore.startPause(id, at)
     local c = db.contracts[id]
     if not c or c.paused_since ~= nil then return false end

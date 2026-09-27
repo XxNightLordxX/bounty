@@ -5609,6 +5609,47 @@ async function main() {
       });
     })();
 
+    /* A cut has to leave five minutes on the clock: the server refuses one
+       that leaves less, so the box stops short of it rather than offering a
+       figure that can only be refused. */
+    await (async function shortenStopsShortOfTheFloor() {
+      function heldWith(seconds) {
+        return Object.assign({}, own, { role: 'hunter', hunters: undefined,
+          deadline: Math.floor(Date.now() / 1000) + seconds });
+      }
+      const app = boot({
+        mine: { ok: true, data: { created: [], accepted: [heldWith(20 * 60 + 30)], onMe: [] } },
+        amendments: { ok: true, data: [] }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      click(app, 'Propose change');
+      await settle();
+      click(app, 'Shorten the deadline');
+      await settle();
+      it('opens on a cut that leaves five minutes, not one', function () {
+        const shown = app.view.textContent;
+        truthy(shown.indexOf('It would then run out in 5 minutes') !== -1,
+          'twenty minutes left, cut by at most fifteen: ' + shown.slice(-300));
+      });
+
+      const tight = boot({
+        mine: { ok: true, data: { created: [], accepted: [heldWith(5 * 60 + 30)], onMe: [] } },
+        amendments: { ok: true, data: [] }
+      });
+      await settle(); await settle();
+      tab(tight, 'mine');
+      await settle(); await settle();
+      click(tight, 'Propose change');
+      await settle();
+      it('does not offer to shorten a deadline with no time to spare', function () {
+        const labels = tight.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+          .map(function (n) { return n.textContent; });
+        falsy(labels.indexOf('Shorten the deadline') !== -1, labels.join(' | '));
+      });
+    })();
+
     /* A row that names no client drew an empty pill. */
     await (async function noEmptyChips() {
       const nameless = Object.assign({}, own, { role: 'target', hunters: undefined,

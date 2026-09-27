@@ -108,6 +108,15 @@ function Memory.setDeadline(id, expected, deadline)
     return true
 end
 
+--- Set a contract's reason and nothing else. An edit writing back the whole
+--- row it read would put back every column somebody else changed meanwhile.
+function Memory.setReason(id, reason)
+    local c = db.contracts[id]
+    if not c then return false end
+    c.reason = reason
+    return true
+end
+
 --- Start a pause, unless one is already running.
 function Memory.startPause(id, at)
     local c = db.contracts[id]

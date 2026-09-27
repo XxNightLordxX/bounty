@@ -687,3 +687,225 @@ describe('a deadline brought in with nobody else on the contract', function()
         eq(s.storage.readContract(c.id).deadline_at, original - 600)
     end)
 end)
+
+--- RACE F12: an edit writing back the row it read.
+---
+--- revise read the contract, awaited its checks and the deadline's own
+--- writes, then wrote the whole row back. A reward withdrawal landing in
+--- those awaits re-clamps the buyout and the stake to the smaller escrow,
+--- and the write put the old ceilings back: a buyout worth three times a
+--- reward that had been taken out, which the target and the client could
+--- use to move money between them.
+describe('RACE F12: an edit lands on a reward being withdrawn', function()
+    local function placed(make)
+        local s = make()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
+            bailoutAmount = 999999, penaltyAmount = 999999,
+        })
+        truthy(c)
+        local bonus
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CB.PORTION.BONUS then bonus = l.id end
+        end
+        truthy(bonus, 'a bonus line to withdraw')
+        return s, f, c, bonus
+    end
+
+    local function run(make, hookName, changes) return function()
+        local s, f, c, bonus = placed(make)
+        local before = s.storage.readContract(c.id)
+
+        local real = s.storage[hookName]
+        local fired, clamped = false, nil
+        s.storage[hookName] = function(...)
+            if not fired then
+                fired = true
+                truthy(s.contracts.withdrawReward(f.creator, c.id, { bonus }))
+                clamped = s.storage.readContract(c.id)
+            end
+            return real(...)
+        end
+        local ok, err = s.contracts.revise(f.creator, c.id, changes)
+        s.storage[hookName] = real
+
+        truthy(fired, 'the withdrawal never landed')
+        truthy(ok, tostring(err))
+        truthy(clamped.bailout_amount < before.bailout_amount, 'the fixture re-clamps')
+        local after = s.storage.readContract(c.id)
+        eq(after.bailout_amount, clamped.bailout_amount,
+            'the edit put back a buyout ceiling for a reward that was taken out')
+        eq(after.penalty_amount, clamped.penalty_amount,
+            'and the stake ceiling with it')
+    end end
+
+    it('keeps the re-clamp under a deadline edit (copying)',
+        run(newCopyingStack, 'setDeadline', { deadlineSeconds = 7200 }))
+    it('keeps the re-clamp under a deadline edit (mysql)',
+        run(mysqlStack, 'setDeadline', { deadlineSeconds = 7200 }))
+    it('keeps the re-clamp under a reason edit (copying)',
+        run(newCopyingStack, 'readHunters', { reason = 'Owes money' }))
+    it('keeps the re-clamp under a reason edit (mysql)',
+        run(mysqlStack, 'readHunters', { reason = 'Owes money' }))
+end)
+
+--- RACE F13: a pause ends while a hunter is staking, and the client cuts.
+---
+--- Ending a pause pushes the deadline out by the pause's length. The check
+--- after the hunter's row compared the deadline itself, so a cut no bigger
+--- than the pause that ended in the same awaits was invisible to it.
+describe('RACE F13: a pause ends and the client cuts while a hunter is staking', function()
+    local function run(make) return function()
+        local s, f, c = deadlineRace(make)
+        local now = os.time()
+        s.storage.setDeadline(c.id, nil, now - 1500)
+        truthy(s.storage.startPause(c.id, now - 3600))
+        -- Thirty-five minutes on the stopped clock: enough to stake on.
+        local shown = s.storage.readContract(c.id).deadline_at
+        local before = money(3)
+
+        local realWrite = s.storage.writeEscrow
+        local fired = false
+        s.storage.writeEscrow = function(contractId, lines)
+            if not fired and lines[1] and lines[1].portion == CB.PORTION.STAKE then
+                fired = true
+                truthy(s.storage.endPause(c.id, now - 3600, 3600), 'the pause ends')
+                truthy(s.contracts.revise(f.creator, c.id, { deadlineSeconds = 60 }),
+                    'nobody holds it yet, so the cut stands')
+            end
+            return realWrite(contractId, lines)
+        end
+        local ok, err = s.contracts.accept(f.hunter, c.id, false,
+            { checkDisclosure = true, disclosed = 1000, shownDeadline = shown })
+        s.storage.writeEscrow = realWrite
+
+        truthy(fired, 'the stake was never written')
+        falsy(ok, 'staked on minutes the hunter was never shown')
+        eq(err, CB.ERR.TERMS_CHANGED)
+        eq(money(3), before, 'and the stake came back')
+        falsy(holding(s, c), 'and nobody holds the contract')
+    end end
+    it('refuses the acceptance (memory)', run(newStack))
+    it('refuses the acceptance (copying)', run(newCopyingStack))
+    it('refuses the acceptance (mysql)', run(mysqlStack))
+end)
+
+--- A cut sits in the store until the look for holders is done, where the
+--- expiry pass can see it. One leaving a second could end the contract,
+--- forfeiting a stake, before it was put back.
+describe('a deadline brought in', function()
+    it('is never brought within five minutes by an edit', function()
+        local s, f, c = deadlineRace(newStack)
+        truthy(s.contracts.revise(f.creator, c.id, { deadlineSeconds = 1 }))
+        truthy(s.storage.readContract(c.id).deadline_at - os.time() >= 300,
+            'an edit left the contract seconds from expiring')
+    end)
+
+    it('is refused, not written, when a rule would leave under five minutes', function()
+        local s, _, c, original = deadlineRace(newStack)
+        local moved, err = s.contracts.bringDeadlineIn(c.id, function()
+            return os.time() + 299
+        end)
+        falsy(moved)
+        eq(err, CB.ERR.INVALID_INPUT)
+        eq(s.storage.readContract(c.id).deadline_at, original, 'and nothing moved')
+        truthy(s.contracts.bringDeadlineIn(c.id, function() return os.time() + 300 end),
+            'five minutes is allowed')
+    end)
+
+    it('leaves the reason alone when the edit is refused', function()
+        -- On the memory store the row read is the stored row: a reason set on
+        -- it stood even though the edit it came with was refused.
+        local s, f, c, original = deadlineRace(newStack)
+        local realSet = s.storage.setDeadline
+        local fired = false
+        s.storage.setDeadline = function(...)
+            if not fired then
+                fired = true
+                truthy(s.contracts.accept(f.hunter, c.id, false,
+                    { checkDisclosure = true, disclosed = 1000, shownDeadline = original }))
+            end
+            return realSet(...)
+        end
+        local ok = s.contracts.revise(f.creator, c.id,
+            { deadlineSeconds = 600, reason = 'Something else entirely' })
+        s.storage.setDeadline = realSet
+        falsy(ok)
+        eq(s.storage.readContract(c.id).reason, 'x', 'refused, reason and all')
+    end)
+
+    it('is put back even when the deadline keeps moving under it', function()
+        -- Three moves landing between the put-back's reads used to leave the
+        -- cut in place under the hunter it had just been refused over.
+        local s, f, c, original = deadlineRace(newStack)
+        local realSet = s.storage.setDeadline
+        local calls = 0
+        s.storage.setDeadline = function(id, expected, deadline)
+            calls = calls + 1
+            if calls == 1 then
+                truthy(s.contracts.accept(f.hunter, c.id, false,
+                    { checkDisclosure = true, disclosed = 1000, shownDeadline = original }))
+            elseif calls >= 2 and calls <= 4 then
+                -- An extension lands first, each time: the guard misses.
+                local row = s.storage.readContract(id)
+                realSet(id, nil, row.deadline_at + 1)
+            end
+            return realSet(id, expected, deadline)
+        end
+        local ok = s.contracts.revise(f.creator, c.id, { deadlineSeconds = 600 })
+        s.storage.setDeadline = realSet
+        falsy(ok)
+        truthy(s.storage.readContract(c.id).deadline_at >= original,
+            'the cut stayed under a hunter who never agreed to it')
+    end)
+end)
+
+--- Nothing sent to a viewer says when an anonymous contract was placed
+--- (§14.32). The mysql store minted ids from the clock to the second, which
+--- went to every viewer next to the rounded deadline.
+describe('the id of a contract', function()
+    local function placedAt(make, offset)
+        math.randomseed(4242)
+        local s = make()
+        local f = fixture(s)
+        Env.time = Env.time + offset
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', anonymous = true,
+            reward = { baseline = { cash = 1000 } },
+        })
+        truthy(c)
+        return s, f, c
+    end
+
+    it('does not depend on when it was placed', function()
+        for _, make in ipairs({ newStack, mysqlStack }) do
+            local _, _, a = placedAt(make, 0)
+            local _, _, b = placedAt(make, 12345)
+            eq(a.id, b.id, 'the id changed with the clock')
+            truthy(a.id:match('^ct[a-z0-9]+$') and #a.id >= 8, 'a well-formed id: ' .. a.id)
+        end
+    end)
+
+    it('does not date a proposal either', function()
+        for _, make in ipairs({ newStack, mysqlStack }) do
+            local s, f, c = placedAt(make, 17)
+            truthy(s.contracts.accept(f.hunter, c.id, false))
+            math.randomseed(99)
+            local p = s.amendments.propose(f.creator, c.id,
+                CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+            truthy(p)
+            eq(p.expires_at % 300, 0, 'the expiry dates the proposal to the second')
+            truthy(p.expires_at >= os.time() + Config.Amendments.ProposalExpirySeconds,
+                'and never gives less time than it promises')
+            local s2, f2, c2 = placedAt(make, 17)
+            truthy(s2.contracts.accept(f2.hunter, c2.id, false))
+            Env.time = Env.time + 777
+            math.randomseed(99)
+            local p2 = s2.amendments.propose(f2.creator, c2.id,
+                CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+            eq(p2.id, p.id, 'the proposal id changed with the clock')
+        end
+    end)
+end)

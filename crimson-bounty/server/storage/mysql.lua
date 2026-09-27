@@ -546,6 +546,14 @@ function MySQLStore.setDeadline(id, expected, deadline)
     return (tonumber(affected) or 0) > 0
 end
 
+--- The reason alone. An edit that wrote back the whole row it read put back
+--- the buyout and the stake a concurrent re-clamp had just lowered.
+function MySQLStore.setReason(id, reason)
+    local affected = MySQL.update.await(
+        'UPDATE crimson_contracts SET reason = ? WHERE id = ?', { reason, id })
+    return (tonumber(affected) or 0) > 0
+end
+
 function MySQLStore.startPause(id, at)
     local affected = MySQL.update.await(
         'UPDATE crimson_contracts SET paused_since = ? WHERE id = ? AND paused_since IS NULL',

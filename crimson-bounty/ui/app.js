@@ -2062,14 +2062,19 @@
     var current = Number(contract.currentSlot) || 1;
     var spare = Math.max(0, total - current);
 
+    // A cut has to leave this much on the clock; the server refuses one
+    // that does not, so the box never offers it.
+    var keep = Number(settings().deadlineMinLeftMinutes) || 5;
+    var most = left === null ? 0 : left - keep;
+
     var options = [
       {
         label: 'Shorten the deadline',
         note: 'It ' + runsOut(left) + ' now.',
-        // Nothing to shorten without a deadline, or with a minute left.
-        skip: left === null || left <= 1,
+        // Nothing to shorten without a deadline, or without time to spare.
+        skip: most < 1,
         run: function () {
-          if (left === null || left <= 1) {
+          if (most < 1) {
             return say('There is no deadline left to shorten.');
           }
           askNumber('Shorten the deadline',
@@ -2082,11 +2087,12 @@
             },
             {
               label: 'Cut it short by (minutes)',
-              value: Math.min(30, left - 1), min: 1, max: left - 1,
+              value: Math.min(30, most), min: 1, max: most,
               confirm: untaken ? 'Shorten' : 'Propose',
               hint: function (value) {
-                if (!value || value < 1 || value > left - 1) {
-                  return 'Between 1 and ' + (left - 1) + ' minutes.';
+                if (!value || value < 1 || value > most) {
+                  return 'Between 1 and ' + most + ' minutes, leaving at least '
+                    + keep + '.';
                 }
                 return 'It would then run out in ' + durationText(left - value) + '.';
               }

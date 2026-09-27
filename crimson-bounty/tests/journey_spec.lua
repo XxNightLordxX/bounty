@@ -455,6 +455,8 @@ describe('the reason a contract gives, in every mode the operator can pick', fun
             eq(set.reasonMode, 'freetext')
             falsy(set.reasonPresets, 'a list nothing will draw is a list not to send')
             truthy(set.reasonMaxLength, 'the box has to know what it is capped at')
+            eq(set.deadlineMinLeftMinutes, 5,
+                'and the shortening box what a cut must leave')
         end)
     end)
 

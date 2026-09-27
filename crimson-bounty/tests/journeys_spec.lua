@@ -806,17 +806,42 @@ describe('moving a deadline by agreement', function()
             '"Shorten the deadline by 30 minutes" left thirty minutes in total')
     end)
 
-    it('does not let a late answer push the deadline into the past', function()
+    it('does not let a late answer cut the deadline to nothing', function()
+        -- Into the past, or to under the five minutes a cut must leave: the
+        -- time left is measured when it is agreed, not when it was asked.
         local s, f, c = held()
         local deadline = s.storage.readContract(c.id).deadline_at
         local p = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
-            { seconds = (deadline - os.time()) - 120 })
+            { seconds = (deadline - os.time()) - 400 })
         truthy(p, 'a cut that fits when it is proposed')
-        Env.advance(150)  -- and is answered after the time it would have left
+        Env.advance(150)  -- answered when it would leave only 250 seconds
         local ok, err = s.amendments.respond(f.hunter, p.id, true)
         falsy(ok, 'agreed into a deadline that had already passed')
         eq(err, CB.ERR.INVALID_INPUT)
         eq(s.storage.readContract(c.id).deadline_at, deadline, 'and it did not move')
+    end)
+
+    it('refuses, when proposed, a cut that would leave under five minutes', function()
+        -- The cut is in the store until the look for holders who did not
+        -- agree is done, where the expiry pass can see it; one leaving
+        -- seconds could end the contract before it was put back.
+        local s, f, c = held()
+        local left = s.storage.readContract(c.id).deadline_at - os.time()
+        local p, err = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+            { seconds = left - 299 })
+        falsy(p, 'a cut leaving 299 seconds')
+        eq(err, CB.ERR.INVALID_INPUT)
+        truthy(s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+            { seconds = left - 300 }), 'five minutes is enough')
+    end)
+
+    it('counts what a stopped clock has left, not the wall clock', function()
+        local s, f, c = held()
+        local deadline = s.storage.readContract(c.id).deadline_at
+        truthy(s.storage.startPause(c.id, os.time()))
+        Env.advance(deadline - os.time() + 600)  -- the wall clock is past it
+        truthy(s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+            { seconds = 600 }), 'hours are left on the stopped clock')
     end)
 
     it('refuses, when proposed, a cut longer than the time that is left', function()
@@ -840,8 +865,9 @@ describe('a proposal whose time is up', function()
         truthy(s.contracts.accept(f.hunter, c.id, false))
         truthy(s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
             { seconds = 600 }))
-        -- Past its time, and the sweep has not run yet.
-        Env.advance(Config.Amendments.ProposalExpirySeconds + 1)
+        -- Past its time (rounded up to five minutes), and the sweep has
+        -- not run yet.
+        Env.advance(Config.Amendments.ProposalExpirySeconds + 300 + 1)
         return s, f, c
     end
 

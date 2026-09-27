@@ -296,6 +296,9 @@ local function buildListing(viewerCid, page)
             -- The server refuses anything larger, and the box asking for it
             -- had no ceiling to hold the player to.
             deadlineMaxMinutes = math.floor((Config.Limits.ContractLifetimeSeconds or 0) / 60),
+            -- And the least a shortening may leave on it: the server refuses
+            -- a cut that leaves less, so the box stops short of it.
+            deadlineMinLeftMinutes = math.floor(Util.CLOCK_STEP / 60),
             informant = Config.Informant.Enabled == true and {
                 cost = Config.Informant.Cost,
                 account = Config.Informant.Account,

@@ -824,10 +824,11 @@ describe('minting an id that is already taken', function()
         })
         truthy(first)
 
-        -- The next id comes back the same, as a second instance sharing the
-        -- database would produce.
-        local real = s.storage.nextId
-        s.storage.nextId = function(prefix)
+        -- The next id comes back the same, as a collision would produce.
+        -- Contract ids are random (Util.randomId); this one comes back taken.
+        local Util = require_shared('util')
+        local real = Util.randomId
+        Util.randomId = function(prefix)
             if prefix == 'ct' then return first.id end
             return real(prefix)
         end
@@ -838,7 +839,7 @@ describe('minting an id that is already taken', function()
             targetCid = 'TARGET01', reason = 'The impostor', mode = CB.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        s.storage.nextId = real
+        Util.randomId = real
 
         falsy(second, 'a contract must not be created onto an id already in use')
         truthy(err)
@@ -857,8 +858,10 @@ describe('minting an id that is already taken', function()
         })
         truthy(first)
 
-        local real = s.storage.nextId
-        s.storage.nextId = function(prefix)
+        -- Contract ids are random (Util.randomId); this one comes back taken.
+        local Util = require_shared('util')
+        local real = Util.randomId
+        Util.randomId = function(prefix)
             if prefix == 'ct' then return first.id end
             return real(prefix)
         end
@@ -870,7 +873,7 @@ describe('minting an id that is already taken', function()
             targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        s.storage.nextId = real
+        Util.randomId = real
 
         eq(Env.players[7].PlayerData.money.cash, before,
             'nothing was taken, because nothing was created')

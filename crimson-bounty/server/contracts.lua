@@ -557,7 +557,7 @@ function Contracts.create(actor, req)
     end
     local penalty = Contracts.clampPenalty(req.penaltyAmount, penaltyEscrow)
 
-    local contractId = Util.mintId(Storage.nextId, 'ct', Storage.readContract)
+    local contractId = Util.mintId(Util.randomId, 'ct', Storage.readContract)
     if not contractId then
         -- Every id on offer belongs to a contract that already exists.
         -- Refusing costs this creator one attempt; writing would rewrite
@@ -644,6 +644,16 @@ end
 -- Acceptance
 --------------------------------------------------------------------------
 
+--- The deadline less every pause that has ended. Ending a pause moves the
+--- deadline out by exactly the time it adds to paused_ms (Storage.endPause),
+--- so this changes only when somebody moves the deadline itself.
+---@param contract table
+---@return number|nil
+local function unpausedDeadline(contract)
+    if not contract.deadline_at then return nil end
+    return contract.deadline_at - (contract.paused_ms or 0) / 1000
+end
+
 --- Why a stake cannot be taken on this contract's clock, or nil.
 ---
 --- A stake on a contract about to run out is a stake handed to the client:
@@ -717,7 +727,7 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     if timeErr then return false, timeErr end
     -- Kept by value: on the memory store `contract` is the stored row
     -- itself, and would read whatever the deadline is moved to next.
-    local checkedDeadline = contract.deadline_at
+    local checkedDeadline = unpausedDeadline(contract)
 
     -- A player may not hunt themselves, their own contract, or a contract
     -- created by another of their own characters (§13.1).
@@ -989,14 +999,17 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- (Contracts.bringDeadlineIn), so one of the two always sees the other.
     -- Only whether it moved in: the window itself was measured above, and
     -- a second passing in the awaits is not the client changing anything.
-    if stake > 0 and checkedDeadline and now.deadline_at
-        and now.deadline_at < checkedDeadline then
+    -- Net of pauses, because a pause ending in the awaits pushes the
+    -- deadline out by its length and would hide a cut no larger than that.
+    local nowDeadline = unpausedDeadline(now)
+    if stake > 0 and checkedDeadline and nowDeadline
+        and nowDeadline < checkedDeadline then
         unwind('deadline_moved')
         if advanced then
             Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'deadline_moved')
         end
         Audit.rejected('deadline_moved', actor.cid, contractId,
-            { was = checkedDeadline, now = now.deadline_at })
+            { was = checkedDeadline, now = nowDeadline })
         return false, CB.ERR.TERMS_CHANGED
     end
 
@@ -1309,9 +1322,10 @@ end
 ---@param contractId string
 ---@param rule fun(contract: table): integer the new deadline
 ---@return integer|nil deadline nil when it would not hold still
+---@param attempts integer|nil how many times to try against a moving deadline
 ---@return integer|nil was the deadline it replaced
-function Contracts.moveDeadline(contractId, rule)
-    for _ = 1, 3 do
+function Contracts.moveDeadline(contractId, rule, attempts)
+    for _ = 1, attempts or 3 do
         local current = Storage.readContract(contractId)
         if not current then return nil end
         -- By value: on the memory store `current` is the row the write moves.
@@ -1322,6 +1336,11 @@ function Contracts.moveDeadline(contractId, rule)
     end
     return nil
 end
+
+--- The least a deadline may be left with when it is brought in: one step of
+--- the clock's rounding (Util.roundClock).
+local MIN_LEFT_AFTER_CUT = Util.CLOCK_STEP
+Contracts.MIN_LEFT_AFTER_CUT = MIN_LEFT_AFTER_CUT
 
 --- Move a deadline that may come forward, but never under somebody holding
 --- the contract who did not agree to it.
@@ -1339,7 +1358,20 @@ end
 ---@return integer|nil deadline
 ---@return string|nil err
 function Contracts.bringDeadlineIn(contractId, rule, agreed)
-    local moved, was = Contracts.moveDeadline(contractId, rule)
+    -- Never to within MIN_LEFT_AFTER_CUT of running out. The cut is in the
+    -- store, where the expiry pass can see it, until the look below is done;
+    -- one that left a second on the clock could expire the contract, and
+    -- forfeit a stake, before it was put back.
+    local tooSoon = false
+    local moved, was = Contracts.moveDeadline(contractId, function(current)
+        local target = rule(current)
+        local from = current.paused_since or os.time()
+        tooSoon = current.deadline_at ~= nil and target < current.deadline_at
+            and target - from < MIN_LEFT_AFTER_CUT
+        if tooSoon then return current.deadline_at end
+        return target
+    end)
+    if tooSoon then return nil, CB.ERR.INVALID_INPUT end
     if not moved then return nil, CB.ERR.LOCKED end
     if not was or moved >= was then return moved end
 
@@ -1348,10 +1380,13 @@ function Contracts.bringDeadlineIn(contractId, rule, agreed)
         if holds(hunters[i]) and not (agreed and agreed[hunters[i].hunter_cid]) then
             -- By what it was cut, not to what it was: a pause ending in
             -- between moved it too, and that is not this call's to undo.
+            -- And until it lands: every other writer of the deadline only
+            -- ever moves it through the same guarded write, so a few more
+            -- tries is all a busy contract needs.
             local cut = was - moved
             Contracts.moveDeadline(contractId, function(current)
                 return (current.deadline_at or moved) + cut
-            end)
+            end, 10)
             return nil, CB.ERR.BAD_STATE
         end
     end
@@ -1656,8 +1691,11 @@ function Contracts.revise(actor, contractId, changes)
     if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
     if heldByAnyone(contractId) then return false, CB.ERR.BAD_STATE end
 
+    -- Held as values, never written onto `contract`: on the memory store it
+    -- is the stored row, and a change made to it here would stand even
+    -- when the deadline below is refused.
     local touched = {}
-    local deadline
+    local deadline, newReason
 
     if changes.reason ~= nil or changes.reasonPreset ~= nil then
         -- Through the same function placing one goes through, so the two
@@ -1670,7 +1708,7 @@ function Contracts.revise(actor, contractId, changes)
         -- is, so refusing the whole request over it would make the deadline
         -- it arrived with unchangeable too — which is what happened.
         if Config.Reason.Mode ~= 'off' then
-            contract.reason = reason
+            newReason = reason
             touched[#touched + 1] = 'reason'
         end
     end
@@ -1681,9 +1719,10 @@ function Contracts.revise(actor, contractId, changes)
         if not seconds then return false, CB.ERR.INVALID_INPUT end
 
         -- Never past the absolute lifetime, which is what stops a contract
-        -- holding escrow forever.
-        -- Rounded, like one set at creation: set from now, it dated the edit.
-        deadline = Util.roundClock(os.time() + seconds)
+        -- holding escrow forever. Never sooner than the least a deadline may
+        -- be brought in to (Contracts.bringDeadlineIn). Rounded, like one
+        -- set at creation: set from now, it dated the edit.
+        deadline = Util.roundClock(os.time() + math.max(seconds, MIN_LEFT_AFTER_CUT))
         if contract.expires_at and deadline > contract.expires_at then
             deadline = contract.expires_at
         end
@@ -1701,7 +1740,14 @@ function Contracts.revise(actor, contractId, changes)
             function() return deadline end)
         if not moved then return false, moveErr end
     end
-    if not Storage.writeContract(contract) then return false, CB.ERR.BAD_STATE end
+    -- The reason alone, never the row: `contract` was read before every
+    -- await above, and writing it back put back whatever changed in them —
+    -- the buyout and stake a reward withdrawal had just re-clamped, among
+    -- others.
+    if newReason ~= nil and newReason ~= contract.reason
+        and not Storage.setReason(contractId, newReason) then
+        return false, CB.ERR.BAD_STATE
+    end
 
     Audit.action('contract_revised', actor.cid, contractId,
         { changed = table.concat(touched, ',') })

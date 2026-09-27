@@ -225,6 +225,9 @@ describe('informant data', function()
     it('does not let the buyer choose who is named by choosing when', function()
         local names = {}
         for offset = 0, 2 do
+            -- The same contract id each time, as the seed is drawn from it:
+            -- ids are random (Util.randomId), so the stream is pinned.
+            math.randomseed(20240601)
             local s = newStack()
             local f = fixture(s)
             local c = s.contracts.create(f.creator, {
@@ -372,7 +375,7 @@ describe('amendments', function()
     it('expires an unanswered proposal', function()
         local s, f, c = seeded()
         local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 60 })
-        Env.advance(Config.Amendments.ProposalExpirySeconds + 10)
+        Env.advance(Config.Amendments.ProposalExpirySeconds + 300 + 10)  -- rounded up to 5 min
         local ok, err, outcome = s.amendments.respond(f.hunter, proposal.id, true)
         falsy(ok)
         eq(outcome, 'expired')
@@ -517,7 +520,7 @@ describe('amendment payloads are bounded', function()
         local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
         truthy(proposal)
 
-        Env.advance(Config.Amendments.ProposalExpirySeconds + 10)
+        Env.advance(Config.Amendments.ProposalExpirySeconds + 300 + 10)  -- rounded up to 5 min
         eq(s.amendments.expire(), 1, 'the open proposal expires')
         eq(s.amendments.expire(), 0, 'and the tracking set is then empty')
         eq(s.storage.readAmendment(proposal.id).outcome, 'expired')
@@ -1463,7 +1466,7 @@ describe('open amendments', function()
 
     it('stops showing one that expired', function()
         local s, f, c, p = proposed()
-        Env.time = Env.time + Config.Amendments.ProposalExpirySeconds + 1
+        Env.time = Env.time + Config.Amendments.ProposalExpirySeconds + 300 + 1  -- rounded up
         eq(s.amendments.expire(), 1)
         eq(#s.amendments.openFor(f.creator, c.id), 0)
     end)
