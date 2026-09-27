@@ -5034,6 +5034,85 @@ async function main() {
       });
     })();
 
+    /* A creator could only ever reach the first operative's thread: the
+       page opened threads[0] and dropped the rest. */
+    await (async function everyOperativeIsReachable() {
+      const two = Object.assign({}, own, { hunters: [{ alias: 'Operative #1' }, { alias: 'Operative #2' }],
+        huntersActive: 2 });
+      const app = boot({
+        mine: { ok: true, data: { created: [two], accepted: [], onMe: [] } },
+        threads: { ok: true, data: [
+          { handle: 'h-one', alias: 'Operative #1' },
+          { handle: 'h-two', alias: 'Operative #2', name: 'Rook Ash' }
+        ] },
+        readThread: { ok: true, data: [] }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Threads');
+      await settle(); await settle();
+
+      it('asks which operative when there is more than one', function () {
+        const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+          .map(function (n) { return n.textContent; });
+        truthy(labels.indexOf('Operative #1') !== -1 && labels.indexOf('Operative #2') !== -1,
+          'only the first operative could ever be reached: ' + labels.join(' | '));
+        eq(app.sent.filter(function (m) { return m.name === 'readThread'; }).length, 0,
+          'and it opened one without asking');
+      });
+
+      click(app, 'Operative #2');
+      await settle(); await settle();
+
+      it('opens the thread that was picked', function () {
+        const reads = app.sent.filter(function (m) { return m.name === 'readThread'; });
+        eq(reads.length, 1);
+        eq(reads[0].body.thread, 'h-two');
+      });
+
+      it('says who the thread is with', function () {
+        truthy(app.view.textContent.indexOf('With Operative #2 (Rook Ash)') !== -1,
+          'every message is signed but the thread was never named: '
+          + app.view.textContent);
+      });
+    })();
+
+    await (async function oneOperativeOpensStraightIn() {
+      const app = boot({
+        mine: { ok: true, data: { created: [own], accepted: [], onMe: [] } },
+        threads: { ok: true, data: [{ handle: 'h-one', alias: 'Grey' }] },
+        readThread: { ok: true, data: [] }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Threads');
+      await settle(); await settle();
+      it('does not ask which of one', function () {
+        eq(app.sent.filter(function (m) { return m.name === 'readThread'; }).length, 1);
+      });
+    })();
+
+    /* With the relay switched off, every message would be refused. */
+    await (async function noMessagingWhereThereIsNone() {
+      const list = JSON.parse(JSON.stringify(BOARD));
+      list.data.settings.relay = false;
+      const hunted = Object.assign({}, own, { role: 'hunter', hunters: undefined });
+      const app = boot({ list: list,
+        mine: { ok: true, data: { created: [own], accepted: [hunted], onMe: [] } } });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      it('draws neither Message nor Threads', function () {
+        const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+          .map(function (n) { return n.textContent; });
+        falsy(labels.indexOf('Message') !== -1, labels.join(' | '));
+        falsy(labels.indexOf('Threads') !== -1, labels.join(' | '));
+        truthy(labels.indexOf('Verify kill') !== -1, 'the rest of the card is still there');
+      });
+    })();
+
     await (async function threadsAnswersTheTap() {
       let answer;
       const held = new Promise(function (resolve) { answer = resolve; });

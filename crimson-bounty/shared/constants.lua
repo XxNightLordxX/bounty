@@ -152,6 +152,17 @@ CB.ERR = {
     --- BAD_STATE, "Not right now." — which reads as something to wait out,
     --- on a contract that is already in their Mine tab.
     ALREADY_HOLDING      = 'already_holding',
+    --- This server does not run the masked relay (Config.Relay.Enabled).
+    --- It was read in one place, the send, and answered BAD_STATE — "Not
+    --- right now." — on a feature that was never going to work, while the
+    --- rest of messaging, calls included, carried on regardless.
+    RELAY_OFF            = 'relay_off',
+    --- This server does not place calls through the app.
+    CALLS_OFF            = 'calls_off',
+    --- A call would show a number the other party paid to keep hidden, and
+    --- this phone build cannot mask it, so it is not placed (§11.3). It was
+    --- BAD_STATE, which says nothing about why or what to do instead.
+    CALL_UNMASKED        = 'call_unmasked',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',

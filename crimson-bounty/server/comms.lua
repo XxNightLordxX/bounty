@@ -126,7 +126,7 @@ end
 ---@return boolean ok
 ---@return string|nil err
 function Comms.send(actor, contractId, threadHandle, rawBody)
-    if not Config.Relay.Enabled then return false, CB.ERR.BAD_STATE end
+    if not Config.Relay.Enabled then return false, CB.ERR.RELAY_OFF end
 
     local ctx, err = Comms.context(actor, contractId, threadHandle)
     if not ctx then return false, err end
@@ -164,6 +164,11 @@ end
 ---@return table[]|nil messages
 ---@return string|nil err
 function Comms.read(actor, contractId, threadHandle)
+    -- The switch applies to the whole relay, not only to sending. It was
+    -- read by send() alone, so with it off the thread still opened, with a
+    -- compose box whose every message was refused.
+    if not Config.Relay.Enabled then return nil, CB.ERR.RELAY_OFF end
+
     local ctx, err = Comms.context(actor, contractId, threadHandle)
     if not ctx then return nil, err end
 
@@ -182,6 +187,8 @@ end
 
 --- Threads visible to the caller, for the app's inbox.
 function Comms.threads(actor, contractId)
+    if not Config.Relay.Enabled then return nil, CB.ERR.RELAY_OFF end
+
     local contract = Storage.readContract(Util.toId(contractId) or '')
     if not contract then return {} end
 
@@ -217,7 +224,11 @@ end
 ---@return boolean ok
 ---@return string|nil err
 function Comms.requestCall(actor, contractId, threadHandle)
-    if not Config.Relay.AllowMaskedCalls then return false, CB.ERR.BAD_STATE end
+    -- Calls are part of the relay. With the relay switched off they used to
+    -- be placed anyway: only AllowMaskedCalls was read here, so a server
+    -- owner who turned messaging off still had players' phones ringing.
+    if not Config.Relay.Enabled then return false, CB.ERR.RELAY_OFF end
+    if not Config.Relay.AllowMaskedCalls then return false, CB.ERR.CALLS_OFF end
 
     local ctx, err = Comms.context(actor, contractId, threadHandle)
     if not ctx then return false, err end
@@ -231,7 +242,7 @@ function Comms.requestCall(actor, contractId, threadHandle)
     end
 
     if otherAnon and not Comms.maskingAvailable() then
-        return false, CB.ERR.BAD_STATE
+        return false, CB.ERR.CALL_UNMASKED
     end
 
     local recipient = ctx.role == 'creator' and ctx.hunterCid or ctx.contract.creator_cid

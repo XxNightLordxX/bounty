@@ -233,6 +233,10 @@ local function buildListing(viewerCid, page)
             -- Whether the app should offer a call at all. Off, the button
             -- is not drawn rather than drawn and refused.
             calls = Config.Relay.Enabled and Config.Relay.AllowMaskedCalls,
+            -- Whether messaging exists at all. Absent, the page drew Message
+            -- and Threads on a server with the relay switched off, and every
+            -- message was refused.
+            relay = Config.Relay.Enabled == true,
             -- What buying informant data costs, and whether it is offered
             -- at all. The app was asking a player to spend money without
             -- telling them how much, on a purchase that is deliberately

@@ -386,6 +386,10 @@
     self_accept: 'You cannot take your own contract.',
     same_account: 'Not on your own people.',
     already_holding: 'You are already on this contract. It is under Mine.',
+    relay_off: 'This server does not run messages through the app.',
+    calls_off: 'This server does not place calls through the app.',
+    call_unmasked: 'They are staying anonymous, and a call from this phone '
+      + 'would show their number. Send a message instead.',
     limit_reached: 'You are holding too many contracts.',
     /* A different rule entirely, and it used to share the message above —
        which told a hunter holding nothing that they were holding too much,
@@ -1075,9 +1079,14 @@
 
       // Opening a thread is a round trip that changes nothing on screen
       // until it lands, so the button read as dead and got tapped again.
-      row.appendChild(actionButton('ghost', 'Message',
-        'thread:' + contract.id, 'Opening\u2026',
-        function () { return openThread(contract, null); }));
+      //
+      // Not drawn at all on a server with the relay switched off: every
+      // message sent from it would be refused.
+      if (settings().relay !== false) {
+        row.appendChild(actionButton('ghost', 'Message',
+          'thread:' + contract.id, 'Opening\u2026',
+          function () { return openThread(contract, null); }));
+      }
 
       var quit = el('button', 'ghost', 'Abandon');
       quit.onclick = function () {
@@ -1136,7 +1145,7 @@
 
       // Same shape, same reason: {} has no .length, so this read as "no
       // hunters" whether or not there were any.
-      if (asList(contract.hunters).length) {
+      if (asList(contract.hunters).length && settings().relay !== false) {
         row.appendChild(actionButton('ghost', 'Threads',
           'threads:' + contract.id, 'Opening\u2026',
           function () { return openThreads(contract); }));
@@ -2252,13 +2261,36 @@
       });
   }
 
-  // A creator picks which operative to talk to; a hunter has only one thread.
+  /* A creator picks which operative to talk to; a hunter has only one
+     thread.
+
+     The picking is the part that was missing. A competitive contract has a
+     thread per operative and the server hands back a handle for each, and
+     this opened the first and dropped the rest — so on a contract with three
+     operatives, two of them could write to the client and the client had no
+     way into either thread. Nothing said so: the first one opened normally,
+     and the other messages simply went unanswered. */
   function openThreads(contract) {
     return post('threads', { id: contract.id }).then(function (r) {
       if (!r.ok) return fail(r);
       var threads = asList(r.data);
       if (!threads.length) return say('No operative to talk to yet.');
-      openThread(contract, threads[0]);
+      if (threads.length === 1) { return openThread(contract, threads[0]); }
+
+      state.dialog = {
+        kind: 'choice',
+        question: 'Which operative?',
+        detail: threads.length + ' operatives are on this contract. Each has '
+          + 'a thread of their own, and none of them can see the others.',
+        options: threads.map(function (thread) {
+          return {
+            label: thread.alias || 'Operative',
+            note: thread.name || null,
+            run: function () { openThread(contract, thread); }
+          };
+        })
+      };
+      render();
     });
   }
 
@@ -2481,6 +2513,16 @@
     var back = el('button', 'ghost', 'Back');
     back.onclick = function () { state.tab = 'mine'; render(); };
     row.appendChild(back);
+
+    /* Who this thread is with. Every message is signed with an alias, but
+       the thread itself was never named — so a creator with several
+       operatives could not tell which of them they were writing to. */
+    var withWhom = t.thread && t.thread.alias
+      ? t.thread.alias + (t.thread.name ? ' (' + t.thread.name + ')' : '')
+      : (t.contract.role === 'hunter' ? 'The client' : null);
+    if (withWhom) {
+      row.appendChild(el('div', 'hint', 'With ' + withWhom));
+    }
 
     // The server has always had a call path and nothing reached it, so the
     // whole feature was unreachable from the phone.
