@@ -424,7 +424,7 @@ describe('money owed to a player is reachable only by them', function()
         Env.players[3]._inventoryFull = true
         s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
         eq(#s.storage.readPending('HUNTER01'), #names, 'every stack owed')
-        truthy(s.escrow.owe('HUNTER01', c.id, 4000, 'bank', 'test'))
+        truthy(s.bailout.owe('HUNTER01', c.id, 4000, 'bank', 'test'))
         return s, f, c
     end
 

@@ -18,6 +18,8 @@ local function mysqlStack()
     s.contracts.init({ storage = store, escrow = s.escrow, identity = s.identity,
         audit = s.audit, notify = s.notify, progression = s.progression, death = s.death })
     s.ledger.init(store)
+    s.bailout.init({ storage = store, identity = s.identity,
+        contracts = s.contracts, escrow = s.escrow, audit = s.audit, notify = s.notify })
     s.death.init({ storage = store, identity = s.identity, contracts = s.contracts, audit = s.audit })
     s.kidnap.init({ storage = store, identity = s.identity, contracts = s.contracts,
         audit = s.audit, notify = s.notify, ledger = s.ledger })
@@ -284,7 +286,7 @@ describe('owed goods that will not fit, with money queued behind them', function
             truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
             eq(#s.storage.readPending('HUNTER01'), #names, 'every stack owed')
             Env.advance(1)
-            truthy(s.escrow.owe('HUNTER01', c.id, 4000, 'bank', 'test'))
+            truthy(s.bailout.owe('HUNTER01', c.id, 4000, 'bank', 'test'))
 
             local before = Env.players[3].PlayerData.money.bank
             for _ = 1, 3 do s.escrow.retryPending('HUNTER01') end
@@ -395,7 +397,7 @@ describe('two retry passes for one player at once', function()
             calls = calls + 1
             if calls == 2 then
                 -- Answered before this lands: a buyout premium owed to them.
-                truthy(s.escrow.owe('HUNTER01', c.id, 4000, 'bank', 'test'))
+                truthy(s.bailout.owe('HUNTER01', c.id, 4000, 'bank', 'test'))
             end
             return answer
         end

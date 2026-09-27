@@ -1097,43 +1097,6 @@ function Escrow.goodsIn(contractId, filter)
     return out
 end
 
---- Put money on the books for one named player, as a real escrow line the
---- login retry delivers (§9.3).
----
---- Its own portion and an explicit owner, so no general release sweeps it,
---- no stake settlement names it, and a memory-mode shutdown hands it over by
---- name. The id is minted and confirmed unused first: escrow is written with
---- an upsert, so an id already taken would land on top of that line.
----@param cid string who is owed
----@param contractId string
----@param amount integer
----@param account string 'cash' | 'bank'
----@param reason string
----@return string|nil lineId nil when no id could be minted
-function Escrow.owe(cid, contractId, amount, account, reason)
-    forget()
-    local lineId = Util.mintId(Storage.nextId, 'owe', Storage.readEscrowLine)
-    if not lineId then
-        Audit.financial('owe_id_exhausted', cid, contractId, { amount = amount })
-        return nil
-    end
-
-    Storage.writeEscrow(contractId, { {
-        id = lineId,
-        contract_id = contractId,
-        slot = 0,
-        portion = CB.PORTION.OWED,
-        owed_to = cid,
-        source = account == 'cash' and 'cash' or 'bank',
-        amount = amount,
-        state = CB.ESCROW_STATE.HELD,
-    } })
-    Storage.queuePending(cid, contractId, lineId)
-    Escrow.noteWaiting(cid, true)
-    Audit.financial('owed_queued', cid, contractId, { amount = amount, reason = reason })
-    return lineId
-end
-
 --- Undo a write-ahead owed line whose stake was never lowered: nothing is
 --- owed, so it is emptied and closed against its would-be recipient.
 local function voidSplit(line)
