@@ -1647,7 +1647,8 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment, opts)
 
         contract.resolved_at = os.time()
         contract.resolution = 'completed'
-        Storage.writeContract(contract)
+        Storage.setContractFields(contractId,
+            { resolved_at = contract.resolved_at, resolution = contract.resolution })
         Contracts.transition(contractId, CB.STATE.COMPLETING, CB.STATE.COMPLETED, 'completed', SETTLING)
     else
         -- Slots remain: the contract goes back to accepted and stays live.
@@ -2118,7 +2119,10 @@ function Contracts.reclampToEscrow(contractId, actorCid)
         end
     end
 
-    if changed then Storage.writeContract(contract) end
+    if changed then
+        Storage.setContractFields(contractId, { bailout_amount = contract.bailout_amount,
+            penalty_amount = contract.penalty_amount })
+    end
 end
 
 ---@param opts table|nil { forfeit = boolean } to say whether an expiry is
@@ -2149,7 +2153,8 @@ function Contracts.resolve(contractId, terminal, recipientCid, filter, reason, o
 
     contract.resolved_at = os.time()
     contract.resolution = reason
-    Storage.writeContract(contract)
+    Storage.setContractFields(contractId,
+        { resolved_at = contract.resolved_at, resolution = contract.resolution })
 
     -- A target who outlived the contract has something to show for it.
     if Progression and (terminal == CB.STATE.BAILED_OUT or terminal == CB.STATE.EXPIRED) then
@@ -2272,7 +2277,8 @@ function Contracts.recoverEnded(contractId)
         releaseUntouched(contract, false)
         contract.resolved_at = contract.resolved_at or os.time()
         contract.resolution = contract.resolution or 'completed'
-        Storage.writeContract(contract)
+        Storage.setContractFields(contractId,
+            { resolved_at = contract.resolved_at, resolution = contract.resolution })
         Contracts.transition(contractId, CB.STATE.COMPLETING, CB.STATE.COMPLETED,
             'completed_on_recovery', SETTLING)
         if Contracts.onResolved then Contracts.onResolved(contractId) end

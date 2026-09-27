@@ -196,6 +196,8 @@ function Amendments.improve(actor, contractId, kind, payload)
 end
 
 improveUnlocked = function(actor, contractId, kind, payload)
+    -- What this call changes, and only that, is written (setContractFields).
+    local fields = {}
 
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
@@ -306,6 +308,7 @@ improveUnlocked = function(actor, contractId, kind, payload)
         if not open then return false, movedErr end
 
         contract.bonus_percent = percent
+        fields.bonus_percent = percent
 
     elseif kind == CB.AMENDMENT.LOWER_PENALTY then
         local amount = Util.toCount(payload.amount, Config.MaxContractValue)
@@ -377,12 +380,13 @@ improveUnlocked = function(actor, contractId, kind, payload)
         end
 
         contract.penalty_amount = amount
+        fields.penalty_amount = amount
 
     else
         return false, CB.ERR.INVALID_INPUT
     end
 
-    Storage.writeContract(contract)
+    if next(fields) then Storage.setContractFields(contractId, fields) end
     Audit.action('contract_improved', actor.cid, contractId, { kind = kind })
 
     local people = participants(contract)
@@ -805,6 +809,7 @@ function Amendments.apply(proposal)
 end
 
 applyUnlocked = function(proposal)
+    local fields = {}
     local contract = Storage.readContract(proposal.contract_id)
     if not contract then return false, CB.ERR.NOT_FOUND end
     local kind, payload = proposal.kind, proposal.payload
@@ -854,11 +859,13 @@ applyUnlocked = function(proposal)
             if active > 1 then return false, CB.ERR.BAD_STATE end
         end
         contract.mode = mode
+        fields.mode = mode
 
     elseif kind == CB.AMENDMENT.CHANGE_REASON then
         local reason = Util.sanitizeText(payload.reason, Config.Reason.MaxLength)
         if not reason then return false, CB.ERR.INVALID_INPUT end
         contract.reason = reason
+        fields.reason = reason
 
     elseif kind == CB.AMENDMENT.RAISE_PENALTY or kind == CB.AMENDMENT.LOWER_PENALTY then
         -- A penalty is only real if it was staked (§3.6). Raising the figure
@@ -875,6 +882,7 @@ applyUnlocked = function(proposal)
         -- what the next hunter is asked to put up.
         contract.penalty_amount = Contracts.clampPenalty(payload.amount,
             Escrow.moneyValue(proposal.contract_id))
+        fields.penalty_amount = contract.penalty_amount
 
     elseif kind == CB.AMENDMENT.CANCEL or kind == CB.AMENDMENT.WITHDRAW then
         -- Agreed cancellation: escrow returns to the creator in full.
@@ -929,7 +937,7 @@ applyUnlocked = function(proposal)
         return false, CB.ERR.INVALID_INPUT
     end
 
-    Storage.writeContract(contract)
+    if next(fields) then Storage.setContractFields(proposal.contract_id, fields) end
 
     -- The buyout premium and the failure stake are both multiples of the
     -- escrow, and reduce_reward just took a slot out of it. Re-priced for

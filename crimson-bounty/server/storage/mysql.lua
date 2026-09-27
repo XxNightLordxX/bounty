@@ -552,6 +552,31 @@ end
 
 --- The reason alone. An edit that wrote back the whole row it read put back
 --- the buyout and the stake a concurrent re-clamp had just lowered.
+--- Write only the named fields of a contract. Every other writer used to
+--- read the row, await, and write the whole copy back, undoing whatever
+--- changed in between: a re-clamp of the buyout and stake, a bonus raise,
+--- an ending's resolution. Only these columns, and never the state, the
+--- slot counters, the clock or the buyout queue, which have their own.
+-- One literal statement per column: no SQL is ever built from a name.
+local SETTABLE = {
+    reason = 'UPDATE crimson_contracts SET reason = ? WHERE id = ?',
+    mode = 'UPDATE crimson_contracts SET mode = ? WHERE id = ?',
+    bonus_percent = 'UPDATE crimson_contracts SET bonus_percent = ? WHERE id = ?',
+    bailout_amount = 'UPDATE crimson_contracts SET bailout_amount = ? WHERE id = ?',
+    penalty_amount = 'UPDATE crimson_contracts SET penalty_amount = ? WHERE id = ?',
+    resolved_at = 'UPDATE crimson_contracts SET resolved_at = ? WHERE id = ?',
+    resolution = 'UPDATE crimson_contracts SET resolution = ? WHERE id = ?',
+}
+function MySQLStore.setContractFields(id, fields)
+    for k in pairs(fields) do
+        if not SETTABLE[k] then error('setContractFields: not a settable field: ' .. tostring(k)) end
+    end
+    for column, sql in pairs(SETTABLE) do
+        if fields[column] ~= nil then MySQL.update.await(sql, { fields[column], id }) end
+    end
+    return true
+end
+
 function MySQLStore.setReason(id, reason)
     local affected = MySQL.update.await(
         'UPDATE crimson_contracts SET reason = ? WHERE id = ?', { reason, id })

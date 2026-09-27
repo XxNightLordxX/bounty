@@ -117,6 +117,23 @@ end
 
 --- Set a contract's reason and nothing else. An edit writing back the whole
 --- row it read would put back every column somebody else changed meanwhile.
+--- Write only the named fields of a contract. Every other writer used to
+--- read the row, await, and write the whole copy back, undoing whatever
+--- changed in between: a re-clamp of the buyout and stake, a bonus raise,
+--- an ending's resolution. Only these columns, and never the state, the
+--- slot counters, the clock or the buyout queue, which have their own.
+local SETTABLE = { reason = true, mode = true, bonus_percent = true, bailout_amount = true,
+    penalty_amount = true, resolved_at = true, resolution = true }
+function Memory.setContractFields(id, fields)
+    local c = db.contracts[id]
+    if not c then return false end
+    for k, v in pairs(fields) do
+        if not SETTABLE[k] then error('setContractFields: not a settable field: ' .. tostring(k)) end
+        c[k] = v
+    end
+    return true
+end
+
 function Memory.setReason(id, reason)
     local c = db.contracts[id]
     if not c then return false end

@@ -1448,8 +1448,8 @@ describe('proposals while a hunter is part-way on', function()
 
     it('closes a solo proposal that was busy, so it can be made again', function()
         local s, f, c = staked(newStack, 2000)
-        local real, fired, p = s.storage.writeContract, false, nil
-        s.storage.writeContract = function(...)
+        local real, fired, p = s.storage.setContractFields, false, nil
+        s.storage.setContractFields = function(...)
             if not fired then
                 fired = true
                 p = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.RAISE_PENALTY, { amount = 3000 })
@@ -1457,7 +1457,7 @@ describe('proposals while a hunter is part-way on', function()
             return real(...)
         end
         truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 1000 }))
-        s.storage.writeContract = real
+        s.storage.setContractFields = real
         truthy(p, 'the proposal was never made')
         eq(p.outcome, 'failed')
         eq(p.error, CB.ERR.BUSY)
@@ -1503,4 +1503,36 @@ describe('RACE F20: the tick settles an instant buyout alongside buy()', functio
     end end
     it('while buy() is settling', run('during'))
     it('after buy() has settled', run('after'))
+end)
+
+describe('RACE F21: a write-back of a stale contract after a re-clamp', function()
+    local function run(make) return function()
+        local s = make()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CB.MODE.COMPETITIVE, bailoutAmount = 999999, penaltyAmount = 999999,
+            reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } } })
+        local bonus
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CB.PORTION.BONUS then bonus = l.id end
+        end
+        local real, fired, clamped = s.storage.readEscrow, false, nil
+        s.storage.readEscrow = function(...)
+            if not fired then
+                fired = true
+                truthy(s.contracts.withdrawReward(f.creator, c.id, { bonus }))
+                clamped = s.storage.readContract(c.id).bailout_amount
+            end
+            return real(...)
+        end
+        -- The client extends the deadline; improve read the row first.
+        s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 10 })
+        s.storage.readEscrow = real
+        truthy(fired)
+        eq(s.storage.readContract(c.id).bailout_amount, clamped,
+            'a stale copy put the buyout ceiling back')
+    end end
+    it('keeps the re-clamp (copying)', run(newCopyingStack))
+    it('keeps the re-clamp (mysql)', run(mysqlStack))
 end)
