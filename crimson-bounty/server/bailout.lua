@@ -81,7 +81,7 @@ end
 --- Pay the premium and close the contract.
 ---@return boolean ok
 ---@return string|nil err
-local settleUnlocked
+local settleUnlocked, deliver
 
 function Bailout.buy(actor, contractId)
     contractId = Util.toId(contractId)
@@ -165,7 +165,7 @@ function Bailout.buy(actor, contractId)
     -- settle clears the record when it is done.
     -- Under the settle lock from the record on, so the tick cannot settle
     -- it too in between (Bailout.settle).
-    return Contracts.serialized({ 'settle:' .. tostring(contractId) }, function()
+    local settled, why = Contracts.serialized({ 'settle:' .. tostring(contractId) }, function()
         Storage.setBailoutQueue(contract.id, {
             bailout_queued_at = os.time() - (Config.Bailout.ProcessingDelaySeconds or 0),
             bailout_paid_by = actor.cid,
@@ -175,6 +175,15 @@ function Bailout.buy(actor, contractId)
         })
         return settleUnlocked(contractId, amount, actor.cid, account)
     end)
+    -- Another settle of this contract was running: nothing of this buyout
+    -- was recorded, so the charge goes back rather than vanish.
+    if not settled and why == CB.ERR.BUSY then
+        if not deliver(actor.cid, contractId, amount, account, 'bailout_refund') then
+            Audit.financial('bailout_refund_stranded', actor.cid, contractId,
+                { amount = amount, account = account, reason = why })
+        end
+    end
+    return settled, why
 end
 
 --- Put money into a player's hands, or on the books for them.
@@ -190,7 +199,7 @@ end
 --- simply stopped existing, with an audit row the player cannot see as its
 --- only trace. Util.mintId exists for the documented case of two server
 --- instances sharing one database, where ids collide as a matter of course.
-local function deliver(cid, contractId, amount, account, reason)
+deliver = function(cid, contractId, amount, account, reason)
     local who = Identity.byCitizenId(cid)
     if who and Util.credit(who.player, account, amount) then return true end
     return Bailout.owe(cid, contractId, amount, account, reason) ~= nil

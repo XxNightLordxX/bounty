@@ -108,7 +108,7 @@ and the listing is flagged. Nobody hunts a cop by accident.
 
 ## What stops it being abused
 
-The full reasoning is in `docs/bounty-hunter-app-spec.md` §14. In short:
+The full reasoning is in `../docs/bounty-hunter-app-spec.md` (in the repository) §14. In short:
 
 - **Money cannot be duplicated.** Every escrow line settles at most once,
   guarded by a compare-and-set. Every release path shares one function.
@@ -138,7 +138,9 @@ The full reasoning is in `docs/bounty-hunter-app-spec.md` §14. In short:
 ## Staff commands
 
 All work from the server console. In game they need the `crimson.admin` ACE
-(`add_ace group.admin crimson.admin allow`) or one of `Config.Admin.ExtraAces`.
+(`add_ace group.admin crimson.admin allow`). `Config.Admin.ExtraAces` also opens
+the read-only ones (`cb-diag`, `cb-timeline`, `cb-stuck`); `cb-void` and
+`cb-settle` always need `crimson.admin` itself, and `cb-whois` `crimson.identity`.
 
 | Command | What it does |
 |---|---|
@@ -190,5 +192,5 @@ Five kinds of check, because each catches what the others cannot:
   Playwright is not installed.
 
 **What it cannot prove:** behaviour against the real `ox_inventory`,
-`lb-phone` and `qbx_core` builds. Work through `docs/in-game-checklist.md` on
+`lb-phone` and `qbx_core` builds. Work through `../docs/in-game-checklist.md` (in the repository, next to this resource folder) on
 a test server before going live.

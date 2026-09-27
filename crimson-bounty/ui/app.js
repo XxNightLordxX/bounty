@@ -1269,6 +1269,12 @@
       var progress = state.progress[contract.id] || contract.kidnapProgress;
       var panel = proposalPanel(contract);
       if (progress) { row.appendChild(countdown(progress)); }
+      // A handover already running when the page opened (reopened, or
+      // reloaded mid-countdown) is followed too: only arming one started the
+      // poll, so the bar froze at the snapshot it was drawn from.
+      if (contract.kidnapProgress && countdownFor !== contract.id) {
+        pollCountdown(contract.id);
+      }
       if (panel) { row.appendChild(panel); }
       return withMore();
     }
@@ -1704,14 +1710,23 @@
     stopCountdown();
     countdownFor = id;
 
-    var deadline = Date.now() + 120000;
+    // Long enough for the server's own countdown and its grace, read from
+    // the progress it sends; two minutes when there is none yet.
+    function allowance() {
+      var p = state.progress[id];
+      var ms = p && Number(p.required) > 0
+        ? Number(p.required) * 1000 + (Number(p.graceTotal) || 0) + 30000 : 120000;
+      return Date.now() + ms;
+    }
+    var deadline = allowance();
     var timer;
 
     timer = countdownTimer = setInterval(function () {
       if (Date.now() > deadline) {
         stopCountdown();
         delete state.progress[id];
-        redraw();
+        say('Lost track of the handover. Your contracts show how it ended.');
+        refresh();
         return;
       }
 
@@ -1751,6 +1766,7 @@
         // Keep the answer. Rendering from the projection's snapshot draws
         // the same frozen bar every second no matter how often we poll.
         state.progress[id] = r.data;
+        deadline = allowance();
 
         // Coalesced, and only where the bar is actually on screen. The
         // countdown is drawn on Mine and On me; redrawing the Place form
@@ -2032,6 +2048,19 @@
     if (minutes === null || minutes === undefined) { return 'has no deadline'; }
     if (minutes <= 0) { return 'has run out'; }
     return 'runs out in ' + durationText(minutes);
+  }
+
+  /* "3 days ago", from a server time in seconds; null without one. */
+  function agoText(at) {
+    var t = Number(at);
+    if (!t) { return null; }
+    var minutes = Math.floor((Date.now() / 1000 - t) / 60);
+    if (minutes < 1) { return 'Just now'; }
+    if (minutes < 60) { return minutes + ' min ago'; }
+    var hours = Math.floor(minutes / 60);
+    if (hours < 24) { return hours + 'h ago'; }
+    var days = Math.floor(hours / 24);
+    return days + (days === 1 ? ' day ago' : ' days ago');
   }
 
   function durationText(minutes) {
@@ -2862,6 +2891,9 @@
       meta.appendChild(chip(row.role, 'role', ROLE_ICONS[row.role] || 'i-user'));
       meta.appendChild(chip(row.fulfilment === 'kidnapping' ? 'Delivered alive' : 'Eliminated',
         'hot', row.fulfilment === 'kidnapping' ? 'i-usercheck' : 'i-crosshair'));
+      // When it closed. Entries on the same target read alike without it.
+      var closedAgo = agoText(row.resolved_at);
+      if (closedAgo) { meta.appendChild(chip(closedAgo, 'plain', 'i-clock')); }
       node.appendChild(meta);
       if (row.photo_ref) {
         /* Bounded, and it says what it is while it loads.

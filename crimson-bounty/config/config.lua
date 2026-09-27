@@ -721,8 +721,10 @@ Config.Admin = {
     --- finds out why their app is empty and which is the one thing they
     --- need before they have set anything up.
     ---
-    --- Anything here is accepted as well. `command` is the ACE most admin
-    --- groups already carry.
+    --- Anything here is accepted as well, for the read-only commands only
+    --- (diag, timeline, stuck). Void, settle and whois move money or unmask
+    --- an anonymous party, so they need the named ACE itself. `command` is
+    --- the ACE most admin groups already carry.
     ExtraAces = { 'command' },
 
     --- Command names, without the leading slash.

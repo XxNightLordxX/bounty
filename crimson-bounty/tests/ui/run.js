@@ -491,6 +491,11 @@ async function main() {
     const tabs = app.document.querySelectorAll('.tab');
     tabs.filter(function (t) { return t.dataset.tab === 'ledger'; })[0].onclick();
 
+    it('says when each entry closed', function () {
+      truthy(/ago/.test(app.view.textContent),
+        'two entries on the same target read exactly alike: ' + app.view.textContent);
+    });
+
     it('shows the standing and the counters', function () {
       const text = app.view.textContent;
       truthy(text.indexOf('Known') !== -1, 'standing: ' + text);
@@ -4242,6 +4247,20 @@ async function main() {
       // elapsed reaches 30 on the third tick, which is >= required.
       falsy(running.view.textContent.indexOf('undefined') !== -1,
         'the finished countdown rendered a hole: ' + running.view.textContent);
+    });
+
+    /* A handover already running when the page opened: the bar has to be
+       followed, not drawn once from the snapshot and left frozen. */
+    const reopened = await (async function () {
+      const running2 = JSON.parse(JSON.stringify(HELD));
+      running2.kidnapProgress = { elapsed: 5, required: 30 };
+      return onMine({ mine: { ok: true, data: { created: [], accepted: [running2], onMe: [] } },
+        kidnapProgress: { ok: true, data: { elapsed: 9, required: 30 } } });
+    })();
+
+    it('follows a handover that was already running when the page opened', function () {
+      truthy(reopened.timers.some(function (t) { return t.repeating && t.ms === 1000; }),
+        'the bar froze at the snapshot it was drawn from');
     });
 
     const refusedPoll = await onMine({

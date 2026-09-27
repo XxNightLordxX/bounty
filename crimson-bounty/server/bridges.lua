@@ -430,9 +430,12 @@ function Bridges.installCommands(modules)
     --- Wrap a command in its permission check. A caller without the ACE is
     --- told the same thing whether or not the contract exists, so the
     --- command cannot be used to probe for ids.
-    local function command(name, ace, fn)
+    ---@param strict boolean|nil only the named ACE: Config.Admin.ExtraAces
+    --- opens the read-only commands, never one that moves money or unmasks
+    --- an anonymous party.
+    local function command(name, ace, fn, strict)
         RegisterCommand(name, function(src, args)
-            if not Admin.allowed(src, ace) then
+            if not Admin.allowed(src, ace, strict) then
                 reply(src, Admin.howToAuthorise(ace))
                 return
             end
@@ -483,7 +486,7 @@ function Bridges.installCommands(modules)
         local ok, err = Admin.void(src, args[1], reason)
         reply(src, ok and 'Contract voided; escrow returned to the creator.'
                        or ('Could not void it: ' .. tostring(err)))
-    end)
+    end, true)
 
     command(names.stuck, Config.Admin.Ace, function(src)
         local lines = Admin.interrupted()
@@ -520,7 +523,7 @@ function Bridges.installCommands(modules)
     command(names.settle, Config.Admin.Ace, function(src, args)
         local ok, err = Admin.settleLine(src, args[1], args[2])
         reply(src, ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err)))
-    end)
+    end, true)
 
     --- What /cleanse says for each refusal, where the app's words do not
     --- reach because the app is closed to the player running it.
@@ -620,7 +623,7 @@ function Bridges.installCommands(modules)
                 h.alias or 'operative', h.cid, h.name,
                 h.anonymous and '  (listed anonymously)' or ''))
         end
-    end)
+    end, true)
 
     return true
 end

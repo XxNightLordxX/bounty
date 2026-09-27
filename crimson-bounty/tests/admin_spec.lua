@@ -860,3 +860,19 @@ describe('the diagnosis and what the app itself reported', function()
             'newest first: the one that just happened is the one being looked for')
     end)
 end)
+
+describe('the extra ACEs open only the read-only staff commands', function()
+    it('refuses void, settle and whois to a player with only `command`', function()
+        local s, _, c = seeded({ accept = true, anonHunter = true })
+        local cmds = commands(s)
+        Env.aces[3] = { command = true }
+        Env.chat = {}
+        cmds[Config.Admin.Commands.whois](3, { c.id })
+        falsy(said(3):find('HUNTER01', 1, true), 'unmasked on the generic command ACE: ' .. said(3))
+        cmds[Config.Admin.Commands.void](3, { c.id })
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED, 'voided on the generic command ACE')
+        Env.chat = {}
+        cmds[Config.Admin.Commands.diagnose](3, {})
+        truthy(#said(3) > 0, 'the read-only diagnosis stays open to it')
+    end)
+end)
