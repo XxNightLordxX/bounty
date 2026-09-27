@@ -128,6 +128,12 @@ function Bridges.install(modules)
     --- start to. Kidnap.cancel existed for this and had no caller.
     modules.contracts.onHunterLeft = function(contractId, hunterCid, reason)
         modules.kidnap.cancel(contractId, hunterCid, reason)
+        -- And the proof of a kill made during the stint that just ended. A
+        -- hunter may now take the contract up again, and a kill or a photo
+        -- token from before they walked away is not something the new stint
+        -- earned.
+        modules.death.clearPending(contractId, hunterCid)
+        modules.photo.forget(contractId, hunterCid)
     end
 
     -- The expiry pass skips itself when nothing could have changed since the

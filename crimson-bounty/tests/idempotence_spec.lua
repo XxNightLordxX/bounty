@@ -212,7 +212,7 @@ describe('accepting twice', function()
         end)
         truthy(first[1], 'the first acceptance stands')
         falsy(second[1], 'the second is refused rather than absorbed')
-        eq(second[2], CB.ERR.BAD_STATE)
+        eq(second[2], CB.ERR.ALREADY_HOLDING)
 
         local rows = 0
         for _, hunter in ipairs(s.storage.readHunters(c.id)) do

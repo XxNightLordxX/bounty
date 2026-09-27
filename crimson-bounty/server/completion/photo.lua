@@ -256,6 +256,20 @@ function Photo.submit(actor, rawToken, rawUrl)
     return true, nil, result
 end
 
+--- Drop a hunter's token on one contract: they are no longer on it.
+---
+--- The spec invalidates a token on abandonment (§14 capture token rule), and
+--- nothing did. It did not matter while a hunter who walked away could never
+--- come back; now they can, and a token minted during the first stint would
+--- otherwise still claim a payout during the second.
+function Photo.forget(contractId, hunterCid)
+    for token, record in pairs(tokens) do
+        if record.contractId == contractId and record.hunterCid == hunterCid then
+            tokens[token] = nil
+        end
+    end
+end
+
 --- Drop tokens belonging to a player who disconnected, so the table cannot
 --- grow across a long uptime.
 function Photo.clearPlayer(cid)

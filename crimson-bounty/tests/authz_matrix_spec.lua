@@ -365,7 +365,7 @@ MATRIX.accept = {
     -- it is enforced: a creator may not hunt their own contract, a target may
     -- not hunt themselves, and a hunter already on it cannot accept twice.
     expect = { creator = CB.ERR.SELF_ACCEPT, target = CB.ERR.SELF_TARGET,
-               hunter = CB.ERR.BAD_STATE,
+               hunter = CB.ERR.ALREADY_HOLDING,
                otherHunter = ALLOW, stranger = ALLOW, admin = ALLOW },
     why = 'open to anyone not already party to it',
 }

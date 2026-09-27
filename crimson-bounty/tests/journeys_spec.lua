@@ -665,3 +665,130 @@ describe('a withdrawal where every line queued', function()
             .. 'funded at 1,000')
     end)
 end)
+
+describe('taking a contract up again after walking away', function()
+    local function walkedAway(opts)
+        opts = opts or {}
+        local s = newStack()
+        local f = fixture(s)
+        s.bridges.install(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        Env.players[3].PlayerData.money.bank = 400000
+        local slots = {}
+        for i = 1, (opts.slots or 1) do slots[i] = { baseline = { cash = 1000 * i } } end
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = opts.mode or CB.MODE.COMPETITIVE,
+            reward = { slots = slots }, penaltyAmount = opts.stake,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hunter, c.id, false), 'the first stint')
+        if opts.before then opts.before(s, f, c) end
+        truthy(s.contracts.abandon(f.hunter, c.id), 'walks away')
+        return s, f, c
+    end
+
+    it('lets the hunter accept again', function()
+        local s, f, c = walkedAway()
+        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        truthy(ok, 'the contract is listed to them with an Accept button and '
+            .. 'was refused "Not right now." forever: ' .. tostring(err))
+        eq(s.projection.contract(s.storage.readContract(c.id), 'HUNTER01').role, 'hunter')
+    end)
+
+    it('takes the old row up again rather than writing a second one', function()
+        local s, f, c = walkedAway()
+        local alias = s.storage.readHunter(c.id, 'HUNTER01').alias
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local rows = 0
+        for _, row in ipairs(s.storage.readHunters(c.id)) do
+            if row.hunter_cid == 'HUNTER01' then rows = rows + 1 end
+        end
+        eq(rows, 1, 'two rows for one person: which one readHunter returns is '
+            .. 'up to the store')
+        eq(s.storage.readHunter(c.id, 'HUNTER01').alias, alias,
+            'the creator would see a second name for the same person')
+    end)
+
+    it('does not make walking away a way round the wait between payouts', function()
+        local s, f, c = walkedAway({ slots = 2, before = function(s, f, c)
+            truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        end })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        falsy(ok, 'collected twice in a row by walking away in between')
+        eq(err, CB.ERR.SLOT_COOLDOWN)
+    end)
+
+    it('takes the stake again, because it was forfeited the first time', function()
+        local s, f, c = walkedAway({ stake = 2000 })
+        local before = Env.players[3].PlayerData.money.bank
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        eq(Env.players[3].PlayerData.money.bank, before - 2000)
+    end)
+
+    it('does not carry a kill from the first stint into the second', function()
+        local s, f, c = walkedAway({ before = function(s, f, c)
+            Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+            Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+            Env.players[2]._health = (Env.players[2]._health or 200) - 60
+            s.death.recordDamage(3, 2, 123456)
+            Env.players[2].PlayerData.metadata.isdead = true
+            s.death.onVictimReport(2)
+            truthy(s.death.getPending(c.id, 'HUNTER01'), 'a kill in the first stint')
+            truthy(s.photo.issue(f.hunter, c.id), 'and a token for it')
+        end })
+        falsy(s.death.getPending(c.id, 'HUNTER01'),
+            'the proof outlived the stint it was made in')
+        eq(s.photo.tokenCount(), 0, 'and so did the token')
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local _, err = s.photo.issue(f.hunter, c.id)
+        eq(err, CB.ERR.NO_KILL_TO_VERIFY)
+    end)
+
+    it('needs no new id to come back, so running out of them cannot refuse it', function()
+        local s, f, c = walkedAway()
+        local real = s.storage.readHunterById
+        s.storage.readHunterById = function() return { id = 'taken' } end
+        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        s.storage.readHunterById = real
+        truthy(ok, 'refused for want of an id the re-accept never uses: ' .. tostring(err))
+    end)
+
+    it('still refuses somebody already on it, in words that say so', function()
+        local s, f, c = walkedAway()
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        falsy(ok)
+        eq(err, CB.ERR.ALREADY_HOLDING)
+    end)
+end)
+
+describe('accepting a contract that is no longer there to take', function()
+    it('says a closed contract is closed', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        truthy(s.contracts.cancel(f.creator, c.id))
+        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        falsy(ok)
+        eq(err, CB.ERR.ALREADY_SETTLED, '"Not right now." on a contract that '
+            .. 'will never be acceptable again')
+    end)
+
+    it('keeps "not right now" for the one state that is momentary', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+            cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'x'),
+            'somebody else is being paid')
+        local _, err = s.contracts.accept(f.hunter, c.id, false)
+        eq(err, CB.ERR.BAD_STATE)
+    end)
+end)

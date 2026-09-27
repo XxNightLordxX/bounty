@@ -140,7 +140,9 @@ local ACTIONS = {
       payload = function(c) return { id = c.id } end,
       allowed = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true },
       refusals = { bad_state = true, already_settled = true, not_found = true,
-                   contract_full = true, limit_reached = true },
+                   contract_full = true, limit_reached = true,
+                   -- The grid's hunter already holds every accepted contract.
+                   already_holding = true },
       why = 'a contract that has ended cannot be taken' },
 
     { name = 'abandon', source = 3,

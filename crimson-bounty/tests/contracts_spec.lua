@@ -177,7 +177,9 @@ describe('acceptance', function()
         Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
         local ok, err = s.contracts.accept(s.identity.resolve(4), c.id, false)
         falsy(ok, 'exclusive means one')
-        eq(err, CB.ERR.BAD_STATE)
+        -- The same fact as a full competitive contract, so the same code the
+        -- page has words for; BAD_STATE was "Not right now."
+        eq(err, CB.ERR.CONTRACT_FULL)
     end)
 
     it('allows several hunters on a competitive contract', function()

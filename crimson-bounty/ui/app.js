@@ -385,6 +385,7 @@
     self_target: 'You cannot put a price on yourself.',
     self_accept: 'You cannot take your own contract.',
     same_account: 'Not on your own people.',
+    already_holding: 'You are already on this contract. It is under Mine.',
     limit_reached: 'You are holding too many contracts.',
     /* A different rule entirely, and it used to share the message above —
        which told a hunter holding nothing that they were holding too much,
@@ -1015,10 +1016,40 @@
       + (goods.labels && goods.labels.length ? ' (' + goods.labels.join(', ') + ')' : '');
   }
 
+  /* Why this card cannot be accepted by this viewer, or nothing if it can. */
+  function boardHint(contract) {
+    if (contract.role === 'creator') {
+      return 'Yours \u2014 manage it under Mine.';
+    }
+    if (contract.role === 'hunter') {
+      return 'You are already on this one \u2014 it is under Mine.';
+    }
+    var active = Number(contract.huntersActive) || 0;
+    if (contract.mode === 'exclusive' && active > 0) {
+      return 'Taken. Somebody has this one to themselves \u2014 it comes back '
+        + 'on the board if they walk away.';
+    }
+    var cap = Number(contract.huntersMax) || 0;
+    if (contract.mode !== 'exclusive' && cap > 0 && active >= cap) {
+      return 'Full. It comes back open if an operative drops out.';
+    }
+    return null;
+  }
+
   function actionsFor(contract, context) {
     var row = el('div', 'row');
 
     if (context === 'board') {
+      /* An Accept button on a card the server can only refuse is a button
+         that reads as broken. The board lists every contract but the
+         viewer's own bounty, so it includes the ones they placed, the ones
+         they already hold, and ones somebody else has filled — and every
+         one of them drew Accept. Said instead, with where to look. */
+      var why = boardHint(contract);
+      if (why) {
+        row.appendChild(el('div', 'hint', why));
+        return row;
+      }
       var take = el('button', 'primary', 'Accept contract');
       take.onclick = function () { acceptContract(contract); };
       row.appendChild(take);
@@ -1304,7 +1335,13 @@
         if (!r.ok) {
           // Told and shown. A message saying the figure changed, with the
           // old figure still on screen, is half an answer.
-          if (r.err === 'terms_changed') { refresh(); }
+          // Likewise a card that is out of date in some other way: closed,
+          // taken, or already theirs. The board is only as fresh as its last
+          // read, and leaving the stale card up invites the same tap again.
+          if (r.err === 'terms_changed' || r.err === 'already_settled'
+              || r.err === 'contract_full' || r.err === 'already_holding') {
+            refresh();
+          }
           return fail(r);
         }
         say(anonymous ? 'Contract accepted, anonymously.' : 'Contract accepted.', 'gold');

@@ -4495,9 +4495,16 @@ async function main() {
         + shown);
     });
 
-    /* And if they tap anyway, the refusal is about the right thing. */
+    it('does not offer Accept on a contract that has no room', function () {
+      falsy(full.view.all().some(function (b) {
+        return b.tagName === 'BUTTON' && b.textContent === 'Accept contract';
+      }), 'a button the server can only refuse reads as broken');
+    });
+
+    /* And if it filled between the read and the tap, the refusal is about
+       the right thing. */
     const refused = boot({
-      list: board(5, 5), mine: MINE, ledger: LEDGER,
+      list: board(4, 5), mine: MINE, ledger: LEDGER,
       accept: { ok: false, err: 'contract_full' }
     });
     await settle(); await settle();
@@ -4513,6 +4520,53 @@ async function main() {
         + said);
       truthy(said.toLowerCase().indexOf('operatives') !== -1,
         'the refusal has to name what is actually full: ' + said);
+    });
+
+    it('reads the board again, so the stale card goes', function () {
+      truthy(refused.sent.filter(function (m) { return m.name === 'list'; }).length >= 2,
+        'the card that invited the tap is still up, inviting it again');
+    });
+
+    /* A card the viewer cannot take says why, instead of an Accept button
+       the server can only refuse. */
+    function cardAs(over) {
+      const b = JSON.parse(JSON.stringify(BOARD));
+      Object.assign(b.data.contracts[0], over);
+      return b;
+    }
+    async function boardWith(over) {
+      const app = boot({ list: cardAs(over), mine: MINE, ledger: LEDGER });
+      await settle(); await settle();
+      return app;
+    }
+    function offersAccept(app) {
+      return app.view.all().some(function (b) {
+        return b.tagName === 'BUTTON' && b.textContent === 'Accept contract';
+      });
+    }
+
+    const ownCard = await boardWith({ role: 'creator' });
+    it('does not offer a creator their own contract', function () {
+      falsy(offersAccept(ownCard));
+      truthy(ownCard.view.textContent.indexOf('Yours') !== -1, ownCard.view.textContent);
+    });
+
+    const heldCard = await boardWith({ role: 'hunter' });
+    it('does not offer a hunter a contract they already hold', function () {
+      falsy(offersAccept(heldCard));
+      truthy(heldCard.view.textContent.indexOf('already on this one') !== -1,
+        heldCard.view.textContent);
+    });
+
+    const takenCard = await boardWith({ mode: 'exclusive', huntersActive: 1, huntersMax: 5 });
+    it('says an exclusive contract somebody holds is taken', function () {
+      falsy(offersAccept(takenCard));
+      truthy(takenCard.view.textContent.indexOf('Taken') !== -1, takenCard.view.textContent);
+    });
+
+    const openCard = await boardWith({ role: 'public', mode: 'exclusive', huntersActive: 0 });
+    it('still offers Accept on a contract that can be taken', function () {
+      truthy(offersAccept(openCard), 'the fix closed the door it was meant to label');
     });
 
     /* An exclusive contract has no cap to show. */

@@ -582,6 +582,12 @@ function Contracts.accept(actor, contractId, anonymous)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
     if contract.state ~= CB.STATE.ACTIVE and contract.state ~= CB.STATE.ACCEPTED then
+        -- Closed is not "not right now". The board drops a closed contract
+        -- only on its next read, so tapping Accept on one that was cancelled,
+        -- expired, bought out or completed a moment ago is the ordinary case,
+        -- and it will never be acceptable again. COMPLETING is the one state
+        -- here that really is momentary.
+        if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
         return false, CB.ERR.BAD_STATE
     end
 
@@ -599,7 +605,22 @@ function Contracts.accept(actor, contractId, anonymous)
         end
     end
 
-    if Storage.readHunter(contractId, actor.cid) then return false, CB.ERR.BAD_STATE end
+    -- A previous stint on this contract is not a reason to refuse. Walking
+    -- away puts the contract back on the board (§12.4), listed to this
+    -- player exactly as to everyone else — and this refused on the mere
+    -- existence of their old row, so the Accept button was dead for the one
+    -- player it was guaranteed to be shown to, answered "Not right now."
+    -- for the rest of the contract's life.
+    --
+    -- The old row is taken up again rather than a second one written. It
+    -- carries the wait between payouts and the alias: a fresh row would
+    -- have made walking away and coming back the way to skip the ten-minute
+    -- wait between collections, and would have given the creator's threads
+    -- a second name for the same person.
+    local previous = Storage.readHunter(contractId, actor.cid)
+    if previous and previous.state == 'active' then
+        return false, CB.ERR.ALREADY_HOLDING
+    end
 
     local held = Storage.countHunterContracts(actor.cid, LIVE_STATES)
     if held >= Config.Limits.MaxAcceptedPerHunter then return false, CB.ERR.LIMIT_REACHED end
@@ -625,7 +646,12 @@ function Contracts.accept(actor, contractId, anonymous)
     local advanced = false
 
     if contract.mode == CB.MODE.EXCLUSIVE then
-        if activeCount > 0 then return false, CB.ERR.BAD_STATE end
+        -- The same fact as a full competitive contract — somebody else has
+        -- it, try another or come back if they drop out — so the same code.
+        -- An exclusive contract stays listed while it is held, so this is an
+        -- answer hunters read often, and "Not right now." named neither the
+        -- reason nor what to do about it.
+        if activeCount > 0 then return false, CB.ERR.CONTRACT_FULL end
         if not Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted') then
             return false, CB.ERR.LOCKED
         end
@@ -675,7 +701,8 @@ function Contracts.accept(actor, contractId, anonymous)
     -- taken by this point, and addHunter is a plain insert: an id in use is
     -- a duplicate-key error thrown out of here with the money gone and no
     -- hunter row to say whose it was, so nothing would ever return it.
-    local hunterId = Util.mintId(Storage.nextId, 'hn', Storage.readHunterById)
+    local hunterId = previous and previous.id
+        or Util.mintId(Storage.nextId, 'hn', Storage.readHunterById)
     if not hunterId then
         if stake > 0 then
             Escrow.release(contractId, actor.cid,
@@ -688,18 +715,25 @@ function Contracts.accept(actor, contractId, anonymous)
         return false, CB.ERR.BAD_STATE
     end
 
-    local record = {
-        id            = hunterId,
-        contract_id   = contractId,
-        hunter_cid    = actor.cid,
-        hunter_account = actor.account,
-        hunter_name   = actor.name,
-        alias         = 'Operative #' .. tostring(aliasNumber),
-        anon          = anonymous == true,
-        accepted_at   = os.time(),
-        state         = 'active',
-    }
-    Storage.addHunter(record)
+    local record
+    if previous then
+        Storage.updateHunter(previous.id, { state = 'active', anon = anonymous == true })
+        record = Storage.readHunter(contractId, actor.cid) or previous
+        record.state, record.anon = 'active', anonymous == true
+    else
+        record = {
+            id            = hunterId,
+            contract_id   = contractId,
+            hunter_cid    = actor.cid,
+            hunter_account = actor.account,
+            hunter_name   = actor.name,
+            alias         = 'Operative #' .. tostring(aliasNumber),
+            anon          = anonymous == true,
+            accepted_at   = os.time(),
+            state         = 'active',
+        }
+        Storage.addHunter(record)
+    end
 
     -- The anonymity fee is taken last, after the stake and the record, so
     -- there is no path where a hunter is charged for an acceptance that

@@ -148,6 +148,10 @@ CB.ERR = {
     --- same as the contract having been cancelled underneath the hunter,
     --- when this is the one refusal on the delivery path that waiting fixes.
     HANDOVER_COOLDOWN    = 'handover_cooldown',
+    --- The caller is already an operative on this contract. It shared
+    --- BAD_STATE, "Not right now." — which reads as something to wait out,
+    --- on a contract that is already in their Mine tab.
+    ALREADY_HOLDING      = 'already_holding',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',
