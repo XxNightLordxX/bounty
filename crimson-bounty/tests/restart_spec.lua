@@ -239,6 +239,65 @@ describe('a crash in the middle of an ending', function()
     end
 end)
 
+describe('a crash while a contract runs out', function()
+    --- Recovery forfeited every stake on an EXPIRED contract, where the
+    --- ending itself forfeits only when the deadline ran out: reaching the
+    --- lifetime while the target was away gives the stake back.
+    local function held(mode)
+        local main, s = boot(mode)
+        Config.Limits.ExclusiveIdleReleaseSeconds = 0
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hunter, c.id))
+        main.tick()
+        return main, s, f, c
+    end
+
+    local function dies(main, s)
+        s.escrow.release = function() error('process killed') end
+        falsy(pcall(main.expire), 'the ending was interrupted')
+    end
+
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': the lifetime, with the target away, still gives the stake back', function()
+            local main, s, _, c = held(mode)
+            local before = money(3)
+            local target = Env.players[2]
+            Env.removePlayer(2)
+            main.markPresenceChanged()
+            main.expire()
+            truthy(s.storage.readContract(c.id).paused_since, 'the deadline is paused')
+
+            Env.advance(Config.Limits.ContractLifetimeSeconds + 60)
+            main.markPresenceChanged()
+            dies(main, s)
+            Env.players[2] = target
+            Env.byCitizen['TARGET01'] = 2
+
+            local _, s2 = restart(mode, s)
+            eq(s2.storage.readContract(c.id).state, CB.STATE.EXPIRED)
+            eq(money(3) - before, 2000,
+                'a crash handed the creator a stake the same ending gives back')
+        end)
+
+        it(mode .. ': the deadline running out still forfeits it', function()
+            local main, s, _, c = held(mode)
+            local before = money(3)
+            Env.advance(Config.Limits.DefaultDeadlineSeconds + 60)
+            main.markPresenceChanged()
+            dies(main, s)
+
+            local _, s2 = restart(mode, s)
+            eq(s2.storage.readContract(c.id).state, CB.STATE.EXPIRED)
+            eq(money(3) - before, 0, 'a hunter who let the clock run out keeps no stake')
+        end)
+    end
+end)
+
 describe('a crash between paying the last collection and closing', function()
     --- Recovery put every COMPLETING contract back to ACCEPTED. One whose
     --- last collection was already paid came back live with nothing left to

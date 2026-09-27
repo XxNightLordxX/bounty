@@ -273,7 +273,17 @@ function Comms.requestCall(actor, contractId, threadHandle)
     -- An anonymous caller on a phone that cannot mask is not refused: the
     -- other party is asked to call back instead, which reveals nothing, and
     -- placeCall declines to dial for exactly that case.
-    local placed = Comms.placeCall(actor, recipient, otherAnon or selfAnon)
+    --
+    -- Never a live call TO an anonymous party. A call rings only if they are
+    -- in the city, so the caller learned whether they were — the one thing
+    -- an anonymous client's contract is built never to answer (§14.32), and
+    -- for an anonymous operative the same thing set beside who is online.
+    -- They are asked to call back instead, which reads the same either way;
+    -- calling back is theirs to choose, and is placed masked.
+    local placed = false
+    if not otherAnon then
+        placed = Comms.placeCall(actor, recipient, selfAnon)
+    end
 
     Notify.toCitizen(recipient,
         placed and 'Incoming call' or 'Call request',

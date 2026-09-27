@@ -463,8 +463,13 @@ local function reasonFor(actor, req)
 
     if mode ~= 'freetext' then return '' end
 
-    local reason = Util.sanitizeText(req.reason, Config.Reason.MaxLength)
+    -- Kept to one character over the limit, so a reason too long can be
+    -- told from one that fits: refused, never cut (§14.30). The page's box
+    -- stops at the limit, so only a request made by hand is ever over it —
+    -- and a cut one was placed and paid for saying something else.
+    local reason = Util.sanitizeText(req.reason, Config.Reason.MaxLength + 1)
     if not reason then return nil, CB.ERR.INVALID_INPUT end
+    if utf8.len(reason) > Config.Reason.MaxLength then return nil, CB.ERR.INVALID_INPUT end
     if Util.digitCount(reason) > Config.Reason.MaxDigits then return nil, CB.ERR.INVALID_INPUT end
     for _, pattern in ipairs(Config.Reason.PatternDenylist) do
         if reason:lower():find(pattern) then return nil, CB.ERR.INVALID_INPUT end
@@ -1816,7 +1821,19 @@ function Contracts.recoverEnded(contractId)
     end
 
     if CB.TERMINAL[contract.state] then
-        local released = releaseUntouched(contract, contract.state == CB.STATE.EXPIRED)
+        -- Whether an expiry forfeits is the deadline's question, asked the
+        -- way the tick asked it (§3.6, §14.18). Every EXPIRED contract used
+        -- to forfeit here, so a crash while ending one that had only reached
+        -- its lifetime — a target out of the city, the deadline paused —
+        -- handed the hunter's stake to the creator, which the same ending
+        -- without the crash never does.
+        local forfeit = false
+        if contract.state == CB.STATE.EXPIRED then
+            local at = contract.resolved_at or contract.expires_at or os.time()
+            forfeit = not contract.paused_since and contract.deadline_at ~= nil
+                and at > contract.deadline_at
+        end
+        local released = releaseUntouched(contract, forfeit)
         return released > 0 and 'released' or nil
     end
 

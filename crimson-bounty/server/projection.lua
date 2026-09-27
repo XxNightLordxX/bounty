@@ -252,6 +252,14 @@ local function buildListing(viewerCid, page)
             -- and Threads on a server with the relay switched off, and every
             -- message was refused.
             relay = Config.Relay.Enabled == true,
+            -- Whether officers are really told, at each stage. A contract on
+            -- an officer is marked whatever this says, and the page's warnings
+            -- said "their department has been advised" on a server that
+            -- advises nobody.
+            advisory = {
+                posted = Config.Advisory.Enabled == true and Config.Advisory.OnCreate ~= false,
+                accepted = Config.Advisory.Enabled == true and Config.Advisory.OnAccept ~= false,
+            },
             -- The message box's limit. The page hard-coded 200 whatever the
             -- server held messages to.
             messageMaxLength = Config.Relay.MaxLength,

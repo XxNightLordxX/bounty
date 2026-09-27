@@ -108,16 +108,6 @@ local DEFAULTS = {
             diagnose = 'cb-diag',
         },
     },
-    --- Both read by the boot validation itself. Absent, they did not produce
-    --- a warning about a misconfigured advisory — they crashed the check
-    --- that would have reported it.
-    Advisory = {
-        RecipientJobTypes = { leo = true, police = true },
-        RecipientJobNames = {
-            police = true, sheriff = true, bcso = true, fib = true,
-            trooper = true, sasp = true, ranger = true,
-        },
-    },
     Immunity = {
         MinTargetPlaytimeHours = 5,
         MinTargetSessionMinutes = 10,
@@ -205,7 +195,14 @@ local DEFAULTS = {
     --- The four job sets the advisory rules read. Indexed directly in
     --- Identity.isProtectedJob and isAdvisoryRecipient, which run inside
     --- searchTargets and browseTargets, so a missing one empties the whole
-    --- target picker rather than merely switching an advisory off.
+    --- target picker rather than merely switching an advisory off. The
+    --- recipient sets are also read by the boot validation itself: absent,
+    --- they crashed the check that would have reported a misconfigured
+    --- advisory.
+    ---
+    --- One entry. There were two in this constructor, and Lua keeps only the
+    --- last of a repeated key, so anything added to the first was silently
+    --- never filled.
     Advisory = {
         AlwaysAlertTarget = true,
         TriggerJobTypes = { leo = true, police = true, ems = true, fire = true },

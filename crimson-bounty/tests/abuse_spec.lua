@@ -87,6 +87,33 @@ describe('a client-fired login event', function()
         eq(s.identity.sessionMinutes('TARGET01'), 15, 'and nothing sent afterwards restarts it')
     end)
 
+    it('does not make anybody just-arrived straight after a restart either', function()
+        local s = newStack()
+        local f = fixture(s)
+        s.bridges.install(s)
+        -- A fresh process: everyone already in the city is noticed, not
+        -- watched arriving, and so has no session floor at all.
+        s.identity.endSession('TARGET01')
+        s.identity.resolve(2)
+        eq(s.identity.sessionMinutes('TARGET01'), nil, 'noticed, length unknown')
+
+        truthy(fire('QBCore:Server:OnPlayerLoaded', 2))
+        local immune, why = s.contracts.isImmune(s.identity.resolve(2))
+        falsy(immune, 'a client turned "noticed" into "just arrived": ' .. tostring(why))
+        local _ = f
+    end)
+
+    it('never begins a watched session on the say-so of a client', function()
+        -- Unreachable through the bridge today, which resolves the player
+        -- (noting them) first; held on its own so it stays that way.
+        local s = newStack()
+        fixture(s)
+        s.identity.endSession('TARGET01')
+        falsy(s.identity.confirmSession('TARGET01', true))
+        eq(s.identity.sessionMinutes('TARGET01'), nil, 'noticed, not watched arriving')
+        truthy(s.identity.confirmSession('TARGET01'), 'the server\'s own event still can')
+    end)
+
     it('still protects somebody who has really just arrived', function()
         local s = newStack()
         local f = fixture(s)
@@ -96,6 +123,7 @@ describe('a client-fired login event', function()
         truthy(fire('local:playerDropped', 2))
         s.identity.resolve(2)
         truthy(fire('QBCore:Server:OnPlayerLoaded', 2))
+        truthy(fire('local:qbx_core:server:playerLoaded', nil, { PlayerData = { source = 2 } }))
         local immune, why = s.contracts.isImmune(s.identity.resolve(2))
         truthy(immune, 'a player who has just walked in is not fair game')
         eq(why, CB.ERR.TARGET_JUST_ON)

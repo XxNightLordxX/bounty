@@ -1222,7 +1222,7 @@ describe('masked calls', function()
         Natives.callExport = nil
     end)
 
-    it('asks the phone to suppress identity for an anonymous party', function()
+    it('asks the phone to suppress identity for an anonymous caller', function()
         local s, f, c = threaded({ anonCreator = true })
         local anonymous = nil
         Natives.callExport = function(_, _, _, anon) anonymous = anon return true end
@@ -1230,8 +1230,38 @@ describe('masked calls', function()
         withConfig({ { Config.Relay, 'CallExport',
                        { resource = 'lb-phone', export = 'StartCall' } } }, function()
             s.comms.resetCallCache()
-            truthy(s.comms.requestCall(f.hunter, c.id, nil))
-            eq(anonymous, true, 'the creator being called chose to be anonymous')
+            local thread = s.comms.threads(f.creator, c.id)[1]
+            local ok, err, result = s.comms.requestCall(f.creator, c.id, thread.handle)
+            truthy(ok, tostring(err))
+            eq(result.placed, true)
+            eq(anonymous, true, 'the creator calling chose to be anonymous')
+        end)
+
+        Natives.callExport = nil
+    end)
+
+    --- A call rings only if the other party is in the city, so ringing an
+    --- anonymous client answered the question their contract is built never
+    --- to answer. The README promised nothing a hunter can press would.
+    it('asks an anonymous party to call back, the same whether or not they are here', function()
+        local s, f, c = threaded({ anonCreator = true })
+        local dialled = 0
+        Natives.callExport = function() dialled = dialled + 1 return true end
+
+        withConfig({ { Config.Relay, 'CallExport',
+                       { resource = 'lb-phone', export = 'StartCall' } } }, function()
+            s.comms.resetCallCache()
+            local okHere, _, here = s.comms.requestCall(f.hunter, c.id, nil)
+
+            Env.removePlayer(1)
+            Env.advance(60)
+            local okAway, errAway, away = s.comms.requestCall(f.hunter, c.id, nil)
+
+            truthy(okHere)
+            eq(okAway, okHere, 'refused only when the client was away: ' .. tostring(errAway))
+            eq(here.placed, false, 'rang an anonymous client, which rings only if they are here')
+            eq(away.placed, here.placed, 'the answer differed with their presence')
+            eq(dialled, 0)
         end)
 
         Natives.callExport = nil

@@ -977,3 +977,30 @@ describe('minting a hunter id that is already taken', function()
             .. 'nothing else ever would, with no hunter row naming who staked it')
     end)
 end)
+
+describe('a reason over the length limit', function()
+    --- Cut to the limit and placed, so the creator paid for a contract that
+    --- said something other than what they wrote (§14.30: refused, not
+    --- altered).
+    it('is refused rather than cut', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = string.rep('a', Config.Reason.MaxLength + 1),
+            reward = { baseline = { cash = 1000 } },
+        })
+        falsy(c, 'placed with its reason cut short')
+        eq(err, CB.ERR.INVALID_INPUT)
+    end)
+
+    it('is taken at exactly the limit, counted in characters', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = string.rep('\208\150', Config.Reason.MaxLength),
+            reward = { baseline = { cash = 1000 } },
+        })
+        truthy(c)
+        eq(utf8.len(s.storage.readContract(c.id).reason), Config.Reason.MaxLength)
+    end)
+end)

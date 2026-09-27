@@ -133,6 +133,16 @@ describe('with the advisory switched off', function()
         eq(countNotifications('THREAT ADVISORY'), 0, 'and sends no bulletin')
     end)
 
+    it('tells the page officers are not being advised', function()
+        local s = seeded(leoJob('trooper'))
+        Config.Advisory.Enabled = false
+        local settings = s.projection.listing('HUNTER01', 1).settings
+        eq(settings.advisory.posted, false)
+        eq(settings.advisory.accepted, false)
+        Config.Advisory.Enabled = true
+        eq(s.projection.listing('HUNTER01', 1).settings.advisory.posted, true)
+    end)
+
     it('gives the officer the paranoid alert in place of the advisory', function()
         local s, f = seeded(leoJob('trooper'))
         Config.Advisory.Enabled = false

@@ -175,7 +175,8 @@ function Bridges.install(modules)
         Bridges.onWeaponDamage(modules, sender, data)
     end)
 
-    local function remember(src)
+    ---@param untrusted boolean|nil true for the event any client can fire
+    local function remember(src, untrusted)
         local actor = modules.identity.resolve(src)
         if actor then
             connected[src] = actor.cid
@@ -187,7 +188,7 @@ function Bridges.install(modules)
             -- one of the two events that lands here is a net event any
             -- client can fire, and restarting the clock on it made the
             -- sender "just arrived" — immune to every claim — on demand.
-            modules.identity.confirmSession(actor.cid)
+            modules.identity.confirmSession(actor.cid, untrusted)
         end
         return actor
     end
@@ -199,7 +200,7 @@ function Bridges.install(modules)
     RegisterNetEvent('QBCore:Server:OnPlayerLoaded', function()
         local src = source
         if not modules.app.floodOk(src, 'playerLoaded') then return end
-        remember(src)
+        remember(src, true)
         scheduleReady(src)
     end)
 

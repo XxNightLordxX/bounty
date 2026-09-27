@@ -1111,8 +1111,8 @@
     node.appendChild(meta);
 
     if (contract.targetProtected && context === 'board') {
-      node.appendChild(el('div', 'notice gold',
-        'This target is a sworn officer. Their department has been advised.'));
+      node.appendChild(el('div', 'notice gold', 'This target is a sworn officer.'
+        + (advised('posted') ? ' Their department has been advised.' : '')));
     }
 
     node.appendChild(actionsFor(contract, context));
@@ -1280,7 +1280,12 @@
       // false, which nothing could satisfy. The button was drawn, quoted
       // "a fee" because there was no figure to quote, and spent a request
       // to be told the server does not run them.
-      if (settings().informant) {
+      //
+      // Nor where every operative on this card is already named. The
+      // client's purchase only ever draws an anonymous one, so with none it
+      // bought a certain "nobody" on the one purchase never refunded.
+      var anyAnonymous = asList(contract.hunters).some(function (h) { return !h.name; });
+      if (settings().informant && anyAnonymous) {
         var buy = el('button', 'ghost ico i-search', 'Buy informant data');
         buy.onclick = function () { buyInformant(contract); };
         more.appendChild(buy);
@@ -1574,7 +1579,9 @@
 
     if (contract.targetProtected && settings().warnHunter !== false) {
       ask('This contract is on a sworn officer.',
-          'Law enforcement has already been advised that someone is coming. Accept anyway?',
+          advised('accepted')
+            ? 'Law enforcement has already been advised that someone is coming. Accept anyway?'
+            : 'Accept anyway?',
           chooseAnonymity);
       return;
     }
@@ -3596,7 +3603,9 @@
     var protectedTarget = state.draft.targetProtected === true;
     if (protectedTarget && settings().warnCreator !== false && !state.leoConfirmed) {
       ask('That target is a sworn officer.',
-          'Placing this will alert every officer on duty, by phone and over dispatch.',
+          advised('posted')
+            ? 'Placing this will alert every officer on duty, by phone and over dispatch.'
+            : 'Place a contract on them anyway?',
           function () { state.leoConfirmed = true; submitContract(); });
       return;
     }
@@ -3683,6 +3692,13 @@
     input.oninput = function () { state.draft[key] = input.value; };
     input.onchange = function () { state.draft[key] = input.value; };
     return input;
+  }
+
+  /* Whether officers are told at this stage ('posted' or 'accepted'). A
+     server that does not say is taken to, which is how it always read. */
+  function advised(stage) {
+    var a = settings().advisory;
+    return !a || a[stage] !== false;
   }
 
   /* What choosing anonymity costs, from the server's settings; 0 where it
@@ -3962,7 +3978,8 @@
         renderPeople([person], null);
         show(status, 'Contract will be placed on ' + person.name + '.');
         if (person.protected) {
-          say('That is a sworn officer. Placing this will alert their department.', 'gold');
+          say('That is a sworn officer.'
+            + (advised('posted') ? ' Placing this will alert their department.' : ''), 'gold');
         }
       };
       return pick;

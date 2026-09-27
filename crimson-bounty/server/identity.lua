@@ -51,13 +51,24 @@ local FRESH_LOGIN_SECONDS = 60
 --- has been in the city all along, and a login event does not change that.
 ---@param cid string
 ---@return boolean changed
-function Identity.confirmSession(cid)
+---
+--- `untrusted` for the net event. It may still note somebody the resource
+--- has never seen, but only as observed — length unknown, no floor — and it
+--- never turns an observed session into a watched one. That upgrade, from a
+--- client, was one more way to be "just arrived": fired within a minute of
+--- the resource first noticing them after a restart, it bought ten minutes
+--- of immunity. The server's own loaded event still makes the upgrade, so a
+--- real arrival is protected either way round the two events land.
+---@param cid string
+---@param untrusted boolean|nil
+function Identity.confirmSession(cid, untrusted)
     if not cid then return false end
     local began = sessionStart[cid]
     if not began then
-        sessionStart[cid] = { at = os.time(), observed = false }
-        return true
+        sessionStart[cid] = { at = os.time(), observed = untrusted == true }
+        return not untrusted
     end
+    if untrusted then return false end
     if began.observed and (os.time() - began.at) <= FRESH_LOGIN_SECONDS then
         began.observed = false
         return true

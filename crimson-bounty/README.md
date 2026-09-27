@@ -89,7 +89,9 @@ Players the app is closed to — law enforcement and EMS — do the same with
 side can pay an informant to unmask one hunter. Creator and hunters can
 message or call each other through the app without either learning who the
 other is (`Config.Relay`; switching it off removes messaging and calls
-entirely).
+entirely). A call to an anonymous party asks them to call back rather than
+ringing them, since a phone that rings only when its owner is in the city
+would say whether they are.
 
 **Hunting a cop.** Allowed, and loud. Every officer online is advised when the
 contract is posted and again on each acceptance, with a running count, on
@@ -161,7 +163,7 @@ CB_SUITES=journeys_spec lua crimson-bounty/tests/run.lua   # one area, in second
 
 Five kinds of check, because each catches what the others cannot:
 
-- **Server suite** (about 1,500 tests) — escrow arithmetic, the state machine,
+- **Server suite** (about 1,650 tests) — escrow arithmetic, the state machine,
   every payout and refund path, whole player journeys, every action against
   every contract state, deliberate exploit attempts, storage conformance
   across all three backends, and randomised simulations asserting that no

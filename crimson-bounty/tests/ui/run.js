@@ -3357,6 +3357,34 @@ async function main() {
       truthy(named.app.notice().indexOf('under your name') !== -1, named.app.notice());
     });
 
+    /* A contract on an officer, on a server that advises nobody. The page
+       said their department had been told. */
+    async function onOfficer(settings) {
+      const board = JSON.parse(JSON.stringify(BOARD));
+      board.data.settings = Object.assign({}, board.data.settings, settings || {});
+      board.data.contracts[0].targetProtected = true;
+      const app = boot({ list: board, mine: MINE, ledger: LEDGER,
+        accept: { ok: true, data: {} } });
+      await settle(); await settle();
+      return app;
+    }
+    const unadvised = await onOfficer({ advisory: { posted: false, accepted: false } });
+    it('does not say officers were told on a server that tells nobody', function () {
+      falsy(/advised/.test(unadvised.view.textContent),
+        'told the board a department had been advised: ' + unadvised.view.textContent);
+    });
+    unadvised.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
+    })[0].onclick();
+    it('nor warns a hunter that they have been', function () {
+      truthy(/sworn officer/.test(unadvised.view.textContent), 'the officer is still flagged');
+      falsy(/advised/.test(unadvised.view.textContent), unadvised.view.textContent);
+    });
+    const advisedBoard = await onOfficer({ advisory: { posted: true, accepted: true } });
+    it('still says so where they are', function () {
+      truthy(/advised/.test(advisedBoard.view.textContent), advisedBoard.view.textContent);
+    });
+
     const anon = await accepting({}, { ok: true, data: { myAnonymous: true } });
     click(anon.app, 'Anonymously');
     await settle(); await settle();
@@ -4928,7 +4956,9 @@ async function main() {
       mode: 'competitive', state: 'accepted', role: 'creator',
       reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
       huntersActive: 1, huntersMax: 5, penaltyAmount: 0,
-      hunters: acrossTheWire([])
+      // Anonymous: the only operative a client's informant can name.
+      hunters: acrossTheWire([{ alias: 'Operative #1', claims: 0,
+        record: { standing: 'Unproven' } }])
     }], accepted: [], onMe: [] } };
 
     const priced = boot({
@@ -4943,6 +4973,27 @@ async function main() {
     await settle(); await settle();
     click(priced, 'Buy informant data');
     await settle();
+
+    /* Every operative on the card already named: the client's purchase
+       can only draw an anonymous one, so it bought a certain "nobody". */
+    const allNamed = JSON.parse(JSON.stringify(OWN));
+    allNamed.data.created[0].hunters = [{ alias: 'Operative #1', name: 'Rook Ash',
+      claims: 0, record: { standing: 'Unproven' } }];
+    const namedCard = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {
+        minQueryLength: 3,
+        informant: { cost: 25000, account: 'bank', maxPerContract: 3 }
+      } } },
+      mine: allNamed, ledger: LEDGER
+    });
+    await settle(); await settle();
+    tab(namedCard, 'mine');
+    await settle(); await settle();
+    it('does not sell the client an informant when every operative is named', function () {
+      falsy(namedCard.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
+      }), 'a purchase that can only answer "nobody", never refunded');
+    });
 
     it('says how many times one contract can be asked', function () {
       const shown = priced.view.textContent;
