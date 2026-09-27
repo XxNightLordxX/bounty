@@ -2626,3 +2626,23 @@ describe('a revive the client reported too early', function()
         falsy(s.death.wasSeenDead('TARGET01'), 'the revive was never recorded')
     end)
 end)
+
+describe('asking the informant again inside the lock', function()
+    it('gives the answer it gave, not whether the hunter is online now', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        truthy(s.contracts.accept(f.hunter, c.id, true))
+        Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
+        Env.players[3]._coords = { x = 505.0, y = 500.0, z = 30.0 }
+        s.death.watchTargets(s.storage.allContracts())
+        Env.players[1].PlayerData.money.bank = 999999
+        local _, _, first = s.informant.buy(f.creator, c.id)
+        local hunter = Env.players[3]
+        Env.players[3] = nil   -- the hunter logs off
+        local _, _, again = s.informant.buy(f.creator, c.id)
+        Env.players[3] = hunter
+        eq(again.name, first.name, 'the repeat said the hunter had gone offline')
+    end)
+end)

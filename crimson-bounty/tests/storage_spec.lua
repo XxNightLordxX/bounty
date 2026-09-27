@@ -343,6 +343,30 @@ describe('finished contracts do not accumulate forever', function()
             'the file is removed where SaveResourceFile wrote it')
     end)
 
+    it('json: has the index without it on disk before the file goes', function()
+        local old = os.time() - (Config.Audit.ContractRetentionDays + 1) * DAY
+        local store
+        for _, backend in ipairs(backends()) do
+            if backend.name == 'json' then store = backend.store end
+        end
+        settled(store, 'ct00000019', old)
+        store.save(true)
+
+        local indexAtUnlink
+        local realRemove, realPath = os.remove, _G.GetResourcePath
+        _G.GetResourcePath = function() return '/srv/resources/crimson-bounty' end
+        os.remove = function(path)
+            indexAtUnlink = Natives.files and Natives.files['data/store.json'] or ''
+            return true
+        end
+        local ok, err = pcall(store.prune)
+        os.remove, _G.GetResourcePath = realRemove, realPath
+        truthy(ok, tostring(err))
+        truthy(indexAtUnlink, 'nothing was removed')
+        falsy(tostring(indexAtUnlink):find('ct00000019', 1, true),
+            'the file went while the index on disk still named it')
+    end)
+
     it('keeps one that has only just finished', function()
         local recent = os.time() - DAY
         for _, backend in ipairs(backends()) do

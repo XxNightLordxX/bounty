@@ -399,3 +399,34 @@ describe('sanitized text is always well-formed', function()
         end
     end)
 end)
+
+describe('a photo token after the kill was undone', function()
+    it('is refused once a revive cleared the kill, even if the target then leaves', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } } })
+        s.contracts.accept(f.hunter, c.id, false)
+        Config.Completion.ExtraPhotoHosts = { 'cdn.fivemanage.com' }
+        s.photo.loadAllowedHosts()
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = (Env.players[2]._health or 200) - 60
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.onVictimReport(2)
+        local token = s.photo.issue(f.hunter, c.id)
+        truthy(token)
+        -- Revived after the proof window, then gone.
+        Env.gameTimer = Env.gameTimer + (Config.Completion.ProofWindowSeconds + 5) * 1000
+        Env.players[2].PlayerData.metadata.isdead = false
+        s.death.onRevived('TARGET01')
+        Env.dropPlayer = Env.dropPlayer
+        Env.players[2] = nil
+        local before = Env.players[3].PlayerData.money.cash
+        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        falsy(ok, 'paid for a kill the revive had undone')
+        eq(err, CB.ERR.PHOTO_REVIVED)
+        eq(Env.players[3].PlayerData.money.cash, before)
+    end)
+end)

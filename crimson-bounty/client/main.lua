@@ -436,32 +436,38 @@ end
 -- The client reports only about itself, and the server treats the report as
 -- a prompt to check its own records rather than as a fact.
 
-local wasDead = false
-
---- Down, by the engine or by the medical resource. qbx_medical and
---- qb-ambulancejob resurrect the ped a moment after a death and hold the
---- player down in an animation: by the engine alone they were "revived"
---- then, the server refused it (still dead by the metadata), and the real
---- revive later was never reported.
-local function isDown(ped)
-    if IsEntityDead(ped) then return true end
+--- The medical resource's view, read without trusting it to exist.
+local function medical()
     local ok, state = pcall(function() return LocalPlayer.state end)
-    if ok and state and (state.isDead == true or state.inLastStand == true) then return true end
-    local okData, data = pcall(function()
-        return exports.qbx_core:GetPlayerData()
-    end)
+    local okData, data = pcall(function() return exports.qbx_core:GetPlayerData() end)
     local meta = okData and type(data) == 'table' and data.metadata or nil
-    return type(meta) == 'table' and (meta.isdead == true or meta.inlaststand == true)
+    state = ok and state or nil
+    local dead = (state and state.isDead == true) or (type(meta) == 'table' and meta.isdead == true)
+    local lastStand = (state and state.inLastStand == true)
+        or (type(meta) == 'table' and meta.inlaststand == true)
+    return dead, lastStand
 end
+
+-- Two questions, kept apart. Dead: reported as a death, once, when the
+-- player is dead by the engine or the medical resource — not in last
+-- stand, which the server does not count, and reporting it then used up
+-- the one report so the real death that followed was never sent. Down
+-- (dead or in last stand): what a revive ends. qbx_medical and
+-- qb-ambulancejob resurrect the ped a moment after a death while the
+-- player stays down, so by the engine alone the revive came too early,
+-- was refused, and the real one was never reported.
+local reportedDead, wasDown = false, false
 
 CreateThread(function()
     while true do
         Wait(1000)
         local ped = PlayerPedId()
-        local dead = isDown(ped)
+        local medDead, lastStand = medical()
+        local dead = IsEntityDead(ped) or medDead
+        local down = dead or lastStand
 
-        if dead and not wasDead then
-            wasDead = true
+        if dead and not reportedDead then
+            reportedDead = true
 
             -- The victim reports who killed them, read from their own game.
             -- A killer's claim about their own kill is exactly what an
@@ -477,10 +483,12 @@ CreateThread(function()
             end
 
             TriggerServerEvent('crimson-bounty:iDied', killerServerId)
-        elseif not dead and wasDead then
-            wasDead = false
+        end
+        if not down and wasDown then
+            reportedDead = false
             TriggerServerEvent('crimson-bounty:iRevived')
         end
+        wasDown = down
     end
 end)
 

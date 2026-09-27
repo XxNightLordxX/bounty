@@ -216,6 +216,17 @@ function Photo.submit(actor, rawToken, rawUrl)
         return false, CB.ERR.PHOTO_TOO_FAR
     end
 
+    -- The kill this token was issued for must still stand: a revive clears
+    -- it (Death.onRevived), and the token outlived it. A target revived and
+    -- then gone offline, or dead again of something else, passed the check
+    -- below, and the hunter was paid for a kill that had been undone.
+    local stillPending = Death.getPending(record.contractId, actor.cid)
+    if not stillPending or (record.diedAt and stillPending.at ~= record.diedAt) then
+        Audit.rejected('photo_kill_undone', actor.cid, record.contractId, {})
+        tokens[token] = nil
+        return false, CB.ERR.PHOTO_REVIVED
+    end
+
     -- Still dead? A target revived between the kill and the photo was not
     -- eliminated (§7.4) — but a short proof window follows the death itself,
     -- because players respawn in seconds and the hunter standing over the

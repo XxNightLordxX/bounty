@@ -126,7 +126,12 @@ function Informant.buy(actor, contractId)
     -- rather than rolling for another, so the purchase cannot be used to
     -- enumerate every hunter for a fee.
     if existing and (os.time() - existing.at) < (Config.Informant.RerollLockMinutes * 60) then
-        return true, nil, Informant.describe(existing.hunterCid)
+        -- The answer given when they were revealed, not a fresh look. Asked
+        -- again, it said whether that hunter was online right now — free,
+        -- every few minutes, for the whole lock: a presence oracle on an
+        -- anonymous hunter. After a restart the lock has run out (locksAgedAt),
+        -- so nothing needs this across one.
+        return true, nil, existing.answer or Informant.describe(existing.hunterCid)
     end
 
     local purchases = existing and existing.purchases or 0
@@ -155,10 +160,11 @@ function Informant.buy(actor, contractId)
         -- premium buys a target a reliable server-side yes/no on whether an
         -- anonymous operative is on them right now — which is the paid
         -- oracle the charge was there to prevent.
+        local answer = Informant.describe(nil)
         remember(contractId, actor.cid, { hunterCid = nil, at = os.time(),
-                         purchases = purchases + 1, seed = existing and existing.seed })
+                         purchases = purchases + 1, seed = existing and existing.seed, answer = answer })
         Audit.action('informant_revealed', actor.cid, contractId, { hunter = nil })
-        return true, nil, Informant.describe(nil)
+        return true, nil, answer
     end
 
     -- Selection must not be steerable. A wall clock in the formula lets the
@@ -186,11 +192,12 @@ function Informant.buy(actor, contractId)
     local index = ((seed + purchases) % #candidates) + 1
     local chosen = candidates[index]
 
+    local answer = Informant.describe(chosen.hunter_cid)
     remember(contractId, actor.cid, { hunterCid = chosen.hunter_cid, at = os.time(),
-                     purchases = purchases + 1, seed = seed })
+                     purchases = purchases + 1, seed = seed, answer = answer })
     Audit.action('informant_revealed', actor.cid, contractId, { hunter = chosen.hunter_cid })
 
-    return true, nil, Informant.describe(chosen.hunter_cid)
+    return true, nil, answer
 end
 
 --- What the buyer is shown.

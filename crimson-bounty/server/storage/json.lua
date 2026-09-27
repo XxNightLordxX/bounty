@@ -499,6 +499,10 @@ local function prunableContracts(cutoff, limit)
     return out
 end
 
+--- Shard files a prune is waiting to remove until the index without them
+--- is safely on disk (JsonStore.prune).
+local pendingUnlinks = {}
+
 function JsonStore.prune()
     local days = Config.Audit.ContractRetentionDays or 0
     if days <= 0 then return true end
@@ -538,11 +542,25 @@ function JsonStore.prune()
         -- there, the unlink failed in silence, and every pruned contract's
         -- file stayed on disk for good.
         local file = shardPath(id)
-        local base = GetResourcePath and GetResourcePath(resource)
-        if file and base and base ~= '' then os.remove(base .. '/' .. file) end
+        if file then pendingUnlinks[#pendingUnlinks + 1] = file end
     end
 
-    indexDirty = true
+    -- The index that no longer names them goes to disk first, and the files
+    -- only after it has. Unlinked first, a crash before the next flush left
+    -- store.json naming a file that was gone, and the contract was
+    -- quarantined as missing, with its warning, on every boot after.
+    if #pendingUnlinks > 0 then
+        if writeFile(path(), buildIndex()) then
+            indexDirty = false
+            local base = GetResourcePath and GetResourcePath(resource)
+            if base and base ~= '' then
+                for i = 1, #pendingUnlinks do os.remove(base .. '/' .. pendingUnlinks[i]) end
+            end
+            pendingUnlinks = {}
+        else
+            indexDirty = true
+        end
+    end
     dirty = true
     return true
 end
