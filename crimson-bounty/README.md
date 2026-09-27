@@ -18,14 +18,15 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 4. Restart. The console prints `[crimson-bounty] started in <mode> mode`,
    plus a warning for any configuration that will surprise you later.
 
-Database tables are created automatically on first start in `mysql` mode.
-Nothing to import.
+The config ships in `json` mode: everything lives in files under
+`crimson-bounty/data/`, which is what to back up. In `mysql` mode the tables
+are created automatically on first start. Nothing to import either way.
 
 ### Configuration worth reading before you start
 
 | Setting | Why it matters |
 |---|---|
-| `Config.Database.Mode` | `mysql` (default), `json` (no database at all), `memory` (testing only — nothing survives a restart) |
+| `Config.Database.Mode` | `json` (as shipped; no database at all), `mysql` (oxmysql), `memory` (testing only — nothing survives a restart) |
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who cannot open the app. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit |
 | `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry |
 | `Config.Payout.AllowConversion` | Leave **off**. See "Dirty money" below |

@@ -149,6 +149,27 @@ local SCHEMA = {
         -- that is a scan of the whole log, which is the largest table here.
         INDEX idx_audit_contract (contract_id)
     )]],
+    -- What one buyer's informant purchases on one contract have bought: the
+    -- reroll lock and the purchase count. Kept here rather than only in
+    -- memory, because a restart that forgot them charged the fee again for
+    -- the same name and counted the ceiling from zero.
+    [[CREATE TABLE IF NOT EXISTS crimson_reveals (
+        id VARCHAR(80) PRIMARY KEY,
+        contract_id VARCHAR(32) NOT NULL,
+        buyer_cid VARCHAR(32) NOT NULL,
+        hunter_cid VARCHAR(32),
+        revealed_at INT NOT NULL,
+        purchases INT DEFAULT 0,
+        seed INT,
+        INDEX idx_reveal_contract (contract_id)
+    )]],
+    -- Small facts about the store itself. Holds the heartbeat: when this
+    -- process was last known to be running, so a boot can tell how long
+    -- nobody could play.
+    [[CREATE TABLE IF NOT EXISTS crimson_meta (
+        meta_key VARCHAR(32) PRIMARY KEY,
+        meta_value INT NOT NULL
+    )]],
 }
 
 --------------------------------------------------------------------------
@@ -333,17 +354,24 @@ function MySQLStore.writeContract(c)
         --
         --   expires_at — the absolute lifetime. Nothing extended one until
         --   the staff timer refresh did.
+        --
+        --   payout_slots — giving the last collection back by agreement
+        --   brings the count down. Left off this list, the count stayed
+        --   where it was on this backend only: the emptied collection stayed
+        --   on sale, the contract never closed on its last real payout, and
+        --   it ran out instead, forfeiting the stake of the hunter who had
+        --   collected everything it still paid.
         ON DUPLICATE KEY UPDATE
             reason = VALUES(reason), mode = VALUES(mode),
             bonus_percent = VALUES(bonus_percent), expires_at = VALUES(expires_at),
             bailout_amount = VALUES(bailout_amount), penalty_amount = VALUES(penalty_amount),
-            slots_claimed = VALUES(slots_claimed), next_slot = VALUES(next_slot),
-            -- Giving the last collection back by agreement lowers the count.
-            -- Left off this list, that write was discarded here and only
-            -- here: the collection's escrow went back to the creator and the
-            -- contract went on selling it, paying the next kill out of an
-            -- empty slot.
             payout_slots = VALUES(payout_slots),
+            -- next_slot and slots_claimed are deliberately absent: they move
+            -- only through advanceSlot. Every other writer carries a copy
+            -- read before its own awaits, and writing those two back undid
+            -- a claim that landed in between — the collection just paid
+            -- was put back on sale, and the next hunter to kill the target
+            -- for it was paid out of an empty slot.
             deadline_at = VALUES(deadline_at), paused_ms = VALUES(paused_ms),
             paused_since = VALUES(paused_since),
             -- The five bailout_* columns are deliberately absent: they move
@@ -848,10 +876,20 @@ end
 
 --- Every audit row naming one contract, oldest first. Indexed, so the
 --- admin timeline is a lookup rather than a scan of the whole log.
+---
+--- The LATEST `limit` rows, as the other backends return. This took the
+--- first ones, so on a contract with more history than the limit — a relay
+--- conversation writes a row per message — the timeline stopped at its
+--- two-hundredth event and never showed what staff were asking about, and
+--- /cb-stuck, which reads this for release_interrupted rows, reported a
+--- stuck release as nothing at all.
 function MySQLStore.auditForContract(contractId, limit)
-    return hydrateAuditRows(MySQL.query.await(
-        'SELECT * FROM crimson_audit WHERE contract_id = ? ORDER BY id ASC LIMIT ?',
-        { contractId, limit or 200 }) or {})
+    local newest = MySQL.query.await(
+        'SELECT * FROM crimson_audit WHERE contract_id = ? ORDER BY id DESC LIMIT ?',
+        { contractId, limit or 200 }) or {}
+    local rows = {}
+    for i = #newest, 1, -1 do rows[#rows + 1] = newest[i] end
+    return hydrateAuditRows(rows)
 end
 
 --- Drop the photo reference from rows older than the cutoff (§14.43).
@@ -913,11 +951,55 @@ function MySQLStore.pruneContracts(cutoff)
             MySQL.query.await('DELETE FROM crimson_hunters WHERE contract_id = ?', { id })
             MySQL.query.await('DELETE FROM crimson_amendments WHERE contract_id = ?', { id })
             MySQL.query.await('DELETE FROM crimson_messages WHERE contract_id = ?', { id })
+            MySQL.query.await('DELETE FROM crimson_reveals WHERE contract_id = ?', { id })
             MySQL.query.await('DELETE FROM crimson_contracts WHERE id = ?', { id })
             removed = removed + 1
         end
     end
     return removed
+end
+
+--- What one buyer's informant purchases on one contract have bought; see the
+--- memory backend.
+function MySQLStore.readReveal(contractId, buyerCid)
+    local rows = MySQL.query.await('SELECT * FROM crimson_reveals WHERE id = ?',
+        { contractId .. ':' .. buyerCid }) or {}
+    return rows[1]
+end
+
+function MySQLStore.writeReveal(contractId, buyerCid, record)
+    MySQL.query.await([[
+        INSERT INTO crimson_reveals
+            (id, contract_id, buyer_cid, hunter_cid, revealed_at, purchases, seed)
+        VALUES (?,?,?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE hunter_cid = VALUES(hunter_cid),
+            revealed_at = VALUES(revealed_at), purchases = VALUES(purchases),
+            seed = VALUES(seed)
+    ]], {
+        contractId .. ':' .. buyerCid, contractId, buyerCid, record.hunter_cid,
+        record.revealed_at, record.purchases or 0, record.seed,
+    })
+    return true
+end
+
+function MySQLStore.clearReveals(contractId)
+    MySQL.query.await('DELETE FROM crimson_reveals WHERE contract_id = ?', { contractId })
+    return true
+end
+
+--- When this process was last known to be running. See main.lua's Recover.
+function MySQLStore.heartbeat(at)
+    MySQL.query.await([[
+        INSERT INTO crimson_meta (meta_key, meta_value) VALUES (?, ?)
+        ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
+    ]], { 'heartbeat', at })
+    return true
+end
+
+function MySQLStore.lastHeartbeat()
+    local rows = MySQL.query.await(
+        'SELECT meta_value FROM crimson_meta WHERE meta_key = ?', { 'heartbeat' }) or {}
+    return rows[1] and tonumber(rows[1].meta_value) or nil
 end
 
 function MySQLStore.flush() return true end

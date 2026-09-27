@@ -11,7 +11,7 @@ local db
 function Memory.open()
     db = {
         contracts = {}, escrow = {}, hunters = {}, amendments = {},
-        messages = {}, ledger = {}, pending = {}, audit = {}, seq = 0,
+        messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, seq = 0,
     }
     return true
 end
@@ -44,12 +44,20 @@ local BAILOUT_QUEUE = {
     'bailout_paid_account', 'bailout_attempts',
 }
 
+--- The payout counters, which move ONLY through advanceSlot. A copy read
+--- before a claim and written after it would otherwise put the collection
+--- just paid back on sale.
+local SLOT_COUNTERS = { 'next_slot', 'slots_claimed' }
+
 function Memory.writeContract(contract)
     local existing = db.contracts[contract.id]
     if existing and existing ~= contract then
         contract.state = existing.state
         for i = 1, #BAILOUT_QUEUE do
             contract[BAILOUT_QUEUE[i]] = existing[BAILOUT_QUEUE[i]]
+        end
+        for i = 1, #SLOT_COUNTERS do
+            contract[SLOT_COUNTERS[i]] = existing[SLOT_COUNTERS[i]]
         end
     end
     db.contracts[contract.id] = contract
@@ -467,9 +475,48 @@ function Memory.prune()
         for j = #db.messages, 1, -1 do
             if db.messages[j].contract_id == id then table.remove(db.messages, j) end
         end
+        for key, row in pairs(db.reveals) do
+            if row.contract_id == id then db.reveals[key] = nil end
+        end
         db.contracts[id] = nil
     end
     return true
+end
+
+--- What one buyer's informant purchases on one contract have bought.
+---
+--- Kept in the store, not only in the informant's memory: the record holds
+--- the reroll lock and the purchase count, and a restart that forgot them
+--- charged the fee again for the same name and counted the ceiling from
+--- zero, on the one purchase in the resource that is never refunded.
+function Memory.readReveal(contractId, buyerCid)
+    return db.reveals[contractId .. ':' .. buyerCid]
+end
+
+function Memory.writeReveal(contractId, buyerCid, record)
+    local row = {}
+    for k, v in pairs(record) do row[k] = v end
+    row.contract_id, row.buyer_cid = contractId, buyerCid
+    db.reveals[contractId .. ':' .. buyerCid] = row
+    return true
+end
+
+function Memory.clearReveals(contractId)
+    for key, row in pairs(db.reveals) do
+        if row.contract_id == contractId then db.reveals[key] = nil end
+    end
+    return true
+end
+
+--- When this process was last known to be running. See main.lua's Recover:
+--- the time between the last heartbeat and a boot is time nobody could play.
+function Memory.heartbeat(at)
+    db.heartbeat = at
+    return true
+end
+
+function Memory.lastHeartbeat()
+    return db.heartbeat
 end
 
 function Memory.flush() return true end

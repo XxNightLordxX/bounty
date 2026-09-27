@@ -681,21 +681,43 @@ end
 --- exactly once by re-reading whether the funds actually moved.
 function Recover()
     local contracts = Storage.allContracts()
-    local recovered, unstuck = 0, 0
+    local recovered, unstuck, finished, paused = 0, 0, 0, 0
+
+    -- When this process was last known to be running. Every contract's clock
+    -- pauses while either party is offline, and while the server is down
+    -- everybody is. A contract nobody had paused when the process went away
+    -- only started pausing at the first tick after the boot, so the downtime
+    -- itself was charged to the deadline — and one that fell due inside it
+    -- expired the moment both parties were back, forfeiting the hunter's
+    -- stake for a restart. Dated from the last heartbeat instead.
+    local now = os.time()
+    local lastAlive = Storage.lastHeartbeat and Storage.lastHeartbeat() or nil
+    if lastAlive and lastAlive >= now then lastAlive = nil end
 
     for i = 1, #contracts do
         local contract = contracts[i]
 
-        if contract.state == CB.STATE.COMPLETING then
-            -- Settlement was interrupted. Put it back to accepted so the
-            -- normal path can run again; escrow lines are individually
-            -- guarded, so anything already settled stays settled.
-            Storage.compareSetContractState(contract.id, CB.STATE.COMPLETING, CB.STATE.ACCEPTED)
-            recovered = recovered + 1
+        if lastAlive and not contract.paused_since
+            and (contract.state == CB.STATE.ACTIVE or contract.state == CB.STATE.ACCEPTED
+                 or contract.state == CB.STATE.COMPLETING) then
+            contract.paused_since = lastAlive
+            Storage.writeContract(contract)
+            paused = paused + 1
         end
+
+        -- Whether anything on this contract was never handed to anybody:
+        -- held (or caught mid-claim before a recipient was written), owed
+        -- to nobody, and naming nobody it was on its way to.
+        local untouched = false
 
         local lines = Storage.readEscrow(contract.id)
         for j = 1, #lines do
+            local line = lines[j]
+            if (line.state == CB.ESCROW_STATE.HELD or line.state == CB.ESCROW_STATE.RELEASING)
+                and not line.owed_to and not line.releasing_to
+                and line.portion ~= CB.PORTION.OWED then
+                untouched = true
+            end
             if lines[j].state == CB.ESCROW_STATE.RELEASING then
                 -- Claimed but never settled. The server stopped between
                 -- handing the money over and recording that it had, so we
@@ -718,16 +740,66 @@ function Recover()
                 end
             end
         end
+
+        if contract.state == CB.STATE.COMPLETING then
+            -- A claim that had paid its collection and died before moving
+            -- the slot on. Every baseline line of that collection is either
+            -- settled or waiting for the person it was paid to, so it was
+            -- paid; left where it was, the next hunter to kill the target
+            -- for it was paid out of an empty slot.
+            local slot = contract.next_slot or 1
+            local baseline, unpaid = 0, 0
+            for j = 1, #lines do
+                local line = lines[j]
+                if line.slot == slot and line.portion == CB.PORTION.BASELINE then
+                    baseline = baseline + 1
+                    if line.state ~= CB.ESCROW_STATE.SETTLED and not line.owed_to then
+                        unpaid = unpaid + 1
+                    end
+                end
+            end
+            if baseline > 0 and unpaid == 0 and Storage.advanceSlot(contract.id, slot) then
+                contract = Storage.readContract(contract.id) or contract
+            end
+
+            if (contract.next_slot or 1) > (contract.payout_slots or 1) then
+                -- Every collection was already paid: the last claim died
+                -- between advancing the slot and closing. Put back to
+                -- accepted, this was a live contract with nothing left to
+                -- claim, which then ran out and forfeited the stake of the
+                -- hunter who had collected all of it. It is finished instead.
+                if modules.contracts.recoverEnded(contract.id) then
+                    finished = finished + 1
+                end
+            else
+                -- Settlement was interrupted. Put it back to accepted so the
+                -- normal path can run again; escrow lines are individually
+                -- guarded, so anything already settled stays settled.
+                Storage.compareSetContractState(contract.id, CB.STATE.COMPLETING, CB.STATE.ACCEPTED)
+                recovered = recovered + 1
+            end
+        elseif untouched and CB.TERMINAL[contract.state] then
+            -- Closed, and still holding something nobody tried to pay.
+            -- `resolve` moves the state first and the money after, so a crash
+            -- in between left the escrow on a contract nothing releases again.
+            if modules.contracts.recoverEnded(contract.id) then
+                finished = finished + 1
+            end
+        end
     end
 
-    if recovered > 0 or unstuck > 0 then
-        print(('[crimson-bounty] recovery: %d contracts resumed, %d escrow lines unstuck')
-            :format(recovered, unstuck))
+    if recovered > 0 or unstuck > 0 or finished > 0 then
+        print(('[crimson-bounty] recovery: %d contracts resumed, %d finished, %d escrow '
+            .. 'lines unstuck'):format(recovered, finished, unstuck))
         modules.audit.action('startup_recovery', nil, nil,
-            { contracts = recovered, lines = unstuck })
+            { contracts = recovered, finished = finished, lines = unstuck,
+              paused = paused })
     end
 
-    return recovered, unstuck
+    -- Alive from here on.
+    if Storage.heartbeat then Storage.heartbeat(now) end
+
+    return recovered, unstuck, finished
 end
 
 --------------------------------------------------------------------------
@@ -813,6 +885,9 @@ function Tick()
     job('app.sweepHandles', app.sweepHandles)
     job('app.sweepFloodCounters', app.sweepFloodCounters)
     job('expireContracts', ExpireContracts)
+    -- When this process was last known to be running, so the next boot can
+    -- tell how long nobody could play. See Recover.
+    if Storage.heartbeat then job('storage.heartbeat', Storage.heartbeat, os.time()) end
     -- Last, and the one every other job used to stand in front of.
     if Storage.flush then job('storage.flush', Storage.flush) end
 end
@@ -1013,6 +1088,8 @@ AddEventHandler('onResourceStop', function(name)
         end
     end
 
+    -- The last moment anybody could play, to the second.
+    if Storage and Storage.heartbeat then pcall(Storage.heartbeat, os.time()) end
     if Storage and Storage.close then Storage.close() end
 end)
 

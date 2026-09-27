@@ -320,6 +320,29 @@ describe('finished contracts do not accumulate forever', function()
         end
     end)
 
+    it('json: deletes the pruned contract\'s file from the resource folder', function()
+        -- SaveResourceFile resolves against the resource; os.remove resolves
+        -- against the server's working directory. The relative path named a
+        -- file that is not there, so no pruned file was ever deleted.
+        local old = os.time() - (Config.Audit.ContractRetentionDays + 1) * DAY
+        local store
+        for _, backend in ipairs(backends()) do
+            if backend.name == 'json' then store = backend.store end
+        end
+        settled(store, 'ct00000009', old)
+
+        local removed = {}
+        local realRemove, realPath = os.remove, _G.GetResourcePath
+        _G.GetResourcePath = function() return '/srv/resources/crimson-bounty' end
+        os.remove = function(path) removed[#removed + 1] = path return true end
+        local ok, err = pcall(store.prune)
+        os.remove, _G.GetResourcePath = realRemove, realPath
+        truthy(ok, tostring(err))
+
+        eq(removed[1], '/srv/resources/crimson-bounty/data/contracts/ct00000009.json',
+            'the file is removed where SaveResourceFile wrote it')
+    end)
+
     it('keeps one that has only just finished', function()
         local recent = os.time() - DAY
         for _, backend in ipairs(backends()) do
@@ -1483,7 +1506,12 @@ describe('rewriting a contract', function()
     local MUTABLE = {
         reason = 'renegotiated', mode = CB.MODE.EXCLUSIVE,
         bonus_percent = 35, bailout_amount = 12345, penalty_amount = 6789,
-        slots_claimed = 2, next_slot = 3,
+        -- Brought down when the last collection is given back by agreement.
+        -- It was listed as immutable on mysql, so on that backend alone the
+        -- emptied collection stayed on sale.
+        payout_slots = 2,
+        -- next_slot and slots_claimed are NOT here: they move only through
+        -- advanceSlot, and the test below holds every backend to that.
         deadline_at = 1800000001, expires_at = 1800000002,
         paused_ms = 7000, paused_since = 1800000003,
         -- The five bailout_* fields are NOT here: they move only through
@@ -1558,6 +1586,36 @@ describe('the buyout queue', function()
                 b.name .. ': the stale copy erased a buyout the target had '
                 .. 'already paid for')
             eq(read.bailout_paid_amount, QUEUED.bailout_paid_amount, b.name)
+        end
+    end)
+end)
+
+describe('the payout counters', function()
+    --- Move only through advanceSlot, never through writeContract.
+    ---
+    --- Every other writer reads the row, awaits, and writes it back. On mysql
+    --- a claim lands in those awaits, and writing next_slot back undid it:
+    --- the collection just paid went back on sale, and the next hunter to
+    --- kill the target for it was paid out of an empty slot.
+    it('survive a writeContract of a copy read before a claim, in every backend', function()
+        for _, b in ipairs(backends()) do
+            local row = contractFixture('ctslot1')
+            row.payout_slots = 3
+            b.store.writeContract(row)
+
+            local stale = {}
+            for k, v in pairs(b.store.readContract('ctslot1')) do stale[k] = v end
+
+            truthy(b.store.advanceSlot('ctslot1', 1), b.name .. ': the claim')
+
+            stale.reason = 'edited meanwhile'
+            b.store.writeContract(stale)
+
+            local read = b.store.readContract('ctslot1')
+            eq(read.reason, 'edited meanwhile', b.name .. ': the edit landed')
+            eq(read.next_slot, 2, b.name .. ': the stale copy put a paid collection '
+                .. 'back on sale')
+            eq(read.slots_claimed, 1, b.name .. ': and uncounted the claim')
         end
     end)
 end)

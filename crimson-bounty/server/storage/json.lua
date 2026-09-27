@@ -14,7 +14,7 @@ local resource = GetCurrentResourceName and GetCurrentResourceName() or 'crimson
 
 local EMPTY = {
     contracts = {}, escrow = {}, hunters = {}, amendments = {},
-    messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, seq = 0,
+    messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, reveals = {}, seq = 0,
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -217,6 +217,7 @@ local function buildIndex()
     -- Everything that is not per-contract. Small, and rewritten whole.
     index.ledger, index.pending = db.ledger, db.pending
     index.audit, index.stats = db.audit, db.stats
+    index.reveals = db.reveals
     return index
 end
 
@@ -520,6 +521,9 @@ function JsonStore.prune()
         for j = #db.messages, 1, -1 do
             if db.messages[j].contract_id == id then table.remove(db.messages, j) end
         end
+        for key, row in pairs(db.reveals) do
+            if row.contract_id == id then db.reveals[key] = nil end
+        end
         db.contracts[id] = nil
 
         -- Off the index first, so a crash between here and the unlink
@@ -527,8 +531,15 @@ function JsonStore.prune()
         -- at a file that is gone.
         shardIds[id] = nil
         dirtyShards[id] = nil
+        -- Through the resource's own folder. SaveResourceFile resolves a
+        -- path against the resource; os.remove resolves it against the
+        -- server process's working directory, which is the server-data
+        -- folder. So the relative path named a file that does not exist
+        -- there, the unlink failed in silence, and every pruned contract's
+        -- file stayed on disk for good.
         local file = shardPath(id)
-        if file then os.remove(file) end
+        local base = GetResourcePath and GetResourcePath(resource)
+        if file and base and base ~= '' then os.remove(base .. '/' .. file) end
     end
 
     indexDirty = true
@@ -538,6 +549,56 @@ end
 
 function JsonStore.flush() return JsonStore.save(false) end
 function JsonStore.close() return JsonStore.save(true) end
+
+--- What one buyer's informant purchases on one contract have bought; see the
+--- memory backend. Financial: it is the record of a fee that is never given
+--- back, and what stops the next purchase charging it again.
+function JsonStore.readReveal(contractId, buyerCid)
+    return db.reveals[contractId .. ':' .. buyerCid]
+end
+
+function JsonStore.writeReveal(contractId, buyerCid, record)
+    local row = {}
+    for k, v in pairs(record) do row[k] = v end
+    row.contract_id, row.buyer_cid = contractId, buyerCid
+    db.reveals[contractId .. ':' .. buyerCid] = row
+    touch(true)
+    return true
+end
+
+function JsonStore.clearReveals(contractId)
+    local cleared = false
+    for key, row in pairs(db.reveals) do
+        if row.contract_id == contractId then
+            db.reveals[key] = nil
+            cleared = true
+        end
+    end
+    if cleared then touch(false) end
+    return true
+end
+
+--- When this process was last known to be running.
+---
+--- A file of its own rather than a field in the index: the index carries
+--- the whole audit log and is rewritten only when something in it changed,
+--- and this changes on every tick.
+local function heartbeatPath()
+    return directory() .. '/heartbeat.json'
+end
+
+function JsonStore.heartbeat(at)
+    SaveResourceFile(resource, heartbeatPath(), json.encode({ at = at }), -1)
+    return true
+end
+
+function JsonStore.lastHeartbeat()
+    local raw = LoadResourceFile(resource, heartbeatPath())
+    if not raw or raw == '' then return nil end
+    local ok, decoded = pcall(json.decode, raw)
+    if not ok or type(decoded) ~= 'table' then return nil end
+    return tonumber(decoded.at)
+end
 
 function JsonStore.nextId(prefix)
     seq = seq + 1
@@ -620,12 +681,19 @@ local BAILOUT_QUEUE = {
     'bailout_paid_account', 'bailout_attempts',
 }
 
+--- The payout counters, which move ONLY through advanceSlot; see the memory
+--- backend.
+local SLOT_COUNTERS = { 'next_slot', 'slots_claimed' }
+
 function JsonStore.writeContract(c)
     local existing = db.contracts[c.id]
     if existing and existing ~= c then
         c.state = existing.state
         for i = 1, #BAILOUT_QUEUE do
             c[BAILOUT_QUEUE[i]] = existing[BAILOUT_QUEUE[i]]
+        end
+        for i = 1, #SLOT_COUNTERS do
+            c[SLOT_COUNTERS[i]] = existing[SLOT_COUNTERS[i]]
         end
     end
     db.contracts[c.id] = c
@@ -746,9 +814,15 @@ end
 -- Hunters
 --------------------------------------------------------------------------
 
+--- Financial, like the stake it records. The stake is taken, and flushed,
+--- before this row is written; with the row riding the debounce, a process
+--- that died inside the flush interval came back with the stake on disk and
+--- no hunter it belonged to. Nothing returns a stake without its hunter row,
+--- and an exclusive contract left `accepted` with nobody on it refused every
+--- later acceptance as locked.
 function JsonStore.addHunter(record)
     db.hunters[record.id] = record
-    touch(false, record.contract_id)
+    touch(true, record.contract_id)
     return true
 end
 
@@ -780,11 +854,14 @@ function JsonStore.readHunterById(id)
     return db.hunters[id]
 end
 
+--- Financial for the same reason as addHunter: a hunter taking a contract up
+--- again is `active` here after a fresh stake was already flushed, and which
+--- hunters are active decides where every stake goes when the contract ends.
 function JsonStore.updateHunter(id, fields)
     local h = db.hunters[id]
     if not h then return false end
     for k, v in pairs(fields) do h[k] = v end
-    touch(false, h.contract_id)
+    touch(true, h.contract_id)
     return true
 end
 

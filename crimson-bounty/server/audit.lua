@@ -93,12 +93,22 @@ end
 --- quietly did nothing.
 ---
 --- A row that will not write is counted as dropped, which is reported.
+---
+--- The queue is detached before the first write. On mysql every write is an
+--- await, and anything that happens while it waits pushes onto the queue:
+--- the loop's bounds were fixed when it started, and resetting head and tail
+--- afterwards orphaned every row pushed in between — never written, never
+--- counted as dropped. A second flush started meanwhile (the staff commands
+--- flush before they read) walked the same rows and wrote them twice.
 function Audit.flush()
     if tail < head then return 0 end
 
+    local batch, first, last = queue, head, tail
+    queue, head, tail = {}, 1, 0
+
     local written = 0
-    for i = head, tail do
-        local entry = queue[i]
+    for i = first, last do
+        local entry = batch[i]
         if entry then
             if pcall(Storage.writeAudit, entry) then
                 written = written + 1
@@ -106,10 +116,9 @@ function Audit.flush()
                 dropped = dropped + 1
             end
             pcall(mirror, entry)
-            queue[i] = nil
+            batch[i] = nil
         end
     end
-    head, tail = 1, 0
 
     -- A silent drop is worse than a noisy one: if the queue overflowed, the
     -- server owner needs to know their log has gaps.

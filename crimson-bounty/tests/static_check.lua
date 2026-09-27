@@ -1738,6 +1738,11 @@ do
         ['crimson_contracts.target_job']      = 'the same: what they were doing when it was placed',
         ['crimson_contracts.anon_creator']    = 'chosen at creation and not revisitable',
         ['crimson_contracts.created_at']      = 'when it was placed',
+        -- The payout counters. Move only through advanceSlot, because every
+        -- other writer carries a copy read before its own awaits, and writing
+        -- them back undid a claim that landed in between.
+        ['crimson_contracts.next_slot']       = 'moves only through advanceSlot',
+        ['crimson_contracts.slots_claimed']   = 'moves only through advanceSlot',
         -- The buyout queue. Moves only through setBailoutQueue, because a
         -- caller writing back a copy it read before a buyout was paid used to
         -- erase the buyout: premium charged, nothing left to settle it.
@@ -1776,6 +1781,10 @@ do
         ['crimson_pending.contract_id']       = 'what it came from',
         ['crimson_pending.line_id']           = 'the escrow line waiting to be handed over',
         ['crimson_stats.cid']                 = 'the primary key',
+        ['crimson_meta.meta_key']             = 'the primary key',
+        ['crimson_reveals.id']                = 'the primary key',
+        ['crimson_reveals.contract_id']       = 'which contract the purchases were on',
+        ['crimson_reveals.buyer_cid']         = 'who bought them',
     }
 
     local sql = read('crimson-bounty/server/storage/mysql.lua')

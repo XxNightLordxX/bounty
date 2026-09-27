@@ -13,10 +13,50 @@ local Storage, Identity, Audit, Death
 --- [contractId .. ':' .. buyerCid] = { hunterCid, at, purchases }
 local reveals = {}
 
+--- Reroll locks older than this were aged by a staff timer refresh. A record
+--- read back from the store after that refresh is aged the same way.
+local locksAgedAt = nil
+
 function Informant.init(deps)
     Storage, Identity, Audit = deps.storage, deps.identity, deps.audit
     Death = deps.death
     reveals = {}
+    locksAgedAt = nil
+end
+
+--- The buyer's record, from memory or from the store.
+---
+--- The store is the authority: this record is the reroll lock and the
+--- purchase count, and a restart that forgot them made the next purchase
+--- charge the fee again for the same name and count the ceiling from zero —
+--- on the one purchase in the resource that is never refunded.
+local function recordFor(contractId, cid)
+    local key = contractId .. ':' .. cid
+    if reveals[key] then return reveals[key] end
+    if not (Storage and Storage.readReveal) then return nil end
+
+    local stored = Storage.readReveal(contractId, cid)
+    if not stored then return nil end
+
+    local at = tonumber(stored.revealed_at) or 0
+    if locksAgedAt and at <= locksAgedAt then
+        at = os.time() - ((Config.Informant.RerollLockMinutes or 0) * 60 + 1)
+    end
+    reveals[key] = {
+        hunterCid = stored.hunter_cid, at = at,
+        purchases = tonumber(stored.purchases) or 0, seed = tonumber(stored.seed),
+    }
+    return reveals[key]
+end
+
+local function remember(contractId, cid, record)
+    reveals[contractId .. ':' .. cid] = record
+    if Storage and Storage.writeReveal then
+        Storage.writeReveal(contractId, cid, {
+            hunter_cid = record.hunterCid, revealed_at = record.at,
+            purchases = record.purchases, seed = record.seed,
+        })
+    end
 end
 
 --- Who may buy data on a contract: its creator, or its target.
@@ -71,8 +111,7 @@ function Informant.buy(actor, contractId)
     -- no longer existed, and nothing gave it back.
     if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
 
-    local key = contractId .. ':' .. actor.cid
-    local existing = reveals[key]
+    local existing = recordFor(contractId, actor.cid)
 
     -- A sticky reveal: buying again inside the lock returns the same name
     -- rather than rolling for another, so the purchase cannot be used to
@@ -107,8 +146,8 @@ function Informant.buy(actor, contractId)
         -- premium buys a target a reliable server-side yes/no on whether an
         -- anonymous operative is on them right now — which is the paid
         -- oracle the charge was there to prevent.
-        reveals[key] = { hunterCid = nil, at = os.time(),
-                         purchases = purchases + 1, seed = existing and existing.seed }
+        remember(contractId, actor.cid, { hunterCid = nil, at = os.time(),
+                         purchases = purchases + 1, seed = existing and existing.seed })
         Audit.action('informant_revealed', actor.cid, contractId, { hunter = nil })
         return true, nil, Informant.describe(nil)
     end
@@ -127,8 +166,8 @@ function Informant.buy(actor, contractId)
     local index = ((seed + purchases) % #candidates) + 1
     local chosen = candidates[index]
 
-    reveals[key] = { hunterCid = chosen.hunter_cid, at = os.time(),
-                     purchases = purchases + 1, seed = seed }
+    remember(contractId, actor.cid, { hunterCid = chosen.hunter_cid, at = os.time(),
+                     purchases = purchases + 1, seed = seed })
     Audit.action('informant_revealed', actor.cid, contractId, { hunter = chosen.hunter_cid })
 
     return true, nil, Informant.describe(chosen.hunter_cid)
@@ -172,8 +211,12 @@ end
 function Informant.expireRerollLocks()
     local window = (Config.Informant.RerollLockMinutes or 0) * 60
     local aged = 0
-    for _, reveal in pairs(reveals) do
+    -- Records still only in the store are aged as they are read back.
+    locksAgedAt = os.time()
+    for key, reveal in pairs(reveals) do
         reveal.at = os.time() - (window + 1)
+        local contractId, cid = key:match('^([^:]+):(.+)$')
+        if contractId then remember(contractId, cid, reveal) end
         aged = aged + 1
     end
     return aged
@@ -206,6 +249,7 @@ function Informant.clearContract(contractId)
     for key in pairs(reveals) do
         if key:sub(1, #contractId + 1) == contractId .. ':' then reveals[key] = nil end
     end
+    if Storage and Storage.clearReveals then Storage.clearReveals(contractId) end
 end
 
 return Informant

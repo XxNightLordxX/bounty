@@ -185,7 +185,19 @@ function Bailout.settle(contractId, amount, targetCid, account, opts)
     if not contract then return false, CB.ERR.NOT_FOUND end
     account = account or contract.bailout_paid_account or 'bank'
 
-    local ok, err = Contracts.resolve(contractId, CB.STATE.BAILED_OUT, contract.creator_cid, nil, 'bailed_out')
+    -- Already bought out, with this buyout still queued: the only thing
+    -- that closes a contract as BAILED_OUT is a buyout, and a second one is
+    -- refused while this one is queued. So this settle closed it already and
+    -- the process died before the premium was handed over and the queue
+    -- cleared. Treating that as "resolved some other way" refunded the
+    -- target a buyout they had been given, and the creator never saw the
+    -- premium.
+    local ok, err
+    if contract.state == CB.STATE.BAILED_OUT and contract.bailout_queued_at then
+        ok = true
+    else
+        ok, err = Contracts.resolve(contractId, CB.STATE.BAILED_OUT, contract.creator_cid, nil, 'bailed_out')
+    end
     if not ok then
         -- LOCKED is not a resolution: the contract is mid-claim and will be
         -- either completed or back to accepted within a tick or two. Refunding

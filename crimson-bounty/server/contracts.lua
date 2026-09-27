@@ -1524,4 +1524,81 @@ function Contracts.resolve(contractId, terminal, recipientCid, filter, reason, o
     return true, result
 end
 
+--------------------------------------------------------------------------
+-- Restart recovery (§10.4)
+--------------------------------------------------------------------------
+
+--- Hand over what an ending interrupted by a crash never reached.
+---
+--- Only lines nobody has tried to pay: still `held`, owed to nobody, and
+--- with no `releasing_to`. A line that was mid-release when the process died
+--- carries the name it was going to and may already have been paid, so it is
+--- left exactly where recovery puts it — logged for staff. Everything else is
+--- the ending's own unfinished business, released the way the ending would
+--- have: stakes to whoever put them up (to the creator, for a hunter still on
+--- a contract that expired), the rest back to the creator.
+---@param contract table
+---@param forfeit boolean
+---@return integer released
+local function releaseUntouched(contract, forfeit)
+    local released = 0
+    for _, line in ipairs(Storage.readEscrow(contract.id) or {}) do
+        if line.state == CB.ESCROW_STATE.HELD and not line.owed_to
+            and not line.releasing_to and line.portion ~= CB.PORTION.OWED then
+            local recipient = contract.creator_cid
+            if line.portion == CB.PORTION.STAKE then
+                local hunter = line.staker and Storage.readHunter(contract.id, line.staker)
+                local keeps = forfeit and hunter and hunter.state == 'active'
+                recipient = keeps and contract.creator_cid or line.staker
+            end
+            if recipient then
+                Escrow.release(contract.id, recipient, { line = line.id }, 'recovered_after_restart')
+                released = released + 1
+            end
+        end
+    end
+    return released
+end
+
+--- Finish a contract whose ending a crash interrupted.
+---
+--- Two shapes, both left behind by a process that died part-way through:
+---
+---   * COMPLETING with every collection already paid. The last claim had
+---     advanced the slot past the end and died before closing. Putting it
+---     back to ACCEPTED, as recovery did, brought back a live contract with
+---     nothing left to claim, which then ran out: the hunter who had
+---     collected everything had their stake forfeited to the creator, and the
+---     target was credited with surviving it.
+---
+---   * A terminal contract still holding escrow. `resolve` moves the state
+---     first and the money after, so a crash in between left the creator's
+---     escrow — and any stake — on a closed contract that nothing ever
+---     releases again, and that no staff tool reported.
+---@param contractId string
+---@return string|nil what 'completed' | 'released' | nil when nothing was done
+function Contracts.recoverEnded(contractId)
+    local contract = Storage.readContract(contractId)
+    if not contract then return nil end
+
+    if contract.state == CB.STATE.COMPLETING
+        and (contract.next_slot or 1) > (contract.payout_slots or 1) then
+        releaseUntouched(contract, false)
+        contract.resolved_at = contract.resolved_at or os.time()
+        contract.resolution = contract.resolution or 'completed'
+        Storage.writeContract(contract)
+        Contracts.transition(contractId, CB.STATE.COMPLETING, CB.STATE.COMPLETED,
+            'completed_on_recovery', SETTLING)
+        if Contracts.onResolved then Contracts.onResolved(contractId) end
+        return 'completed'
+    end
+
+    if CB.TERMINAL[contract.state] then
+        local released = releaseUntouched(contract, contract.state == CB.STATE.EXPIRED)
+        return released > 0 and 'released' or nil
+    end
+
+    return nil
+end
+
 return Contracts
