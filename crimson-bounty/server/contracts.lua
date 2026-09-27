@@ -636,6 +636,18 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     local previousState = previous and previous.state
     local previousAnon = previous and previous.anon
 
+    -- Coming back cannot buy anonymity the first stint gave away. The alias
+    -- and the thread are the same ones, so a creator who was shown
+    -- "Operative #1 (their name)" and that operative's messages knows
+    -- exactly who the anonymous Operative #1 is — and the fee used to be
+    -- taken for it all the same. Named again, and charged nothing, the way
+    -- a hunter who cannot cover the fee is simply named.
+    local renamed = false
+    if previous and not previous.anon and anonymous then
+        anonymous = false
+        renamed = true
+    end
+
     local held = Storage.countHunterContracts(actor.cid, LIVE_STATES)
     if held >= Config.Limits.MaxAcceptedPerHunter then return false, CB.ERR.LIMIT_REACHED end
 
@@ -810,6 +822,10 @@ function Contracts.accept(actor, contractId, anonymous, opts)
             Notify.toCitizen(actor.cid, 'Not anonymous',
                 'You could not cover the anonymity fee, so the contract carries your name.')
         end
+    elseif renamed then
+        Notify.toCitizen(actor.cid, 'Not anonymous',
+            'The client already knows you by name on this contract, so you are '
+            .. 'back on it under your name. You were not charged for anonymity.')
     end
 
     -- Start watching the target's health now, so damage claimed against

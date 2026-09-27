@@ -1636,11 +1636,11 @@
         // once a second throws away what the player is typing into it.
         if (state.tab === 'mine' || state.tab === 'onme') { redraw(); }
 
-        if (r.data.elapsed >= r.data.required) {
-          stopCountdown();
-          delete state.progress[id];
-          refresh();
-        }
+        // A full bar is not the end. A countdown that has run its course is
+        // still reported while its payout waits behind another one being
+        // settled, and stopping here left the hunter with a full bar and no
+        // word of how it ended. The poll that finds it over carries that
+        // (`done` above), and the deadline bounds the rest.
       });
     }, 1000);
   }
@@ -2389,8 +2389,15 @@
     // Whatever is half-typed survives re-reading the thread. Re-reading is
     // what happens after every send and on every push, so without this the
     // box emptied itself under anyone composing a second message.
+    //
+    // The same THREAD, not merely the same contract. A creator with several
+    // operatives has a thread per operative, and a message half-written to
+    // one of them used to be waiting in the box of the next one opened, one
+    // tap from reaching the wrong person.
+    var handleOf = function (t) { return (t && t.handle) || null; };
     var keep = (state.thread && state.thread.contract
-      && state.thread.contract.id === contract.id) ? state.thread.draft : '';
+      && state.thread.contract.id === contract.id
+      && handleOf(state.thread.thread) === handleOf(thread)) ? state.thread.draft : '';
 
     return post('readThread', { id: contract.id, thread: thread ? thread.handle : null })
       .then(function (r) {

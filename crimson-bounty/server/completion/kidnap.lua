@@ -15,6 +15,10 @@ local Storage, Identity, Contracts, Audit, Notify, Ledger
 local active = {}
 local running = false
 
+--- How each hunter's last handover ended; see Kidnap.outcome below.
+--- [contractId .. ':' .. hunterCid] = { outcome, reason, pending, at }
+local outcomes = {}
+
 function Kidnap.init(deps)
     Storage, Identity, Contracts, Audit, Notify, Ledger =
         deps.storage, deps.identity, deps.contracts, deps.audit, deps.notify, deps.ledger
@@ -171,6 +175,12 @@ function Kidnap.arm(contractId, hunterCid)
         startedAt  = Util.monotonicMs(),
     }
 
+    -- How the PREVIOUS handover ended is not how this one ends. Kept, it
+    -- was what the poller reported when this one stopped without an ending
+    -- of its own (the hunter walking away): "The handover failed. You lost
+    -- hold of the target", about a countdown from a minute earlier.
+    outcomes[key(contractId, hunterCid)] = nil
+
     -- The creator has to be present for the whole countdown, so they are
     -- told the moment it starts rather than discovering it failed.
     Notify.toCitizen(contract.creator_cid, 'Handover starting',
@@ -194,8 +204,6 @@ end
 -- Kept briefly and per (contract, hunter), holding only what that hunter is
 -- told anyway. Nothing reads it but the hunter's own poller.
 
---- [contractId .. ':' .. hunterCid] = { outcome, reason, pending, at }
-local outcomes = {}
 local OUTCOME_KEPT_SECONDS = 120
 
 --- How long a countdown may sit paused behind another payout's settlement
@@ -318,6 +326,7 @@ function Kidnap.tick(deltaMs)
                         completions[#completions + 1] = {
                             contractId = state.contractId,
                             hunterCid  = state.hunterCid,
+                            countdown  = state,
                         }
                     end
                 else
@@ -368,7 +377,32 @@ function Kidnap.tick(deltaMs)
         local ok, err, result = Contracts.claimSlot(done.contractId, done.hunterCid,
             CB.FULFILMENT.KIDNAPPING, { fulfilment = CB.FULFILMENT.KIDNAPPING })
         local k = key(done.contractId, done.hunterCid)
-        if ok then
+
+        -- The claim met another payout's settlement lock. The loop above
+        -- read this contract as accepted, but every read between there and
+        -- the claim yields, and another hunter's claim can take the lock in
+        -- the gap: claimSlot then answers bad_state or locked. That is the
+        -- momentary state the pause above exists for, met one step later —
+        -- and it used to end the delivery, telling a hunter who had held
+        -- somebody for the whole countdown that the contract had closed
+        -- while it still had a payout on it. Put back instead, finished and
+        -- paused, and claimed on a later tick; bounded by the same limit.
+        if not ok and (err == CB.ERR.BAD_STATE or err == CB.ERR.LOCKED)
+            and done.countdown and not active[k] then
+            local now = Storage.readContract(done.contractId)
+            local countdown = done.countdown
+            if now and (now.state == CB.STATE.COMPLETING or now.state == CB.STATE.ACCEPTED)
+                and (countdown.pausedMs or 0) <= PAUSE_LIMIT_MS
+                and not active[k] then
+                countdown.pausedMs = (countdown.pausedMs or 0) + deltaMs
+                active[k] = countdown
+                done.retrying = true
+            end
+        end
+
+        if done.retrying then
+            done.error = err
+        elseif ok then
             local contract = Storage.readContract(done.contractId)
             Ledger.record(contract, done.hunterCid, nil, CB.FULFILMENT.KIDNAPPING, result)
             Notify.contractCompleted(contract, done.hunterCid, nil)
@@ -402,7 +436,10 @@ function Kidnap.progress(contractId, hunterCid)
     local state = active[key(contractId, hunterCid)]
     if not state then return nil end
     return {
-        elapsed   = math.floor(state.elapsedMs / 1000),
+        -- Held at the full count: a countdown that has run its course can
+        -- still be here, waiting to be paid behind another settlement.
+        elapsed   = math.min(Config.Kidnap.CountdownSeconds,
+                             math.floor(state.elapsedMs / 1000)),
         required  = Config.Kidnap.CountdownSeconds,
         graceLeft = math.max(0, Config.Kidnap.MaxTotalGraceMs - state.graceUsedMs),
         -- The budget, so the app can show how much of it is gone rather

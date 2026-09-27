@@ -4099,6 +4099,28 @@ async function main() {
       falsy(said.indexOf('Not right now') !== -1, 'the catch-all: ' + said);
     });
 
+    /* A full bar is not the ending. A countdown that has run its course
+       waits to be paid while another payout on the contract is settled, and
+       stopping the poll there left the hunter with a full bar and no word
+       of how it ended. */
+    const answers = [
+      { ok: true, data: { elapsed: 30, required: 30 } },
+      { ok: true, data: { done: true, outcome: 'paid' } }
+    ];
+    const waitingPage = await onMine({
+      armKidnap: { ok: true, data: true },
+      kidnapProgress: function () { return answers.length > 1 ? answers.shift() : answers[0]; }
+    });
+    click(waitingPage, 'Deliver alive');
+    await settle();
+    const waitTick = waitingPage.timers.filter(function (t) { return t.repeating && t.ms === 1000; })[0];
+    waitTick.fn(); await settle(); await settle();
+    if (!waitTick.cleared) { waitTick.fn(); await settle(); await settle(); }
+    it('reads how it ended after the bar fills', function () {
+      truthy(waitingPage.notice().indexOf('Payment released') !== -1,
+        'the poll stopped at a full bar: ' + waitingPage.notice());
+    });
+
     const tooSoon = await endedWith({ outcome: 'refused', reason: 'slot_cooldown' });
     it('names the wait between payouts when that is why', function () {
       truthy(tooSoon.notice().indexOf('very recently') !== -1, tooSoon.notice());
@@ -5171,6 +5193,56 @@ async function main() {
       await settle(); await settle();
       it('does not ask which of one', function () {
         eq(app.sent.filter(function (m) { return m.name === 'readThread'; }).length, 1);
+      });
+    })();
+
+    /* The half-typed message survives re-reading its thread — and only its
+       thread. It was kept per contract, so with a thread per operative a
+       message written to one was waiting in the next one opened, a tap away
+       from reaching the wrong person. */
+    await (async function aDraftStaysWithItsOperative() {
+      const two = Object.assign({}, own, { hunters: [{ alias: 'Operative #1' }, { alias: 'Operative #2' }],
+        huntersActive: 2 });
+      const app = boot({
+        mine: { ok: true, data: { created: [two], accepted: [], onMe: [] } },
+        threads: { ok: true, data: [
+          { handle: 'h-one', alias: 'Operative #1' },
+          { handle: 'h-two', alias: 'Operative #2' }
+        ] },
+        readThread: { ok: true, data: [] },
+        sendMessage: { ok: true }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Threads');
+      await settle(); await settle();
+      click(app, 'Operative #1');
+      await settle(); await settle();
+      const first = app.view.all().filter(function (n) { return n.tagName === 'INPUT'; })[0];
+      first.value = 'For you only: the target is at the pier';
+      first.oninput();
+
+      click(app, 'Back');
+      await settle();
+      click(app, 'Threads');
+      await settle(); await settle();
+      click(app, 'Operative #2');
+      await settle(); await settle();
+      const second = app.view.all().filter(function (n) { return n.tagName === 'INPUT'; })[0];
+
+      it('does not follow the creator into another operative’s thread', function () {
+        eq(second.value, '', 'the message for Operative #1 was one tap from Operative #2');
+      });
+
+      // Its own thread re-read under it, as every push does.
+      second.value = 'For Operative #2';
+      second.oninput();
+      app.sandbox.window._message({ data: { type: 'push', reason: 'message' } });
+      await settle(); await settle(); await settle();
+      const reread = app.view.all().filter(function (n) { return n.tagName === 'INPUT'; })[0];
+      it('still survives its own thread being re-read', function () {
+        eq(reread.value, 'For Operative #2');
       });
     })();
 
