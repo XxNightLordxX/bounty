@@ -200,6 +200,8 @@ function Kidnap.arm(contractId, hunterCid)
         'An operative has your target in hand. Be there now.')
 
     Audit.action('kidnap_armed', hunterCid, contractId, {})
+    -- An attempt on the target, which is what keeps an exclusive hold.
+    if Contracts.noteAttempt then Contracts.noteAttempt(contractId, hunterCid) end
     Kidnap.start()
     return true
 end
@@ -287,6 +289,10 @@ function Kidnap.tick(deltaMs)
     for _, k in ipairs(keys) do
         local state = active[k]
         if state then
+            -- Each countdown on its own. One throw — a read on a connection
+            -- that dropped — used to end the whole pass, and every countdown
+            -- after it waited on a pass that never came to it.
+            local stepped, stepError = pcall(function()
             local contract = Storage.readContract(state.contractId)
             if contract and contract.state == CB.STATE.COMPLETING then
                 -- Somebody else's payout holds the contract's lock, and holds it
@@ -349,6 +355,9 @@ function Kidnap.tick(deltaMs)
                             contractId = state.contractId,
                             hunterCid  = state.hunterCid,
                             countdown  = state,
+                            -- Which collection it is for, so a claim that
+                            -- throws can be told apart from one that paid.
+                            slot       = contract.next_slot or 1,
                         }
                     end
                 else
@@ -391,11 +400,17 @@ function Kidnap.tick(deltaMs)
                     end
                 end
             end
+            end)
+            if not stepped then
+                print(('[crimson-bounty] handover countdown %s failed: %s')
+                    :format(tostring(k), tostring(stepError)))
+            end
         end
     end
 
     for i = 1, #completions do
         local done = completions[i]
+        local settled, settleError = pcall(function()
         local ok, err, result = Contracts.claimSlot(done.contractId, done.hunterCid,
             CB.FULFILMENT.KIDNAPPING, { fulfilment = CB.FULFILMENT.KIDNAPPING })
         local k = key(done.contractId, done.hunterCid)
@@ -427,12 +442,16 @@ function Kidnap.tick(deltaMs)
         if done.retrying then
             done.error = err
         elseif ok then
-            local contract = Storage.readContract(done.contractId)
-            Ledger.record(contract, done.hunterCid, nil, CB.FULFILMENT.KIDNAPPING, result)
-            Notify.contractCompleted(contract, done.hunterCid, nil)
-            Audit.financial('kidnap_completed', done.hunterCid, done.contractId, { slot = result.slot })
+            -- Paid is recorded first: what follows is bookkeeping, and a
+            -- throw in it must not read as a claim that failed.
             remember(k, { outcome = 'paid', pending = (result.pending or 0) > 0 })
             done.result = result
+            pcall(function()
+                local contract = Storage.readContract(done.contractId)
+                Ledger.record(contract, done.hunterCid, nil, CB.FULFILMENT.KIDNAPPING, result)
+                Notify.contractCompleted(contract, done.hunterCid, nil)
+                Audit.financial('kidnap_completed', done.hunterCid, done.contractId, { slot = result.slot })
+            end)
         else
             done.error = err
 
@@ -449,6 +468,37 @@ function Kidnap.tick(deltaMs)
                 REFUSED_WORDS[err] or 'The handover finished but the payout '
                     .. 'could not be collected.',
                 { bypassBudget = true })
+        end
+        end)
+        if not settled then
+            -- The claim threw. Whether it took effect is read from the
+            -- contract: still accepted, on the collection this handover was
+            -- for, and it never happened — the countdown goes back, paused,
+            -- and is claimed on a later pass. Anything else is left for
+            -- staff and the hunter is told, rather than dropped: the
+            -- countdown was already out of `active`, and a throw here used
+            -- to lose it with the page showing "being paid" for two minutes.
+            local k = key(done.contractId, done.hunterCid)
+            print(('[crimson-bounty] handover claim %s failed: %s')
+                :format(tostring(k), tostring(settleError)))
+            local readOk, now = pcall(Storage.readContract, done.contractId)
+            local untouched = readOk and now and now.state == CB.STATE.ACCEPTED
+                and (now.next_slot or 1) == done.slot
+            local countdown = done.countdown
+            if untouched and countdown and not active[k]
+                and (countdown.pausedMs or 0) <= PAUSE_LIMIT_MS then
+                countdown.pausedMs = (countdown.pausedMs or 0) + deltaMs
+                active[k] = countdown
+                outcomes[k] = nil
+                done.retrying = true
+            else
+                remember(k, { outcome = 'refused', reason = 'error' })
+                pcall(Audit.rejected, 'kidnap_claim_error', done.hunterCid, done.contractId,
+                    { err = tostring(settleError) })
+                pcall(Notify.toCitizen, done.hunterCid, 'Handover not paid',
+                    'The handover finished, but the payout hit an error. Staff can see it.',
+                    { bypassBudget = true })
+            end
         end
     end
 

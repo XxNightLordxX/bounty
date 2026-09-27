@@ -578,6 +578,50 @@ describe('an exclusive contract held by somebody who is not working it', functio
         local _ = f
     end)
 
+    --- Near, and nothing else. A target's friend holding the contract for
+    --- them is near the target by definition, and being near reset the idle
+    --- clock on every pass: the contract stayed frozen until its deadline.
+    it('releases a holder who stays near the target and never makes an attempt', function()
+        local s, f, c = held()
+        Env.players[3]._coords = { x = 20.0, y = 0.0, z = 0.0 }
+        Natives.calls.notifications = {}
+        s.contracts.releaseIdleHolds()
+        run(s, math.ceil(Config.Limits.ExclusiveAttemptWindowSeconds / 60) + 1)
+        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'released',
+            'sat beside the target for hours and kept the contract from everyone')
+        local told = false
+        for _, note in ipairs(Natives.calls.notifications) do
+            if tostring(note.content):find('making an attempt', 1, true) then told = true end
+        end
+        truthy(told, 'and told why')
+        local _ = f
+    end)
+
+    it('keeps a holder who lands a hit now and then', function()
+        local s, f, c = held()
+        Env.players[3]._coords = { x = 20.0, y = 0.0, z = 0.0 }
+        s.contracts.releaseIdleHolds()
+        for _ = 1, 4 do
+            run(s, 45)
+            Env.players[2]._health = (Env.players[2]._health or 200) - 5
+            s.death.recordDamage(3, 2, 123456)
+        end
+        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'active')
+        local _ = f
+    end)
+
+    it('keeps a holder who arms a handover now and then', function()
+        local s, f, c = held()
+        Env.players[3]._coords = { x = 20.0, y = 0.0, z = 0.0 }
+        s.contracts.releaseIdleHolds()
+        for _ = 1, 4 do
+            run(s, 45)
+            s.contracts.noteAttempt(c.id, 'HUNTER01')
+        end
+        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'active')
+        local _ = f
+    end)
+
     it('does not count time the target is not in the city', function()
         local s, f, c = held()
         s.contracts.releaseIdleHolds()
@@ -636,9 +680,48 @@ describe('an exclusive contract held by somebody who is not working it', functio
     it('can be switched off', function()
         local s, f, c = held()
         Config.Limits.ExclusiveIdleReleaseSeconds = 0
+        Config.Limits.ExclusiveAttemptWindowSeconds = 0
         s.contracts.releaseIdleHolds()
         run(s, 240)
         eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'active')
         local _ = f
+    end)
+end)
+
+describe('an anonymous operative logging off', function()
+    --- The client's handle for the operative's thread was dropped when the
+    --- operative disconnected: a message, a call or a re-read with it came
+    --- back not_participant, and `threads` handed out a new one — the moment
+    --- the anonymous operative left the city and returned, for the asking.
+    local function threaded()
+        local s = newStack()
+        local f = fixture(s)
+        s.bridges.install(s)
+        local c = place(s, f.creator, { mode = CB.MODE.COMPETITIVE })
+        truthy(s.contracts.accept(f.hunter, c.id, true))
+        local thread = s.comms.threads(f.creator, c.id)[1]
+        truthy(thread and thread.handle)
+        return s, f, c, thread.handle
+    end
+
+    it('reads the same to the client whether the operative is here or not', function()
+        local s, f, c, handle = threaded()
+        local here = { s.comms.send(f.creator, c.id, handle, 'still there?') }
+
+        require('crimson-bounty.server.bridges').onPlayerDropped(s, 'HUNTER01')
+        Env.removePlayer(3)
+        local away = { s.comms.send(f.creator, c.id, handle, 'still there?') }
+        eq(away[1], here[1], 'the answer changed when they logged off: ' .. tostring(away[2]))
+        eq(s.comms.threads(f.creator, c.id)[1].handle, handle,
+            'a fresh handle said they had gone')
+        local ok = s.comms.requestCall(f.creator, c.id, handle)
+        truthy(ok, 'a call request refused only because they were away')
+    end)
+
+    it('still closes the thread when they leave the contract', function()
+        local s, f, c, handle = threaded()
+        truthy(s.contracts.abandon(f.hunter, c.id))
+        local ok = s.comms.send(f.creator, c.id, handle, 'hello?')
+        falsy(ok, 'writing to an operative who is no longer on it')
     end)
 end)

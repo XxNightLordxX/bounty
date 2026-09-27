@@ -7,6 +7,8 @@
 
 local Projection = {}
 
+local Util = require_shared('util')
+
 local Storage, Identity, Escrow, Kidnap, Mugshot, Progression
 
 function Projection.init(deps)
@@ -257,8 +259,8 @@ local function buildListing(viewerCid, page)
             -- said "their department has been advised" on a server that
             -- advises nobody.
             advisory = {
-                posted = Config.Advisory.Enabled == true and Config.Advisory.OnCreate ~= false,
-                accepted = Config.Advisory.Enabled == true and Config.Advisory.OnAccept ~= false,
+                posted = Util.advises('posted'),
+                accepted = Util.advises('accepted'),
             },
             -- The message box's limit. The page hard-coded 200 whatever the
             -- server held messages to.

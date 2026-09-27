@@ -1051,6 +1051,18 @@ end
 local idleFor = {}
 local lastIdleSweep = nil
 
+--- The same, counting time without an attempt on the target: no hit landed
+--- and no handover armed. [contractId:hunterCid].
+local unattemptedFor = {}
+
+--- When a hunter last armed a handover on a contract. [contractId:hunterCid].
+local armedAt = {}
+
+--- A handover was armed: an attempt, which keeps an exclusive hold.
+function Contracts.noteAttempt(contractId, hunterCid)
+    armedAt[contractId .. ':' .. hunterCid] = os.time()
+end
+
 --- Rebuild the index of held contracts after a restart, when contracts may already be held
 --- that this process never saw accepted.
 ---@return integer indexed
@@ -1069,7 +1081,7 @@ end
 --- Take one idle operative off an exclusive contract and put it back on the
 --- board. Their stake comes back: the release is the remedy, not a fine.
 ---@return boolean released
-local function releaseIdleHold(contractId, hunter, idleSeconds)
+local function releaseIdleHold(contractId, hunter, idleSeconds, why)
     -- Re-read: a payout or an abandonment may have moved it since the sweep
     -- read it, and a hunter being paid is not one to release.
     local contract = Storage.readContract(contractId)
@@ -1096,8 +1108,10 @@ local function releaseIdleHold(contractId, hunter, idleSeconds)
 
     local minutes = math.floor(idleSeconds / 60)
     Notify.toCitizen(current.hunter_cid, 'Taken off a contract',
-        ('You held a contract for %d minutes without going near its target, so it '
-            .. 'has gone back on the board. Your stake has been returned.'):format(minutes),
+        ('You held a contract for %d minutes without %s, so it has gone back on the '
+            .. 'board. Your stake has been returned.'):format(minutes,
+            why == 'no_attempt' and 'making an attempt on its target'
+                or 'going near its target'),
         { bypassBudget = true })
     Notify.toCitizen(contract.creator_cid, 'Contract back on the board',
         'The operative holding your contract was not working it, so it is open again.')
@@ -1105,7 +1119,7 @@ local function releaseIdleHold(contractId, hunter, idleSeconds)
         { current.hunter_cid }, 'released')
 
     Audit.action('hold_released_idle', current.hunter_cid, contractId,
-        { idle = idleSeconds })
+        { idle = idleSeconds, why = why or 'idle' })
     return true
 end
 
@@ -1115,11 +1129,12 @@ end
 ---@return integer released
 function Contracts.releaseIdleHolds()
     local window = Config.Limits.ExclusiveIdleReleaseSeconds or 0
+    local attemptWindow = Config.Limits.ExclusiveAttemptWindowSeconds or 0
     local now = os.time()
     local elapsed = lastIdleSweep and math.max(0, now - lastIdleSweep) or 0
     lastIdleSweep = now
-    if window <= 0 then
-        idleFor = {}
+    if window <= 0 and attemptWindow <= 0 then
+        idleFor, unattemptedFor = {}, {}
         return 0
     end
 
@@ -1163,11 +1178,29 @@ function Contracts.releaseIdleHolds()
                         idleFor[k] = (idleFor[k] or 0) + elapsed
                     end
 
-                    if (idleFor[k] or 0) >= window then
-                        if releaseIdleHold(c.id, h, idleFor[k]) then
+                    -- And an attempt: near is not enough. A target's friend
+                    -- is near the target by definition, which reset the clock
+                    -- above on every pass while the contract stayed frozen.
+                    local hit = Death and Death.lastHit and Death.lastHit(h.hunter_cid, c.target_cid)
+                    local attempt = math.max(hit or 0, armedAt[k] or 0)
+                    if attempt > 0 and (now - attempt) <= elapsed then
+                        unattemptedFor[k] = 0
+                    elseif bothHere then
+                        unattemptedFor[k] = (unattemptedFor[k] or 0) + elapsed
+                    end
+
+                    local why
+                    if window > 0 and (idleFor[k] or 0) >= window then
+                        why = 'idle'
+                    elseif attemptWindow > 0 and (unattemptedFor[k] or 0) >= attemptWindow then
+                        why = 'no_attempt'
+                    end
+                    if why then
+                        local held = why == 'idle' and idleFor[k] or unattemptedFor[k]
+                        if releaseIdleHold(c.id, h, held, why) then
                             released = released + 1
                         end
-                        idleFor[k] = nil
+                        idleFor[k], unattemptedFor[k], armedAt[k] = nil, nil, nil
                     end
                 end
             end
@@ -1178,6 +1211,12 @@ function Contracts.releaseIdleHolds()
     -- the exclusive contracts that are held right now.
     for k in pairs(idleFor) do
         if not live[k] then idleFor[k] = nil end
+    end
+    for k in pairs(unattemptedFor) do
+        if not live[k] then unattemptedFor[k] = nil end
+    end
+    for k in pairs(armedAt) do
+        if not live[k] then armedAt[k] = nil end
     end
 
     return released

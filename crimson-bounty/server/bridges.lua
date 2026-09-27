@@ -135,6 +135,10 @@ function Bridges.install(modules)
         -- earned.
         modules.death.clearPending(contractId, hunterCid)
         modules.photo.forget(contractId, hunterCid)
+        -- And the handles that stood for their thread on it.
+        if modules.comms and modules.comms.clearHunter then
+            modules.comms.clearHunter(contractId, hunterCid)
+        end
     end
 
     -- The expiry pass skips itself when nothing could have changed since the

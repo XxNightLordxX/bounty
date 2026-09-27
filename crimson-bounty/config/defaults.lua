@@ -205,6 +205,12 @@ ConfigDefaults.Limits = {
     --- city, their stake is returned, and they may not take that contract
     --- again on any character. 0 turns it off.
     ExclusiveIdleReleaseSeconds = 1800,
+    --- And one who is near the target but never makes an attempt on them —
+    --- no hit landed, no handover armed — for this long, counted the same
+    --- way, is released the same way. Being near is what a target's friend
+    --- does best, so on its own it reset the clock above for ever. 0 turns
+    --- it off.
+    ExclusiveAttemptWindowSeconds = 7200,
 }
 
 --- What an action cooldown is counted against (§14.27).

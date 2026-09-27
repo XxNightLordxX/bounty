@@ -3380,6 +3380,27 @@ async function main() {
       truthy(/sworn officer/.test(unadvised.view.textContent), 'the officer is still flagged');
       falsy(/advised/.test(unadvised.view.textContent), unadvised.view.textContent);
     });
+    /* Only the acceptance bulletin runs: nobody has been told yet. */
+    const onAccept = await onOfficer({ advisory: { posted: false, accepted: true } });
+    onAccept.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
+    })[0].onclick();
+    it('does not say officers were already told when only accepting tells them', function () {
+      falsy(/already been advised/.test(onAccept.view.textContent), onAccept.view.textContent);
+      truthy(/Accepting alerts/.test(onAccept.view.textContent),
+        'and says that accepting will: ' + onAccept.view.textContent);
+    });
+
+    /* Only the posting bulletin runs: told already, not told again. */
+    const onPost = await onOfficer({ advisory: { posted: true, accepted: false } });
+    onPost.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
+    })[0].onclick();
+    it('says officers were told when the posting bulletin went', function () {
+      truthy(/already been advised/.test(onPost.view.textContent), onPost.view.textContent);
+      falsy(/Accepting alerts/.test(onPost.view.textContent), onPost.view.textContent);
+    });
+
     const advisedBoard = await onOfficer({ advisory: { posted: true, accepted: true } });
     it('still says so where they are', function () {
       truthy(/advised/.test(advisedBoard.view.textContent), advisedBoard.view.textContent);
@@ -6067,6 +6088,32 @@ async function main() {
         eq(composeBox(app).value, 'Meet me at the pier at ten');
       });
       it('and sent nothing on the way', function () { eq(sent.length, 0); });
+    })();
+
+    /* The server can hand the same conversation a new handle — it did on
+       every operative log-off, and does after a restart. A draft filed by
+       handle was then never found again. */
+    await (async function draftSurvivesANewHandle() {
+      let handle = 'thOld';
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [placedCard()], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        threads: function () { return { ok: true, data: [{ handle: handle, alias: 'Operative #1' }] }; },
+        readThread: { ok: true, data: [] }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Threads'); await settle(); await settle();
+      const box = composeBox(app);
+      truthy(box, 'the thread opened');
+      box.value = 'Meet me at the pier at nine'; box.oninput();
+      click(app, 'Back'); await settle();
+      handle = 'thNew';
+      click(app, 'Threads'); await settle(); await settle();
+      it('keeps a half-typed message when the thread comes back under a new handle', function () {
+        eq(composeBox(app) && composeBox(app).value, 'Meet me at the pier at nine');
+      });
     })();
 
     /* The message box's limit is the server's, not a number in the page. */

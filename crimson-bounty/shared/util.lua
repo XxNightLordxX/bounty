@@ -186,6 +186,22 @@ function Util.sanitizeText(text, maxLength)
     return text
 end
 
+--- Whether law enforcement is told at this stage: 'posted' or 'accepted'.
+---
+--- The one answer to that question, asked by the advisory itself and by the
+--- projection that tells the page. They asked it two ways — the advisory by
+--- truthiness, the page's flag with `~= false` — so a config without
+--- OnCreate told players the department had been advised while no bulletin
+--- went. Absent is on; both have shipped on since the first release.
+---@param stage string
+---@return boolean
+function Util.advises(stage)
+    local advisory = Config and Config.Advisory
+    if type(advisory) ~= 'table' or advisory.Enabled ~= true then return false end
+    local key = stage == 'posted' and 'OnCreate' or 'OnAccept'
+    return advisory[key] ~= false
+end
+
 --- Count digits, used to blunt phone numbers and addresses in free text (§14.30).
 function Util.digitCount(text)
     local n = 0

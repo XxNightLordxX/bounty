@@ -77,9 +77,27 @@ function Comms.clearContract(contractId)
     end
 end
 
+--- A player has gone: the handles they were given go with them.
+---
+--- Only theirs. It also dropped every handle that NAMED them, so when an
+--- anonymous operative logged off, the client's handle for their thread
+--- stopped working and the next `threads` minted a new one — a message,
+--- a call or a re-read told the client the moment their anonymous operative
+--- left the city and came back. A handle naming a hunter lasts while that
+--- hunter is on the contract (Comms.clearHunter) and the contract lives.
 function Comms.clearPlayer(cid)
     for handle, entry in pairs(handles) do
-        if entry.ownerCid == cid or entry.hunterCid == cid then handles[handle] = nil end
+        if entry.ownerCid == cid then handles[handle] = nil end
+    end
+end
+
+--- A hunter has left a contract: nobody's handle for their thread on it
+--- means anything now.
+function Comms.clearHunter(contractId, hunterCid)
+    for handle, entry in pairs(handles) do
+        if entry.contractId == contractId and entry.hunterCid == hunterCid then
+            handles[handle] = nil
+        end
     end
 end
 

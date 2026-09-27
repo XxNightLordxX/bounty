@@ -134,6 +134,18 @@ local DEFAULTS = {
     Bailout = {
         BlockWhileIncapacitated = true,
     },
+    --- Added to a section every config has. Absent read as 0, which is off:
+    --- on every upgraded server an exclusive contract could still be held
+    --- by somebody who never went near the target.
+    Limits = {
+        ExclusiveIdleReleaseSeconds = 1800,
+        ExclusiveAttemptWindowSeconds = 7200,
+    },
+    --- Absent read as off, and an anonymous client calling a named operative
+    --- on a phone that cannot mask was dialled from their own number.
+    Relay = {
+        RequireMaskingForAnonymous = true,
+    },
     --- Owed deliveries tried per pass. Read inside the login timer, where a
     --- nil is a comparison that throws with nobody to see it.
     PendingEscrow = {
@@ -374,6 +386,8 @@ local function validateConfig()
         { 'Kidnap', 'MaxTotalGraceMs' },
         -- Squared for every Arm, and the countdown thread's own wait and
         -- delta: a string here stopped every handover rather than one.
+        { 'Limits', 'ExclusiveIdleReleaseSeconds' },
+        { 'Limits', 'ExclusiveAttemptWindowSeconds' },
         { 'Kidnap', 'Radius' },
         { 'Kidnap', 'TickMs' },
         -- Compared on every create and every payout.
@@ -493,6 +507,10 @@ local function validateConfig()
 
     if not Config.Kidnap.RequireCoercion then
         warn[#warn + 1] = 'Kidnap.RequireCoercion is off: a target can be "delivered" while walking freely'
+    end
+    if Config.Relay.RequireMaskingForAnonymous == false then
+        warn[#warn + 1] = 'Relay.RequireMaskingForAnonymous is off: on a phone that cannot hide '
+            .. 'caller id, an anonymous party\'s calls are placed from their own number'
     end
 
     if Config.Advisory.Enabled

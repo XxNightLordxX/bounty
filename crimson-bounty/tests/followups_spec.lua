@@ -486,3 +486,41 @@ describe('a top-up that a payout lands on', function()
         truthy(ok, 'told the top-up was refused, with a hunter holding it: ' .. tostring(err))
     end)
 end)
+
+describe('a handover tick that throws part-way through', function()
+    --- Every finished countdown was taken out of the live set before any
+    --- was claimed, and one throw ended the pass: the ones not yet claimed
+    --- were in neither place, their hunters shown "being paid" for two
+    --- minutes and then told to try again.
+    it('pays every handover that finished, once the read comes back', function()
+        local s, f, c = handover(2)
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+            cash = 5000, bank = 5000, firstname = 'Sol', lastname = 'Vane' })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        together()
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HUNTER02'))
+        ticks(s, Config.Kidnap.CountdownSeconds - 1)
+
+        local before1, before2 = money(3), money(4)
+        local real = s.storage.readContract
+        local reads = 0
+        s.storage.readContract = function(id)
+            reads = reads + 1
+            if reads == 3 then error('mysql: connection lost') end
+            return real(id)
+        end
+        local realPrint = _G.print
+        _G.print = function() end
+        local ok = pcall(s.kidnap.tick, Config.Kidnap.TickMs)
+        s.storage.readContract = real
+        truthy(ok, 'the throw is contained')
+        ticks(s, 2)
+        _G.print = realPrint
+
+        eq((money(3) - before1) + (money(4) - before2), 1000 + 2000,
+            'both handovers paid, one collection each')
+        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+        local _ = f
+    end)
+end)

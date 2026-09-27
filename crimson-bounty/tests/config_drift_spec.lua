@@ -1109,7 +1109,7 @@ describe('a safety switch added to a section the operator already had', function
         { 'Bailout', 'BlockWhileIncapacitated' }, { 'Kidnap', 'RequireConscious' },
         { 'Kidnap', 'RejectDead' }, { 'Kidnap', 'RejectLastStand' },
         { 'Kidnap', 'RequireCoercion' }, { 'Notifications', 'PushEnabled' },
-        { 'Advisory', 'AlwaysAlertTarget' },
+        { 'Advisory', 'AlwaysAlertTarget' }, { 'Relay', 'RequireMaskingForAnonymous' },
     }
 
     it('is on when the config never had it', function()
@@ -1126,6 +1126,12 @@ describe('a safety switch added to a section the operator already had', function
             boot(function() Config[entry[1]][entry[2]] = false end)
             eq(Config[entry[1]][entry[2]], false, entry[1] .. '.' .. entry[2])
         end
+        resetConfig()
+    end)
+
+    it('fills the idle-hold release, which absent read as off', function()
+        boot(function() Config.Limits.ExclusiveIdleReleaseSeconds = nil end)
+        eq(Config.Limits.ExclusiveIdleReleaseSeconds, 1800)
         resetConfig()
     end)
 

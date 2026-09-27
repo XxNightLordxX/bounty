@@ -332,6 +332,15 @@ function Death.lastEngaged(contractId, hunterCid, targetCid)
     return near or hit
 end
 
+--- The last time this hunter landed a hit on this target. nil when never.
+--- An attempt, where lastEngaged also counts merely being near.
+---@param hunterCid string
+---@param targetCid string
+---@return integer|nil os.time()
+function Death.lastHit(hunterCid, targetCid)
+    return targetCid and hitBy[targetCid] and hitBy[targetCid][hunterCid] or nil
+end
+
 --- Seconds since this player was last revived, or nil if never seen.
 function Death.sinceRespawn(cid)
     local at = respawnedAt[cid]

@@ -198,3 +198,38 @@ describe('app access', function()
         truthy(s.identity.gate(53))
     end)
 end)
+
+describe('an advisory switched off at one stage', function()
+    --- The posting bulletin off: the officer was told nothing at all — no
+    --- bulletin, and no paranoid alert either, which went only where the
+    --- whole advisory was off. And with OnCreate absent the page said the
+    --- department had been advised while no bulletin went.
+    local function placed(onCreate)
+        local s, f = seeded(leoJob('trooper'))
+        Config.Advisory.OnCreate = onCreate
+        Natives.calls.notifications = {}
+        truthy(s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        }))
+        local settings = s.projection.listing('HUNTER01', 1).settings
+        return settings, countNotifications('THREAT ADVISORY')
+    end
+
+    it('gives the officer the paranoid alert when the posting bulletin is off', function()
+        placed(false)
+        local found = false
+        for _, note in ipairs(Natives.calls.notifications) do
+            if tostring(note.content):find('eyes on you') then found = true end
+        end
+        truthy(found, 'an officer with a price on their head was told nothing')
+    end)
+
+    it('tells the page the same thing it does', function()
+        local settings, bulletins = placed(false)
+        eq(settings.advisory.posted, false)
+        eq(bulletins, 0)
+        settings, bulletins = placed(nil)
+        eq(settings.advisory.posted, true, 'absent is on')
+        truthy(bulletins > 0, 'and the bulletin went, as the page says')
+    end)
+end)

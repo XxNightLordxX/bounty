@@ -1578,10 +1578,16 @@
     }
 
     if (contract.targetProtected && settings().warnHunter !== false) {
-      ask('This contract is on a sworn officer.',
-          advised('accepted')
-            ? 'Law enforcement has already been advised that someone is coming. Accept anyway?'
-            : 'Accept anyway?',
+      // Each stage said only where it happens: the posting bulletin has
+      // already gone, the acceptance one goes when they tap. The dialog
+      // said "already advised" on the strength of the acceptance bulletin,
+      // which had not been sent, and said nothing where only the posting
+      // one had.
+      var told = [];
+      if (advised('posted')) { told.push('Law enforcement has already been advised about it.'); }
+      if (advised('accepted')) { told.push('Accepting alerts every officer on duty that someone is coming.'); }
+      told.push('Accept anyway?');
+      ask('This contract is on a sworn officer.', told.join(' '),
           chooseAnonymity);
       return;
     }
@@ -2530,8 +2536,13 @@
      has one thread per operative. Matching on the contract alone is how a
      message half-typed to one operative was waiting, pre-filled, in the
      next operative's box — and went to them on Send. */
+  /* Which conversation this is: the contract, and the operative by alias.
+     Not by handle, which the server can issue afresh for the same thread —
+     a draft filed under the old one could never be found again. An alias
+     is unique on its contract and kept by an operative who comes back. */
   function threadKey(contract, thread) {
-    return (contract && contract.id) + '|' + ((thread && thread.handle) || '');
+    return (contract && contract.id) + '|'
+      + ((thread && (thread.alias || thread.handle)) || '');
   }
 
   function sameThread(open, contract, thread) {
@@ -3605,7 +3616,9 @@
       ask('That target is a sworn officer.',
           advised('posted')
             ? 'Placing this will alert every officer on duty, by phone and over dispatch.'
-            : 'Place a contract on them anyway?',
+            : advised('accepted')
+              ? 'Officers on duty will be alerted when someone accepts it.'
+              : 'Place a contract on them anyway?',
           function () { state.leoConfirmed = true; submitContract(); });
       return;
     }
@@ -3979,7 +3992,9 @@
         show(status, 'Contract will be placed on ' + person.name + '.');
         if (person.protected) {
           say('That is a sworn officer.'
-            + (advised('posted') ? ' Placing this will alert their department.' : ''), 'gold');
+            + (advised('posted') ? ' Placing this will alert their department.'
+              : advised('accepted') ? ' Their department is told when someone accepts.' : ''),
+            'gold');
         }
       };
       return pick;

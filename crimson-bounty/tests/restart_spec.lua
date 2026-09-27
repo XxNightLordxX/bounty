@@ -246,6 +246,7 @@ describe('a crash while a contract runs out', function()
     local function held(mode)
         local main, s = boot(mode)
         Config.Limits.ExclusiveIdleReleaseSeconds = 0
+        Config.Limits.ExclusiveAttemptWindowSeconds = 0
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
@@ -458,6 +459,7 @@ describe('server downtime and the deadline', function()
         -- exclusive contract back on the board (§14.8) and measure that
         -- instead.
         Config.Limits.ExclusiveIdleReleaseSeconds = 0
+        Config.Limits.ExclusiveAttemptWindowSeconds = 0
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x',
@@ -522,6 +524,7 @@ describe('an anonymous client away from the city', function()
         local main, s = boot('memory')
         -- The deadline, not an idle hold: nobody here goes near the target.
         Config.Limits.ExclusiveIdleReleaseSeconds = 0
+        Config.Limits.ExclusiveAttemptWindowSeconds = 0
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', anonymous = anonymous,
@@ -829,6 +832,7 @@ describe('an acceptance as the deadline runs out', function()
     local function due()
         local main, s = boot('memory')
         Config.Limits.ExclusiveIdleReleaseSeconds = 0
+        Config.Limits.ExclusiveAttemptWindowSeconds = 0
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
@@ -992,6 +996,7 @@ describe('an extension while the expiry pass ends a pause', function()
         it(mode .. ': both the pause and the extension count', function()
             local main, s = boot(mode)
             Config.Limits.ExclusiveIdleReleaseSeconds = 0
+            Config.Limits.ExclusiveAttemptWindowSeconds = 0
             local f = fixture(s)
             local c = s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'x',

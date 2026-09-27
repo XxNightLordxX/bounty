@@ -6,6 +6,8 @@
 
 local Notify = {}
 
+local Util = require_shared('util')
+
 local Identity
 local budgets = {}
 local advisorySent = {}
@@ -146,9 +148,9 @@ end
 function Notify.contractCreated(contract, targetActor)
     -- The target's paranoid alert. Deliberately vague: it tells them
     -- something is wrong, not who or how much.
-    -- An officer is told by the advisory instead, unless there is none.
+    -- An officer is told by the posting bulletin instead, unless none goes.
     if Config.Notifications.ParanoidAlert
-        and (not contract.target_protected or not Config.Advisory.Enabled) then
+        and (not contract.target_protected or not Notify.advises('posted')) then
         Notify.toCitizen(contract.target_cid, 'Unsettling',
             'You feel eyes on you. A price has been put on your head.')
     end
@@ -218,10 +220,11 @@ end
 ---@param contract table
 ---@param stage string 'posted' | 'accepted'
 ---@param activeHunters integer|nil count of hunters now on the contract
+--- Whether officers are told at this stage; see Util.advises.
+Notify.advises = Util.advises
+
 function Notify.advisory(contract, stage, activeHunters)
-    if not Config.Advisory.Enabled then return end
-    if stage == 'posted' and not Config.Advisory.OnCreate then return end
-    if stage == 'accepted' and not Config.Advisory.OnAccept then return end
+    if not Notify.advises(stage) then return end
 
     -- One advisory per contract per stage; acceptances are keyed by count so
     -- each new operative raises exactly one bulletin.
