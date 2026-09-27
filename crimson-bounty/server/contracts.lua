@@ -1193,11 +1193,21 @@ function Contracts.withdrawReward(actor, contractId, lineIds)
         -- Somebody accepted while this was in flight. Every line the guard
         -- reached is back where it was.
         Audit.action('reward_reduce_raced', actor.cid, contractId,
-            { lines = count, settled = result.settled })
+            { lines = count, settled = result.settled, pending = result.pending })
 
         -- Nothing at all got out: the ordinary case, and the hunter has the
         -- contract exactly as they accepted it.
-        if result.settled == 0 then return false, CB.ERR.BAD_STATE end
+        --
+        -- A QUEUED line got out too. It is marked owed to the creator, and
+        -- from that moment every reader of what this contract pays skips it —
+        -- so counting only settled lines here answered "that did not work"
+        -- to a creator whose reward had already shrunk, returned before the
+        -- hunter below was told, and skipped the audit row and the re-pricing
+        -- further down. Measured: a contract worth 9,500 left at 8,500, the
+        -- creator told the withdrawal failed, the hunter told nothing.
+        if result.settled == 0 and result.pending == 0 then
+            return false, CB.ERR.BAD_STATE
+        end
 
         -- Something did. The guard runs per line, so an acceptance landing
         -- between two of them leaves the earlier ones already returned — a
@@ -1218,14 +1228,15 @@ function Contracts.withdrawReward(actor, contractId, lineIds)
         end
     end
 
-    if not ok and result.settled == 0 then
-        -- Nothing moved. Either something else claimed the lines between
-        -- the check above and here, or delivery could not happen at all.
-        -- A queued line is still the creator's; a skipped one is not theirs
-        -- any more.
-        if result.pending > 0 then
-            return true, nil, result
-        end
+    -- Nothing moved: something else claimed the lines between the check
+    -- above and here. A queued line DID move — it is owed to the creator and
+    -- out of the pot — so it falls through to the audit row and the
+    -- re-pricing below. It used to return success from here and skip both,
+    -- which left no financial record of escrow leaving and left the buyout
+    -- priced against money the contract no longer held: the transfer rail
+    -- the comment below describes, reopened for any withdrawal that could
+    -- not be handed over on the spot.
+    if not ok and result.settled == 0 and result.pending == 0 then
         return false, CB.ERR.LOCKED
     end
 

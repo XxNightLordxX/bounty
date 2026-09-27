@@ -519,3 +519,149 @@ describe('informant data across a crash', function()
         eq(err, CB.ERR.LIMIT_REACHED)
     end)
 end)
+
+describe('a withdrawal that queued a line', function()
+    --- A queued line has left the pot: it is owed to the creator, and every
+    --- reader of what the contract pays skips it from that moment. Two paths
+    --- in withdrawReward counted only SETTLED lines as having got out.
+    local function race()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        Env.players[3].PlayerData.money.bank = 400000
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = {
+                { baseline = { cash = 5000 }, bonus = { dirty = 1000 } },
+                { baseline = { cash = 3000 }, bonus = { cash = 500 } },
+            } },
+        })
+        truthy(c, 'two collections, each with a bonus')
+
+        local wanted = {}
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.portion == CB.PORTION.BONUS then wanted[#wanted + 1] = line.id end
+        end
+        eq(#wanted, 2, 'two bonus lines, so the acceptance can land between them')
+
+        local worthBefore = s.escrow.moneyValue(c.id) + 1000  -- the dirty line
+        -- No room for the black money: the first line out is queued.
+        Env.players[1]._inventoryFull = true
+
+        -- The hunter accepts as the SECOND line leaves `held` — the window the
+        -- release guard exists for.
+        local realClaim = s.storage.claimEscrowLine
+        local seen = 0
+        s.storage.claimEscrowLine = function(id, expected, next_)
+            local out = realClaim(id, expected, next_)
+            if out and expected == CB.ESCROW_STATE.HELD then
+                seen = seen + 1
+                if seen == 2 then s.contracts.accept(f.hunter, c.id, false) end
+            end
+            return out
+        end
+        Natives.calls.notifications = {}
+        local moved, err, result = s.contracts.withdrawReward(f.creator, c.id, wanted)
+        s.storage.claimEscrowLine = realClaim
+        Env.players[1]._inventoryFull = false
+
+        local queued = false
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.owed_to == 'CREATOR1' then queued = true end
+        end
+        truthy(queued, 'the black money has to have been queued, or this '
+            .. 'measures nothing')
+        truthy(seen >= 2, 'the acceptance has to have landed mid-release')
+        return s, f, c, moved, err, result, worthBefore
+    end
+
+    it('does not tell the creator it failed while the reward has shrunk', function()
+        local _, _, _, moved, err = race()
+        truthy(moved, 'the creator was told "that did not work" (' .. tostring(err)
+            .. ') about a withdrawal that had already taken money out of the pot')
+    end)
+
+    it('tells the hunter the contract shrank as they took it', function()
+        race()
+        local told = false
+        for _, note in ipairs(Natives.calls.notifications or {}) do
+            local text = tostring(note.title or '') .. ' '
+                .. tostring(note.content or note.message or '')
+            if text:find('Reward changed', 1, true) then told = true end
+        end
+        truthy(told, 'part of the reward left as the hunter accepted and the '
+            .. 'hunter was told nothing')
+    end)
+
+    it('leaves a financial row for the escrow that moved', function()
+        local s = race()
+        s.audit.flush()
+        local rows = 0
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'reward_reduced' then rows = rows + 1 end
+        end
+        eq(rows, 1, 'escrow left the pot with no financial row saying so')
+    end)
+end)
+
+describe('a withdrawal where every line queued', function()
+    --- Nothing settled, so Escrow.release answered "not ok" — and the early
+    --- return for that case took "a line was queued" as success and left
+    --- before the audit row and the re-pricing. The escrow had left the pot
+    --- all the same.
+    local function withdraw()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 }, bonus = { cash = 40000 } } } },
+            -- The ceiling for 41,000 of clean funding.
+            bailoutAmount = 123000,
+        })
+        truthy(c)
+        eq(s.storage.readContract(c.id).bailout_amount, 123000)
+
+        local bonus
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.portion == CB.PORTION.BONUS then bonus = line end
+        end
+        truthy(bonus)
+
+        -- The creator's game closes with the request in flight: clean money
+        -- is credited rather than carried, so being offline is what queues it.
+        Env.removePlayer(1)
+        local moved, err = s.contracts.withdrawReward(f.creator, c.id, { bonus.id })
+
+        local queued = false
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.id == bonus.id and line.owed_to == 'CREATOR1' then queued = true end
+        end
+        truthy(queued, 'the 40,000 has to be queued, or this measures nothing')
+        return s, c, moved, err
+    end
+
+    it('reports that the reward changed', function()
+        local _, _, moved, err = withdraw()
+        truthy(moved, 'refused with ' .. tostring(err))
+    end)
+
+    it('leaves a financial row for the escrow that moved', function()
+        local s = withdraw()
+        s.audit.flush()
+        local rows = 0
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'reward_reduced' then rows = rows + 1 end
+        end
+        eq(rows, 1, '40,000 left the pot with no financial row saying so')
+    end)
+
+    it('re-prices the buyout against what is left', function()
+        local s, c = withdraw()
+        eq(s.storage.readContract(c.id).bailout_amount, 3000,
+            'the target would be charged 123,000 to close a contract now '
+            .. 'funded at 1,000')
+    end)
+end)
