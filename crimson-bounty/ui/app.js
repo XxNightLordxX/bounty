@@ -623,16 +623,20 @@
       // the number is measured in.
       panel.appendChild(labelled(opts.label || 'Amount', input));
 
+      /* Always there, hint or not. It is also where a figure Confirm will
+         not take is explained, and a dialog opened without a hint had
+         nowhere to say it: Confirm on a bad value returned and said
+         nothing, so the tap read as not having registered at all. */
+      consequence = el('div', 'hint');
       if (opts.hint) {
-        consequence = el('div', 'hint');
         var showConsequence = function () {
           var current = parseInt(input.value, 10);
           consequence.textContent = opts.hint(isNaN(current) ? null : current) || '';
         };
         input.oninput = showConsequence;
         showConsequence();
-        panel.appendChild(consequence);
       }
+      panel.appendChild(consequence);
     }
 
     var row = el('div', 'row');
@@ -650,11 +654,9 @@
         var floor = bounds.min !== undefined ? bounds.min : 1;
         if (!value || value < floor
             || (bounds.max !== undefined && value > bounds.max)) {
-          if (consequence) {
-            consequence.textContent = bounds.max !== undefined
-              ? ('Enter something between ' + floor + ' and ' + bounds.max + '.')
-              : ('Enter ' + floor + ' or more.');
-          }
+          consequence.textContent = bounds.max !== undefined
+            ? ('Enter something between ' + floor + ' and ' + bounds.max + '.')
+            : ('Enter ' + floor + ' or more.');
           return;
         }
       }
@@ -1810,34 +1812,27 @@
            It is offered only when there is actually a later payout to give
            back, rather than opening a box that always fails. A creator with
            nobody hunting has the direct route instead: Change reward. */
-        label: 'Give back a later payout',
+        /* The last one only. The collections are a sequence the contract
+           walks through, so one out of the middle would renumber everything
+           after it — the server refuses that, and this used to offer any
+           later collection in a number box and let the other party find
+           out by pressing Agree. There is nothing to choose, so nothing is
+           asked. */
+        label: 'Give back the last payout',
         note: spare > 0
-          ? (spare === 1 ? 'One collection after this one.' : spare + ' collections after this one.')
+          ? 'Collection ' + total + ' of ' + total + ', leaving ' + (total - 1) + '.'
           : 'Nothing after the one being competed for.',
         skip: spare <= 0,
         run: function () {
-          askNumber('Give back a later payout',
-            hunter
-              ? 'You are offering to give up one of the collections still to '
+          ask('Give back collection ' + total + ' of ' + total + '?',
+            (hunter
+              ? 'You are offering to give up the last collection still to '
                 + 'come. What is on the table now is untouched.'
-              : 'This returns one whole later collection to you. The one being '
-                + 'competed for now is untouched.',
-            function (slot) {
-              sendProposal(contract, 'reduce_reward', { slot: slot });
-            },
-            {
-              label: 'Which collection to give back',
-              value: total, min: current + 1, max: total,
-              confirm: 'Propose',
-              hint: function (value) {
-                if (!value || value < current + 1 || value > total) {
-                  return 'A collection after the current one: '
-                    + (current + 1) + ' to ' + total + '.';
-                }
-                return 'Collection ' + value + ' of ' + total
-                  + ' goes back to the client. ' + (total - 1)
-                  + ' would remain.';
-              }
+              : 'This returns the last collection to you. The one being '
+                + 'competed for now is untouched.')
+              + ' ' + (total - 1) + ' would remain.',
+            function () {
+              sendProposal(contract, 'reduce_reward', { slot: total });
             });
         }
       },
@@ -1873,7 +1868,25 @@
 
   function sendProposal(contract, kind, payload) {
     post('propose', { id: contract.id, kind: kind, payload: payload }).then(function (r) {
-      if (!r.ok) { return fail(r); }
+      if (!r.ok) {
+        /* limit_reached here is how many changes may wait on THIS contract
+           at once, and the shared words for it are about how many contracts
+           the player holds — so a creator proposing a second change was
+           told they were holding too many contracts. */
+        var reasons = {
+          limit_reached: 'There is already a change waiting on this contract. '
+            + 'It has to be answered, or run out, before you can propose '
+            + 'another.',
+          invalid_input: 'That change no longer fits this contract \u2014 it '
+            + 'has moved on since you opened it. Look again.',
+          bad_state: 'This contract cannot be changed right now.'
+        };
+        if (reasons[r.err]) {
+          if (r.err === 'invalid_input') { refresh(); }
+          return say(reasons[r.err]);
+        }
+        return fail(r);
+      }
       say('Proposed. The other party has to agree.', 'gold');
       state.proposals = {};
       refresh();
@@ -1895,6 +1908,11 @@
           ? 'It currently has ' + durationText(left) + ' left.'
           : 'Its deadline has already passed.');
 
+    /* It opened on an empty box, with no ceiling and no hint — so Confirm,
+       the obvious first tap, did nothing and said nothing. It now opens on
+       a sensible figure, is held to what the server will take, and says
+       what the deadline would become. */
+    var ceiling = Number(settings().deadlineMaxMinutes) || 0;
     askNumber('Extend the deadline by how many minutes?',
               standing + ' This applies at once \u2014 it can only help '
               + 'whoever is hunting.',
@@ -1908,6 +1926,22 @@
                   say('Deadline extended.', 'gold');
                   refresh();
                 });
+              },
+              {
+                label: 'Extra minutes',
+                value: ceiling > 0 ? Math.min(30, ceiling) : 30,
+                min: 1,
+                max: ceiling > 0 ? ceiling : undefined,
+                confirm: 'Extend',
+                hint: function (value) {
+                  if (!value || value < 1 || (ceiling > 0 && value > ceiling)) {
+                    return ceiling > 0 ? 'Between 1 and ' + ceiling + ' minutes.'
+                                       : 'At least 1 minute.';
+                  }
+                  return 'It would then run out in '
+                    + durationText(Math.max(left || 0, 0) + value)
+                    + ', or at the contract\u2019s own time limit if that is sooner.';
+                }
               });
   }
 

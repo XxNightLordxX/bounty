@@ -172,6 +172,7 @@ describe('changing a contract after it is placed', function()
         ok('accept', 3, { id = c.id, anonymous = false })
 
         -- ui/app.js:1032 — sendProposal(contract, 'shorten_deadline', { seconds })
+        local before = s.storage.readContract(c.id).deadline_at
         local proposal = ok('propose', 1, { id = c.id, kind = 'shorten_deadline',
                                             payload = { seconds = 600 } })
         truthy(proposal and proposal.id, 'a proposal has to come back with its id')
@@ -191,26 +192,36 @@ describe('changing a contract after it is placed', function()
         eq(answer and answer.outcome, 'applied',
             'approving has to apply the amendment, not decline it')
 
+        -- BY ten minutes, which is what both parties were shown. This used to
+        -- assert "no later than ten minutes from now", which was the bug: an
+        -- agreed "shorten by 10 minutes" on a three-hour contract left ten
+        -- minutes in total.
         local after = s.storage.readContract(c.id)
-        truthy(after.deadline_at and after.deadline_at <= os.time() + 600,
-            'an approved shorten_deadline has to actually move the deadline')
+        eq(after.deadline_at, before - 600,
+            'an approved shorten_deadline has to move the deadline by what it says')
     end)
 
     --- The regression this whole suite exists for. The page used to send
     --- { amount } here and the server read payload.slot, so the proposal
     --- was built with nothing in it. Every module-level test passed.
     it('reduces a reward by the slot the page names, not an amount', function()
-        local s, f, c = seeded()
+        local s, f = seeded()
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Two collections', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
+        })
+        truthy(c, 'a contract with a later collection to give back')
         ok('accept', 3, { id = c.id, anonymous = false })
 
+        -- ui/app.js editReward — post('rewardBreakdown', { id })
         local breakdown = ok('rewardBreakdown', 1, { id = c.id })
-        local lines = breakdown and (breakdown.lines or breakdown.removable) or {}
-        truthy(#lines > 0, 'the editor has to be offered something to take back')
+        truthy(breakdown, 'the reward editor reads what the contract holds')
 
-        -- ui/app.js:1070 — sendProposal(contract, 'reduce_reward', { slot })
+        -- ui/app.js proposeChange — sendProposal(contract, 'reduce_reward',
+        -- { slot: contract.slots }): the last collection, the only one the
+        -- server will take back.
         local proposal = ok('propose', 1, {
-            id = c.id, kind = 'reduce_reward',
-            payload = { slot = lines[1].id or lines[1].slot },
+            id = c.id, kind = 'reduce_reward', payload = { slot = 2 },
         })
         truthy(proposal and proposal.id, 'a reduction has to come back with its id')
     end)

@@ -70,23 +70,15 @@ describe('giving a later collection back by agreement', function()
     end)
 
     it('still refuses to give back the collection being competed for', function()
-        -- The guard the fix must not have widened. It bites at apply time
-        -- rather than at propose time: Amendments.sanitize validates the shape
-        -- of a payload and has no contract to check a slot bound against, so
-        -- the proposal is made and refused when it is agreed.
-        --
-        -- That is a real wart — both parties can negotiate something that can
-        -- never succeed, and the app says "Waiting on the other party" about
-        -- it — but it is a separate concern from the money the slot count was
-        -- losing, and apply is the authority either way. Asserted here as what
-        -- it actually is rather than as what would be nicer.
+        -- The guard the fix must not have widened. It used to bite only at
+        -- apply time, so both parties could negotiate something that could
+        -- never succeed and the refusal landed on whoever pressed Agree. It
+        -- is now asked when the proposal is made, and again when it is
+        -- applied.
         local s, f, c = twoCollections()
-        local proposal = s.amendments.propose(f.creator, c.id,
+        local proposal, err = s.amendments.propose(f.creator, c.id,
             CB.AMENDMENT.REDUCE_REWARD, { slot = 1 })
-        truthy(proposal, 'the proposal is made, un-validated against the slots')
-
-        local ok, err = s.amendments.respond(f.hunter, proposal.id, true)
-        falsy(ok, 'the live collection is not the creator\'s to take back')
+        falsy(proposal, 'the live collection is not the creator\'s to take back')
         eq(err, CB.ERR.INVALID_INPUT)
         eq(s.storage.readContract(c.id).payout_slots, 2,
             'and the count is untouched by a refused reduction')
@@ -109,11 +101,9 @@ describe('giving a later collection back by agreement', function()
         truthy(c, 'three collections')
         truthy(s.contracts.accept(f.hunter, c.id))
 
-        local proposal = s.amendments.propose(f.creator, c.id,
+        local proposal, err = s.amendments.propose(f.creator, c.id,
             CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
-        truthy(proposal)
-        local ok, err = s.amendments.respond(f.hunter, proposal.id, true)
-        falsy(ok, 'the middle one is not removable')
+        falsy(proposal, 'the middle one is not removable')
         eq(err, CB.ERR.INVALID_INPUT)
         eq(s.storage.readContract(c.id).payout_slots, 3)
 
@@ -790,5 +780,110 @@ describe('accepting a contract that is no longer there to take', function()
             'somebody else is being paid')
         local _, err = s.contracts.accept(f.hunter, c.id, false)
         eq(err, CB.ERR.BAD_STATE)
+    end)
+end)
+
+describe('moving a deadline by agreement', function()
+    local function held()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        return s, f, c
+    end
+
+    it('shortens BY the amount both parties agreed to', function()
+        local s, f, c = held()
+        local before = s.storage.readContract(c.id).deadline_at
+        truthy(before and before - os.time() > 3600, 'a deadline hours away')
+        local p = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+            { seconds = 1800 })
+        truthy(p)
+        truthy(s.amendments.respond(f.hunter, p.id, true))
+        eq(s.storage.readContract(c.id).deadline_at, before - 1800,
+            '"Shorten the deadline by 30 minutes" left thirty minutes in total')
+    end)
+
+    it('does not let a late answer push the deadline into the past', function()
+        local s, f, c = held()
+        local deadline = s.storage.readContract(c.id).deadline_at
+        local p = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+            { seconds = (deadline - os.time()) - 120 })
+        truthy(p, 'a cut that fits when it is proposed')
+        Env.advance(150)  -- and is answered after the time it would have left
+        local ok, err = s.amendments.respond(f.hunter, p.id, true)
+        falsy(ok, 'agreed into a deadline that had already passed')
+        eq(err, CB.ERR.INVALID_INPUT)
+        eq(s.storage.readContract(c.id).deadline_at, deadline, 'and it did not move')
+    end)
+
+    it('refuses, when proposed, a cut longer than the time that is left', function()
+        local s, f, c = held()
+        local left = s.storage.readContract(c.id).deadline_at - os.time()
+        local p, err = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+            { seconds = left + 60 })
+        falsy(p, 'the other party would be asked to agree to something that '
+            .. 'cannot be applied')
+        eq(err, CB.ERR.INVALID_INPUT)
+    end)
+end)
+
+describe('a proposal whose time is up', function()
+    local function lapsed()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+            { seconds = 600 }))
+        -- Past its time, and the sweep has not run yet.
+        Env.advance(Config.Amendments.ProposalExpirySeconds + 1)
+        return s, f, c
+    end
+
+    it('does not hold the open slot until the sweep gets round to it', function()
+        local s, f, c = lapsed()
+        local p, err = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CANCEL, {})
+        truthy(p, 'refused by a proposal nobody can answer any more: ' .. tostring(err))
+    end)
+
+    it('is not listed with Agree and Decline', function()
+        local s, f, c = lapsed()
+        local listed = s.amendments.openFor(f.hunter, c.id)
+        eq(#listed, 0, 'drawn with two buttons that can only be refused')
+    end)
+end)
+
+describe('an agreed change the contract has moved past', function()
+    it('tells the person who proposed it', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local p = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+        truthy(p, 'the last collection, while nobody is competing for it')
+
+        -- Collection 1 is paid, so collection 2 is now the live one.
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        Natives.calls.notifications = {}
+        local ok, err = s.amendments.respond(f.hunter, p.id, true)
+        falsy(ok, 'the live collection cannot be given back')
+        eq(err, CB.ERR.INVALID_INPUT)
+
+        local told = false
+        for _, note in ipairs(Natives.calls.notifications) do
+            if note.title == 'Change not made' then told = true end
+        end
+        truthy(told, 'only the person who pressed Agree saw the refusal; the '
+            .. 'one who asked for the change went on believing it was waiting')
+        eq(s.escrow.moneyValue(c.id, { slot = 2 }), 2000, 'and nothing moved')
     end)
 end)

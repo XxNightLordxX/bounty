@@ -246,6 +246,10 @@ local function buildListing(viewerCid, page)
             reasonPresets = Config.Reason.Mode == 'preset'
                 and Config.Reason.Presets or nil,
             reasonMaxLength = Config.Reason.MaxLength,
+            -- The most a deadline can be moved by in one go, in minutes.
+            -- The server refuses anything larger, and the box asking for it
+            -- had no ceiling to hold the player to.
+            deadlineMaxMinutes = math.floor((Config.Limits.ContractLifetimeSeconds or 0) / 60),
             informant = Config.Informant.Enabled == true and {
                 cost = Config.Informant.Cost,
                 account = Config.Informant.Account,

@@ -298,6 +298,55 @@ end
 -- Material changes (§12.2)
 --------------------------------------------------------------------------
 
+--- Proposals on a contract that can still be answered.
+---
+--- The store's idea of "open" is the outcome field, which only the expiry
+--- sweep changes, and the sweep runs on the main tick — so for up to a tick
+--- after its time was up a proposal was still counted against the one open
+--- slot a contract has, refusing the next proposal, and still drawn with
+--- Agree and Decline that could only be refused. respond() already asked the
+--- clock; the other two readers now ask it too.
+---@param contractId string
+---@return table[]
+function Amendments.answerable(contractId)
+    local now = os.time()
+    local out = {}
+    for _, proposal in ipairs(Storage.readOpenAmendments(contractId) or {}) do
+        if now <= (proposal.expires_at or 0) then out[#out + 1] = proposal end
+    end
+    return out
+end
+
+--- The part of a proposal's validity that depends on the contract as it is.
+---
+--- sanitize() checks the shape of a payload and has no contract to check it
+--- against, so anything that did depend on the contract was found out when
+--- the other party pressed Agree — the refusal landing on the person who had
+--- done nothing wrong, about a proposal both of them had been shown as
+--- waiting on an answer. Asked at propose time, and again at apply time,
+--- because the contract can move in between.
+---@return boolean ok
+---@return string|nil err
+local function checkAgainst(contract, kind, payload)
+    if kind == CB.AMENDMENT.REDUCE_REWARD then
+        -- Only the LAST collection, and only one nobody is competing for:
+        -- see apply() for why.
+        local slots = contract.payout_slots or 1
+        local slot = payload.slot
+        if not slot or slot <= (contract.next_slot or 1) or slot ~= slots then
+            return false, CB.ERR.INVALID_INPUT
+        end
+    elseif kind == CB.AMENDMENT.SHORTEN_DEADLINE then
+        -- There has to be a deadline, and cutting it by this much has to
+        -- leave some of it.
+        if not contract.deadline_at
+            or (contract.deadline_at - os.time()) <= (payload.seconds or 0) then
+            return false, CB.ERR.INVALID_INPUT
+        end
+    end
+    return true
+end
+
 --- Propose a change that needs agreement. Returns the proposal, which is
 --- inert until every participant approves.
 ---@return table|nil proposal
@@ -325,7 +374,7 @@ function Amendments.propose(actor, contractId, kind, payload)
         return nil, CB.ERR.INVALID_INPUT
     end
 
-    if #Storage.readOpenAmendments(contractId) >= Config.Amendments.MaxOpenPerContract then
+    if #Amendments.answerable(contractId) >= Config.Amendments.MaxOpenPerContract then
         return nil, CB.ERR.LIMIT_REACHED
     end
 
@@ -334,6 +383,9 @@ function Amendments.propose(actor, contractId, kind, payload)
     -- attacker-chosen data in a row nothing ever deletes.
     local clean, payloadErr = Amendments.sanitize(kind, payload)
     if not clean then return nil, payloadErr end
+
+    local fits, fitErr = checkAgainst(contract, kind, clean)
+    if not fits then return nil, fitErr end
 
     -- Only the proposer's answer is recorded here. The set of people who
     -- must agree is recomputed when someone responds, so a hunter who joins
@@ -385,7 +437,7 @@ function Amendments.openFor(actor, contractId)
     if not people[actor.cid] then return nil, CB.ERR.NOT_PARTICIPANT end
 
     local out = {}
-    for _, proposal in ipairs(Storage.readOpenAmendments(contractId)) do
+    for _, proposal in ipairs(Amendments.answerable(contractId)) do
         -- Who must still answer. Recomputed from the current participants
         -- for the same reason respond() recomputes it: a hunter who joined
         -- after the proposal is not bound by a vote they never cast.
@@ -546,6 +598,15 @@ function Amendments.respond(actor, amendmentId, approve)
     proposal.error = err
     Storage.writeAmendment(proposal)
 
+    -- The proposer is told too. Only the person who pressed Agree saw the
+    -- refusal, so the one who asked for the change was left believing it
+    -- was still waiting on an answer.
+    if not ok and proposal.proposer ~= actor.cid then
+        Notify.toCitizen(proposal.proposer, 'Change not made',
+            'Your proposed contract change was agreed, but the contract had '
+            .. 'moved on and it no longer applies. The terms are unchanged.')
+    end
+
     return ok, err, proposal.outcome
 end
 
@@ -559,10 +620,27 @@ function Amendments.apply(proposal)
     -- Set by any branch that takes escrow back out of the contract.
     local reclamp = false
 
-    if kind == CB.AMENDMENT.SHORTEN_DEADLINE or kind == CB.AMENDMENT.EXTEND_DEADLINE then
+    local fits, fitErr = checkAgainst(contract, kind, payload)
+    if not fits then return false, fitErr end
+
+    -- Only shortening. Extending is additive — it can only help whoever is
+    -- hunting — so propose() refuses it and the creator applies it directly
+    -- through improve(), which already moves the deadline by the amount and
+    -- holds it to the contract's lifetime.
+    if kind == CB.AMENDMENT.SHORTEN_DEADLINE then
         local seconds = Util.toPositive(payload.seconds, Config.Limits.ContractLifetimeSeconds)
         if not seconds then return false, CB.ERR.INVALID_INPUT end
-        contract.deadline_at = os.time() + seconds
+
+        -- An amount of time to move the deadline BY, not the deadline to
+        -- move it to. This set it to now + seconds, while everything either
+        -- party is shown is relative — the box reads "Cut it short by", its
+        -- hint says when it would then run out, and the other party is asked
+        -- to agree to "Shorten the deadline by 30 minutes". Agreed on a
+        -- contract with three hours left, that left thirty minutes in total.
+        --
+        -- checkAgainst() above has already refused a cut longer than what is
+        -- left now, including time that passed while it waited for an answer.
+        contract.deadline_at = contract.deadline_at - seconds
 
     elseif kind == CB.AMENDMENT.CHANGE_MODE then
         local mode = payload.mode == CB.MODE.COMPETITIVE and CB.MODE.COMPETITIVE or CB.MODE.EXCLUSIVE
@@ -609,10 +687,12 @@ function Amendments.apply(proposal)
         -- creator. Only an unclaimed slot may be given back.
         -- Only a slot nobody is competing for yet may be withdrawn. Emptying
         -- the live slot would leave a claimable payout funded with nothing.
+        --
+        -- checkAgainst() above holds all three rules — a later collection,
+        -- the last one, and one that exists — so they are asked the same way
+        -- at propose time and here.
         local slots = contract.payout_slots or 1
-        local slot = Util.toPositive(payload.slot, Config.Limits.MaxPayoutSlots)
-        if not slot or slot <= (contract.next_slot or 1) then return false, CB.ERR.INVALID_INPUT end
-        if slot > slots then return false, CB.ERR.INVALID_INPUT end
+        local slot = payload.slot
 
         -- Only the LAST one may go, and the count comes down with it.
         --
@@ -627,7 +707,6 @@ function Amendments.apply(proposal)
         -- The last one, because the slots are a sequence next_slot walks:
         -- taking one out of the middle would renumber every slot after it and
         -- orphan the escrow filed against their old numbers.
-        if slot ~= slots then return false, CB.ERR.INVALID_INPUT end
 
         Escrow.release(proposal.contract_id, contract.creator_cid, { slot = slot }, 'reward_reduced')
         contract.payout_slots = slots - 1

@@ -2965,7 +2965,7 @@ async function main() {
     it('does not offer to give back a payout there is none of', function () {
       const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
         .map(function (n) { return n.textContent; });
-      truthy(labels.indexOf('Give back a later payout') === -1,
+      truthy(labels.indexOf('Give back the last payout') === -1,
         'a one-payout contract has nothing after the live one: ' + labels.join(' | '));
       truthy(labels.indexOf('Reduce the reward') === -1,
         'and the old label sent a payload the server has never accepted: '
@@ -2991,31 +2991,33 @@ async function main() {
       .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
     await settle(); await settle();
     click(multi, 'Propose change');
-    click(multi, 'Give back a later payout');
+    click(multi, 'Give back the last payout');
 
-    it('asks which collection, bounded to the ones still to come', function () {
-      const box = multi.document.getElementById('dialog-value');
-      truthy(box, 'there should be a number field');
-      eq(String(box.min), '2', 'the live collection cannot be given back');
-      eq(String(box.max), '3', 'nor one that does not exist');
-      truthy(box.value && Number(box.value) >= 2,
-        'an empty box is the whole complaint: got "' + box.value + '"');
+    /* The last collection is the only one the server will take back: the
+       collections are a sequence, and one out of the middle would renumber
+       the rest. The page used to offer any later one in a number box, and
+       the other party found out by pressing Agree. */
+    it('does not ask which collection, because only the last can go', function () {
+      falsy(multi.document.getElementById('dialog-value'),
+        'a number box offers choices the server refuses');
+      truthy(multi.view.textContent.indexOf('collection 3 of 3') !== -1,
+        'the one that goes has to be named: ' + multi.view.textContent);
     });
 
     it('says what giving it back would do', function () {
-      truthy(multi.view.textContent.indexOf('goes back to the client') !== -1,
+      truthy(multi.view.textContent.indexOf('2 would remain') !== -1,
         'the consequence has to be on screen: ' + multi.view.textContent);
     });
 
-    click(multi, 'Propose');
+    click(multi, 'Yes');
     await settle();
 
-    it('sends a slot, which is what the server reads', function () {
+    it('sends the last slot, which is what the server reads', function () {
       const sent = multi.sent.filter(function (s) { return s.name === 'propose'; });
       eq(sent.length, 1, 'one proposal');
       eq(sent[0].body.kind, 'reduce_reward');
-      truthy(sent[0].body.payload.slot >= 2,
-        'the server sanitizes on payload.slot and refuses anything without it: '
+      eq(sent[0].body.payload.slot, 3,
+        'the server takes back the last collection and no other: '
         + JSON.stringify(sent[0].body.payload));
       falsy(sent[0].body.payload.amount,
         'an amount is the payload that could never work');
@@ -4941,6 +4943,94 @@ async function main() {
         truthy(shown.indexOf('1h 30m') !== -1,
           'a creator deciding how much to add has to know what they are '
           + 'adding to, and the app already knew: ' + shown.slice(0, 200));
+      });
+    })();
+
+    /* The dialog opened on an empty box with no ceiling and no hint, so
+       Confirm — the obvious first tap — did nothing and said nothing. */
+    await (async function extendOpensAnswerable() {
+      const list = JSON.parse(JSON.stringify(BOARD));
+      list.data.settings.deadlineMaxMinutes = 120;
+      const app = boot({ list: list,
+        mine: { ok: true, data: { created: [own], accepted: [], onMe: [] } },
+        improve: { ok: true, data: true } });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Extend deadline');
+      await settle();
+      const box = app.document.getElementById('dialog-value');
+
+      it('opens on a figure Confirm will take', function () {
+        truthy(box && Number(box.value) > 0, 'an empty box: "' + (box && box.value) + '"');
+      });
+
+      it('holds the figure to what the server takes', function () {
+        eq(String(box.max), '120');
+      });
+
+      it('says what the deadline would become', function () {
+        truthy(app.view.textContent.indexOf('would then run out in') !== -1,
+          app.view.textContent);
+      });
+
+      box.value = '';
+      click(app, 'Extend');
+      await settle();
+      it('says why when Confirm will not take what is in the box', function () {
+        truthy(app.view.textContent.indexOf('between 1 and 120') !== -1,
+          'the tap did nothing and said nothing: ' + app.view.textContent);
+        eq(app.sent.filter(function (m) { return m.name === 'improve'; }).length, 0);
+      });
+
+      box.value = '30';
+      click(app, 'Extend');
+      await settle(); await settle();
+      it('sends the minutes as seconds', function () {
+        const sent = app.sent.filter(function (m) { return m.name === 'improve'; });
+        eq(sent.length, 1);
+        eq(sent[0].body.payload.seconds, 1800);
+      });
+    })();
+
+    /* A number dialog with no hint had nowhere to say a figure was refused. */
+    await (async function anyNumberDialogExplainsARefusal() {
+      const app = boot({ mine: { ok: true, data: { created: [own], accepted: [], onMe: [] } } });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Extend deadline');
+      await settle();
+      const box = app.document.getElementById('dialog-value');
+      box.value = '0';
+      click(app, 'Extend');
+      await settle();
+      it('explains a refused figure even on a server that sends no ceiling', function () {
+        truthy(app.view.textContent.indexOf('At least 1') !== -1
+            || app.view.textContent.indexOf('or more') !== -1,
+          'silence: ' + app.view.textContent);
+      });
+    })();
+
+    /* A second proposal on one contract was refused as "You are holding too
+       many contracts", the shared words for a different rule. */
+    await (async function proposalLimitInItsOwnWords() {
+      const hunted = Object.assign({}, own, { role: 'hunter', hunters: undefined });
+      const app = boot({
+        mine: { ok: true, data: { created: [], accepted: [hunted], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        propose: { ok: false, err: 'limit_reached' }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      click(app, 'Propose change');
+      click(app, 'Withdraw');
+      await settle(); await settle();
+      it('says a change is already waiting, not that they hold too much', function () {
+        const said = app.notice();
+        falsy(said.indexOf('holding too many') !== -1, said);
+        truthy(said.indexOf('already a change waiting') !== -1, said);
       });
     })();
 

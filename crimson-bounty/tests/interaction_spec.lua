@@ -718,10 +718,10 @@ describe('amendment guards', function()
 
     it('refuses to empty the slot hunters are competing for', function()
         local s, f, c = competitive()
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.REDUCE_REWARD, { slot = 1 })
-        truthy(proposal)
-        local ok = s.amendments.respond(f.hunter, proposal.id, true)
-        falsy(ok, 'the live slot must stay funded')
+        -- Refused when it is proposed, not when the other party agrees to it.
+        local proposal, err = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.REDUCE_REWARD, { slot = 1 })
+        falsy(proposal, 'the live slot must stay funded')
+        eq(err, CB.ERR.INVALID_INPUT)
         eq(s.escrow.moneyValue(c.id, { slot = 1 }), 1000, 'still funded')
     end)
 

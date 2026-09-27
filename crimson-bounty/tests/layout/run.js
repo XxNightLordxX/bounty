@@ -121,7 +121,7 @@ function serverStub() {
     copy.role = 'creator';
     copy.huntersActive = 0;
     copy.hunters = [];
-    // More than one collection, so "Give back a later payout" is offered
+    // More than one collection, so "Give back the last payout" is offered
     // and its dialog gets measured too.
     copy.slots = 3;
     copy.currentSlot = 1;
