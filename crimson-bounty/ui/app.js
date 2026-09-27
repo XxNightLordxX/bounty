@@ -1194,6 +1194,10 @@
         var out = el('button', 'primary danger', 'Buy out \u2014 ' + money(contract.bailoutAmount));
         out.onclick = function () { bailout(contract); };
         row.appendChild(out);
+      } else if (settings().buyouts === false) {
+        // Not the client's doing. Saying "no buyout was offered" here blamed
+        // the one person who had not decided it.
+        row.appendChild(el('div', 'hint', 'This server does not offer buyouts.'));
       } else {
         row.appendChild(el('div', 'hint', 'No buyout was offered on this contract.'));
       }
@@ -1988,7 +1992,12 @@
   }
 
   /* One escrow line, as a line of text a player can read. */
-  function rewardLineLabel(line) {
+  /* On a contract that pays more than once, which collection the line pays
+     out of. The breakdown carried the slot and this never read it, so three
+     collections each funded with the same cash drew three identical rows and
+     a creator wanting the last one's money back could not tell which to
+     tick. */
+  function rewardLineLabel(line, slots) {
     var what;
     if (line.source === 'cash' || line.source === 'bank' || line.source === 'dirty') {
       what = SOURCE_LABELS[line.source] + ' ' + money(line.amount || 0);
@@ -1997,7 +2006,11 @@
     } else {
       what = itemLabel(line.item) + ' ×' + (line.quantity || 1);
     }
-    return what + ' — ' + (line.portion === 'bonus' ? 'bonus' : 'base');
+    var text = what + ' — ' + (line.portion === 'bonus' ? 'bonus' : 'base');
+    if ((Number(slots) || 1) > 1) {
+      text = 'Collection ' + (Number(line.slot) || 1) + ': ' + text;
+    }
+    return text;
   }
 
   function renderRewardEditor(view) {
@@ -2084,7 +2097,8 @@
           row.appendChild(box);
         }
 
-        row.appendChild(el('span', line.id ? null : 'hint', rewardLineLabel(line)));
+        row.appendChild(el('span', line.id ? null : 'hint',
+          rewardLineLabel(line, edit.data.slots)));
         list.appendChild(row);
       });
       panel.appendChild(list);
@@ -2703,6 +2717,9 @@
     slots.max = (state.wallet && state.wallet.caps && state.wallet.caps.slots) || 5;
     slots.onchange = function () { state.draft.slots = slots.value; renderSlots(); };
     form.appendChild(labelled('Payouts (how many times it can be collected)', slots));
+    var ceilingNote = el('div', 'hint');
+    ceilingNote.id = 'slots-ceiling';
+    form.appendChild(ceilingNote);
     form.appendChild(el('div', 'hint',
       'Every payout is funded and escrowed up front. More hunters may accept than there are ' +
       'payouts — the first to finish are paid.'));
@@ -2761,10 +2778,41 @@
     renderSlots();
   }
 
+  /* How many payouts the form is building, held to the server's ceiling.
+
+     The field's max stops the stepper arrows and nothing else: a phone keypad
+     types, and a browser does not bind a typed value to max. So 9 on a
+     server taking 3 drew nine payouts, let them all be funded, and was
+     refused as "That reward does not add up" when the amounts added up
+     perfectly; and 2000 built two thousand payout blocks in one pass. The
+     form and the submit each derived the count on their own, so a clamp in
+     one would still have sent a contract that differed from the one on
+     screen — both read it from here. */
+  function payoutCount() {
+    var ceiling = parseInt(state.wallet && state.wallet.caps
+      && state.wallet.caps.slots, 10) || 5;
+    var count = parseInt(state.draft.slots, 10);
+    if (!count || count < 1) { return 1; }
+    return Math.min(count, ceiling);
+  }
+
   function renderSlots() {
     var box = document.getElementById('slots');
     if (!box) return;
-    var count = parseInt(state.draft.slots, 10) || 1;
+    var count = payoutCount();
+
+    // Put the clamped figure back in the box, and say why, so what the
+    // field shows is what is being built.
+    var typed = parseInt(state.draft.slots, 10);
+    var note = document.getElementById('slots-ceiling');
+    if (typed > count) {
+      state.draft.slots = String(count);
+      var field = document.getElementById('slots-count');
+      if (field) { field.value = String(count); }
+      if (note) { note.textContent = 'This server allows at most ' + count + ' payouts.'; }
+    } else if (note) {
+      note.textContent = '';
+    }
 
     // Drop what was staged on payouts the player has taken away. This runs
     // only on a real change to the count, never on a rebuild: it used to run
@@ -3115,7 +3163,7 @@
     var target = state.draft.target || document.getElementById('target-handle').value;
     if (!target) return say('Choose a target.');
 
-    var count = parseInt(state.draft.slots, 10) || 1;
+    var count = payoutCount();
     var slots = [];
     for (var i = 1; i <= count; i++) {
       // Only sources the creator actually funded are sent. A zero is not a

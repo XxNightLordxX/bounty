@@ -164,7 +164,12 @@ function Projection.contract(contract, viewerCid)
         end
     elseif role == 'target' then
         out.bailoutAmount = contract.bailout_amount
-        out.bailoutAvailable = (contract.bailout_amount or 0) > 0
+        -- Both questions, not one. A price stored before the owner switched
+        -- buyouts off stays on the row, and the switch was read only when
+        -- the button was pressed — so the On me tab offered a buyout, at a
+        -- price, on a server that refuses every one.
+        out.bailoutAvailable = Config.Bailout.Enabled == true
+            and (contract.bailout_amount or 0) > 0
         -- A buyout already paid for, waiting out its processing delay.
         --
         -- The projection carried no sign of it, so the app could not draw
@@ -237,6 +242,9 @@ local function buildListing(viewerCid, page)
             -- and Threads on a server with the relay switched off, and every
             -- message was refused.
             relay = Config.Relay.Enabled == true,
+            -- Whether this server runs buyouts at all, so the page can tell
+            -- "the client offered none" from "there are none here".
+            buyouts = Config.Bailout.Enabled == true,
             -- What buying informant data costs, and whether it is offered
             -- at all. The app was asking a player to spend money without
             -- telling them how much, on a purchase that is deliberately

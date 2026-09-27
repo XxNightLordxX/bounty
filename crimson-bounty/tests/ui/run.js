@@ -2345,6 +2345,26 @@ async function main() {
       return app;
     }
 
+    /* Three collections funded alike drew three identical rows. */
+    const threeAlike = await openEditor({ rewardBreakdown: { ok: true, data: {
+      editable: true, slots: 3, currentSlot: 1,
+      lines: [1, 2, 3].map(function (n) {
+        return { id: 'ct00000001:' + n, slot: n, portion: 'baseline', source: 'cash',
+                 amount: 5000, withdrawable: true };
+      })
+    } } });
+    it('names the collection each line pays out of', function () {
+      const shown = threeAlike.view.textContent;
+      truthy(shown.indexOf('Collection 3:') !== -1 && shown.indexOf('Collection 1:') !== -1,
+        'three identical rows and no way to tell which is which: ' + shown);
+    });
+
+    const oneOnly = await openEditor();
+    it('does not number the lines of a contract that pays once', function () {
+      falsy(oneOnly.view.textContent.indexOf('Collection 1:') !== -1,
+        oneOnly.view.textContent);
+    });
+
     const app = await openEditor();
 
     it('lists every line the server said could be taken back', function () {
@@ -2817,6 +2837,26 @@ async function main() {
     }
 
     const all = await place(wallet());
+
+    /* A typed count is not bound by the field's max. 9 on a server taking
+       3 drew nine payouts and sent a contract the server refuses. */
+    const tooMany = await place(wallet());
+    (function () {
+      const field = tooMany.document.getElementById('slots-count');
+      field.value = '9';
+      field.onchange();
+    })();
+    await settle();
+    it('builds no more payouts than the server takes', function () {
+      const blocks = tooMany.view.all().filter(function (n) {
+        return n.id && /^slot-cash-\d+$/.test(n.id);
+      });
+      eq(blocks.length, 3, 'drew a payout for every number typed');
+      eq(tooMany.document.getElementById('slots-count').value, '3',
+        'and the box has to show what is being built');
+      truthy(tooMany.view.textContent.indexOf('at most 3 payouts') !== -1,
+        tooMany.view.textContent.slice(0, 300));
+    });
 
     it('offers all three money sources when the server takes all three', function () {
       ['cash', 'bank', 'dirty'].forEach(function (source) {
@@ -4582,6 +4622,28 @@ async function main() {
       truthy(shown.indexOf('1 operative') !== -1, shown);
       falsy(shown.indexOf('of 5') !== -1,
         'an exclusive contract has no roster to be full: ' + shown);
+    });
+  })();
+
+  /* A server with buyouts switched off is not the client's doing. */
+  await (async function buyoutsSwitchedOff() {
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: { buyouts: false } } },
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [{
+        id: 'ct00000009', targetName: 'You', reason: 'Unpaid debt',
+        mode: 'competitive', state: 'active', reward: { baseline: 9000 },
+        slots: 1, slotsClaimed: 0, currentSlot: 1, role: 'target',
+        bailoutAmount: 15000, bailoutAvailable: false, penaltyAmount: 0
+      }] } }
+    });
+    await settle(); await settle();
+    tab(app, 'onme');
+    await settle(); await settle();
+    it('says the server offers none, rather than that the client did not', function () {
+      const shown = app.view.textContent;
+      truthy(shown.indexOf('does not offer buyouts') !== -1, shown);
+      falsy(shown.indexOf('No buyout was offered') !== -1, shown);
     });
   })();
 

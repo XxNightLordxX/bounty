@@ -1666,6 +1666,92 @@ describe('a player the app is closed to can still buy out', function()
         eq(Env.players[2].PlayerData.money.bank, 100000, 'nothing was charged')
         eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE)
     end)
+
+    it('lets them read the list and then act on it', function()
+        -- The allowance is one a minute and the listing used to spend it, so
+        -- doing exactly what the listing said was refused as "Slow down."
+        local s, f, c = officer()
+        Env.commands[Config.Bailout.Command](2, {})
+        Env.chat = {}
+        Env.commands[Config.Bailout.Command](2, { c.id })
+        local said = ''
+        for _, line in ipairs(Env.chat) do said = said .. line.text end
+        falsy(said:find('Slow down', 1, true), said)
+        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+    end)
+
+    it('does not spend the allowance on a purchase that was refused', function()
+        local s, f, c = officer()
+        Env.players[2].PlayerData.money.bank = 0
+        Env.players[2].PlayerData.money.cash = 0
+        Env.commands[Config.Bailout.Command](2, { c.id })
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'could not afford it')
+        Env.players[2].PlayerData.money.bank = 100000
+        Env.chat = {}
+        Env.commands[Config.Bailout.Command](2, { c.id })
+        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT,
+            'refused for want of an allowance the refusal had spent')
+    end)
+
+    it('says why in words, not as a code', function()
+        local s, f, c = officer()
+        Env.players[2].PlayerData.money.bank = 0
+        Env.players[2].PlayerData.money.cash = 0
+        Env.chat = {}
+        Env.commands[Config.Bailout.Command](2, { c.id })
+        local said = ''
+        for _, line in ipairs(Env.chat) do said = said .. line.text end
+        falsy(said:find('insufficient_funds', 1, true), said)
+        truthy(said:find('do not have that much', 1, true), said)
+    end)
+
+    it('is throttled when it is hammered, allowance refunds or not', function()
+        -- A command does not pass the flood guard the app's requests do, and
+        -- nothing it refuses keeps a purchase token, so the listing budget is
+        -- what bounds it.
+        local s, f, c = officer()
+        Env.chat = {}
+        for _ = 1, 60 do Env.commands[Config.Bailout.Command](2, {}) end
+        local said = ''
+        for _, line in ipairs(Env.chat) do said = said .. line.text end
+        truthy(said:find('Slow down', 1, true), 'sixty store reads in one breath, unrefused')
+    end)
+
+    it('still limits actual purchases', function()
+        local s, f, c = officer()
+        local c2 = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'y',
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000,
+        })
+        truthy(c2, 'a second contract on the same officer')
+        Env.commands[Config.Bailout.Command](2, { c.id })
+        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        Env.chat = {}
+        Env.commands[Config.Bailout.Command](2, { c2.id })
+        local said = ''
+        for _, line in ipairs(Env.chat) do said = said .. line.text end
+        truthy(said:find('Slow down', 1, true), 'a purchase is what the allowance is for: ' .. said)
+        eq(s.storage.readContract(c2.id).state, CB.STATE.ACTIVE)
+    end)
+end)
+
+describe('a buyout on a server that has switched them off', function()
+    it('is not offered on the On me tab', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000,
+        })
+        truthy(c)
+        withConfig({ { Config.Bailout, 'Enabled', false } }, function()
+            local row = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
+            falsy(row.bailoutAvailable, 'offered at a price on a server that '
+                .. 'refuses every buyout')
+            eq(s.projection.listing('TARGET01', 1).settings.buyouts, false)
+        end)
+        truthy(s.projection.contract(s.storage.readContract(c.id), 'TARGET01').bailoutAvailable)
+    end)
 end)
 
 

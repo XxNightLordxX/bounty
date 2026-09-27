@@ -509,6 +509,21 @@ function Bridges.installCommands(modules)
         reply(src, ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err)))
     end)
 
+    --- What /cleanse says for each refusal, where the app's words do not
+    --- reach because the app is closed to the player running it.
+    local CLEANSE_REFUSALS = {
+        [CB.ERR.BAILOUT_OFF] = 'this server does not offer buyouts.',
+        [CB.ERR.NO_BUYOUT_PRICE] = 'the client did not put a price on closing that one.',
+        [CB.ERR.BUYOUT_PENDING] = 'you have already paid; it closes shortly.',
+        [CB.ERR.INCAPACITATED] = 'not from the floor. Get up first.',
+        [CB.ERR.HANDOVER_IN_PROGRESS] = 'somebody has hold of you.',
+        [CB.ERR.INSUFFICIENT] = 'you do not have that much.',
+        [CB.ERR.ALREADY_SETTLED] = 'that contract has already closed.',
+        [CB.ERR.NOT_FOUND] = 'no contract on you has that id.',
+        [CB.ERR.NOT_PARTICIPANT] = 'that contract is not on you.',
+        [CB.ERR.INVALID_INPUT] = 'that is not a contract id.',
+    }
+
     -- Buying out a contract on yourself, for players the app is closed to.
     --
     -- Law enforcement and EMS are barred from the app by §2, so an officer
@@ -527,9 +542,22 @@ function Bridges.installCommands(modules)
 
             -- Deliberately past the app's job gate: being barred from the
             -- app is the reason this exists.
-            if not modules.ratelimit.check(actor, 'bailout') then
-                return reply(src, 'Slow down.')
+            --
+            -- Two allowances, for two things. Every run of the command reads
+            -- the store, so every run spends from `load` — the budget the app
+            -- itself reads on — which bounds a player hammering it: a command
+            -- does not pass the net-event flood guard the app's requests do.
+            -- The one-a-minute `bailout` allowance is for a purchase, and
+            -- only a purchase spends it. It used to be spent by the listing,
+            -- so running /cleanse, reading the id it printed and doing
+            -- exactly what it said was refused as "Slow down."
+            local function slowDown(bucket)
+                local wait = modules.ratelimit.retryAfter(actor, bucket) or 0
+                return reply(src, wait > 0
+                    and ('Slow down. Try again in %d second(s).'):format(wait)
+                    or 'Slow down.')
             end
+            if not modules.ratelimit.check(actor, 'load') then return slowDown('load') end
 
             local open = modules.bailout.available(actor)
             if #open == 0 then
@@ -545,9 +573,18 @@ function Bridges.installCommands(modules)
                 return reply(src, ('Buy one out with /%s <id>'):format(Config.Bailout.Command))
             end
 
+            if not modules.ratelimit.check(actor, 'bailout') then return slowDown('bailout') end
+
             local ok, err = modules.bailout.buy(actor, args[1])
-            reply(src, ok and 'Paid. The contract closes shortly.'
-                          or ('Could not buy it out: ' .. tostring(err)))
+            if not ok then
+                -- Nothing was bought, so the purchase allowance goes back,
+                -- as the app's own handler does. And in words: the command
+                -- printed the raw code, "Could not buy it out: incapacitated".
+                modules.ratelimit.refund(actor, 'bailout')
+                return reply(src, 'Could not buy it out: '
+                    .. (CLEANSE_REFUSALS[err] or tostring(err)))
+            end
+            reply(src, 'Paid. The contract closes shortly.')
         end, false)
     end
 
