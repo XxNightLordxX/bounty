@@ -74,7 +74,10 @@ hunter anonymity and you cannot cover it, the acceptance is refused rather
 than made under your name. An exclusive contract you hold without going near
 the target for `Config.Limits.ExclusiveIdleReleaseSeconds` (counted only while
 the client and the target are both in the city) goes back on the board with
-your stake returned, and is not yours to take again.
+your stake returned, and is not yours to take again. The deadline pauses the
+same way. Both follow the target alone when the client is anonymous, because
+a clock that stops while they are away tells everyone watching it when they
+logged off.
 
 **Finishing it.** Kill the target and photograph the body through the app's
 camera for the baseline. Or take them alive to the client and hold them there

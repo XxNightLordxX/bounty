@@ -483,7 +483,7 @@ describe('an exclusive contract held by somebody who is not working it', functio
         Env.addPlayer({ source = 4, citizenid = 'REALHUNT', license = 'license:real',
             cash = 50000, bank = 50000 })
         local c = place(s, f.creator, { mode = CB.MODE.EXCLUSIVE, cash = 50000,
-            penalty = opts.penalty })
+            penalty = opts.penalty, anonymous = opts.anonymous })
         truthy(s.contracts.accept(f.hunter, c.id, false))
         -- Nowhere near the target.
         Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
@@ -565,6 +565,26 @@ describe('an exclusive contract held by somebody who is not working it', functio
         Env.byCitizen['TARGET01'] = 2
         run(s, 10)
         eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'released')
+        local _ = f
+    end)
+
+    it('does not count time a named client is away', function()
+        local s, f, c = held()
+        s.contracts.releaseIdleHolds()
+        Env.removePlayer(1)
+        run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
+        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'active',
+            'released while the client the handover is for was not in the city')
+        local _ = f
+    end)
+
+    it('counts time an anonymous client is away, which nobody may know', function()
+        local s, f, c = held({ anonymous = true })
+        s.contracts.releaseIdleHolds()
+        Env.removePlayer(1)
+        run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
+        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'released',
+            'the moment of the release told the holder when the client was in the city')
         local _ = f
     end)
 

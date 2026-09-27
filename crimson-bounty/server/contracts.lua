@@ -1068,7 +1068,10 @@ function Contracts.releaseIdleHolds()
             -- mid-settlement stays, since a failed payout lands it back here.
             if not c or c.state ~= CB.STATE.COMPLETING then heldIndex[contractId] = nil end
         elseif c.mode == CB.MODE.EXCLUSIVE then
-            local bothHere = Identity.byCitizenId(c.creator_cid) ~= nil
+            -- An anonymous creator's presence is not asked, as for the
+            -- deadline: a release timed by it tells the holder when the
+            -- client was in the city.
+            local bothHere = (c.anon_creator == true or Identity.byCitizenId(c.creator_cid) ~= nil)
                 and Identity.byCitizenId(c.target_cid) ~= nil
 
             for _, h in ipairs(Storage.readHunters(c.id)) do

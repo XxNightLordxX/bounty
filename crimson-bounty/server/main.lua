@@ -979,7 +979,15 @@ function ExpireContracts()
                     { forfeit = deadlinePassed and true or false })
                 resolved = resolved + 1
             else
-                local creatorOnline = modules.identity.byCitizenId(contract.creator_cid) ~= nil
+                -- An anonymous creator's presence is not asked (§14.32).
+                -- Pausing for it moved the deadline on by exactly how long
+                -- they were away, and every viewer is sent the deadline:
+                -- their session, to the minute. The hunter loses nothing by
+                -- it. A kill needs only the target, and a handover to a
+                -- creator nobody can locate is as easily avoided by one who
+                -- is online and elsewhere as by one who has logged off.
+                local creatorOnline = contract.anon_creator == true
+                    or modules.identity.byCitizenId(contract.creator_cid) ~= nil
                 local targetOnline = modules.identity.byCitizenId(contract.target_cid) ~= nil
                 local paused = not (creatorOnline and targetOnline)
 

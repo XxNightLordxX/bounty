@@ -421,6 +421,75 @@ describe('server downtime and the deadline', function()
     end
 end)
 
+describe('an anonymous client away from the city', function()
+    --- The deadline paused for the creator as for the target, so it moved
+    --- on by exactly how long an anonymous creator was away, and every
+    --- viewer is sent it: when they logged off and when they came back, to
+    --- the second, on a contract that exists to keep them unknown (§14.32).
+    local function placed(anonymous)
+        local main, s = boot('memory')
+        -- The deadline, not an idle hold: nobody here goes near the target.
+        Config.Limits.ExclusiveIdleReleaseSeconds = 0
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', anonymous = anonymous,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hunter, c.id))
+        main.tick()
+        return main, s, f, c
+    end
+
+    local function away(main, src, seconds)
+        local p = Env.players[src]
+        Env.removePlayer(src)
+        main.markPresenceChanged()
+        main.expire()
+        Env.advance(seconds)
+        Env.players[src] = p
+        Env.byCitizen[p.PlayerData.citizenid] = src
+        main.markPresenceChanged()
+        main.expire()
+    end
+
+    local function shown(s, c)
+        return s.projection.contract(s.storage.readContract(c.id), 'HUNTER01').deadline
+    end
+
+    it('does not move the deadline anyone is shown', function()
+        local main, s, _, c = placed(true)
+        local before = shown(s, c)
+        truthy(before)
+        away(main, 1, 137 * 60)
+        eq(shown(s, c), before, 'the deadline moved by exactly how long the client was gone')
+    end)
+
+    it('still moves it for a named client', function()
+        local main, s, _, c = placed(false)
+        local before = shown(s, c)
+        away(main, 1, 1800)
+        eq(shown(s, c) - before, 1800)
+    end)
+
+    it('still moves it for a target who is away', function()
+        local main, s, _, c = placed(true)
+        local before = shown(s, c)
+        away(main, 2, 1800)
+        eq(shown(s, c) - before, 1800, 'the hunter cannot work a target who is not here')
+    end)
+
+    it('runs out on time while the client is away', function()
+        local main, s, _, c = placed(true)
+        Env.removePlayer(1)
+        main.markPresenceChanged()
+        main.tick()
+        Env.advance(Config.Limits.DefaultDeadlineSeconds + 60)
+        main.tick()
+        eq(s.storage.readContract(c.id).state, CB.STATE.EXPIRED)
+    end)
+end)
+
 describe('an idle exclusive hold, on the running server', function()
     --- The release is one of the maintenance jobs. Every other test of it
     --- calls the function directly, which says nothing about whether the
