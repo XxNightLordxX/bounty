@@ -172,6 +172,17 @@ function Informant.buy(actor, contractId)
         for i = 1, #actor.cid do seed = seed + actor.cid:byte(i) * (i * 7) end
     end
 
+    -- Not the one already named, while there is anybody else: a second
+    -- purchase that named the same hunter again was paid for nothing, and
+    -- left the other hidden.
+    if existing and existing.hunterCid and #candidates > 1 then
+        local others = {}
+        for _, h in ipairs(candidates) do
+            if h.hunter_cid ~= existing.hunterCid then others[#others + 1] = h end
+        end
+        if #others > 0 then candidates = others end
+    end
+
     local index = ((seed + purchases) % #candidates) + 1
     local chosen = candidates[index]
 

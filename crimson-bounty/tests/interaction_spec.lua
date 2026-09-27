@@ -2580,3 +2580,49 @@ describe('two amendments open on the same contract', function()
         end)
     end)
 end)
+
+describe('a second informant purchase', function()
+    it('names somebody else when somebody else can be named', function()
+        for _, target in ipairs({ 'TARGET01' }) do
+            for seedShift = 0, 3 do
+                local s = newStack()
+                local f = fixture(s)
+                Env.addPlayer({ source = 4, citizenid = 'HUNTER0' .. (2 + seedShift), license = 'license:x' .. seedShift,
+                    cash = 5000, bank = 5000, firstname = 'Nel', lastname = 'Vey' .. seedShift })
+                local c = s.contracts.create(f.creator, { targetCid = target, reason = 'x',
+                    mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+                truthy(s.contracts.accept(f.hunter, c.id, true))
+                Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
+                Env.players[3]._coords = { x = 505.0, y = 500.0, z = 30.0 }
+                Env.players[4]._coords = { x = 5000.0, y = 500.0, z = 30.0 }
+                s.death.watchTargets(s.storage.allContracts())
+                Env.players[1].PlayerData.money.bank = 999999
+                local ok, _, first = s.informant.buy(f.creator, c.id)
+                truthy(ok)
+                -- Later a second operative is on them too.
+                truthy(s.contracts.accept(s.identity.resolve(4), c.id, true))
+                Env.players[4]._coords = { x = 505.0, y = 500.0, z = 30.0 }
+                s.death.watchTargets(s.storage.allContracts())
+                Env.advance(((Config.Informant.RerollLockMinutes or 0) + 1) * 60)
+                s.death.watchTargets(s.storage.allContracts())
+                local ok2, err2, second = s.informant.buy(f.creator, c.id)
+                truthy(ok2, tostring(err2))
+                falsy(second.name == first.name, 'paid twice for the same name: ' .. tostring(first.name))
+            end
+        end
+    end)
+end)
+
+describe('a revive the client reported too early', function()
+    it('is recorded once the target is up by the medical state', function()
+        local s = newStack()
+        local f = fixture(s)
+        s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000 } } })
+        s.death.markDead('TARGET01')
+        truthy(s.death.wasSeenDead('TARGET01'))
+        -- Up again; the client's report was refused and will not come again.
+        s.death.watchTargets(s.storage.allContracts())
+        falsy(s.death.wasSeenDead('TARGET01'), 'the revive was never recorded')
+    end)
+end)

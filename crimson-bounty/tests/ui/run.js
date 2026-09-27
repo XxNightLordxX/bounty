@@ -473,6 +473,29 @@ async function main() {
     });
   })();
 
+  /* The board a page at a time: past the first, nothing was reachable. */
+  await (async function boardPages() {
+    const asked = [];
+    const app = boot({
+      list: function (body) {
+        asked.push(body.page);
+        const b = JSON.parse(JSON.stringify(BOARD));
+        b.data.page = body.page; b.data.pages = 2;
+        return b;
+      },
+      mine: MINE, ledger: LEDGER
+    });
+    await settle(); await settle();
+    it('offers the next page of the board', function () {
+      truthy(app.view.textContent.indexOf('Page 1 of 2') !== -1, app.view.textContent);
+    });
+    click(app, 'More');
+    await settle(); await settle();
+    it('asks for it', function () {
+      eq(asked[asked.length - 1], 2, 'asked for ' + asked.join(','));
+    });
+  })();
+
   await (async function ledgerWithProof() {
     const app = boot({
       list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
@@ -3685,7 +3708,7 @@ async function main() {
    * up" — blaming amounts that are fine, about a rule the creator was never
    * shown and could not have counted. */
   await (async function rewardLineCeiling() {
-    async function form(maxLines, payouts) {
+    async function form(maxLines, payouts, fill) {
       const app = boot({
         list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
         mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
@@ -3726,7 +3749,7 @@ async function main() {
           const field = app.view.all().filter(function (n) {
             return n._id === 'slot-' + source + '-' + i;
           })[0];
-          if (field) { field.value = '1000'; }
+          if (field) { field.value = (fill && fill[source]) || '1000'; }
         });
       }
 
@@ -3763,6 +3786,29 @@ async function main() {
     });
 
     const noCap = await form(undefined, 4);
+
+    // Over the per-source ceiling (500,000 here), typed rather than stepped.
+    const overCap = await form(60, 1, { cash: '600000' });
+    it('names the ceiling a payout is over rather than sending it', function () {
+      eq(overCap.sent.filter(function (x) { return x.name === 'create'; }).length, 0,
+        'sent a payout over the ceiling, for a refusal that says it does not add up');
+      truthy(/at most/.test(overCap.notice()), overCap.notice());
+    });
+
+    // "1e5" on a number field read as 1, and placed a $1 reward.
+    const exponent = await form(60, 1, { bank: '1e5' });
+    it('does not read 1e5 as one dollar', function () {
+      const sent = exponent.sent.filter(function (x) { return x.name === 'create'; });
+      eq(sent.length, 1);
+      eq(sent[0].body.reward.slots[0].baseline.bank, 100000,
+        'placed with a reward the creator did not type');
+    });
+
+    const fraction = await form(60, 1, { bank: '1500.50' });
+    it('refuses cents rather than silently dropping them', function () {
+      eq(fraction.sent.filter(function (x) { return x.name === 'create'; }).length, 0);
+      truthy(/whole dollars/.test(fraction.notice()), fraction.notice());
+    });
 
     it('does not invent a ceiling when the server sent none', function () {
       eq(noCap.sent.filter(function (x) { return x.name === 'create'; }).length, 1,
@@ -4257,6 +4303,29 @@ async function main() {
       return onMine({ mine: { ok: true, data: { created: [], accepted: [running2], onMe: [] } },
         kidnapProgress: { ok: true, data: { elapsed: 9, required: 30 } } });
     })();
+
+    const twoRunning = await (async function () {
+      const a = JSON.parse(JSON.stringify(HELD));
+      a.kidnapProgress = { elapsed: 5, required: 30 };
+      const b = JSON.parse(JSON.stringify(HELD));
+      b.id = 'ct00000077';
+      b.kidnapProgress = { elapsed: 5, required: 30 };
+      const asked = [];
+      const app = await onMine({ mine: { ok: true, data: { created: [], accepted: [a, b], onMe: [] } },
+        kidnapProgress: function (body) { asked.push(body.id); return { ok: true, data: { elapsed: 9, required: 30 } }; } });
+      const t = app.timers.filter(function (x) { return x.repeating && x.ms === 1000; });
+      t.forEach(function (x) { if (!x.cleared) { x.fn(); } });
+      await settle(); await settle();
+      t.forEach(function (x) { if (!x.cleared) { x.fn(); } });
+      await settle();
+      return { app: app, asked: asked };
+    })();
+    it('does not let a second handover take the first one\'s poll', function () {
+      const first = twoRunning.asked[0];
+      eq(first, HELD.id, 'the second card took the first card\'s poll: ' + twoRunning.asked.join(','));
+      truthy(twoRunning.asked.every(function (id) { return id === first; }),
+        'the poll was handed from one bar to the other on each redraw: ' + twoRunning.asked.join(','));
+    });
 
     it('follows a handover that was already running when the page opened', function () {
       truthy(reopened.timers.some(function (t) { return t.repeating && t.ms === 1000; }),

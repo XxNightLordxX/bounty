@@ -1272,7 +1272,9 @@
       // A handover already running when the page opened (reopened, or
       // reloaded mid-countdown) is followed too: only arming one started the
       // poll, so the bar froze at the snapshot it was drawn from.
-      if (contract.kidnapProgress && countdownFor !== contract.id) {
+      // Never in place of one already followed: a second handover's card
+      // took the poll over on every redraw, and the first bar froze.
+      if (contract.kidnapProgress && !countdownTimer) {
         pollCountdown(contract.id);
       }
       if (panel) { row.appendChild(panel); }
@@ -2804,6 +2806,24 @@
       return;
     }
     contracts.forEach(function (c) { view.appendChild(card(c, 'board')); });
+
+    // The board is sent a page at a time. With no pager, every contract past
+    // the first page could never be seen or taken from the phone.
+    var page = Number(data.page) || 1;
+    var pages = Number(data.pages) || 1;
+    if (pages > 1) {
+      var nav = el('div', 'row pager');
+      var back = el('button', 'ghost ico i-left', 'Back');
+      back.disabled = page <= 1;
+      back.onclick = function () { state.boardPage = page - 1; refresh(); };
+      var forward = el('button', 'ghost ico ico-end i-right', 'More');
+      forward.disabled = page >= pages;
+      forward.onclick = function () { state.boardPage = page + 1; refresh(); };
+      nav.appendChild(back);
+      nav.appendChild(el('div', 'page-of', 'Page ' + page + ' of ' + pages));
+      nav.appendChild(forward);
+      view.appendChild(nav);
+    }
   }
 
   function viewMine(view) {
@@ -3635,6 +3655,16 @@
     if (!target) return say('Choose a target.');
 
     var count = payoutCount();
+    var moneyFields = ['bonus', 'bailout', 'penalty'];
+    for (var k = 1; k <= count; k++) {
+      moneyFields.push('slot-cash-' + k, 'slot-bank-' + k, 'slot-dirty-' + k);
+    }
+    if (badAmounts(moneyFields)) {
+      return say('Amounts are whole dollars, written out in full (100000, not 1e5).');
+    }
+    var caps = (state.wallet && state.wallet.caps) || {};
+    var labels = { cash: 'Cash', bank: 'Bank', dirty: 'Dirty money' };
+
     var slots = [];
     for (var i = 1; i <= count; i++) {
       // Only sources the creator actually funded are sent. A zero is not a
@@ -3648,6 +3678,15 @@
       if (cash) baseline.cash = cash;
       if (bank) baseline.bank = bank;
       if (dirty) baseline.dirty = dirty;
+      // Held to the server's ceiling here, where the field can be named:
+      // over it, the server refused the whole contract as not adding up.
+      for (var src in labels) {
+        var cap = Number(caps[src]);
+        if (baseline[src] && cap > 0 && baseline[src] > cap) {
+          return say('Payout ' + i + ': ' + labels[src] + ' is at most '
+            + money(cap) + ' on this server.');
+        }
+      }
 
       var goods = goodsOf(i);
       if (goods.items.length) baseline.items = goods.items;
@@ -3772,8 +3811,21 @@
       var node = document.getElementById(id);
       raw = node && node.value;
     }
-    var value = parseInt(raw, 10);
-    return (!value || value < 0) ? 0 : value;
+    // Number, not parseInt: "1e5" read as 1 and a $100,000 reward was
+    // placed as $1 with no warning. Anything that is not a whole, finite,
+    // non-negative amount is refused by the caller (badAmounts).
+    var value = Number(raw);
+    if (raw === undefined || raw === null || String(raw).trim() === '') { return 0; }
+    if (!isFinite(value) || value < 0 || Math.floor(value) !== value) { return NaN; }
+    return value;
+  }
+
+  /* The first money field whose entry num() could not read as whole dollars. */
+  function badAmounts(ids) {
+    for (var i = 0; i < ids.length; i++) {
+      if (isNaN(num(ids[i]))) { return ids[i]; }
+    }
+    return null;
   }
 
   // An input whose value is the draft's, and whose edits go back into it.
@@ -4252,9 +4304,16 @@
 
   function refresh() {
     var boardIsCurrent = newestLoad('board');
-    post('list', { page: 1 }).then(function (r) {
+    post('list', { page: state.boardPage || 1 }).then(function (r) {
       if (!boardIsCurrent()) { return; }
       if (!loadResult('board', r)) { return; }
+      // The board shrank under the page being looked at: back to its last.
+      var pages = Number(r.data && r.data.pages) || 1;
+      if ((state.boardPage || 1) > pages) {
+        state.boardPage = pages;
+        refresh();
+        return;
+      }
       state.board = r.data;
       redraw();
     });

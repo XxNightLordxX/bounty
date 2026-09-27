@@ -673,7 +673,6 @@ do
         ['Bridges.accessMemoSize']     = 'that the access memo does not grow without bound',
         ['Comms.resetCallCache']       = 'a masked-call cache a test needs to start empty',
         ['Comms.resetMaskingCache']    = 'the same, for the alias mapping',
-        ['Death.wasSeenDead']          = 'whether the sampler recorded a death',
         ['Mugshot.get']                = 'the stored image, without going through a handle',
         ['Notify.clearPush']           = 'the push cooldown, so a test can send twice',
         ['Photo.allowedHosts']         = 'the host allowlist as it was actually parsed',

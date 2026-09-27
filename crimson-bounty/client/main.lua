@@ -438,11 +438,27 @@ end
 
 local wasDead = false
 
+--- Down, by the engine or by the medical resource. qbx_medical and
+--- qb-ambulancejob resurrect the ped a moment after a death and hold the
+--- player down in an animation: by the engine alone they were "revived"
+--- then, the server refused it (still dead by the metadata), and the real
+--- revive later was never reported.
+local function isDown(ped)
+    if IsEntityDead(ped) then return true end
+    local ok, state = pcall(function() return LocalPlayer.state end)
+    if ok and state and (state.isDead == true or state.inLastStand == true) then return true end
+    local okData, data = pcall(function()
+        return exports.qbx_core:GetPlayerData()
+    end)
+    local meta = okData and type(data) == 'table' and data.metadata or nil
+    return type(meta) == 'table' and (meta.isdead == true or meta.inlaststand == true)
+end
+
 CreateThread(function()
     while true do
         Wait(1000)
         local ped = PlayerPedId()
-        local dead = IsEntityDead(ped)
+        local dead = isDown(ped)
 
         if dead and not wasDead then
             wasDead = true

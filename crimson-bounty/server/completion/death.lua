@@ -276,7 +276,15 @@ function Death.watchTargets(contracts)
                 -- A target may die to something no hunter reported — a fall,
                 -- a car, another player. Noting it here is what lets them
                 -- claim the revive afterwards.
-                if Identity.isTrulyDead(target.source) then Death.markDead(target.cid) end
+                -- And the revive after it: the client's own report can come
+                -- too early (a medical script resurrects the ped while the
+                -- player is still down) and be refused, and then never comes
+                -- again. Up and alive by the medical state is the revive.
+                if Identity.isTrulyDead(target.source) then
+                    Death.markDead(target.cid)
+                elseif Death.wasSeenDead(target.cid) then
+                    Death.onRevived(target.cid)
+                end
 
                 local targetCoords = GetEntityCoords(GetPlayerPed(target.source))
                 local hunters = Storage.readHunters(c.id)
