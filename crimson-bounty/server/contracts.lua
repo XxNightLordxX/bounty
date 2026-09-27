@@ -1139,7 +1139,16 @@ function Contracts.withdrawReward(actor, contractId, lineIds)
     local before, after = {}, {}
     for i = 1, #lines do
         local line = lines[i]
-        if line.state == CB.ESCROW_STATE.HELD and line.portion == CB.PORTION.BASELINE then
+        -- `owed_to` excluded, as every other reader of "what this contract
+        -- pays" excludes it: Escrow.moneyValue, Escrow.goodsIn, the general
+        -- release filter and Projection.rewardLines. A line promised to one
+        -- named person is already spoken for, so counting it as funding meant
+        -- a creator could take out the last line that actually pays and leave
+        -- a live contract offering a hunter nothing. The route in is ordinary:
+        -- withdraw part of a reward with full pockets, and the line that
+        -- cannot be carried is queued and marked owed.
+        if line.state == CB.ESCROW_STATE.HELD and not line.owed_to
+            and line.portion == CB.PORTION.BASELINE then
             local slot = line.slot or 1
             before[slot] = before[slot] or {}
             before[slot][#before[slot] + 1] = line
@@ -1266,7 +1275,11 @@ function Contracts.reclampToEscrow(contractId, actorCid)
 
     local held, heldMoney = {}, 0
     for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
-        if line.state == CB.ESCROW_STATE.HELD then
+        -- And here too, for the same reason and with a sharper cost: this is
+        -- what re-prices the buyout and the failure stake against what the
+        -- contract still holds. Counting a queued line left the target being
+        -- charged a price set against money the contract no longer pays.
+        if line.state == CB.ESCROW_STATE.HELD and not line.owed_to then
             held[#held + 1] = line
             if CB.MONEY_ACCOUNTS[line.source] then
                 heldMoney = heldMoney + (line.amount or 0)

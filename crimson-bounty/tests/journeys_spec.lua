@@ -254,3 +254,134 @@ describe('a target who has already paid to get out', function()
            'and nothing was taken for the second attempt')
     end)
 end)
+
+describe('money already promised to one named person', function()
+    --- Escrow.moneyValue states the rule and its reason in its own comment:
+    --- "a line marked for one named person is already spoken for: the release
+    --- a hunter's claim runs skips it, so counting it here advertises a reward
+    --- bigger than anything that will ever be paid."
+    ---
+    --- Escrow.goodsIn, Escrow.release and Projection.rewardLines all apply it.
+    --- Two readers in contracts.lua did not, and both decide something a
+    --- player pays for.
+    ---
+    --- A line ends up in that state on a LIVE contract by an ordinary route: a
+    --- creator withdraws part of a reward, their pockets are full, so the line
+    --- cannot be handed over. It goes back to 'held' and is marked owed to
+    --- them, and from that moment every other reader stops counting it.
+    local function withQueuedLine()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000, dirty = 4000 } },
+            -- At the ceiling for 9,000 of funding (3x). Once 4,000 of it is
+            -- promised to the creator the ceiling is 15,000, so a reclamp
+            -- that counts the promised line leaves this where it is and one
+            -- that does not brings it down. Anything below 15,000 here would
+            -- pass either way and prove nothing.
+            bailoutAmount = 27000,
+        })
+        truthy(c, 'a contract funded with clean and dirty money')
+
+        -- The creator cannot carry the black money back.
+        Env.players[1]._inventoryFull = true
+
+        local lines = s.storage.readEscrow(c.id)
+        local dirty
+        for _, line in ipairs(lines) do
+            if line.source == 'dirty' then dirty = line end
+        end
+        truthy(dirty, 'a black-money line to withdraw')
+
+        local ok = s.contracts.withdrawReward(f.creator, c.id, { dirty.id })
+        Env.players[1]._inventoryFull = false
+
+        local back = s.storage.readEscrowLine(dirty.id)
+        truthy(back and back.owed_to,
+            'the withdrawal has to have QUEUED rather than settled, or this '
+            .. 'measures nothing: ' .. tostring(ok))
+        return s, f, c
+    end
+
+    it('is not counted as funding the collection it sits in', function()
+        local s, f, c = withQueuedLine()
+
+        -- Now take the only line still funding the collection. The emptiness
+        -- check must see the collection as about to be empty.
+        local cash
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.source == 'cash' and not line.owed_to then cash = line end
+        end
+        truthy(cash, 'the clean-money line')
+
+        local ok, err = s.contracts.withdrawReward(f.creator, c.id, { cash.id })
+        falsy(ok, 'a collection has to keep something in it, and the queued '
+            .. 'line is not something: every other reader already skips it, so '
+            .. 'this would leave a live contract paying a hunter nothing')
+        eq(err, CB.ERR.INVALID_REWARD)
+    end)
+
+    it('is not counted when a buyout price is re-priced against the escrow', function()
+        -- Clean money this time. The bailout is a multiple of CLEAN funding
+        -- only (CB.MONEY_ACCOUNTS), so a queued black-money line never moved
+        -- it — which is why the first version of this test passed with the
+        -- fault in place. Clean money is credited rather than carried, so a
+        -- full inventory cannot queue it; a creator who has logged off can.
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        Env.players[3].PlayerData.money.bank = 400000
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 } },
+                                 { baseline = { cash = 40000 } } } },
+            -- The ceiling for 41,000 of clean funding.
+            bailoutAmount = 123000,
+        })
+        truthy(c)
+        eq(s.storage.readContract(c.id).bailout_amount, 123000)
+        truthy(s.contracts.accept(f.hunter, c.id))
+
+        local proposal = s.amendments.propose(f.creator, c.id,
+            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+        truthy(proposal)
+
+        -- The creator closes the game; the hunter agrees, which is the
+        -- ordinary way a proposal gets answered.
+        Env.removePlayer(1)
+        truthy(s.amendments.respond(f.hunter, proposal.id, true))
+
+        local queued = false
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.slot == 2 and line.owed_to == 'CREATOR1' then queued = true end
+        end
+        truthy(queued, 'the 40,000 has to be queued for the offline creator, '
+            .. 'or this measures nothing')
+
+        eq(s.storage.readContract(c.id).bailout_amount, 3000,
+            'the target would be charged 123,000 to close a contract now '
+            .. 'funded at 1,000 — the old premium, on money given back')
+    end)
+
+    it('still lets an ordinary withdrawal through', function()
+        -- The door the fix must not have closed.
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000, bank = 3000 } },
+        })
+        truthy(c)
+        local first
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.source == 'bank' then first = line end
+        end
+        truthy(s.contracts.withdrawReward(f.creator, c.id, { first.id }),
+            'taking one of two lines back leaves the collection funded')
+    end)
+end)
