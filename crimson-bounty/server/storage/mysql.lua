@@ -507,6 +507,24 @@ function MySQLStore.advanceSlot(id, expectedSlot)
     return (tonumber(affected) or 0) > 0
 end
 
+--- End a contract as expired only if it is still due, in the same
+--- statement: see the memory backend.
+function MySQLStore.expireIfDue(id, expected, next_, now, byLifetime)
+    local affected
+    if byLifetime then
+        affected = MySQL.update.await([[
+            UPDATE crimson_contracts SET state = ?
+            WHERE id = ? AND state = ? AND expires_at < ?
+        ]], { next_, id, expected, now })
+    else
+        affected = MySQL.update.await([[
+            UPDATE crimson_contracts SET state = ?
+            WHERE id = ? AND state = ? AND paused_since IS NULL AND deadline_at < ?
+        ]], { next_, id, expected, now })
+    end
+    return (tonumber(affected) or 0) > 0
+end
+
 function MySQLStore.reduceSlots(id, expected)
     if expected <= 1 then return false end
     local affected = MySQL.update.await(

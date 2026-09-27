@@ -22,6 +22,17 @@ end
 
 local LIVE_STATES = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true, [CB.STATE.COMPLETING] = true }
 
+--- Whether a hunter row is on the contract: holding it, or part-way
+--- through an acceptance ('joining') that has not been confirmed yet. A
+--- joining row counts toward who is on it — so two acceptances cannot both
+--- fit under a cap, and nobody reads the contract as empty — but only an
+--- active one can be paid, forfeit a stake, or be released for idling.
+---@param row table|nil
+---@return boolean
+local function holds(row)
+    return row ~= nil and (row.state == 'active' or row.state == 'joining')
+end
+
 --- Contracts somebody has accepted, so the idle-hold sweep reads those and
 --- not the whole table. Filled on acceptance and rebuilt once at boot
 --- (Contracts.reindexHolds); one no longer held drops out on the next sweep.
@@ -699,7 +710,7 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- wait between collections, and would have given the creator's threads
     -- a second name for the same person.
     local previous = Storage.readHunter(contractId, actor.cid)
-    if previous and previous.state == 'active' then
+    if holds(previous) then
         return false, CB.ERR.ALREADY_HOLDING
     end
     -- Copied out: on the in-process store `previous` IS the stored row, so
@@ -730,7 +741,7 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     local existing = Storage.readHunters(contractId)
     local activeCount = 0
     for i = 1, #existing do
-        if existing[i].state == 'active' then activeCount = activeCount + 1 end
+        if holds(existing[i]) then activeCount = activeCount + 1 end
         -- Released from it for sitting on it, on this character or another:
         -- taking it straight back would make the release a reset.
         if existing[i].state == 'released' and (existing[i].hunter_cid == actor.cid
@@ -872,10 +883,10 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     if previous then
         -- accepted_at is this stint's start: whether a stake can be
         -- forfeited to a deadline is asked of when the hunter joined.
-        Storage.updateHunter(previous.id, { state = 'active', anon = anonymous == true,
+        Storage.updateHunter(previous.id, { state = 'joining', anon = anonymous == true,
             accepted_at = joinedAt })
         record = Storage.readHunter(contractId, actor.cid) or previous
-        record.state, record.anon, record.accepted_at = 'active', anonymous == true, joinedAt
+        record.state, record.anon, record.accepted_at = 'joining', anonymous == true, joinedAt
     else
         record = {
             id            = hunterId,
@@ -886,7 +897,11 @@ function Contracts.accept(actor, contractId, anonymous, opts)
             alias         = 'Operative #' .. tostring(aliasNumber),
             anon          = anonymous == true,
             accepted_at   = joinedAt,
-            state         = 'active',
+            -- Not holding it yet: confirmed below, once the contract has
+            -- been read again and found open. An ending that lands in
+            -- between returns a joining hunter's stake rather than
+            -- forfeiting it — they were never told they had it.
+            state         = 'joining',
         }
         Storage.addHunter(record)
     end
@@ -929,6 +944,10 @@ function Contracts.accept(actor, contractId, anonymous, opts)
         if nowState == CB.STATE.COMPLETING then return false, CB.ERR.LOCKED end
         return false, CB.ERR.ALREADY_SETTLED
     end
+
+    -- Confirmed: holding it from here.
+    Storage.updateHunter(record.id, { state = 'active' })
+    record.state = 'active'
 
     -- The fee, now that the acceptance stands. Checked above; a balance
     -- that moved since is refused the same way, never downgraded to a name.
@@ -999,7 +1018,7 @@ function Contracts.abandon(actor, contractId)
     local remaining = 0
     local hunters = Storage.readHunters(contractId)
     for i = 1, #hunters do
-        if hunters[i].state == 'active' then remaining = remaining + 1 end
+        if holds(hunters[i]) then remaining = remaining + 1 end
     end
 
     -- With nobody left holding it, an exclusive contract goes back on the
@@ -1012,7 +1031,7 @@ function Contracts.abandon(actor, contractId)
             -- board — refused every claim and forfeiting their stake at
             -- expiry. Looked at again now it has, and put back if so.
             for _, row in ipairs(Storage.readHunters(contractId) or {}) do
-                if row.state == 'active' then
+                if holds(row) then
                     Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'rejoined')
                     break
                 end
@@ -1096,7 +1115,7 @@ local function releaseIdleHold(contractId, hunter, idleSeconds, why)
 
     local remaining = 0
     for _, h in ipairs(Storage.readHunters(contractId)) do
-        if h.state == 'active' then remaining = remaining + 1 end
+        if holds(h) then remaining = remaining + 1 end
     end
     if remaining == 0 then
         Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'idle_hold_released')
@@ -1461,7 +1480,7 @@ end
 local function heldByAnyone(contractId)
     local hunters = Storage.readHunters(contractId)
     for i = 1, #hunters do
-        if hunters[i].state == 'active' then return true end
+        if holds(hunters[i]) then return true end
     end
     return false
 end
@@ -1876,7 +1895,22 @@ function Contracts.resolve(contractId, terminal, recipientCid, filter, reason, o
     if not contract then return false, CB.ERR.NOT_FOUND end
     if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
 
-    if not Contracts.transition(contractId, contract.state, terminal, reason, SETTLING) then
+    local moved
+    if opts and opts.dueAt and terminal == CB.STATE.EXPIRED then
+        -- Expired only if still due when the state is written, not when the
+        -- pass read it: an extension landing in between is kept.
+        local allowed = CB.TRANSITIONS[contract.state]
+        moved = allowed and allowed[terminal]
+            and Storage.expireIfDue(contractId, contract.state, terminal, opts.dueAt,
+                opts.byLifetime == true)
+        if moved then
+            Audit.action('state_change', nil, contractId,
+                { from = contract.state, to = terminal, reason = reason })
+        end
+    else
+        moved = Contracts.transition(contractId, contract.state, terminal, reason, SETTLING)
+    end
+    if not moved then
         return false, CB.ERR.LOCKED
     end
 
@@ -1941,6 +1975,31 @@ local function releaseUntouched(contract, forfeit)
         end
     end
     return released
+end
+
+--- Undo, at boot, acceptances a crash left part-way: rows still joining.
+---
+--- The hunter was never told they had the contract, so it is not theirs:
+--- the row is refused and the stake it took goes back to them. A contract
+--- nobody is then left on goes back on the board.
+---@param contract table
+---@return integer undone
+function Contracts.recoverJoining(contract)
+    local undone, left = 0, 0
+    for _, h in ipairs(Storage.readHunters(contract.id) or {}) do
+        if h.state == 'joining' then
+            Storage.updateHunter(h.id, { state = 'refused', left_at = os.time() })
+            Escrow.release(contract.id, h.hunter_cid,
+                { portion = CB.PORTION.STAKE, staker = h.hunter_cid }, 'accept_interrupted')
+            undone = undone + 1
+        elseif h.state == 'active' then
+            left = left + 1
+        end
+    end
+    if undone > 0 and left == 0 and contract.state == CB.STATE.ACCEPTED then
+        Contracts.transition(contract.id, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'accept_interrupted')
+    end
+    return undone
 end
 
 --- Finish a contract whose ending a crash interrupted.

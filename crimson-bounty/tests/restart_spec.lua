@@ -853,6 +853,31 @@ describe('an acceptance as the deadline runs out', function()
         eq(money(3), before)
     end)
 
+    it('does not forfeit a stake whose acceptance the deadline cut short', function()
+        -- Exactly on the deadline when the acceptance is checked, one second
+        -- past it while its row is written, and the pass runs in that wait:
+        -- the row was on the contract "before" the deadline, and its stake
+        -- was forfeited to an acceptance the hunter was told had failed.
+        local main, s, f, c = due()
+        local deadline = s.storage.readContract(c.id).deadline_at
+        Env.advance(deadline - os.time())
+        local realAdd = s.storage.addHunter
+        s.storage.addHunter = function(row)
+            local out = realAdd(row)
+            Env.advance(1)
+            main.markPresenceChanged()
+            main.expire()
+            return out
+        end
+        local before = money(3)
+        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        s.storage.addHunter = realAdd
+        falsy(ok)
+        eq(err, CB.ERR.ALREADY_SETTLED)
+        eq(s.storage.readContract(c.id).state, CB.STATE.EXPIRED)
+        eq(money(3), before, 'refused, and the stake paid to the client all the same')
+    end)
+
     it('does not forfeit a stake taken after the deadline passed', function()
         local main, s, f, c = due()
         -- Seconds left when the acceptance starts; gone by the time its row
@@ -1035,6 +1060,80 @@ describe('an extension while the expiry pass ends a pause', function()
             falsy(after.paused_since, 'the pause ended')
             eq(after.deadline_at - before, 600 + 3600,
                 mode .. ': the pass wrote its copy over the extension')
+        end)
+    end
+end)
+
+describe('an extension landing as the expiry pass decides', function()
+    --- The pass read the contract overdue, the client extended it in the
+    --- await after, and the pass expired it on its read all the same —
+    --- forfeiting the stake of the hunter the time was given to.
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': the extended contract is not expired', function()
+            local main, s = boot(mode)
+            Config.Limits.ExclusiveIdleReleaseSeconds = 0
+            Config.Limits.ExclusiveAttemptWindowSeconds = 0
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x',
+                reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hunter, c.id))
+            main.tick()
+            Env.advance(Config.Limits.DefaultDeadlineSeconds + 5)
+            local hunterBefore = money(3)
+
+            local real = s.storage.readContract
+            local extended = false
+            s.storage.readContract = function(id)
+                local row = real(id)
+                if id == c.id and not extended then
+                    extended = true
+                    truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE,
+                        { seconds = 3600 }), 'the client extends it')
+                end
+                return row
+            end
+            main.markPresenceChanged()
+            main.expire()
+            s.storage.readContract = real
+            truthy(extended)
+
+            eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED,
+                mode .. ': expired on a read taken before the extension')
+            eq(money(3), hunterBefore, 'and the stake is still theirs')
+        end)
+    end
+end)
+
+describe('a crash part-way through an acceptance', function()
+    --- The row is written before the acceptance is confirmed. A process
+    --- that died between the two left a hunter on the contract who had been
+    --- told nothing — holding an exclusive contract nobody else could take.
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is undone at boot, stake back and the contract open again', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+                reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+            })
+            truthy(c)
+            local before = money(3)
+            local realAdd = s.storage.addHunter
+            s.storage.addHunter = function(row)
+                realAdd(row)
+                error('process killed')
+            end
+            falsy(pcall(s.contracts.accept, f.hunter, c.id, false))
+
+            local _, s2 = restart(mode, s)
+            eq(money(3), before, 'the stake came back')
+            eq(s2.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'on the board again')
+            eq(s2.storage.readHunter(c.id, 'HUNTER01').state, 'refused')
+            truthy(s2.contracts.accept(s2.identity.resolve(3), c.id, false),
+                'and can be taken, by them or anyone')
         end)
     end
 end)

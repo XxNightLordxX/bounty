@@ -720,6 +720,24 @@ function JsonStore.writeContract(c)
     return true
 end
 
+--- End a contract as expired only if it is still due: past its lifetime,
+--- or past a deadline whose clock is running. The expiry pass decides on
+--- a read, and a deadline the client extended in the await after it was
+--- expired all the same, forfeiting the stake of the hunter it was
+--- extended for.
+function JsonStore.expireIfDue(id, expected, next_, now, byLifetime)
+    local c = db.contracts[id]
+    if not c or c.state ~= expected then return false end
+    if byLifetime then
+        if not (c.expires_at and now > c.expires_at) then return false end
+    elseif c.paused_since ~= nil or not (c.deadline_at and now > c.deadline_at) then
+        return false
+    end
+    c.state = next_
+    touch(true, id)
+    return true
+end
+
 function JsonStore.reduceSlots(id, expected)
     local c = db.contracts[id]
     if not c or (c.payout_slots or 1) ~= expected or expected <= 1 then return false end

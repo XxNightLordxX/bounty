@@ -218,20 +218,22 @@ describe('RACE F3: the expiry pass writes back rows it read before it yielded', 
 
         -- The hunter's kill on B is verified while the pass is busy
         -- expiring A.
-        local realCas = m.storage.compareSetContractState
+        -- The expiry's own state write, which is where the pass yields.
+        local realExpire = m.storage.expireIfDue
         local fired = false
-        m.storage.compareSetContractState = function(id, expected, next_)
+        m.storage.expireIfDue = function(id, expected, next_, ...)
             if not fired and id == a.id and next_ == CB.STATE.EXPIRED then
                 fired = true
                 local ok, err, res = m.contracts.claimSlot(b.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
                 print('  claim on B during the pass ->', ok, err, res and res.settled)
                 print('  B next_slot right after the claim', m.storage.readContract(b.id).next_slot)
             end
-            return realCas(id, expected, next_)
+            return realExpire(id, expected, next_, ...)
         end
 
         local expired = main.expire()
-        m.storage.compareSetContractState = realCas
+        m.storage.expireIfDue = realExpire
+        truthy(fired, 'the claim ran inside the pass')
         m.storage.allContracts = realAll
         print('  pass expired', expired)
         local rowB = deepCopy(m.storage.readContract(b.id))

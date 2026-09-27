@@ -799,6 +799,12 @@ function Recover()
         local untouched = false
 
         local lines = Storage.readEscrow(contract.id)
+        -- An acceptance the crash left part-way (Contracts.recoverJoining).
+        if (contract.state == CB.STATE.ACTIVE or contract.state == CB.STATE.ACCEPTED)
+            and modules.contracts.recoverJoining then
+            recovered = recovered + modules.contracts.recoverJoining(contract)
+        end
+
         -- Owed lines a crash left unqueued, and a stake reduction it
         -- interrupted (Escrow.recoverOwed).
         if modules.escrow.recoverOwed then
@@ -1065,10 +1071,12 @@ function ExpireContracts()
                 -- the city.
                 local deadlinePassed = not contract.paused_since
                     and contract.deadline_at ~= nil and now > contract.deadline_at
-                modules.contracts.resolve(contract.id, CB.STATE.EXPIRED,
+                if modules.contracts.resolve(contract.id, CB.STATE.EXPIRED,
                     contract.creator_cid, nil, 'lifetime_exceeded',
-                    { forfeit = deadlinePassed and true or false })
-                resolved = resolved + 1
+                    { forfeit = deadlinePassed and true or false,
+                      dueAt = now, byLifetime = true }) then
+                    resolved = resolved + 1
+                end
             else
                 -- An anonymous creator's presence is not asked (§14.32).
                 -- Pausing for it moved the deadline on by exactly how long
@@ -1103,9 +1111,10 @@ function ExpireContracts()
                     end
 
                     if contract.deadline_at and now > contract.deadline_at then
-                        modules.contracts.resolve(contract.id, CB.STATE.EXPIRED,
-                            contract.creator_cid, nil, 'expired')
-                        resolved = resolved + 1
+                        if modules.contracts.resolve(contract.id, CB.STATE.EXPIRED,
+                            contract.creator_cid, nil, 'expired', { dueAt = now }) then
+                            resolved = resolved + 1
+                        end
                     elseif contract.deadline_at and contract.deadline_at < soonest then
                         soonest = contract.deadline_at
                     end

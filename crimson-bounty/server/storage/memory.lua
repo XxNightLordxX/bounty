@@ -75,6 +75,23 @@ end
 
 --- Take the last collection off a contract, guarded on the count still
 --- being the one the caller read.
+--- End a contract as expired only if it is still due: past its lifetime,
+--- or past a deadline whose clock is running. The expiry pass decides on
+--- a read, and a deadline the client extended in the await after it was
+--- expired all the same, forfeiting the stake of the hunter it was
+--- extended for.
+function Memory.expireIfDue(id, expected, next_, now, byLifetime)
+    local c = db.contracts[id]
+    if not c or c.state ~= expected then return false end
+    if byLifetime then
+        if not (c.expires_at and now > c.expires_at) then return false end
+    elseif c.paused_since ~= nil or not (c.deadline_at and now > c.deadline_at) then
+        return false
+    end
+    c.state = next_
+    return true
+end
+
 function Memory.reduceSlots(id, expected)
     local c = db.contracts[id]
     if not c or (c.payout_slots or 1) ~= expected or expected <= 1 then return false end
