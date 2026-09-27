@@ -767,10 +767,28 @@ local function job(name, fn, ...)
     return ok
 end
 
+--- Hand over what was queued for players who are still online.
+---
+--- The login retry was the only thing that ever read the queue, while the
+--- app told a player whose pockets were full to "make room and it will be
+--- handed over". Told the same way the login retry tells them.
+function RetryWaiting()
+    local delivered = modules.escrow.retryWaiting(function(cid)
+        return modules.identity.byCitizenId(cid) ~= nil
+    end)
+    for cid, count in pairs(delivered) do
+        modules.notify.toCitizen(cid, 'Outstanding payment',
+            ('%d outstanding item%s been delivered.')
+                :format(count, count == 1 and ' has' or 's have'))
+    end
+    return delivered
+end
+
 function Tick()
     job('audit.flush', modules.audit.flush)
     job('amendments.expire', modules.amendments.expire)
     job('bailout.processQueue', modules.bailout.processQueue)
+    job('escrow.retryWaiting', RetryWaiting)
     job('photo.sweep', modules.photo.sweep)
 
     local now = os.time()
@@ -850,8 +868,21 @@ function ExpireContracts()
         if contract.state == CB.STATE.ACTIVE or contract.state == CB.STATE.ACCEPTED then
             -- The absolute ceiling applies whatever anyone's presence is.
             if contract.expires_at and now > contract.expires_at then
+                -- Whether the hunters failed is the paused deadline's
+                -- question, not the lifetime's (§3.6, §14.18). The lifetime
+                -- runs through every pause, so reaching it while the
+                -- deadline still has time on it — which is how it is almost
+                -- always reached, a target who was out of the city — is not
+                -- a hunter who let the clock run out, and their stake comes
+                -- back. It used to forfeit to the creator regardless: a
+                -- hunter holding a contract on a target who left for two
+                -- days lost their stake without ever having had them in
+                -- the city.
+                local deadlinePassed = not contract.paused_since
+                    and contract.deadline_at ~= nil and now > contract.deadline_at
                 modules.contracts.resolve(contract.id, CB.STATE.EXPIRED,
-                    contract.creator_cid, nil, 'lifetime_exceeded')
+                    contract.creator_cid, nil, 'lifetime_exceeded',
+                    { forfeit = deadlinePassed and true or false })
                 resolved = resolved + 1
             else
                 local creatorOnline = modules.identity.byCitizenId(contract.creator_cid) ~= nil
@@ -941,6 +972,16 @@ AddEventHandler('onResourceStop', function(name)
                     owed[line.owed_to][line.id] = true
                 end
             end
+            -- A buyout paid and still waiting out its delay. The target's
+            -- premium is in no pocket and no escrow line: it exists only as
+            -- the queue columns on this row, and the row goes with the
+            -- resource. Neither sweep below reads those columns, so a target
+            -- who paid in the two minutes before a restart lost the premium
+            -- outright. It goes back to whoever paid it.
+            if c.bailout_queued_at and modules.bailout then
+                modules.bailout.returnQueued(c, 'resource_stopping')
+            end
+
             for cid, ids in pairs(owed) do
                 modules.escrow.release(c.id, cid, { lines = ids }, 'resource_stopping_owed')
             end

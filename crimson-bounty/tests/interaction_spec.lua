@@ -2100,9 +2100,15 @@ describe('a credit the framework refuses', function()
         s.escrow.release(c.id, 'CREATOR1', { line = nil }, 'retry')
     end)
 
-    it('leaves a stake alone when the staker cannot be paid the reduction', function()
+    it('owes a staker the reduction when the credit is refused', function()
         -- The escrow line is reduced before the money moves, so a refused
-        -- credit took the difference out of escrow and paid nobody.
+        -- credit took the difference out of escrow and paid nobody. It then
+        -- left the stake whole instead, "returned in full at resolution" —
+        -- which is only true of the endings that return a stake. Walking
+        -- away or running out of clock forfeited the whole line, so the
+        -- creator collected the figure they had just lowered. The difference
+        -- is owed to the staker instead, like any payout that cannot be
+        -- handed over on the spot.
         local s = newStack()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
@@ -2122,13 +2128,18 @@ describe('a credit the framework refuses', function()
 
         eq(Env.players[3].PlayerData.money.bank, 40000, 'nothing reached the staker')
 
-        local staked = 0
+        local staked, owed = 0, 0
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
             if line.portion == CB.PORTION.STAKE then staked = staked + (line.amount or 0) end
+            if line.portion == CB.PORTION.OWED and line.owed_to == 'HUNTER01' then
+                owed = owed + (line.amount or 0)
+            end
         end
-        eq(staked, 10000,
-            'so the stake stays whole and is returned in full at resolution, rather '
-            .. 'than being reduced against a payment that never happened')
+        eq(staked, 4000, 'the stake is the figure the contract now names')
+        eq(owed, 6000, 'and the difference is owed to the staker, not left at risk')
+
+        eq(s.escrow.retryPending('HUNTER01'), 1, 'handed over once they can take it')
+        eq(Env.players[3].PlayerData.money.bank, 46000)
     end)
 
     it('records an anonymity fee it could not refund', function()

@@ -36,6 +36,38 @@ end
 -- Additive changes (§12.1)
 --------------------------------------------------------------------------
 
+--- Hand back escrow this call has just taken, if the contract moved under
+--- it while the take was in flight.
+---
+--- The contract is read at the top of the call and every store call after
+--- that is a yield on mysql. A buyout, an expiry, a cancellation or the last
+--- payout landing in one of them settles the contract's escrow before these
+--- lines exist, so nothing would ever sweep them: the creator's top-up sat
+--- `held` on a closed contract, owed to nobody. And a payout landing on the
+--- very slot being topped up leaves the lines on a collection already paid,
+--- which no claim will ever reach again.
+---
+--- Asked once the lines are written, which is what makes the answer binding:
+--- an ending that has not started yet will find them when it returns the
+--- remainder, and a claim that has not started yet will pay them out.
+---@return boolean stillOpen
+---@return string|nil err
+local function keptOrReturned(actor, contractId, expectedSlot, ids)
+    local now = Storage.readContract(contractId)
+    local state = now and now.state
+    local open = state == CB.STATE.ACTIVE or state == CB.STATE.ACCEPTED
+    if open and (expectedSlot == nil or (now.next_slot or 1) == expectedSlot) then
+        return true
+    end
+
+    if ids and next(ids) then
+        Escrow.release(contractId, actor.cid, { lines = ids }, 'escrow_added_to_moved')
+    end
+    Audit.rejected('escrow_added_to_moved', actor.cid, contractId, { state = state })
+    if CB.TERMINAL[state] then return false, CB.ERR.ALREADY_SETTLED end
+    return false, CB.ERR.LOCKED
+end
+
 --- Add value to a live contract. Applies at once; escrow is taken through
 --- the same path as creation, so the added value is as safe as the original.
 ---@return boolean ok
@@ -74,9 +106,12 @@ function Amendments.addEscrow(actor, contractId, rewardSpec)
     local slot = contract.next_slot or 1
     for i = 1, #lines do lines[i].slot = slot end
 
-    local ok
-    ok, err = Escrow.take(actor, contractId, lines)
+    local ok, ids
+    ok, err, ids = Escrow.take(actor, contractId, lines)
     if not ok then return false, err end
+
+    local open, movedErr = keptOrReturned(actor, contractId, slot, ids)
+    if not open then return false, movedErr end
 
     Audit.financial('escrow_added', actor.cid, contractId, { lines = #lines, slot = slot })
 
@@ -152,6 +187,10 @@ function Amendments.improve(actor, contractId, kind, payload)
         -- what it would have paid before. Of all the amendments this is the
         -- one that applies with no approval, on the stated grounds that it
         -- can only benefit the hunter.
+        -- Copied now: on the in-process store `contract` is the stored row,
+        -- so a payout landing during the take would move this underneath us.
+        local slotAtRead = contract.next_slot or 1
+
         local extra = Escrow.bonusTopUp(contractId, was, percent)
 
         -- The same ceiling the rest of the escrow answers to. This path
@@ -192,8 +231,11 @@ function Amendments.improve(actor, contractId, kind, payload)
             return false, CB.ERR.INVALID_REWARD
         end
 
-        local took, takeErr = Escrow.take(actor, contractId, extra)
+        local took, takeErr, ids = Escrow.take(actor, contractId, extra)
         if not took then return false, takeErr end
+
+        local open, movedErr = keptOrReturned(actor, contractId, slotAtRead, ids)
+        if not open then return false, movedErr end
 
         contract.bonus_percent = percent
 
@@ -236,40 +278,46 @@ function Amendments.improve(actor, contractId, kind, payload)
                 -- underneath us and any later read of it is the new value.
                 local original = line.amount
                 local returned = original - amount
-                local staker = Identity.byCitizenId(line.staker)
 
-                if staker then
-                    -- Guarded write: the line must still be exactly as it
-                    -- was read. Writing a caller-held copy back would let a
-                    -- settlement that landed in between be undone, putting a
-                    -- settled line back on the board as claimable.
-                    local reduced = Storage.setEscrowAmount(
-                        line.id, CB.ESCROW_STATE.HELD, amount, original)
+                -- Guarded write: the line must still be exactly as it was
+                -- read. Writing a caller-held copy back would let a
+                -- settlement that landed in between be undone, putting a
+                -- settled line back on the board as claimable.
+                local reduced = Storage.setEscrowAmount(
+                    line.id, CB.ESCROW_STATE.HELD, amount, original)
 
-                    if reduced then
-                        -- Back to the account it came from, not always bank.
-                        if Util.credit(staker.player, line.source, returned) then
-                            Audit.financial('stake_reduced', line.staker, contractId,
-                                { returned = returned, remaining = amount })
-                        else
-                            -- The line was reduced before the money moved, so
-                            -- a refused credit would take the difference out
-                            -- of escrow and pay nobody. Put it back, under the
-                            -- same guard, and treat it exactly like an offline
-                            -- staker: they keep the higher stake and get it
-                            -- back in full when the contract resolves.
-                            Storage.setEscrowAmount(
-                                line.id, CB.ESCROW_STATE.HELD, original, amount)
-                            Audit.action('stake_reduction_deferred', line.staker, contractId,
-                                { returned = returned, reason = 'credit_refused' })
-                        end
+                if reduced then
+                    local staker = Identity.byCitizenId(line.staker)
+                    -- Back to the account it came from, not always bank.
+                    if staker and Util.credit(staker.player, line.source, returned) then
+                        Audit.financial('stake_reduced', line.staker, contractId,
+                            { returned = returned, remaining = amount })
+
+                    -- Offline, or a credit the framework refused: the
+                    -- difference is owed to them rather than left in the
+                    -- stake. Leaving it in the stake was described as "they
+                    -- get it back in full when the contract resolves", which
+                    -- held only for the endings that return a stake. Walking
+                    -- away or running out of clock forfeits the whole line,
+                    -- so a hunter who happened to be offline when the client
+                    -- lowered the penalty to 500 forfeited the 2,000 they
+                    -- had staked — to a creator whose contract, and whose
+                    -- own card, said 500. §3.6: lowering the penalty returns
+                    -- the difference to every hunter who staked the higher
+                    -- figure.
+                    elseif Escrow.owe(line.staker, contractId, returned, line.source,
+                                      'stake_reduced') then
+                        Audit.financial('stake_reduced', line.staker, contractId,
+                            { returned = returned, remaining = amount, owed = true })
+                    else
+                        -- Nothing could hold the difference. Put the stake
+                        -- back whole under the same guard rather than take
+                        -- it out of escrow and pay nobody.
+                        Storage.setEscrowAmount(
+                            line.id, CB.ESCROW_STATE.HELD, original, amount)
+                        Audit.action('stake_reduction_deferred', line.staker, contractId,
+                            { returned = returned, reason = 'nowhere_to_put_it' })
                     end
-                else
-                    -- The staker is offline: their stake stays as it is
-                    -- rather than being reduced against a player who cannot
-                    -- be paid. They keep the higher stake and get it back in
-                    -- full when the contract resolves.
-                    Audit.action('stake_reduction_deferred', line.staker, contractId, {})
                 end
             end
         end

@@ -12,8 +12,20 @@ local Escrow = {}
 
 local Storage, Audit
 
+--- Players owed something that could not be handed over, by citizen id, and
+--- the earliest moment to try them again. See Escrow.retryWaiting.
+local waiting = {}
+
 function Escrow.init(storage, audit)
     Storage, Audit = storage, audit
+    waiting = {}
+end
+
+--- Remember that this player has a delivery queued, so the tick tries it
+--- again while they are online rather than only at their next login.
+---@param cid string
+function Escrow.noteWaiting(cid)
+    if cid and waiting[cid] == nil then waiting[cid] = 0 end
 end
 
 --------------------------------------------------------------------------
@@ -478,6 +490,7 @@ end
 ---@param lines table[] from Escrow.validate
 ---@return boolean ok
 ---@return string|nil err
+---@return table<string, boolean>|nil ids the stored line ids, on success
 function Escrow.take(actor, contractId, lines)
     forget()
     local taken = {}
@@ -613,7 +626,13 @@ function Escrow.take(actor, contractId, lines)
     end
 
     Audit.financial('escrow_taken', actor.cid, contractId, { lines = #records })
-    return true
+
+    -- The ids the new lines were stored under, as a set a release filter
+    -- takes. A caller that finds the contract closed under it once the take
+    -- has landed needs to hand exactly these back, and nothing else.
+    local ids = {}
+    for i = 1, #records do ids[records[i].id] = true end
+    return true, nil, ids
 end
 
 --------------------------------------------------------------------------
@@ -767,6 +786,7 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
                     line.owed_to = recipientCid
                     Storage.writeEscrow(contractId, { line })
                     Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
+                    Escrow.noteWaiting(recipientCid)
                     if not alreadyQueued then
                         Storage.queuePending(recipientCid, contractId, line.id)
                         -- Kept current if it has been read, so a second line
@@ -1017,6 +1037,43 @@ function Escrow.goodsIn(contractId, filter)
     return out
 end
 
+--- Put money on the books for one named player, as a real escrow line the
+--- login retry delivers (§9.3).
+---
+--- Its own portion and an explicit owner, so no general release sweeps it,
+--- no stake settlement names it, and a memory-mode shutdown hands it over by
+--- name. The id is minted and confirmed unused first: escrow is written with
+--- an upsert, so an id already taken would land on top of that line.
+---@param cid string who is owed
+---@param contractId string
+---@param amount integer
+---@param account string 'cash' | 'bank'
+---@param reason string
+---@return string|nil lineId nil when no id could be minted
+function Escrow.owe(cid, contractId, amount, account, reason)
+    forget()
+    local lineId = Util.mintId(Storage.nextId, 'owe', Storage.readEscrowLine)
+    if not lineId then
+        Audit.financial('owe_id_exhausted', cid, contractId, { amount = amount })
+        return nil
+    end
+
+    Storage.writeEscrow(contractId, { {
+        id = lineId,
+        contract_id = contractId,
+        slot = 0,
+        portion = CB.PORTION.OWED,
+        owed_to = cid,
+        source = account == 'cash' and 'cash' or 'bank',
+        amount = amount,
+        state = CB.ESCROW_STATE.HELD,
+    } })
+    Storage.queuePending(cid, contractId, lineId)
+    Escrow.noteWaiting(cid)
+    Audit.financial('owed_queued', cid, contractId, { amount = amount, reason = reason })
+    return lineId
+end
+
 --- Retry queued deliveries for a player who has just come online (§9.3).
 ---@param cid string
 ---@return integer delivered
@@ -1051,6 +1108,50 @@ function Escrow.retryPending(cid)
         Audit.financial('pending_delivered', cid, nil, { count = delivered })
     end
     return delivered
+end
+
+local RETRY_SECONDS = 30
+
+--- Try again for players still online with something queued.
+---
+--- The queue was only ever read at login. A payout that would not fit told
+--- the player "make room and it will be handed over", and making room did
+--- nothing: the goods waited for a relog nobody had told them to do. A
+--- withdrawal that would not fit said the same, and so did a cancel.
+---
+--- Walks only the players something was queued for in this process, not
+--- every player online, and tries each at most every RETRY_SECONDS so full
+--- pockets do not become a store read per tick. A player who is offline is
+--- dropped: their login runs the same retry.
+---@param isOnline fun(cid: string): boolean
+---@return table<string, integer> delivered per citizen id, where anything was
+function Escrow.retryWaiting(isOnline)
+    local now = os.time()
+    local out = {}
+
+    -- A snapshot: retryPending yields on mysql, and a release queuing for a
+    -- new player mid-walk would otherwise be a table modified under pairs.
+    local due = {}
+    for cid, at in pairs(waiting) do
+        if now >= at then due[#due + 1] = cid end
+    end
+
+    for i = 1, #due do
+        local cid = due[i]
+        if not isOnline(cid) then
+            waiting[cid] = nil
+        else
+            local delivered = Escrow.retryPending(cid)
+            if delivered > 0 then out[cid] = delivered end
+            if #(Storage.readPending(cid) or {}) == 0 then
+                waiting[cid] = nil
+            else
+                waiting[cid] = now + RETRY_SECONDS
+            end
+        end
+    end
+
+    return out
 end
 
 return Escrow

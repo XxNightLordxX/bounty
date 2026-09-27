@@ -284,12 +284,48 @@ function Bailout.owe(cid, contractId, amount, account, reason)
         state = CB.ESCROW_STATE.HELD,
     } })
     Storage.queuePending(cid, contractId, lineId)
+    if Escrow and Escrow.noteWaiting then Escrow.noteWaiting(cid) end
     Audit.financial('owed_queued', cid, contractId, { amount = amount, reason = reason })
     return lineId
 end
 
 function Bailout.clearQueue(contractId)
     return Storage.setBailoutQueue(contractId, nil)
+end
+
+--- Hand a queued buyout's premium straight back, without settling it.
+---
+--- For a store that is about to disappear (memory mode stopping), where the
+--- delay will never run out and an owed line would vanish with the tables.
+--- The payer first; if they have gone, the creator it was on its way to;
+--- and the audit row either way, so staff can place it by hand if nobody
+--- involved was online to take it.
+---@param contract table a contract row carrying the queue columns
+---@param reason string
+---@return boolean delivered
+function Bailout.returnQueued(contract, reason)
+    if not contract or not contract.bailout_queued_at then return false end
+
+    local amount = tonumber(contract.bailout_paid_amount) or 0
+    local account = contract.bailout_paid_account == 'cash' and 'cash' or 'bank'
+    local payer = contract.bailout_paid_by
+    local paidTo
+
+    if amount > 0 then
+        for _, cid in ipairs({ payer, contract.creator_cid }) do
+            local who = cid and Identity.byCitizenId(cid)
+            if who and Util.credit(who.player, account, amount) then
+                paidTo = cid
+                break
+            end
+        end
+    end
+
+    Audit.financial(paidTo and 'bailout_refunded' or 'bailout_refund_stranded',
+        payer, contract.id,
+        { amount = amount, account = account, paid_to = paidTo, reason = reason })
+    Bailout.clearQueue(contract.id)
+    return paidTo ~= nil
 end
 
 --- Process queued buyouts whose delay has elapsed. Driven by the main tick.

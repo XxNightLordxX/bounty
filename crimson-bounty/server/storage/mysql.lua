@@ -338,6 +338,12 @@ function MySQLStore.writeContract(c)
             bonus_percent = VALUES(bonus_percent), expires_at = VALUES(expires_at),
             bailout_amount = VALUES(bailout_amount), penalty_amount = VALUES(penalty_amount),
             slots_claimed = VALUES(slots_claimed), next_slot = VALUES(next_slot),
+            -- Giving the last collection back by agreement lowers the count.
+            -- Left off this list, that write was discarded here and only
+            -- here: the collection's escrow went back to the creator and the
+            -- contract went on selling it, paying the next kill out of an
+            -- empty slot.
+            payout_slots = VALUES(payout_slots),
             deadline_at = VALUES(deadline_at), paused_ms = VALUES(paused_ms),
             paused_since = VALUES(paused_since),
             -- The five bailout_* columns are deliberately absent: they move

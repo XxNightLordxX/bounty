@@ -621,6 +621,10 @@ function Contracts.accept(actor, contractId, anonymous)
     if previous and previous.state == 'active' then
         return false, CB.ERR.ALREADY_HOLDING
     end
+    -- Copied out: on the in-process store `previous` IS the stored row, so
+    -- reactivating it below changes these fields underneath us.
+    local previousState = previous and previous.state
+    local previousAnon = previous and previous.anon
 
     local held = Storage.countHunterContracts(actor.cid, LIVE_STATES)
     if held >= Config.Limits.MaxAcceptedPerHunter then return false, CB.ERR.LIMIT_REACHED end
@@ -674,6 +678,7 @@ function Contracts.accept(actor, contractId, anonymous)
     -- can walk away from (§3.6). The hunter is told the amount before this
     -- point, and refusing to stake simply refuses the contract.
     local stake = contract.penalty_amount or 0
+    local stakeIds
     if stake > 0 then
         local account = (actor.player.Functions.GetMoney('bank') or 0) >= stake and 'bank' or 'cash'
         if (actor.player.Functions.GetMoney(account) or 0) < stake then
@@ -684,10 +689,11 @@ function Contracts.accept(actor, contractId, anonymous)
             return false, CB.ERR.INSUFFICIENT
         end
 
-        local ok = Escrow.take(actor, contractId, { {
+        local ok, _, ids = Escrow.take(actor, contractId, { {
             slot = 0, portion = CB.PORTION.STAKE, source = account,
             amount = stake, staker = actor.cid,
         } })
+        stakeIds = ids
         if not ok then
             if advanced then
                 Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
@@ -733,6 +739,39 @@ function Contracts.accept(actor, contractId, anonymous)
             state         = 'active',
         }
         Storage.addHunter(record)
+    end
+
+    -- Is the contract still open, now that this hunter is on it?
+    --
+    -- The state was read at the top, and every store call since is a yield
+    -- on mysql. A contract that closed in one of them — the creator
+    -- cancelling an exclusive contract this call had just moved to accepted
+    -- (no hunter row existed yet, so the cancel saw nobody on it), another
+    -- hunter collecting the last payout of a competitive one, a buyout, the
+    -- expiry pass — ran its settlement before this hunter existed, so
+    -- nothing ever returned the stake taken above. It sat `held` on a closed
+    -- contract with nothing that would move it, and the hunter was told they
+    -- had accepted.
+    --
+    -- Asked only after the row is written, which is what makes the answer
+    -- binding: an ending that has not started yet will find this hunter
+    -- when it settles stakes, and one that has started is visible here.
+    -- COMPLETING is refused too, because a claim on the last payout settles
+    -- stakes before it marks the contract completed.
+    local now = Storage.readContract(contractId)
+    local nowState = now and now.state
+    if nowState ~= CB.STATE.ACTIVE and nowState ~= CB.STATE.ACCEPTED then
+        if previous then
+            Storage.updateHunter(previous.id, { state = previousState, anon = previousAnon == true })
+        else
+            Storage.updateHunter(record.id, { state = 'withdrawn', left_at = os.time() })
+        end
+        if stakeIds and next(stakeIds) then
+            Escrow.release(contractId, actor.cid, { lines = stakeIds }, 'accept_on_closed')
+        end
+        Audit.rejected('accept_on_closed', actor.cid, contractId, { state = nowState })
+        if nowState == CB.STATE.COMPLETING then return false, CB.ERR.LOCKED end
+        return false, CB.ERR.ALREADY_SETTLED
     end
 
     -- The anonymity fee is taken last, after the stake and the record, so
@@ -1378,7 +1417,9 @@ function Contracts.reclampToEscrow(contractId, actorCid)
     if changed then Storage.writeContract(contract) end
 end
 
-function Contracts.resolve(contractId, terminal, recipientCid, filter, reason)
+---@param opts table|nil { forfeit = boolean } to say whether an expiry is
+--- the hunters' failure; by default every expiry is
+function Contracts.resolve(contractId, terminal, recipientCid, filter, reason, opts)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
     if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
@@ -1407,7 +1448,9 @@ function Contracts.resolve(contractId, terminal, recipientCid, filter, reason)
     -- terminal paths came to differ; there is now one of them.
     --
     -- An expiry is the hunter failing, so the creator keeps their stake.
-    finalise(contractId, contract, terminal == CB.STATE.EXPIRED)
+    local forfeit = terminal == CB.STATE.EXPIRED
+    if forfeit and opts and opts.forfeit == false then forfeit = false end
+    finalise(contractId, contract, forfeit)
 
     return true, result
 end

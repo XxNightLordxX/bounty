@@ -1737,7 +1737,6 @@ do
         ['crimson_contracts.target_protected'] = 'judged once, at creation, against the rules then',
         ['crimson_contracts.target_job']      = 'the same: what they were doing when it was placed',
         ['crimson_contracts.anon_creator']    = 'chosen at creation and not revisitable',
-        ['crimson_contracts.payout_slots']    = 'the shape of the contract hunters accepted',
         ['crimson_contracts.created_at']      = 'when it was placed',
         -- The buyout queue. Moves only through setBailoutQueue, because a
         -- caller writing back a copy it read before a buyout was paid used to
