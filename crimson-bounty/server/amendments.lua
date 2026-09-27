@@ -279,45 +279,29 @@ function Amendments.improve(actor, contractId, kind, payload)
                 local original = line.amount
                 local returned = original - amount
 
-                -- Guarded write: the line must still be exactly as it was
-                -- read. Writing a caller-held copy back would let a
-                -- settlement that landed in between be undone, putting a
-                -- settled line back on the board as claimable.
-                local reduced = Storage.setEscrowAmount(
-                    line.id, CB.ESCROW_STATE.HELD, amount, original)
-
-                if reduced then
-                    local staker = Identity.byCitizenId(line.staker)
-                    -- Back to the account it came from, not always bank.
-                    if staker and Util.credit(staker.player, line.source, returned) then
-                        Audit.financial('stake_reduced', line.staker, contractId,
-                            { returned = returned, remaining = amount })
-
-                    -- Offline, or a credit the framework refused: the
-                    -- difference is owed to them rather than left in the
-                    -- stake. Leaving it in the stake was described as "they
-                    -- get it back in full when the contract resolves", which
-                    -- held only for the endings that return a stake. Walking
-                    -- away or running out of clock forfeits the whole line,
-                    -- so a hunter who happened to be offline when the client
-                    -- lowered the penalty to 500 forfeited the 2,000 they
-                    -- had staked — to a creator whose contract, and whose
-                    -- own card, said 500. §3.6: lowering the penalty returns
-                    -- the difference to every hunter who staked the higher
-                    -- figure.
-                    elseif Escrow.owe(line.staker, contractId, returned, line.source,
-                                      'stake_reduced') then
-                        Audit.financial('stake_reduced', line.staker, contractId,
-                            { returned = returned, remaining = amount, owed = true })
-                    else
-                        -- Nothing could hold the difference. Put the stake
-                        -- back whole under the same guard rather than take
-                        -- it out of escrow and pay nobody.
-                        Storage.setEscrowAmount(
-                            line.id, CB.ESCROW_STATE.HELD, original, amount)
-                        Audit.action('stake_reduction_deferred', line.staker, contractId,
-                            { returned = returned, reason = 'nowhere_to_put_it' })
-                    end
+                -- Owed first and lowered second, guarded on the line being
+                -- exactly as read (a settlement landing in between is not
+                -- undone), then handed over: to their pocket now if they are
+                -- here, queued for them if not. Crediting them straight after
+                -- lowering the stake — or, offline, minting an owed line after
+                -- it — lost the difference to a crash in between.
+                --
+                -- Offline or online, the difference is theirs rather than
+                -- left in the stake. Left in the stake it was described as
+                -- "they get it back in full when the contract resolves",
+                -- which held only for the endings that return a stake:
+                -- walking away or running out of clock forfeits the whole
+                -- line, so a hunter who happened to be offline when the
+                -- client lowered the penalty to 500 forfeited the 2,000 they
+                -- had staked (§3.6).
+                local owedId, delivered = Escrow.reduceStake(contractId, line, amount,
+                    'stake_reduced')
+                if owedId then
+                    Audit.financial('stake_reduced', line.staker, contractId,
+                        { returned = returned, remaining = amount, owed = not delivered or nil })
+                else
+                    Audit.action('stake_reduction_skipped', line.staker, contractId,
+                        { returned = returned, reason = 'stake_moved' })
                 end
             end
         end

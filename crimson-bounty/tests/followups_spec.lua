@@ -329,3 +329,86 @@ describe('the handover countdown thread', function()
         local _ = f
     end)
 end)
+
+describe('two retry passes for one player at once', function()
+    --- The tick's online retry and a login's run side by side, and a
+    --- release sweep can be mid-delivery too. One pass cleared the queue
+    --- entry of a line the other was holding; the other's delivery then
+    --- failed, put the line back owed, and nothing queued it again.
+    local function owedGoods(s)
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { items = { { name = 'lockpick', count = 2 } } } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        Env.players[3]._inventoryFull = true
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        eq(#s.storage.readPending('HUNTER01'), 1, 'owed, and queued')
+        return f, c
+    end
+
+    local function lockpicks()
+        local n = 0
+        for _, slot in ipairs(Env.players[3]._inventory) do
+            if slot.name == 'lockpick' then n = n + slot.count end
+        end
+        return n
+    end
+
+    it('does not lose the queue entry of a line the other pass holds', function()
+        local s = mysqlStack()
+        owedGoods(s)
+        local real = s.storage.claimEscrowLine
+        local fired = false
+        s.storage.claimEscrowLine = function(id, from, to)
+            local ok = real(id, from, to)
+            if ok and not fired and to == CB.ESCROW_STATE.RELEASING then
+                fired = true
+                -- The login's pass, in the tick's wait.
+                s.escrow.retryPending('HUNTER01')
+            end
+            return ok
+        end
+        s.escrow.retryWaiting(function() return true end)
+        s.storage.claimEscrowLine = real
+        truthy(fired)
+        eq(#s.storage.readPending('HUNTER01'), 1,
+            'the entry was cleared under a delivery that then failed')
+
+        Env.players[3]._inventoryFull = false
+        for _ = 1, 3 do
+            Env.advance(31)
+            s.escrow.retryWaiting(function() return true end)
+        end
+        eq(lockpicks(), 2, 'made room, and the goods never came')
+    end)
+
+    it('does not forget a player something was queued for while it ran', function()
+        local s = mysqlStack()
+        local _, c = owedGoods(s)
+        Env.players[3]._inventoryFull = false
+        local real = s.storage.readPending
+        local calls = 0
+        s.storage.readPending = function(cid)
+            local answer = real(cid)
+            calls = calls + 1
+            if calls == 2 then
+                -- Answered before this lands: a buyout premium owed to them.
+                truthy(s.escrow.owe('HUNTER01', c.id, 4000, 'bank', 'test'))
+            end
+            return answer
+        end
+        s.escrow.retryWaiting(function() return true end)
+        s.storage.readPending = real
+        eq(lockpicks(), 2, 'the first delivery')
+
+        local before = Env.players[3].PlayerData.money.bank
+        for _ = 1, 3 do
+            Env.advance(31)
+            s.escrow.retryWaiting(function() return true end)
+        end
+        eq(Env.players[3].PlayerData.money.bank - before, 4000,
+            'online the whole time, and left for a relog')
+    end)
+end)

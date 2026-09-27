@@ -412,6 +412,39 @@ describe('a crash while a queued buyout is being settled', function()
     end
 end)
 
+describe('a crash after a queued buyout paid the premium', function()
+    --- Paid and not yet cleared from the queue looks, on the next tick,
+    --- exactly like not paid: bought out, still queued. The premium was
+    --- paid again.
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': the creator is paid it once', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            Env.players[2].PlayerData.money.bank = 100000
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x',
+                reward = { baseline = { cash = 10000 } }, bailoutAmount = 15000,
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hunter, c.id))
+            local creatorBefore, targetBefore = money(1), money(2)
+            truthy(s.bailout.buy(f.target, c.id), 'queued behind the engaged hunter')
+
+            Env.advance(200)
+            s.bailout.clearQueue = function() error('process killed') end
+            falsy(pcall(s.bailout.processQueue))
+
+            local main2, s2 = restart(mode, s)
+            for _ = 1, 3 do Env.advance(20) main2.tick() end
+
+            falsy(s2.storage.readContract(c.id).bailout_queued_at, 'the queue is cleared')
+            eq(money(2) - targetBefore, -15000)
+            eq(money(1) - creatorBefore, 10000 + 15000,
+                'the escrow back and the premium, and the premium once')
+        end)
+    end
+end)
+
 describe('server downtime and the deadline', function()
     --- Every contract's clock pauses while either party is offline. While the
     --- server is down everybody is, but a contract nobody had paused only
@@ -725,4 +758,228 @@ describe('audit rows written while a flush waits on the database', function()
         eq(seen.escrow_settle_lost, 1, 'the row pushed during the flush was lost')
         eq(seen.first, 1, 'and nothing was written twice')
     end)
+end)
+
+describe('an acceptance and the anonymity fee, when something goes wrong', function()
+    --- The fee was taken first, before the stake, the row and the re-read,
+    --- all of which wait on the store: a process that died in any of them
+    --- had spent the fee with no row, no line and nothing recovery could
+    --- give it back from.
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': a crash part-way through costs no fee', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            Config.Anonymity.HunterFee = 1500
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 10000 } }, penaltyAmount = 1000,
+            })
+            truthy(c)
+            local before = money(3)
+            s.escrow.take = function() error('process killed') end
+            falsy(pcall(s.contracts.accept, f.hunter, c.id, true))
+
+            restart(mode, s)
+            eq(money(3), before, 'the fee went with the process')
+        end)
+    end
+
+    --- A refused acceptance left its row withdrawn but marked anonymous, and
+    --- the fee is charged once per contract: the next anonymous acceptance
+    --- read that row as paid-for anonymity and charged nothing.
+    it('charges the fee after an acceptance that was refused', function()
+        local _, s = boot('memory')
+        local f = fixture(s)
+        Config.Anonymity.HunterFee = 1500
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+            cash = 5000, bank = 20000, firstname = 'Sol', lastname = 'Vane' })
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } } } },
+            penaltyAmount = 1000,
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        -- Another hunter's claim holds the contract while this one writes
+        -- its row, and lets go afterwards with a payout left.
+        local real = s.storage.addHunter
+        s.storage.addHunter = function(row)
+            local out = real(row)
+            s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming_slot')
+            return out
+        end
+        local second = s.identity.resolve(4)
+        local before = money(4)
+        local ok, err = s.contracts.accept(second, c.id, true)
+        s.storage.addHunter = real
+        falsy(ok)
+        eq(err, CB.ERR.LOCKED)
+        eq(money(4), before, 'a refused acceptance costs nothing')
+        truthy(s.contracts.transition(c.id, CB.STATE.COMPLETING, CB.STATE.ACCEPTED, 'slot_claimed'))
+
+        truthy(s.contracts.accept(second, c.id, true))
+        eq(before - money(4), 1000 + 1500, 'anonymity given without the fee ever being kept')
+    end)
+end)
+
+describe('an acceptance as the deadline runs out', function()
+    --- Accepted anyway, the stake went onto an active row that the expiry
+    --- pass found and forfeited to the client, and the hunter was told the
+    --- contract had closed.
+    local function due()
+        local main, s = boot('memory')
+        Config.Limits.ExclusiveIdleReleaseSeconds = 0
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        truthy(c)
+        main.tick()
+        return main, s, f, c
+    end
+
+    it('is refused, and charged nothing, once the deadline has passed', function()
+        local _, s, f, c = due()
+        Env.advance(Config.Limits.DefaultDeadlineSeconds + 5)
+        local before = money(3)
+        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        falsy(ok, 'accepted a contract whose time was up')
+        eq(err, CB.ERR.ALREADY_SETTLED)
+        eq(money(3), before)
+    end)
+
+    it('does not forfeit a stake taken after the deadline passed', function()
+        local main, s, f, c = due()
+        -- Seconds left when the acceptance starts; gone by the time its row
+        -- is written, and the expiry pass runs in that same wait.
+        Env.advance(Config.Limits.DefaultDeadlineSeconds - 2)
+        local realRead = s.storage.readHunterById
+        local moved = false
+        s.storage.readHunterById = function(id)
+            if not moved then moved = true; Env.advance(5) end
+            return realRead(id)
+        end
+        local realAdd = s.storage.addHunter
+        s.storage.addHunter = function(row)
+            local out = realAdd(row)
+            main.markPresenceChanged()
+            main.expire()
+            return out
+        end
+        local before = money(3)
+        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        s.storage.readHunterById, s.storage.addHunter = realRead, realAdd
+        falsy(ok)
+        eq(err, CB.ERR.ALREADY_SETTLED)
+        eq(s.storage.readContract(c.id).state, CB.STATE.EXPIRED)
+        eq(money(3), before, 'refused, and the stake paid to the client all the same')
+    end)
+end)
+
+describe('a crash while the client lowers the penalty', function()
+    --- The stake was lowered first and the owed difference minted after it,
+    --- two awaits apart; a process that died between them lost the
+    --- difference to nobody. The owed line is written first now, and boot
+    --- settles whichever side of the stake's write the crash fell.
+    local function heldBy(s, cid)
+        local total = 0
+        for _, c in ipairs(s.storage.allContracts()) do
+            for _, l in ipairs(s.storage.readEscrow(c.id)) do
+                local mine = (l.portion == CB.PORTION.STAKE and l.staker == cid and not l.owed_to)
+                    or l.owed_to == cid
+                if mine and (l.state == CB.ESCROW_STATE.HELD or l.state == CB.ESCROW_STATE.RELEASING) then
+                    total = total + (l.amount or 0)
+                end
+            end
+        end
+        return total
+    end
+
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        for _, at in ipairs({ 'owed line written', 'stake lowered' }) do
+            it(mode .. ': dying after the ' .. at .. ' loses nothing', function()
+                local _, s = boot(mode)
+                local f = fixture(s)
+                local c = s.contracts.create(f.creator, {
+                    targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                    reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+                })
+                truthy(c)
+                truthy(s.contracts.accept(f.hunter, c.id, false))
+                local hunter = Env.players[3]
+                Env.removePlayer(3)
+                local before = hunter.PlayerData.money.cash + hunter.PlayerData.money.bank
+                    + heldBy(s, 'HUNTER01')
+
+                if at == 'owed line written' then
+                    local real = s.storage.writeEscrow
+                    s.storage.writeEscrow = function(id, lines)
+                        local out = real(id, lines)
+                        if lines[1] and lines[1].portion == CB.PORTION.OWED then
+                            error('process killed')
+                        end
+                        return out
+                    end
+                else
+                    local real = s.storage.setEscrowAmount
+                    s.storage.setEscrowAmount = function(...)
+                        local out = real(...)
+                        if out then error('process killed') end
+                        return out
+                    end
+                end
+                falsy(pcall(s.amendments.improve, f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY,
+                    { amount = 500 }), 'the process died')
+
+                local _, s2 = restart(mode, s)
+                Env.players[3] = hunter
+                Env.byCitizen['HUNTER01'] = 3
+                s2.escrow.retryPending('HUNTER01')
+
+                local after = hunter.PlayerData.money.cash + hunter.PlayerData.money.bank
+                    + heldBy(s2, 'HUNTER01')
+                eq(after, before, mode .. ': the hunter\'s money and stake, before and after')
+                if at == 'stake lowered' then
+                    eq(heldBy(s2, 'HUNTER01'), 500, 'the stake at its new figure, the rest paid')
+                else
+                    eq(heldBy(s2, 'HUNTER01'), 2000, 'the stake untouched, nothing owed for it')
+                end
+            end)
+        end
+    end
+end)
+
+describe('a crash between paying a handover\'s baseline and its bonus', function()
+    --- Recovery counted the collection paid by its baseline and swept the
+    --- bonus, held and owed to nobody, to the client.
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': the hunter still gets the bonus they earned', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x',
+                reward = { baseline = { cash = 10000 }, bonus = { cash = 5000 } },
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hunter, c.id))
+            local hunterBefore, creatorBefore = money(3), money(1)
+
+            local real = s.escrow.release
+            s.escrow.release = function(id, who, filter, reason)
+                if type(filter) == 'table' and filter.portion == CB.PORTION.BONUS then
+                    error('process killed')
+                end
+                return real(id, who, filter, reason)
+            end
+            falsy(pcall(s.contracts.claimSlot, c.id, 'HUNTER01', CB.FULFILMENT.KIDNAPPING))
+
+            local main2, s2 = restart(mode, s)
+            s2.escrow.retryPending('HUNTER01')
+            main2.tick()
+            eq(money(3) - hunterBefore, 15000, 'the baseline and the bonus')
+            eq(money(1) - creatorBefore, 0, 'none of it to the client')
+            eq(s2.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+        end)
+    end
 end)

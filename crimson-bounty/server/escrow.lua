@@ -27,17 +27,35 @@ local waiting = {}
 local lastTried = {}
 local attempts = 0
 
+--- How many times something new has been queued for each player, so a
+--- retry pass can tell whether anything arrived while it was running.
+local wakes = {}
+
 function Escrow.init(storage, audit)
     Storage, Audit = storage, audit
     waiting = {}
     lastTried = {}
+    wakes = {}
 end
 
 --- Remember that this player has a delivery queued, so the tick tries it
 --- again while they are online rather than only at their next login.
+---
+--- `fresh` when something has just been queued for them. That is due now
+--- whatever the player's wait between tries, and it is counted: a retry
+--- pass running for this player at that moment had already read their
+--- queue, found it empty and was about to forget them — a wake-up lost,
+--- and the new payout left for a relog.
 ---@param cid string
-function Escrow.noteWaiting(cid)
-    if cid and waiting[cid] == nil then waiting[cid] = 0 end
+---@param fresh boolean|nil
+function Escrow.noteWaiting(cid, fresh)
+    if not cid then return end
+    if fresh then
+        wakes[cid] = (wakes[cid] or 0) + 1
+        waiting[cid] = 0
+    elseif waiting[cid] == nil then
+        waiting[cid] = 0
+    end
 end
 
 --------------------------------------------------------------------------
@@ -826,13 +844,15 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
                     line.owed_to = recipientCid
                     Storage.writeEscrow(contractId, { line })
                     Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
-                    Escrow.noteWaiting(recipientCid)
                     if not alreadyQueued then
                         Storage.queuePending(recipientCid, contractId, line.id)
                         -- Kept current if it has been read, so a second line
                         -- in this same pass sees the first one's entry.
                         if queuedAlready then queuedAlready[line.id] = true end
                     end
+                    -- After the entry exists, so a retry that reads the
+                    -- queue on this wake-up finds it there.
+                    Escrow.noteWaiting(recipientCid, not alreadyQueued)
                     result.pending = result.pending + 1
                 end
             end
@@ -1109,9 +1129,117 @@ function Escrow.owe(cid, contractId, amount, account, reason)
         state = CB.ESCROW_STATE.HELD,
     } })
     Storage.queuePending(cid, contractId, lineId)
-    Escrow.noteWaiting(cid)
+    Escrow.noteWaiting(cid, true)
     Audit.financial('owed_queued', cid, contractId, { amount = amount, reason = reason })
     return lineId
+end
+
+--- Undo a write-ahead owed line whose stake was never lowered: nothing is
+--- owed, so it is emptied and closed against its would-be recipient.
+local function voidSplit(line)
+    if (line.amount or 0) > 0 then
+        if not Storage.setEscrowAmount(line.id, CB.ESCROW_STATE.HELD, 0, line.amount) then
+            return false
+        end
+    end
+    if Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING) then
+        Storage.settleEscrowLine(line.id, line.owed_to)
+    end
+    return true
+end
+
+--- Lower a held stake and owe the difference to the hunter who staked it.
+---
+--- Two writes, and a process can die between any two. Lowering the stake
+--- first and then minting and writing the owed line lost the difference
+--- when it died in between: the stake already at the new figure, the rest
+--- in no line, no queue and no pocket. So the owed line is written first —
+--- unqueued, which nothing pays, and marked with the stake it comes from
+--- and the figures either side — and the stake is lowered after it. Boot
+--- recovery settles the one case a crash can leave (Escrow.recoverSplits):
+--- a stake still at its old figure means the owed line never became owed.
+---@param contractId string
+---@param line table the stake line, as read
+---@param amount integer what the stake becomes
+---@param reason string
+---@return string|nil owedLineId nil when the stake could not be lowered
+---@return boolean delivered whether the difference reached them now
+function Escrow.reduceStake(contractId, line, amount, reason)
+    local original = line.amount or 0
+    local returned = original - amount
+    if returned <= 0 or not line.staker then return nil, false end
+
+    local lineId = Util.mintId(Storage.nextId, 'owe', Storage.readEscrowLine)
+    if not lineId then return nil, false end
+
+    local owed = {
+        id = lineId,
+        contract_id = contractId,
+        slot = 0,
+        portion = CB.PORTION.OWED,
+        owed_to = line.staker,
+        source = line.source == 'cash' and 'cash' or 'bank',
+        amount = returned,
+        state = CB.ESCROW_STATE.HELD,
+        metadata = { splitFrom = line.id, stakeWas = original, stakeNow = amount },
+    }
+    Storage.writeEscrow(contractId, { owed })
+
+    -- Guarded: the stake must still be exactly as it was read.
+    if not Storage.setEscrowAmount(line.id, CB.ESCROW_STATE.HELD, amount, original) then
+        voidSplit(owed)
+        return nil, false
+    end
+
+    Storage.queuePending(line.staker, contractId, lineId)
+    Escrow.noteWaiting(line.staker, true)
+    local _, result = Escrow.release(contractId, line.staker, { line = lineId }, reason)
+    return lineId, result ~= nil and (result.settled or 0) > 0
+end
+
+--- Finish, at boot, whatever a crash left between owing and queuing.
+---
+--- Two shapes. A stake reduction interrupted between its two writes (see
+--- Escrow.reduceStake): the owed line written ahead of its stake is owed
+--- only if the stake was lowered, which the stake's own amount says. And
+--- any line owed to somebody that no queue entry points at — written, and
+--- the process gone before the entry was: nothing pays an owed line that is
+--- not queued, so it would have waited for ever.
+---@param lines table[] one contract's escrow lines
+---@return integer finished
+function Escrow.recoverOwed(lines)
+    local finished = 0
+    local queuedFor = {}
+    local function isQueuedFor(cid, lineId)
+        if not queuedFor[cid] then
+            queuedFor[cid] = {}
+            for _, entry in ipairs(Storage.readPending(cid) or {}) do
+                queuedFor[cid][entry.line_id] = true
+            end
+        end
+        return queuedFor[cid][lineId] == true
+    end
+
+    for _, l in ipairs(lines or {}) do
+        if l.state == CB.ESCROW_STATE.HELD and l.owed_to then
+            local mark = type(l.metadata) == 'table' and l.metadata or nil
+            local voided = false
+            if l.portion == CB.PORTION.OWED and mark and mark.splitFrom then
+                local stake = Storage.readEscrowLine(mark.splitFrom)
+                if not (stake ~= nil and stake.amount ~= mark.stakeWas) then
+                    voided = voidSplit(l)
+                    if voided then finished = finished + 1 end
+                end
+            end
+            if not voided and not isQueuedFor(l.owed_to, l.id) then
+                Storage.queuePending(l.owed_to, l.contract_id, l.id)
+                queuedFor[l.owed_to][l.id] = true
+                Escrow.noteWaiting(l.owed_to, true)
+                finished = finished + 1
+            end
+        end
+    end
+    return finished
 end
 
 --- Retry queued deliveries for a player who has just come online (§9.3).
@@ -1136,8 +1264,16 @@ function Escrow.retryPending(cid)
     for k = 1, math.min(#queued, Config.PendingEscrow.MaxRetriesPerLogin or 0) do
         local entry = queued[order[k]]
         local line = Storage.readEscrowLine(entry.line_id)
-        if line and line.state == CB.ESCROW_STATE.HELD
-            and (line.owed_to == nil or line.owed_to == cid) then
+        local theirs = line ~= nil and (line.owed_to == nil or line.owed_to == cid)
+        if theirs and line.state == CB.ESCROW_STATE.RELEASING then
+            -- Another pass has it — the tick's and a login's run side by
+            -- side for one player, and a release sweep can be mid-delivery.
+            -- The entry is that pass's to settle or keep. Cleared here, a
+            -- delivery that then failed put the line back owed with nothing
+            -- queued for it, and no retry, login or recovery ever read it
+            -- again.
+            if tried[entry.id] ~= nil then stillTried[entry.id] = tried[entry.id] end
+        elseif theirs and line.state == CB.ESCROW_STATE.HELD then
             local claimed = Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING)
             local handed = false
             if claimed then
@@ -1218,9 +1354,16 @@ function Escrow.retryWaiting(isOnline)
         if not isOnline(cid) then
             waiting[cid] = nil
         else
+            local woken = wakes[cid]
             local delivered = Escrow.retryPending(cid)
             if delivered > 0 then out[cid] = delivered end
-            if #(Storage.readPending(cid) or {}) == 0 then
+            local left = #(Storage.readPending(cid) or {})
+            if wakes[cid] ~= woken then
+                -- Something was queued for them while this ran, and the
+                -- read above may have been answered before it was written.
+                -- Due now; the next pass reads the queue afresh.
+                waiting[cid] = 0
+            elseif left == 0 then
                 waiting[cid] = nil
             else
                 waiting[cid] = now + RETRY_SECONDS

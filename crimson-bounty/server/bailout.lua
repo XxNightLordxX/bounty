@@ -177,6 +177,38 @@ local function deliver(cid, contractId, amount, account, reason)
     return Bailout.owe(cid, contractId, amount, account, reason) ~= nil
 end
 
+--- The id of a contract's buyout premium line. One per contract: only one
+--- buyout can ever close it.
+---@param contractId string
+---@return string
+function Bailout.premiumLineId(contractId)
+    return 'prem:' .. contractId
+end
+
+--- Owe the creator the premium and hand it over. Idempotent: see settle.
+local function payPremium(contract, amount, account)
+    local id = Bailout.premiumLineId(contract.id)
+    local existing = Storage.readEscrowLine(id)
+    if not (existing and existing.id == id) then
+        Storage.writeEscrow(contract.id, { {
+            id = id,
+            contract_id = contract.id,
+            slot = 0,
+            portion = CB.PORTION.OWED,
+            owed_to = contract.creator_cid,
+            source = account == 'cash' and 'cash' or 'bank',
+            amount = amount,
+            state = CB.ESCROW_STATE.HELD,
+        } })
+        Storage.queuePending(contract.creator_cid, contract.id, id)
+        if Escrow and Escrow.noteWaiting then Escrow.noteWaiting(contract.creator_cid, true) end
+    end
+    local line = Storage.readEscrowLine(id)
+    if line and line.id == id and line.state == CB.ESCROW_STATE.HELD and Escrow then
+        Escrow.release(contract.id, contract.creator_cid, { line = id }, 'bailout_premium')
+    end
+end
+
 --- Close a bought-out contract: the creator gets their escrow back plus the
 --- premium, and the contract resolves once.
 ---@param opts table|nil { retryable = true } when driven by the queue
@@ -243,22 +275,17 @@ function Bailout.settle(contractId, amount, targetCid, account, opts)
         return false, err
     end
 
-    -- Offline, or a credit the framework refused: either way the premium is
-    -- owed, not lost. It is written as a real escrow line so the normal
-    -- retry path can deliver it — a placeholder id would be read back as a
-    -- missing line and dropped.
-    if not deliver(contract.creator_cid, contractId, amount, account, 'bailout_premium') then
-        -- The contract has closed and the creator cannot be paid by either
-        -- route. Between a creator who does not receive a premium and a
-        -- target whose money stops existing, it goes back to the person who
-        -- paid it: that is visible and recoverable, and destroyed money is
-        -- neither. The buyer is online on the immediate path by definition,
-        -- so this all but always lands.
-        if not deliver(targetCid, contractId, amount, account, 'bailout_premium_returned') then
-            Audit.financial('bailout_premium_stranded', targetCid, contractId,
-                { amount = amount, account = account, creator = contract.creator_cid })
-        end
-    end
+    -- The premium, once. It is written as an owed line under an id that
+    -- comes from the contract, then handed over the way every owed line
+    -- is: now if the creator is here, queued for them if not.
+    --
+    -- A settle that dies after paying and before clearing the queue looks,
+    -- on the next tick, exactly like one that died before paying: bought
+    -- out, still queued. Credited straight into the creator's pocket, the
+    -- premium was paid again. Written under the contract's own id, the
+    -- second write lands on the first line and changes nothing, and the
+    -- line's state says whether it was handed over.
+    payPremium(contract, amount, account)
 
     Audit.financial('bailout_settled', targetCid, contractId, { amount = amount })
     Notify.toCitizen(contract.creator_cid, 'Contract closed',
@@ -297,7 +324,7 @@ function Bailout.owe(cid, contractId, amount, account, reason)
         state = CB.ESCROW_STATE.HELD,
     } })
     Storage.queuePending(cid, contractId, lineId)
-    if Escrow and Escrow.noteWaiting then Escrow.noteWaiting(cid) end
+    if Escrow and Escrow.noteWaiting then Escrow.noteWaiting(cid, true) end
     Audit.financial('owed_queued', cid, contractId, { amount = amount, reason = reason })
     return lineId
 end

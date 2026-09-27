@@ -780,6 +780,11 @@ function Recover()
         local untouched = false
 
         local lines = Storage.readEscrow(contract.id)
+        -- Owed lines a crash left unqueued, and a stake reduction it
+        -- interrupted (Escrow.recoverOwed).
+        if modules.escrow.recoverOwed then
+            recovered = recovered + modules.escrow.recoverOwed(lines)
+        end
         for j = 1, #lines do
             local line = lines[j]
             if (line.state == CB.ESCROW_STATE.HELD or line.state == CB.ESCROW_STATE.RELEASING)

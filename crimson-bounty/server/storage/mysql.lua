@@ -709,6 +709,11 @@ function MySQLStore.updateHunter(id, fields)
         MySQL.update.await('UPDATE crimson_hunters SET alias = ? WHERE id = ?',
             { fields.alias, id })
     end
+    -- A stint's start, rewritten when a hunter takes a contract up again.
+    if fields.accepted_at ~= nil then
+        MySQL.update.await('UPDATE crimson_hunters SET accepted_at = ? WHERE id = ?',
+            { fields.accepted_at, id })
+    end
     return true
 end
 

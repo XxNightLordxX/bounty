@@ -68,11 +68,28 @@ end
 ---@param contractId string
 ---@param creatorCid string
 ---@param forfeit boolean
-local function settleStakes(contractId, creatorCid, forfeit)
+--- Whether this hunter's stake is the client's when the contract fails.
+---
+--- Only a hunter who was on it while its deadline still stood. One whose
+--- acceptance landed after the deadline — in the moment between the expiry
+--- pass reading the contract and resolving it — could not have failed a
+--- clock that had already run out, and forfeiting their stake paid the
+--- client for an acceptance the hunter was then told had been refused.
+---@param hunter table|nil a hunter row
+---@param contract table|nil
+---@return boolean
+local function stakeForfeits(hunter, contract)
+    if not hunter or hunter.state ~= 'active' then return false end
+    local deadline = contract and contract.deadline_at
+    if deadline and hunter.accepted_at and hunter.accepted_at > deadline then return false end
+    return true
+end
+
+local function settleStakes(contractId, creatorCid, forfeit, contract)
     local hunters = Storage.readHunters(contractId)
     for i = 1, #hunters do
         local hunter = hunters[i]
-        local toCreator = forfeit and hunter.state == 'active'
+        local toCreator = forfeit and stakeForfeits(hunter, contract)
         Escrow.release(contractId,
             toCreator and creatorCid or hunter.hunter_cid,
             { portion = CB.PORTION.STAKE, staker = hunter.hunter_cid },
@@ -93,7 +110,7 @@ local function finalise(contractId, contract, forfeitStakes)
     local hunters = Storage.readHunters(contractId)
     for i = 1, #hunters do hunterCids[#hunterCids + 1] = hunters[i].hunter_cid end
 
-    settleStakes(contractId, contract.creator_cid, forfeitStakes)
+    settleStakes(contractId, contract.creator_cid, forfeitStakes, contract)
 
     -- Anything still held — a top-up on a slot nobody claimed, an odd line
     -- from an amendment, the unpaid bonus on an elimination — goes back to
@@ -646,6 +663,15 @@ function Contracts.accept(actor, contractId, anonymous, opts)
         return false, CB.ERR.BAD_STATE
     end
 
+    -- Past its deadline with the clock running, or past its lifetime, it is
+    -- ending: the next expiry pass closes it, whatever this call does. The
+    -- same test the pass applies. Accepted anyway, the stake taken here was
+    -- written onto an active row the pass then found and forfeited to the
+    -- client, and the hunter was told the contract had closed.
+    if Contracts.isOverdue(contract, os.time()) then
+        return false, CB.ERR.ALREADY_SETTLED
+    end
+
     -- A player may not hunt themselves, their own contract, or a contract
     -- created by another of their own characters (§13.1).
     if contract.target_cid == actor.cid then return false, CB.ERR.SELF_TARGET end
@@ -680,6 +706,12 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- reactivating it below changes these fields underneath us.
     local previousState = previous and previous.state
     local previousAnon = previous and previous.anon
+    local previousAcceptedAt = previous and previous.accepted_at
+    -- A row an acceptance wrote and then took back (the contract closed or
+    -- was busy under it) was never a stint: nobody held the contract on it,
+    -- and no fee was kept for it. It is reused for its id and alias, and
+    -- otherwise counts for nothing.
+    local stint = previous ~= nil and previousState ~= 'refused'
 
     -- Coming back cannot buy anonymity the first stint gave away. The alias
     -- and the thread are the same ones, so a creator who was shown
@@ -687,7 +719,7 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- exactly who the anonymous Operative #1 is — and the fee used to be
     -- taken for it all the same. Named again, charged nothing, and told why.
     local renamed = false
-    if previous and not previous.anon and anonymous then
+    if stint and not previousAnon and anonymous then
         anonymous = false
         renamed = true
     end
@@ -746,38 +778,28 @@ function Contracts.accept(actor, contractId, anonymous, opts)
         -- expiry.
     end
 
-    -- The anonymity fee, before anything else is taken, and a refusal if it
-    -- cannot be paid (§4: charged BEFORE anonymity is granted).
+    -- The anonymity fee: checked here, before anything is taken, and
+    -- charged only once the acceptance is certain (below). Refused if it
+    -- cannot be covered (§4: paid BEFORE anonymity is granted).
     --
-    -- It used to be taken last, and a hunter who could not cover it was
-    -- simply named: the acceptance went through, the creator's phone said
-    -- "accepted by <their name>", and the page — which only saw a successful
-    -- reply — told the hunter "Contract accepted, anonymously." Anonymity is
-    -- the one thing in this resource that cannot be given back once it has
-    -- been lost, so it is not something to downgrade on somebody's behalf.
-    -- Every refusal from here on puts the fee back.
+    -- It was once taken last with no check first, and a hunter who could
+    -- not cover it was simply named: the creator's phone said "accepted by
+    -- <their name>" while the page told the hunter "Contract accepted,
+    -- anonymously." Anonymity is the one thing in this resource that cannot
+    -- be given back once it has been lost, so it is not something to
+    -- downgrade on somebody's behalf. Then it was taken first, and a process
+    -- that died in any of the awaits after it had spent the fee with no row,
+    -- no line and no record that recovery could give it back from.
     --
     -- Once per contract. Coming back anonymous after an anonymous stint is
     -- the same alias and the same thread, anonymity already paid for here;
     -- charging it again bought nothing, and a hunter who could not cover
     -- the second fee was refused a contract they were already anonymous on.
+    -- A refused row is not a stint, so it has paid for nothing.
     local feeAccount = Config.Anonymity.FeeAccount or 'bank'
-    local paidBefore = previousAnon == true
+    local paidBefore = stint and previousAnon == true
     local fee = (anonymous and not paidBefore and (Config.Anonymity.HunterFee or 0) > 0)
         and Config.Anonymity.HunterFee or 0
-    if fee > 0 and not Util.charge(actor.player, feeAccount, fee) then
-        if advanced then
-            Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'fee_failed')
-        end
-        return false, CB.ERR.INSUFFICIENT
-    end
-    local function refundFee()
-        if fee <= 0 then return end
-        if not Util.credit(actor.player, feeAccount, fee) then
-            Audit.financial('anonymity_fee_refund_failed', actor.cid, contractId,
-                { amount = fee, account = feeAccount, role = 'hunter' })
-        end
-    end
 
     -- The failure penalty is staked here, at acceptance, or not at all: a
     -- penalty that is only charged after a failure is a penalty the hunter
@@ -785,16 +807,31 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- point, and refusing to stake simply refuses the contract.
     local stake = contract.penalty_amount or 0
     local stakeIds
-    if stake > 0 then
-        local account = (actor.player.Functions.GetMoney('bank') or 0) >= stake and 'bank' or 'cash'
-        if (actor.player.Functions.GetMoney(account) or 0) < stake then
-            -- Undo the state change this call made, in either mode.
+    local stakeAccount = (actor.player.Functions.GetMoney('bank') or 0) >= stake and 'bank' or 'cash'
+    if stake > 0 and (actor.player.Functions.GetMoney(stakeAccount) or 0) < stake then
+        -- Undo the state change this call made, in either mode.
+        if advanced then
+            Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
+        end
+        return false, CB.ERR.INSUFFICIENT
+    end
+    if fee > 0 then
+        -- The stake and the fee together, from the accounts each will come
+        -- out of.
+        local left = {
+            bank = actor.player.Functions.GetMoney('bank') or 0,
+            cash = actor.player.Functions.GetMoney('cash') or 0,
+        }
+        if stake > 0 then left[stakeAccount] = left[stakeAccount] - stake end
+        if (left[feeAccount] or 0) < fee then
             if advanced then
-                Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
+                Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'fee_failed')
             end
-            refundFee()
             return false, CB.ERR.INSUFFICIENT
         end
+    end
+    if stake > 0 then
+        local account = stakeAccount
 
         local ok, takeErr, ids = Escrow.take(actor, contractId, { {
             slot = 0, portion = CB.PORTION.STAKE, source = account,
@@ -805,7 +842,6 @@ function Contracts.accept(actor, contractId, anonymous, opts)
             if advanced then
                 Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
             end
-            refundFee()
             -- A contract busy with another take is not the hunter being
             -- short of money.
             return false, takeErr == CB.ERR.LOCKED and CB.ERR.LOCKED or CB.ERR.INSUFFICIENT
@@ -827,16 +863,19 @@ function Contracts.accept(actor, contractId, anonymous, opts)
         if advanced then
             Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'accept_failed')
         end
-        refundFee()
         Audit.rejected('hunter_id_exhausted', actor.cid, contractId, {})
         return false, CB.ERR.BAD_STATE
     end
 
     local record
+    local joinedAt = os.time()
     if previous then
-        Storage.updateHunter(previous.id, { state = 'active', anon = anonymous == true })
+        -- accepted_at is this stint's start: whether a stake can be
+        -- forfeited to a deadline is asked of when the hunter joined.
+        Storage.updateHunter(previous.id, { state = 'active', anon = anonymous == true,
+            accepted_at = joinedAt })
         record = Storage.readHunter(contractId, actor.cid) or previous
-        record.state, record.anon = 'active', anonymous == true
+        record.state, record.anon, record.accepted_at = 'active', anonymous == true, joinedAt
     else
         record = {
             id            = hunterId,
@@ -846,7 +885,7 @@ function Contracts.accept(actor, contractId, anonymous, opts)
             hunter_name   = actor.name,
             alias         = 'Operative #' .. tostring(aliasNumber),
             anon          = anonymous == true,
-            accepted_at   = os.time(),
+            accepted_at   = joinedAt,
             state         = 'active',
         }
         Storage.addHunter(record)
@@ -869,21 +908,37 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- when it settles stakes, and one that has started is visible here.
     -- COMPLETING is refused too, because a claim on the last payout settles
     -- stakes before it marks the contract completed.
+    --- Take this acceptance back: the row as it was, the stake home.
+    local function unwind(reason)
+        if previous then
+            Storage.updateHunter(previous.id, { state = previousState,
+                anon = previousAnon == true, accepted_at = previousAcceptedAt })
+        else
+            Storage.updateHunter(record.id, { state = 'refused', left_at = os.time() })
+        end
+        if stakeIds and next(stakeIds) then
+            Escrow.release(contractId, actor.cid, { lines = stakeIds }, reason)
+        end
+    end
+
     local now = Storage.readContract(contractId)
     local nowState = now and now.state
     if nowState ~= CB.STATE.ACTIVE and nowState ~= CB.STATE.ACCEPTED then
-        if previous then
-            Storage.updateHunter(previous.id, { state = previousState, anon = previousAnon == true })
-        else
-            Storage.updateHunter(record.id, { state = 'withdrawn', left_at = os.time() })
-        end
-        if stakeIds and next(stakeIds) then
-            Escrow.release(contractId, actor.cid, { lines = stakeIds }, 'accept_on_closed')
-        end
-        refundFee()
+        unwind('accept_on_closed')
         Audit.rejected('accept_on_closed', actor.cid, contractId, { state = nowState })
         if nowState == CB.STATE.COMPLETING then return false, CB.ERR.LOCKED end
         return false, CB.ERR.ALREADY_SETTLED
+    end
+
+    -- The fee, now that the acceptance stands. Checked above; a balance
+    -- that moved since is refused the same way, never downgraded to a name.
+    if fee > 0 and not Util.charge(actor.player, feeAccount, fee) then
+        unwind('anonymity_fee_failed')
+        if advanced then
+            Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'fee_failed')
+        end
+        Audit.rejected('anonymity_fee_failed', actor.cid, contractId, { amount = fee })
+        return false, CB.ERR.INSUFFICIENT
     end
 
     -- Competitive: advanced only now, with this hunter's stake and row in
@@ -1132,6 +1187,20 @@ end
 -- Slot claiming (§3.5)
 --------------------------------------------------------------------------
 
+--- Whether a contract's time is up: past its lifetime, or past a deadline
+--- whose clock was running. A paused clock stopped at `paused_since`, so a
+--- deadline that fell before the pause began is up however long the pause
+--- has lasted — the pass that ends the pause will find it so.
+---@param contract table
+---@param now integer
+---@return boolean
+function Contracts.isOverdue(contract, now)
+    if contract.expires_at and now > contract.expires_at then return true end
+    local deadline = contract.deadline_at
+    if not deadline then return false end
+    return (contract.paused_since or now) > deadline
+end
+
 --- Whether this hunter collected on this contract too recently to collect
 --- again. Asked by the claim and, ahead of it, by anything that makes a
 --- player spend time on a claim that is certain to be refused — a handover
@@ -1210,11 +1279,34 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment, opts)
     end
     contract, hunter, slot = held, fresh, held.next_slot or 1
 
+    -- Whose each of this collection's lines is, written before any of them
+    -- moves. The baseline and the bonus are released one after the other,
+    -- and a process that died between the two left the bonus held and owed
+    -- to nobody: recovery found the collection paid by its baseline, and
+    -- swept the bonus to the client — a live delivery's premium, earned and
+    -- never paid. Marked first, every line of the collection is owed to
+    -- whoever this claim decided it for, and recovery queues it for them.
+    local kidnap = fulfilment == CB.FULFILMENT.KIDNAPPING
+    local marks = {}
+    for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
+        if line.slot == slot and line.state == CB.ESCROW_STATE.HELD
+            and not line.owed_to and not line.releasing_to then
+            if line.portion == CB.PORTION.BASELINE then
+                line.owed_to = hunterCid
+                marks[#marks + 1] = line
+            elseif line.portion == CB.PORTION.BONUS then
+                line.owed_to = kidnap and hunterCid or contract.creator_cid
+                marks[#marks + 1] = line
+            end
+        end
+    end
+    if #marks > 0 then Storage.writeEscrow(contractId, marks) end
+
     -- A kidnapping releases the slot's baseline and its bonus; an elimination
     -- releases the baseline only, and the bonus returns to the creator.
     local _, baseline = Escrow.release(contractId, hunterCid, { slot = slot, portion = CB.PORTION.BASELINE }, 'payout_baseline')
     local bonus = { settled = 0, pending = 0 }
-    if fulfilment == CB.FULFILMENT.KIDNAPPING then
+    if kidnap then
         _, bonus = Escrow.release(contractId, hunterCid, { slot = slot, portion = CB.PORTION.BONUS }, 'payout_bonus')
     else
         Escrow.release(contractId, contract.creator_cid, { slot = slot, portion = CB.PORTION.BONUS }, 'bonus_unearned')
@@ -1775,7 +1867,7 @@ local function releaseUntouched(contract, forfeit)
             local recipient = contract.creator_cid
             if line.portion == CB.PORTION.STAKE then
                 local hunter = line.staker and Storage.readHunter(contract.id, line.staker)
-                local keeps = forfeit and hunter and hunter.state == 'active'
+                local keeps = forfeit and stakeForfeits(hunter, contract)
                 recipient = keeps and contract.creator_cid or line.staker
             end
             if recipient then
