@@ -245,6 +245,10 @@ local function buildListing(viewerCid, page)
             -- Whether this server runs buyouts at all, so the page can tell
             -- "the client offered none" from "there are none here".
             buyouts = Config.Bailout.Enabled == true,
+            -- Whether changes can be proposed at all. Absent, the page drew
+            -- Propose change on every card of a server with amendments off,
+            -- and every proposal was refused.
+            amendments = Config.Amendments.Enabled == true,
             -- What buying informant data costs, and whether it is offered
             -- at all. The app was asking a player to spend money without
             -- telling them how much, on a purchase that is deliberately

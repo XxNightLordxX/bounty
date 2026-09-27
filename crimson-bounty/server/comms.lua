@@ -100,6 +100,14 @@ function Comms.context(actor, contractId, threadHandle)
     local contract = Storage.readContract(contractId)
     if not contract then return nil, CB.ERR.NOT_FOUND end
 
+    -- A thread lives as long as its contract (§11.2). Nothing here asked,
+    -- and a hunter's row stays 'active' when a contract ends — only the
+    -- creator's handles are dropped — so a hunter could go on writing to
+    -- the client of a finished contract indefinitely, every message a
+    -- notification on their phone, while the client could no longer answer
+    -- and was told "That is not yours" about the conversation instead.
+    if CB.TERMINAL[contract.state] then return nil, CB.ERR.ALREADY_SETTLED end
+
     if contract.creator_cid == actor.cid then
         -- The creator names a thread by its handle, never by a citizen id.
         local hunterCid = resolveHandle(actor.cid, contractId, threadHandle)
@@ -191,6 +199,8 @@ function Comms.threads(actor, contractId)
 
     local contract = Storage.readContract(Util.toId(contractId) or '')
     if not contract then return {} end
+    -- Closed with its contract, like the threads themselves.
+    if CB.TERMINAL[contract.state] then return {} end
 
     if contract.creator_cid == actor.cid then
         local hunters = Storage.readHunters(contract.id)

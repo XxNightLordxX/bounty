@@ -323,6 +323,15 @@ function Kidnap.tick(deltaMs)
 
                     if state.elapsedMs >= (Config.Kidnap.CountdownSeconds * 1000) then
                         active[k] = nil
+                        -- Between here and the outcome below the countdown
+                        -- is neither running nor ended: the payout is being
+                        -- settled, and on mysql every step of that waits on
+                        -- the database. A poll landing in that gap found no
+                        -- countdown and no outcome and answered no_handover,
+                        -- which the page reads as "The handover ended. Get
+                        -- them back to the client and try again." — to a
+                        -- hunter who was being paid at that moment.
+                        remember(k, { outcome = 'settling' })
                         completions[#completions + 1] = {
                             contractId = state.contractId,
                             hunterCid  = state.hunterCid,
@@ -396,6 +405,8 @@ function Kidnap.tick(deltaMs)
                 and not active[k] then
                 countdown.pausedMs = (countdown.pausedMs or 0) + deltaMs
                 active[k] = countdown
+                -- Running again, so no longer "being paid right now".
+                outcomes[k] = nil
                 done.retrying = true
             end
         end

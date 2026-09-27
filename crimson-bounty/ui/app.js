@@ -58,7 +58,10 @@
     draft: {},
     // Open amendment proposals, keyed by contract. Read on demand rather
     // than carried in every listing row: most contracts have none.
-    proposals: {}
+    proposals: {},
+    // Half-typed messages, one per conversation — keyed by contract and
+    // operative, so a draft never turns up in somebody else's thread.
+    drafts: {}
   };
 
   /* ---------- diagnostics ----------------------------------------------
@@ -624,7 +627,18 @@
       input.id = 'dialog-value';
       input.min = opts.min !== undefined ? opts.min : 1;
       if (opts.max !== undefined) { input.max = opts.max; }
-      if (opts.value !== undefined && opts.value !== null) {
+      /* What the player typed, kept on the dialog rather than in the node.
+
+         This box was seeded from opts.value on every render, and render()
+         runs on any reply that lands — a push, a late board load, a face
+         arriving. The fields dialog was fixed for exactly this; this one was
+         not, and once it started opening on a figure rather than empty, a
+         redraw put that figure back under the player: 90 minutes typed, a
+         hunter accepts somewhere, the box reads 30 again and Extend sends
+         30. */
+      if (d.value !== undefined) {
+        input.value = d.value;
+      } else if (opts.value !== undefined && opts.value !== null) {
         input.value = String(opts.value);
       }
 
@@ -637,14 +651,16 @@
          nowhere to say it: Confirm on a bad value returned and said
          nothing, so the tap read as not having registered at all. */
       consequence = el('div', 'hint');
-      if (opts.hint) {
-        var showConsequence = function () {
-          var current = parseInt(input.value, 10);
-          consequence.textContent = opts.hint(isNaN(current) ? null : current) || '';
-        };
-        input.oninput = showConsequence;
+      var showConsequence = function () {
+        if (!opts.hint) { return; }
+        var current = parseInt(input.value, 10);
+        consequence.textContent = opts.hint(isNaN(current) ? null : current) || '';
+      };
+      input.oninput = function () {
+        d.value = input.value;
         showConsequence();
-      }
+      };
+      showConsequence();
       panel.appendChild(consequence);
     }
 
@@ -1216,9 +1232,13 @@
       };
       more.appendChild(quit);
 
-      var propose = el('button', 'ghost ico i-swap', 'Propose change');
-      propose.onclick = function () { proposeChange(contract); };
-      more.appendChild(propose);
+      // Not on a server with amendments switched off, where every proposal
+      // is refused.
+      if (settings().amendments !== false) {
+        var propose = el('button', 'ghost ico i-swap', 'Propose change');
+        propose.onclick = function () { proposeChange(contract); };
+        more.appendChild(propose);
+      }
 
       // Live progress if the countdown is running, otherwise the snapshot
       // that came with the projection.
@@ -1270,9 +1290,13 @@
       extend.onclick = function () { improveContract(contract); };
       more.appendChild(extend);
 
-      var change = el('button', 'ghost ico i-swap', 'Propose change');
-      change.onclick = function () { proposeChange(contract); };
-      more.appendChild(change);
+      // Not on a server with amendments switched off, where every proposal
+      // is refused.
+      if (settings().amendments !== false) {
+        var change = el('button', 'ghost ico i-swap', 'Propose change');
+        change.onclick = function () { proposeChange(contract); };
+        more.appendChild(change);
+      }
 
       // Only while nobody is holding it. Once a hunter has accepted they
       // accepted it as written, and the server refuses both of these — so
@@ -1349,8 +1373,9 @@
     bar.appendChild(fill);
     wrap.appendChild(bar);
 
-    wrap.appendChild(el('div', 'label',
-      progress.elapsed + 's of ' + progress.required + 's'));
+    wrap.appendChild(el('div', 'label', progress.settling
+      ? 'Held long enough — settling the payout…'
+      : progress.elapsed + 's of ' + progress.required + 's'));
 
     // The grace budget is one allowance for the whole countdown, not one per
     // break, so what is left of it is the number that actually matters.
@@ -1390,7 +1415,16 @@
       function () {
         post('cancel', { id: contract.id }).then(function (r) {
           if (!r.ok) { return fail(r); }
-          say('Contract withdrawn. Everything you put up has been returned.', 'gold');
+          // Not "everything has been returned" unconditionally. Something
+          // that would not fit is owed and handed over later, and the phone
+          // notification already says so — this said the opposite at the
+          // same moment, which is the case where a player counts their
+          // money, finds it short and reports it stolen.
+          var queued = (r.data && Number(r.data.queued)) || 0;
+          say(queued > 0
+            ? 'Contract withdrawn. Some of what you put up would not fit and is '
+              + 'waiting for you — it arrives when you next have room.'
+            : 'Contract withdrawn. Everything you put up has been returned.', 'gold');
           refresh();
         });
       });
@@ -1412,8 +1446,13 @@
     var fields = [];
 
     if (mode === 'preset' && presets.length) {
+      // Opens on the reason the contract already gives. It opened on no
+      // choice at all, which Save read as the first preset — so moving the
+      // deadline also replaced the reason with whatever was top of the list.
+      var currentPreset = presets.indexOf(contract.reason) + 1;
       fields.push({
         id: 'reasonPreset', label: 'Reason', type: 'select',
+        value: currentPreset > 0 ? currentPreset : undefined,
         // One-based, as the server indexes its own list.
         options: presets.map(function (text, i) {
           return { value: i + 1, label: text };
@@ -1425,15 +1464,33 @@
                     max: settings().reasonMaxLength || 140 });
     }
 
+    /* The deadline as it stands, not a fixed three hours.
+
+       The box always opened on 3 and Save always sent it, so a creator who
+       opened Edit to fix a word in the reason also moved the deadline to
+       three hours from now — cutting a contract with a day left down to
+       three hours, with nothing on screen saying the deadline had been
+       touched. It opens on what is left, and is sent only if changed. */
+    var left = minutesLeft(contract);
+    // With no deadline running there is nothing to preserve: the figure in
+    // the box is only a suggestion, and Save means it.
+    var suggested = left === null || left <= 0;
+    var hoursNow = suggested ? 3 : Math.min(48, Math.max(1, Math.ceil(left / 60)));
     fields.push({ id: 'hours', label: 'Hours from now to the deadline',
-                  type: 'number', value: 3, min: 1, max: 48 });
+                  type: 'number', value: hoursNow, min: 1, max: 48 });
 
     askFields('Edit this contract',
       'Only while nobody has taken it. To change what it pays, use Change '
         + 'reward.',
       fields,
       function (values) {
-        var seconds = (values.hours || 0) * 3600;
+        var seconds = (values.hours && (suggested || values.hours !== hoursNow))
+          ? values.hours * 3600 : 0;
+        // A picker left on no choice is no change, not the first preset.
+        var preset = parseInt(values.reasonPreset, 10) || 0;
+        if (!seconds && values.reason === undefined && !preset) {
+          return say('Nothing was changed.');
+        }
         // Only whichever field this server actually reads. The dialog draws
         // one or the other or neither, so the rest are undefined and do not
         // survive being encoded — sending the wrong one is how the deadline
@@ -1443,8 +1500,7 @@
           id: contract.id,
           deadlineSeconds: seconds > 0 ? seconds : undefined,
           reason: values.reason,
-          reasonPreset: values.reasonPreset === undefined
-            ? undefined : (parseInt(values.reasonPreset, 10) || 1)
+          reasonPreset: preset > 0 ? preset : undefined
         }).then(function (r) {
           if (!r.ok) { return fail(r); }
           say('Contract updated.', 'gold');
@@ -1738,7 +1794,10 @@
         var reasons = {
           limit_reached: 'You have already bought everything this informant '
             + 'will tell you about this contract.',
-          insufficient: 'You cannot afford the informant.',
+          // The code the server sends. This was keyed `insufficient`, which
+          // nothing sends, so the purchase fell through to the Place form's
+          // "You do not have that."
+          insufficient_funds: 'You cannot afford the informant.',
           not_participant: 'This is not yours to ask about.',
           bad_state: 'This server does not run informants.'
         };
@@ -1788,8 +1847,21 @@
     change_reason: function (p) {
       return 'Change the stated reason' + (p && p.reason ? ' to "' + p.reason + '"' : '');
     },
-    withdraw: function () { return 'Withdraw from this contract'; },
-    cancel: function () { return 'Cancel this contract outright'; }
+    /* Both kinds end the whole contract. The server applies an agreed
+       `withdraw` exactly as it applies `cancel` — the contract closes for
+       everyone on it and the escrow goes back to the client — and this read
+       "Withdraw from this contract", which a client and every other
+       operative read as one operative stepping away. Agreeing to that
+       closed the contract under all of them, and cost the client a
+       two-hour wait before they could list the same person again. */
+    withdraw: function () {
+      return 'Call the whole contract off — it closes for everyone on it, '
+        + 'and what the client put up goes back to them';
+    },
+    cancel: function () {
+      return 'Cancel this contract outright — it closes for everyone on '
+        + 'it, and what the client put up goes back to them';
+    }
   };
 
   function describeAmendment(proposal) {
@@ -1835,11 +1907,24 @@
       item.appendChild(el('div', 'who',
         proposal.mine ? 'Your proposal' : proposal.proposer + ' proposed this'));
 
-      if (proposal.mine || proposal.answered) {
-        item.appendChild(el('div', 'hint', proposal.waiting === 0
-          ? 'Waiting to be applied.'
-          : 'Waiting on ' + proposal.waiting
-              + (proposal.waiting === 1 ? ' other party.' : ' other parties.')));
+      var waiting = Number(proposal.waiting) || 0;
+      if ((proposal.mine || proposal.answered) && waiting === 0) {
+        /* Nobody else has to agree, so it is this player's answer that
+           applies it — the server applies a proposal on the last answer it
+           needs, and with nobody else on the contract that answer is theirs.
+           It was drawn as "Waiting to be applied." with nothing to press, so
+           it sat until it lapsed, held the contract's one open slot
+           meanwhile, and was then put to the next hunter to accept. */
+        item.appendChild(el('div', 'hint',
+          'Nobody else is on this contract to agree, so it is yours to apply.'));
+        var applyRow = el('div', 'row');
+        applyRow.appendChild(actionButton('primary', 'Apply it',
+          'amend:' + proposal.id, 'Sending…',
+          function () { return answerProposal(proposal, true); }));
+        item.appendChild(applyRow);
+      } else if (proposal.mine || proposal.answered) {
+        item.appendChild(el('div', 'hint', 'Waiting on ' + waiting
+              + (waiting === 1 ? ' other party.' : ' other parties.')));
       } else {
         // Both keyed on the proposal, so answering it disables BOTH — a
         // second tap on either used to send a second answer, and the reply
@@ -1903,6 +1988,10 @@
      a change neither could see the shape of. */
   function proposeChange(contract) {
     var hunter = contract.role === 'hunter';
+    // Nobody holds it: there is nobody to agree, and the creator's own
+    // confirmation applies it (sendProposal). Said so, rather than "if the
+    // operative agrees" about an operative who does not exist.
+    var untaken = !hunter && !(Number(contract.huntersActive) > 0);
     var pot = rewardTotal(contract);
     var left = minutesLeft(contract);
 
@@ -1925,14 +2014,15 @@
           askNumber('Shorten the deadline',
             hunter
               ? 'You are asking the client for less time than you have.'
-              : 'You are asking the operative to finish sooner.',
+              : (untaken ? 'Nobody has taken it, so this applies at once.'
+                         : 'You are asking the operative to finish sooner.'),
             function (minutes) {
               sendProposal(contract, 'shorten_deadline', { seconds: minutes * 60 });
             },
             {
               label: 'Cut it short by (minutes)',
               value: Math.min(30, left - 1), min: 1, max: left - 1,
-              confirm: 'Propose',
+              confirm: untaken ? 'Shorten' : 'Propose',
               hint: function (value) {
                 if (!value || value < 1 || value > left - 1) {
                   return 'Between 1 and ' + (left - 1) + ' minutes.';
@@ -1977,10 +2067,18 @@
         }
       },
       {
-        label: hunter ? 'Withdraw' : 'Cancel the contract',
+        label: hunter ? 'Call it off' : 'Cancel the contract',
+        // Not "hand it back": agreed, this closes the whole contract for
+        // everyone on it, the same as the client cancelling it. Walking away
+        // alone is Abandon.
         note: hunter
-          ? 'Hand it back with no penalty, if the client agrees.'
-          : 'Close it and take back what you put up, if the operative agrees.',
+          ? 'Ask for the whole contract to be cancelled. If everyone agrees it '
+            + 'closes for all of you, the client gets back what they put up, '
+            + 'and your stake comes back to you. To leave on your own, use '
+            + 'Abandon.'
+          : (untaken
+            ? 'Nobody has taken it, so it closes now and what you put up comes back.'
+            : 'Close it and take back what you put up, if the operative agrees.'),
         run: function () {
           sendProposal(contract, hunter ? 'withdraw' : 'cancel', {});
         }
@@ -1996,8 +2094,11 @@
       // that happened to carry it does not apply here.
       detail: 'Pays ' + money(pot) + ', ' + runsOut(left)
         + (total > 1 ? ', ' + total + ' collections' : '')
-        + '. Nothing happens until '
-        + (hunter ? 'the client' : 'the operative') + ' agrees.',
+        + (!hunter && !(Number(contract.huntersActive) > 0)
+          // Nobody holds it, so there is nobody to wait for.
+          ? '. Nobody has taken it, so this applies as soon as you confirm.'
+          : '. Nothing happens until '
+            + (hunter ? 'the client' : 'the operative') + ' agrees.'),
       // An option the server would refuse whatever the player enters is not
       // an option; it is a button that wastes their time and reads as a
       // fault. Dropped rather than drawn.
@@ -2026,6 +2127,17 @@
           return say(reasons[r.err]);
         }
         return fail(r);
+      }
+      /* Nobody else holds it, so nobody else has to agree: the server
+         applies a proposal on the last answer it needs, and on an untaken
+         contract that is the creator's own. It used to stop here and say
+         "The other party has to agree" about a party that did not exist,
+         leaving the proposal to lapse under "Waiting to be applied." — and
+         a collection given back this way is the one route the page has for
+         it, since the reward editor will not empty a collection. */
+      if (contract.role === 'creator' && !(Number(contract.huntersActive) > 0)
+          && r.data && r.data.id) {
+        return answerProposal({ id: r.data.id }, true);
       }
       say('Proposed. The other party has to agree.', 'gold');
       state.proposals = {};
@@ -2314,15 +2426,16 @@
      This only ever offered cash. A creator whose money is in the bank, or
      who deals in black money, had no way to sweeten a contract at all —
      the server has taken all three since the first commit. */
-  function addEscrow(contract) {
-    var wallet = state.wallet;
+  function addEscrow(contract, fresh) {
+    var wallet = fresh;
     if (!wallet) {
-      // The wallet is read when the Place form opens, and this can be
-      // reached without ever going there.
+      // Read now, every time. This used whatever wallet the Place form had
+      // read, however long ago, and told the creator "You hold $50,000"
+      // and offered up to it when they held a fraction of that.
       return post('rewardOptions', {}).then(function (r) {
         if (!r.ok || !r.data) { return fail(r); }
         state.wallet = r.data;
-        addEscrow(contract);
+        addEscrow(contract, r.data);
       });
     }
 
@@ -2383,6 +2496,47 @@
     render();
   }
 
+  /* Whether `open` is the conversation with this operative on this contract.
+
+     A contract is not a conversation: a creator on a competitive contract
+     has one thread per operative. Matching on the contract alone is how a
+     message half-typed to one operative was waiting, pre-filled, in the
+     next operative's box — and went to them on Send. */
+  function threadKey(contract, thread) {
+    return (contract && contract.id) + '|' + ((thread && thread.handle) || '');
+  }
+
+  function sameThread(open, contract, thread) {
+    return !!(open && open.contract)
+      && threadKey(open.contract, open.thread) === threadKey(contract, thread);
+  }
+
+  /* What a thread that can no longer be read means, in words. The shared
+     table says "That is not yours." for not_participant, which is what the
+     creator of a contract that has just closed was told on every push,
+     sitting in front of a conversation they had been part of a moment ago. */
+  var THREAD_GONE = {
+    already_settled: 'That contract has closed, and its conversation closed '
+      + 'with it.',
+    not_participant: 'That conversation is no longer open — the contract '
+      + 'has ended or the operative is no longer on it. If the contract is '
+      + 'still running, open it again from Mine.'
+  };
+
+  /* Leave a thread the server will not serve any more, rather than sitting
+     in front of it with a compose box every Send of which is refused. */
+  function leaveDeadThread(r, contract, thread) {
+    if (!THREAD_GONE[r.err]) { return false; }
+    if (state.tab === 'thread' && sameThread(state.thread, contract, thread)) {
+      state.thread = null;
+      state.tab = 'mine';
+      render();
+      refresh();
+    }
+    say(THREAD_GONE[r.err]);
+    return true;
+  }
+
   // Threads are addressed by an opaque server-issued handle, never by a
   // citizen id — the creator is not told who the operative is.
   function openThread(contract, thread) {
@@ -2390,18 +2544,16 @@
     // what happens after every send and on every push, so without this the
     // box emptied itself under anyone composing a second message.
     //
-    // The same THREAD, not merely the same contract. A creator with several
-    // operatives has a thread per operative, and a message half-written to
-    // one of them used to be waiting in the box of the next one opened, one
-    // tap from reaching the wrong person.
-    var handleOf = function (t) { return (t && t.handle) || null; };
-    var keep = (state.thread && state.thread.contract
-      && state.thread.contract.id === contract.id
-      && handleOf(state.thread.thread) === handleOf(thread)) ? state.thread.draft : '';
+    // The same thread only — the same operative on the same contract — so a
+    // draft never follows the player into a conversation with somebody else.
+    var keep = state.drafts[threadKey(contract, thread)] || '';
 
     return post('readThread', { id: contract.id, thread: thread ? thread.handle : null })
       .then(function (r) {
-        if (!r.ok) return fail(r);
+        if (!r.ok) {
+          if (leaveDeadThread(r, contract, thread)) { return; }
+          return fail(r);
+        }
         state.thread = { contract: contract, thread: thread,
                          messages: asList(r.data), draft: keep };
         state.tab = 'thread';
@@ -2473,8 +2625,26 @@
       // instant Enter was pressed, so a message the server refused — too
       // long, too fast, a thread that had closed — took the player's words
       // with it and left them retyping something they could not see.
-      if (!r.ok) { return fail(r); }
+      if (!r.ok) {
+        if (leaveDeadThread(r, t.contract, t.thread)) { return; }
+        return fail(r);
+      }
       t.draft = '';
+      // Only if it is still what was sent: the player may have started the
+      // next message while this one was in flight.
+      var key = threadKey(t.contract, t.thread);
+      if (state.drafts[key] === body) { delete state.drafts[key]; }
+      // A push can have re-read the thread while this was in flight, which
+      // replaces state.thread with a copy still holding what was just sent.
+      if (sameThread(state.thread, t.contract, t.thread)
+          && state.thread.draft === body) {
+        state.thread.draft = '';
+      }
+      // Only if the player is still in this conversation. Reopening it
+      // regardless pulled them out of whichever thread they had moved to.
+      if (state.tab !== 'thread' || !sameThread(state.thread, t.contract, t.thread)) {
+        return;
+      }
       return openThread(t.contract, t.thread);
     });
   }
@@ -2718,20 +2888,27 @@
     input.placeholder = 'Say something';
     input.maxLength = 200;
     input.value = t.draft || '';
-    input.oninput = function () { t.draft = input.value; };
+    input.oninput = function () {
+      t.draft = input.value;
+      state.drafts[threadKey(t.contract, t.thread)] = input.value;
+    };
+
+    // Per conversation, not per contract: a send to one operative must not
+    // lock the box in another's thread.
+    var busyKey = 'message:' + threadKey(t.contract, t.thread);
 
     function send() {
       var body = input.value;
       if (!body) { return; }
-      once('message:' + t.contract.id, function () { return sendMessage(body); });
+      once(busyKey, function () { return sendMessage(body); });
     }
 
     input.onkeydown = function (e) { if (e.key === 'Enter') { send(); } };
     field.appendChild(input);
 
     var go = el('button', 'primary',
-      isBusy('message:' + t.contract.id) ? 'Sending\u2026' : 'Send');
-    if (isBusy('message:' + t.contract.id)) { go.disabled = true; }
+      isBusy(busyKey) ? 'Sending\u2026' : 'Send');
+    if (isBusy(busyKey)) { go.disabled = true; }
     else { go.onclick = send; }
     field.appendChild(go);
 
@@ -3421,6 +3598,23 @@
             + 'Pick the items and weapons again.');
           return render();
         }
+        /* The person picked is no longer one the server can name: they left
+           the city, or the pick came from a list read long enough ago that
+           its handles have lapsed. This read "Check what you entered." on a
+           form with nothing wrong in it, and picking them again from the
+           same list sent the same dead handle — the list is kept and never
+           re-read — so it failed the same way for as long as the player
+           kept trying. The pick is dropped and the list asked for again. */
+        if (r.err === 'not_found') {
+          delete state.draft.target;
+          delete state.draft.targetName;
+          delete state.draft.targetProtected;
+          state.browse.data = null;
+          state.browse.pending = null;
+          say('That person cannot be picked any more — they may have left '
+            + 'the city. The list has been read again; choose who this is for.');
+          return render();
+        }
         return fail(r);
       }
       say('Contract placed.', 'gold');
@@ -3944,7 +4138,22 @@
       // wallet used to leave an error card where both pickers should be for
       // the rest of the session, since the form only re-asks when it holds
       // neither a wallet nor a failure.
-      if (state.tab === 'place') { state.walletFailed = null; }
+      //
+      // And it is read afresh, not kept. The wallet was read on the first
+      // open and never again until a contract was placed, so every balance
+      // on the form — and every item and weapon offered — was whatever the
+      // player had been carrying then: a stake paid, a buyout, a refund or
+      // a purchase anywhere in the city since, and the form showed money
+      // they no longer had, then refused the contract with "You do not have
+      // that" beside a balance saying they did.
+      if (state.tab === 'place') {
+        state.walletFailed = null;
+        state.wallet = null;
+        // The list is read afresh too. Its handles lapse after a while, and
+        // re-reading it is what renews them.
+        state.browse.data = null;
+        state.browse.pending = null;
+      }
 
       render();
       // Opening a tab is when a player expects to see current state.

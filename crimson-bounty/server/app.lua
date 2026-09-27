@@ -485,8 +485,20 @@ function App.register()
     -- Contracts ---------------------------------------------------------
 
     handler('create', 'create', function(actor, payload)
+        -- A handle that no longer resolves is a person who cannot be named
+        -- any more — the handle lapsed, or they left and took their handles
+        -- with them — not a field the player typed wrong. It answered
+        -- INVALID_INPUT, "Check what you entered.", on a form with nothing
+        -- wrong in it; NOT_FOUND is what the same person already produces
+        -- when they log off between being picked and being placed, and the
+        -- page re-reads the list on it.
         local targetCid = App.resolveTargetHandle(actor.cid, payload.target)
-        if not targetCid then return false, CB.ERR.INVALID_INPUT end
+        if not targetCid then
+            if type(payload.target) ~= 'string' or payload.target == '' then
+                return false, CB.ERR.INVALID_INPUT
+            end
+            return false, CB.ERR.NOT_FOUND
+        end
 
         local contract, err = deps.contracts.create(actor, {
             targetCid     = targetCid,
@@ -523,9 +535,12 @@ function App.register()
     -- Both are creator-only and both are refused the moment somebody is
     -- actually hunting it.
     handler('cancel', 'accept', function(actor, payload)
-        local ok, err = deps.contracts.cancel(actor, payload.id)
+        local ok, err, result = deps.contracts.cancel(actor, payload.id)
         if not ok then return false, err end
-        return { id = payload.id }
+        -- How much could not be handed back yet, so the page does not say
+        -- "everything has been returned" beside a phone notification saying
+        -- some of it is waiting.
+        return { id = payload.id, queued = result and result.owed or 0 }
     end)
 
     handler('revise', 'amend', function(actor, payload)
@@ -650,6 +665,14 @@ function App.register()
             -- was told it had ended and to try again. Keyed by this actor's
             -- own citizen id, so it only ever describes their own handover.
             local ended = deps.kidnap.outcome and deps.kidnap.outcome(id, actor.cid)
+            -- Held long enough and being paid right now. Answered as a full
+            -- bar rather than as an ending, so the page keeps asking and
+            -- hears how the payout went.
+            if ended and ended.outcome == 'settling' then
+                return { settling = true,
+                         elapsed = Config.Kidnap.CountdownSeconds,
+                         required = Config.Kidnap.CountdownSeconds }
+            end
             if ended then
                 return { done = true, outcome = ended.outcome,
                          reason = ended.reason, pending = ended.pending }

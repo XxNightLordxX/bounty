@@ -2229,13 +2229,50 @@ async function main() {
 
     // Asking again after it has one would be the same waste by another
     // route, so the settled form must not re-ask on a later rebuild either.
+    //
+    // A rebuild, not a return to the tab: a push lands and everything is
+    // redrawn. Opening the tab again is the player asking for the form as it
+    // is now, and that does read the wallet again (below).
     const afterArrival = inFlightCalls;
-    await toPlace(chatty);
-    await settle();
+    chatty.sandbox.window._message({ data: { type: 'push', reason: 'accepted' } });
+    chatty.timers.filter(function (t) { return t.ms === 250 && !t.cleared; })
+      .forEach(function (t) { t.cleared = true; t.fn(); });
+    await settle(); await settle();
 
     it('and does not ask again once it has one', function () {
       eq(inFlightCalls, afterArrival,
         're-rendered the form and asked for a wallet it already had');
+    });
+
+    /* But opening the form again does read it again.
+
+       It was read on the first open and never after until a contract was
+       placed, so every balance on the form was whatever the player carried
+       then — a stake paid, a buyout, a purchase anywhere in the city since,
+       and the form offered money they no longer had and was then refused
+       with "You do not have that" beside a balance saying they did. */
+    let walletReads = 0;
+    const moving = boot(base({
+      browseTargets: { ok: true, data: { people: [], total: 0, page: 1, pages: 1 } },
+      rewardOptions: function () {
+        walletReads++;
+        return { ok: true, data: { cash: walletReads === 1 ? 50000 : 1200, bank: 0,
+          dirty: 0, items: [], weapons: [], inventoryRead: true, caps: {} } };
+      }
+    }));
+    await settle(); await settle();
+    await toPlace(moving);
+    const firstBalance = (moving.view.textContent.match(/Cash \$[\d,]+/) || [])[0];
+    moving.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'board'; })[0].onclick();
+    await settle();
+    await toPlace(moving);
+    const secondBalance = (moving.view.textContent.match(/Cash \$[\d,]+/) || [])[0];
+
+    it('reads the wallet again when the form is opened again', function () {
+      eq(firstBalance, 'Cash $50,000');
+      eq(secondBalance, 'Cash $1,200',
+        'the form went on showing a balance read on its first opening');
     });
 
     /* The filter box is rebuilt empty on every render, but the remembered
@@ -2710,6 +2747,20 @@ async function main() {
         'that is a different rule entirely: ' + bought.notice());
       truthy(bought.notice().indexOf('informant') !== -1,
         'and it has to say what this one was: ' + bought.notice());
+    });
+
+    /* The server refuses a purchase the buyer cannot cover as
+       insufficient_funds. The page had words for a code nothing sends, so
+       this fell through to the Place form's "You do not have that." */
+    const broke = await onMine({
+      informant: { ok: false, err: 'insufficient_funds' }
+    });
+    click(broke, 'Buy informant data');
+    click(broke, 'Yes');
+    await settle();
+
+    it('says the informant is what they cannot afford', function () {
+      truthy(broke.notice().indexOf('afford the informant') !== -1, broke.notice());
     });
 
     /* The price, before they agree to pay it. */
@@ -5127,7 +5178,7 @@ async function main() {
       tab(app, 'mine');
       await settle(); await settle();
       click(app, 'Propose change');
-      click(app, 'Withdraw');
+      click(app, 'Call it off');
       await settle(); await settle();
       it('says a change is already waiting, not that they hold too much', function () {
         const said = app.notice();
@@ -5722,6 +5773,418 @@ async function main() {
     })();
   })();
 
+
+  /* ---------- the page walked as each role ----------------------------
+
+     Found by walking every tab as creator, hunter, target and a player with
+     nothing, against the shapes the server really sends. Each is something
+     the page did that a player would act on, and each fails on the page as
+     it was. */
+  await (async function walkedAsEachRole() {
+    function nowSeconds() { return Math.floor(Date.now() / 1000); }
+    function placedCard(extra) {
+      return Object.assign({
+        id: 'ct00000009', reason: 'Owes money', mode: 'competitive', state: 'accepted',
+        reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+        huntersActive: 1, huntersMax: 5, targetName: 'Dana Reyes', targetProtected: false,
+        creatorName: 'Vic Marlowe', role: 'creator', deadline: nowSeconds() + 3 * 3600,
+        penaltyAmount: 0,
+        hunters: [{ alias: 'Operative #1', claims: 0, record: { standing: 'Unproven' } }]
+      }, extra || {});
+    }
+    function boardWith(settings) {
+      return { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: Object.assign({ relay: true, calls: false, deadlineMaxMinutes: 2880,
+          buyouts: true, amendments: true }, settings || {}) } };
+    }
+    function pushNow(app) {
+      app.sandbox.window._message({ data: { type: 'push', reason: 'accepted' } });
+      app.timers.filter(function (t) { return t.ms === 250 && !t.cleared; })
+        .forEach(function (t) { t.cleared = true; t.fn(); });
+    }
+    function buttonLabels(app) {
+      return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+    }
+    function composeBox(app) {
+      return app.view.all().filter(function (n) {
+        return n.tagName === 'INPUT' && n.placeholder === 'Say something';
+      })[0];
+    }
+
+    /* A number typed into a dialog, and a push landing before Confirm.
+
+       The box was re-seeded from its opening figure on every render, so
+       90 minutes typed became 30 again under the player and Extend sent
+       30. The fields dialog was fixed for this long ago; this one was not. */
+    await (async function numberDialogKeepsWhatWasTyped() {
+      let improved = null;
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [placedCard()], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        improve: function (body) { improved = body; return { ok: true, data: true }; }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Extend deadline');
+      const box = app.document.getElementById('dialog-value');
+      box.value = '90'; box.oninput();
+      pushNow(app);
+      await settle(); await settle(); await settle();
+
+      it('keeps a typed figure when the dialog is redrawn under it', function () {
+        eq(app.document.getElementById('dialog-value').value, '90',
+          'the redraw put the opening figure back in the box');
+      });
+
+      click(app, 'Extend');
+      await settle();
+      it('and sends the figure that was typed', function () {
+        truthy(improved, 'nothing was sent');
+        eq(improved.payload.seconds, 90 * 60);
+      });
+      drewCleanly(app, 'the extend dialog');
+    })();
+
+    /* A creator with two operatives, writing to the first, then opening the
+       second. The draft was kept per contract, so it was waiting pre-filled
+       in the second operative's box and went to them on Send. */
+    await (async function draftStaysWithItsOperative() {
+      const sent = [];
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [placedCard({ huntersActive: 2, hunters: [
+          { alias: 'Operative #1', claims: 0, record: { standing: 'Unproven' } },
+          { alias: 'Operative #2', claims: 0, record: { standing: 'Unproven' } }] })],
+          accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        threads: { ok: true, data: [{ handle: 'thA', alias: 'Operative #1' },
+                                    { handle: 'thB', alias: 'Operative #2' }] },
+        readThread: { ok: true, data: [] },
+        sendMessage: function (body) { sent.push(body); return { ok: true, data: true }; }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Threads'); await settle(); await settle();
+      click(app, 'Operative #1'); await settle(); await settle();
+      const first = composeBox(app);
+      first.value = 'Meet me at the pier at ten'; first.oninput();
+      click(app, 'Back'); await settle();
+      click(app, 'Threads'); await settle(); await settle();
+      click(app, 'Operative #2'); await settle(); await settle();
+
+      it('does not carry a draft into another operative’s thread', function () {
+        eq(composeBox(app).value, '',
+          'words typed to one operative were waiting in the next one’s box');
+      });
+
+      click(app, 'Back'); await settle();
+      click(app, 'Threads'); await settle(); await settle();
+      click(app, 'Operative #1'); await settle(); await settle();
+      it('but keeps it for the operative it was written to', function () {
+        eq(composeBox(app).value, 'Meet me at the pier at ten');
+      });
+      it('and sent nothing on the way', function () { eq(sent.length, 0); });
+    })();
+
+    /* The contract closes while its thread is open. The re-read on the push
+       was refused, and the page stayed in front of the conversation saying
+       "That is not yours." on every push after. */
+    await (async function closedThreadIsLeft() {
+      let open = true;
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [placedCard({ role: 'hunter',
+          hunters: undefined, myAlias: 'Operative #1' })], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        readThread: function () {
+          return open ? { ok: true, data: [] } : { ok: false, err: 'already_settled' };
+        }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Message'); await settle(); await settle();
+      truthy(composeBox(app), 'the thread opened');
+
+      open = false;
+      pushNow(app);
+      await settle(); await settle(); await settle();
+
+      it('leaves a thread whose contract has closed', function () {
+        falsy(!!composeBox(app), 'a compose box every Send of which is refused');
+      });
+      it('and says the contract closed, not that it is not theirs', function () {
+        truthy(app.notice().indexOf('closed') !== -1, app.notice());
+        falsy(app.notice().indexOf('not yours') !== -1, app.notice());
+      });
+    })();
+
+    /* The Edit dialog, opened to fix a word in the reason. It opened on a
+       fixed three hours and always sent it, so saving a reason cut a
+       contract with most of a day left down to three hours. */
+    await (async function editLeavesTheDeadlineAlone() {
+      let revised = null;
+      const card = placedCard({ state: 'active', huntersActive: 0, hunters: [],
+        deadline: nowSeconds() + 20 * 3600 });
+      const app = boot({
+        list: boardWith({ reasonMode: 'freetext' }), ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        revise: function (body) { revised = body; return { ok: true, data: { id: body.id } }; }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Edit');
+
+      it('opens the deadline on what is left, not on three hours', function () {
+        eq(app.document.getElementById('dialog-hours').value, '20');
+      });
+
+      const reason = app.document.getElementById('dialog-reason');
+      reason.value = 'Owes money, and lied about it'; reason.oninput();
+      click(app, 'Save'); await settle();
+
+      it('sends the reason and leaves the deadline where it was', function () {
+        truthy(revised, 'nothing was sent');
+        eq(revised.reason, 'Owes money, and lied about it');
+        falsy('deadlineSeconds' in revised && revised.deadlineSeconds !== undefined,
+          'a reason edit moved the deadline: ' + JSON.stringify(revised));
+      });
+    })();
+
+    // The same dialog on a preset server: moving the deadline replaced the
+    // reason with the first preset, because the picker opened on nothing.
+    await (async function editKeepsThePresetReason() {
+      let revised = null;
+      const card = placedCard({ state: 'active', huntersActive: 0, hunters: [],
+        reason: 'Snitching', deadline: nowSeconds() + 2 * 3600 });
+      const app = boot({
+        list: boardWith({ reasonMode: 'preset',
+          reasonPresets: ['Unpaid debt', 'Snitching', 'Territory dispute'] }),
+        ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        revise: function (body) { revised = body; return { ok: true, data: { id: body.id } }; }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Edit');
+      const hours = app.document.getElementById('dialog-hours');
+      hours.value = '6'; hours.oninput();
+      click(app, 'Save'); await settle();
+
+      it('keeps the preset the contract already gives', function () {
+        truthy(revised, 'nothing was sent');
+        eq(revised.reasonPreset, 2, 'the reason was replaced with the first preset');
+        eq(revised.deadlineSeconds, 6 * 3600);
+      });
+    })();
+
+    /* A proposal on a contract nobody holds. The creator's own answer is
+       the one that applies it, and the page drew it as "Waiting to be
+       applied." with nothing to press — so it lapsed, held the one open
+       slot, and was then put to the next hunter to accept. */
+    await (async function untakenProposalApplies() {
+      const calls = [];
+      const card = placedCard({ state: 'active', huntersActive: 0, hunters: [], slots: 2 });
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        propose: function (body) { calls.push(['propose', body]); return { ok: true, data: { id: 'am00000001' } }; },
+        respondAmendment: function (body) {
+          calls.push(['respond', body]); return { ok: true, data: { outcome: 'applied' } };
+        }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Propose change');
+
+      it('does not tell a creator of an untaken contract to wait for an operative', function () {
+        falsy(app.view.textContent.indexOf('until the operative agrees') !== -1,
+          app.view.textContent);
+      });
+
+      click(app, 'Give back the last payout');
+      click(app, 'Yes');
+      await settle(); await settle(); await settle();
+
+      it('applies it with the creator’s own answer', function () {
+        eq(calls.map(function (c) { return c[0]; }).join(','), 'propose,respond');
+        eq(calls[1][1].id, 'am00000001');
+        eq(calls[1][1].approve, true);
+      });
+      it('and says it is done', function () {
+        truthy(app.notice().indexOf('in effect') !== -1, app.notice());
+      });
+    })();
+
+    // And one left open with nobody else to answer it — the operatives
+    // walked away — offers the answer that applies it.
+    await (async function strandedProposalCanBeApplied() {
+      let answered = null;
+      const card = placedCard({ state: 'active', huntersActive: 0, hunters: [] });
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [{ id: 'am00000002', kind: 'shorten_deadline',
+          payload: { seconds: 1800 }, proposer: 'Vic Marlowe', mine: true,
+          answered: true, waiting: 0 }] },
+        respondAmendment: function (body) { answered = body; return { ok: true, data: { outcome: 'applied' } }; }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+
+      it('does not claim a proposal nobody can answer is waiting to be applied', function () {
+        falsy(app.view.textContent.indexOf('Waiting to be applied') !== -1,
+          app.view.textContent);
+      });
+      click(app, 'Apply it');
+      await settle(); await settle();
+      it('offers the answer that applies it', function () {
+        truthy(answered, 'nothing was sent');
+        eq(answered.approve, true);
+      });
+    })();
+
+    // A server with amendments switched off refuses every proposal.
+    await (async function noProposalsWhereThereAreNone() {
+      const app = boot({
+        list: boardWith({ amendments: false }), ledger: LEDGER,
+        mine: { ok: true, data: { created: [placedCard()], accepted: [placedCard({
+          id: 'ct00000010', role: 'hunter', hunters: undefined })], onMe: [] } },
+        amendments: { ok: true, data: [] }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      it('draws no Propose change where the server takes none', function () {
+        eq(buttonLabels(app).filter(function (l) { return l === 'Propose change'; }).length, 0,
+          buttonLabels(app).join(' | '));
+      });
+    })();
+
+    /* An agreed "withdraw" closes the whole contract — the server applies it
+       exactly as it applies cancel. The client and every other operative
+       were shown "Withdraw from this contract", which reads as one operative
+       stepping away. */
+    await (async function withdrawSaysWhatItDoes() {
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [placedCard()], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [{ id: 'am00000003', kind: 'withdraw', payload: {},
+          proposer: 'Operative #1', mine: false, answered: false, waiting: 2 }] }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      it('tells the client that agreeing ends the whole contract', function () {
+        const text = app.view.textContent;
+        truthy(text.indexOf('whole contract') !== -1 || text.indexOf('closes for everyone') !== -1,
+          text);
+      });
+    })();
+
+    /* A pick that can no longer be named: its handle lapsed, or the person
+       left. It read "Check what you entered.", and picking them again from
+       the kept list sent the same dead handle every time. */
+    await (async function deadPickIsDropped() {
+      const creates = [];
+      let reads = 0;
+      const app = boot({
+        list: boardWith(), ledger: LEDGER, mine: MINE,
+        rewardOptions: { ok: true, data: { cash: 100000, bank: 50000, dirty: 0,
+          items: [], weapons: [], caps: {} } },
+        browseTargets: function () {
+          reads++;
+          return { ok: true, data: { people: [{ handle: 'tg0000000' + reads,
+            name: 'Dana Reyes', protected: false }], total: 1, page: 1, pages: 1 } };
+        },
+        create: function (body) {
+          creates.push(body.target);
+          return body.target === 'tg00000001'
+            ? { ok: false, err: 'not_found' } : { ok: true, data: {} };
+        }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'place'); await settle(); await settle(); await settle();
+      function person() {
+        return app.view.all().filter(function (n) {
+          return n.tagName === 'BUTTON' && n._className.indexOf('person') === 0;
+        })[0];
+      }
+      person().onclick();
+      const cash = app.document.getElementById('slot-cash-1');
+      cash.value = '5000'; cash.oninput();
+      click(app, 'Place contract'); await settle(); await settle(); await settle();
+
+      it('says the person cannot be picked any more, not to check the form', function () {
+        falsy(app.notice().indexOf('Check what you entered') !== -1, app.notice());
+        truthy(app.notice().indexOf('choose') !== -1, app.notice());
+      });
+      it('reads the list again for fresh picks', function () { eq(reads, 2); });
+
+      person().onclick();
+      click(app, 'Place contract'); await settle(); await settle();
+      it('and the next pick is a live one', function () {
+        eq(JSON.stringify(creates), JSON.stringify(['tg00000001', 'tg00000002']));
+      });
+    })();
+
+    // Withdrawing a contract whose refund would not all fit.
+    await (async function withdrawSaysWhatIsWaiting() {
+      const card = placedCard({ state: 'active', huntersActive: 0, hunters: [] });
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        cancel: { ok: true, data: { id: 'ct00000009', queued: 2 } }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Withdraw'); click(app, 'Yes'); await settle(); await settle();
+      it('does not say everything came back when some of it is waiting', function () {
+        falsy(app.notice().indexOf('Everything you put up has been returned') !== -1,
+          app.notice());
+        truthy(app.notice().indexOf('waiting for you') !== -1, app.notice());
+      });
+    })();
+
+    /* The poll that lands while a finished handover is being paid. It used
+       to stop the poller at a full bar — the one place the outcome is read
+       — so a hunter who had been paid was never told. */
+    await (async function paidHandoverIsReported() {
+      const replies = [
+        { ok: true, data: { elapsed: 29, required: 30, graceLeft: 3000, graceTotal: 3000 } },
+        { ok: true, data: { settling: true, elapsed: 30, required: 30 } },
+        { ok: true, data: { done: true, outcome: 'paid' } }
+      ];
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [placedCard({ role: 'hunter',
+          hunters: undefined })], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        armKidnap: { ok: true, data: { armed: true } },
+        kidnapProgress: function () { return replies.shift() || { ok: false, err: 'no_handover' }; }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Deliver alive'); await settle(); await settle();
+      const poll = app.timers.filter(function (t) { return t.repeating && t.ms === 1000; })[0];
+      truthy(poll, 'the poller started');
+      // Only while it is still running, as a browser would: a stopped
+      // interval does not fire again.
+      for (let i = 0; i < 3; i++) {
+        if (!poll.cleared) { poll.fn(); }
+        await settle(); await settle();
+      }
+
+      it('tells a hunter who was paid that they were paid', function () {
+        truthy(app.notice().indexOf('Delivered') !== -1,
+          'the poller stopped at a full bar and never heard how it ended: '
+          + app.notice());
+      });
+    })();
+  })();
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

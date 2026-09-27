@@ -1137,7 +1137,7 @@ function Contracts.cancel(actor, contractId)
              .. 'would not fit and are waiting for you — they arrive when you '
              .. 'next have room.'):format(owed)
         or 'Nobody had taken it, so everything you put up has been returned.')
-    return true
+    return true, nil, { owed = owed }
 end
 
 --- Change a contract nobody has taken.
