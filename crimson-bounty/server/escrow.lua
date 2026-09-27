@@ -643,6 +643,31 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
     local lines = Storage.readEscrow(contractId)
     local result = { settled = 0, pending = 0, skipped = 0, refused = 0 }
 
+    --- Line ids already waiting in this recipient's retry queue.
+    ---
+    --- A cancel, an expiry or a buyout releases to the creator and then
+    --- finalise() sweeps the "unclaimed remainder" to the SAME creator. For a
+    --- creator who is offline the first pass queues every line, and the second
+    --- re-claims each one — it is owed to them, not to somebody else, so the
+    --- filter lets it through — fails to deliver again, and queued it a second
+    --- time. No backend de-duplicates the queue. Measured: nine entries for
+    --- five lines, and on login a retry budget of five spent partly on
+    --- duplicates, so which part of the payout actually arrived depended on
+    --- the order the store handed the rows back, while the app told the player
+    --- their outstanding payment had been delivered.
+    ---
+    --- Read once, and only when a delivery has actually failed.
+    local queuedAlready
+    local function isQueued(lineId)
+        if not queuedAlready then
+            queuedAlready = {}
+            for _, entry in ipairs(Storage.readPending(recipientCid) or {}) do
+                queuedAlready[entry.line_id] = true
+            end
+        end
+        return queuedAlready[lineId] == true
+    end
+
     for i = 1, #lines do
         local line = lines[i]
         local matches = true
@@ -736,10 +761,18 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
                     -- The mark matters: without it a later unfiltered refund
                     -- would sweep a hunter's undelivered payout to the
                     -- creator, quietly paying the wrong person.
+                    local alreadyQueued = line.owed_to == recipientCid
+                        and isQueued(line.id)
+
                     line.owed_to = recipientCid
                     Storage.writeEscrow(contractId, { line })
                     Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
-                    Storage.queuePending(recipientCid, contractId, line.id)
+                    if not alreadyQueued then
+                        Storage.queuePending(recipientCid, contractId, line.id)
+                        -- Kept current if it has been read, so a second line
+                        -- in this same pass sees the first one's entry.
+                        if queuedAlready then queuedAlready[line.id] = true end
+                    end
                     result.pending = result.pending + 1
                 end
             end

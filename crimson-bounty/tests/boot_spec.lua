@@ -1083,3 +1083,50 @@ describe('the loader and the wait in front of it', function()
         eq(told, '', 'a normal start says nothing: ' .. told)
     end)
 end)
+
+describe('stopping the resource in memory mode', function()
+    --- The config says this mode "releases all open escrow on shutdown rather
+    --- than losing it". It did not release a line already owed to somebody —
+    --- the stake sweep names a portion those lines do not have, the creator
+    --- refund deliberately skips anything owed to someone else, and a finished
+    --- contract was not visited at all.
+    it('hands over a payout that was waiting for its owner to come back', function()
+        local main, modules = boot()
+        local f = fixture(modules)
+        Env.players[1].PlayerData.money.bank = 400000
+
+        local c = modules.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+
+        -- The creator crashes; the contract is cancelled for them; the refund
+        -- cannot be handed over, so it is owed.
+        local creator = Env.players[1]
+        Env.removePlayer(1)
+        truthy(modules.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1',
+            nil, 'test'))
+
+        local owed = false
+        for _, line in ipairs(modules.storage.readEscrow(c.id)) do
+            if line.owed_to == 'CREATOR1' then owed = true end
+        end
+        truthy(owed, 'the refund has to be owed, or this measures nothing')
+
+        -- They come back, and the resource stops before the login retry runs.
+        Env.addPlayer({ source = 1, citizenid = 'CREATOR1', license = 'license:aaa',
+                        cash = creator.PlayerData.money.cash,
+                        bank = creator.PlayerData.money.bank })
+        local before = Env.players[1].PlayerData.money.cash
+                     + Env.players[1].PlayerData.money.bank
+
+        Env.handlers['onResourceStop'](GetCurrentResourceName())
+
+        eq(Env.players[1].PlayerData.money.cash
+           + Env.players[1].PlayerData.money.bank - before, 5000,
+           'the tables go with the resource, so money owed and not handed over '
+           .. 'here is money that no longer exists anywhere')
+        local _ = main
+    end)
+end)

@@ -913,6 +913,38 @@ AddEventHandler('onResourceStop', function(name)
         local contracts = Storage.allContracts()
         for i = 1, #contracts do
             local c = contracts[i]
+
+            -- Money already promised to one named person, on EVERY contract
+            -- whatever state it is in.
+            --
+            -- A payout that could not be handed over when it was earned — a
+            -- hunter whose pockets were full, a creator who had logged off
+            -- before an unearned bonus came back — is marked owed_to and
+            -- delivered at that player's next login. In memory mode there is
+            -- no next login: the tables go with the resource. The config says
+            -- this mode "releases all open escrow on shutdown rather than
+            -- losing it", and both sweeps below stepped straight past these
+            -- lines — the stake loop names a portion they do not have, and the
+            -- creator refund deliberately skips anything owed to somebody
+            -- else. Worse, a finished contract was not visited at all, and a
+            -- completed contract is exactly where a claimed payout and an
+            -- unearned bonus end up.
+            --
+            -- Released by name, so the release is authorised to move money
+            -- that is spoken for. A recipient who is still offline gets
+            -- nothing, and nothing here can change that; one who is online —
+            -- back from the crash that queued it, or never gone — is paid.
+            local owed = {}
+            for _, line in ipairs(Storage.readEscrow(c.id) or {}) do
+                if line.owed_to and line.state ~= CB.ESCROW_STATE.SETTLED then
+                    owed[line.owed_to] = owed[line.owed_to] or {}
+                    owed[line.owed_to][line.id] = true
+                end
+            end
+            for cid, ids in pairs(owed) do
+                modules.escrow.release(c.id, cid, { lines = ids }, 'resource_stopping_owed')
+            end
+
             if not CB.TERMINAL[c.state] then
                 -- Stakes belong to the hunters who put them up, and an
                 -- unfiltered release deliberately skips them — so they are

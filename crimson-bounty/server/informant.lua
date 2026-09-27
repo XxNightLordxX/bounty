@@ -179,10 +179,27 @@ function Informant.expireRerollLocks()
     return aged
 end
 
+--- Nothing is released when a player disconnects.
+---
+--- This used to delete the buyer's reveal record, which is the record that
+--- carries both the reroll lock and the purchase count. So a relog was a free
+--- reset of both: the next purchase found no record, skipped the sticky early
+--- return that makes a repeat purchase free, charged the fee again for the same
+--- name — and counted purchases from zero, so the ceiling on how many hunters
+--- one contract's fees may uncover was bypassed by rejoining. On the one
+--- purchase in the resource that is never refunded.
+---
+--- RateLimit.clear already refuses to reset on disconnect for exactly this
+--- reason. Clearing on the REVEALED hunter's disconnect bought nothing either:
+--- describe() already answers "Unknown operative" for a hunter who has gone
+--- offline since they were seen.
+---
+--- Nothing accumulates without it: reveals are keyed to a contract and
+--- released by clearContract the moment the contract resolves.
+---@return boolean false, always
 function Informant.clearPlayer(cid)
-    for key, entry in pairs(reveals) do
-        if key:find(':' .. cid, 1, true) or entry.hunterCid == cid then reveals[key] = nil end
-    end
+    local _ = cid
+    return false
 end
 
 function Informant.clearContract(contractId)

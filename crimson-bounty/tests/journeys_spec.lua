@@ -385,3 +385,137 @@ describe('money already promised to one named person', function()
             'taking one of two lines back leaves the collection funded')
     end)
 end)
+
+describe('a payout owed to a player who is offline', function()
+    --- Queued once per line, not once per release pass.
+    ---
+    --- A cancel, an expiry or a buyout releases to the creator and then sweeps
+    --- the unclaimed remainder to the same creator. For an offline creator the
+    --- second pass re-claimed each already-owed line and queued it again. On
+    --- login the retry budget was spent partly on duplicates, so which part of
+    --- the payout arrived depended on the order the store returned the rows.
+    local function boughtOutWhileCreatorOffline()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.cash = 100000
+        Env.players[1].PlayerData.money.bank = 100000
+        Env.players[2].PlayerData.money.bank = 400000
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000, bank = 3000 } },
+            bailoutAmount = 15000,
+        })
+        truthy(c, 'a contract funded in two lines')
+
+        local creator = Env.players[1]
+        Env.removePlayer(1)
+
+        truthy(s.bailout.buy(f.target, c.id), 'the target buys out, instantly')
+        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        return s, f, c, creator
+    end
+
+    it('holds one queue entry per line', function()
+        local s = boughtOutWhileCreatorOffline()
+
+        local perLine = {}
+        for _, entry in ipairs(s.storage.readPending('CREATOR1') or {}) do
+            perLine[entry.line_id] = (perLine[entry.line_id] or 0) + 1
+        end
+        local lines = 0
+        for id, n in pairs(perLine) do
+            lines = lines + 1
+            eq(n, 1, 'line ' .. id .. ' was queued ' .. n .. ' times: once by '
+                .. 'the resolution and again by the remainder sweep to the same '
+                .. 'person')
+        end
+        truthy(lines >= 3, 'two escrow lines and the premium should all be '
+            .. 'owed, or this measures nothing: ' .. lines)
+    end)
+
+    it('arrives whole on the next login, and only once', function()
+        local s, f, c, creator = boughtOutWhileCreatorOffline()
+        local _ = f; local _c = c
+
+        -- They come back with what they had when they left.
+        Env.addPlayer({ source = 1, citizenid = 'CREATOR1', license = 'license:aaa',
+                        cash = creator.PlayerData.money.cash,
+                        bank = creator.PlayerData.money.bank })
+        local before = Env.players[1].PlayerData.money.cash
+                     + Env.players[1].PlayerData.money.bank
+
+        s.escrow.retryPending('CREATOR1')
+        local after = Env.players[1].PlayerData.money.cash
+                    + Env.players[1].PlayerData.money.bank
+        -- 5,000 + 3,000 of escrow back, and the 15,000 premium.
+        eq(after - before, 23000,
+            'part of what was owed arrived and the rest waited for another '
+            .. 'login, while the app said the payment had been delivered')
+
+        s.escrow.retryPending('CREATOR1')
+        eq(Env.players[1].PlayerData.money.cash
+           + Env.players[1].PlayerData.money.bank, after,
+           'and a second login pays nothing more')
+    end)
+end)
+
+describe('informant data across a crash', function()
+    --- A relog reset the reroll lock AND the purchase count, on the one
+    --- purchase in the resource that is never refunded.
+    local function informed()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        Env.players[2].PlayerData.money.bank = 100000
+        Env.players[3].PlayerData.money.bank = 400000
+        Config.Informant.MaxPurchasesPerContract = 2
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id))
+        truthy(s.informant.buy(f.target, c.id), 'the first purchase')
+        return s, f, c
+    end
+
+    local function purse()
+        local p = Env.players[2].PlayerData
+        return p.money.cash + p.money.bank
+    end
+
+    local function relog(s, f)
+        -- Exactly what the disconnect bridge does.
+        require('crimson-bounty.server.bridges').onPlayerDropped(s, f.target.cid)
+        Env.removePlayer(2)
+        Env.addPlayer({ source = 2, citizenid = 'TARGET01', license = 'license:bbb',
+                        cash = 0, bank = 75000 })
+        return s.identity.resolve(2)
+    end
+
+    it('does not charge again for the same answer after a relog', function()
+        local s, f, c = informed()
+        local target = relog(s, f)
+        local before = purse()
+
+        truthy(s.informant.buy(target, c.id), 'asking again inside the lock')
+        eq(purse(), before,
+            'inside the reroll lock a repeat is free by design; a crash made it '
+            .. 'cost the whole fee again for the same name')
+    end)
+
+    it('does not reset how many times one contract can be asked about', function()
+        local s, f, c = informed()
+        -- Spend the second and last purchase outside the lock.
+        Env.advance(Config.Informant.RerollLockMinutes * 60 + 10)
+        truthy(s.informant.buy(f.target, c.id), 'the second purchase')
+        Env.advance(Config.Informant.RerollLockMinutes * 60 + 10)
+        eq(select(2, s.informant.buy(f.target, c.id)), CB.ERR.LIMIT_REACHED)
+
+        local target = relog(s, f)
+        local ok, err = s.informant.buy(target, c.id)
+        falsy(ok, 'rejoining must not be a way past the ceiling')
+        eq(err, CB.ERR.LIMIT_REACHED)
+    end)
+end)
