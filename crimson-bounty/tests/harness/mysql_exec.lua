@@ -353,8 +353,16 @@ local function update(sql, params)
         -- the column, which is exactly the kind of difference this exists
         -- to surface.
         local source, delta = trimmed:match('^([%w_]+)%s*([%+%-]%s*%d+)$')
+        -- And `col = col + ?`, the same with the amount bound.
+        local boundSource, sign = trimmed:match('^([%w_]+)%s*([%+%-])%s*%?$')
 
-        if trimmed == '?' then
+        if boundSource then
+            index = index + 1
+            assignments[#assignments + 1] = {
+                column = column, relative = boundSource, index = index,
+                negate = sign == '-',
+            }
+        elseif trimmed == '?' then
             index = index + 1
             assignments[#assignments + 1] = { column = column, index = index }
         elseif source then
@@ -401,8 +409,12 @@ local function update(sql, params)
                 local assignment = assignments[i]
 
                 if assignment.relative then
-                    row[assignment.column] =
-                        (tonumber(row[assignment.relative]) or 0) + assignment.delta
+                    local delta = assignment.delta
+                    if delta == nil then
+                        delta = tonumber(params[assignment.index]) or 0
+                        if assignment.negate then delta = -delta end
+                    end
+                    row[assignment.column] = (tonumber(row[assignment.relative]) or 0) + delta
                     goto continue
                 end
 

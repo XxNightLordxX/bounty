@@ -983,3 +983,53 @@ describe('a crash between paying a handover\'s baseline and its bonus', function
         end)
     end
 end)
+
+describe('an extension while the expiry pass ends a pause', function()
+    --- The pass re-read the row, then wrote the whole of it back one await
+    --- later, over an extension made in that await: the hunter lost the time
+    --- the client had just given them.
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': both the pause and the extension count', function()
+            local main, s = boot(mode)
+            Config.Limits.ExclusiveIdleReleaseSeconds = 0
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x',
+                reward = { baseline = { cash = 10000 } },
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hunter, c.id))
+            local before = s.storage.readContract(c.id).deadline_at
+            -- The target leaves: the pass starts a pause.
+            local target = Env.players[2]
+            Env.removePlayer(2)
+            main.markPresenceChanged()
+            main.expire()
+            truthy(s.storage.readContract(c.id).paused_since, 'paused')
+            Env.advance(600)
+            Env.players[2] = target
+            Env.byCitizen['TARGET01'] = 2
+
+            local real = s.storage.readContract
+            local extended = false
+            s.storage.readContract = function(id)
+                local row = real(id)
+                if id == c.id and not extended and row and row.paused_since then
+                    extended = true
+                    truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE,
+                        { seconds = 3600 }), 'the client extends it')
+                end
+                return row
+            end
+            main.markPresenceChanged()
+            main.expire()
+            s.storage.readContract = real
+            truthy(extended)
+
+            local after = s.storage.readContract(c.id)
+            falsy(after.paused_since, 'the pause ended')
+            eq(after.deadline_at - before, 600 + 3600,
+                mode .. ': the pass wrote its copy over the extension')
+        end)
+    end
+end)

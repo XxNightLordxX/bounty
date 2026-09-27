@@ -1187,6 +1187,26 @@ end
 -- Slot claiming (§3.5)
 --------------------------------------------------------------------------
 
+--- Move a contract's deadline by a rule applied to its current value.
+---
+--- Through the guarded write, against a fresh read, and read again if it
+--- moved: the deadline is also moved by the expiry pass ending a pause, and
+--- a caller writing back a copy it read before its own awaits undid that —
+--- or had its own change undone by the pass writing back its copy.
+---@param contractId string
+---@param rule fun(contract: table): integer the new deadline
+---@return integer|nil deadline nil when it would not hold still
+function Contracts.moveDeadline(contractId, rule)
+    for _ = 1, 3 do
+        local current = Storage.readContract(contractId)
+        if not current then return nil end
+        local target = rule(current)
+        if target == current.deadline_at then return target end
+        if Storage.setDeadline(contractId, current.deadline_at, target) then return target end
+    end
+    return nil
+end
+
 --- Whether a contract's time is up: past its lifetime, or past a deadline
 --- whose clock was running. A paused clock stopped at `paused_since`, so a
 --- deadline that fell before the pause began is up however long the pause
@@ -1521,6 +1541,11 @@ function Contracts.revise(actor, contractId, changes)
     if #touched == 0 then return false, CB.ERR.INVALID_INPUT end
 
     if not Storage.writeContract(contract) then return false, CB.ERR.BAD_STATE end
+    -- The clock moves only through its own writes. A new deadline, set from
+    -- now: whatever the clock held a moment ago is what is being replaced.
+    if changes.deadlineSeconds ~= nil then
+        Storage.setDeadline(contractId, nil, contract.deadline_at)
+    end
 
     Audit.action('contract_revised', actor.cid, contractId,
         { changed = table.concat(touched, ',') })

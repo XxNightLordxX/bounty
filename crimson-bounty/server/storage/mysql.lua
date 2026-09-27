@@ -357,25 +357,22 @@ function MySQLStore.writeContract(c)
         --   expires_at — the absolute lifetime. Nothing extended one until
         --   the staff timer refresh did.
         --
-        --   payout_slots — giving the last collection back by agreement
-        --   brings the count down. Left off this list, the count stayed
-        --   where it was on this backend only: the emptied collection stayed
-        --   on sale, the contract never closed on its last real payout, and
-        --   it ran out instead, forfeiting the stake of the hunter who had
-        --   collected everything it still paid.
         ON DUPLICATE KEY UPDATE
             reason = VALUES(reason), mode = VALUES(mode),
             bonus_percent = VALUES(bonus_percent), expires_at = VALUES(expires_at),
             bailout_amount = VALUES(bailout_amount), penalty_amount = VALUES(penalty_amount),
-            payout_slots = VALUES(payout_slots),
-            -- next_slot and slots_claimed are deliberately absent: they move
-            -- only through advanceSlot. Every other writer carries a copy
-            -- read before its own awaits, and writing those two back undid
-            -- a claim that landed in between — the collection just paid
-            -- was put back on sale, and the next hunter to kill the target
-            -- for it was paid out of an empty slot.
-            deadline_at = VALUES(deadline_at), paused_ms = VALUES(paused_ms),
-            paused_since = VALUES(paused_since),
+            -- next_slot, slots_claimed and payout_slots are deliberately
+            -- absent: they move only through advanceSlot and reduceSlots.
+            -- Every other writer carries a copy read before its own awaits,
+            -- and writing them back undid a claim that landed in between —
+            -- the collection just paid was put back on sale — or put back a
+            -- collection just given back by agreement.
+            --
+            -- And the clock — deadline_at, paused_ms, paused_since — moves
+            -- only through setDeadline, startPause, endPause and resetClock,
+            -- for the same reason: the expiry pass wrote a copy over an
+            -- extension the client made while it waited, and a copy written
+            -- by anything else erased a pause the pass had just begun.
             -- The five bailout_* columns are deliberately absent: they move
             -- only through setBailoutQueue, so a caller writing back a copy
             -- it read before a buyout was paid cannot erase the buyout.
@@ -507,6 +504,50 @@ function MySQLStore.advanceSlot(id, expectedSlot)
         SET next_slot = ?, slots_claimed = slots_claimed + 1
         WHERE id = ? AND next_slot = ?
     ]], { expectedSlot + 1, id, expectedSlot })
+    return (tonumber(affected) or 0) > 0
+end
+
+function MySQLStore.reduceSlots(id, expected)
+    if expected <= 1 then return false end
+    local affected = MySQL.update.await(
+        'UPDATE crimson_contracts SET payout_slots = ? WHERE id = ? AND payout_slots = ?',
+        { expected - 1, id, expected })
+    return (tonumber(affected) or 0) > 0
+end
+
+function MySQLStore.setDeadline(id, expected, deadline)
+    local affected
+    if expected ~= nil then
+        affected = MySQL.update.await(
+            'UPDATE crimson_contracts SET deadline_at = ? WHERE id = ? AND deadline_at = ?',
+            { deadline, id, expected })
+    else
+        affected = MySQL.update.await(
+            'UPDATE crimson_contracts SET deadline_at = ? WHERE id = ?', { deadline, id })
+    end
+    return (tonumber(affected) or 0) > 0
+end
+
+function MySQLStore.startPause(id, at)
+    local affected = MySQL.update.await(
+        'UPDATE crimson_contracts SET paused_since = ? WHERE id = ? AND paused_since IS NULL',
+        { at, id })
+    return (tonumber(affected) or 0) > 0
+end
+
+function MySQLStore.endPause(id, since, seconds)
+    local affected = MySQL.update.await([[
+        UPDATE crimson_contracts
+        SET deadline_at = deadline_at + ?, paused_ms = paused_ms + ?, paused_since = NULL
+        WHERE id = ? AND paused_since = ?
+    ]], { seconds, seconds * 1000, id, since })
+    return (tonumber(affected) or 0) > 0
+end
+
+function MySQLStore.resetClock(id, deadline)
+    local affected = MySQL.update.await(
+        'UPDATE crimson_contracts SET deadline_at = ?, paused_since = NULL WHERE id = ?',
+        { deadline, id })
     return (tonumber(affected) or 0) > 0
 end
 

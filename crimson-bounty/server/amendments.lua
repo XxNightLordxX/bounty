@@ -62,6 +62,23 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
 
     if ids and next(ids) then
         Escrow.release(contractId, actor.cid, { lines = ids }, 'escrow_added_to_moved')
+
+        -- A claim that moved the slot after these lines were written paid
+        -- them out with its collection, and there was nothing to hand back:
+        -- the top-up went where it was meant to go. Answering "someone got
+        -- there first" told the client it had not gone through, while a
+        -- hunter had the money. A contract that closed is told as closed —
+        -- its ending returned the lines to the client.
+        if not CB.TERMINAL[state] then
+            for id in pairs(ids) do
+                local line = Storage.readEscrowLine(id)
+                local to = line and (line.settled_to or line.releasing_to or line.owed_to)
+                if to and to ~= actor.cid then
+                    Audit.action('escrow_added_paid_out', actor.cid, contractId, { to = to })
+                    return true
+                end
+            end
+        end
     end
     Audit.rejected('escrow_added_to_moved', actor.cid, contractId, { state = state })
     if CB.TERMINAL[state] then return false, CB.ERR.ALREADY_SETTLED end
@@ -164,11 +181,18 @@ function Amendments.improve(actor, contractId, kind, payload)
     if kind == CB.AMENDMENT.EXTEND_DEADLINE then
         local seconds = Util.toPositive(payload.seconds, Config.Limits.ContractLifetimeSeconds)
         if not seconds then return false, CB.ERR.INVALID_INPUT end
-        contract.deadline_at = (contract.deadline_at or os.time()) + seconds
-        -- The absolute lifetime is a ceiling, not a suggestion.
-        if contract.expires_at and contract.deadline_at > contract.expires_at then
-            contract.deadline_at = contract.expires_at
-        end
+        -- Against the deadline as it stands when written, not as this call
+        -- read it: the expiry pass may have ended a pause in the meantime.
+        local moved = Contracts.moveDeadline(contractId, function(current)
+            local deadline = (current.deadline_at or os.time()) + seconds
+            -- The absolute lifetime is a ceiling, not a suggestion.
+            if current.expires_at and deadline > current.expires_at then
+                deadline = current.expires_at
+            end
+            return deadline
+        end)
+        if not moved then return false, CB.ERR.LOCKED end
+        contract.deadline_at = moved
 
     elseif kind == CB.AMENDMENT.RAISE_BONUS then
         local percent = Util.toPositive(payload.percent, Config.Bonus.maxPercent)
@@ -712,7 +736,11 @@ function Amendments.apply(proposal)
         --
         -- checkAgainst() above has already refused a cut longer than what is
         -- left now, including time that passed while it waited for an answer.
-        contract.deadline_at = contract.deadline_at - seconds
+        local moved = Contracts.moveDeadline(proposal.contract_id, function(current)
+            return (current.deadline_at or os.time()) - seconds
+        end)
+        if not moved then return false, CB.ERR.LOCKED end
+        contract.deadline_at = moved
 
     elseif kind == CB.AMENDMENT.CHANGE_MODE then
         local mode = payload.mode == CB.MODE.COMPETITIVE and CB.MODE.COMPETITIVE or CB.MODE.EXCLUSIVE
@@ -780,6 +808,14 @@ function Amendments.apply(proposal)
         -- taking one out of the middle would renumber every slot after it and
         -- orphan the escrow filed against their old numbers.
 
+        -- The count first, guarded on it still being what this read: every
+        -- other writer carries a copy, and a count written back from one
+        -- put the collection back on sale after its escrow had gone home.
+        -- A crash between the two leaves that escrow on a collection the
+        -- contract no longer sells, which its ending returns to the client.
+        if not Storage.reduceSlots(proposal.contract_id, slots) then
+            return false, CB.ERR.LOCKED
+        end
         Escrow.release(proposal.contract_id, contract.creator_cid, { slot = slot }, 'reward_reduced')
         contract.payout_slots = slots - 1
         -- Applied after the write below, not here: on a durable backend the

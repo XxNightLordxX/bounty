@@ -47,7 +47,13 @@ local BAILOUT_QUEUE = {
 --- The payout counters, which move ONLY through advanceSlot. A copy read
 --- before a claim and written after it would otherwise put the collection
 --- just paid back on sale.
-local SLOT_COUNTERS = { 'next_slot', 'slots_claimed' }
+local SLOT_COUNTERS = { 'next_slot', 'slots_claimed', 'payout_slots' }
+
+--- The clock: moves only through setDeadline, startPause, endPause and
+--- resetClock, never through writeContract. Every other writer carries a
+--- copy read before its own awaits, and writing these back undid a pause the
+--- expiry pass had just started, or an extension the client had just made.
+local CLOCK = { 'deadline_at', 'paused_ms', 'paused_since' }
 
 function Memory.writeContract(contract)
     local existing = db.contracts[contract.id]
@@ -59,8 +65,56 @@ function Memory.writeContract(contract)
         for i = 1, #SLOT_COUNTERS do
             contract[SLOT_COUNTERS[i]] = existing[SLOT_COUNTERS[i]]
         end
+        for i = 1, #CLOCK do
+            contract[CLOCK[i]] = existing[CLOCK[i]]
+        end
     end
     db.contracts[contract.id] = contract
+    return true
+end
+
+--- Take the last collection off a contract, guarded on the count still
+--- being the one the caller read.
+function Memory.reduceSlots(id, expected)
+    local c = db.contracts[id]
+    if not c or (c.payout_slots or 1) ~= expected or expected <= 1 then return false end
+    c.payout_slots = expected - 1
+    return true
+end
+
+--- Set the deadline, guarded on it still being `expected` (nil: unguarded).
+function Memory.setDeadline(id, expected, deadline)
+    local c = db.contracts[id]
+    if not c then return false end
+    if expected ~= nil and c.deadline_at ~= expected then return false end
+    c.deadline_at = deadline
+    return true
+end
+
+--- Start a pause, unless one is already running.
+function Memory.startPause(id, at)
+    local c = db.contracts[id]
+    if not c or c.paused_since ~= nil then return false end
+    c.paused_since = at
+    return true
+end
+
+--- End the pause that began at `since`, moving the deadline on by how long
+--- it lasted. Relative, so it composes with a deadline changed meanwhile.
+function Memory.endPause(id, since, seconds)
+    local c = db.contracts[id]
+    if not c or c.paused_since ~= since then return false end
+    c.deadline_at = (c.deadline_at or 0) + seconds
+    c.paused_ms = (c.paused_ms or 0) + seconds * 1000
+    c.paused_since = nil
+    return true
+end
+
+--- Staff: a new deadline and no pause.
+function Memory.resetClock(id, deadline)
+    local c = db.contracts[id]
+    if not c then return false end
+    c.deadline_at, c.paused_since = deadline, nil
     return true
 end
 

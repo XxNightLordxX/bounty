@@ -769,9 +769,10 @@ function Recover()
         if lastAlive and not contract.paused_since
             and (contract.state == CB.STATE.ACTIVE or contract.state == CB.STATE.ACCEPTED
                  or contract.state == CB.STATE.COMPLETING) then
-            contract.paused_since = lastAlive
-            Storage.writeContract(contract)
-            paused = paused + 1
+            if Storage.startPause(contract.id, lastAlive) then
+                contract.paused_since = lastAlive
+                paused = paused + 1
+            end
         end
 
         -- Whether anything on this contract was never handed to anybody:
@@ -1066,17 +1067,21 @@ function ExpireContracts()
                 if paused then
                     -- Record when the pause began, once. The deadline is
                     -- extended when it ends, by however long it lasted.
-                    if not contract.paused_since then
+                    --
+                    -- Narrow writes, not the row: the row this pass holds was
+                    -- read one await ago, and writing it back undid whatever
+                    -- landed in that await — a deadline the client had just
+                    -- extended, most of all.
+                    if not contract.paused_since and Storage.startPause(contract.id, now) then
                         contract.paused_since = now
-                        Storage.writeContract(contract)
                     end
                 else
                     if contract.paused_since then
-                        local pausedFor = now - contract.paused_since
-                        contract.paused_ms = (contract.paused_ms or 0) + (pausedFor * 1000)
-                        contract.deadline_at = (contract.deadline_at or now) + pausedFor
-                        contract.paused_since = nil
-                        Storage.writeContract(contract)
+                        local since = contract.paused_since
+                        -- Relative, so an extension landing meanwhile is kept.
+                        if Storage.endPause(contract.id, since, now - since) then
+                            contract = Storage.readContract(contract.id) or contract
+                        end
                     end
 
                     if contract.deadline_at and now > contract.deadline_at then

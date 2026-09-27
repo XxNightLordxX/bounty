@@ -737,6 +737,8 @@ function Admin.refreshTimers(src)
             -- extension on top of the deadline just granted.
             contract.paused_since = nil
             Storage.writeContract(contract)
+            -- The clock moves only through its own writes.
+            Storage.resetClock(contract.id, deadline)
             counts.deadlines = counts.deadlines + 1
 
             local hunters = Storage.readHunters(contract.id)

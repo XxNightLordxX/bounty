@@ -414,3 +414,75 @@ describe('two retry passes for one player at once', function()
             'online the whole time, and left for a relog')
     end)
 end)
+
+describe('an agreed give-back while the client raises the bonus', function()
+    --- The raise writes back a copy of the contract read before its own
+    --- awaits. payout_slots was in the mysql upsert, so the count the
+    --- give-back had just lowered was written back over it and the emptied
+    --- collection went back on sale.
+    it('mysql: the count stays down', function()
+        local s = mysqlStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
+            bonusPercent = 10,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+        truthy(proposal)
+
+        local real = s.escrow.take
+        local agreed = false
+        s.escrow.take = function(...)
+            if not agreed then
+                agreed = true
+                truthy(s.amendments.respond(f.hunter, proposal.id, true), 'the hunter agrees')
+                eq(s.storage.readContract(c.id).payout_slots, 1, 'given back')
+            end
+            return real(...)
+        end
+        s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 20 })
+        s.escrow.take = real
+        truthy(agreed)
+        eq(s.storage.readContract(c.id).payout_slots, 1,
+            'the raise wrote its copy back over the give-back')
+    end)
+end)
+
+describe('a top-up that a payout lands on', function()
+    --- The claim moved the slot after the top-up's lines were written and
+    --- paid them out with its collection. The hand-back then found nothing
+    --- to hand back, and the client was told the top-up had not gone
+    --- through while the hunter had the money.
+    it('mysql: is reported as added, since it was paid out', function()
+        local s = mysqlStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local creatorBefore, hunterBefore = money(1), money(3)
+
+        local real = s.storage.writeEscrow
+        local claimed = false
+        s.storage.writeEscrow = function(id, lines)
+            local out = real(id, lines)
+            if not claimed and lines[1] and lines[1].portion == CB.PORTION.BASELINE then
+                claimed = true
+                truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+            end
+            return out
+        end
+        local ok, err = s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 5000 } })
+        s.storage.writeEscrow = real
+        truthy(claimed)
+        eq(money(1) - creatorBefore, -5000)
+        eq(money(3) - hunterBefore, 1000 + 5000, 'the collection, and the top-up with it')
+        truthy(ok, 'told the top-up was refused, with a hunter holding it: ' .. tostring(err))
+    end)
+end)

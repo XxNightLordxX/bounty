@@ -695,7 +695,11 @@ local BAILOUT_QUEUE = {
 
 --- The payout counters, which move ONLY through advanceSlot; see the memory
 --- backend.
-local SLOT_COUNTERS = { 'next_slot', 'slots_claimed' }
+local SLOT_COUNTERS = { 'next_slot', 'slots_claimed', 'payout_slots' }
+
+--- The clock, which moves only through the narrow writes below; see the
+--- memory backend.
+local CLOCK = { 'deadline_at', 'paused_ms', 'paused_since' }
 
 function JsonStore.writeContract(c)
     local existing = db.contracts[c.id]
@@ -707,9 +711,55 @@ function JsonStore.writeContract(c)
         for i = 1, #SLOT_COUNTERS do
             c[SLOT_COUNTERS[i]] = existing[SLOT_COUNTERS[i]]
         end
+        for i = 1, #CLOCK do
+            c[CLOCK[i]] = existing[CLOCK[i]]
+        end
     end
     db.contracts[c.id] = c
     touch(true, c.id)
+    return true
+end
+
+function JsonStore.reduceSlots(id, expected)
+    local c = db.contracts[id]
+    if not c or (c.payout_slots or 1) ~= expected or expected <= 1 then return false end
+    c.payout_slots = expected - 1
+    touch(true, id)
+    return true
+end
+
+function JsonStore.setDeadline(id, expected, deadline)
+    local c = db.contracts[id]
+    if not c then return false end
+    if expected ~= nil and c.deadline_at ~= expected then return false end
+    c.deadline_at = deadline
+    touch(true, id)
+    return true
+end
+
+function JsonStore.startPause(id, at)
+    local c = db.contracts[id]
+    if not c or c.paused_since ~= nil then return false end
+    c.paused_since = at
+    touch(true, id)
+    return true
+end
+
+function JsonStore.endPause(id, since, seconds)
+    local c = db.contracts[id]
+    if not c or c.paused_since ~= since then return false end
+    c.deadline_at = (c.deadline_at or 0) + seconds
+    c.paused_ms = (c.paused_ms or 0) + seconds * 1000
+    c.paused_since = nil
+    touch(true, id)
+    return true
+end
+
+function JsonStore.resetClock(id, deadline)
+    local c = db.contracts[id]
+    if not c then return false end
+    c.deadline_at, c.paused_since = deadline, nil
+    touch(true, id)
     return true
 end
 

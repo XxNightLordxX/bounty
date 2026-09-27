@@ -1507,14 +1507,11 @@ describe('rewriting a contract', function()
     local MUTABLE = {
         reason = 'renegotiated', mode = CB.MODE.EXCLUSIVE,
         bonus_percent = 35, bailout_amount = 12345, penalty_amount = 6789,
-        -- Brought down when the last collection is given back by agreement.
-        -- It was listed as immutable on mysql, so on that backend alone the
-        -- emptied collection stayed on sale.
-        payout_slots = 2,
-        -- next_slot and slots_claimed are NOT here: they move only through
-        -- advanceSlot, and the test below holds every backend to that.
-        deadline_at = 1800000001, expires_at = 1800000002,
-        paused_ms = 7000, paused_since = 1800000003,
+        -- next_slot, slots_claimed and payout_slots are NOT here: they move
+        -- only through advanceSlot and reduceSlots, and the tests below hold
+        -- every backend to that. Nor is the clock (deadline_at, paused_ms,
+        -- paused_since), which moves only through its own narrow writes.
+        expires_at = 1800000002,
         -- The five bailout_* fields are NOT here: they move only through
         -- setBailoutQueue, and the test below holds every backend to that.
         resolved_at = 1800000005, resolution = 'completed',
@@ -1617,6 +1614,52 @@ describe('the payout counters', function()
             eq(read.next_slot, 2, b.name .. ': the stale copy put a paid collection '
                 .. 'back on sale')
             eq(read.slots_claimed, 1, b.name .. ': and uncounted the claim')
+        end
+    end)
+end)
+
+describe('the collection count and the clock', function()
+    --- Both move only through their own guarded writes. Every other writer
+    --- reads the row, awaits and writes it back; on mysql a give-back, an
+    --- extension or the expiry pass lands in those awaits, and writing the
+    --- copy back undid it.
+    it('survive a writeContract of a stale copy, in every backend', function()
+        for _, b in ipairs(backends()) do
+            local row = contractFixture('ctclock1')
+            row.payout_slots, row.deadline_at, row.paused_ms = 3, 1000, 0
+            b.store.writeContract(row)
+
+            local stale = {}
+            for k, v in pairs(b.store.readContract('ctclock1')) do stale[k] = v end
+
+            truthy(b.store.reduceSlots('ctclock1', 3), b.name .. ': the give-back')
+            truthy(b.store.startPause('ctclock1', 500), b.name .. ': a pause')
+            truthy(b.store.endPause('ctclock1', 500, 60), b.name .. ': and its end')
+            truthy(b.store.setDeadline('ctclock1', 1060, 1200), b.name .. ': an extension')
+
+            stale.reason = 'edited meanwhile'
+            b.store.writeContract(stale)
+
+            local read = b.store.readContract('ctclock1')
+            eq(read.reason, 'edited meanwhile', b.name .. ': the edit landed')
+            eq(read.payout_slots, 2, b.name .. ': a stale copy put the collection back')
+            eq(read.deadline_at, 1200, b.name .. ': a stale copy undid the deadline')
+            eq(read.paused_ms, 60000, b.name .. ': and the time paused')
+            falsy(read.paused_since, b.name .. ': and the pause')
+        end
+    end)
+
+    it('refuse a guarded write whose guard no longer holds', function()
+        for _, b in ipairs(backends()) do
+            local row = contractFixture('ctclock2')
+            row.payout_slots, row.deadline_at = 2, 1000
+            b.store.writeContract(row)
+            falsy(b.store.reduceSlots('ctclock2', 3), b.name .. ': the count moved')
+            falsy(b.store.setDeadline('ctclock2', 999, 5), b.name .. ': the deadline moved')
+            truthy(b.store.startPause('ctclock2', 10))
+            falsy(b.store.startPause('ctclock2', 20), b.name .. ': a pause already running')
+            falsy(b.store.endPause('ctclock2', 20, 5), b.name .. ': not that pause')
+            eq(b.store.readContract('ctclock2').deadline_at, 1000)
         end
     end)
 end)
