@@ -700,7 +700,8 @@
       };
 
       if (option.note) {
-        var block = el('div', 'choice');
+        // `has-note` rather than :has(): FiveM's browser may predate it.
+        var block = el('div', 'choice has-note');
         block.appendChild(button);
         block.appendChild(el('div', 'hint', option.note));
         row.appendChild(block);
@@ -889,8 +890,84 @@
     return node;
   }
 
-  function chip(text, variant) {
-    return el('span', 'chip' + (variant ? ' ' + variant : ''), text);
+  /* A label on a card. `icon` names one of the line icons app.css draws
+     (i-flag, i-users, ...). The stylesheet paints it as a mask before the
+     words rather than anything being written into the page, so the chip's
+     text — the only thing a screen reader or a test reads — is exactly what
+     it was without one. */
+  function chip(text, variant, icon) {
+    return el('span', 'chip' + (variant ? ' ' + variant : '')
+      + (icon ? ' ico ' + icon : ''), text);
+  }
+
+  /* Up to two initials for a monogram: the first letter of the first and
+     the last word that begins with a letter, so "Dana Reyes 2" is DR rather
+     than D2. A letter is anything with a case — cheaper than a Unicode
+     table and right for every Latin, Greek and Cyrillic name — and a name
+     with none at all falls back to its first character, so the seal is
+     never empty. */
+  function initials(name) {
+    var text = String(name || '').trim();
+    function lettered(word) {
+      var first = word.charAt(0);
+      return first.toLowerCase() !== first.toUpperCase();
+    }
+    var words = text.split(/\s+/).filter(lettered);
+    if (!words.length) { return Array.from(text)[0] || '?'; }
+    var out = words[0].charAt(0);
+    if (words.length > 1) { out += words[words.length - 1].charAt(0); }
+    return out.toUpperCase();
+  }
+
+  /* The face on a file.
+
+     A card could show a mugshot when the server sent one and otherwise
+     showed nothing, so most entries on the board had no face at all and
+     the ones that did looked like a different kind of card. Every entry has
+     the same slot now: the mugshot when there is one, a monogram struck
+     from the name when there is not. The initials live in a data attribute
+     and the stylesheet draws them, so they add nothing to the card's text —
+     the name is still said once, where it always was. */
+  function portrait(name, face) {
+    var slot = el('div', 'portrait');
+    slot.setAttribute('aria-hidden', 'true');
+    if (face) {
+      var shot = document.createElement('img');
+      shot.className = 'mugshot';
+      shot.src = face;
+      shot.alt = '';
+      slot.appendChild(shot);
+    } else {
+      slot.className = 'portrait is-monogram';
+      slot.dataset.initials = initials(name);
+    }
+    return slot;
+  }
+
+  /* A count over the word it counts: "7 completed", set as a large 7 with
+     "completed" beneath it. Two spans, and the second keeps its leading
+     space, so read as text it is still exactly "7 completed". */
+  function tally(value, label) {
+    var cell = el('div', 'stat');
+    cell.appendChild(el('span', 'stat-value', value));
+    cell.appendChild(el('span', 'stat-label', ' ' + label));
+    return cell;
+  }
+
+  /* A balance under its caption: "Cash $100,000", the other way up. */
+  function balance(label, amount) {
+    var cell = el('div', 'stat is-balance');
+    cell.appendChild(el('span', 'stat-label', label));
+    cell.appendChild(el('span', 'stat-value', ' ' + amount));
+    return cell;
+  }
+
+  /* One sheet of the Place form, under its heading. The number in front of
+     the heading is a CSS counter, not text. */
+  function formSection(title) {
+    var section = el('section', 'form-section');
+    section.appendChild(el('h3', 'form-head', title));
+    return section;
   }
 
   /* ---------- contract card ---------- */
@@ -898,19 +975,20 @@
   function card(contract, context) {
     var node = el('div', 'card' + (contract.targetProtected ? ' is-protected' : ''));
 
+    /* A name with a word too long to share a line with the stamp — a
+       double-barrelled surname, a handle with no spaces in it — gets the
+       line to itself, and the stamp drops beneath it. Squeezed in beside
+       the price it broke every few letters, which reads as a rendering
+       fault on the one line of the card that says who this is about. */
+    var longestWord = String(contract.targetName || '').split(/\s+/)
+      .reduce(function (most, word) { return Math.max(most, word.length); }, 0);
     var head = el('div', 'card-head');
+    if (longestWord > 12) { head.className = 'card-head is-stacked'; }
     var left = el('div', 'card-identity');
 
-    var face = mugshot(contract.targetImageId);
-    if (face) {
-      var shot = document.createElement('img');
-      shot.className = 'mugshot';
-      shot.src = face;
-      shot.alt = '';
-      left.appendChild(shot);
-    }
+    left.appendChild(portrait(contract.targetName, mugshot(contract.targetImageId)));
 
-    var who = el('div');
+    var who = el('div', 'identity');
     who.appendChild(el('div', 'target', contract.targetName));
     who.appendChild(el('div', 'reason', contract.reason || '—'));
     left.appendChild(who);
@@ -928,6 +1006,12 @@
       reward.appendChild(el('div', 'bonus', '+' + money(paid.bonus) + ' alive'));
     }
 
+    // What the headline figure does not say goes on a line of its own under
+    // the head, not in the stamp's column. In the column, the longest item
+    // list set the column's width, and the target's name was squeezed to a
+    // few letters a line — on exactly the contracts that pay the most.
+    var notes = el('div', 'reward-notes');
+
     // How much of that is black money, when any of it is.
     //
     // The headline is one figure covering all three money sources, and they
@@ -937,25 +1021,27 @@
     var dirtyPart = (paid.sources && paid.sources.dirty || 0)
       + (paid.bonusSources && paid.bonusSources.dirty || 0);
     if (dirtyPart > 0) {
-      reward.appendChild(el('div', 'hint',
+      notes.appendChild(el('div', 'hint ico i-coin',
         money(dirtyPart) + ' of it is black money'));
     }
 
     // Goods are not priced — nobody can defend a number for a kitted rifle —
     // but a contract paying one and nothing else read as $0.
     var goods = goodsLine(paid.goods);
-    if (goods) { reward.appendChild(el('div', 'goods', goods)); }
+    if (goods) { notes.appendChild(el('div', 'goods ico i-box', goods)); }
     var bonusGoods = goodsLine(paid.bonusGoods);
-    if (bonusGoods) { reward.appendChild(el('div', 'goods', '+ ' + bonusGoods + ' alive')); }
+    if (bonusGoods) { notes.appendChild(el('div', 'goods ico i-box', '+ ' + bonusGoods + ' alive')); }
     head.appendChild(reward);
     node.appendChild(head);
+    if (notes.children.length) { node.appendChild(notes); }
 
     var meta = el('div', 'meta');
-    meta.appendChild(chip(contract.mode === 'competitive' ? 'Competitive' : 'Exclusive'));
+    meta.appendChild(chip(contract.mode === 'competitive' ? 'Competitive' : 'Exclusive',
+      null, contract.mode === 'competitive' ? 'i-flag' : 'i-lock'));
 
     if (contract.slots > 1) {
       meta.appendChild(chip(
-        'Slot ' + contract.currentSlot + ' of ' + contract.slots, 'slots'));
+        'Slot ' + contract.currentSlot + ' of ' + contract.slots, 'slots', 'i-layers'));
     }
     if (contract.huntersActive > 0) {
       // Against the cap on a competitive contract, so a hunter can see
@@ -968,7 +1054,7 @@
       var full = contract.mode === 'competitive'
         && contract.huntersMax
         && contract.huntersActive >= contract.huntersMax;
-      meta.appendChild(chip(full ? crowd + ' — full' : crowd, full ? 'warn' : 'hot'));
+      meta.appendChild(chip(full ? crowd + ' — full' : crowd, full ? 'warn' : 'hot', 'i-users'));
     }
     if (contract.role === 'creator') {
       // Through asList, like every other list from the server. The projection
@@ -979,7 +1065,7 @@
       // whole Mine tab down with it.
       asList(contract.hunters).forEach(function (h) {
         if (h.record) {
-          meta.appendChild(chip(h.alias + ' · ' + h.record.standing));
+          meta.appendChild(chip(h.alias + ' · ' + h.record.standing, null, 'i-user'));
         }
       });
     }
@@ -988,15 +1074,16 @@
     // acceptance debited it anyway, so the first a hunter knew of a stake
     // was the money leaving their bank.
     if (contract.penaltyAmount > 0) {
-      meta.appendChild(chip(money(contract.penaltyAmount) + ' stake', 'warn'));
+      meta.appendChild(chip(money(contract.penaltyAmount) + ' stake', 'warn', 'i-coin'));
     }
     // Only when there is something to say: a row carrying neither drew an
     // empty pill.
     if (contract.creatorAnonymous || contract.creatorName) {
-      meta.appendChild(chip(contract.creatorAnonymous ? 'Anonymous client' : contract.creatorName));
+      meta.appendChild(chip(contract.creatorAnonymous ? 'Anonymous client' : contract.creatorName,
+        null, 'i-briefcase'));
     }
     if (contract.targetProtected && settings().flagListing !== false) {
-      meta.appendChild(chip('Law enforcement', 'warn'));
+      meta.appendChild(chip('Law enforcement', 'warn', 'i-shield'));
     }
     node.appendChild(meta);
 
@@ -1047,7 +1134,20 @@
   }
 
   function actionsFor(contract, context) {
-    var row = el('div', 'row');
+    var row = el('div', 'row actions');
+
+    /* Everything but the card's one action.
+
+       A creator's card was a wall of six outlined buttons of identical
+       weight, and nothing on it said which one mattered. The primary stays
+       in the row at full width; the rest are gathered into this, which the
+       stylesheet sets as a grid of quiet tiles under it. Added to the row
+       last, and only if anything went into it. */
+    var more = el('div', 'more');
+    function withMore() {
+      if (more.children.length) { row.appendChild(more); }
+      return row;
+    }
 
     if (context === 'board') {
       /* An Accept button on a card the server can only refuse is a button
@@ -1067,6 +1167,9 @@
     }
 
     if (contract.role === 'hunter') {
+      // Two ways to finish, and they share the top line.
+      row.className = 'row actions is-hunting';
+
       // Both through `once`. The camera takes as long as the hunter takes
       // to line up a shot, and until now the button stayed live throughout:
       // a second tap minted a second photo token, which invalidates the one
@@ -1087,12 +1190,12 @@
       // Not drawn at all on a server with the relay switched off: every
       // message sent from it would be refused.
       if (settings().relay !== false) {
-        row.appendChild(actionButton('ghost', 'Message',
+        more.appendChild(actionButton('ghost ico i-message', 'Message',
           'thread:' + contract.id, 'Opening\u2026',
           function () { return openThread(contract, null); }));
       }
 
-      var quit = el('button', 'ghost', 'Abandon');
+      var quit = el('button', 'ghost ico i-exit is-destructive', 'Abandon');
       quit.onclick = function () {
         ask('Walk away from this contract?',
             contract.penaltyAmount > 0
@@ -1106,24 +1209,25 @@
               });
             });
       };
-      row.appendChild(quit);
+      more.appendChild(quit);
 
-      var propose = el('button', 'ghost', 'Propose change');
+      var propose = el('button', 'ghost ico i-swap', 'Propose change');
       propose.onclick = function () { proposeChange(contract); };
-      row.appendChild(propose);
+      more.appendChild(propose);
 
       // Live progress if the countdown is running, otherwise the snapshot
       // that came with the projection.
+      //
+      // Directly under the two ways to finish, above the other tools. The
+      // countdown is the one thing on this card that is urgent — a hunter
+      // holding somebody is watching it — and it was drawn last, below
+      // Message, Propose change and Abandon, a scroll away from the button
+      // that started it. A proposal waiting on an answer goes with it.
       var progress = state.progress[contract.id] || contract.kidnapProgress;
       var panel = proposalPanel(contract);
-      if (progress || panel) {
-        var wrap = el('div');
-        wrap.appendChild(row);
-        if (progress) { wrap.appendChild(countdown(progress)); }
-        if (panel) { wrap.appendChild(panel); }
-        return wrap;
-      }
-      return row;
+      if (progress) { row.appendChild(countdown(progress)); }
+      if (panel) { row.appendChild(panel); }
+      return withMore();
     }
 
     if (contract.role === 'creator') {
@@ -1131,7 +1235,9 @@
       // and a creator who had put up too much had exactly one way down:
       // withdraw the whole contract and place it again. The editor behind
       // this offers both, and says which of them this contract allows.
-      var top = el('button', null, 'Change reward');
+      // Money, and the thing a creator comes back to this card to do, so it
+      // is the card's one crimson button.
+      var top = el('button', 'primary', 'Change reward');
       top.onclick = function () { editReward(contract); };
       row.appendChild(top);
 
@@ -1142,39 +1248,40 @@
       // "a fee" because there was no figure to quote, and spent a request
       // to be told the server does not run them.
       if (settings().informant) {
-        var buy = el('button', 'ghost', 'Buy informant data');
+        var buy = el('button', 'ghost ico i-search', 'Buy informant data');
         buy.onclick = function () { buyInformant(contract); };
-        row.appendChild(buy);
+        more.appendChild(buy);
       }
 
       // Same shape, same reason: {} has no .length, so this read as "no
       // hunters" whether or not there were any.
       if (asList(contract.hunters).length && settings().relay !== false) {
-        row.appendChild(actionButton('ghost', 'Threads',
+        more.appendChild(actionButton('ghost ico i-message', 'Threads',
           'threads:' + contract.id, 'Opening\u2026',
           function () { return openThreads(contract); }));
       }
 
-      var extend = el('button', 'ghost', 'Extend deadline');
+      var extend = el('button', 'ghost ico i-clock', 'Extend deadline');
       extend.onclick = function () { improveContract(contract); };
-      row.appendChild(extend);
+      more.appendChild(extend);
 
-      var change = el('button', 'ghost', 'Propose change');
+      var change = el('button', 'ghost ico i-swap', 'Propose change');
       change.onclick = function () { proposeChange(contract); };
-      row.appendChild(change);
+      more.appendChild(change);
 
       // Only while nobody is holding it. Once a hunter has accepted they
       // accepted it as written, and the server refuses both of these — so
       // offering them would be offering a guaranteed refusal.
       if (!contract.huntersActive) {
-        var edit = el('button', 'ghost', 'Edit');
+        var edit = el('button', 'ghost ico i-pencil', 'Edit');
         edit.onclick = function () { editContract(contract); };
-        row.appendChild(edit);
+        more.appendChild(edit);
 
-        var scrap = el('button', 'danger', 'Withdraw');
+        var scrap = el('button', 'danger ico i-xcircle', 'Withdraw');
         scrap.onclick = function () { cancelContract(contract); };
-        row.appendChild(scrap);
+        more.appendChild(scrap);
       }
+      withMore();
 
       var creatorPanel = proposalPanel(contract);
       if (creatorPanel) {
@@ -1206,11 +1313,11 @@
         row.appendChild(el('div', 'hint', 'No buyout was offered on this contract.'));
       }
       if (settings().informant) {
-        var informant = el('button', 'ghost', 'Buy informant data');
+        var informant = el('button', 'ghost ico i-search', 'Buy informant data');
         informant.onclick = function () { buyInformant(contract); };
-        row.appendChild(informant);
+        more.appendChild(informant);
       }
-      return row;
+      return withMore();
     }
 
     return row;
@@ -2125,7 +2232,7 @@
       showTotal();
     }
 
-    var row = el('div', 'row');
+    var row = el('div', 'row editor-actions');
 
     if (edit.data && !edit.pending) {
       var take = el('button', 'primary', 'Take back what I ticked');
@@ -2136,7 +2243,7 @@
     // Adding is offered from the same screen whether or not taking back is
     // allowed: a contract somebody is hunting can still be sweetened, and
     // that is exactly when a creator wants to.
-    var add = el('button', 'ghost', 'Add cash');
+    var add = el('button', 'ghost ico i-plus', 'Add cash');
     add.onclick = function () {
       var contract = edit.contract;
       state.dialog = null; state.reward = null;
@@ -2370,7 +2477,7 @@
     if (!why) { return false; }
     var failed = el('div', 'card');
     failed.appendChild(el('div', 'hint', why));
-    var again = el('button', 'ghost', 'Try again');
+    var again = el('button', 'ghost ico i-refresh', 'Try again');
     again.onclick = function () { delete state.loadFailed[section]; refresh(); render(); };
     failed.appendChild(again);
     view.appendChild(failed);
@@ -2388,7 +2495,7 @@
      card and before the empty one, so a refusal still wins. */
   function drewPending(view, section) {
     if (state.loaded[section]) { return false; }
-    view.appendChild(el('div', 'empty', 'Asking the server…'));
+    view.appendChild(el('div', 'empty is-pending', 'Asking the server…'));
     return true;
   }
 
@@ -2454,16 +2561,18 @@
     var record = data.record;
 
     if (record) {
-      var card = el('div', 'card');
+      var card = el('div', 'card record');
       card.appendChild(el('div', 'target', record.standing));
-      var meta = el('div', 'meta');
-      meta.appendChild(chip(record.completed + ' completed', 'hot'));
-      meta.appendChild(chip(record.placed + ' placed'));
-      meta.appendChild(chip(record.survived + ' survived'));
+      // Figures rather than pills: three grey capsules in a row read as
+      // three buttons, and the numbers were the smallest thing in them.
+      var stats = el('div', 'stats');
+      stats.appendChild(tally(record.completed, 'completed'));
+      stats.appendChild(tally(record.placed, 'placed'));
+      stats.appendChild(tally(record.survived, 'survived'));
       if (record.rate !== undefined && record.rate !== null) {
-        meta.appendChild(chip(record.rate + '% success'));
+        stats.appendChild(tally(record.rate + '%', 'success'));
       }
-      card.appendChild(meta);
+      card.appendChild(stats);
       view.appendChild(card);
     }
 
@@ -2474,11 +2583,19 @@
     }
     rows.forEach(function (row) {
       var node = el('div', 'card');
-      node.appendChild(el('div', 'target', row.target_name || 'Unknown'));
-      node.appendChild(el('div', 'reason', row.reason || ''));
+      // The same face and name as the entry had on the board, so a closed
+      // file reads as the one that was open.
+      var head = el('div', 'card-identity');
+      head.appendChild(portrait(row.target_name || 'Unknown', null));
+      var who = el('div', 'identity');
+      who.appendChild(el('div', 'target', row.target_name || 'Unknown'));
+      who.appendChild(el('div', 'reason', row.reason || ''));
+      head.appendChild(who);
+      node.appendChild(head);
       var meta = el('div', 'meta');
-      meta.appendChild(chip(row.role));
-      meta.appendChild(chip(row.fulfilment === 'kidnapping' ? 'Delivered alive' : 'Eliminated', 'hot'));
+      meta.appendChild(chip(row.role, 'role', ROLE_ICONS[row.role] || 'i-user'));
+      meta.appendChild(chip(row.fulfilment === 'kidnapping' ? 'Delivered alive' : 'Eliminated',
+        'hot', row.fulfilment === 'kidnapping' ? 'i-usercheck' : 'i-crosshair'));
       node.appendChild(meta);
       if (row.photo_ref) {
         /* Bounded, and it says what it is while it loads.
@@ -2514,6 +2631,9 @@
     view.appendChild(buildStamp());
   }
 
+  // The icon beside the part a player played in a closed contract.
+  var ROLE_ICONS = { hunter: 'i-user', creator: 'i-briefcase', target: 'i-eye' };
+
   /* Which copy of this page the player is actually running.
 
      CEF caches app.js on its own disk, so "have you updated?" and "is the
@@ -2537,9 +2657,9 @@
     var t = state.thread;
     if (!t) { state.tab = 'mine'; return render(); }
 
-    var row = el('div', 'row');
+    var row = el('div', 'row thread-head');
 
-    var back = el('button', 'ghost', 'Back');
+    var back = el('button', 'ghost ico i-left', 'Back');
     back.onclick = function () { state.tab = 'mine'; render(); };
     row.appendChild(back);
 
@@ -2556,7 +2676,7 @@
     // The server has always had a call path and nothing reached it, so the
     // whole feature was unreachable from the phone.
     if (settings().calls) {
-      var call = el('button', 'ghost', 'Call');
+      var call = el('button', 'ghost ico i-phone', 'Call');
       call.id = 'thread-call';
       call.onclick = function () { requestCall(); };
       row.appendChild(call);
@@ -2607,7 +2727,7 @@
   }
 
   function viewPlace(view) {
-    var form = el('div');
+    var form = el('div', 'place-form');
 
     // What the creator actually has, read server-side, so an over-budget
     // contract is obvious before they submit rather than after.
@@ -2623,7 +2743,7 @@
       var failed = el('div', 'card');
       failed.appendChild(el('div', 'hint', state.walletFailed
         + ' Money still works; items and weapons need another look.'));
-      var again = el('button', 'ghost', 'Try again');
+      var again = el('button', 'ghost ico i-refresh', 'Try again');
       again.onclick = function () {
         state.walletFailed = null; state.walletPending = false; render();
       };
@@ -2632,13 +2752,14 @@
     } else if (state.wallet) {
       var w = state.wallet;
       var wcaps = w.caps || {};
-      var wallet = el('div', 'card');
-      var meta = el('div', 'meta');
+      var wallet = el('div', 'card funds');
+      // A strip of figures, each under its caption, rather than three pills.
+      var meta = el('div', 'stats');
       // Only what this server will actually take. A balance shown beside a
       // source that is switched off is an offer the form cannot honour.
-      if (wcaps.cashEnabled !== false) { meta.appendChild(chip('Cash ' + money(w.cash))); }
-      if (wcaps.bankEnabled !== false) { meta.appendChild(chip('Bank ' + money(w.bank))); }
-      if (wcaps.dirtyEnabled !== false) { meta.appendChild(chip('Dirty ' + money(w.dirty))); }
+      if (wcaps.cashEnabled !== false) { meta.appendChild(balance('Cash', money(w.cash))); }
+      if (wcaps.bankEnabled !== false) { meta.appendChild(balance('Bank', money(w.bank))); }
+      if (wcaps.dirtyEnabled !== false) { meta.appendChild(balance('Dirty', money(w.dirty))); }
       wallet.appendChild(meta);
       form.appendChild(wallet);
     } else {
@@ -2676,13 +2797,22 @@
       // drawing nothing at all, forever, with no way to ask again.
       var waiting = el('div', 'card');
       waiting.appendChild(el('div', 'hint', 'Reading what you are carrying…'));
-      var retry = el('button', 'ghost', 'Try again');
+      var retry = el('button', 'ghost ico i-refresh', 'Try again');
       retry.onclick = function () { state.walletPending = false; render(); };
       waiting.appendChild(retry);
       form.appendChild(waiting);
     }
 
-    form.appendChild(labelled('Target', targetSearch()));
+    /* Four sheets, in the order a contract is written: who, the job, what
+       it pays, and on what terms. This was one column of fifteen controls
+       with nothing to say where one decision ended and the next began.
+       Only the paper is new — every field, id and draft key, and the order
+       they come in, is as it was. */
+    var subject = formSection('Subject');
+    subject.appendChild(labelled('Target', targetSearch()));
+    form.appendChild(subject);
+
+    var job = formSection('The job');
 
     // The reason control this server will actually accept.
     //
@@ -2708,9 +2838,9 @@
         opt.textContent = text;
         pick.appendChild(opt);
       });
-      form.appendChild(labelled('Reason', drafted(pick, 'reasonPreset', '1')));
+      job.appendChild(labelled('Reason', drafted(pick, 'reasonPreset', '1')));
     } else if (reasonMode !== 'off') {
-      form.appendChild(labelled('Reason',
+      job.appendChild(labelled('Reason',
         drafted(textInput('reason', 'Why?', settings().reasonMaxLength || 140),
                 'reason')));
     }
@@ -2723,7 +2853,10 @@
       opt.value = o[0]; opt.textContent = o[1];
       mode.appendChild(opt);
     });
-    form.appendChild(labelled('Assignment', drafted(mode, 'mode', 'exclusive')));
+    job.appendChild(labelled('Assignment', drafted(mode, 'mode', 'exclusive')));
+    form.appendChild(job);
+
+    var pay = formSection('Payment');
 
     var slots = drafted(numberInput('slots', 1), 'slots', '1');
     slots.min = 1;
@@ -2731,17 +2864,20 @@
     // in the config used to leave the form refusing to go past five.
     slots.max = (state.wallet && state.wallet.caps && state.wallet.caps.slots) || 5;
     slots.onchange = function () { state.draft.slots = slots.value; renderSlots(); };
-    form.appendChild(labelled('Payouts (how many times it can be collected)', slots));
+    pay.appendChild(labelled('Payouts (how many times it can be collected)', slots));
     var ceilingNote = el('div', 'hint');
     ceilingNote.id = 'slots-ceiling';
-    form.appendChild(ceilingNote);
-    form.appendChild(el('div', 'hint',
+    pay.appendChild(ceilingNote);
+    pay.appendChild(el('div', 'hint',
       'Every payout is funded and escrowed up front. More hunters may accept than there are ' +
       'payouts — the first to finish are paid.'));
 
     var slotBox = el('div');
     slotBox.id = 'slots';
-    form.appendChild(slotBox);
+    pay.appendChild(slotBox);
+    form.appendChild(pay);
+
+    var terms = formSection('Terms');
 
     // Bounded by the ceiling the server sent, and told to the creator.
     // caps.bonusPercent was computed and shipped and never read, so a figure
@@ -2750,14 +2886,14 @@
     var bonusCap = (state.wallet && state.wallet.caps && state.wallet.caps.bonusPercent) || null;
     var bonusField = drafted(numberInput('bonus', 50), 'bonus', '50');
     if (bonusCap) { bonusField.max = bonusCap; }
-    form.appendChild(labelled(
+    terms.appendChild(labelled(
       'Kidnapping bonus %' + (bonusCap ? ' (up to ' + bonusCap + ')' : ''),
       bonusField));
-    form.appendChild(labelled('Buyout price (0 for none)',
+    terms.appendChild(labelled('Buyout price (0 for none)',
       drafted(numberInput('bailout', 0), 'bailout', '0')));
-    form.appendChild(labelled('Failure penalty (0 for none)',
+    terms.appendChild(labelled('Failure penalty (0 for none)',
       drafted(numberInput('penalty', 0), 'penalty', '0')));
-    form.appendChild(el('div', 'hint',
+    terms.appendChild(el('div', 'hint',
       'A hunter stakes this when they accept, and forfeits it to you if they walk away.'));
 
     var anon = document.createElement('input');
@@ -2771,7 +2907,8 @@
     toggle.htmlFor = 'anon';
     toggle.appendChild(anon);
     toggle.appendChild(el('span', null, 'Place anonymously'));
-    form.appendChild(toggle);
+    terms.appendChild(toggle);
+    form.appendChild(terms);
 
     // Through `once`, because this one charges money. Nothing on screen
     // changed for the whole round trip and the button stayed live, so a
@@ -2780,7 +2917,6 @@
     var submit = el('button', 'primary',
       isBusy('create') ? 'Placing\u2026' : 'Place contract');
     submit.id = 'place-submit';
-    submit.style.marginTop = '0.8rem';
     if (isBusy('create')) {
       submit.disabled = true;
       submit.classList.toggle('is-busy', true);
@@ -3045,7 +3181,7 @@
     count.min = 1;
 
     var howMany = labelled('How many', count);
-    var field = el('div');
+    var field = el('div', 'picker');
     field.appendChild(labelled('Item', choose));
     field.appendChild(howMany);
 
@@ -3065,7 +3201,7 @@
     choose.onchange = follow;
     follow();
 
-    var add = el('button', 'ghost', 'Add this item');
+    var add = el('button', 'ghost ico i-plus', 'Add this item');
     add.id = 'slot-item-add-' + index;
     add.onclick = function () {
       var name = choose.value;
@@ -3112,7 +3248,7 @@
     });
     if (choose.children.length === 0) { return el('div', 'hint', 'No weapons left to add.'); }
 
-    var add = el('button', 'ghost', 'Add this weapon');
+    var add = el('button', 'ghost ico i-plus', 'Add this weapon');
     add.id = 'slot-weapon-add-' + index;
     add.onclick = function () {
       var slotNumber = parseInt(choose.value, 10);
@@ -3135,7 +3271,7 @@
       renderSlots();
     };
 
-    var field = el('div');
+    var field = el('div', 'picker');
     field.appendChild(labelled('Weapon', choose));
     field.appendChild(add);
     return field;
@@ -3529,13 +3665,13 @@
 
       // Paging, only where there is more than one page.
       if (paging && paging.pages > 1) {
-        var nav = el('div', 'row');
-        var back = el('button', 'ghost', 'Back');
+        var nav = el('div', 'row pager');
+        var back = el('button', 'ghost ico i-left', 'Back');
         back.disabled = paging.page <= 1;
         back.onclick = function () {
           browse.page = paging.page - 1; browse.data = null; browse.pending = null; load();
         };
-        var forward = el('button', 'ghost', 'More');
+        var forward = el('button', 'ghost ico ico-end i-right', 'More');
         forward.disabled = paging.page >= paging.pages;
         forward.onclick = function () {
           browse.page = paging.page + 1; browse.data = null; browse.pending = null; load();
@@ -3552,13 +3688,16 @@
       var pick = el('button', 'person');
       if (state.draft.target === person.handle) { pick.className = 'person is-chosen'; }
 
+      // The same monogram the contract will carry on the board.
+      pick.appendChild(portrait(person.name, null));
+
       var name = el('span', 'person-name', person.name);
       pick.appendChild(name);
 
       var tags = el('span', 'person-tags');
-      if (person.protected) { tags.appendChild(el('span', 'chip warn', 'Law')); }
+      if (person.protected) { tags.appendChild(el('span', 'chip warn ico i-shield', 'Law')); }
       if (person.metres !== undefined && person.metres !== null) {
-        tags.appendChild(el('span', 'chip', person.metres + 'm'));
+        tags.appendChild(el('span', 'chip ico i-pin', person.metres + 'm'));
       }
       if (tags.children.length > 0) { pick.appendChild(tags); }
 
@@ -3618,6 +3757,7 @@
     var view = document.getElementById('view');
     if (!view) { return; }
     view.innerHTML = '';
+    view.classList.toggle('has-dialog', false);
 
     var panel = el('div', 'card');
     panel.appendChild(el('p', 'target', 'This screen could not be drawn.'));
@@ -3646,6 +3786,10 @@
     var view = document.getElementById('view');
     view.innerHTML = '';
 
+    // A dialog is drawn alone, as a sheet at the foot of the view; the view
+    // carries the seal behind it while one is open.
+    view.classList.toggle('has-dialog', !!state.dialog);
+
     if (state.dialog) {
       if (state.dialog.kind === 'choice') {
         renderChoice(view);
@@ -3665,7 +3809,10 @@
     })[state.tab](view);
 
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
-      tab.classList.toggle('is-active', tab.dataset.tab === state.tab);
+      // A thread is opened from Mine and goes back to it, so Mine stays lit
+      // while it is open, rather than no tab at all.
+      var shown = state.tab === 'thread' ? 'mine' : state.tab;
+      tab.classList.toggle('is-active', tab.dataset.tab === shown);
     });
 
     renderNotice();

@@ -3743,11 +3743,21 @@ async function main() {
     // every assertion below while testing nothing.
     const REACHED = new Set();
 
+    /* mulberry32. The generator this replaced was the textbook LCG taking
+       `state % n`: the low bits of that sequence cycle with tiny periods, and
+       1103515245 * state overflows the integers a double holds exactly, so a
+       walk kept pressing the same few positions in every list. Whether it
+       ever reached a given button came down to where the button sat in the
+       page — reordering two elements for a redesign "lost" Propose change
+       from all twenty-five walks. */
     function rng(seed) {
-      let state = seed;
+      let a = seed >>> 0;
       return function (n) {
-        state = (1103515245 * state + 12345) % 2147483648;
-        return state % n;
+        a = (a + 0x6D2B79F5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * n);
       };
     }
 
