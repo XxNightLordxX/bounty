@@ -571,7 +571,7 @@ describe('accepting a contract that carries a stake', function()
         local proposal = s.amendments.propose(f.creator, c.id,
             CB.AMENDMENT.RAISE_PENALTY, { amount = 15000 })
         truthy(proposal)
-        truthy(s.amendments.respond(f.creator, proposal.id, true))
+        eq(proposal.outcome, 'applied', 'nobody else holds it, so it is in effect')
 
         local reply = call('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 2000 })
         truthy(reply, 'the handler must answer')

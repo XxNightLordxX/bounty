@@ -4351,6 +4351,35 @@ async function main() {
         'told a hunter who had walked away to get the target back: ' + leaving.notice());
     });
 
+    /* The same, with a poll already in flight when the abandon is sent:
+       its reply lands after "You are off the contract." */
+    let heldPoll = null;
+    let gone = false;
+    const inFlight = await onMine({
+      armKidnap: { ok: true, data: true },
+      kidnapProgress: function () {
+        return gone ? { ok: false, err: 'no_handover' }
+          : { ok: true, data: { elapsed: 5, required: 30 } };
+      },
+      abandon: function () { gone = true; return { ok: true, data: true }; }
+    });
+    click(inFlight, 'Deliver alive');
+    await settle();
+    const flightTick = inFlight.timers.filter(function (t) { return t.repeating && t.ms === 1000; })[0];
+    flightTick.fn(); await settle(); await settle();
+    // The abandon goes out; a tick fires before its reply is back, so its
+    // poll reaches the server after the abandon and its answer — no
+    // handover — reaches the page after "You are off the contract."
+    click(inFlight, 'Abandon');
+    click(inFlight, 'Yes');
+    flightTick.fn();
+    await settle(); await settle(); await settle();
+    it('ignores a poll reply that lands after the hunter walked away', function () {
+      falsy(/try again/i.test(inFlight.notice()),
+        'told a hunter who had just walked away to get the target back: ' + inFlight.notice());
+    });
+    void heldPoll;
+
     const tooSoon = await endedWith({ outcome: 'refused', reason: 'slot_cooldown' });
     it('names the wait between payouts when that is why', function () {
       truthy(tooSoon.notice().indexOf('very recently') !== -1, tooSoon.notice());
@@ -6199,6 +6228,36 @@ async function main() {
       });
     })();
 
+    /* Ten minutes left opens the box on 1 — rounded up — and a creator who
+       types 1, meaning an hour from now, was not sent: the figure matched
+       the one it opened on, the Save went through as "Contract updated."
+       and the deadline stayed at ten minutes. */
+    await (async function editSetsTheRoundedFigure() {
+      let revised = null;
+      const card = placedCard({ state: 'active', huntersActive: 0, hunters: [],
+        deadline: nowSeconds() + 10 * 60 });
+      const app = boot({
+        list: boardWith({ reasonMode: 'freetext' }), ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        revise: function (body) { revised = body; return { ok: true, data: { id: body.id } }; }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Edit');
+      it('says exactly how long is left, beside the rounded box', function () {
+        truthy(/10 min/.test(app.view.textContent), app.view.textContent);
+      });
+      const hours = app.document.getElementById('dialog-hours');
+      eq(hours.value, '1');
+      hours.value = '1'; hours.oninput();
+      click(app, 'Save'); await settle();
+      it('sends the deadline the creator typed, even the figure it opened on', function () {
+        truthy(revised, 'nothing was sent');
+        eq(revised.deadlineSeconds, 3600, JSON.stringify(revised));
+      });
+    })();
+
     // The same dialog on a preset server: moving the deadline replaced the
     // reason with the first preset, because the picker opened on nothing.
     await (async function editKeepsThePresetReason() {
@@ -6238,9 +6297,12 @@ async function main() {
         list: boardWith(), ledger: LEDGER,
         mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
         amendments: { ok: true, data: [] },
-        propose: function (body) { calls.push(['propose', body]); return { ok: true, data: { id: 'am00000001' } }; },
+        propose: function (body) {
+          calls.push(['propose', body]);
+          return { ok: true, data: { id: 'am00000001', outcome: 'applied' } };
+        },
         respondAmendment: function (body) {
-          calls.push(['respond', body]); return { ok: true, data: { outcome: 'applied' } };
+          calls.push(['respond', body]); return { ok: false, err: 'rate_limited' };
         }
       });
       await settle(); await settle(); await settle();
@@ -6256,10 +6318,11 @@ async function main() {
       click(app, 'Yes');
       await settle(); await settle(); await settle();
 
-      it('applies it with the creator’s own answer', function () {
-        eq(calls.map(function (c) { return c[0]; }).join(','), 'propose,respond');
-        eq(calls[1][1].id, 'am00000001');
-        eq(calls[1][1].approve, true);
+      /* The server applies it in the one request. A second request of
+         the page's own came out of the same rate-limit bucket, and refused
+         it left a proposal the card never drew. */
+      it('applies it in the one request', function () {
+        eq(calls.map(function (c) { return c[0]; }).join(','), 'propose');
       });
       it('and says it is done', function () {
         truthy(app.notice().indexOf('in effect') !== -1, app.notice());

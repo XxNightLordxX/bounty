@@ -4,6 +4,22 @@
 
 local AT = { x = 200.0, y = 200.0, z = 30.0 }
 
+--- Fire a net event the way a client does, rate limits and all, and return
+--- the reply the page would receive.
+local function call(name, src, payload)
+    local handler = Env.events['crimson-bounty:' .. name]
+    if not handler then return { ok = false, err = 'NO SUCH HANDLER' } end
+    Env.clientEvents = {}
+    _G.source = src
+    local fired, err = pcall(handler, payload or {})
+    _G.source = nil
+    if not fired then return { ok = false, err = 'THREW: ' .. tostring(err) } end
+    for _, event in ipairs(Env.clientEvents) do
+        if event.name == 'crimson-bounty:result' then return event.args[1] end
+    end
+    return nil
+end
+
 local function placed(s, f, extra)
     local spec = {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
@@ -22,34 +38,35 @@ describe('a change proposed on a contract nobody holds', function()
     --- as "Waiting to be applied." with nothing to press, so it lapsed, held
     --- the one open slot, and was put to the next hunter to accept. The page
     --- now gives that answer; these pin what it relies on.
-    it('waits on nobody', function()
+    --- Applied in the propose itself now: the page's own answer was a
+    --- second request from the same rate-limit bucket, and two proposals a
+    --- few seconds apart left one open that the card never drew.
+    it('is applied in the one request, waiting on nobody', function()
         local s = newStack()
         local f = fixture(s)
         local c = placed(s, f, { reward = { slots = {
             { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
             mode = CB.MODE.COMPETITIVE })
-        local proposal = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
-        truthy(proposal)
-        local open = s.amendments.openFor(f.creator, c.id)
-        eq(#open, 1)
-        eq(open[1].waiting, 0)
-        eq(open[1].mine, true)
-    end)
-
-    it('is applied by the creator\'s own answer', function()
-        local s = newStack()
-        local f = fixture(s)
-        local c = placed(s, f, { reward = { slots = {
-            { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
-            mode = CB.MODE.COMPETITIVE })
-        local proposal = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
-        local ok, _, outcome = s.amendments.respond(f.creator, proposal.id, true)
-        truthy(ok)
-        eq(outcome, 'applied')
+        local reply = call('propose', 1, { id = c.id, kind = 'reduce_reward', payload = { slot = 2 } })
+        truthy(reply.ok, tostring(reply.err))
+        eq(reply.data.outcome, 'applied')
+        eq(#s.amendments.openFor(f.creator, c.id), 0, 'nothing left open')
         eq(s.storage.readContract(c.id).payout_slots, 1,
             'the collection went back, which the reward editor cannot do')
+    end)
+
+    it('does not run out of requests on the second change', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = placed(s, f, { reward = { slots = {
+            { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } },
+            { baseline = { cash = 3000 } } } }, mode = CB.MODE.COMPETITIVE })
+        local first = call('propose', 1, { id = c.id, kind = 'reduce_reward', payload = { slot = 3 } })
+        Env.advance(5)
+        local second = call('propose', 1, { id = c.id, kind = 'reduce_reward', payload = { slot = 2 } })
+        eq(first.data and first.data.outcome, 'applied')
+        eq(second.data and second.data.outcome, 'applied', tostring(second.err))
+        eq(s.storage.readContract(c.id).payout_slots, 1)
     end)
 
     it('tells the page whether proposals exist on this server at all', function()

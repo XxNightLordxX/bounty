@@ -475,6 +475,22 @@ function Amendments.propose(actor, contractId, kind, payload)
     end
 
     Audit.action('amendment_proposed', actor.cid, contractId, { kind = kind })
+
+    -- Nobody else has to agree — the client, on a contract nobody holds —
+    -- so it is applied now, in this request. The page used to follow the
+    -- proposal with an answer of its own, which spent a second request from
+    -- the same rate-limit bucket: two proposals a few seconds apart and the
+    -- answer was refused, leaving an open proposal the page never drew and
+    -- that blocked the next one until it lapsed.
+    local everyone = true
+    for cid in pairs(people) do
+        if not approvals[cid] then everyone = false end
+    end
+    if everyone then
+        local _, err, outcome = Amendments.respond(actor, proposal.id, true)
+        proposal.outcome = outcome or proposal.outcome
+        proposal.error = err
+    end
     return proposal
 end
 

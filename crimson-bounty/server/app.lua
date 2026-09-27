@@ -731,7 +731,10 @@ function App.register()
     handler('propose', 'amend', function(actor, payload)
         local proposal, err = deps.amendments.propose(actor, payload.id, payload.kind, payload.payload)
         if not proposal then return false, err end
-        return { id = proposal.id, kind = proposal.kind, expires = proposal.expires_at }
+        -- outcome 'applied' when nobody else had to agree and it is in
+        -- effect already; 'failed' when it was agreed but no longer fits.
+        return { id = proposal.id, kind = proposal.kind, expires = proposal.expires_at,
+                 outcome = proposal.outcome, err = proposal.error }
     end)
 
     handler('respondAmendment', 'amend', function(actor, payload)

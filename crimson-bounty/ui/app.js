@@ -601,10 +601,14 @@
         var raw = nodes[spec.id] ? nodes[spec.id].value : current(spec);
         values[spec.id] = (spec.type === 'number') ? (parseInt(raw, 10) || 0) : raw;
       });
+      // Which fields the player actually edited, as opposed to left on what
+      // they opened with.
+      var touched = {};
+      Object.keys(d.values || {}).forEach(function (id) { touched[id] = true; });
       var handler = d.onValues;
       state.dialog = null;
       render();
-      if (handler) handler(values);
+      if (handler) handler(values, touched);
     };
     var no = el('button', 'ghost', 'Cancel');
     no.onclick = closeDialog;
@@ -1494,10 +1498,16 @@
 
     askFields('Edit this contract',
       'Only while nobody has taken it. To change what it pays, use Change '
-        + 'reward.',
+        + 'reward.'
+        + (suggested ? '' : ' It currently runs out in ' + durationText(left) + '.'),
       fields,
-      function (values) {
-        var seconds = (values.hours && (suggested || values.hours !== hoursNow))
+      function (values, touched) {
+        // Sent when the player edited the box, whatever it says. Compared
+        // with the figure it opened on instead — the time left rounded UP
+        // to whole hours — a contract with ten minutes left opened on 1,
+        // and a creator who kept 1 meaning "an hour from now" had their
+        // Save accepted with the deadline left at ten minutes.
+        var seconds = (values.hours && (suggested || (touched && touched.hours)))
           ? values.hours * 3600 : 0;
         // A picker left on no choice is no change, not the first preset.
         var preset = parseInt(values.reasonPreset, 10) || 0;
@@ -1681,8 +1691,9 @@
     countdownFor = id;
 
     var deadline = Date.now() + 120000;
+    var timer;
 
-    countdownTimer = setInterval(function () {
+    timer = countdownTimer = setInterval(function () {
       if (Date.now() > deadline) {
         stopCountdown();
         delete state.progress[id];
@@ -1691,6 +1702,12 @@
       }
 
       post('kidnapProgress', { id: id }).then(function (r) {
+        /* A reply to a poll this page has since stopped — the hunter walked
+           away while it was in flight, or a newer handover replaced it. It
+           answered "no handover" to a hunter who had just left and told
+           them to get the target back and try again, and a stale reply
+           could stop the poller that replaced it. */
+        if (countdownTimer !== timer) { return; }
         if (r.ok && r.data && r.data.done) {
           // Over, and the server says how. Every ending used to reach this
           // poller the same way — the countdown gone — so a hunter who had
@@ -2169,12 +2186,20 @@
          leaving the proposal to lapse under "Waiting to be applied." — and
          a collection given back this way is the one route the page has for
          it, since the reward editor will not empty a collection. */
-      if (contract.role === 'creator' && !(Number(contract.huntersActive) > 0)
-          && r.data && r.data.id) {
-        return answerProposal({ id: r.data.id }, true);
+      /* The server applies it in the same request when nobody else has to
+         agree. The page used to answer its own proposal with a second
+         request, from the same rate-limit bucket: refused, it left a
+         proposal the card never drew and that blocked the next one. */
+      state.proposals = {};
+      if (r.data && r.data.outcome === 'applied') {
+        say('Done \u2014 the change is in effect.', 'gold');
+        return refresh();
+      }
+      if (r.data && r.data.outcome === 'failed') {
+        say(ERRORS[r.data.err] || 'That change no longer fits this contract.');
+        return refresh();
       }
       say('Proposed. The other party has to agree.', 'gold');
-      state.proposals = {};
       refresh();
     });
   }

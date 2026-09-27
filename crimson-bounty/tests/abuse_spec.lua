@@ -230,10 +230,13 @@ end)
 --------------------------------------------------------------------------
 
 describe('a reason changed by agreement', function()
+    --- On a contract nobody holds the client is the only party, so the
+    --- proposal is applied in the one request.
     local function agree(s, c, payload)
         local proposed = call('propose', 1, { id = c.id, kind = 'change_reason', payload = payload })
         if not proposed.ok then return proposed end
-        return call('respondAmendment', 1, { id = proposed.data.id, approve = true })
+        if proposed.data.outcome == 'applied' then return { ok = true } end
+        return { ok = false, err = proposed.data.err }
     end
 
     it('answers to the banned patterns, as a placed or edited one does', function()

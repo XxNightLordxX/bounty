@@ -268,8 +268,7 @@ describe('the failure stake', function()
         local proposal, err = s.amendments.propose(f.creator, c.id,
             CB.AMENDMENT.RAISE_PENALTY, { amount = Config.MaxContractValue })
         truthy(proposal, tostring(err))
-        local applied, applyErr = s.amendments.respond(f.creator, proposal.id, true)
-        truthy(applied, tostring(applyErr))
+        eq(proposal.outcome, 'applied', tostring(proposal.error))
 
         local ceiling = math.min(Config.Penalty.MaxAmount,
             math.floor(1000 * Config.Penalty.MaxFractionOfEscrow))
@@ -341,8 +340,7 @@ describe('the failure stake', function()
         local proposal, err = s.amendments.propose(f.creator, c.id,
             CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
         truthy(proposal, tostring(err))
-        local applied, applyErr = s.amendments.respond(f.creator, proposal.id, true)
-        truthy(applied, tostring(applyErr))
+        eq(proposal.outcome, 'applied', tostring(proposal.error))
 
         local after = s.storage.readContract(c.id)
         local worth = s.escrow.moneyValue(c.id)
@@ -415,7 +413,7 @@ describe('the failure stake', function()
         local proposal = s.amendments.propose(f.creator, c.id,
             CB.AMENDMENT.RAISE_PENALTY, { amount = 15000 })
         truthy(proposal)
-        truthy(s.amendments.respond(f.creator, proposal.id, true))
+        eq(proposal.outcome, 'applied')
         eq(s.storage.readContract(c.id).penalty_amount, 15000)
 
         falsy(s.contracts.stakeWasDisclosed(s.storage.readContract(c.id), 2000),
