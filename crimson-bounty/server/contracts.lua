@@ -573,14 +573,24 @@ end
 --- Accept a contract. Conditional write: in exclusive mode the ACTIVE →
 --- ACCEPTED transition is what reserves it, so two hunters racing produce
 --- exactly one winner (§14.34).
+---@param opts table|nil { disclosed = n } the stake the page had on screen
 ---@return boolean ok
 ---@return string|nil err
-function Contracts.accept(actor, contractId, anonymous)
+function Contracts.accept(actor, contractId, anonymous, opts)
     contractId = Util.toId(contractId)
     if not contractId then return false, CB.ERR.INVALID_INPUT end
 
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
+
+    -- Against THIS read, the one the stake below is charged from. The net
+    -- event checked a read of its own, one await earlier, and a reprice
+    -- landing between the two was charged in full.
+    if opts and opts.checkDisclosure
+        and not Contracts.stakeWasDisclosed(contract, opts.disclosed) then
+        return false, CB.ERR.TERMS_CHANGED
+    end
+
     if contract.state ~= CB.STATE.ACTIVE and contract.state ~= CB.STATE.ACCEPTED then
         -- Closed is not "not right now". The board drops a closed contract
         -- only on its next read, so tapping Accept on one that was cancelled,
@@ -666,11 +676,12 @@ function Contracts.accept(actor, contractId, anonymous)
         if activeCount >= Config.Limits.MaxHuntersPerContract then
             return false, CB.ERR.CONTRACT_FULL
         end
-        if contract.state == CB.STATE.ACTIVE then
-            -- Only when it took. A competitive contract another hunter
-            -- advanced in the same tick is theirs to put back, not ours.
-            advanced = Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted') and true or false
-        end
+        -- Not advanced here. A competitive contract is advanced only once
+        -- this hunter's stake and row exist (below), so there is never an
+        -- advance to put back: putting one back after another hunter had
+        -- joined on the strength of it left that hunter holding an ACTIVE
+        -- contract that refused every claim and forfeited their stake at
+        -- expiry.
     end
 
     -- The failure penalty is staked here, at acceptance, or not at all: a
@@ -689,7 +700,7 @@ function Contracts.accept(actor, contractId, anonymous)
             return false, CB.ERR.INSUFFICIENT
         end
 
-        local ok, _, ids = Escrow.take(actor, contractId, { {
+        local ok, takeErr, ids = Escrow.take(actor, contractId, { {
             slot = 0, portion = CB.PORTION.STAKE, source = account,
             amount = stake, staker = actor.cid,
         } })
@@ -698,7 +709,9 @@ function Contracts.accept(actor, contractId, anonymous)
             if advanced then
                 Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
             end
-            return false, CB.ERR.INSUFFICIENT
+            -- A contract busy with another take is not the hunter being
+            -- short of money.
+            return false, takeErr == CB.ERR.LOCKED and CB.ERR.LOCKED or CB.ERR.INSUFFICIENT
         end
         Audit.financial('stake_taken', actor.cid, contractId, { amount = stake })
     end
@@ -774,6 +787,12 @@ function Contracts.accept(actor, contractId, anonymous)
         return false, CB.ERR.ALREADY_SETTLED
     end
 
+    -- Competitive: advanced only now, with this hunter's stake and row in
+    -- place. A no-op when somebody else already advanced it.
+    if contract.mode ~= CB.MODE.EXCLUSIVE and nowState == CB.STATE.ACTIVE then
+        Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted')
+    end
+
     -- The anonymity fee is taken last, after the stake and the record, so
     -- there is no path where a hunter is charged for an acceptance that
     -- then fails (§4).
@@ -839,7 +858,18 @@ function Contracts.abandon(actor, contractId)
     -- board. A contract mid-settlement is left alone: claimSlot owns that
     -- transition and will land it in ACCEPTED or COMPLETED itself.
     if remaining == 0 and contract.state == CB.STATE.ACCEPTED then
-        Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'abandoned')
+        if Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'abandoned') then
+            -- Counted before the revert landed, so a hunter who accepted in
+            -- between is holding a contract that just went back on the
+            -- board — refused every claim and forfeiting their stake at
+            -- expiry. Looked at again now it has, and put back if so.
+            for _, row in ipairs(Storage.readHunters(contractId) or {}) do
+                if row.state == 'active' then
+                    Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'rejoined')
+                    break
+                end
+            end
+        end
     end
 
     if Progression then Progression.onFailed(actor.cid) end
@@ -914,6 +944,29 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment, opts)
     if not Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming_slot') then
         return false, CB.ERR.LOCKED
     end
+
+    -- Everything above was read before the lock was ours, and every read is
+    -- an await: another claim can take the lock, pay its slot, advance
+    -- next_slot and give the lock back in between. Acting on the slot read
+    -- at the top paid this hunter out of a slot already settled — nothing
+    -- moved, the claim reported success, and the kill, the photo token and
+    -- the next ten minutes were spent on it. Read again under the lock,
+    -- where nothing else can move them.
+    local held = Storage.readContract(contractId)
+    local fresh = Storage.readHunter(contractId, hunterCid)
+    local refusal
+    if not fresh or fresh.state ~= 'active' then
+        refusal = CB.ERR.NOT_PARTICIPANT
+    elseif Contracts.slotCoolingDown(fresh) then
+        refusal = CB.ERR.SLOT_COOLDOWN
+    elseif not held or (held.next_slot or 1) > (held.payout_slots or 1) then
+        refusal = CB.ERR.ALREADY_SETTLED
+    end
+    if refusal then
+        Contracts.transition(contractId, CB.STATE.COMPLETING, CB.STATE.ACCEPTED, 'claim_refused')
+        return false, refusal
+    end
+    contract, hunter, slot = held, fresh, held.next_slot or 1
 
     -- A kidnapping releases the slot's baseline and its bonus; an elimination
     -- releases the baseline only, and the bonus returns to the creator.

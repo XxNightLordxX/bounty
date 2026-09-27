@@ -575,9 +575,31 @@ end
 ---@return boolean ok
 ---@return string|nil err
 ---@return string|nil outcome
+local respondUnlocked
+
+--- Proposals with an answer being recorded in this process.
+---
+--- An answer reads the proposal, waits on the contract and its hunters, and
+--- writes the proposal back with its own approval added. Two hunters
+--- agreeing in the same instant each wrote back a copy holding only their
+--- own approval, so the second write erased the first: both were told the
+--- change was waiting on the other, and it expired unapplied though
+--- everybody had agreed. One answer per proposal at a time; the other is
+--- told somebody got there first and can answer again.
+local responding = {}
+
 function Amendments.respond(actor, amendmentId, approve)
     amendmentId = Util.toId(amendmentId)
     if not amendmentId then return false, CB.ERR.INVALID_INPUT end
+    if responding[amendmentId] then return false, CB.ERR.LOCKED end
+    responding[amendmentId] = true
+    local ok, a, b, c = pcall(respondUnlocked, actor, amendmentId, approve)
+    responding[amendmentId] = nil
+    if not ok then error(a, 0) end
+    return a, b, c
+end
+
+respondUnlocked = function(actor, amendmentId, approve)
 
     local proposal = Storage.readAmendment(amendmentId)
     if not proposal or proposal.outcome ~= 'open' then return false, CB.ERR.NOT_FOUND end

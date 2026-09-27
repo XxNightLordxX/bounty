@@ -482,6 +482,21 @@ end
 -- Taking escrow
 --------------------------------------------------------------------------
 
+local takeUnlocked
+
+--- Contracts with a take in flight in this process.
+---
+--- Line ids are allocated from the lines a contract already holds, and on
+--- mysql reading those is an await. Two takes on one contract in the same
+--- instant — two hunters staking a competitive contract, a top-up sent
+--- twice — allocated the same id, and the second write merged into the
+--- first row instead of adding one: two people charged, one line held. The
+--- read-back below compared source, portion and amount, which two stakes
+--- of the same figure share, so it passed both and one stake stopped
+--- existing. One take per contract at a time closes the allocation race;
+--- the loser is told the contract is busy and nothing is charged.
+local taking = {}
+
 --- Confiscate the validated lines and write the escrow record as one
 --- operation. On any failure everything already taken is put back, so a
 --- partially-charged creator is not a reachable state (§3.5).
@@ -492,6 +507,15 @@ end
 ---@return string|nil err
 ---@return table<string, boolean>|nil ids the stored line ids, on success
 function Escrow.take(actor, contractId, lines)
+    if taking[contractId] then return false, CB.ERR.LOCKED end
+    taking[contractId] = true
+    local ok, result, err, ids = pcall(takeUnlocked, actor, contractId, lines)
+    taking[contractId] = nil
+    if not ok then error(result, 0) end
+    return result, err, ids
+end
+
+takeUnlocked = function(actor, contractId, lines)
     forget()
     local taken = {}
 
@@ -617,6 +641,10 @@ function Escrow.take(actor, contractId, lines)
         if not found
             or found.source ~= mine.source
             or found.portion ~= mine.portion
+            -- Whose it is, too: two stakes of the same figure agree on
+            -- everything else.
+            or found.staker ~= mine.staker
+            or found.item ~= mine.item
             or (found.amount or 0) ~= (mine.amount or 0)
             or (found.quantity or 0) ~= (mine.quantity or 0) then
             Audit.rejected('escrow_id_collision', actor.cid, contractId, { line = mine.id })

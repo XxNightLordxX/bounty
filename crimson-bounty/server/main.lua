@@ -865,6 +865,17 @@ function ExpireContracts()
 
     for i = 1, #contracts do
         local contract = contracts[i]
+        -- Read again before acting on it. The list above was read once, and
+        -- every write and every resolve for the contracts before this one is
+        -- an await in which a player can act on this one: a payout claimed,
+        -- a deadline extended, a bonus raised. The pause marker below wrote
+        -- back the whole row as the list had it and undid all of them — a
+        -- claimed collection went back on offer and the next kill was paid
+        -- out of a slot already settled — and the deadline check expired a
+        -- contract its creator had just extended.
+        if contract.state == CB.STATE.ACTIVE or contract.state == CB.STATE.ACCEPTED then
+            contract = Storage.readContract(contract.id) or contract
+        end
         if contract.state == CB.STATE.ACTIVE or contract.state == CB.STATE.ACCEPTED then
             -- The absolute ceiling applies whatever anyone's presence is.
             if contract.expires_at and now > contract.expires_at then
