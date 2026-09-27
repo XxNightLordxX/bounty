@@ -57,22 +57,30 @@ kidnapping bonus, a buyout price, and a failure penalty.
 the reward or take part of it back — tick the lines to return and they come
 home as the same property, the same weapon with the same serial. A slot's
 baseline cannot be emptied, because a collection that pays nothing is not a
-contract. The moment somebody accepts, the reward can only go up: they took
-it as written, and escrow exists so it cannot be pulled out from under them.
+contract. The moment somebody accepts, the client can only add to it on their
+own: the hunter took it as written, and escrow exists so it cannot be pulled
+out from under them. Anything else — a shorter deadline, giving back the last
+payout, cancelling — is proposed in the app and happens only if the other side
+agrees.
 
 **Taking one.** Accept from the board, anonymously if you like. More hunters
 may accept than there are payouts; the first to fulfil are paid. If the
 contract carries a penalty, you stake it when you accept — walk away and the
-client keeps it.
+client keeps it. You can take it up again later, staking again; the wait
+between payouts on one contract (`Config.Limits.SlotCooldownSeconds`) carries
+over, so walking away is not a way round it.
 
 **Finishing it.** Kill the target and photograph the body through the app's
 camera for the baseline. Or take them alive to the client and hold them there
 for thirty seconds for baseline plus bonus.
 
 **Counter-play.** A target can see the price on their head and buy it out.
-Either side can pay an informant to unmask one hunter. Creator and hunters can
+Players the app is closed to — law enforcement and EMS — do the same with
+`/cleanse` (lists what is on them) and `/cleanse <id>` (buys one out). Either
+side can pay an informant to unmask one hunter. Creator and hunters can
 message or call each other through the app without either learning who the
-other is.
+other is (`Config.Relay`; switching it off removes messaging and calls
+entirely).
 
 **Hunting a cop.** Allowed, and loud. Every officer online is advised when the
 contract is posted and again on each acceptance, with a running count, on
@@ -105,6 +113,28 @@ The full reasoning is in `docs/bounty-hunter-app-spec.md` §14. In short:
 
 ---
 
+## Staff commands
+
+All work from the server console. In game they need the `crimson.admin` ACE
+(`add_ace group.admin crimson.admin allow`) or one of `Config.Admin.ExtraAces`.
+
+| Command | What it does |
+|---|---|
+| `/cb-diag [player id]` | Why the app is not showing something: runs the app's own reads as that player and says what each answered, plus the last faults their phone reported |
+| `/cb-timeline <contract>` | One contract's state, escrow lines and audit trail |
+| `/cb-whois <contract>` | Who is really behind an anonymous creator or hunter. Needs `crimson.identity`, a separate ACE |
+| `/cb-void <contract> [reason]` | Close a contract and return its escrow to the creator |
+| `/cb-stuck` | Escrow lines that were mid-payment when the server stopped |
+| `/cb-settle <line> pay\|return` | Finish one of those by hand |
+| `/bountyadmin timers` | Test servers: bring every wait and cooldown forward. `crimson.admin` itself only — the extra ACEs do not open it — and audited |
+
+Faults the phone page hits are reported to the server, printed to the console
+and kept for `/cb-diag`; `Config.Debug = true` adds each one's full stack trace.
+On the phone, tapping the build line at the bottom of the Ledger tab five times
+opens a diagnostics panel showing the page's recent requests and faults.
+
+---
+
 ## Testing
 
 The suite runs the real server modules against a stubbed FiveM runtime, so it
@@ -112,14 +142,18 @@ can be run anywhere Lua is installed:
 
 ```bash
 sh crimson-bounty/tests/all.sh    # everything
+CB_SUITES=journeys_spec lua crimson-bounty/tests/run.lua   # one area, in seconds
 ```
 
-Three kinds of check, because each catches what the others cannot:
+Five kinds of check, because each catches what the others cannot:
 
-- **Server suite** (278 tests) — escrow arithmetic, the state machine, every
-  payout and refund path, deliberate exploit attempts, storage conformance
-  across all three backends, and a randomised simulation asserting that no
+- **Server suite** (about 1,500 tests) — escrow arithmetic, the state machine,
+  every payout and refund path, whole player journeys, every action against
+  every contract state, deliberate exploit attempts, storage conformance
+  across all three backends, and randomised simulations asserting that no
   sequence of operations creates or destroys value.
+- **Store invariants** — the same suite again with a monitor auditing the
+  whole store after every write.
 - **Static checks** — rules no unit test can see: no SQL built by
   concatenation, no handler reading an identity from a payload, every module
   the resource loader asks for exists, every event name agrees across UI,
@@ -129,7 +163,10 @@ Three kinds of check, because each catches what the others cannot:
   through a minimal DOM. This exists because the two worst bugs in the whole
   build were in the app and invisible to Lua tests: a form that could never
   submit a valid contract, and an open that refreshed itself into a storm.
+- **Layout suite** — the page rendered in a real browser at phone widths from
+  280 to 414px, measuring tap targets, clipping and the tab bar. Skipped where
+  Playwright is not installed.
 
 **What it cannot prove:** behaviour against the real `ox_inventory`,
-`lb-phone` and `qbx_core` builds, or how the UI renders on an actual phone.
-Work through `docs/in-game-checklist.md` on a test server before going live.
+`lb-phone` and `qbx_core` builds. Work through `docs/in-game-checklist.md` on
+a test server before going live.

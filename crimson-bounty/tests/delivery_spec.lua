@@ -316,3 +316,59 @@ describe('a kill whose victim leaves', function()
         falsy(s.death.getPending(c.id, 'HUNTER01'))
     end)
 end)
+
+describe('two changes to a contract inside one second', function()
+    local function pushesTo(source)
+        local n = 0
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:push' and event.target == source then n = n + 1 end
+        end
+        return n
+    end
+
+    it('still tells the open app about the second one', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 1000 } },
+        })
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+            cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
+        Env.clientEvents = {}
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        eq(pushesTo(1), 1, 'one refresh now, not two')
+
+        -- The refresh the first push caused can have read the contract
+        -- before the second acceptance landed. Something has to follow it.
+        Env.advance(2)
+        eq(pushesTo(1), 2, 'the creator\'s card went on showing one operative')
+    end)
+
+    it('sends one trailing push for a whole burst, not one each', function()
+        local s = newStack()
+        s.notify.clearPush('CREATOR1')
+        local f = fixture(s)
+        Env.clientEvents = {}
+        truthy(s.notify.push('CREATOR1', 'a'))
+        local timers = #Env.timers
+        for _ = 1, 5 do s.notify.push('CREATOR1', 'b') end
+        eq(#Env.timers, timers + 1, 'a timer per held push, where one would do')
+        Env.advance(2)
+        eq(pushesTo(1), 2)
+        local _ = f
+    end)
+
+    it('does not push a player who has left', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.clientEvents = {}
+        truthy(s.notify.push('CREATOR1', 'a'))
+        s.notify.push('CREATOR1', 'b')
+        s.notify.clearPlayer('CREATOR1')
+        Env.advance(2)
+        eq(pushesTo(1), 1)
+        local _ = f
+    end)
+end)

@@ -10,9 +10,17 @@ local Identity
 local budgets = {}
 local advisorySent = {}
 
+--- [cid] = os.time() of the last push, so a burst of state changes on one
+--- contract does not become a burst of refreshes.
+local lastPush = {}
+
+--- [cid] = the reason for a push held back by the floor, waiting to go.
+local trailing = {}
+
 function Notify.init(deps)
     Identity = deps.identity
     budgets, advisorySent = {}, {}
+    lastPush, trailing = {}, {}
 end
 
 local function withinBudget(cid)
@@ -65,9 +73,6 @@ end
 -- the normal projections, so a push can never become a channel that leaks
 -- what a projection would have withheld.
 
---- [cid] = os.clock() of the last push, so a burst of state changes on one
---- contract does not become a burst of refreshes.
-local lastPush = {}
 
 --- Nudge one player's open app.
 ---@param cid string
@@ -78,7 +83,24 @@ function Notify.push(cid, reason)
 
     local now = os.time()
     local last = lastPush[cid]
-    if last and (now - last) < (Config.Notifications.PushMinIntervalSeconds or 1) then
+    local floor = Config.Notifications.PushMinIntervalSeconds or 1
+    if last and (now - last) < floor then
+        -- Held back, not dropped. The app refreshes on the push it already
+        -- got, and that refresh can read the contract before this change
+        -- lands — two hunters accepting in the same second left the
+        -- creator's open card showing one operative until something else
+        -- happened to change. One push goes once the floor has passed, so a
+        -- burst still costs one refresh after the first, and the last word
+        -- is always seen.
+        if not trailing[cid] then
+            SetTimeout(math.max(1, floor - (now - last)) * 1000, function()
+                local held = trailing[cid]
+                trailing[cid] = nil
+                -- Due by now: the timer waits out the rest of the floor.
+                if held then Notify.push(cid, held) end
+            end)
+        end
+        trailing[cid] = reason
         return false
     end
 
@@ -114,6 +136,7 @@ end
 
 function Notify.clearPush(cid)
     lastPush[cid] = nil
+    trailing[cid] = nil
 end
 
 --------------------------------------------------------------------------
@@ -260,6 +283,7 @@ end
 function Notify.clearPlayer(cid)
     budgets[cid] = nil
     lastPush[cid] = nil
+    trailing[cid] = nil
 end
 
 function Notify.clearContract(contractId)
