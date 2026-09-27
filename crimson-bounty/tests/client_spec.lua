@@ -324,23 +324,182 @@ describe('the camera, on a phone that dies mid-upload', function()
             'a camera that never calls back left the page waiting for good')
     end)
 
-    it('takes its camera override back off the phone when it is done', function()
+    local function sentToServer(name)
+        for _, e in ipairs(Client.toServer) do
+            if e.name == name then return e end
+        end
+    end
+
+    it('hands the photo lb-phone took to the server', function()
+        -- lb-phone calls the SECOND argument of SetCameraComponent and never
+        -- reads options.cb. With the callback only in the options, the shot
+        -- went nowhere: nothing was submitted, and two minutes later the
+        -- hunter was told the camera never came back.
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued()
+        truthy(Client.camera('https://cdn.fivemanage.com/proof.png'),
+            'the camera must be given a callback lb-phone will actually call')
+
+        local submit = sentToServer('crimson-bounty:submitPhoto')
+        truthy(submit, 'the photograph was never sent to the server')
+        eq(submit.args[1].token, 'tok')
+        eq(submit.args[1].url, 'https://cdn.fivemanage.com/proof.png')
+
+        falsy(Client.answered, 'the page waits for the verdict, not the shutter')
+        Client.fire('crimson-bounty:result', {
+            rid = submit.args[1].__rid, event = 'submitPhoto', ok = true, data = { slot = 1 },
+        })
+        truthy(Client.answered)
+        truthy(Client.answer.ok, 'and it is told what the server decided')
+        eq(Client.answerCount, 1)
+    end)
+
+    it('also works on a build that calls back through options.cb', function()
+        -- lb-phone's own documentation gives the callback as a field of the
+        -- options table. Builds seen in the wild read the second argument
+        -- instead. Both are passed; this is the documented one.
+        Env.reset()
+        Client.boot()
+        local documented
+        Client.exports.SetCameraComponent = function(_, spec)
+            table.insert(Client.phone, { call = 'SetCameraComponent', spec = spec })
+            documented = spec and spec.cb
+        end
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued()
+        truthy(documented, 'no callback where the documentation puts it')
+        documented('https://cdn.fivemanage.com/proof.png')
+        local submit = sentToServer('crimson-bounty:submitPhoto')
+        truthy(submit, 'a build that calls options.cb had its photograph dropped')
+        eq(submit.args[1].url, 'https://cdn.fivemanage.com/proof.png')
+    end)
+
+    it('submits once when a build calls back by more than one route', function()
+        Env.reset()
+        Client.boot()
+        Client.exports.SetCameraComponent = function(_, spec, cb)
+            table.insert(Client.phone, { call = 'SetCameraComponent', spec = spec })
+            spec.cb('https://cdn.fivemanage.com/proof.png')
+            cb('https://cdn.fivemanage.com/proof.png')
+            return 'https://cdn.fivemanage.com/proof.png'
+        end
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued()
+        local submits = 0
+        for _, e in ipairs(Client.toServer) do
+            if e.name == 'crimson-bounty:submitPhoto' then submits = submits + 1 end
+        end
+        eq(submits, 1, 'one photograph sent as several claims')
+    end)
+
+    it('opens no camera when there is nothing to photograph', function()
+        -- The commonest tap of Verify kill. The refusal used to "reset" the
+        -- camera on its way out, which on lb-phone opens one — and, with no
+        -- callback, waits for the player to close it before the page hears
+        -- anything.
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        local asked = Client.toServer[#Client.toServer]
+        Client.fire('crimson-bounty:result', {
+            rid = asked.args[1].__rid, event = 'requestPhotoToken',
+            ok = false, err = 'no_kill_to_verify',
+        })
+
+        truthy(Client.answered, 'the page must be told straight away')
+        eq(Client.answer.err, 'no_kill_to_verify')
+        for _, call in ipairs(Client.phone) do
+            falsy(call.call == 'SetCameraComponent', 'a refusal opened a camera')
+        end
+    end)
+
+    --- A build whose SetCameraComponent ignores the callback and waits for
+    --- the shot inside the call (Citizen.Await), returning the URL. The wait
+    --- is a coroutine yield here.
+    local function waitingCamera()
+        Client.exports.SetCameraComponent = function(_, spec)
+            table.insert(Client.phone, { call = 'SetCameraComponent', spec = spec })
+            return coroutine.yield('camera-open')
+        end
+    end
+
+    local function tokenIssuedInto(co)
+        local asked = Client.toServer[#Client.toServer]
+        local rid = asked.args[1] and asked.args[1].__rid
+        return coroutine.resume(co, rid)
+    end
+
+    it('still gives up on a camera that waits inside the call and never returns', function()
+        Env.reset()
+        Client.boot()
+        waitingCamera()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+
+        local co = coroutine.create(function(rid)
+            return Client.fire('crimson-bounty:result', {
+                rid = rid, event = 'requestPhotoToken', ok = true, data = { token = 'tok' },
+            })
+        end)
+        local _, tag = tokenIssuedInto(co)
+        eq(tag, 'camera-open', 'the camera is open and the call is waiting on it')
+
+        -- The camera never comes back. The timer has to exist already: one
+        -- armed after the call would be armed only once the call returns.
+        Client.runTimeouts()
+        truthy(Client.answered,
+            'the no-answer timer was never armed, so the page waits for good')
+        eq(Client.answer.err, 'camera_no_answer')
+
+        -- Let the waiting call finish, or the harness's swapped-in exports
+        -- and print stay installed for every suite that runs after this.
+        coroutine.resume(co, nil)
+        eq(coroutine.status(co), 'dead')
+        eq(Client.answerCount, 1)
+    end)
+
+    it('submits a URL handed back as the return value', function()
+        Env.reset()
+        Client.boot()
+        waitingCamera()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+
+        local co = coroutine.create(function(rid)
+            return Client.fire('crimson-bounty:result', {
+                rid = rid, event = 'requestPhotoToken', ok = true, data = { token = 'tok' },
+            })
+        end)
+        tokenIssuedInto(co)
+        coroutine.resume(co, 'https://cdn.fivemanage.com/proof.png')
+
+        local submit = sentToServer('crimson-bounty:submitPhoto')
+        truthy(submit, 'the URL the camera returned was thrown away')
+        eq(submit.args[1].url, 'https://cdn.fivemanage.com/proof.png')
+    end)
+
+    it('opens exactly one camera, and never a bare one', function()
+        -- lb-phone's SetCameraComponent treats anything that is not a table
+        -- as empty options and OPENS a camera with them. The "reset" this
+        -- used to send after every ending was a second camera with the
+        -- phone's defaults, popped open over a hunter who had just taken
+        -- their photo — or who had been refused before any camera opened.
         Env.reset()
         Client.boot()
         Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
         tokenIssued()
         truthy(Client.camera('https://example.com/a.png'))
+        Client.runTimeouts()
 
-        local resets = 0
+        local opened, bare = 0, 0
         for _, call in ipairs(Client.phone) do
-            if call.call == 'SetCameraComponent' and call.spec == nil then
-                resets = resets + 1
+            if call.call == 'SetCameraComponent' then
+                opened = opened + 1
+                if type(call.spec) ~= 'table' or next(call.spec) == nil then bare = bare + 1 end
             end
         end
-        truthy(resets > 0,
-            'the override stays installed, so every later use of the phone camera '
-            .. 'runs through a component configured for one photograph of a body, '
-            .. 'callback included')
+        eq(opened, 1, 'one photograph, one camera')
+        eq(bare, 0, 'a camera was opened with no options at all')
     end)
 
     it('does not upload the shot to the players own gallery by default', function()

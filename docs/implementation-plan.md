@@ -23,7 +23,7 @@ Read directly from the uploaded server resources, not assumed:
 | Police/EMS jobs | `police, sheriff, leo, trooper, sasp, bcso, fib, ranger, doj, lawyer, ambulance`; job **types** `leo`, `police` | The spec's 5-name blacklist is insufficient — see §2 decision |
 | Mugshots | `MugShotBase64` → `exports.MugShotBase64:GetMugShotBase64(ped, transparent)` | Client-side render source for §7.2 |
 | Word filter | lb-phone `exports["lb-phone"]:ContainsBlacklistedWord(source, text)` | Reused for contract reason and relay messages (§14.30) |
-| Photo capture | `SetCameraComponent{ cb = function(src) end }`, `SaveToGallery(link)` | Camera flow for §7.4 / §14.20 |
+| Photo capture | `SetCameraComponent(options)` returns the photo URL. lb-phone's docs put the callback in `options.cb`; builds seen in the wild take it as a **second argument** instead and only return the URL when there is none. The client passes it both ways and uses the return value too, taking whichever arrives first. A non-table `options` opens a camera with defaults, so there is no "reset" call. `SaveToGallery(link)` | Camera flow for §7.4 / §14.20 |
 | Notifications | `exports["lb-phone"]:SendNotification{ app, title, content }` | §7.3 alerts |
 
 ## 2. Decisions taken (owner delegated these)

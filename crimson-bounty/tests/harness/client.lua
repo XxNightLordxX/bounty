@@ -52,10 +52,16 @@ local function defaultExports()
             table.insert(Client.phone, { call = 'SendNotification', data = data })
             return true
         end,
-        SetCameraComponent = function(_, spec)
-            table.insert(Client.phone, { call = 'SetCameraComponent', spec = spec })
-            Client.cameraCallback = spec and spec.cb
-            return true
+        -- lb-phone's own shape: SetCameraComponent(options, cb). The callback
+        -- it calls is the SECOND argument; options.cb is never read. Anything
+        -- that is not a table is taken as empty options and opens a camera
+        -- all the same. With no callback the real export waits for the shot
+        -- (Citizen.Await) and returns the URL, which a test drives through
+        -- Client.blockingCamera instead.
+        SetCameraComponent = function(_, spec, cb)
+            table.insert(Client.phone, { call = 'SetCameraComponent', spec = spec, cb = cb })
+            Client.cameraCallback = cb
+            return nil
         end,
     }
 end

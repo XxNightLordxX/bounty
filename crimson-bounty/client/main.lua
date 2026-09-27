@@ -487,54 +487,116 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
     -- phone crashing, in the middle of an upload, for no stated reason.
     local answered = false
 
-    --- Take our camera override back off the phone.
-    ---
-    --- Idempotent, and called from EVERY path that ends this request rather
-    --- than only from the camera's own callback, which is where it used to
-    --- live. A camera that never calls back — the player closes the phone,
-    --- walks away, or the build never opens it — left this installed for the
-    --- rest of the session. Every later use of the phone's own camera then
-    --- ran through a component this resource configured for one photograph
-    --- of a body, calling a callback belonging to a request that finished
-    --- minutes ago and which answers nothing because it has already
-    --- answered. The symptom is the player's camera app silently doing
-    --- nothing, forever, with this resource nowhere in sight.
     -- Whether the player has actually taken a shot. The no-answer timer is
     -- about a camera that was never used; once there is a photo in flight
     -- the request belongs to the upload, however long that takes.
     local shutterPressed = false
 
-    local released = false
-    local function releaseCamera()
-        if released then return end
-        released = true
-        phone('SetCameraComponent reset', function()
-            return exports['lb-phone']:SetCameraComponent(nil)
-        end)
-    end
+    -- Whether the camera has already handed us its result. lb-phone has
+    -- been seen to call back more than once, and this asks it for the
+    -- result by two routes (below), so the first one wins.
+    local delivered = false
 
+    -- There is no camera "override" to take back off the phone afterwards.
+    -- lb-phone's SetCameraComponent(options, cb) opens a one-shot camera
+    -- whose callback is dropped once it has been used, and it treats
+    -- anything that is not a table as empty options: calling it with nil to
+    -- "reset" it opened a SECOND camera with lb-phone's defaults (and the
+    -- phone with it, if it was closed), and, with no callback, waited inside
+    -- that call until the player dealt with it — before the page was told
+    -- anything. Every ending of this request did that, including a refusal
+    -- before any camera had been asked for.
     local function cb(payload)
         if answered then return end
         answered = true
-        releaseCamera()
         pcall(rawCb, payload)
     end
 
-    local contractId = data and data.id
+    -- A body that is not an object is refused rather than indexed: indexing
+    -- a number throws, and a throw here leaves the request unanswered.
+    local contractId = type(data) == 'table' and data.id or nil
     if not contractId then return cb({ ok = false, err = 'invalid_input' }) end
 
     App.request('requestPhotoToken', { id = contractId }, function(result)
-        if not result.ok or not result.data or not result.data.token then
+        if not result.ok or type(result.data) ~= 'table' or not result.data.token then
             return cb({ ok = false, err = result.err or 'no_token' })
         end
 
         local token = result.data.token
 
+        --- What the camera produced: a URL, or nothing if the player backed
+        --- out.
+        ---
+        --- Guarded: lb-phone calls this from its own camera, so a throw here
+        --- does not stay here — it goes back into the camera and takes the
+        --- phone with it.
+        local function onShot(src)
+            if delivered then return end
+            delivered = true
+
+            -- The shutter has been pressed, so the no-answer timer below
+            -- must not fire. Without this, a photo taken at 119 seconds is
+            -- still uploading when the timer expires at 120: the page is
+            -- told the camera never came back, the real answer is dropped as
+            -- a second reply, and the hunter is told their kill went unsent
+            -- while the server was in the middle of accepting it.
+            shutterPressed = true
+
+            -- The page has already been told the camera never came back, and
+            -- the token this photo would be sent with has run out with it.
+            if answered then return end
+
+            local ok, err = pcall(function()
+                if type(src) ~= 'string' or src == '' then
+                    return cb({ ok = false, err = 'cancelled' })
+                end
+                App.request('submitPhoto', { token = token, url = src }, function(submitResult)
+                    cb({ ok = submitResult.ok, err = submitResult.err,
+                         data = submitResult.data })
+                end)
+            end)
+            if not ok then
+                print(('[crimson-bounty] the camera callback threw: %s')
+                    :format(tostring(err)))
+                cb({ ok = false, err = 'photo_rejected' })
+            end
+        end
+
+        -- A camera that opens and never calls back leaves the page waiting on
+        -- a request that has no timeout of its own: the server round trip has
+        -- one, the player composing a shot does not. Generous, because they
+        -- are lining up a photograph, but not forever.
+        --
+        -- Armed BEFORE the camera is asked for. SetCameraComponent is
+        -- documented as returning the photo's URL, and a build that returns
+        -- it waits inside the call until the camera is done with; a timer
+        -- armed after that call is armed only once there is nothing left to
+        -- wait for.
+        --
+        -- Its own code, not 'cancelled'. Cancelling is the player's own
+        -- decision and the page is deliberately silent about it — so a
+        -- camera that never came back said nothing at all, two minutes after
+        -- a tap that had already said nothing. The two are not the same
+        -- event and the second one needs words.
+        SetTimeout((Config.Completion.PhotoTokenLifetimeSeconds or 120) * 1000, function()
+            if shutterPressed then return end
+            cb({ ok = false, err = 'camera_no_answer' })
+        end)
+
         -- The UI is waiting on cb. A build without SetCameraComponent
         -- would throw out of here and never call it, leaving the player
         -- looking at a button that does nothing forever.
-        local opened = phone('SetCameraComponent', function()
-            exports['lb-phone']:SetCameraComponent({
+        --
+        -- The callback goes in as the SECOND argument. That is the one
+        -- lb-phone reads: SetCameraComponent(options, cb) calls cb(url), and
+        -- with no second argument it ignores options.cb entirely, waits for
+        -- the shot and returns the URL instead. The photo went nowhere: the
+        -- URL was discarded, nothing was submitted, and two minutes later the
+        -- hunter was told the camera never came back. options.cb is kept for
+        -- a build that reads it there, and a URL handed back as the return
+        -- value is used too; `delivered` makes the first of them the only one.
+        local opened, returned = phone('SetCameraComponent', function()
+            return exports['lb-phone']:SetCameraComponent({
                 default = { type = 'Photo', flash = false, camera = 'rear' },
                 permissions = {
                     toggleFlash = true, flipCamera = true, takePhoto = true,
@@ -546,57 +608,12 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
                 -- builds. It is also evidence of a crime sitting in the
                 -- hunter's phone. Off unless an operator asks for it.
                 saveToGallery = Config.Completion.SavePhotoToGallery == true,
-                cb = function(src)
-                    -- Released here too, before anything that can fail: the
-                    -- override is ours and we are done with it the moment
-                    -- the shutter has been pressed. cb() below releases it
-                    -- as well, and releasing twice is a no-op.
-                    releaseCamera()
-
-                    -- The shutter has been pressed, so the no-answer timer
-                    -- below must not fire. Without this, a photo taken at
-                    -- 119 seconds is still uploading when the timer expires
-                    -- at 120: the page is told the camera never came back,
-                    -- the real answer is dropped as a second reply, and the
-                    -- hunter is told their kill went unsent while the server
-                    -- was in the middle of accepting it.
-                    shutterPressed = true
-
-                    -- Guarded: this runs inside lb-phone's camera, so a
-                    -- throw here does not stay here — it goes back into the
-                    -- camera and takes the phone with it.
-                    local ok, err = pcall(function()
-                        if not src then return cb({ ok = false, err = 'cancelled' }) end
-                        App.request('submitPhoto', { token = token, url = src }, function(submitResult)
-                            cb({ ok = submitResult.ok, err = submitResult.err,
-                                 data = submitResult.data })
-                        end)
-                    end)
-                    if not ok then
-                        print(('[crimson-bounty] the camera callback threw: %s')
-                            :format(tostring(err)))
-                        cb({ ok = false, err = 'photo_rejected' })
-                    end
-                end,
-            })
+                cb = onShot,
+            }, onShot)
         end)
 
         if not opened then return cb({ ok = false, err = 'camera_unavailable' }) end
-
-        -- A camera that opens and never calls back leaves the page waiting on
-        -- a request that has no timeout of its own: the server round trip has
-        -- one, the player composing a shot does not. Generous, because they
-        -- are lining up a photograph, but not forever.
-        --
-        -- Its own code, not 'cancelled'. Cancelling is the player's own
-        -- decision and the page is deliberately silent about it — so a
-        -- camera that never came back said nothing at all, two minutes after
-        -- a tap that had already said nothing. The two are not the same
-        -- event and the second one needs words.
-        SetTimeout((Config.Completion.PhotoTokenLifetimeSeconds or 120) * 1000, function()
-            if shutterPressed then return end
-            cb({ ok = false, err = 'camera_no_answer' })
-        end)
+        if type(returned) == 'string' and returned ~= '' then onShot(returned) end
     end)
 end)
 

@@ -111,6 +111,21 @@ describe('capture tokens', function()
         truthy(s.photo.issue(f.hunter, c.id), 'issued after a corroborated kill')
     end)
 
+    it('has nothing left to claim by the time the client gives up on the camera', function()
+        -- client/main.lua answers camera_no_answer PhotoTokenLifetimeSeconds
+        -- after the camera opened, and the camera cannot open before the
+        -- kill. The page's words for that code are held to this: it used to
+        -- say "the kill is still yours to claim - try again".
+        local s, f, c = seeded()
+        killTarget(s)
+        truthy(s.photo.issue(f.hunter, c.id), 'the camera opens on a live kill')
+
+        Env.advance(Config.Completion.PhotoTokenLifetimeSeconds + 1)
+        local token, err = s.photo.issue(f.hunter, c.id)
+        falsy(token)
+        eq(err, CB.ERR.NO_KILL_TO_VERIFY)
+    end)
+
     it('replaces the previous token, so tokens cannot be banked', function()
         local s, f, c = seeded()
         killTarget(s)

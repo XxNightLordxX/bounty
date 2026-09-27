@@ -464,8 +464,13 @@
     // back. Before this had its own code it answered as a cancel, which the
     // page is deliberately silent about — so two minutes after a tap that
     // said nothing, nothing else was said either.
-    camera_no_answer: 'The camera never came back. Nothing was sent and the '
-      + 'kill is still yours to claim — try again.',
+    /* Not "try again". The client gives up on the camera a full proof
+       window after it opened, and the server's claim on the kill runs out
+       that long after the death, which was earlier — so by the time this is
+       said there is never a kill left to claim. "Try again" sent the hunter
+       straight into "No kill on this contract is waiting for proof". */
+    camera_no_answer: 'The camera never came back, and the time to verify '
+      + 'this kill has run out. Nothing was sent.',
     no_token: 'Nothing to verify yet.',
     timeout: 'No answer. Try again.',
     unreachable: 'No answer. Try again.'

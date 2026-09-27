@@ -4845,7 +4845,11 @@ async function main() {
     await (async function saysWhatWentWrongWithTheCamera() {
       for (const each of [
         { err: 'camera_unavailable', expect: 'cannot open the camera' },
-        { err: 'camera_no_answer', expect: 'never came back' }
+        // Said a full proof window after the camera opened, by which time
+        // the server's claim on the kill has always run out: a "try again"
+        // here sends the hunter straight into "No kill ... waiting for proof".
+        { err: 'camera_no_answer', expect: 'never came back',
+          forbid: ['try again', 'still yours'] }
       ]) {
         const app = boot({
           mine: mineWithAHunt(),
@@ -4863,6 +4867,10 @@ async function main() {
             'answered "' + said + '" — a hunter with a confirmed kill and a '
             + 'live contract needs to know which of the two happened');
           falsy(said.indexOf('Something went wrong') !== -1, said);
+          (each.forbid || []).forEach(function (words) {
+            falsy(said.toLowerCase().indexOf(words) !== -1,
+              'promised "' + words + '" when there is nothing left to try: ' + said);
+          });
         });
       }
     })();
