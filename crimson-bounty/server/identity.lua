@@ -30,6 +30,41 @@ function Identity.endSession(cid)
     sessionStart[cid] = nil
 end
 
+--- How recently resolve() must have noticed somebody for a login event to
+--- count as the start of that same session.
+local FRESH_LOGIN_SECONDS = 60
+
+--- Confirm a login, without ever moving a session's clock back to now.
+---
+--- Called from the login bridges. The bridge used to end the session and
+--- begin a new one, which restarted the new-player clock every time a login
+--- event arrived — and one of those events, QBCore:Server:OnPlayerLoaded, is
+--- a net event any client can fire. A target who fired it every nine minutes
+--- stayed "just arrived" for as long as they liked, and because immunity is
+--- re-checked on every payout, no kill or handover on them ever paid.
+---
+--- A real login follows a disconnect or a character unload, and both of
+--- those end the session. So a real login finds either no record at all, or
+--- the observed one resolve() noted moments before the event arrived — and
+--- that one is taken as watched, from the moment it was noted. A record
+--- that is already watched, or observed long ago, belongs to somebody who
+--- has been in the city all along, and a login event does not change that.
+---@param cid string
+---@return boolean changed
+function Identity.confirmSession(cid)
+    if not cid then return false end
+    local began = sessionStart[cid]
+    if not began then
+        sessionStart[cid] = { at = os.time(), observed = false }
+        return true
+    end
+    if began.observed and (os.time() - began.at) <= FRESH_LOGIN_SECONDS then
+        began.observed = false
+        return true
+    end
+    return false
+end
+
 --- Backdate every watched session, for the staff timer refresh.
 ---
 --- A character who has just walked in cannot be named as a target for ten

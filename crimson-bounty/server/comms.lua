@@ -243,13 +243,21 @@ function Comms.requestCall(actor, contractId, threadHandle)
     local ctx, err = Comms.context(actor, contractId, threadHandle)
     if not ctx then return false, err end
 
-    local otherAnon
+    -- Both parties' choices, not only the callee's. The call is placed from
+    -- the caller's phone, so the number a callee would see is the CALLER's:
+    -- asking for masking only when the other side was anonymous meant an
+    -- anonymous creator ringing a named operative did so with caller id on,
+    -- handing over the number they had paid to hide.
+    local otherAnon, selfAnon
+    local hunter = Storage.readHunter(ctx.contract.id, ctx.hunterCid)
     if ctx.role == 'creator' then
-        local hunter = Storage.readHunter(contractId, ctx.hunterCid)
         otherAnon = hunter and hunter.anon
+        selfAnon = ctx.contract.anon_creator
     else
         otherAnon = ctx.contract.anon_creator
+        selfAnon = hunter and hunter.anon
     end
+    otherAnon, selfAnon = otherAnon == true, selfAnon == true
 
     if otherAnon and not Comms.maskingAvailable() then
         return false, CB.ERR.CALL_UNMASKED
@@ -261,7 +269,11 @@ function Comms.requestCall(actor, contractId, threadHandle)
     -- telling the other party somebody wants to talk. Whether it can is
     -- probed at boot, not assumed: lb-phone ships its server code escrowed,
     -- so an invented export name would be a call that silently does nothing.
-    local placed = Comms.placeCall(actor, recipient, otherAnon == true)
+    --
+    -- An anonymous caller on a phone that cannot mask is not refused: the
+    -- other party is asked to call back instead, which reveals nothing, and
+    -- placeCall declines to dial for exactly that case.
+    local placed = Comms.placeCall(actor, recipient, otherAnon or selfAnon)
 
     Notify.toCitizen(recipient,
         placed and 'Incoming call' or 'Call request',
@@ -270,7 +282,7 @@ function Comms.requestCall(actor, contractId, threadHandle)
             or  ('%s wants to speak with you about a contract.'):format(ctx.alias))
 
     Audit.action(placed and 'call_placed' or 'call_requested', actor.cid, contractId,
-        { anonymous = otherAnon == true })
+        { anonymous = otherAnon or selfAnon })
 
     -- The caller is told which of the two happened, so the app can say
     -- "calling" or "they have been asked to call you" rather than implying

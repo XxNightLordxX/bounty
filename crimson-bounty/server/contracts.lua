@@ -22,6 +22,11 @@ end
 
 local LIVE_STATES = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true, [CB.STATE.COMPLETING] = true }
 
+--- Contracts somebody has accepted, so the idle-hold sweep reads those and
+--- not the whole table. Filled on acceptance and rebuilt once at boot
+--- (Contracts.reindexHolds); one no longer held drops out on the next sweep.
+local heldIndex = {}
+
 --------------------------------------------------------------------------
 -- State machine
 --------------------------------------------------------------------------
@@ -130,8 +135,26 @@ function Contracts.canCreate(actor, targetActor)
     -- Only the contracts these two are involved in matter here, so this asks
     -- for those rather than for the whole table.
     local contracts = Storage.contractsBy(actor.cid)
+
+    -- And the ones this player placed on their other characters. Every
+    -- creator-side limit below — how many they may have open, the wait
+    -- before naming the same person again, the wait after cancelling — was
+    -- counted per character, so /relog onto a second character on the same
+    -- licence reset all three: the two-hour wait on re-listing one victim
+    -- became the thirty minutes everybody waits (§14.7).
+    if actor.account and Storage.contractsByAccount then
+        local alsoMine = Storage.contractsByAccount(actor.account) or {}
+        for i = 1, #alsoMine do contracts[#contracts + 1] = alsoMine[i] end
+    end
+
     local naming = Storage.contractsNaming(targetActor.cid)
     for i = 1, #naming do contracts[#contracts + 1] = naming[i] end
+
+    --- Whether this contract was placed by this player, on any character.
+    local function placedByThisPlayer(c)
+        return c.creator_cid == actor.cid
+            or Identity.sameAccount(c.creator_account, actor.account)
+    end
 
     local byCreator, byTarget = 0, 0
     local now = os.time()
@@ -142,7 +165,7 @@ function Contracts.canCreate(actor, targetActor)
         if counted[c.id] then goto continue end
         counted[c.id] = true
         if LIVE_STATES[c.state] then
-            if c.creator_cid == actor.cid then byCreator = byCreator + 1 end
+            if placedByThisPlayer(c) then byCreator = byCreator + 1 end
             if c.target_cid == targetActor.cid then byTarget = byTarget + 1 end
         else
             -- Cooldowns after a resolution, so a target cannot be re-listed
@@ -161,7 +184,7 @@ function Contracts.canCreate(actor, targetActor)
                 -- Its own code. This is a policy wait of hours, and sharing
                 -- RATE_LIMITED with the token bucket told the creator to
                 -- "slow down" about it.
-                if c.creator_cid == actor.cid and since < Config.Limits.SameCreatorSameTargetCooldownSeconds then
+                if placedByThisPlayer(c) and since < Config.Limits.SameCreatorSameTargetCooldownSeconds then
                     return false, CB.ERR.SAME_TARGET_TOO_SOON
                 end
             end
@@ -174,7 +197,7 @@ function Contracts.canCreate(actor, targetActor)
     if Config.Amendments.CancelCooldownSeconds > 0 then
         for i = 1, #contracts do
             local c = contracts[i]
-            if c.creator_cid == actor.cid and c.state == CB.STATE.CANCELLED and c.resolved_at
+            if placedByThisPlayer(c) and c.state == CB.STATE.CANCELLED and c.resolved_at
                 and (now - c.resolved_at) < Config.Amendments.CancelCooldownSeconds then
                 return false, CB.ERR.CANCELLED_TOO_SOON
             end
@@ -442,6 +465,13 @@ local function reasonFor(actor, req)
     return reason
 end
 
+--- The same rules, for the third way a reason can change: an agreed
+--- change_reason amendment. It checked length and digits only, so a creator
+--- could propose a link, an invite or a handle and agree to it themselves on
+--- any contract nobody had taken — and put free text on the board of a
+--- server whose operator had switched free text off.
+Contracts.reasonFor = reasonFor
+
 function Contracts.create(actor, req)
     local targetActor = Identity.byCitizenId(req.targetCid)
     local ok, err = Contracts.canCreate(actor, targetActor)
@@ -655,6 +685,12 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     local activeCount = 0
     for i = 1, #existing do
         if existing[i].state == 'active' then activeCount = activeCount + 1 end
+        -- Released from it for sitting on it, on this character or another:
+        -- taking it straight back would make the release a reset.
+        if existing[i].state == 'released' and (existing[i].hunter_cid == actor.cid
+            or Identity.sameAccount(existing[i].hunter_account, actor.account)) then
+            return false, CB.ERR.HOLD_RELEASED
+        end
     end
 
     -- Aliases are numbered from everyone who has ever held this contract,
@@ -696,6 +732,33 @@ function Contracts.accept(actor, contractId, anonymous, opts)
         -- expiry.
     end
 
+    -- The anonymity fee, before anything else is taken, and a refusal if it
+    -- cannot be paid (§4: charged BEFORE anonymity is granted).
+    --
+    -- It used to be taken last, and a hunter who could not cover it was
+    -- simply named: the acceptance went through, the creator's phone said
+    -- "accepted by <their name>", and the page — which only saw a successful
+    -- reply — told the hunter "Contract accepted, anonymously." Anonymity is
+    -- the one thing in this resource that cannot be given back once it has
+    -- been lost, so it is not something to downgrade on somebody's behalf.
+    -- Every refusal from here on puts the fee back.
+    local feeAccount = Config.Anonymity.FeeAccount or 'bank'
+    local fee = (anonymous and (Config.Anonymity.HunterFee or 0) > 0)
+        and Config.Anonymity.HunterFee or 0
+    if fee > 0 and not Util.charge(actor.player, feeAccount, fee) then
+        if advanced then
+            Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'fee_failed')
+        end
+        return false, CB.ERR.INSUFFICIENT
+    end
+    local function refundFee()
+        if fee <= 0 then return end
+        if not Util.credit(actor.player, feeAccount, fee) then
+            Audit.financial('anonymity_fee_refund_failed', actor.cid, contractId,
+                { amount = fee, account = feeAccount, role = 'hunter' })
+        end
+    end
+
     -- The failure penalty is staked here, at acceptance, or not at all: a
     -- penalty that is only charged after a failure is a penalty the hunter
     -- can walk away from (§3.6). The hunter is told the amount before this
@@ -709,6 +772,7 @@ function Contracts.accept(actor, contractId, anonymous, opts)
             if advanced then
                 Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
             end
+            refundFee()
             return false, CB.ERR.INSUFFICIENT
         end
 
@@ -721,6 +785,7 @@ function Contracts.accept(actor, contractId, anonymous, opts)
             if advanced then
                 Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
             end
+            refundFee()
             -- A contract busy with another take is not the hunter being
             -- short of money.
             return false, takeErr == CB.ERR.LOCKED and CB.ERR.LOCKED or CB.ERR.INSUFFICIENT
@@ -742,6 +807,7 @@ function Contracts.accept(actor, contractId, anonymous, opts)
         if advanced then
             Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'accept_failed')
         end
+        refundFee()
         Audit.rejected('hunter_id_exhausted', actor.cid, contractId, {})
         return false, CB.ERR.BAD_STATE
     end
@@ -794,6 +860,7 @@ function Contracts.accept(actor, contractId, anonymous, opts)
         if stakeIds and next(stakeIds) then
             Escrow.release(contractId, actor.cid, { lines = stakeIds }, 'accept_on_closed')
         end
+        refundFee()
         Audit.rejected('accept_on_closed', actor.cid, contractId, { state = nowState })
         if nowState == CB.STATE.COMPLETING then return false, CB.ERR.LOCKED end
         return false, CB.ERR.ALREADY_SETTLED
@@ -805,23 +872,10 @@ function Contracts.accept(actor, contractId, anonymous, opts)
         Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted')
     end
 
-    -- The anonymity fee is taken last, after the stake and the record, so
-    -- there is no path where a hunter is charged for an acceptance that
-    -- then fails (§4).
-    if anonymous and (Config.Anonymity.HunterFee or 0) > 0 then
-        local account = Config.Anonymity.FeeAccount or 'bank'
-        if Util.charge(actor.player, account, Config.Anonymity.HunterFee) then
-            Audit.financial('anonymity_fee', actor.cid, contractId,
-                { amount = Config.Anonymity.HunterFee, role = 'hunter' })
-        else
-            -- They cannot afford to stay unnamed, so they are simply named.
-            -- Refusing the whole acceptance here would mean unwinding the
-            -- stake as well, for a preference rather than a requirement.
-            Storage.updateHunter(record.id, { anon = false })
-            record.anon = false
-            Notify.toCitizen(actor.cid, 'Not anonymous',
-                'You could not cover the anonymity fee, so the contract carries your name.')
-        end
+    -- Recorded once the acceptance it paid for has actually happened.
+    if fee > 0 then
+        Audit.financial('anonymity_fee', actor.cid, contractId,
+            { amount = fee, role = 'hunter' })
     elseif renamed then
         Notify.toCitizen(actor.cid, 'Not anonymous',
             'The client already knows you by name on this contract, so you are '
@@ -837,6 +891,9 @@ function Contracts.accept(actor, contractId, anonymous, opts)
 
     Audit.action('contract_accepted', actor.cid, contractId, { anonymous = record.anon })
     Notify.contractAccepted(contract, record, activeCount + 1)
+
+    -- Somebody holds it now, which is what the idle-hold sweep reads.
+    heldIndex[contractId] = true
 
     return true, nil, record
 end
@@ -900,6 +957,152 @@ function Contracts.abandon(actor, contractId)
 
     Audit.action('contract_abandoned', actor.cid, contractId, {})
     return true
+end
+
+--------------------------------------------------------------------------
+-- An exclusive hold nobody is working (§14.8)
+--------------------------------------------------------------------------
+--
+-- An exclusive contract is one operative's alone, the client cannot cancel
+-- it while it is held, and nobody else can take it. So a target's friend
+-- could accept the contract on them and simply sit on it — nowhere near the
+-- target, costing nothing on a contract with no stake — and it stayed frozen
+-- until its deadline ran out, which pauses whenever either party logs off.
+-- The client's only answer to "Cancel" was "Not right now."
+
+--- Seconds each holder has gone without working the contract, counted only
+--- while its client and target are both in the city — nobody is released
+--- for failing to find a target who is not there. [contractId:hunterCid].
+local idleFor = {}
+local lastIdleSweep = nil
+
+--- Rebuild the index of held contracts after a restart, when contracts may already be held
+--- that this process never saw accepted.
+---@return integer indexed
+function Contracts.reindexHolds()
+    heldIndex = {}
+    local n = 0
+    for _, c in ipairs(Storage.allContracts()) do
+        if c.state == CB.STATE.ACCEPTED or c.state == CB.STATE.COMPLETING then
+            heldIndex[c.id] = true
+            n = n + 1
+        end
+    end
+    return n
+end
+
+--- Take one idle operative off an exclusive contract and put it back on the
+--- board. Their stake comes back: the release is the remedy, not a fine.
+---@return boolean released
+local function releaseIdleHold(contractId, hunter, idleSeconds)
+    -- Re-read: a payout or an abandonment may have moved it since the sweep
+    -- read it, and a hunter being paid is not one to release.
+    local contract = Storage.readContract(contractId)
+    if not contract or contract.state ~= CB.STATE.ACCEPTED then return false end
+    local current = Storage.readHunter(contractId, hunter.hunter_cid)
+    if not current or current.state ~= 'active' then return false end
+
+    Storage.updateHunter(current.id, { state = 'released', left_at = os.time() })
+
+    Escrow.release(contractId, current.hunter_cid,
+        { portion = CB.PORTION.STAKE, staker = current.hunter_cid }, 'stake_returned_idle')
+
+    local remaining = 0
+    for _, h in ipairs(Storage.readHunters(contractId)) do
+        if h.state == 'active' then remaining = remaining + 1 end
+    end
+    if remaining == 0 then
+        Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'idle_hold_released')
+    end
+
+    if Contracts.onHunterLeft then
+        Contracts.onHunterLeft(contractId, current.hunter_cid, 'idle_hold_released')
+    end
+
+    local minutes = math.floor(idleSeconds / 60)
+    Notify.toCitizen(current.hunter_cid, 'Taken off a contract',
+        ('You held a contract for %d minutes without going near its target, so it '
+            .. 'has gone back on the board. Your stake has been returned.'):format(minutes),
+        { bypassBudget = true })
+    Notify.toCitizen(contract.creator_cid, 'Contract back on the board',
+        'The operative holding your contract was not working it, so it is open again.')
+    Notify.pushParties(Storage.readContract(contractId) or contract,
+        { current.hunter_cid }, 'released')
+
+    Audit.action('hold_released_idle', current.hunter_cid, contractId,
+        { idle = idleSeconds })
+    return true
+end
+
+--- Release every exclusive hold that has gone unworked for too long.
+--- Driven by the maintenance tick; the clock is advanced by however long it
+--- has been since the last pass, so a slow tick neither loses nor gains time.
+---@return integer released
+function Contracts.releaseIdleHolds()
+    local window = Config.Limits.ExclusiveIdleReleaseSeconds or 0
+    local now = os.time()
+    local elapsed = lastIdleSweep and math.max(0, now - lastIdleSweep) or 0
+    lastIdleSweep = now
+    if window <= 0 then
+        idleFor = {}
+        return 0
+    end
+
+    local released = 0
+    local live = {}
+
+    -- The contracts somebody has taken, from the index rather than a walk of
+    -- the table: this runs every ten seconds for the life of the server, and
+    -- almost every contract that exists is not being held.
+    --
+    -- Walked from a snapshot of the keys: every read below waits on the
+    -- database in mysql mode, and an acceptance landing in that wait adds a
+    -- key to the table being walked, which pairs() leaves undefined.
+    local ids = {}
+    for contractId in pairs(heldIndex) do ids[#ids + 1] = contractId end
+
+    for _, contractId in ipairs(ids) do
+        local c = Storage.readContract(contractId)
+        if not c or c.state ~= CB.STATE.ACCEPTED then
+            -- Resolved, or back on the board: nobody holds it now. A contract
+            -- mid-settlement stays, since a failed payout lands it back here.
+            if not c or c.state ~= CB.STATE.COMPLETING then heldIndex[contractId] = nil end
+        elseif c.mode == CB.MODE.EXCLUSIVE then
+            local bothHere = Identity.byCitizenId(c.creator_cid) ~= nil
+                and Identity.byCitizenId(c.target_cid) ~= nil
+
+            for _, h in ipairs(Storage.readHunters(c.id)) do
+                if h.state == 'active' then
+                    local k = c.id .. ':' .. h.hunter_cid
+                    live[k] = true
+
+                    local engaged = Death and Death.lastEngaged
+                        and Death.lastEngaged(c.id, h.hunter_cid, c.target_cid)
+                    if engaged and (now - engaged) <= elapsed then
+                        -- Worked since the last pass.
+                        idleFor[k] = 0
+                    elseif bothHere then
+                        idleFor[k] = (idleFor[k] or 0) + elapsed
+                    end
+
+                    if (idleFor[k] or 0) >= window then
+                        if releaseIdleHold(c.id, h, idleFor[k]) then
+                            released = released + 1
+                        end
+                        idleFor[k] = nil
+                    end
+                end
+            end
+        end
+    end
+
+    -- Holds that ended some other way are forgotten, so this is bounded by
+    -- the exclusive contracts that are held right now.
+    for k in pairs(idleFor) do
+        if not live[k] then idleFor[k] = nil end
+    end
+
+    return released
 end
 
 --------------------------------------------------------------------------

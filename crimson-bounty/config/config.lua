@@ -193,6 +193,17 @@ Config.Limits = {
 
     ContractLifetimeSeconds = 172800,   -- absolute ceiling, pause included
     DefaultDeadlineSeconds  = 10800,
+
+    --- An exclusive contract goes back on the board when the one operative
+    --- holding it has not been near the target for this long (§14.8). The
+    --- clock only runs while the client and the target are both in the
+    --- city, their stake is returned, and they may not take that contract
+    --- again on any character. 0 turns it off.
+    ---
+    --- Without it a target's friend could take the contract on them and sit
+    --- on it: the client cannot cancel a held contract and nobody else can
+    --- take an exclusive one, so it was frozen until its deadline ran out.
+    ExclusiveIdleReleaseSeconds = 1800,
 }
 
 --- What an action cooldown is counted against (§14.27).

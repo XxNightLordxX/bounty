@@ -142,6 +142,18 @@ function Memory.contractsBy(cid)
     return out
 end
 
+--- Contracts created by any character on this account. The creator-side
+--- limits belong to the player, not to whichever character they are on.
+function Memory.contractsByAccount(account)
+    local out = {}
+    if account == nil then return out end
+    for _, c in pairs(db.contracts) do
+        if c.creator_account == account then out[#out + 1] = c end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 --- Advance the payout slot, only if it is still the one the caller acted on.
 ---
 --- claimSlot used to write back the whole contract it had read at the top,

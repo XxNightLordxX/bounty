@@ -361,6 +361,11 @@ describe('server downtime and the deadline', function()
     --- moment both parties were back, forfeiting the hunter's stake.
     local function nearlyDue(mode)
         local main, s = boot(mode)
+        -- About the deadline, not about an idle hold: this operative never
+        -- goes near the target, which after half an hour would put the
+        -- exclusive contract back on the board (§14.8) and measure that
+        -- instead.
+        Config.Limits.ExclusiveIdleReleaseSeconds = 0
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x',
@@ -414,6 +419,36 @@ describe('server downtime and the deadline', function()
             eq(money(3), hunterBefore, 'and nothing was forfeited')
         end)
     end
+end)
+
+describe('an idle exclusive hold, on the running server', function()
+    --- The release is one of the maintenance jobs. Every other test of it
+    --- calls the function directly, which says nothing about whether the
+    --- server ever does.
+    it('is put back on the board by the tick, with the stake returned', function()
+        local main, s = boot('memory')
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hunter, c.id))
+        -- Nowhere near the target, with both parties in the city.
+        Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
+        local before = money(3)
+
+        main.tick()
+        for _ = 1, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1 do
+            Env.advance(60)
+            main.tick()
+        end
+
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE,
+            'the running server never let go of a hold nobody was working')
+        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'released')
+        eq(money(3) - before, 2000, 'and the stake came back')
+    end)
 end)
 
 describe('informant data across a restart', function()

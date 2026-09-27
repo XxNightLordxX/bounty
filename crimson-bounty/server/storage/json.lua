@@ -663,6 +663,18 @@ function JsonStore.contractsBy(cid)
     return out
 end
 
+--- Contracts created by any character on this account. The creator-side
+--- limits belong to the player, not to whichever character they are on.
+function JsonStore.contractsByAccount(account)
+    local out = {}
+    if account == nil then return out end
+    for _, c in pairs(db.contracts) do
+        if c.creator_account == account then out[#out + 1] = c end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 --- State is not written here: it changes only through
 --- compareSetContractState, so a stale copy cannot revert a transition.
 --- The buyout queue columns, which move ONLY through setBailoutQueue.

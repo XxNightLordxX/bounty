@@ -152,6 +152,10 @@ CB.ERR = {
     --- BAD_STATE, "Not right now." — which reads as something to wait out,
     --- on a contract that is already in their Mine tab.
     ALREADY_HOLDING      = 'already_holding',
+    --- This player (on any character) held this exclusive contract without
+    --- working it and was released from it, so it is not theirs to take
+    --- again (§14.8). Without the bar, releasing an idle hold only reset it.
+    HOLD_RELEASED        = 'hold_released',
     --- This server does not run the masked relay (Config.Relay.Enabled).
     --- It was read in one place, the send, and answered BAD_STATE — "Not
     --- right now." — on a feature that was never going to work, while the

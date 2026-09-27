@@ -31,7 +31,14 @@ end
 local function listedFor(contract, viewerCid)
     if contract.state ~= CB.STATE.ACTIVE and contract.state ~= CB.STATE.ACCEPTED then return false end
 
-    local creatorOnline = Identity.byCitizenId(contract.creator_cid) ~= nil
+    -- Except that an anonymous creator's presence is not asked at all
+    -- (§14.32). Hiding their contract whenever they logged off made the
+    -- board a record of their session: every viewer could watch it vanish
+    -- and come back, set that beside who left and rejoined the city, and
+    -- after a few evenings the intersection is one person. The target's
+    -- presence is theirs to reveal, and the contract is about them anyway.
+    local creatorOnline = contract.anon_creator == true
+        or Identity.byCitizenId(contract.creator_cid) ~= nil
     local targetOnline = Identity.byCitizenId(contract.target_cid) ~= nil
     if not (creatorOnline and targetOnline) then return false end
 

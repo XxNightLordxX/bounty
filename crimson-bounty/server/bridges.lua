@@ -181,10 +181,12 @@ function Bridges.install(modules)
             -- Someone arriving can unpause a contract's clock.
             if modules.scheduler then modules.scheduler.presenceChanged() end
             -- A session we watched begin, so its length is known exactly.
-            -- Identity.resolve may already have noted them as observed; this
-            -- replaces that with the real thing.
-            modules.identity.endSession(actor.cid)
-            modules.identity.beginSession(actor.cid, false)
+            -- Identity.resolve may already have noted them as observed a
+            -- moment ago; that becomes the real thing. Never restarted:
+            -- one of the two events that lands here is a net event any
+            -- client can fire, and restarting the clock on it made the
+            -- sender "just arrived" — immune to every claim — on demand.
+            modules.identity.confirmSession(actor.cid)
         end
         return actor
     end

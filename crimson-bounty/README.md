@@ -69,7 +69,12 @@ may accept than there are payouts; the first to fulfil are paid. If the
 contract carries a penalty, you stake it when you accept — walk away and the
 client keeps it. You can take it up again later, staking again; the wait
 between payouts on one contract (`Config.Limits.SlotCooldownSeconds`) carries
-over, so walking away is not a way round it.
+over, so walking away is not a way round it. Where the server charges for
+hunter anonymity and you cannot cover it, the acceptance is refused rather
+than made under your name. An exclusive contract you hold without going near
+the target for `Config.Limits.ExclusiveIdleReleaseSeconds` (counted only while
+the client and the target are both in the city) goes back on the board with
+your stake returned, and is not yours to take again.
 
 **Finishing it.** Kill the target and photograph the body through the app's
 camera for the baseline. Or take them alive to the client and hold them there
@@ -108,9 +113,14 @@ The full reasoning is in `docs/bounty-hunter-app-spec.md` §14. In short:
 - **A delivery has to be real.** The target must be alive, conscious and
   restrained or in your vehicle, checked on every tick of the countdown.
 - **Anonymity is enforced by omission.** An anonymous party's identity is
-  never put in the payload, so there is nothing to find client-side.
+  never put in the payload, so there is nothing to find client-side. An
+  anonymous client's contract stays on the board while they are offline, and
+  nothing a hunter can press says whether they are in the city.
 - **New players are protected.** Playtime and session floors, post-respawn
-  immunity, per-target contract caps and re-listing cooldowns.
+  immunity, per-target contract caps and re-listing cooldowns. A login event
+  never restarts a session that is already running, so the session floor
+  cannot be renewed on demand, and a client's limits and waits count across
+  every character on their licence.
 
 ---
 

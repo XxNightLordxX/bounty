@@ -43,6 +43,8 @@ local SCHEMA = {
         INDEX idx_state (state),
         INDEX idx_target (target_cid),
         INDEX idx_creator (creator_cid),
+        -- Asked on every creation. Added to existing databases by migrate.
+        INDEX idx_creator_account (creator_account),
         -- Read on every maintenance tick, and almost always empty. Added
         -- to existing databases by MySQLStore.migrate.
         INDEX idx_bailout_queued (bailout_queued_at)
@@ -480,6 +482,16 @@ end
 function MySQLStore.contractsBy(cid)
     local rows = MySQL.query.await(
         'SELECT * FROM crimson_contracts WHERE creator_cid = ? ORDER BY id', { cid }) or {}
+    for i = 1, #rows do hydrateContract(rows[i]) end
+    return rows
+end
+
+--- Contracts created by any character on this account. The creator-side
+--- limits belong to the player, not to whichever character they are on.
+function MySQLStore.contractsByAccount(account)
+    if account == nil then return {} end
+    local rows = MySQL.query.await(
+        'SELECT * FROM crimson_contracts WHERE creator_account = ? ORDER BY id', { account }) or {}
     for i = 1, #rows do hydrateContract(rows[i]) end
     return rows
 end

@@ -642,6 +642,9 @@ function StartCrimsonBounty()
 
     Recover()
     amendments.reindex()
+    -- Contracts already held when this process started, so an idle hold
+    -- from before a restart is still one the sweep can see.
+    contracts.reindexHolds()
     StartTick()
 
     reportIntegrations()
@@ -884,6 +887,11 @@ function Tick()
     if bridges.refreshAccess then job('bridges.refreshAccess', bridges.refreshAccess) end
     job('app.sweepHandles', app.sweepHandles)
     job('app.sweepFloodCounters', app.sweepFloodCounters)
+    -- An exclusive contract held by somebody who is not working it goes
+    -- back on the board (§14.8).
+    if modules.contracts.releaseIdleHolds then
+        job('contracts.releaseIdleHolds', modules.contracts.releaseIdleHolds)
+    end
     job('expireContracts', ExpireContracts)
     -- When this process was last known to be running, so the next boot can
     -- tell how long nobody could play. See Recover.

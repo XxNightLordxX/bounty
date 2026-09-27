@@ -598,7 +598,7 @@ describe('anonymity fees', function()
         eq(Env.players[3].PlayerData.money.bank, 47500)
     end)
 
-    it('accepts under their own name when they cannot afford anonymity', function()
+    it('refuses an anonymous acceptance they cannot afford, rather than naming them', function()
         local s, f = withFees(0, 2500)
         Env.players[3].PlayerData.money.bank = 100
         Env.players[3].PlayerData.money.cash = 100
@@ -606,12 +606,19 @@ describe('anonymity fees', function()
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
 
-        local ok = s.contracts.accept(f.hunter, c.id, true)
+        local ok, err = s.contracts.accept(f.hunter, c.id, true)
 
-        truthy(ok, 'anonymity is a preference, not a requirement to take work')
-        local hunter = s.storage.readHunter(c.id, 'HUNTER01')
-        falsy(hunter.anon, 'and they are simply named instead')
+        -- They used to be accepted under their own name. The page only sees
+        -- that the acceptance went through, so it told them "accepted,
+        -- anonymously" while the creator was told who they were — and a
+        -- name, once handed over, cannot be taken back.
+        falsy(ok, 'asked to be anonymous and could not pay for it')
+        eq(err, CB.ERR.INSUFFICIENT)
+        falsy(s.storage.readHunter(c.id, 'HUNTER01'), 'no acceptance was recorded')
         eq(Env.players[3].PlayerData.money.bank, 100, 'charged nothing')
+
+        -- Under their own name is still there for the asking.
+        truthy(s.contracts.accept(f.hunter, c.id, false))
     end)
 
     it('never charges a hunter for an acceptance that fails', function()

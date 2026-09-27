@@ -403,6 +403,11 @@ function Amendments.propose(actor, contractId, kind, payload)
     contractId = Util.toId(contractId)
     if not contractId then return nil, CB.ERR.INVALID_INPUT end
     if not Config.Amendments.Enabled then return nil, CB.ERR.BAD_STATE end
+    -- A kind is a string or nothing at all. kind:upper() below threw for a
+    -- missing or numeric kind, which reached the player as a server fault,
+    -- printed a line to the console, and handed the request's allowance
+    -- back — so a client could repeat it as fast as the flood guard allows.
+    if type(kind) ~= 'string' then return nil, CB.ERR.INVALID_INPUT end
     if CB.ADDITIVE[kind] then return nil, CB.ERR.INVALID_INPUT end
     if not CB.AMENDMENT[kind:upper()] and not Amendments.isKnown(kind) then
         return nil, CB.ERR.INVALID_INPUT
@@ -429,7 +434,7 @@ function Amendments.propose(actor, contractId, kind, payload)
     -- Only the fields this amendment kind actually uses are kept, each
     -- coerced. Storing the client's table verbatim would persist unbounded
     -- attacker-chosen data in a row nothing ever deletes.
-    local clean, payloadErr = Amendments.sanitize(kind, payload)
+    local clean, payloadErr = Amendments.sanitize(kind, payload, actor)
     if not clean then return nil, payloadErr end
 
     local fits, fitErr = checkAgainst(contract, kind, clean)
@@ -520,9 +525,10 @@ function Amendments.openFor(actor, contractId)
 end
 
 --- Build a payload containing only what `apply` reads for this kind.
+---@param actor table|nil the proposer, whose phone's word list a reason answers to
 ---@return table|nil clean
 ---@return string|nil err
-function Amendments.sanitize(kind, payload)
+function Amendments.sanitize(kind, payload, actor)
     if payload ~= nil and type(payload) ~= 'table' then return nil, CB.ERR.INVALID_INPUT end
     payload = payload or {}
     local clean = {}
@@ -538,11 +544,23 @@ function Amendments.sanitize(kind, payload)
         clean.mode = payload.mode
 
     elseif kind == CB.AMENDMENT.CHANGE_REASON then
-        clean.reason = Util.sanitizeText(payload.reason, Config.Reason.MaxLength)
-        if not clean.reason then return nil, CB.ERR.INVALID_INPUT end
-        if Util.digitCount(clean.reason) > Config.Reason.MaxDigits then
+        -- Held to every rule a placed or edited reason answers to — the
+        -- mode, the length, the digit cap, the banned patterns and the
+        -- phone's own word list — by the same function. Length and digits
+        -- alone let an agreed change put a link on the board, or free text
+        -- on a server that only takes presets.
+        --
+        -- A server that shows no reason has none to change.
+        if Config.Reason.Mode ~= 'freetext' and Config.Reason.Mode ~= 'preset' then
             return nil, CB.ERR.INVALID_INPUT
         end
+        local reason, reasonErr = Contracts.reasonFor(actor or {}, {
+            reason = payload.reason, reasonPreset = payload.reasonPreset,
+        })
+        if reasonErr or not reason or reason == '' then
+            return nil, reasonErr or CB.ERR.INVALID_INPUT
+        end
+        clean.reason = reason
 
     elseif kind == CB.AMENDMENT.RAISE_PENALTY or kind == CB.AMENDMENT.LOWER_PENALTY then
         clean.amount = Util.toCount(payload.amount, Config.MaxContractValue)

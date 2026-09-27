@@ -389,6 +389,8 @@
     self_accept: 'You cannot take your own contract.',
     same_account: 'Not on your own people.',
     already_holding: 'You are already on this contract. It is under Mine.',
+    hold_released: 'You held this one without working it and were taken off '
+      + 'it. It is not yours to take again.',
     relay_off: 'This server does not run messages through the app.',
     calls_off: 'This server does not place calls through the app.',
     call_unmasked: 'They are staying anonymous, and a call from this phone '

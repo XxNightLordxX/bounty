@@ -78,10 +78,19 @@ local function pool(contract, actor)
     local hunters = Storage.readHunters(contract.id)
     local near = Config.Informant.RequireProximity and Death and Death.seenNear(contract.id)
 
+    -- A creator already sees every operative who chose to be named, in the
+    -- roster on their own card. Drawing one of those spent a purchase that is
+    -- never refunded — one of only MaxPurchasesPerContract — on a name that
+    -- was already on their screen, while the anonymous operative the purchase
+    -- exists to unmask (§6.1, §14.29) stayed hidden. The target sees no
+    -- roster at all, so for them every operative is unknown.
+    local buyerSeesNamed = contract.creator_cid == actor.cid
+
     local out = {}
     for i = 1, #hunters do
         local h = hunters[i]
-        if h.state == 'active' and (not near or near[h.hunter_cid]) then
+        if h.state == 'active' and (not near or near[h.hunter_cid])
+            and not (buyerSeesNamed and not h.anon) then
             out[#out + 1] = h
         end
     end

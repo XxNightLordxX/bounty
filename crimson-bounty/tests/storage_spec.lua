@@ -1363,6 +1363,7 @@ describe('every mysql statement is executable', function()
             function() m.contractsInvolving('A') end,
             function() m.contractsNaming('B') end,
             function() m.contractsBy('A') end,
+            function() m.contractsByAccount('license:a') end,
             function() m.compareSetContractState('c1','active','accepted') end,
             function() m.writeEscrow('c1', { { id='c1:1', contract_id='c1', slot=1, portion='baseline', source='cash', amount=100, state='held' } }) end,
             function() m.readEscrow('c1') end,

@@ -75,9 +75,10 @@ describe('RACE F1: two hunters accept a competitive contract at once', function(
 end)
 
 describe('RACE F2: a contract resolves while a hunter is mid-accept', function()
-    local function run(which)
+    local function run(which, fee)
         local s = newStack()
         local f = fixture(s)
+        if fee then Config.Anonymity.HunterFee = fee end
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } }, penaltyAmount = 1000,
@@ -99,7 +100,7 @@ describe('RACE F2: a contract resolves while a hunter is mid-accept', function()
             end
             return realWrite(contractId, lines)
         end
-        local ok1, err1 = s.contracts.accept(f.hunter, c.id, false)
+        local ok1, err1 = s.contracts.accept(f.hunter, c.id, fee ~= nil)
         s.storage.writeEscrow = realWrite
         print('  accept ->', ok1, err1, ' state', s.storage.readContract(c.id).state)
         for _, l in ipairs(stakeLines(s, c.id)) do
@@ -113,6 +114,12 @@ describe('RACE F2: a contract resolves while a hunter is mid-accept', function()
     end)
     it('gives the stake back when the target buys out mid-accept', function()
         eq(run('bailout'), 10000, 'the stake was left held on a bought-out contract')
+    end)
+    it('gives the anonymity fee back with the stake', function()
+        -- Charged first, before the stake, so the refusal has two things
+        -- to give back, not one.
+        eq(run('cancel', 1500), 10000, 'the fee for anonymity on a contract '
+            .. 'the hunter never got was kept')
     end)
 end)
 

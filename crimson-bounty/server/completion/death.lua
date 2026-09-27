@@ -22,6 +22,11 @@ local pending = {}
 --- re-listed or re-claimed the instant they respawn (§14.39).
 local respawnedAt = {}
 
+--- When each attacker last landed a corroborated hit on each victim:
+--- [victimCid] = { [attackerCid] = os.time() }. What an idle hold is
+--- measured against, alongside being seen near the target.
+local hitBy = {}
+
 --- Players the server has actually seen dead, and has not yet seen revived.
 ---
 --- A revive is claimed by the reviving player's own client, and the only
@@ -44,7 +49,7 @@ end
 function Death.init(deps)
     Storage, Identity, Contracts, Audit, Photo =
         deps.storage, deps.identity, deps.contracts, deps.audit, deps.photo
-    damage, pending = {}, {}
+    damage, pending, hitBy = {}, {}, {}
 end
 
 --------------------------------------------------------------------------
@@ -125,6 +130,10 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
         list = {}
         damage[victim.cid] = list
     end
+
+    -- Landing a hit is working the contract, from however far away.
+    hitBy[victim.cid] = hitBy[victim.cid] or {}
+    hitBy[victim.cid][attacker.cid] = os.time()
 
     list[#list + 1] = {
         attackerCid = attacker.cid,
@@ -308,6 +317,19 @@ end
 
 function Death.clearProximity(contractId)
     seenNear[contractId] = nil
+end
+
+--- The last time the server saw this hunter work this contract: near its
+--- target, or landing a hit on them. nil when it never has.
+---@param contractId string
+---@param hunterCid string
+---@param targetCid string
+---@return integer|nil os.time()
+function Death.lastEngaged(contractId, hunterCid, targetCid)
+    local near = seenNear[contractId] and seenNear[contractId][hunterCid] or nil
+    local hit = targetCid and hitBy[targetCid] and hitBy[targetCid][hunterCid] or nil
+    if near and hit then return math.max(near, hit) end
+    return near or hit
 end
 
 --- Seconds since this player was last revived, or nil if never seen.
@@ -584,6 +606,7 @@ end
 --- the photo token lifetime, whoever is online.
 function Death.clearPlayer(cid)
     damage[cid] = nil
+    hitBy[cid] = nil
     condition[cid] = nil
     respawnedAt[cid] = nil
     seenDead[cid] = nil

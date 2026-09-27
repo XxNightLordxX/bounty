@@ -77,7 +77,18 @@ end
 ---@return boolean ok
 ---@return string|nil reason
 function Kidnap.conditionsMet(contract, hunter, target, creator)
-    if not hunter or not target or not creator then return false, 'party_offline' end
+    -- An anonymous client who is not in the city gets the answer a client
+    -- who is in the city but not here would get (§14.32). 'party_offline'
+    -- was the first thing checked, so a hunter pressing Arm anywhere, with
+    -- nobody in hand, learned whether the person who paid to stay unnamed
+    -- was online right now — as often as they liked, since a refusal costs
+    -- nothing. Taken to the creator-distance check instead, so every earlier
+    -- reason is still the one it would have been.
+    local absentAnonymousClient = not creator and contract ~= nil
+        and contract.anon_creator == true
+    if not hunter or not target or (not creator and not absentAnonymousClient) then
+        return false, 'party_offline'
+    end
 
     -- The target must be alive and conscious for the entire delivery.
     -- Delivering a corpse is not a kidnapping (§7.4).
@@ -93,9 +104,11 @@ function Kidnap.conditionsMet(contract, hunter, target, creator)
     local r2 = radius * radius
     local hunterCoords = GetEntityCoords(GetPlayerPed(hunter.source))
     local targetCoords = GetEntityCoords(GetPlayerPed(target.source))
-    local creatorCoords = GetEntityCoords(GetPlayerPed(creator.source))
 
     if Util.dist2(hunterCoords, targetCoords) > r2 then return false, 'target_too_far' end
+    if not creator then return false, 'creator_too_far' end
+
+    local creatorCoords = GetEntityCoords(GetPlayerPed(creator.source))
     if Util.dist2(hunterCoords, creatorCoords) > r2 then return false, 'creator_too_far' end
     if Util.dist2(targetCoords, creatorCoords) > r2 then return false, 'creator_too_far' end
 

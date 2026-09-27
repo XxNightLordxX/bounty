@@ -10,7 +10,7 @@ local function seeded(opts)
         reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
         bailoutAmount = opts.bailout,
     })
-    if opts.accept ~= false then s.contracts.accept(f.hunter, c.id, false) end
+    if opts.accept ~= false then s.contracts.accept(f.hunter, c.id, opts.anonHunter == true) end
     return s, f, c
 end
 
@@ -98,7 +98,9 @@ describe('informant data', function()
     end
 
     it('names a hunter for the creator', function()
-        local s, f, c = seeded()
+        -- Anonymous: the creator already sees every operative who chose to
+        -- be named, so those are not what a purchase is spent on.
+        local s, f, c = seeded({ anonHunter = true })
         tailing(s)
         local ok, err, data = s.informant.buy(f.creator, c.id)
         truthy(ok, tostring(err))
@@ -140,7 +142,7 @@ describe('informant data', function()
     end)
 
     it('names everyone active when proximity is not required', function()
-        local s, f, c = seeded()
+        local s, f, c = seeded({ anonHunter = true })
         withConfig({ { Config.Informant, 'RequireProximity', false } }, function()
             local ok, _, data = s.informant.buy(f.creator, c.id)
             truthy(ok)
@@ -291,7 +293,7 @@ describe('informant data', function()
     --- test measures the default it thought it had changed.
     describe('in each mode an operator can choose', function()
         it('names the hunter on a server set to names', function()
-            local s, f, c = seeded()
+            local s, f, c = seeded({ anonHunter = true })
             tailing(s)
             local data
             withConfig({ { Config.Informant, 'RevealMode', 'name' } }, function()
@@ -304,7 +306,7 @@ describe('informant data', function()
         end)
 
         it('describes the hunter on a server set to descriptions', function()
-            local s, f, c = seeded()
+            local s, f, c = seeded({ anonHunter = true })
             tailing(s)
             local data
             withConfig({ { Config.Informant, 'RevealMode', 'description' } }, function()
