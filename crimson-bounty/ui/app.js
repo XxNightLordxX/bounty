@@ -990,7 +990,11 @@
     if (contract.penaltyAmount > 0) {
       meta.appendChild(chip(money(contract.penaltyAmount) + ' stake', 'warn'));
     }
-    meta.appendChild(chip(contract.creatorAnonymous ? 'Anonymous client' : contract.creatorName));
+    // Only when there is something to say: a row carrying neither drew an
+    // empty pill.
+    if (contract.creatorAnonymous || contract.creatorName) {
+      meta.appendChild(chip(contract.creatorAnonymous ? 'Anonymous client' : contract.creatorName));
+    }
     if (contract.targetProtected && settings().flagListing !== false) {
       meta.appendChild(chip('Law enforcement', 'warn'));
     }
@@ -1759,6 +1763,15 @@
     return seconds > 0 ? Math.floor(seconds / 60) : 0;
   }
 
+  /* "runs out in 2h", or what to say instead when there is no clock. The
+     no-deadline case used to be spliced into the same sentence and read
+     "runs out in no set deadline". */
+  function runsOut(minutes) {
+    if (minutes === null || minutes === undefined) { return 'has no deadline'; }
+    if (minutes <= 0) { return 'has run out'; }
+    return 'runs out in ' + durationText(minutes);
+  }
+
   function durationText(minutes) {
     if (minutes === null || minutes === undefined) { return 'no set deadline'; }
     if (minutes <= 0) { return 'no time left'; }
@@ -1790,7 +1803,9 @@
     var options = [
       {
         label: 'Shorten the deadline',
-        note: 'Runs out in ' + durationText(left) + ' now.',
+        note: 'It ' + runsOut(left) + ' now.',
+        // Nothing to shorten without a deadline, or with a minute left.
+        skip: left === null || left <= 1,
         run: function () {
           if (left === null || left <= 1) {
             return say('There is no deadline left to shorten.');
@@ -1867,7 +1882,7 @@
       // contract pays and how long is left is what every one of these
       // choices is about, and it should not disappear because the option
       // that happened to carry it does not apply here.
-      detail: 'Pays ' + money(pot) + ', runs out in ' + durationText(left)
+      detail: 'Pays ' + money(pot) + ', ' + runsOut(left)
         + (total > 1 ? ', ' + total + ' collections' : '')
         + '. Nothing happens until '
         + (hunter ? 'the client' : 'the operative') + ' agrees.',

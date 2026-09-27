@@ -5175,6 +5175,47 @@ async function main() {
       });
     })();
 
+    /* With no deadline, "runs out in no set deadline" — and an option to
+       shorten a deadline that does not exist. */
+    await (async function noDeadlineReadsRight() {
+      const open = Object.assign({}, own, { role: 'hunter', hunters: undefined, deadline: undefined });
+      const app = boot({
+        mine: { ok: true, data: { created: [], accepted: [open], onMe: [] } },
+        amendments: { ok: true, data: [] }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      click(app, 'Propose change');
+      await settle();
+      it('does not say a contract with no deadline runs out in one', function () {
+        const shown = app.view.textContent;
+        falsy(shown.indexOf('in no set deadline') !== -1, shown);
+        truthy(shown.indexOf('has no deadline') !== -1, shown);
+      });
+      it('does not offer to shorten a deadline that does not exist', function () {
+        const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+          .map(function (n) { return n.textContent; });
+        falsy(labels.indexOf('Shorten the deadline') !== -1, labels.join(' | '));
+      });
+    })();
+
+    /* A row that names no client drew an empty pill. */
+    await (async function noEmptyChips() {
+      const nameless = Object.assign({}, own, { role: 'target', hunters: undefined,
+        creatorName: undefined, creatorAnonymous: undefined });
+      const app = boot({ mine: { ok: true, data: { created: [], accepted: [], onMe: [nameless] } } });
+      await settle(); await settle();
+      tab(app, 'onme');
+      await settle(); await settle();
+      it('draws no empty chip', function () {
+        const empty = app.view.all().filter(function (n) {
+          return /(^| )chip( |$)/.test(n.className || '') && !n.textContent.trim();
+        });
+        eq(empty.length, 0);
+      });
+    })();
+
     await (async function threadsAnswersTheTap() {
       let answer;
       const held = new Promise(function (resolve) { answer = resolve; });
