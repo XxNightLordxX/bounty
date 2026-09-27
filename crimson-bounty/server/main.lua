@@ -387,10 +387,11 @@ local function validateConfig()
         { 'Kidnap', 'MaxTotalGraceMs' },
         -- Squared for every Arm, and the countdown thread's own wait and
         -- delta: a string here stopped every handover rather than one.
-        { 'Limits', 'ExclusiveIdleReleaseSeconds' },
-        { 'Limits', 'ExclusiveAttemptWindowSeconds' },
         { 'Kidnap', 'Radius' },
         { 'Kidnap', 'TickMs' },
+        -- Compared against elapsed seconds on every idle-hold sweep.
+        { 'Limits', 'ExclusiveIdleReleaseSeconds' },
+        { 'Limits', 'ExclusiveAttemptWindowSeconds' },
         -- Compared on every create and every payout.
         { 'Immunity', 'MinTargetSessionMinutes' },
         -- Inside the login timer.
@@ -509,6 +510,16 @@ local function validateConfig()
 
     if not Config.Kidnap.RequireCoercion then
         warn[#warn + 1] = 'Kidnap.RequireCoercion is off: a target can be "delivered" while walking freely'
+    end
+    -- Two releases with two switches. Turning the idle one off leaves the
+    -- attempt window, which an operator who meant "never take a hold away"
+    -- would not expect.
+    if (Config.Limits.ExclusiveIdleReleaseSeconds or 0) <= 0
+        and (Config.Limits.ExclusiveAttemptWindowSeconds or 0) > 0 then
+        warn[#warn + 1] = ('Limits.ExclusiveIdleReleaseSeconds is off, but a hunter who holds an '
+            .. 'exclusive contract without an attempt is still released after %d s '
+            .. '(Limits.ExclusiveAttemptWindowSeconds; 0 turns that off too)')
+            :format(Config.Limits.ExclusiveAttemptWindowSeconds)
     end
     if Config.Relay.RequireMaskingForAnonymous == false then
         warn[#warn + 1] = 'Relay.RequireMaskingForAnonymous is off: on a phone that cannot hide '
@@ -718,6 +729,8 @@ function StartCrimsonBounty()
         },
     }
 
+    -- Nothing is answered until recovery has finished (App.ready).
+    app.ready = false
     app.init(modules)
     admin.init(modules)
     require('server.bridges').install(modules)
@@ -731,6 +744,7 @@ function StartCrimsonBounty()
     -- Contracts already held when this process started, so an idle hold
     -- from before a restart is still one the sweep can see.
     contracts.reindexHolds()
+    app.ready = true
     StartTick()
 
     reportIntegrations()
@@ -801,17 +815,6 @@ function Recover()
         local untouched = false
 
         local lines = Storage.readEscrow(contract.id)
-        -- An acceptance the crash left part-way (Contracts.recoverJoining).
-        if (contract.state == CB.STATE.ACTIVE or contract.state == CB.STATE.ACCEPTED)
-            and modules.contracts.recoverJoining then
-            recovered = recovered + modules.contracts.recoverJoining(contract)
-        end
-
-        -- Owed lines a crash left unqueued, and a stake reduction it
-        -- interrupted (Escrow.recoverOwed).
-        if modules.escrow.recoverOwed then
-            recovered = recovered + modules.escrow.recoverOwed(lines)
-        end
         for j = 1, #lines do
             local line = lines[j]
             if (line.state == CB.ESCROW_STATE.HELD or line.state == CB.ESCROW_STATE.RELEASING)
@@ -886,6 +889,29 @@ function Recover()
             if modules.contracts.recoverEnded(contract.id) then
                 finished = finished + 1
             end
+        end
+
+        -- Both below read the contract as the steps above left it. Asked of
+        -- the first read, an acceptance part-way on a contract another
+        -- hunter's claim had locked (COMPLETING) was skipped, and the claim
+        -- was then put back to ACCEPTED with the row still joining: its
+        -- stake held, its hunter unable to take it, leave it or work it.
+        local current = Storage.readContract(contract.id) or contract
+
+        -- An acceptance the crash left part-way (Contracts.recoverJoining).
+        if (current.state == CB.STATE.ACTIVE or current.state == CB.STATE.ACCEPTED)
+            and modules.contracts.recoverJoining then
+            recovered = recovered + modules.contracts.recoverJoining(current)
+        end
+
+        -- Owed lines a crash left unqueued, and a stake reduction it
+        -- interrupted (Escrow.recoverOwed). After the lines caught
+        -- mid-release are back to held: asked before, it looked only at
+        -- held lines, so an owed line the crash caught releasing was put
+        -- back to held unqueued, and waited for the next restart — while
+        -- the claim it belonged to was counted as paid.
+        if modules.escrow.recoverOwed then
+            recovered = recovered + modules.escrow.recoverOwed(Storage.readEscrow(contract.id))
         end
     end
 
@@ -990,6 +1016,10 @@ function Tick()
     -- back on the board (§14.8).
     if modules.contracts.releaseIdleHolds then
         job('contracts.releaseIdleHolds', modules.contracts.releaseIdleHolds)
+    end
+    -- An acceptance a throw left part-way, and whose taking back threw too.
+    if modules.contracts.retryStuckJoins then
+        job('contracts.retryStuckJoins', modules.contracts.retryStuckJoins)
     end
     job('expireContracts', ExpireContracts)
     -- When this process was last known to be running, so the next boot can

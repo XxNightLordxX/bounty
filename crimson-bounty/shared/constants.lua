@@ -239,6 +239,10 @@ CB.ERR = {
     PHOTO_REVIVED    = 'photo_revived',
     PHOTO_BAD_HOST   = 'photo_bad_host',
     LOCKED           = 'locked',
+    -- Something else is being done to the same contract, or by the same
+    -- player, in this instant; or the resource is still starting. Nothing
+    -- was changed, and the same request a moment later goes through.
+    BUSY             = 'busy',
 }
 
 return CB

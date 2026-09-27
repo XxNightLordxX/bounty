@@ -11,6 +11,19 @@ local App = {}
 
 local deps
 
+--- Whether requests are answered yet.
+---
+--- The handlers are registered before boot recovery runs, and on mysql every
+--- step of recovery is a yield that lets a player's request run in the
+--- middle of it. Recovery takes back any acceptance it finds part-way, as
+--- the dead process's — so one a player had just started in this process was
+--- taken back under them, its stake returned while they went on to hold the
+--- contract; and a penalty being lowered had half its work undone. Held off
+--- until recovery has finished (StartCrimsonBounty), and answered as busy
+--- meanwhile. True outside that window, as a stack built without a boot has
+--- nothing to recover.
+App.ready = true
+
 function App.init(d)
     deps = d
     App.register()
@@ -145,6 +158,11 @@ local function handler(name, action, fn)
 
     RegisterNetEvent('crimson-bounty:' .. name, function(payload)
         local src = source
+
+        if not App.ready then
+            return App.reply(src, name, false, CB.ERR.BUSY, nil,
+                type(payload) == 'table' and tonumber(payload.__rid) or nil)
+        end
 
         local allowed, shouldLog = floodCheck(src)
         if not allowed then
@@ -836,6 +854,9 @@ function App.register()
 
     RegisterNetEvent('crimson-bounty:iDied', function(killerServerId)
         local src = source
+        -- Not while boot recovery runs (App.ready); the kill is still
+        -- recorded by the condition sampler, and the photo can prove it.
+        if not App.ready then return end
         if not App.floodOk(src, 'iDied') then return end
 
         local actor = deps.identity.resolve(src)
@@ -854,6 +875,7 @@ function App.register()
 
     RegisterNetEvent('crimson-bounty:iRevived', function()
         local src = source
+        if not App.ready then return end
         if not App.floodOk(src, 'iRevived') then return end
 
         local actor = deps.identity.resolve(src)

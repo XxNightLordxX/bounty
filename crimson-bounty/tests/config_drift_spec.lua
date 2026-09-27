@@ -1156,6 +1156,22 @@ describe('a safety switch added to a section the operator already had', function
         resetConfig()
     end)
 
+    it('warns that holds are still released when only the idle release is off', function()
+        local said = {}
+        local realPrint = _G.print
+        _G.print = function(...)
+            local parts = {}
+            for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+            said[#said + 1] = table.concat(parts, ' ')
+        end
+        local ok = pcall(boot, function() Config.Limits.ExclusiveIdleReleaseSeconds = 0 end)
+        _G.print = realPrint
+        resetConfig()
+        truthy(ok)
+        truthy(table.concat(said, ' | '):find('ExclusiveAttemptWindowSeconds', 1, true),
+            'an operator who switched the release off is not told it still happens')
+    end)
+
     it('fills the coercion detectors and death providers when they are absent', function()
         boot(function()
             Config.Kidnap.Coercion = nil

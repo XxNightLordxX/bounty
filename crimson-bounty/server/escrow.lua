@@ -977,7 +977,12 @@ function Escrow.bonusTopUp(contractId, fromPercent, toPercent)
         if line.portion == CB.PORTION.BONUS and not line.derived then
             explicit[line.slot] = true
         end
-        if line.state == CB.ESCROW_STATE.SETTLED then settled[line.slot] = true end
+        -- A collection is paid when its baseline is. Any settled line used
+        -- to count, so a top-up handed back to the client marked the
+        -- collection paid and refused every later raise on it.
+        if line.state == CB.ESCROW_STATE.SETTLED and line.portion == CB.PORTION.BASELINE then
+            settled[line.slot] = true
+        end
     end
 
     local extra = {}
@@ -1154,6 +1159,16 @@ function Escrow.reduceStake(contractId, line, amount, reason)
         return nil, false
     end
 
+    -- And the owed half must still be there. Anything that voided it in
+    -- between — boot recovery, which reads an owed line whose stake is still
+    -- whole as a split that never happened — would leave the difference in
+    -- neither line: put the stake back rather than lose it.
+    local check = Storage.readEscrowLine(lineId)
+    if not check or check.state ~= CB.ESCROW_STATE.HELD or (check.amount or 0) ~= returned then
+        Storage.setEscrowAmount(line.id, CB.ESCROW_STATE.HELD, original, amount)
+        return nil, false
+    end
+
     Storage.queuePending(line.staker, contractId, lineId)
     Escrow.noteWaiting(line.staker, true)
     local _, result = Escrow.release(contractId, line.staker, { line = lineId }, reason)
@@ -1184,17 +1199,33 @@ function Escrow.recoverOwed(lines)
     end
 
     for _, l in ipairs(lines or {}) do
-        if l.state == CB.ESCROW_STATE.HELD and l.owed_to then
+        if l.state == CB.ESCROW_STATE.HELD and l.owed_to and not isQueuedFor(l.owed_to, l.id) then
             local mark = type(l.metadata) == 'table' and l.metadata or nil
-            local voided = false
+            local voided, doubtful = false, false
             if l.portion == CB.PORTION.OWED and mark and mark.splitFrom then
+                -- Owed only if the stake stands exactly where this split
+                -- left it, void only if it stands where the split found it.
+                -- "Moved at all" was the old test, and a split whose guard
+                -- lost to another cut on the same stake — the stake moved,
+                -- by somebody else — was paid as well as the one that won.
                 local stake = Storage.readEscrowLine(mark.splitFrom)
-                if not (stake ~= nil and stake.amount ~= mark.stakeWas) then
+                if stake == nil or stake.amount == mark.stakeWas then
                     voided = voidSplit(l)
                     if voided then finished = finished + 1 end
+                elseif stake.amount ~= mark.stakeNow then
+                    -- Neither: not something one cut at a time can leave.
+                    -- Neither paid nor voided, and put in front of staff.
+                    doubtful = true
+                    print(('[crimson-bounty] owed line %s splits stake %s, which is at '
+                        .. 'neither figure it knew; left for review')
+                        :format(tostring(l.id), tostring(mark.splitFrom)))
+                    if Audit then
+                        Audit.financial('split_unresolved', l.owed_to, l.contract_id,
+                            { line = l.id, stake = mark.splitFrom, review = true })
+                    end
                 end
             end
-            if not voided and not isQueuedFor(l.owed_to, l.id) then
+            if not voided and not doubtful then
                 Storage.queuePending(l.owed_to, l.contract_id, l.id)
                 queuedFor[l.owed_to][l.id] = true
                 Escrow.noteWaiting(l.owed_to, true)

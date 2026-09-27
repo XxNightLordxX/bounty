@@ -1207,3 +1207,308 @@ describe('an extension written while the expiry pass ends a pause', function()
         end)
     end
 end)
+
+--------------------------------------------------------------------------
+-- Crashes part-way, and the boot after them
+--------------------------------------------------------------------------
+
+--- Kill the process at the first store call `when` picks. That call goes
+--- through, and every store call after it throws: a process that has died
+--- writes nothing more, and nothing it meant to do next — an unwind, a
+--- retry — happens. The next boot finds the store as it stood.
+---@param s table the stack
+---@param when fun(name: string, ...): boolean
+local function killAt(s, when)
+    local dead = false
+    for name, fn in pairs(s.storage) do
+        if type(fn) == 'function' then
+            s.storage[name] = function(...)
+                if dead then error('process dead', 0) end
+                local out = table.pack(fn(...))
+                if when(name, ...) then
+                    dead = true
+                    error('process killed', 0)
+                end
+                return table.unpack(out, 1, out.n)
+            end
+        end
+    end
+end
+
+local function addHunter2()
+    Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+        cash = 5000, bank = 5000, firstname = 'Sol', lastname = 'Vane' })
+end
+
+local function holders(s, contractId)
+    local out = {}
+    for _, h in ipairs(s.storage.readHunters(contractId)) do out[h.hunter_cid] = h end
+    return out
+end
+
+describe('a crash part-way through accepting', function()
+    it('mysql: stake written, row not yet: the contract is takeable again and the stake is back', function()
+        local _, s = boot('mysql')
+        local f = fixture(s)
+        addHunter2()
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        truthy(c)
+        local before = money(3)
+        killAt(s, function(name, _, lines)
+            return name == 'writeEscrow' and type(lines) == 'table' and lines[1] ~= nil
+                and lines[1].portion == CB.PORTION.STAKE
+        end)
+        falsy(pcall(s.contracts.accept, f.hunter, c.id, false))
+
+        local _, s2 = restart('mysql', s)
+        eq(s2.storage.readContract(c.id).state, CB.STATE.ACTIVE,
+            'reserved for nobody, it refused everyone')
+        eq(money(3), before, 'and the stake came back')
+        truthy(s2.contracts.accept(s2.identity.resolve(4), c.id, false),
+            'somebody else can take it')
+    end)
+
+    it('mysql: a row left joining while another hunter\'s claim held the contract is taken back', function()
+        local _, s = boot('mysql')
+        local f = fixture(s)
+        addHunter2()
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 500,
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local before = money(4)
+        killAt(s, function(name, row)
+            if name == 'addHunter' and type(row) == 'table' and row.hunter_cid == 'HUNTER02' then
+                -- HUNTER01's claim takes the contract as the row lands.
+                s.storage.compareSetContractState(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING)
+                return true
+            end
+            return false
+        end)
+        falsy(pcall(s.contracts.accept, s.identity.resolve(4), c.id, false))
+
+        local _, s2 = restart('mysql', s)
+        local row = holders(s2, c.id).HUNTER02
+        truthy(row, 'the row was written')
+        falsy(row.state == 'joining',
+            'left joining: holding a place, and its hunter could neither take it, leave it nor work it')
+        eq(money(4), before, 'and nothing of theirs is held')
+        truthy(s2.contracts.accept(s2.identity.resolve(4), c.id, false), 'they can take it now')
+    end)
+
+    for _, firstAnon in ipairs({ false, true }) do
+        it(('mysql: a crash as a hunter takes it up again keeps their %s first stint')
+            :format(firstAnon and 'anonymous' or 'named'), function()
+            local _, s = boot('mysql')
+            Config.Anonymity.HunterFee = 1500
+            local f = fixture(s)
+            Env.players[3].PlayerData.money.bank = 20000
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 10000 } }, penaltyAmount = 1000,
+            })
+            truthy(s.contracts.accept(f.hunter, c.id, firstAnon))
+            truthy(s.contracts.abandon(f.hunter, c.id))
+            killAt(s, function(name, _, fields)
+                return name == 'updateHunter' and type(fields) == 'table'
+                    and (fields.state == 'joining' or fields.state == 'rejoining')
+            end)
+            falsy(pcall(s.contracts.accept, f.hunter, c.id, true))
+
+            local _, s2 = restart('mysql', s)
+            Config.Anonymity.HunterFee = 1500
+            local row = holders(s2, c.id).HUNTER01
+            eq(row.state, 'abandoned', 'the earlier stint was erased')
+            local before = money(3)
+            truthy(s2.contracts.accept(s2.identity.resolve(3), c.id, true))
+            local anon = holders(s2, c.id).HUNTER01.anon
+            eq(anon == true or anon == 1, firstAnon,
+                firstAnon and 'the paid-for anonymity was lost'
+                or 'made anonymous under the alias the client already saw named')
+            eq(before - money(3), 1000,
+                'charged for anonymity it already had, or that hides nothing')
+        end)
+    end
+end)
+
+describe('a crash part-way through paying a collection', function()
+    it('mysql: an owed collection caught mid-release is queued at the first boot', function()
+        local _, s = boot('mysql')
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local before = money(3)
+        killAt(s, function(name, _, lines)
+            return name == 'writeEscrow' and type(lines) == 'table' and lines[1] ~= nil
+                and lines[1].portion == CB.PORTION.BASELINE and lines[1].releasing_to ~= nil
+        end)
+        falsy(pcall(s.contracts.claimSlot, c.id, f.hunter.cid, CB.FULFILMENT.ELIMINATION, {}))
+
+        local _, s2 = restart('mysql', s)
+        s2.escrow.retryPending(f.hunter.cid)
+        eq(money(3) - before, 10000,
+            'owed, unqueued, and left for the restart after this one')
+    end)
+end)
+
+describe('a crash part-way through an instant buyout', function()
+    it('mysql: the premium the target paid reaches the client', function()
+        local main, s = boot('mysql')
+        local f = fixture(s)
+        Env.players[2].PlayerData.money.bank = 100000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } }, bailoutAmount = 15000,
+        })
+        truthy(c)
+        local creator, target = money(1), money(2)
+        killAt(s, function(name, _, _, next_)
+            return name == 'compareSetContractState' and next_ == CB.STATE.BAILED_OUT
+        end)
+        falsy(pcall(s.bailout.buy, f.target, c.id))
+
+        local main2, s2 = restart('mysql', s)
+        for _ = 1, 3 do Env.advance(10); main2.tick() end
+        s2.escrow.retryPending(f.creator.cid)
+        eq(s2.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        eq(target - money(2), 15000, 'the target paid')
+        eq(money(1) - creator, 10000 + 15000,
+            'the escrow came back, and the premium was in no line, no queue and no pocket')
+    end)
+end)
+
+describe('requests while boot recovery is running', function()
+    it('mysql: are answered busy, and change nothing', function()
+        local _, s = boot('mysql')
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 1000,
+        })
+        truthy(c)
+
+        -- A player's accept arrives while recovery is reading the escrow.
+        local realRun, reply = Exec.run, nil
+        Exec.run = function(sql, params)
+            if reply == nil and type(sql) == 'string'
+                and sql:find('FROM crimson_escrow WHERE contract_id') then
+                reply = false
+                local fire = Env.events['crimson-bounty:accept']
+                if fire then
+                    Env.clientEvents = {}
+                    _G.source = 3
+                    pcall(fire, { id = c.id, anonymous = false, penaltyAmount = 1000 })
+                    _G.source = nil
+                    for _, e in ipairs(Env.clientEvents) do
+                        if e.name == 'crimson-bounty:result' then reply = e.args[1] end
+                    end
+                end
+            end
+            return realRun(sql, params)
+        end
+        local ok, _, s2 = pcall(restart, 'mysql', s)
+        Exec.run = realRun
+        truthy(ok)
+        truthy(type(reply) == 'table', 'the request got no answer at all')
+        falsy(reply.ok, 'accepted while recovery was deciding what the crash had left')
+        eq(reply.err, CB.ERR.BUSY)
+        eq(#s2.storage.readHunters(c.id), 0, 'and nobody is on the contract')
+
+        -- And once recovery is done, the same request goes through.
+        Env.clientEvents = {}
+        _G.source = 3
+        Env.events['crimson-bounty:accept']({ id = c.id, anonymous = false, penaltyAmount = 1000 })
+        _G.source = nil
+        local after
+        for _, e in ipairs(Env.clientEvents) do
+            if e.name == 'crimson-bounty:result' then after = e.args[1] end
+        end
+        truthy(after and after.ok, 'still refused once the server had started: '
+            .. tostring(after and after.err))
+    end)
+
+    it('mysql: a death reported while recovery runs is not acted on yet', function()
+        local _, s = boot('mysql')
+        local f = fixture(s)
+        truthy(s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } },
+        }))
+        local realRun, fired, handled = Exec.run, false, false
+        Exec.run = function(sql, params)
+            if not fired and type(sql) == 'string'
+                and sql:find('FROM crimson_escrow WHERE contract_id') then
+                fired = true
+                local death = package.loaded['server.completion.death']
+                local real = death and death.onVictimReport
+                if death then death.onVictimReport = function(...) handled = true return real(...) end end
+                local fire = Env.events['crimson-bounty:iDied']
+                _G.source = 2
+                if fire then pcall(fire, 3) end
+                _G.source = nil
+                if death then death.onVictimReport = real end
+            end
+            return realRun(sql, params)
+        end
+        local ok = pcall(restart, 'mysql', s)
+        Exec.run = realRun
+        truthy(ok)
+        truthy(fired, 'recovery never read the escrow')
+        falsy(handled, 'a kill was settled while recovery was still deciding what the crash left')
+    end)
+end)
+
+describe('a crash inside boot recovery itself', function()
+    it('mysql: the joining hunter still gets their stake back on the boot after', function()
+        local _, s = boot('mysql')
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        local before = money(3)
+        killAt(s, function(name, _, lines)
+            return name == 'writeEscrow' and type(lines) == 'table' and lines[1] ~= nil
+                and lines[1].portion == CB.PORTION.STAKE
+        end)
+        falsy(pcall(s.contracts.accept, f.hunter, c.id, false))
+
+        -- The next boot dies at recovery's first write for that acceptance,
+        -- whichever it is.
+        local realRun, dead = Exec.run, false
+        Exec.run = function(sql, params)
+            if dead then error('process dead', 0) end
+            local out = realRun(sql, params)
+            if type(sql) == 'string' and (sql:find('UPDATE crimson_hunters SET state')
+                or sql:find('UPDATE crimson_escrow SET state')) then
+                dead = true
+                error('process killed', 0)
+            end
+            return out
+        end
+        falsy(pcall(restart, 'mysql', s))
+        Exec.run = realRun
+
+        local _, s3 = restart('mysql', s)
+        eq(money(3), before, 'the stake was left held against a row already refused')
+        eq(s3.storage.readContract(c.id).state, CB.STATE.ACTIVE)
+    end)
+end)
+
+describe('queued payments across a restart', function()
+    it('mysql: one queued in the same second after a restart does not replace another', function()
+        local _, s = boot('mysql')
+        s.storage.queuePending('HUNTER01', 'ct000000001', 'owe00000001')
+        local _, s2 = restart('mysql', s)
+        s2.storage.queuePending('HUNTER01', 'ct000000001', 'owe00000002')
+        eq(#s2.storage.readPending('HUNTER01'), 2,
+            'the sequence started again at boot, and the second landed on the first')
+    end)
+end)

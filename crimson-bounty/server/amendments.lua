@@ -23,11 +23,15 @@ function Amendments.init(deps)
     openContracts = {}
 end
 
+--- Who has to agree: the client, and every hunter on the contract —
+--- including one part-way through accepting (Contracts.holds). Counting only
+--- active rows let a change be applied, as agreed by nobody else, under a
+--- hunter who had already staked on the old terms.
 local function participants(contract)
     local out = { [contract.creator_cid] = 'creator' }
     local hunters = Storage.readHunters(contract.id)
     for i = 1, #hunters do
-        if hunters[i].state == 'active' then out[hunters[i].hunter_cid] = 'hunter' end
+        if Contracts.holds(hunters[i]) then out[hunters[i].hunter_cid] = 'hunter' end
     end
     return out
 end
@@ -58,6 +62,31 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
     local open = state == CB.STATE.ACTIVE or state == CB.STATE.ACCEPTED
     if open and (expectedSlot == nil or (now.next_slot or 1) == expectedSlot) then
         return true
+    end
+
+    -- Still open, and a claim moved the slot on in the awaits. Only lines on
+    -- a collection already paid are stranded; those on collections still to
+    -- come are as good as ever, and a line the claim paid out went where it
+    -- was meant to. Handing every line back and then reporting the top-up as
+    -- made told a bonus raise it had applied — its percent stored and shown
+    -- — while the collections after it went back to the old bonus.
+    if open then
+        local back, kept = {}, false
+        for id in pairs(ids or {}) do
+            local line = Storage.readEscrowLine(id)
+            if line and line.state == CB.ESCROW_STATE.HELD
+                and (line.slot or 0) < (now.next_slot or 1) then
+                back[id] = true
+            elseif line then
+                kept = true
+            end
+        end
+        if next(back) then
+            Escrow.release(contractId, actor.cid, { lines = back }, 'escrow_added_to_moved')
+        end
+        if kept then return true end
+        Audit.rejected('escrow_added_to_moved', actor.cid, contractId, { state = state })
+        return false, CB.ERR.LOCKED
     end
 
     if ids and next(ids) then
@@ -148,10 +177,25 @@ end
 --- addEscrow; these are the non-monetary improvements.
 ---@return boolean ok
 ---@return string|nil err
+local improveUnlocked
+
 function Amendments.improve(actor, contractId, kind, payload)
     contractId = Util.toId(contractId)
     if not contractId then return false, CB.ERR.INVALID_INPUT end
     if not CB.ADDITIVE[kind] then return false, CB.ERR.INVALID_INPUT end
+    -- Lowering the penalty cuts stakes, and an acceptance stakes: one at a
+    -- time per contract (Contracts.serialized). Two cuts side by side each
+    -- wrote an owed line and only one lowered the stake, and a crash between
+    -- them had boot pay both; a cut beside an acceptance skipped the stake
+    -- it was taking and left it staked at the old figure.
+    if kind == CB.AMENDMENT.LOWER_PENALTY then
+        return Contracts.serialized({ 'contract:' .. contractId },
+            improveUnlocked, actor, contractId, kind, payload)
+    end
+    return improveUnlocked(actor, contractId, kind, payload)
+end
+
+improveUnlocked = function(actor, contractId, kind, payload)
 
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
@@ -286,9 +330,11 @@ function Amendments.improve(actor, contractId, kind, payload)
             -- creator's money back to the person who walked away.
             local claimedByOther = line.owed_to ~= nil and line.owed_to ~= line.staker
 
-            -- And only a hunter still on the contract has a live stake.
+            -- And only a hunter still on the contract has a live stake —
+            -- one part-way through accepting included, whose stake is as
+            -- real as anybody's.
             local hunter = line.staker and Storage.readHunter(contractId, line.staker)
-            local stillActive = hunter and hunter.state == 'active'
+            local stillActive = Contracts.holds(hunter)
 
             if line.portion == CB.PORTION.STAKE
                 and line.state == CB.ESCROW_STATE.HELD
@@ -499,6 +545,12 @@ function Amendments.propose(actor, contractId, kind, payload)
         local _, err, outcome = Amendments.respond(actor, proposal.id, true)
         proposal.outcome = outcome or proposal.outcome
         proposal.error = err
+        -- Nobody else can answer it, so left open it would only block the
+        -- next one until it lapsed: closed, and made again.
+        if outcome == 'busy' then
+            proposal.outcome = 'failed'
+            Storage.writeAmendment(proposal)
+        end
     end
     return proposal
 end
@@ -715,6 +767,9 @@ respondUnlocked = function(actor, amendmentId, approve)
     end
 
     local ok, err = Amendments.apply(proposal)
+    -- Busy is "not this instant", not "no": the proposal stays open and the
+    -- answer can be given again.
+    if not ok and err == CB.ERR.BUSY then return false, err, 'busy' end
     proposal.outcome = ok and 'applied' or 'failed'
     proposal.error = err
     Storage.writeAmendment(proposal)
@@ -731,9 +786,25 @@ respondUnlocked = function(actor, amendmentId, approve)
     return ok, err, proposal.outcome
 end
 
+local applyUnlocked
+
 --- Apply an approved proposal. Each kind is handled explicitly; an unknown
 --- kind fails rather than falling through to something permissive.
+---
+--- A change to the penalty or the mode waits for no acceptance in flight
+--- on the contract (Contracts.serialized): who is on it decides whether it
+--- may be applied at all.
 function Amendments.apply(proposal)
+    local kind = proposal.kind
+    if kind == CB.AMENDMENT.RAISE_PENALTY or kind == CB.AMENDMENT.LOWER_PENALTY
+        or kind == CB.AMENDMENT.CHANGE_MODE then
+        return Contracts.serialized({ 'contract:' .. tostring(proposal.contract_id) },
+            applyUnlocked, proposal)
+    end
+    return applyUnlocked(proposal)
+end
+
+applyUnlocked = function(proposal)
     local contract = Storage.readContract(proposal.contract_id)
     if not contract then return false, CB.ERR.NOT_FOUND end
     local kind, payload = proposal.kind, proposal.payload
@@ -778,7 +849,7 @@ function Amendments.apply(proposal)
             local active = 0
             local hunters = Storage.readHunters(proposal.contract_id)
             for i = 1, #hunters do
-                if hunters[i].state == 'active' then active = active + 1 end
+                if Contracts.holds(hunters[i]) then active = active + 1 end
             end
             if active > 1 then return false, CB.ERR.BAD_STATE end
         end
@@ -796,7 +867,7 @@ function Amendments.apply(proposal)
         -- unheld — a hunter stakes whatever it says when they accept.
         local hunters = Storage.readHunters(proposal.contract_id)
         for i = 1, #hunters do
-            if hunters[i].state == 'active' then return false, CB.ERR.BAD_STATE end
+            if Contracts.holds(hunters[i]) then return false, CB.ERR.BAD_STATE end
         end
         -- Through the same clamp creation uses. An amendment that skipped
         -- it would be the way back to an uncapped stake: raise_penalty is

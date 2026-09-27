@@ -458,6 +458,10 @@
     handover_in_progress: 'Somebody has hold of you. You cannot buy your way '
       + 'out of a handover already under way.',
     locked: 'Someone got there first.',
+    /* Nothing was changed: the contract was busy with something else in
+       that instant, or the server had only just started. Asking again
+       works, so it says so rather than calling it a failure. */
+    busy: 'That was busy for a moment. Try again.',
     not_found: 'Gone.',
     // The player closed the camera themselves. They know; saying so is
     // telling them what they just did.

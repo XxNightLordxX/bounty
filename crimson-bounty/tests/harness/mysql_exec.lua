@@ -528,10 +528,21 @@ local function contractsInvolving(params)
     return out
 end
 
-local function hunterContractStates(params)
+local function hunterContractStates(sql, params)
+    -- The hunter states the statement asks for, read from it rather than
+    -- assumed, so a change to which rows count is exercised here too.
+    local wanted = {}
+    local list = sql:match("h%.state IN %(([^)]*)%)")
+    if list then
+        for state in list:gmatch("'([^']*)'") do wanted[state] = true end
+    else
+        local one = sql:match("h%.state = '([^']*)'")
+        if not one then error('mysql_exec: cannot read the hunter states in: ' .. sql) end
+        wanted[one] = true
+    end
     local out = {}
     for _, hunter in pairs(Exec.tables.crimson_hunters or {}) do
-        if hunter.hunter_cid == params[1] and hunter.state == 'active' then
+        if hunter.hunter_cid == params[1] and wanted[hunter.state] then
             local contract = Exec.tables.crimson_contracts[hunter.contract_id]
             if contract then out[#out + 1] = { state = contract.state } end
         end
@@ -577,7 +588,7 @@ function Exec.run(sql, params)
     if flat:find('^SELECT c%.%* FROM crimson_contracts') then
         return contractsInvolving(params)
     end
-    if flat:find('^SELECT c%.state AS state') then return hunterContractStates(params) end
+    if flat:find('^SELECT c%.state AS state') then return hunterContractStates(flat, params) end
     if flat:find('^SELECT COUNT%(%*%)') then
         return #rowsOf(flat:match('FROM ([%w_]+)') or '')
     end

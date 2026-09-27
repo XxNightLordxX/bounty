@@ -23,15 +23,49 @@ end
 local LIVE_STATES = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true, [CB.STATE.COMPLETING] = true }
 
 --- Whether a hunter row is on the contract: holding it, or part-way
---- through an acceptance ('joining') that has not been confirmed yet. A
---- joining row counts toward who is on it — so two acceptances cannot both
---- fit under a cap, and nobody reads the contract as empty — but only an
---- active one can be paid, forfeit a stake, or be released for idling.
+--- through an acceptance that has not been confirmed yet. 'joining' is a
+--- first acceptance; 'rejoining' is a hunter who walked away taking it up
+--- again, kept apart so a crash can put their earlier stint back rather
+--- than erase it (Contracts.recoverJoining). Either counts toward who is on
+--- it — so two acceptances cannot both fit under a cap, and nobody reads the
+--- contract as empty — but only an active one can be paid, forfeit a stake,
+--- or be released for idling.
 ---@param row table|nil
 ---@return boolean
 local function holds(row)
-    return row ~= nil and (row.state == 'active' or row.state == 'joining')
+    return row ~= nil and (row.state == 'active' or row.state == 'joining'
+        or row.state == 'rejoining')
 end
+Contracts.holds = holds
+
+--- Work that must not interleave with other work on the same keys.
+---
+--- Every store call yields on mysql, and each request runs in its own
+--- coroutine, so two requests about one contract run side by side unless
+--- something stops them: two cuts to one stake each wrote their half, a
+--- penalty lowered while an acceptance was staking skipped the new stake,
+--- and one player's two acceptances each counted the other as not there.
+--- Checking before writing cannot close that; only one at a time can. The
+--- other is refused as busy rather than queued, and a crash takes every
+--- key with it, so nothing is ever held across a restart.
+local busy = {}
+
+---@param keys string[]
+---@param fn function
+---@return any ...
+function Contracts.serialized(keys, fn, ...)
+    for i = 1, #keys do
+        if busy[keys[i]] then return false, CB.ERR.BUSY end
+    end
+    for i = 1, #keys do busy[keys[i]] = true end
+    local out = table.pack(pcall(fn, ...))
+    for i = 1, #keys do busy[keys[i]] = nil end
+    if not out[1] then error(out[2], 0) end
+    return table.unpack(out, 2, out.n)
+end
+
+--- See Contracts.retryStuckJoins.
+local stuckJoins = {}
 
 --- Contracts somebody has accepted, so the idle-hold sweep reads those and
 --- not the whole table. Filled on acceptance and rebuilt once at boot
@@ -684,10 +718,7 @@ end
 ---@param opts table|nil { disclosed = n } the stake the page had on screen
 ---@return boolean ok
 ---@return string|nil err
-function Contracts.accept(actor, contractId, anonymous, opts)
-    contractId = Util.toId(contractId)
-    if not contractId then return false, CB.ERR.INVALID_INPUT end
-
+local function acceptUnlocked(actor, contractId, anonymous, opts)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
 
@@ -801,15 +832,6 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- makes two different people indistinguishable in the creator's threads.
     local aliasNumber = #existing + 1
 
-    -- Whether THIS call is the one that advanced the contract, which is the
-    -- only thing that makes reverting it safe. The undo below used to test
-    -- the mode instead, so an exclusive acceptance was put back and a
-    -- competitive one was not — and every step after this can still fail.
-    -- A broke player tapping Accept flipped a competitive contract to
-    -- `accepted` for every viewer of the board, with no hunter on it and
-    -- huntersActive still zero, and left it that way.
-    local advanced = false
-
     if contract.mode == CB.MODE.EXCLUSIVE then
         -- The same fact as a full competitive contract — somebody else has
         -- it, try another or come back if they drop out — so the same code.
@@ -817,22 +839,10 @@ function Contracts.accept(actor, contractId, anonymous, opts)
         -- answer hunters read often, and "Not right now." named neither the
         -- reason nor what to do about it.
         if activeCount > 0 then return false, CB.ERR.CONTRACT_FULL end
-        if not Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted') then
-            return false, CB.ERR.LOCKED
-        end
-        advanced = true
-    else
+    elseif activeCount >= Config.Limits.MaxHuntersPerContract then
         -- Not LIMIT_REACHED: that one is about what the CALLER is holding,
         -- and this is about what the contract is holding.
-        if activeCount >= Config.Limits.MaxHuntersPerContract then
-            return false, CB.ERR.CONTRACT_FULL
-        end
-        -- Not advanced here. A competitive contract is advanced only once
-        -- this hunter's stake and row exist (below), so there is never an
-        -- advance to put back: putting one back after another hunter had
-        -- joined on the strength of it left that hunter holding an ACTIVE
-        -- contract that refused every claim and forfeited their stake at
-        -- expiry.
+        return false, CB.ERR.CONTRACT_FULL
     end
 
     -- The anonymity fee: checked here, before anything is taken, and
@@ -862,171 +872,219 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- penalty that is only charged after a failure is a penalty the hunter
     -- can walk away from (§3.6). The hunter is told the amount before this
     -- point, and refusing to stake simply refuses the contract.
+    --
+    -- The fee's account is set aside first and the stake comes from
+    -- whatever is left. Choosing the stake's account first took it from the
+    -- bank whenever the bank covered it, and then refused a hunter whose
+    -- cash could have paid the stake as short of money for the fee.
     local stake = contract.penalty_amount or 0
-    local stakeIds
-    local stakeAccount = (actor.player.Functions.GetMoney('bank') or 0) >= stake and 'bank' or 'cash'
-    if stake > 0 and (actor.player.Functions.GetMoney(stakeAccount) or 0) < stake then
-        -- Undo the state change this call made, in either mode.
-        if advanced then
-            Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
-        end
+    local left = {
+        bank = actor.player.Functions.GetMoney('bank') or 0,
+        cash = actor.player.Functions.GetMoney('cash') or 0,
+    }
+    if fee > 0 then
+        if (left[feeAccount] or 0) < fee then return false, CB.ERR.INSUFFICIENT end
+        left[feeAccount] = left[feeAccount] - fee
+    end
+    local stakeAccount = left.bank >= stake and 'bank' or 'cash'
+    if stake > 0 and (left[stakeAccount] or 0) < stake then
         return false, CB.ERR.INSUFFICIENT
     end
-    if fee > 0 then
-        -- The stake and the fee together, from the accounts each will come
-        -- out of.
-        local left = {
-            bank = actor.player.Functions.GetMoney('bank') or 0,
-            cash = actor.player.Functions.GetMoney('cash') or 0,
-        }
-        if stake > 0 then left[stakeAccount] = left[stakeAccount] - stake end
-        if (left[feeAccount] or 0) < fee then
-            if advanced then
-                Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'fee_failed')
-            end
-            return false, CB.ERR.INSUFFICIENT
-        end
-    end
-    if stake > 0 then
-        local account = stakeAccount
 
-        local ok, takeErr, ids = Escrow.take(actor, contractId, { {
-            slot = 0, portion = CB.PORTION.STAKE, source = account,
-            amount = stake, staker = actor.cid,
-        } })
-        stakeIds = ids
-        if not ok then
-            if advanced then
-                Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'stake_failed')
-            end
-            -- A contract busy with another take is not the hunter being
-            -- short of money.
-            return false, takeErr == CB.ERR.LOCKED and CB.ERR.LOCKED or CB.ERR.INSUFFICIENT
-        end
-        Audit.financial('stake_taken', actor.cid, contractId, { amount = stake })
-    end
-
-    -- Confirmed free before the row is written. The stake above is already
-    -- taken by this point, and addHunter is a plain insert: an id in use is
-    -- a duplicate-key error thrown out of here with the money gone and no
-    -- hunter row to say whose it was, so nothing would ever return it.
     local hunterId = previous and previous.id
         or Util.mintId(Storage.nextId, 'hn', Storage.readHunterById)
     if not hunterId then
-        if stake > 0 then
-            Escrow.release(contractId, actor.cid,
-                { portion = CB.PORTION.STAKE, staker = actor.cid }, 'hunter_id_exhausted')
-        end
-        if advanced then
-            Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'accept_failed')
-        end
         Audit.rejected('hunter_id_exhausted', actor.cid, contractId, {})
         return false, CB.ERR.BAD_STATE
     end
 
+    -- The row first, before the contract is reserved and before anything is
+    -- taken. A crash after it leaves a row boot recovery can find and undo
+    -- (Contracts.recoverJoining); a crash before it has taken nothing. The
+    -- stake used to come first, and a crash between the two left money held
+    -- against no row that nothing would ever return — and an exclusive
+    -- contract reserved for nobody, refusing everyone.
+    --
+    -- A hunter taking the contract up again keeps their earlier stint on the
+    -- row until this one is confirmed: 'rejoining' leaves its anonymity and
+    -- start alone, so recovery can put back the stint a crash interrupted
+    -- instead of erasing it (what anonymity it bought, and what the client
+    -- already saw).
     local record
     local joinedAt = os.time()
-    if previous then
-        -- accepted_at is this stint's start: whether a stake can be
-        -- forfeited to a deadline is asked of when the hunter joined.
-        Storage.updateHunter(previous.id, { state = 'joining', anon = anonymous == true,
-            accepted_at = joinedAt })
-        record = Storage.readHunter(contractId, actor.cid) or previous
-        record.state, record.anon, record.accepted_at = 'joining', anonymous == true, joinedAt
-    else
-        record = {
-            id            = hunterId,
-            contract_id   = contractId,
-            hunter_cid    = actor.cid,
-            hunter_account = actor.account,
-            hunter_name   = actor.name,
-            alias         = 'Operative #' .. tostring(aliasNumber),
-            anon          = anonymous == true,
-            accepted_at   = joinedAt,
-            -- Not holding it yet: confirmed below, once the contract has
-            -- been read again and found open. An ending that lands in
-            -- between returns a joining hunter's stake rather than
-            -- forfeiting it — they were never told they had it.
-            state         = 'joining',
-        }
-        Storage.addHunter(record)
-    end
 
-    -- Is the contract still open, now that this hunter is on it?
-    --
-    -- The state was read at the top, and every store call since is a yield
-    -- on mysql. A contract that closed in one of them — the creator
-    -- cancelling an exclusive contract this call had just moved to accepted
-    -- (no hunter row existed yet, so the cancel saw nobody on it), another
-    -- hunter collecting the last payout of a competitive one, a buyout, the
-    -- expiry pass — ran its settlement before this hunter existed, so
-    -- nothing ever returned the stake taken above. It sat `held` on a closed
-    -- contract with nothing that would move it, and the hunter was told they
-    -- had accepted.
-    --
-    -- Asked only after the row is written, which is what makes the answer
-    -- binding: an ending that has not started yet will find this hunter
-    -- when it settles stakes, and one that has started is visible here.
-    -- COMPLETING is refused too, because a claim on the last payout settles
-    -- stakes before it marks the contract completed.
-    --- Take this acceptance back: the row as it was, the stake home.
+    -- Whether THIS call is the one that advanced the contract, which is the
+    -- only thing that makes reverting it safe. A broke player tapping Accept
+    -- once flipped a competitive contract to `accepted` for every viewer of
+    -- the board, with no hunter on it, and left it that way.
+    local advanced = false
+    -- The lines the stake went into, once the take has returned them.
+    local stakeIds
+
+    --- Take this acceptance back: the stake home, then the row as it was,
+    --- then the reservation. In that order, so a crash part-way leaves a
+    --- joining row that recovery takes back the same way, and never a stake
+    --- with no row to say whose it is. By the lines the take returned; by
+    --- staker only for a take that threw part-way and returned none.
     local function unwind(reason)
+        if stakeIds and next(stakeIds) then
+            Escrow.release(contractId, actor.cid, { lines = stakeIds }, reason)
+        elseif stake > 0 then
+            Escrow.release(contractId, actor.cid,
+                { portion = CB.PORTION.STAKE, staker = actor.cid }, reason)
+        end
         if previous then
             Storage.updateHunter(previous.id, { state = previousState,
                 anon = previousAnon == true, accepted_at = previousAcceptedAt })
-        else
+        elseif record then
             Storage.updateHunter(record.id, { state = 'refused', left_at = os.time() })
         end
-        if stakeIds and next(stakeIds) then
-            Escrow.release(contractId, actor.cid, { lines = stakeIds }, reason)
-        end
-    end
-
-    local now = Storage.readContract(contractId)
-    local nowState = now and now.state
-    if nowState ~= CB.STATE.ACTIVE and nowState ~= CB.STATE.ACCEPTED then
-        unwind('accept_on_closed')
-        Audit.rejected('accept_on_closed', actor.cid, contractId, { state = nowState })
-        if nowState == CB.STATE.COMPLETING then return false, CB.ERR.LOCKED end
-        return false, CB.ERR.ALREADY_SETTLED
-    end
-
-    -- And the deadline, read again now that this hunter is on it. Checked
-    -- above against a read taken before the stake; the client could bring
-    -- it in during any await since, because until the row above existed
-    -- nobody held the contract to stop them. This read is after the row, and
-    -- a client's change is written before it looks for holders
-    -- (Contracts.bringDeadlineIn), so one of the two always sees the other.
-    -- Only whether it moved in: the window itself was measured above, and
-    -- a second passing in the awaits is not the client changing anything.
-    -- Net of pauses, because a pause ending in the awaits pushes the
-    -- deadline out by its length and would hide a cut no larger than that.
-    local nowDeadline = unpausedDeadline(now)
-    if stake > 0 and checkedDeadline and nowDeadline
-        and nowDeadline < checkedDeadline then
-        unwind('deadline_moved')
         if advanced then
-            Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'deadline_moved')
+            Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, reason)
         end
-        Audit.rejected('deadline_moved', actor.cid, contractId,
-            { was = checkedDeadline, now = nowDeadline })
-        return false, CB.ERR.TERMS_CHANGED
     end
 
-    -- Confirmed: holding it from here.
-    Storage.updateHunter(record.id, { state = 'active' })
-    record.state = 'active'
-
-    -- The fee, now that the acceptance stands. Checked above; a balance
-    -- that moved since is refused the same way, never downgraded to a name.
-    if fee > 0 and not Util.charge(actor.player, feeAccount, fee) then
-        unwind('anonymity_fee_failed')
-        if advanced then
-            Contracts.transition(contractId, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'fee_failed')
+    -- Everything from here to the fee either completes or is taken back.
+    -- A throw — a dropped database connection is an ordinary one — used to
+    -- leave the row joining: holding the contract against everyone, while
+    -- the hunter who had paid a stake for it could neither work it, abandon
+    -- it nor take it again, until a restart.
+    local done, ok, err, nowState = pcall(function()
+        if previous then
+            local joining = previousState == 'refused' and 'joining' or 'rejoining'
+            Storage.updateHunter(previous.id, { state = joining })
+            record = {}
+            for k, v in pairs(Storage.readHunter(contractId, actor.cid) or previous) do record[k] = v end
+            record.state = joining
+        else
+            record = {
+                id            = hunterId,
+                contract_id   = contractId,
+                hunter_cid    = actor.cid,
+                hunter_account = actor.account,
+                hunter_name   = actor.name,
+                alias         = 'Operative #' .. tostring(aliasNumber),
+                anon          = anonymous == true,
+                accepted_at   = joinedAt,
+                -- Not holding it yet: confirmed below, once the contract has
+                -- been read again and found open. An ending that lands in
+                -- between returns a joining hunter's stake rather than
+                -- forfeiting it — they were never told they had it.
+                state         = 'joining',
+            }
+            Storage.addHunter(record)
         end
-        Audit.rejected('anonymity_fee_failed', actor.cid, contractId, { amount = fee })
-        return false, CB.ERR.INSUFFICIENT
+
+        if contract.mode == CB.MODE.EXCLUSIVE then
+            -- Reserved now that the row is there to say by whom.
+            if not Contracts.transition(contractId, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted') then
+                unwind('accept_locked')
+                -- Closed since it was read is not "try again".
+                local now = Storage.readContract(contractId)
+                if now and CB.TERMINAL[now.state] then return false, CB.ERR.ALREADY_SETTLED end
+                return false, CB.ERR.LOCKED
+            end
+            advanced = true
+        end
+
+        if stake > 0 then
+            local taken, takeErr, ids = Escrow.take(actor, contractId, { {
+                slot = 0, portion = CB.PORTION.STAKE, source = stakeAccount,
+                amount = stake, staker = actor.cid,
+            } })
+            stakeIds = ids
+            if not taken then
+                unwind('stake_failed')
+                -- A contract busy with another take is not the hunter being
+                -- short of money.
+                return false, takeErr == CB.ERR.LOCKED and CB.ERR.LOCKED or CB.ERR.INSUFFICIENT
+            end
+            Audit.financial('stake_taken', actor.cid, contractId, { amount = stake })
+        end
+
+        -- Is the contract still open, now that this hunter is on it?
+        --
+        -- The state was read at the top, and every store call since is a
+        -- yield on mysql. A contract that closed in one of them — the
+        -- creator cancelling, another hunter collecting the last payout of a
+        -- competitive one, a buyout, the expiry pass — ran its settlement
+        -- without this stake, so nothing would ever return it. Asked after
+        -- the row and the stake, which is what makes the answer binding: an
+        -- ending that has not started yet will find both when it settles
+        -- stakes, and one that has started is visible here. COMPLETING is
+        -- refused too, because a claim on the last payout settles stakes
+        -- before it marks the contract completed.
+        local now = Storage.readContract(contractId)
+        local state = now and now.state
+        if state ~= CB.STATE.ACTIVE and state ~= CB.STATE.ACCEPTED then
+            unwind('accept_on_closed')
+            Audit.rejected('accept_on_closed', actor.cid, contractId, { state = state })
+            if state == CB.STATE.COMPLETING then return false, CB.ERR.LOCKED end
+            return false, CB.ERR.ALREADY_SETTLED
+        end
+
+        -- And the deadline, read again now that this hunter is on it. The
+        -- client could bring it in during any await before the row above
+        -- existed, because nobody held the contract to stop them. This read
+        -- is after the row, and a client's change is written before it looks
+        -- for holders (Contracts.bringDeadlineIn), so one of the two always
+        -- sees the other. Only whether it moved in: the window itself was
+        -- measured above. Net of pauses, because a pause ending in the
+        -- awaits pushes the deadline out by its length and would hide a cut
+        -- no larger than that.
+        local nowDeadline = unpausedDeadline(now)
+        if stake > 0 and checkedDeadline and nowDeadline
+            and nowDeadline < checkedDeadline then
+            unwind('deadline_moved')
+            Audit.rejected('deadline_moved', actor.cid, contractId,
+                { was = checkedDeadline, now = nowDeadline })
+            return false, CB.ERR.TERMS_CHANGED
+        end
+
+        -- And the penalty. The stake was taken at the figure read at the
+        -- top; a reward withdrawn in the awaits since re-clamps it, and a
+        -- hunter holding a stake the contract no longer asks for — or less
+        -- than it now asks for — is on terms nobody agreed to.
+        if (now.penalty_amount or 0) ~= stake then
+            unwind('penalty_moved')
+            Audit.rejected('penalty_moved', actor.cid, contractId,
+                { was = stake, now = now.penalty_amount })
+            return false, CB.ERR.TERMS_CHANGED
+        end
+
+        -- Confirmed, if the row is still this acceptance's. Written only
+        -- where it is still joining: anything that took it off joining in
+        -- the awaits — boot recovery, which refuses a joining row as the
+        -- dead process's — is not silently reversed into a hold with no
+        -- stake behind it.
+        if not Storage.confirmHunter(record.id, anonymous == true, joinedAt) then
+            unwind('accept_superseded')
+            Audit.rejected('accept_superseded', actor.cid, contractId, {})
+            return false, CB.ERR.BUSY
+        end
+        record.state, record.anon, record.accepted_at = 'active', anonymous == true, joinedAt
+        -- Somebody holds it now, which is what the idle-hold sweep reads.
+        heldIndex[contractId] = true
+
+        -- The fee, now that the acceptance stands. Checked above; a balance
+        -- that moved since is refused the same way, never downgraded to a
+        -- name.
+        if fee > 0 and not Util.charge(actor.player, feeAccount, fee) then
+            unwind('anonymity_fee_failed')
+            Audit.rejected('anonymity_fee_failed', actor.cid, contractId, { amount = fee })
+            return false, CB.ERR.INSUFFICIENT
+        end
+        return true, nil, state
+    end)
+
+    if not done then
+        -- Put back what can be put back, and if even that fails — the store
+        -- that just threw may throw again — leave it for the maintenance tick
+        -- to finish (Contracts.retryStuckJoins).
+        if not pcall(unwind, 'accept_error') then stuckJoins[contractId] = true end
+        error(ok, 0)
     end
+    if not ok then return false, err end
 
     -- Competitive: advanced only now, with this hunter's stake and row in
     -- place. A no-op when somebody else already advanced it.
@@ -1054,10 +1112,41 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     Audit.action('contract_accepted', actor.cid, contractId, { anonymous = record.anon })
     Notify.contractAccepted(contract, record, activeCount + 1)
 
-    -- Somebody holds it now, which is what the idle-hold sweep reads.
-    heldIndex[contractId] = true
-
     return true, nil, record
+end
+
+--- Accept a contract, one acceptance at a time per contract and per player.
+---
+--- Per contract, so a penalty change or a second acceptance cannot land in
+--- the middle of this one's awaits; per player, so their two acceptances
+--- each count the other against MaxAcceptedPerHunter. See acceptUnlocked.
+function Contracts.accept(actor, contractId, anonymous, opts)
+    contractId = Util.toId(contractId)
+    if not contractId then return false, CB.ERR.INVALID_INPUT end
+    return Contracts.serialized({ 'contract:' .. contractId, 'hunter:' .. tostring(actor.cid) },
+        acceptUnlocked, actor, contractId, anonymous, opts)
+end
+
+--- Contracts an acceptance could not be taken back on after a throw, where
+--- the taking back threw too. Finished by the maintenance tick once nothing
+--- is being done to them: with every acceptance holding its contract for as
+--- long as it runs, a joining row on a contract nobody holds is left over.
+function Contracts.retryStuckJoins()
+    local done = 0
+    for contractId in pairs(stuckJoins) do
+        local ran, err = Contracts.serialized({ 'contract:' .. contractId }, function()
+            local contract = Storage.readContract(contractId)
+            if contract then Contracts.recoverJoining(contract) end
+            return true
+        end)
+        if ran then
+            stuckJoins[contractId] = nil
+            done = done + 1
+        elseif err ~= CB.ERR.BUSY then
+            break
+        end
+    end
+    return done
 end
 
 --- A hunter walks away. The contract reverts to open rather than resolving,
@@ -2121,20 +2210,31 @@ local function releaseUntouched(contract, forfeit)
     return released
 end
 
---- Undo, at boot, acceptances a crash left part-way: rows still joining.
+--- Undo acceptances a crash left part-way: rows still joining.
 ---
---- The hunter was never told they had the contract, so it is not theirs:
---- the row is refused and the stake it took goes back to them. A contract
---- nobody is then left on goes back on the board.
+--- The hunter was never told they had the contract, so it is not theirs.
+--- The stake goes back first, then the row: a first acceptance's is refused,
+--- and a hunter who had walked away and was taking it up again is put back
+--- to having walked away, keeping the stint they had. Refusing that row too
+--- erased the stint — what anonymity it had bought, and that the client had
+--- already been shown their name under the same alias. A contract nobody is
+--- then left on goes back on the board, including an exclusive one this
+--- acceptance had reserved.
+---
+--- Run at boot, and by the tick for a contract a throw left like this.
 ---@param contract table
 ---@return integer undone
 function Contracts.recoverJoining(contract)
     local undone, left = 0, 0
     for _, h in ipairs(Storage.readHunters(contract.id) or {}) do
-        if h.state == 'joining' then
-            Storage.updateHunter(h.id, { state = 'refused', left_at = os.time() })
+        if h.state == 'joining' or h.state == 'rejoining' then
             Escrow.release(contract.id, h.hunter_cid,
                 { portion = CB.PORTION.STAKE, staker = h.hunter_cid }, 'accept_interrupted')
+            if h.state == 'rejoining' then
+                Storage.updateHunter(h.id, { state = 'abandoned' })
+            else
+                Storage.updateHunter(h.id, { state = 'refused', left_at = os.time() })
+            end
             undone = undone + 1
         elseif h.state == 'active' then
             left = left + 1

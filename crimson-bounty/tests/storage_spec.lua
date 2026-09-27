@@ -1663,3 +1663,67 @@ describe('the collection count and the clock', function()
         end
     end)
 end)
+
+describe('the narrow writes added for the second review', function()
+    it('sets a reason and nothing else, in every backend', function()
+        for _, b in ipairs(backends()) do
+            local row = contractFixture('ctreason1')
+            row.reason, row.bailout_amount = 'Old', 900
+            b.store.writeContract(row)
+            truthy(b.store.setReason('ctreason1', 'New'), b.name)
+            local read = b.store.readContract('ctreason1')
+            eq(read.reason, 'New', b.name)
+            eq(read.bailout_amount, 900, b.name .. ': touched a column it was not asked to')
+        end
+    end)
+
+    it('confirms an acceptance only while it is still joining, in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ctconfirm'))
+            b.store.addHunter({ id = 'hnconfirm1', contract_id = 'ctconfirm', hunter_cid = 'HUNTER01',
+                alias = 'Operative #1', anon = false, accepted_at = 10, state = 'joining' })
+            truthy(b.store.confirmHunter('hnconfirm1', true, 20), b.name .. ': a joining row')
+            local h = b.store.readHunter('ctconfirm', 'HUNTER01')
+            eq(h.state, 'active', b.name)
+            eq(h.anon == true or h.anon == 1, true, b.name .. ': anonymity written with it')
+            eq(h.accepted_at, 20, b.name)
+
+            b.store.updateHunter('hnconfirm1', { state = 'refused' })
+            falsy(b.store.confirmHunter('hnconfirm1', false, 30),
+                b.name .. ': reversed a row something else had taken back')
+            eq(b.store.readHunter('ctconfirm', 'HUNTER01').state, 'refused', b.name)
+
+            b.store.updateHunter('hnconfirm1', { state = 'rejoining' })
+            truthy(b.store.confirmHunter('hnconfirm1', false, 40), b.name .. ': a rejoining row')
+        end
+    end)
+
+    it('counts a hunter mid-acceptance against their cap, in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ctcount1'))
+            b.store.addHunter({ id = 'hncount1', contract_id = 'ctcount1', hunter_cid = 'HUNTER01',
+                alias = 'Operative #1', anon = false, accepted_at = 10, state = 'joining' })
+            eq(b.store.countHunterContracts('HUNTER01', { active = true }), 1,
+                b.name .. ': a second acceptance counted this one as not there')
+        end
+    end)
+
+    it('gives a collection back only while it is unclaimed and unlocked, in every backend', function()
+        for _, b in ipairs(backends()) do
+            local row = contractFixture('ctslots9')
+            row.payout_slots, row.next_slot = 2, 2
+            b.store.writeContract(row)
+            falsy(b.store.reduceSlots('ctslots9', 2),
+                b.name .. ': removed the collection a claim had just advanced onto')
+
+            local held = contractFixture('ctslots8')
+            held.payout_slots, held.next_slot = 2, 1
+            b.store.writeContract(held)
+            b.store.compareSetContractState('ctslots8', CB.STATE.ACTIVE, CB.STATE.COMPLETING)
+            falsy(b.store.reduceSlots('ctslots8', 2), b.name .. ': removed it mid-claim')
+            b.store.compareSetContractState('ctslots8', CB.STATE.COMPLETING, CB.STATE.ACCEPTED)
+            truthy(b.store.reduceSlots('ctslots8', 2), b.name .. ': and gives it back otherwise')
+            eq(b.store.readContract('ctslots8').payout_slots, 1, b.name)
+        end
+    end)
+end)

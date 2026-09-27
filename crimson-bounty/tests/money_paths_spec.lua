@@ -192,9 +192,9 @@ describe('taking a stake on a contract that closes during the acceptance', funct
         })
         local before = worth(3)
         local ok, err
-        -- Store call 8 is inside the stake being written, after the
-        -- contract has been moved to accepted by this very call.
-        interleaveAt(s, 8, function() ok, err = s.contracts.accept(f.hunter, c.id, false) end,
+        -- Store call 3 is before the hunter's row exists, so the cancel goes
+        -- through; the acceptance is then reserving a cancelled contract.
+        interleaveAt(s, 3, function() ok, err = s.contracts.accept(f.hunter, c.id, false) end,
             function() s.contracts.cancel(f.creator, c.id) end)
         eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED)
         falsy(ok, 'accepting a contract that closed underneath is not an acceptance')

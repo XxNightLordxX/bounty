@@ -170,6 +170,11 @@ function Bridges.install(modules)
         readying[src] = true
         SetTimeout(Config.PendingEscrow.LoginRetryDelayMs or 5000, function()
             readying[src] = nil
+            -- Owed money is not delivered while boot recovery is still
+            -- deciding what is owed (App.ready): asked again shortly.
+            if modules.app and modules.app.ready == false then
+                return scheduleReady(src)
+            end
             Bridges.onPlayerReady(modules, src)
         end)
         return true

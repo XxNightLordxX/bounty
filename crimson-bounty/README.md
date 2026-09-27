@@ -169,7 +169,7 @@ CB_SUITES=journeys_spec lua crimson-bounty/tests/run.lua   # one area, in second
 
 Five kinds of check, because each catches what the others cannot:
 
-- **Server suite** (about 1,720 tests) — escrow arithmetic, the state machine,
+- **Server suite** (about 1,780 tests) — escrow arithmetic, the state machine,
   every payout and refund path, whole player journeys, every action against
   every contract state, deliberate exploit attempts, storage conformance
   across all three backends, and randomised simulations asserting that no

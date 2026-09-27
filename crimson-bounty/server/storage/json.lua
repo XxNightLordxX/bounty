@@ -738,9 +738,16 @@ function JsonStore.expireIfDue(id, expected, next_, now, byLifetime)
     return true
 end
 
+--- Take the last collection off sale, guarded on everything the decision
+--- rested on: the count, that the collection is still unclaimed, and that
+--- no claim holds the contract. On the count alone, a claim landing between
+--- the decision and this write advanced onto the very collection being
+--- removed, and the contract was left selling a collection past its end.
 function JsonStore.reduceSlots(id, expected)
     local c = db.contracts[id]
     if not c or (c.payout_slots or 1) ~= expected or expected <= 1 then return false end
+    if (c.next_slot or 1) >= expected then return false end
+    if c.state ~= 'active' and c.state ~= 'accepted' then return false end
     c.payout_slots = expected - 1
     touch(true, id)
     return true
@@ -953,10 +960,23 @@ function JsonStore.updateHunter(id, fields)
     return true
 end
 
+--- Confirm an acceptance: the row goes active only if it is still the
+--- acceptance that wrote it. Anything that moved it off joining since — boot
+--- recovery, a throw's unwind — is not reversed.
+function JsonStore.confirmHunter(id, anon, acceptedAt)
+    local h = db.hunters[id]
+    if not h or (h.state ~= 'joining' and h.state ~= 'rejoining') then return false end
+    h.state, h.anon, h.accepted_at = 'active', anon == true, acceptedAt
+    touch(true, h.contract_id)
+    return true
+end
+
+--- Contracts a player is on, mid-acceptance included: two acceptances in
+--- flight must each see the other against the cap.
 function JsonStore.countHunterContracts(cid, states)
     local n = 0
     for _, h in pairs(db.hunters) do
-        if h.hunter_cid == cid and h.state == 'active' then
+        if h.hunter_cid == cid and (h.state == 'active' or h.state == 'joining' or h.state == 'rejoining') then
             local c = db.contracts[h.contract_id]
             if c and states[c.state] then n = n + 1 end
         end

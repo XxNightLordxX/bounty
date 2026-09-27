@@ -75,6 +75,9 @@ describe('RACE F1: two hunters accept a competitive contract at once', function(
 end)
 
 describe('RACE F2: a contract resolves while a hunter is mid-accept', function()
+    -- A cancel lands before the hunter's row exists: once it does, somebody
+    -- is on the contract and the client can no longer cancel it outright.
+    -- A buyout lands inside the stake itself, after the row.
     local function run(which, fee)
         local s = newStack()
         local f = fixture(s)
@@ -85,23 +88,34 @@ describe('RACE F2: a contract resolves while a hunter is mid-accept', function()
             bailoutAmount = 5000,
         })
         truthy(c)
-        local realWrite = s.storage.writeEscrow
+        local function land()
+            local ok, err
+            if which == 'cancel' then
+                ok, err = s.contracts.cancel(f.creator, c.id)
+            else
+                ok, err = s.bailout.buy(f.target, c.id)
+            end
+            print('  ' .. which .. ' ->', ok, err)
+        end
+        local realWrite, realCount = s.storage.writeEscrow, s.storage.countHunterContracts
         local fired = false
+        s.storage.countHunterContracts = function(...)
+            if which == 'cancel' and not fired then fired = true land() end
+            return realCount(...)
+        end
         s.storage.writeEscrow = function(contractId, lines)
-            if not fired and lines[1] and lines[1].portion == CB.PORTION.STAKE then
+            if which ~= 'cancel' and not fired and lines[1]
+                and lines[1].portion == CB.PORTION.STAKE then
                 fired = true
-                local ok, err
-                if which == 'cancel' then
-                    ok, err = s.contracts.cancel(f.creator, c.id)
-                else
-                    ok, err = s.bailout.buy(f.target, c.id)
-                end
-                print('  ' .. which .. ' ->', ok, err)
+                land()
             end
             return realWrite(contractId, lines)
         end
         local ok1, err1 = s.contracts.accept(f.hunter, c.id, fee ~= nil)
-        s.storage.writeEscrow = realWrite
+        s.storage.writeEscrow, s.storage.countHunterContracts = realWrite, realCount
+        truthy(fired, 'the ' .. which .. ' never landed')
+        falsy(ok1, 'accepted a contract that closed underneath')
+        eq(err1, CB.ERR.ALREADY_SETTLED)
         print('  accept ->', ok1, err1, ' state', s.storage.readContract(c.id).state)
         for _, l in ipairs(stakeLines(s, c.id)) do
             print('  stake line', l.id, 'state', l.state, 'amount', l.amount)
@@ -116,10 +130,31 @@ describe('RACE F2: a contract resolves while a hunter is mid-accept', function()
         eq(run('bailout'), 10000, 'the stake was left held on a bought-out contract')
     end)
     it('gives the anonymity fee back with the stake', function()
-        -- Charged first, before the stake, so the refusal has two things
-        -- to give back, not one.
         eq(run('cancel', 1500), 10000, 'the fee for anonymity on a contract '
             .. 'the hunter never got was kept')
+    end)
+
+    it('refuses a cancel that lands once the hunter is on it, and the acceptance stands', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } }, penaltyAmount = 1000,
+        })
+        local realWrite = s.storage.writeEscrow
+        local cancelled
+        s.storage.writeEscrow = function(contractId, lines)
+            if cancelled == nil and lines[1] and lines[1].portion == CB.PORTION.STAKE then
+                cancelled = s.contracts.cancel(f.creator, c.id) or false
+            end
+            return realWrite(contractId, lines)
+        end
+        local ok = s.contracts.accept(f.hunter, c.id, false)
+        s.storage.writeEscrow = realWrite
+        eq(cancelled, false, 'cancelled out from under a hunter part-way through accepting')
+        truthy(ok, 'and the acceptance stands')
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED)
+        eq(money(3), 9000, 'with its stake held')
     end)
 end)
 
@@ -571,22 +606,22 @@ describe('RACE F9: the client brings the deadline in while a hunter is staking',
         local s, f, c, original = deadlineRace(make)
         local before = money(3)
 
-        local realWrite = s.storage.writeEscrow
+        local realCount = s.storage.countHunterContracts
         local fired, revised = false, nil
-        s.storage.writeEscrow = function(contractId, lines)
-            if not fired and lines[1] and lines[1].portion == CB.PORTION.STAKE then
+        s.storage.countHunterContracts = function(...)
+            if not fired then
                 fired = true
                 -- Past the accept's check, before its row exists: nobody
                 -- holds the contract, so the edit is allowed.
                 revised = s.contracts.revise(f.creator, c.id, { deadlineSeconds = 600 })
             end
-            return realWrite(contractId, lines)
+            return realCount(...)
         end
         local ok, err = s.contracts.accept(f.hunter, c.id, false,
             { checkDisclosure = true, disclosed = 1000, shownDeadline = original })
-        s.storage.writeEscrow = realWrite
+        s.storage.countHunterContracts = realCount
 
-        truthy(fired, 'the stake was never written')
+        truthy(fired, 'the edit never landed')
         truthy(revised, 'nobody held it yet, so the edit itself stands')
         falsy(ok, 'the hunter was left staked on ten minutes they were never shown')
         eq(err, CB.ERR.TERMS_CHANGED)
@@ -597,6 +632,29 @@ describe('RACE F9: the client brings the deadline in while a hunter is staking',
     it('refuses the acceptance (memory)', run(newStack))
     it('refuses the acceptance (copying)', run(newCopyingStack))
     it('refuses the acceptance (mysql)', run(mysqlStack))
+end)
+
+describe('RACE F9b: the client edits once the staking hunter\'s row exists', function()
+    local function run(make) return function()
+        local s, f, c, original = deadlineRace(make)
+        local realWrite = s.storage.writeEscrow
+        local revised, why
+        s.storage.writeEscrow = function(contractId, lines)
+            if revised == nil and lines[1] and lines[1].portion == CB.PORTION.STAKE then
+                revised, why = s.contracts.revise(f.creator, c.id, { deadlineSeconds = 600 })
+            end
+            return realWrite(contractId, lines)
+        end
+        local ok, err = s.contracts.accept(f.hunter, c.id, false,
+            { checkDisclosure = true, disclosed = 1000, shownDeadline = original })
+        s.storage.writeEscrow = realWrite
+        falsy(revised, 'the deadline was cut under a hunter part-way through staking')
+        eq(why, CB.ERR.BAD_STATE)
+        truthy(ok, tostring(err))
+        eq(s.storage.readContract(c.id).deadline_at, original, 'on the deadline they were shown')
+    end end
+    it('refuses the edit (memory)', run(newStack))
+    it('refuses the edit (mysql)', run(mysqlStack))
 end)
 
 describe('RACE F10: a hunter takes the contract while the client is editing its deadline', function()
@@ -766,22 +824,22 @@ describe('RACE F13: a pause ends and the client cuts while a hunter is staking',
         local shown = s.storage.readContract(c.id).deadline_at
         local before = money(3)
 
-        local realWrite = s.storage.writeEscrow
+        local realCount = s.storage.countHunterContracts
         local fired = false
-        s.storage.writeEscrow = function(contractId, lines)
-            if not fired and lines[1] and lines[1].portion == CB.PORTION.STAKE then
+        s.storage.countHunterContracts = function(...)
+            if not fired then
                 fired = true
                 truthy(s.storage.endPause(c.id, now - 3600, 3600), 'the pause ends')
                 truthy(s.contracts.revise(f.creator, c.id, { deadlineSeconds = 60 }),
                     'nobody holds it yet, so the cut stands')
             end
-            return realWrite(contractId, lines)
+            return realCount(...)
         end
         local ok, err = s.contracts.accept(f.hunter, c.id, false,
             { checkDisclosure = true, disclosed = 1000, shownDeadline = shown })
-        s.storage.writeEscrow = realWrite
+        s.storage.countHunterContracts = realCount
 
-        truthy(fired, 'the stake was never written')
+        truthy(fired, 'the cut never landed')
         falsy(ok, 'staked on minutes the hunter was never shown')
         eq(err, CB.ERR.TERMS_CHANGED)
         eq(money(3), before, 'and the stake came back')
@@ -907,5 +965,505 @@ describe('the id of a contract', function()
                 CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
             eq(p2.id, p.id, 'the proposal id changed with the clock')
         end
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- A hunter part-way through accepting, and everything that can land on them
+--------------------------------------------------------------------------
+
+local function staked(make, penalty, mode)
+    local s = make()
+    local f = fixture(s)
+    Env.players[3].PlayerData.money.bank = 50000
+    local c = s.contracts.create(f.creator, {
+        targetCid = 'TARGET01', reason = 'x', mode = mode or CB.MODE.COMPETITIVE,
+        reward = { baseline = { cash = 20000 } }, penaltyAmount = penalty or 2000,
+    })
+    truthy(c)
+    return s, f, c
+end
+
+local function stakeHeld(s, c, cid)
+    local total = 0
+    for _, l in ipairs(s.storage.readEscrow(c.id)) do
+        if l.portion == CB.PORTION.STAKE and l.staker == cid and l.state == CB.ESCROW_STATE.HELD then
+            total = total + (l.amount or 0)
+        end
+    end
+    return total
+end
+
+--- Run `second` once, just after the acceptance's row lands.
+local function afterRow(s, second)
+    local real, out, fired = s.storage.addHunter, nil, false
+    s.storage.addHunter = function(...)
+        local r = table.pack(real(...))
+        -- Marked before the call: the second request may write a row too.
+        if not fired then fired = true out = table.pack(second()) end
+        return table.unpack(r, 1, r.n)
+    end
+    return function()
+        s.storage.addHunter = real
+        if not out then return nil end
+        return table.unpack(out, 1, out.n)
+    end
+end
+
+describe('RACE F14: the penalty changes while a hunter is part-way through accepting', function()
+    local function run(make) return function()
+        local s, f, c = staked(make, 2000)
+        local done = afterRow(s, function()
+            return s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 500 })
+        end)
+        local ok, err = s.contracts.accept(f.hunter, c.id, false,
+            { checkDisclosure = true, disclosed = 2000 })
+        local lowered, why = done()
+        truthy(ok, tostring(err))
+        falsy(lowered, 'the cut skipped the stake being taken')
+        eq(why, CB.ERR.BUSY)
+        eq(stakeHeld(s, c, 'HUNTER01'), s.storage.readContract(c.id).penalty_amount,
+            'a hunter holding a stake the contract does not ask for')
+    end end
+    it('refuses the cut as busy (memory)', run(newStack))
+    it('refuses the cut as busy (mysql)', run(mysqlStack))
+
+    it('does not apply a raise alone under a hunter who is joining', function()
+        local s, f, c = staked(newStack, 500)
+        local done = afterRow(s, function()
+            return s.amendments.propose(f.creator, c.id, CB.AMENDMENT.RAISE_PENALTY, { amount = 2000 })
+        end)
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local p = done()
+        falsy(p and p.outcome == 'applied', 'applied, agreed by nobody else, under a staked hunter')
+        eq(s.storage.readContract(c.id).penalty_amount, 500)
+        eq(stakeHeld(s, c, 'HUNTER01'), 500)
+    end)
+end)
+
+describe('RACE F15: one player\'s two acceptances at once', function()
+    it('never leaves them over MaxAcceptedPerHunter', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Limits.MaxAcceptedPerHunter = 1
+        Env.addPlayer({ source = 6, citizenid = 'TARGET02', license = 'license:t2',
+            firstname = 'Tia', lastname = 'Orr' })
+        local x = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        local y = s.contracts.create(f.creator, { targetCid = 'TARGET02', reason = 'x',
+            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        truthy(x and y)
+        local done = afterRow(s, function() return s.contracts.accept(f.hunter, y.id, false) end)
+        truthy(s.contracts.accept(f.hunter, x.id, false))
+        falsy(done(), 'the second counted the first as not there')
+        eq(s.storage.countHunterContracts('HUNTER01', { active = true, accepted = true }), 1)
+    end)
+end)
+
+describe('RACE F16: a throw part-way through accepting', function()
+    it('takes the acceptance back rather than leave it joining', function()
+        local s, f, c = staked(newStack, 1000, CB.MODE.EXCLUSIVE)
+        local before = money(3)
+        local armed, thrown = false, false
+        local realAdd, realRead = s.storage.addHunter, s.storage.readContract
+        s.storage.addHunter = function(...) armed = true return realAdd(...) end
+        s.storage.readContract = function(...)
+            if armed and not thrown then thrown = true error('connection lost', 0) end
+            return realRead(...)
+        end
+        local ok = pcall(s.contracts.accept, f.hunter, c.id, false)
+        s.storage.addHunter, s.storage.readContract = realAdd, realRead
+        truthy(thrown, 'the throw never happened')
+        falsy(ok, 'the throw is still an error to the caller')
+        local row = s.storage.readHunter(c.id, 'HUNTER01')
+        falsy(row and (row.state == 'joining' or row.state == 'active'),
+            'left on the contract: ' .. tostring(row and row.state))
+        eq(money(3), before, 'and the stake is back')
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'and the contract open')
+        truthy(s.contracts.accept(f.hunter, c.id, false), 'so it can be taken again')
+    end)
+
+    it('takes it back when the fee charge throws, rather than leave an unpaid anonymous hunter', function()
+        local s, f, c = staked(newStack, 1000)
+        Config.Anonymity.HunterFee = 1500
+        local before = money(3)
+        local fns = f.hunter.player.Functions
+        local realRemove = fns.RemoveMoney
+        fns.RemoveMoney = function(account, amount, ...)
+            if amount == 1500 then error('framework refused', 0) end
+            return realRemove(account, amount, ...)
+        end
+        local ok = pcall(s.contracts.accept, f.hunter, c.id, true)
+        fns.RemoveMoney = realRemove
+        falsy(ok)
+        local row = s.storage.readHunter(c.id, 'HUNTER01')
+        falsy(row and row.state == 'active', 'anonymous on the contract without paying for it')
+        eq(money(3), before, 'and the stake came back')
+    end)
+
+    it('is finished by the tick when taking it back throws too', function()
+        local s, f, c = staked(newStack, 1000)
+        local before = money(3)
+        local armed, broken = false, false
+        local realAdd, realRead, realRelease = s.storage.addHunter, s.storage.readContract,
+            s.storage.claimEscrowLine
+        s.storage.addHunter = function(...) armed = true return realAdd(...) end
+        s.storage.readContract = function(...)
+            if armed and not broken then broken = true error('connection lost', 0) end
+            return realRead(...)
+        end
+        -- The store stays down for the taking back as well.
+        s.storage.claimEscrowLine = function(...)
+            if broken and armed then error('connection lost', 0) end
+            return realRelease(...)
+        end
+        falsy(pcall(s.contracts.accept, f.hunter, c.id, false))
+        armed = false
+        s.storage.addHunter, s.storage.readContract, s.storage.claimEscrowLine =
+            realAdd, realRead, realRelease
+        truthy(s.contracts.retryStuckJoins() >= 1, 'nothing left to finish it')
+        local row = s.storage.readHunter(c.id, 'HUNTER01')
+        falsy(row and (row.state == 'joining' or row.state == 'active'), tostring(row and row.state))
+        eq(money(3), before, 'and the stake is back')
+    end)
+end)
+
+describe('the anonymity fee and the stake from different accounts', function()
+    it('takes the stake from cash when the bank only covers the fee', function()
+        local s, f, c = staked(newStack, 1000)
+        Config.Anonymity.HunterFee, Config.Anonymity.FeeAccount = 500, 'bank'
+        Env.players[3].PlayerData.money.bank = 1000
+        Env.players[3].PlayerData.money.cash = 5000
+        local ok, err = s.contracts.accept(f.hunter, c.id, true)
+        truthy(ok, 'refused with 6,000 on hand for 1,500 owed: ' .. tostring(err))
+        eq(Env.players[3].PlayerData.money.bank, 500, 'the fee from the bank')
+        eq(Env.players[3].PlayerData.money.cash, 4000, 'the stake from cash')
+    end)
+end)
+
+describe('RACE F17: two cuts to one stake at once', function()
+    it('lets one through and answers the other busy', function()
+        local s, f, c = staked(mysqlStack, 2000)
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local real, second, fired = s.storage.setEscrowAmount, nil, false
+        s.storage.setEscrowAmount = function(...)
+            if not fired then
+                fired = true
+                second = table.pack(s.amendments.improve(f.creator, c.id,
+                    CB.AMENDMENT.LOWER_PENALTY, { amount = 1000 }))
+            end
+            return real(...)
+        end
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 500 }))
+        s.storage.setEscrowAmount = real
+        falsy(second[1], 'two cuts on one stake side by side')
+        eq(second[2], CB.ERR.BUSY)
+        eq(stakeHeld(s, c, 'HUNTER01'), 500)
+    end)
+end)
+
+describe('boot recovery of a stake cut it finds half made', function()
+    local function split(stakeAmount, was, now)
+        local s = newStack()
+        local stake = { id = 'ct00000009:1', contract_id = 'ct00000009', slot = 0,
+            portion = CB.PORTION.STAKE, staker = 'HUNTER01', source = 'bank',
+            amount = stakeAmount, state = CB.ESCROW_STATE.HELD }
+        local owed = { id = 'owe00000009', contract_id = 'ct00000009', slot = 0,
+            portion = CB.PORTION.OWED, owed_to = 'HUNTER01', source = 'bank',
+            amount = was - now, state = CB.ESCROW_STATE.HELD,
+            metadata = { splitFrom = stake.id, stakeWas = was, stakeNow = now } }
+        s.storage.writeEscrow('ct00000009', { stake, owed })
+        s.escrow.recoverOwed(s.storage.readEscrow('ct00000009'))
+        return s, owed.id
+    end
+
+    it('pays the split that lowered the stake', function()
+        local s, id = split(1000, 2000, 1000)
+        eq(#s.storage.readPending('HUNTER01'), 1)
+        eq(s.storage.readEscrowLine(id).amount, 1000)
+    end)
+
+    it('voids the split whose stake was never lowered', function()
+        local s, id = split(2000, 2000, 1000)
+        eq(#s.storage.readPending('HUNTER01'), 0)
+        eq(s.storage.readEscrowLine(id).amount, 0)
+    end)
+
+    it('pays neither way a split whose stake another cut moved', function()
+        -- Two cuts from 2,000: this one to 500 lost its guard to one to
+        -- 1,000. The stake has moved, but not by this split.
+        local s, id = split(1000, 2000, 500)
+        eq(#s.storage.readPending('HUNTER01'), 0, 'paid as well as the cut that won')
+        eq(s.storage.readEscrowLine(id).amount, 1500, 'left for staff, not destroyed')
+    end)
+end)
+
+describe('a stake cut whose owed half is voided underneath it', function()
+    it('puts the stake back rather than lose the difference', function()
+        local s, f, c = staked(newStack, 2000)
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local afterStake = money(3)
+        local real = s.storage.setEscrowAmount
+        local voided = false
+        s.storage.setEscrowAmount = function(id, state, amount, expected)
+            if not voided then
+                voided = true
+                -- Boot recovery reading the owed line as a split that never
+                -- happened, while this cut is between its two writes.
+                for _, l in ipairs(s.storage.readEscrow(c.id)) do
+                    if l.portion == CB.PORTION.OWED then
+                        s.escrow.recoverOwed({ l })
+                    end
+                end
+            end
+            return real(id, state, amount, expected)
+        end
+        s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 500 })
+        s.storage.setEscrowAmount = real
+        local owedLive = 0
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CB.PORTION.OWED and l.state == CB.ESCROW_STATE.HELD then
+                owedLive = owedLive + (l.amount or 0)
+            end
+        end
+        eq(stakeHeld(s, c, 'HUNTER01') + owedLive + (money(3) - afterStake), 2000,
+            'the hunter\'s 2,000 is no longer all accounted for')
+    end)
+end)
+
+describe('RACE F18: a claim lands on the collection being given back', function()
+    local function run(make) return function()
+        local s = make()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            penaltyAmount = 500,
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local p = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+        truthy(p)
+        local real, fired = s.storage.reduceSlots, false
+        s.storage.reduceSlots = function(...)
+            if not fired then
+                fired = true
+                truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION, {}))
+            end
+            return real(...)
+        end
+        s.amendments.respond(f.hunter, p.id, true)
+        s.storage.reduceSlots = real
+        local after = s.storage.readContract(c.id)
+        truthy((after.next_slot or 1) <= (after.payout_slots or 1)
+            or after.state == CB.STATE.COMPLETED,
+            ('left selling collection %d of %d'):format(after.next_slot or 1, after.payout_slots or 1))
+        Env.advance((Config.Limits.SlotCooldownSeconds or 0) + 1)
+        truthy(after.state == CB.STATE.COMPLETED
+            or s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION, {}),
+            'the second collection can still be paid')
+    end end
+    it('does not strand the contract (memory)', run(newStack))
+    it('does not strand the contract (mysql)', run(mysqlStack))
+end)
+
+describe('RACE F19: a delivery lands on a bonus raise', function()
+    local function run(make) return function()
+        local s = make()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            bonusPercent = 10,
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } } } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local real, fired = s.storage.writeEscrow, false
+        s.storage.writeEscrow = function(contractId, lines)
+            local r = table.pack(real(contractId, lines))
+            if not fired and lines[1] and lines[1].portion == CB.PORTION.BONUS and lines[1].derived then
+                fired = true
+                truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.KIDNAPPING, {}))
+            end
+            return table.unpack(r, 1, r.n)
+        end
+        local ok, err = s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 20 })
+        s.storage.writeEscrow = real
+        truthy(fired, 'the delivery never landed')
+        local slot2 = 0
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.slot == 2 and l.portion == CB.PORTION.BONUS and l.state == CB.ESCROW_STATE.HELD then
+                slot2 = slot2 + l.amount
+            end
+        end
+        local percent = s.storage.readContract(c.id).bonus_percent
+        if ok then
+            eq(percent, 20)
+            eq(slot2, 200, 'the card says 20% while collection 2 holds the old bonus')
+        else
+            eq(percent, 10, 'refused, yet the new percent was stored: ' .. tostring(err))
+            eq(slot2, 100)
+        end
+    end end
+    it('keeps the card and the escrow the same (memory)', run(newStack))
+    it('keeps the card and the escrow the same (mysql)', run(mysqlStack))
+end)
+
+describe('more of the acceptance, pinned', function()
+    it('keeps a proposal open when an answer is busy, so it can be given again', function()
+        local s, f, c = staked(newStack, 2000)
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local p = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_MODE,
+            { mode = CB.MODE.EXCLUSIVE })
+        truthy(p and p.outcome == 'open')
+        -- The hunter agrees while the client's penalty cut holds the contract.
+        local real, fired, answer = s.storage.setEscrowAmount, false, nil
+        s.storage.setEscrowAmount = function(...)
+            if not fired then
+                fired = true
+                answer = table.pack(s.amendments.respond(f.hunter, p.id, true))
+            end
+            return real(...)
+        end
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 500 }))
+        s.storage.setEscrowAmount = real
+        local ok, err, outcome = table.unpack(answer, 1, answer.n)
+        falsy(ok)
+        eq(err, CB.ERR.BUSY)
+        eq(outcome, 'busy')
+        eq(s.storage.readAmendment(p.id).outcome, 'open', 'failed for good over an instant')
+    end)
+
+    it('does not confirm a row something else took back in the meantime', function()
+        local s, f, c = staked(newStack, 1000)
+        local before = money(3)
+        local real, fired = s.storage.writeEscrow, false
+        s.storage.writeEscrow = function(contractId, lines)
+            local r = table.pack(real(contractId, lines))
+            if not fired and lines[1] and lines[1].portion == CB.PORTION.STAKE then
+                fired = true
+                -- Recovery takes the joining row back as left over.
+                s.contracts.recoverJoining(s.storage.readContract(c.id))
+            end
+            return table.unpack(r, 1, r.n)
+        end
+        local ok = s.contracts.accept(f.hunter, c.id, false)
+        s.storage.writeEscrow = real
+        falsy(ok, 'told they hold it')
+        local row = s.storage.readHunter(c.id, 'HUNTER01')
+        falsy(row and row.state == 'active', 'holding the contract with no stake behind it')
+        eq(money(3), before, 'and nothing of theirs is held')
+    end)
+
+    it('refuses a stake taken at a penalty re-clamped in the awaits', function()
+        -- On mysql, where the acceptance's read is a copy the re-clamp does
+        -- not reach.
+        local s, f = staked(mysqlStack, 0)
+        local c2 = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'y', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
+            penaltyAmount = 999999,
+        })
+        truthy(c2)
+        local bonus
+        for _, l in ipairs(s.storage.readEscrow(c2.id)) do
+            if l.portion == CB.PORTION.BONUS then bonus = l.id end
+        end
+        local shown = s.storage.readContract(c2.id).penalty_amount
+        local real, fired = s.storage.countHunterContracts, false
+        s.storage.countHunterContracts = function(...)
+            if not fired then
+                fired = true
+                truthy(s.contracts.withdrawReward(f.creator, c2.id, { bonus }))
+            end
+            return real(...)
+        end
+        local before = money(3)
+        local ok, err = s.contracts.accept(f.hunter, c2.id, false,
+            { checkDisclosure = true, disclosed = shown })
+        s.storage.countHunterContracts = real
+        truthy(fired, 'the withdrawal never landed')
+        truthy(s.storage.readContract(c2.id).penalty_amount < shown, 'the fixture re-clamps')
+        falsy(ok, 'staked at a penalty the contract no longer asks for')
+        eq(err, CB.ERR.TERMS_CHANGED)
+        eq(money(3), before)
+    end)
+
+    it('does not count a returned top-up as a paid collection', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE, bonusPercent = 10,
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } } } },
+        })
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 20 }))
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.slot == 2 and l.derived then
+                s.escrow.release(c.id, f.creator.cid, { line = l.id }, 'test_returned')
+            end
+        end
+        local extra = s.escrow.bonusTopUp(c.id, 20, 30)
+        local onTwo = false
+        for _, l in ipairs(extra) do if l.slot == 2 then onTwo = true end end
+        truthy(onTwo, 'a collection nobody has been paid for was treated as paid')
+    end)
+
+    it('never leaves one player over the cap when the second lands before the first row', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Limits.MaxAcceptedPerHunter = 1
+        Env.addPlayer({ source = 6, citizenid = 'TARGET02', license = 'license:t2',
+            firstname = 'Tia', lastname = 'Orr' })
+        local x = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        local y = s.contracts.create(f.creator, { targetCid = 'TARGET02', reason = 'x',
+            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        local real, fired, second = s.storage.readHunters, false, nil
+        s.storage.readHunters = function(...)
+            if not fired then
+                fired = true
+                second = s.contracts.accept(f.hunter, y.id, false)
+            end
+            return real(...)
+        end
+        local first = s.contracts.accept(f.hunter, x.id, false)
+        s.storage.readHunters = real
+        falsy(first and second, 'both passed a cap of one')
+        eq(s.storage.countHunterContracts('HUNTER01', { active = true, accepted = true }), 1)
+    end)
+end)
+
+describe('proposals while a hunter is part-way on', function()
+    it('are not applied alone over a joining row that was left behind', function()
+        local s, f, c = staked(newStack, 0)
+        s.storage.addHunter({ id = 'hnstuck01', contract_id = c.id, hunter_cid = 'HUNTER01',
+            hunter_account = 'license:ccc', alias = 'Operative #1', anon = false,
+            accepted_at = os.time(), state = 'joining' })
+        local p = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_REASON,
+            { reason = 'Something else' })
+        truthy(p)
+        eq(p.outcome, 'open', 'applied as agreed by nobody else, over a hunter on the contract')
+    end)
+
+    it('closes a solo proposal that was busy, so it can be made again', function()
+        local s, f, c = staked(newStack, 2000)
+        local real, fired, p = s.storage.writeContract, false, nil
+        s.storage.writeContract = function(...)
+            if not fired then
+                fired = true
+                p = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.RAISE_PENALTY, { amount = 3000 })
+            end
+            return real(...)
+        end
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 1000 }))
+        s.storage.writeContract = real
+        truthy(p, 'the proposal was never made')
+        eq(p.outcome, 'failed')
+        eq(p.error, CB.ERR.BUSY)
+        eq(s.storage.readAmendment(p.id).outcome, 'failed',
+            'left open, with nobody else who could ever answer it')
+        truthy(s.amendments.propose(f.creator, c.id, CB.AMENDMENT.RAISE_PENALTY, { amount = 3000 }),
+            'and it can be made again')
     end)
 end)

@@ -155,6 +155,19 @@ function Bailout.buy(actor, contractId)
         return true, nil
     end
 
+    -- Recorded before it is settled, as a buyout already due. The target
+    -- has paid; until the premium line exists nothing else says so, and
+    -- settling is a score of awaits on mysql. A crash in any of them left a
+    -- contract bought out with the premium in no line, no queue and no
+    -- pocket. Recorded, the next tick finishes it like a queued buyout, and
+    -- settle clears the record when it is done.
+    Storage.setBailoutQueue(contract.id, {
+        bailout_queued_at = os.time() - (Config.Bailout.ProcessingDelaySeconds or 0),
+        bailout_paid_by = actor.cid,
+        bailout_paid_amount = amount,
+        bailout_paid_account = account,
+        bailout_attempts = 0,
+    })
     return Bailout.settle(contractId, amount, actor.cid, account)
 end
 

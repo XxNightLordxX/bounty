@@ -4,6 +4,7 @@
 --- SQL anywhere in this file, and no table or column name comes from config
 --- or from a player — they are literals in this source.
 
+local Util = require_shared('util')
 local MySQLStore = {}
 
 local seq = 0
@@ -527,9 +528,12 @@ end
 
 function MySQLStore.reduceSlots(id, expected)
     if expected <= 1 then return false end
-    local affected = MySQL.update.await(
-        'UPDATE crimson_contracts SET payout_slots = ? WHERE id = ? AND payout_slots = ?',
-        { expected - 1, id, expected })
+    -- Guarded on the collection being unclaimed and no claim holding the
+    -- contract, not only on the count (see Memory.reduceSlots).
+    local affected = MySQL.update.await([[
+        UPDATE crimson_contracts SET payout_slots = ?
+        WHERE id = ? AND payout_slots = ? AND next_slot < ? AND state IN ('active', 'accepted')
+    ]], { expected - 1, id, expected, expected })
     return (tonumber(affected) or 0) > 0
 end
 
@@ -784,11 +788,22 @@ function MySQLStore.updateHunter(id, fields)
     return true
 end
 
+--- The row goes active only if it is still the acceptance that wrote it.
+function MySQLStore.confirmHunter(id, anon, acceptedAt)
+    local affected = MySQL.update.await([[
+        UPDATE crimson_hunters SET state = 'active', anon = ?, accepted_at = ?
+        WHERE id = ? AND state IN ('joining', 'rejoining')
+    ]], { anon and 1 or 0, acceptedAt, id })
+    return (tonumber(affected) or 0) > 0
+end
+
+--- Mid-acceptance rows count: two acceptances in flight must each see the
+--- other against the cap.
 function MySQLStore.countHunterContracts(cid, states)
     local rows = MySQL.query.await([[
         SELECT c.state AS state FROM crimson_hunters h
         JOIN crimson_contracts c ON c.id = h.contract_id
-        WHERE h.hunter_cid = ? AND h.state = 'active'
+        WHERE h.hunter_cid = ? AND h.state IN ('active', 'joining', 'rejoining')
     ]], { cid }) or {}
     local n = 0
     for i = 1, #rows do
@@ -889,14 +904,16 @@ function MySQLStore.readLedger(cid, depth)
 end
 
 function MySQLStore.queuePending(cid, contractId, lineId)
-    MySQLStore.pendingSeq = (MySQLStore.pendingSeq or 0) + 1
+    -- Random, not the clock and a sequence: the sequence starts again at
+    -- every boot, so a restart within the same second minted the ids of
+    -- entries already queued, and ON DUPLICATE KEY UPDATE landed the new
+    -- entry on top of an old one — one owed payment silently unqueued.
     MySQL.query.await([[
         INSERT INTO crimson_pending (id, cid, contract_id, line_id, queued_at)
         VALUES (?,?,?,?,?)
         ON DUPLICATE KEY UPDATE queued_at = VALUES(queued_at)
     ]], {
-        ('pnd%d%04d'):format(os.time() % 100000, MySQLStore.pendingSeq % 10000),
-        cid, contractId, lineId, os.time(),
+        Util.randomId('pnd'), cid, contractId, lineId, os.time(),
     })
     return true
 end
