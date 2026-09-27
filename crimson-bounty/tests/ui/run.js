@@ -91,6 +91,10 @@ function boot(responses) {
   const sent = [];
   const urls = [];
   const timers = [];
+  let timerSeq = 0;
+  function clearTimer(id) {
+    timers.forEach(function (t) { if (t.id === id) { t.cleared = true; } });
+  }
   const notices = [];
 
   // The tab bar the app expects to exist.
@@ -190,10 +194,18 @@ function boot(responses) {
      * Named here as something other than the shipped name, so a page that
      * ignores it and uses the literal is a page that fails. */
     GetParentResourceName: function () { return 'renamed-by-the-operator'; },
-    setTimeout: function (fn, ms) { timers.push({ fn: fn, ms: ms }); return timers.length; },
-    setInterval: function (fn, ms) { timers.push({ fn: fn, ms: ms, repeating: true }); return timers.length; },
-    clearInterval: function () {},
-    clearTimeout: function () {},
+    // Ids are a counter, not a position: settle() splices fired timeouts out
+    // of the list, so a position would name a different timer afterwards.
+    setTimeout: function (fn, ms) { timers.push({ fn: fn, ms: ms, id: ++timerSeq }); return timerSeq; },
+    setInterval: function (fn, ms) {
+      timers.push({ fn: fn, ms: ms, repeating: true, id: ++timerSeq });
+      return timerSeq;
+    },
+    // Recorded, so a test can tell a timer the page stopped from one it
+    // forgot. As a no-op, "stopped polling" was not something any test could
+    // observe.
+    clearInterval: function (id) { clearTimer(id); },
+    clearTimeout: function (id) { clearTimer(id); },
     Promise: Promise, JSON: JSON, Math: Math, Number: Number, String: String,
     Array: Array, Object: Object, console: console
   };
@@ -3992,6 +4004,73 @@ async function main() {
     it('survives the countdown being refused mid-delivery', function () {
       truthy(refusedPoll.view.textContent.trim().length > 0,
         'a refused poll emptied the screen');
+    });
+
+    /* How it ended. The countdown disappears the moment a handover ends,
+       whichever way, and every ending used to reach the poller as the same
+       "no_handover" — so a hunter who had just been paid was told the
+       handover ended and to try again. */
+    async function endedWith(ended) {
+      const page = await onMine({
+        armKidnap: { ok: true, data: true },
+        kidnapProgress: { ok: true, data: Object.assign({ done: true }, ended) }
+      });
+      click(page, 'Deliver alive');
+      await settle();
+      page.timers.filter(function (t) { return t.repeating && t.ms === 1000; })[0].fn();
+      await settle(); await settle();
+      return page;
+    }
+
+    const paidPage = await endedWith({ outcome: 'paid' });
+    it('tells a hunter who was paid that they were paid', function () {
+      const said = paidPage.notice();
+      truthy(said.indexOf('Payment released') !== -1, said);
+      falsy(/try again/i.test(said), 'told to try again after being paid: ' + said);
+    });
+
+    it('stops polling once it knows how the handover ended', function () {
+      falsy(paidPage.timers.some(function (t) { return t.repeating && t.ms === 1000 && !t.cleared; }),
+        'still polling a handover that is over');
+    });
+
+    const owedPage = await endedWith({ outcome: 'paid', pending: true });
+    it('says so when part of the payout is being held', function () {
+      truthy(owedPage.notice().indexOf('held for you') !== -1, owedPage.notice());
+    });
+
+    const lostRace = await endedWith({ outcome: 'refused', reason: 'bad_state' });
+    it('tells a hunter refused at the end that it was not paid, and why', function () {
+      const said = lostRace.notice();
+      truthy(said.indexOf('not paid') !== -1, said);
+      truthy(said.indexOf('closed') !== -1, said);
+      falsy(said.indexOf('Not right now') !== -1, 'the catch-all: ' + said);
+    });
+
+    const tooSoon = await endedWith({ outcome: 'refused', reason: 'slot_cooldown' });
+    it('names the wait between payouts when that is why', function () {
+      truthy(tooSoon.notice().indexOf('very recently') !== -1, tooSoon.notice());
+    });
+
+    const clientGone = await endedWith({ outcome: 'failed', reason: 'party_offline' });
+    it('does not say the target got away when somebody went offline', function () {
+      const said = clientGone.notice();
+      truthy(said.indexOf('offline') !== -1, said);
+      falsy(said.indexOf('lost hold') !== -1, said);
+    });
+
+    const closedPage = await endedWith({ outcome: 'closed' });
+    it('says the contract closed when it did', function () {
+      const said = closedPage.notice();
+      truthy(said.indexOf('closed') !== -1, said);
+      falsy(/try again/i.test(said), 'nothing to try again on: ' + said);
+    });
+
+    const cooling = await onMine({ armKidnap: { ok: false, err: 'handover_cooldown' } });
+    click(cooling, 'Deliver alive');
+    await settle();
+    it('tells a hunter to wait out a failed handover, not "not right now"', function () {
+      truthy(cooling.notice().indexOf('minute') !== -1, cooling.notice());
     });
   })();
 

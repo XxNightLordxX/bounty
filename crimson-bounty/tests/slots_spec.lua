@@ -118,7 +118,9 @@ describe('payout slots', function()
 
         local ok, err = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
         falsy(ok, 'cooldown must block a back-to-back claim')
-        eq(err, CB.ERR.RATE_LIMITED)
+        -- Its own code: this is a ten-minute policy wait, and RATE_LIMITED is
+        -- the flood guard, which the page words as "Slow down."
+        eq(err, CB.ERR.SLOT_COOLDOWN)
 
         Env.advance(Config.Limits.SlotCooldownSeconds + 1)
         truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION),

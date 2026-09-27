@@ -1458,7 +1458,9 @@ describe('a handover cannot be retried in a loop', function()
         Env.players[1]._coords = AT
         local ok, err = s.kidnap.arm(c.id, 'HUNTER01')
         falsy(ok, 'a failed handover cannot be restarted immediately')
-        eq(err, CB.ERR.BAD_STATE)
+        -- Its own code: the one refusal on this path that waiting fixes, which
+        -- BAD_STATE's "Not right now." could not say.
+        eq(err, CB.ERR.HANDOVER_COOLDOWN)
     end)
 
     it('lets them try again once the cooldown has passed', function()

@@ -640,8 +640,19 @@ function App.register()
     handler('kidnapProgress', 'progress', function(actor, payload)
         -- Returned unchanged: a fabricated { elapsed = 0 } has no `required`,
         -- which draws a NaN bar and a poller that can never finish.
-        local progress = deps.kidnap.progress(Util.toId(payload.id) or '', actor.cid)
+        local id = Util.toId(payload.id) or ''
+        local progress = deps.kidnap.progress(id, actor.cid)
         if not progress then
+            -- How it ended, if it ended a moment ago. The poller is what is
+            -- watching when a countdown finishes, and every ending looked the
+            -- same to it — so a hunter who had just been paid for a handover
+            -- was told it had ended and to try again. Keyed by this actor's
+            -- own citizen id, so it only ever describes their own handover.
+            local ended = deps.kidnap.outcome and deps.kidnap.outcome(id, actor.cid)
+            if ended then
+                return { done = true, outcome = ended.outcome,
+                         reason = ended.reason, pending = ended.pending }
+            end
             -- Named, rather than left as a bare nil.
             --
             -- A handler returning nil is read as a refusal by App.reply, and

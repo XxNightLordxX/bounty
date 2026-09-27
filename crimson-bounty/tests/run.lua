@@ -368,7 +368,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the
@@ -384,9 +384,17 @@ local RAW_STORE_SPECS = { differential_spec = true }
 --- exercise is exercised by the operations it is counting.
 local MEASUREMENT_SPECS = { complexity_spec = true }
 
+--- CB_SUITES=a_spec,b_spec runs only those, for a quick loop while working
+--- on one area. Unset — as all.sh leaves it — everything runs.
+local only
+if os.getenv('CB_SUITES') and os.getenv('CB_SUITES') ~= '' then
+    only = {}
+    for name in os.getenv('CB_SUITES'):gmatch('[^,%s]+') do only[name] = true end
+end
+
 for _, name in ipairs(suites) do
-    local skip = _G.__SKIP_RAW_STORE_SPECS
-        and (RAW_STORE_SPECS[name] or MEASUREMENT_SPECS[name])
+    local skip = (only and not only[name]) or (_G.__SKIP_RAW_STORE_SPECS
+        and (RAW_STORE_SPECS[name] or MEASUREMENT_SPECS[name]))
     local ok, err = skip and true or pcall(require, 'crimson-bounty.tests.' .. name)
     if not ok then
         Suite.failed = Suite.failed + 1

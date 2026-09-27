@@ -374,6 +374,14 @@
     cancelled_too_soon: 'You cancelled a contract recently. Placing another '
       + 'has to wait a few minutes: cancelling and re-listing would otherwise '
       + 'be free.',
+    // Also policy waits. slot_cooldown shared rate_limited, so a hunter
+    // photographing a body was told to wait a few seconds and try again on
+    // a wait of ten minutes; handover_cooldown shared bad_state.
+    slot_cooldown: 'You collected on this contract very recently. The next '
+      + 'payout on it has to wait \u2014 a kill or a handover now will not '
+      + 'count, so work another contract in the meantime.',
+    handover_cooldown: 'Your last handover on this contract failed a moment '
+      + 'ago. Give it a minute before you start another.',
     self_target: 'You cannot put a price on yourself.',
     self_accept: 'You cannot take your own contract.',
     same_account: 'Not on your own people.',
@@ -1425,6 +1433,18 @@
       }
 
       post('kidnapProgress', { id: id }).then(function (r) {
+        if (r.ok && r.data && r.data.done) {
+          // Over, and the server says how. Every ending used to reach this
+          // poller the same way — the countdown gone — so a hunter who had
+          // just been PAID for a handover was told it had ended and to try
+          // again, and one refused at the end was told to try again on a
+          // refusal no retry fixes.
+          stopCountdown();
+          delete state.progress[id];
+          handoverEnded(r.data);
+          refresh();
+          return;
+        }
         if (!r.ok || !r.data || r.data.elapsed === undefined) {
           // Over, one way or another. The bar goes rather than freezing,
           // and the player is told — a delivery that simply stops moving is
@@ -1455,6 +1475,41 @@
         }
       });
     }, 1000);
+  }
+
+  /* What a finished handover means, in words. The server keeps how each
+     one ended for a couple of minutes; the phone notification says the same
+     thing to a hunter who has closed the app. */
+  function handoverEnded(ended) {
+    if (ended.outcome === 'paid') {
+      return say(ended.pending
+        ? 'Delivered. Some of the reward would not fit and is being held for '
+          + 'you \u2014 make room and it will be handed over.'
+        : 'Delivered. Payment released.', 'gold');
+    }
+    if (ended.outcome === 'closed') {
+      return say('The contract closed before the handover finished.');
+    }
+    if (ended.outcome === 'refused') {
+      var refused = {
+        bad_state: 'The contract closed before the handover finished.',
+        locked: 'Another payout on this contract was being settled at the same '
+          + 'moment, and it got there first.',
+        target_protected: 'They had only just got back up, so the handover '
+          + 'does not count.'
+      };
+      return say('The handover finished but was not paid. '
+        + (refused[ended.reason] || ERRORS[ended.reason] || ''));
+    }
+    var failed = {
+      party_offline: 'Someone the handover needed went offline.',
+      creator_too_far: 'Your client did not arrive in time.',
+      target_not_conscious: 'The target went down. A handover has to be alive.',
+      contract_locked: 'The contract was stuck settling another payout.'
+    };
+    return say('The handover failed. ' + (failed[ended.reason]
+      || 'You lost hold of the target.') + ' Get them back to the client and '
+      + 'try again in a minute.');
   }
 
   function bailout(contract) {

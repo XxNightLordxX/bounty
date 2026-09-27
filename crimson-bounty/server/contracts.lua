@@ -787,6 +787,17 @@ end
 -- Slot claiming (§3.5)
 --------------------------------------------------------------------------
 
+--- Whether this hunter collected on this contract too recently to collect
+--- again. Asked by the claim and, ahead of it, by anything that makes a
+--- player spend time on a claim that is certain to be refused — a handover
+--- countdown holds a restrained player for thirty seconds.
+---@param hunter table a hunter row
+---@return boolean
+function Contracts.slotCoolingDown(hunter)
+    return hunter ~= nil and hunter.last_claim_at ~= nil
+        and (os.time() - hunter.last_claim_at) < (Config.Limits.SlotCooldownSeconds or 0)
+end
+
 --- Claim the next unclaimed payout slot for a hunter.
 ---
 --- This is the single point where a fulfilment turns into money. It takes the
@@ -810,8 +821,8 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment, opts)
 
     -- The same hunter may not collect two slots back to back; without this a
     -- multi-slot contract is a respawn-camping machine (§3.5).
-    if hunter.last_claim_at and (os.time() - hunter.last_claim_at) < Config.Limits.SlotCooldownSeconds then
-        return false, CB.ERR.RATE_LIMITED
+    if Contracts.slotCoolingDown(hunter) then
+        return false, CB.ERR.SLOT_COOLDOWN
     end
 
     local slot = contract.next_slot or 1
@@ -886,6 +897,18 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment, opts)
     else
         -- Slots remain: the contract goes back to accepted and stays live.
         Contracts.transition(contractId, CB.STATE.COMPLETING, CB.STATE.ACCEPTED, 'slot_claimed')
+
+        -- And every party's card has just changed: which collection is on
+        -- offer, how many are left, and what it pays. finalise() pushes on
+        -- the last slot and nothing pushed on the ones before it, so a
+        -- creator watching a three-payout contract went on being shown the
+        -- first collection's money after it had been paid, and a second
+        -- hunter went on competing for a slot that was gone.
+        local cids = {}
+        for _, row in ipairs(Storage.readHunters(contractId) or {}) do
+            if row.state == 'active' then cids[#cids + 1] = row.hunter_cid end
+        end
+        Notify.pushParties(contract, cids, 'slot_claimed')
     end
 
     return true, nil, {

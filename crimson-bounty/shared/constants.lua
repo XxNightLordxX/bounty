@@ -134,6 +134,20 @@ CB.ERR = {
     --- The creator cancelled a contract recently. Same story: minutes of
     --- policy wait, reported as throttling.
     CANCELLED_TOO_SOON   = 'cancelled_too_soon',
+    --- This hunter collected on this contract too recently to collect again.
+    ---
+    --- It was RATE_LIMITED, which the page words as "Slow down." and tells a
+    --- hunter photographing a body to wait a few seconds and try again. The
+    --- rule is a policy wait between payouts on one contract
+    --- (Config.Limits.SlotCooldownSeconds, ten minutes as shipped), enforced
+    --- at the moment the player has already done all the work — a few seconds
+    --- fixes nothing, and the kill is lost either way.
+    SLOT_COOLDOWN        = 'slot_cooldown',
+    --- A handover on this contract failed a moment ago and cannot be
+    --- restarted yet. It was BAD_STATE — "Not right now." — which reads the
+    --- same as the contract having been cancelled underneath the hunter,
+    --- when this is the one refusal on the delivery path that waiting fixes.
+    HANDOVER_COOLDOWN    = 'handover_cooldown',
     SELF_TARGET      = 'self_target',
     SELF_ACCEPT      = 'self_accept',
     SAME_ACCOUNT     = 'same_account',

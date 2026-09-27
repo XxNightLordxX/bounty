@@ -570,13 +570,25 @@ function Death.pendingCount()
     return n
 end
 
+--- Forget a player who disconnected.
+---
+--- A pending kill goes with its HUNTER, not with its victim. It used to go
+--- with either, so a target who closed the game while lying dead destroyed a
+--- kill the server itself had attributed: the hunter, standing over the body,
+--- was told there was no kill to verify. Nothing in the proof needs the victim
+--- online — the body's position is recorded with the death, and the revive
+--- check only applies to a victim who is still here to be revived. Quitting
+--- is not a way out of a contract.
+---
+--- Nothing accumulates: a pending kill ages out of getPending and sweep on
+--- the photo token lifetime, whoever is online.
 function Death.clearPlayer(cid)
     damage[cid] = nil
     condition[cid] = nil
     respawnedAt[cid] = nil
     seenDead[cid] = nil
     for key, record in pairs(pending) do
-        if record.victimCid == cid or record.hunterCid == cid then pending[key] = nil end
+        if record.hunterCid == cid then pending[key] = nil end
     end
 end
 
