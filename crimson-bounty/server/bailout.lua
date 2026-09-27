@@ -262,7 +262,8 @@ function Bailout.settle(contractId, amount, targetCid, account, opts)
 
     Audit.financial('bailout_settled', targetCid, contractId, { amount = amount })
     Notify.toCitizen(contract.creator_cid, 'Contract closed',
-        'Your target bought out the contract. Escrow and premium have been returned.')
+        'Your target bought out the contract. Escrow and premium have been returned.',
+        { bypassBudget = true })
 
     Bailout.clearQueue(contractId)
     return true

@@ -146,7 +146,9 @@ end
 function Notify.contractCreated(contract, targetActor)
     -- The target's paranoid alert. Deliberately vague: it tells them
     -- something is wrong, not who or how much.
-    if Config.Notifications.ParanoidAlert and not contract.target_protected then
+    -- An officer is told by the advisory instead, unless there is none.
+    if Config.Notifications.ParanoidAlert
+        and (not contract.target_protected or not Config.Advisory.Enabled) then
         Notify.toCitizen(contract.target_cid, 'Unsettling',
             'You feel eyes on you. A price has been put on your head.')
     end
@@ -190,12 +192,16 @@ end
 ---@param photoRef string|nil the proof image, where the route produced one
 function Notify.contractCompleted(contract, hunterRecord, photoRef)
     local hasPhoto = type(photoRef) == 'string' and photoRef ~= ''
+    -- A receipt, so outside the budget (§14.40). Relay messages spend the
+    -- same budget, so five from the hunter in the minute before the kill
+    -- used to mean the creator never heard it had been done.
     Notify.toCitizen(contract.creator_cid, 'Contract fulfilled',
         hasPhoto
             and 'Your contract was fulfilled. The verification photograph is '
                 .. 'in your archive.'
             or  'Your contract was fulfilled by live delivery. There is no '
-                .. 'photograph — the target was handed over in person.')
+                .. 'photograph — the target was handed over in person.',
+        { bypassBudget = true })
     local _ = hunterRecord
 end
 

@@ -434,6 +434,19 @@ describe('starting on a configuration with a hole in it', function()
         truthy(err:find('invalid configuration', 1, true), err)
     end)
 
+    it('refuses a handover, session or login number that is not one', function()
+        -- Filled when absent, but a string where the number belongs stopped
+        -- every handover on the server (the countdown thread's own wait),
+        -- every create, or every login delivery, rather than refusing boot.
+        for _, entry in ipairs({ { 'Kidnap', 'TickMs' }, { 'Kidnap', 'Radius' },
+                                 { 'Immunity', 'MinTargetSessionMinutes' },
+                                 { 'PendingEscrow', 'MaxRetriesPerLogin' } }) do
+            local ok, err = bootExpectingFailure(entry[1], entry[2], 'fast')
+            falsy(ok, 'Config.' .. entry[1] .. '.' .. entry[2] .. ' as a string was accepted')
+            truthy(err:find('invalid configuration', 1, true), err)
+        end
+    end)
+
     it('still starts on the configuration as it ships', function()
         local main, modules = boot()
         truthy(modules, 'the shipped config must be valid')

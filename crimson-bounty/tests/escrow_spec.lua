@@ -403,6 +403,49 @@ describe('money owed to a player is reachable only by them', function()
         eq(hunterHas, 2, 'what they earned arrives when there is room for it')
     end)
 
+    --- A queue that begins with more goods than one pass tries, none of
+    --- which fit, and money behind them.
+    local function queuedBehindGoods()
+        local s = newStack()
+        local names = {}
+        local inventory = {}
+        for i = 1, Config.PendingEscrow.MaxRetriesPerLogin + 1 do
+            names[i] = 'goods' .. i
+            inventory[i] = { name = names[i], count = 1 }
+        end
+        local f = fixture(s, { creatorInventory = inventory })
+        local items = {}
+        for i = 1, #names do items[i] = { name = names[i], count = 1 } end
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { items = items } },
+        })
+        truthy(c, 'placed')
+        s.contracts.accept(f.hunter, c.id, false)
+        Env.players[3]._inventoryFull = true
+        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        eq(#s.storage.readPending('HUNTER01'), #names, 'every stack owed')
+        truthy(s.escrow.owe('HUNTER01', c.id, 4000, 'bank', 'test'))
+        return s, f, c
+    end
+
+    it('keeps trying, while they are online, what a login could not hand over', function()
+        local s = queuedBehindGoods()
+        -- A fresh process: nothing it queued, so nothing it is waiting on.
+        s.escrow.init(s.storage, s.audit)
+        s.escrow.retryPending('HUNTER01')
+        Env.players[3]._inventoryFull = false
+        local total = 0
+        for _ = 1, 4 do
+            Env.advance(31)
+            for _, n in pairs(s.escrow.retryWaiting(function() return true end)) do
+                total = total + n
+            end
+        end
+        eq(#s.storage.readPending('HUNTER01'), 0,
+            'made room, stayed online, and nothing arrived until a relog')
+        truthy(total > 0)
+    end)
+
     it('refuses to deliver it to anyone else', function()
         local s, f, c = owedToHunter()
         Env.players[1]._inventoryFull = false

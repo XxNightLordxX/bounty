@@ -1539,7 +1539,14 @@
           }
           return fail(r);
         }
-        say(anonymous ? 'Contract accepted, anonymously.' : 'Contract accepted.', 'gold');
+        // Worded from what the server recorded, not from the button. A
+        // hunter the client already knows by name on this contract comes
+        // back under it, and was told "accepted, anonymously".
+        var recorded = r.data && typeof r.data.myAnonymous === 'boolean'
+          ? r.data.myAnonymous : anonymous;
+        say(recorded ? 'Contract accepted, anonymously.'
+          : anonymous ? 'Contract accepted under your name: the client already knows you on this one.'
+          : 'Contract accepted.', 'gold');
         refresh();
       });
     }
@@ -1549,6 +1556,9 @@
         kind: 'choice',
         question: 'Take this one anonymously?',
         detail: 'The client will see an operative, not a name.'
+          + (anonymityFee('hunter') > 0
+            ? ' Anonymity costs ' + money(anonymityFee('hunter')) + '.'
+            : '')
           + (contract.penaltyAmount > 0
             ? ' Accepting stakes ' + money(contract.penaltyAmount)
               + ' of yours, returned when you finish and forfeit to the client'
@@ -2897,7 +2907,7 @@
     var field = el('div', 'field compose');
     var input = document.createElement('input');
     input.placeholder = 'Say something';
-    input.maxLength = 200;
+    input.maxLength = settings().messageMaxLength || 200;
     input.value = t.draft || '';
     input.oninput = function () {
       t.draft = input.value;
@@ -3083,14 +3093,28 @@
     // caps.bonusPercent was computed and shipped and never read, so a figure
     // over the cap reached the server — which clamps it now, and used to
     // drop it to no bonus at all.
-    var bonusCap = (state.wallet && state.wallet.caps && state.wallet.caps.bonusPercent) || null;
-    var bonusField = drafted(numberInput('bonus', 50), 'bonus', '50');
-    if (bonusCap) { bonusField.max = bonusCap; }
-    terms.appendChild(labelled(
-      'Kidnapping bonus %' + (bonusCap ? ' (up to ' + bonusCap + ')' : ''),
-      bonusField));
-    terms.appendChild(labelled('Buyout price (0 for none)',
-      drafted(numberInput('bailout', 0), 'bailout', '0')));
+    //
+    // A cap of 0 is a server with no bonus, not a server with no cap: read
+    // with ||, it offered the box at 50 with no ceiling.
+    var caps = state.wallet && state.wallet.caps;
+    var bonusCap = caps && typeof caps.bonusPercent === 'number' ? caps.bonusPercent : null;
+    if (bonusCap === 0) {
+      delete state.draft.bonus;
+    } else {
+      var bonusField = drafted(numberInput('bonus', 50), 'bonus', '50');
+      if (bonusCap) { bonusField.max = bonusCap; }
+      terms.appendChild(labelled(
+        'Kidnapping bonus %' + (bonusCap ? ' (up to ' + bonusCap + ')' : ''),
+        bonusField));
+    }
+    // Not on a server without buyouts, where the figure was taken and then
+    // quietly set to nothing.
+    if (settings().buyouts !== false) {
+      terms.appendChild(labelled('Buyout price (0 for none)',
+        drafted(numberInput('bailout', 0), 'bailout', '0')));
+    } else {
+      delete state.draft.bailout;
+    }
     terms.appendChild(labelled('Failure penalty (0 for none)',
       drafted(numberInput('penalty', 0), 'penalty', '0')));
     terms.appendChild(el('div', 'hint',
@@ -3106,7 +3130,8 @@
     toggle.className = 'toggle';
     toggle.htmlFor = 'anon';
     toggle.appendChild(anon);
-    toggle.appendChild(el('span', null, 'Place anonymously'));
+    toggle.appendChild(el('span', null, 'Place anonymously'
+      + (anonymityFee('creator') > 0 ? ' (costs ' + money(anonymityFee('creator')) + ')' : '')));
     terms.appendChild(toggle);
     form.appendChild(terms);
 
@@ -3658,6 +3683,14 @@
     input.oninput = function () { state.draft[key] = input.value; };
     input.onchange = function () { state.draft[key] = input.value; };
     return input;
+  }
+
+  /* What choosing anonymity costs, from the server's settings; 0 where it
+     is free or the server did not say. */
+  function anonymityFee(role) {
+    var fees = settings().anonymityFees;
+    var fee = fees && fees[role];
+    return typeof fee === 'number' && fee > 0 ? fee : 0;
   }
 
   function labelled(text, control) {

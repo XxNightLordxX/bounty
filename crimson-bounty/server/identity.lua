@@ -85,6 +85,17 @@ end
 
 --- Minutes this player has been connected, or nil if we never saw them
 --- arrive (a resource restart mid-session, for instance).
+--- Seconds since a watched session began, for comparing against the time
+--- of a death: minutes floored to a whole number cannot say which came
+--- first. Nil exactly when sessionMinutes is.
+---@param cid string
+---@return number|nil
+function Identity.sessionSeconds(cid)
+    local began = sessionStart[cid]
+    if not began or began.observed then return nil end
+    return os.time() - began.at
+end
+
 function Identity.sessionMinutes(cid)
     local began = sessionStart[cid]
     -- Nil for a session we did not watch start: unknown, not zero. Treating
@@ -230,7 +241,12 @@ end
 
 --- True when a job triggers a law enforcement threat advisory (§7.5).
 function Identity.isProtectedJob(job)
-    if type(job) ~= 'table' or not Config.Advisory.Enabled then return false end
+    -- Not gated on the advisory being switched on. Whether officers are
+    -- told is one setting; whether an officer is who they are is not a
+    -- setting at all. Gated, turning the bulletins off also turned off
+    -- Targeting.AllowProtectedJobTargets = false and every warning and
+    -- listing flag, and put officers back on the board without a word.
+    if type(job) ~= 'table' then return false end
     local jobType = job.type and tostring(job.type):lower() or nil
     if jobType and Config.Advisory.TriggerJobTypes[jobType] then return true end
     local name = job.name and tostring(job.name):lower() or nil
@@ -322,7 +338,7 @@ end
 ---@param source number
 ---@return boolean dead, boolean lastStand, boolean resolved
 function Identity.deathState(source)
-    for _, provider in ipairs(Config.Completion.DeathStateProviders) do
+    for _, provider in ipairs(Config.Completion.DeathStateProviders or {}) do
         if GetResourceState(provider.resource) == 'started' then
             local ok, dead = pcall(function() return exports[provider.resource][provider.dead](nil, source) end)
             local ok2, last = pcall(function() return exports[provider.resource][provider.lastStand](nil, source) end)

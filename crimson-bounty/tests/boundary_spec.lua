@@ -257,6 +257,50 @@ describe('the notification budget', function()
         end)
     end)
 
+    --- A receipt is outside it (§14.40). Relay messages spend the same
+    --- budget, so a chatty hunter used to swallow "Contract fulfilled".
+    local function told(title)
+        for _, note in ipairs(Natives.calls.notifications) do
+            if note.title == title then return true end
+        end
+        return false
+    end
+
+    local function spent(s)
+        for _ = 1, Config.Notifications.MaxPerRecipientPerMinute + 2 do
+            s.notify.toCitizen('CREATOR1', 'Contract message', 'x')
+        end
+        Natives.calls.notifications = {}
+    end
+
+    it('still tells the creator their contract was fulfilled', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        spent(s)
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        -- As the photo route sends it once the claim has paid.
+        s.notify.contractCompleted(s.storage.readContract(c.id), f.hunter,
+            'https://cdn.fivemanage.com/p.png')
+        truthy(told('Contract fulfilled'), 'the receipt was lost to the budget')
+    end)
+
+    it('still tells the creator the target bought out their contract', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[2].PlayerData.money.bank = 200000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+            bailoutAmount = 5000,
+        })
+        spent(s)
+        truthy(s.bailout.buy(f.target, c.id))
+        truthy(told('Contract closed'), 'the receipt was lost to the budget')
+    end)
+
     it('still binds by the hour once the minutes have rolled', function()
         local s = newStack()
         fixture(s)

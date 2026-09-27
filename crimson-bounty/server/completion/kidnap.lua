@@ -549,7 +549,16 @@ function Kidnap.start()
                 running = false
                 return
             end
-            Kidnap.tick(Config.Kidnap.TickMs)
+            -- One throw — a storage read on a connection that dropped, an
+            -- inventory export raising inside the payout — ended this
+            -- thread with `running` still set. No handover on the server
+            -- moved again until a restart, and every one armed after it said
+            -- it was armed and sat at nought. The maintenance tick and the
+            -- condition sampler are wrapped for the same reason.
+            local ok, err = pcall(Kidnap.tick, Config.Kidnap.TickMs)
+            if not ok then
+                print(('[crimson-bounty] handover tick failed: %s'):format(tostring(err)))
+            end
         end
     end)
 end

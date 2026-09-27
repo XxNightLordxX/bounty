@@ -3262,6 +3262,109 @@ async function main() {
     });
   })();
 
+  /* What the server's settings say the Place form and the accept dialog
+     should offer. Each was drawn whatever the server ran, and each was then
+     refused, clamped to nothing, or charged without being shown. */
+  await (async function formFollowsTheServer() {
+    function wallet(caps) {
+      return { ok: true, data: {
+        cash: 100000, bank: 50000, dirty: 0,
+        items: [], weapons: [], inventoryRead: true,
+        caps: Object.assign({
+          itemsEnabled: false, weaponsEnabled: false, slots: 3,
+          cash: 250000, bank: 500000,
+          cashEnabled: true, bankEnabled: true, dirtyEnabled: false,
+          bonusPercent: 200
+        }, caps || {})
+      } };
+    }
+    async function place(settings, caps) {
+      const app = boot({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: settings || {} } },
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+        ledger: LEDGER,
+        browseTargets: { ok: true, data: { people: [], total: 0, page: 1, pages: 1 } },
+        rewardOptions: wallet(caps)
+      });
+      await settle(); await settle();
+      app.document.querySelectorAll('.tab')
+        .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+      await settle(); await settle();
+      return app;
+    }
+    function live(app, id) {
+      return app.view.all().filter(function (n) { return n._id === id; })[0] || null;
+    }
+
+    const noBuyouts = await place({ buyouts: false });
+    it('draws no buyout price on a server without buyouts', function () {
+      falsy(live(noBuyouts, 'bailout'),
+        'a price the server takes and quietly sets to nothing');
+    });
+    const buyouts = await place({ buyouts: true });
+    it('still draws it where there are buyouts', function () {
+      truthy(live(buyouts, 'bailout'));
+    });
+
+    const noBonus = await place({}, { bonusPercent: 0 });
+    it('draws no bonus on a server whose bonus ceiling is nought', function () {
+      falsy(live(noBonus, 'bonus'), 'offered at 50% with no ceiling at all');
+    });
+    it('still bounds the bonus by a ceiling above nought', function () {
+      eq(String(live(buyouts, 'bonus').max), '200');
+    });
+
+    const feeFree = await place({});
+    const feeCharged = await place({ anonymityFees: { creator: 7500, hunter: 0 } });
+    it('says what placing anonymously costs, where it costs anything', function () {
+      truthy(feeCharged.view.textContent.indexOf('$7,500') !== -1,
+        'charged 7,500 no screen had shown: ' + feeCharged.view.textContent);
+      falsy(/costs/.test(feeFree.view.textContent.replace(/[^]*Place anonymously/, '').slice(0, 20)),
+        'a free server shows no price');
+    });
+
+    /* The accept dialog, and what the page says once the server has
+       answered. */
+    async function accepting(settings, reply) {
+      let accepted = null;
+      const board = JSON.parse(JSON.stringify(BOARD));
+      board.data.settings = Object.assign({}, board.data.settings, settings || {});
+      const app = boot({
+        list: board, mine: MINE, ledger: LEDGER,
+        accept: function (body) { accepted = body; return reply; }
+      });
+      await settle(); await settle();
+      app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
+      })[0].onclick();
+      return { app: app, sent: function () { return accepted; } };
+    }
+
+    const priced = await accepting({ anonymityFees: { creator: 0, hunter: 1000 } },
+      { ok: true, data: { myAnonymous: true } });
+    it('says what taking one anonymously costs before it is chosen', function () {
+      truthy(priced.app.view.textContent.indexOf('$1,000') !== -1,
+        'the fee was charged and never shown: ' + priced.app.view.textContent);
+    });
+
+    const named = await accepting({}, { ok: true, data: { myAnonymous: false } });
+    click(named.app, 'Anonymously');
+    await settle(); await settle();
+    it('says so when the server took them under their name', function () {
+      truthy(named.sent() && named.sent().anonymous === true, 'the choice was sent');
+      falsy(named.app.notice().indexOf('anonymously') !== -1,
+        'told "accepted, anonymously" while the client sees their name: ' + named.app.notice());
+      truthy(named.app.notice().indexOf('under your name') !== -1, named.app.notice());
+    });
+
+    const anon = await accepting({}, { ok: true, data: { myAnonymous: true } });
+    click(anon.app, 'Anonymously');
+    await settle(); await settle();
+    it('and that they are anonymous when they are', function () {
+      truthy(anon.app.notice().indexOf('anonymously') !== -1, anon.app.notice());
+    });
+  })();
+
   /* A refusal the player can act on has to reach the screen as words.
    *
    * no_player is what the gate returns while the framework is still loading
@@ -5913,6 +6016,24 @@ async function main() {
         eq(composeBox(app).value, 'Meet me at the pier at ten');
       });
       it('and sent nothing on the way', function () { eq(sent.length, 0); });
+    })();
+
+    /* The message box's limit is the server's, not a number in the page. */
+    await (async function messageBoxFollowsTheServer() {
+      const app = boot({
+        list: boardWith({ messageMaxLength: 90 }), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [placedCard({ role: 'hunter',
+          hunters: undefined, myAlias: 'Operative #1' })], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        readThread: { ok: true, data: [] }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Message'); await settle(); await settle();
+      it('bounds the message box by the length the server holds messages to', function () {
+        truthy(composeBox(app), 'the thread opened');
+        eq(String(composeBox(app).maxLength), '90');
+      });
     })();
 
     /* The contract closes while its thread is open. The re-read on the push

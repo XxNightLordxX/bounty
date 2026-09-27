@@ -120,6 +120,34 @@ local DEFAULTS = {
     },
     Immunity = {
         MinTargetPlaytimeHours = 5,
+        MinTargetSessionMinutes = 10,
+    },
+    --- The safety switches. Each was added to a section operators already
+    --- had, and each is read as a plain truth test, so on a config taken
+    --- before it the protection was simply off: a victim's client naming any
+    --- hunter as the killer with no damage observed, a stake repriced
+    --- between the board and Accept, an informant naming hunters never near
+    --- the target. A switch the operator never had is not one they turned
+    --- off; one they set to false stays false.
+    Completion = {
+        RequireObservedDamage = true,
+        RejectLastStand = true,
+        --- A list, so filled whole or not at all: see isRecord.
+        DeathStateProviders = {
+            { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
+            { resource = 'qbx_medical',  dead = 'IsDead', lastStand = 'IsLaststand' },
+        },
+    },
+    Penalty = {
+        RequireDisclosureOnAccept = true,
+    },
+    Bailout = {
+        BlockWhileIncapacitated = true,
+    },
+    --- Owed deliveries tried per pass. Read inside the login timer, where a
+    --- nil is a comparison that throws with nobody to see it.
+    PendingEscrow = {
+        MaxRetriesPerLogin = 5,
     },
     --- Read while validating the text on every contract placed. A missing
     --- one is not a relaxed rule but a comparison or an ipairs against nil,
@@ -135,6 +163,7 @@ local DEFAULTS = {
     Notifications = {
         MaxPerRecipientPerMinute = 6,
         MaxPerRecipientPerHour = 40,
+        PushEnabled = true,
     },
     --- Read on the create path, where a nil cooldown is a comparison
     --- against nil rather than no cooldown.
@@ -146,12 +175,26 @@ local DEFAULTS = {
     Informant = {
         Cost = 25000,
         MaxPurchasesPerContract = 2,
+        RequireProximity = true,
     },
     --- Compared against a count in Kidnap.arm, so a missing one is not a
     --- disabled cap but a comparison against nil: every attempt to start a
     --- live delivery answers server_error.
     Kidnap = {
         MaxConcurrentCountdowns = 20,
+        Radius = 12.0,
+        TickMs = 1000,
+        RequireConscious = true,
+        RejectDead = true,
+        RejectLastStand = true,
+        RequireCoercion = true,
+        --- Absent, every detector reads as off, and with coercion required
+        --- no delivery could ever succeed — silently. A set, so an operator
+        --- who has one keeps exactly the detectors they left in it.
+        Coercion = {
+            handcuffed = true,
+            passengerOfHunter = true,
+        },
     },
     --- The board's page size, read straight into arithmetic in
     --- Projection.listing. Absent, it takes down `list` — the app's home
@@ -164,6 +207,7 @@ local DEFAULTS = {
     --- searchTargets and browseTargets, so a missing one empties the whole
     --- target picker rather than merely switching an advisory off.
     Advisory = {
+        AlwaysAlertTarget = true,
         TriggerJobTypes = { leo = true, police = true, ems = true, fire = true },
         TriggerJobNames = { doj = true, lawyer = true, ranger = true },
         RecipientJobTypes = { leo = true, police = true },
@@ -193,6 +237,23 @@ local function copyOf(value)
     local out = {}
     for k, v in pairs(value) do out[k] = copyOf(v) end
     return out
+end
+
+--- Whether a default is a record whose missing fields can be filled one by
+--- one, rather than a set or a list the operator owns whole.
+---
+--- A record's fields are separate settings: an item source with no
+--- maxPerStack is a gap. A set's entries are a choice: an operator who took
+--- ems out of the jobs that trigger an advisory, or a detector out of
+--- Kidnap.Coercion, had it put straight back by a fill that topped up every
+--- table, and a list was topped up by position — a denylist of two patterns
+--- came back with the shipped third and fourth appended.
+local function isRecord(value)
+    if type(value) ~= 'table' or #value > 0 then return false end
+    for _, v in pairs(value) do
+        if v ~= true then return true end
+    end
+    return false
 end
 
 local function applyConfigDefaults()
@@ -244,7 +305,7 @@ local function applyConfigDefaults()
                 Config[section][key] = copyOf(value)
                 filled[#filled + 1] = section .. '.' .. key
 
-            elseif type(value) == 'table' and type(held) == 'table' then
+            elseif isRecord(value) and type(held) == 'table' then
                 -- A setting the operator has but only half of. Filling the
                 -- missing fields matters as much as the whole entry: an
                 -- item source with no maxPerStack is a source nothing can
@@ -314,6 +375,14 @@ local function validateConfig()
         { 'Completion', 'MaxWeaponRange' },
         { 'Kidnap', 'CountdownSeconds' },
         { 'Kidnap', 'MaxTotalGraceMs' },
+        -- Squared for every Arm, and the countdown thread's own wait and
+        -- delta: a string here stopped every handover rather than one.
+        { 'Kidnap', 'Radius' },
+        { 'Kidnap', 'TickMs' },
+        -- Compared on every create and every payout.
+        { 'Immunity', 'MinTargetSessionMinutes' },
+        -- Inside the login timer.
+        { 'PendingEscrow', 'MaxRetriesPerLogin' },
         { 'Audit', 'MaxQueueSize' },
         { 'Audit', 'RetentionDays' },
         { 'Audit', 'ContractRetentionDays' },
@@ -854,7 +923,8 @@ function RetryWaiting()
     for cid, count in pairs(delivered) do
         modules.notify.toCitizen(cid, 'Outstanding payment',
             ('%d outstanding item%s been delivered.')
-                :format(count, count == 1 and ' has' or 's have'))
+                :format(count, count == 1 and ' has' or 's have'),
+            { bypassBudget = true })
     end
     return delivered
 end

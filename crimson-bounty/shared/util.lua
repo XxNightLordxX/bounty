@@ -167,10 +167,19 @@ function Util.sanitizeText(text, maxLength)
     if type(text) ~= 'string' then return nil end
     text = text:gsub('%c', ' '):gsub('%s+', ' '):gsub('^%s*(.-)%s*$', '%1')
     if text == '' then return nil end
-    if #text > maxLength then text = text:sub(1, maxLength) end
-    -- After the cut, not before: the cap counts bytes, so this is also what
-    -- removes the half of a character the cut left behind.
+    -- The cap counts characters, which is what the page's box counts and
+    -- what a VARCHAR holds. It counted bytes: a reason the box allowed, in
+    -- Polish or Russian, was cut to half its length after the creator had
+    -- paid for the contract, with nothing to say so.
+    --
+    -- A character is at most four bytes, so nothing past that many can
+    -- survive the cap; cutting there first bounds the work on a payload of
+    -- any size. The cut can split a character, which the pass that follows
+    -- removes.
+    if #text > maxLength * 4 then text = text:sub(1, maxLength * 4) end
     text = Util.toValidUtf8(text)
+    local cut = utf8.offset(text, maxLength + 1)
+    if cut and cut <= #text then text = text:sub(1, cut - 1) end
     -- Trailing space can be exposed by dropping a character off the end.
     text = text:gsub('^%s*(.-)%s*$', '%1')
     if text == '' then return nil end

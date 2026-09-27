@@ -1098,3 +1098,90 @@ describe('a config missing a section the code was built against', function()
         truthy(ok3, 'the board threw on a stripped config')
     end)
 end)
+
+describe('a safety switch added to a section the operator already had', function()
+    --- Each is read as a plain truth test, so absent was off, and none was
+    --- in the fill: on a config taken before it, the protection it shipped
+    --- with was simply not there.
+    local SWITCHES = {
+        { 'Completion', 'RequireObservedDamage' }, { 'Completion', 'RejectLastStand' },
+        { 'Penalty', 'RequireDisclosureOnAccept' }, { 'Informant', 'RequireProximity' },
+        { 'Bailout', 'BlockWhileIncapacitated' }, { 'Kidnap', 'RequireConscious' },
+        { 'Kidnap', 'RejectDead' }, { 'Kidnap', 'RejectLastStand' },
+        { 'Kidnap', 'RequireCoercion' }, { 'Notifications', 'PushEnabled' },
+        { 'Advisory', 'AlwaysAlertTarget' },
+    }
+
+    it('is on when the config never had it', function()
+        for _, entry in ipairs(SWITCHES) do
+            boot(function() Config[entry[1]][entry[2]] = nil end)
+            eq(Config[entry[1]][entry[2]], true,
+                'Config.' .. entry[1] .. '.' .. entry[2] .. ' was read as off')
+        end
+        resetConfig()
+    end)
+
+    it('stays off when the operator turned it off', function()
+        for _, entry in ipairs(SWITCHES) do
+            boot(function() Config[entry[1]][entry[2]] = false end)
+            eq(Config[entry[1]][entry[2]], false, entry[1] .. '.' .. entry[2])
+        end
+        resetConfig()
+    end)
+
+    it('fills the numbers the handover, the session floor and the login retry use', function()
+        boot(function()
+            Config.Kidnap.Radius, Config.Kidnap.TickMs = nil, nil
+            Config.Immunity.MinTargetSessionMinutes = nil
+            Config.PendingEscrow.MaxRetriesPerLogin = nil
+        end)
+        eq(Config.Kidnap.Radius, 12.0)
+        eq(Config.Kidnap.TickMs, 1000)
+        eq(Config.Immunity.MinTargetSessionMinutes, 10)
+        eq(Config.PendingEscrow.MaxRetriesPerLogin, 5)
+        resetConfig()
+    end)
+
+    it('fills the coercion detectors and death providers when they are absent', function()
+        boot(function()
+            Config.Kidnap.Coercion = nil
+            Config.Completion.DeathStateProviders = nil
+        end)
+        eq(Config.Kidnap.Coercion.handcuffed, true,
+            'with coercion required and no detectors, no delivery can ever succeed')
+        eq(#Config.Completion.DeathStateProviders, 2)
+        resetConfig()
+    end)
+end)
+
+describe('a set or a list the operator wrote', function()
+    --- The fill topped up every table it found half-filled. For a set that
+    --- is putting back an entry the operator took out.
+    it('keeps a job the operator took out of the advisory triggers out', function()
+        boot(function()
+            Config.Advisory.TriggerJobTypes = { leo = true, police = true }
+        end)
+        falsy(Config.Advisory.TriggerJobTypes.ems, 'put back a job the operator removed')
+        falsy(Config.Advisory.TriggerJobTypes.fire)
+        resetConfig()
+    end)
+
+    it('keeps a coercion detector the operator took out out', function()
+        boot(function() Config.Kidnap.Coercion = { handcuffed = true } end)
+        falsy(Config.Kidnap.Coercion.passengerOfHunter,
+            'a detector the operator removed was switched back on')
+        resetConfig()
+    end)
+
+    it('does not append to a denylist by position', function()
+        boot(function() Config.Reason.PatternDenylist = { 'discord%.gg' } end)
+        eq(#Config.Reason.PatternDenylist, 1)
+        resetConfig()
+    end)
+
+    it('still fills a record the operator has only part of', function()
+        boot(function() Config.Sources.item = { enabled = true } end)
+        eq(Config.Sources.item.maxStacks, 10, 'an item source with no stack cap')
+        resetConfig()
+    end)
+end)

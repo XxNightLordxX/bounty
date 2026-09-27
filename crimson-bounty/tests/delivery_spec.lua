@@ -310,6 +310,40 @@ describe('a kill whose victim leaves', function()
             .. 'no kill to verify: ' .. tostring(err))
     end)
 
+    it('pays for the kill when the target quits and comes straight back', function()
+        local s, f, c = killed()
+        s.photo.loadAllowedHosts()
+        -- A long-standing session, so the floor is not already in play.
+        s.identity.beginSession('TARGET01', false)
+        Env.advance(5)
+        s.bridges.onPlayerDropped(s, 'TARGET01')
+        local target = Env.players[2]
+        Env.removePlayer(2)
+        Env.advance(15)
+        Env.players[2] = target
+        Env.byCitizen['TARGET01'] = 2
+        Env.players[2].PlayerData.metadata.isdead = false
+        -- What the login bridge does for a real login.
+        s.identity.confirmSession('TARGET01')
+        eq(s.identity.sessionMinutes('TARGET01'), 0, 'a new session, just begun')
+
+        local token, err = s.photo.issue(f.hunter, c.id)
+        truthy(token, tostring(err))
+        local ok, why = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        truthy(ok, 'the kill was refused as the target having just arrived: ' .. tostring(why))
+        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+    end)
+
+    it('still protects a target who has just arrived from a death after it', function()
+        local s = newStack()
+        local f = fixture(s)
+        s.identity.confirmSession('TARGET01')
+        eq(s.contracts.isImmune(f.target,
+            { deathAt = require('crimson-bounty.shared.util').monotonicMs() }), true,
+            'a kill made after they arrived is the thing the floor is for')
+        local _ = f
+    end)
+
     it('still lets the kill go with the hunter who made it', function()
         local s, f, c = killed()
         s.death.clearPlayer('HUNTER01')

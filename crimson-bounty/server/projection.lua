@@ -165,6 +165,9 @@ function Projection.contract(contract, viewerCid)
     elseif role == 'hunter' then
         local mine = Storage.readHunter(contract.id, viewerCid)
         out.myAlias = mine and mine.alias or nil
+        -- Their own, so nothing is disclosed. The page worded "accepted,
+        -- anonymously" from the button pressed, not from what was recorded.
+        out.myAnonymous = mine and mine.anon == true or false
         out.myClaims = mine and mine.claims or 0
         if Kidnap then
             out.kidnapProgress = Kidnap.progress(contract.id, viewerCid)
@@ -249,6 +252,16 @@ local function buildListing(viewerCid, page)
             -- and Threads on a server with the relay switched off, and every
             -- message was refused.
             relay = Config.Relay.Enabled == true,
+            -- The message box's limit. The page hard-coded 200 whatever the
+            -- server held messages to.
+            messageMaxLength = Config.Relay.MaxLength,
+            -- What anonymity costs, shown before it is chosen (§14.44).
+            -- Charged, but never shown anywhere, on a server that set one.
+            anonymityFees = {
+                creator = Config.Anonymity.CreatorFee or 0,
+                hunter = Config.Anonymity.HunterFee or 0,
+                account = Config.Anonymity.FeeAccount or 'bank',
+            },
             -- Whether this server runs buyouts at all, so the page can tell
             -- "the client offered none" from "there are none here".
             buyouts = Config.Bailout.Enabled == true,
@@ -471,7 +484,7 @@ Projection.ALLOWED_KEYS = {
         creatorName = true, creatorAnonymous = true,
     },
     creator = { bailoutAmount = true, hunters = true },
-    hunter  = { myAlias = true, myClaims = true, kidnapProgress = true },
+    hunter  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
                 bailoutPaid = true },
     public  = {},

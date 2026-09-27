@@ -260,30 +260,46 @@ describe('sanitizing text', function()
         return utf8 and utf8.len(text) ~= nil
     end
 
-    it('does not cut a character in half at the length cap', function()
-        -- The cap counts bytes. An emoji straddling it left two of its four
-        -- bytes behind: valid text in, invalid UTF-8 out, headed for a
-        -- utf8mb4 column that rejects it and a JSON message the page cannot
-        -- parse — which drops the whole reply and freezes the app.
-        local text = string.rep('a', 30) .. '\240\159\148\170 blade'
-        local out = Util.sanitizeText(text, 32)
-        truthy(out)
-        truthy(wellFormed(out), 'the cap must fall on a character boundary')
-        eq(out, string.rep('a', 30), 'and the half-character is dropped, not kept')
+    it('counts characters at the length cap, not bytes', function()
+        -- The page's box counts characters, and so does a VARCHAR. Counted
+        -- in bytes, a 140-character reason in accented or Cyrillic text was
+        -- cut to 70 after the contract had been paid for.
+        local text = string.rep('\195\169', 100) .. string.rep('a', 40)
+        eq(utf8.len(text), 140)
+        eq(Util.sanitizeText(text, 140), text, 'the reason the box allowed was cut short')
     end)
 
-    it('does not cut a two-byte character in half either', function()
-        local text = string.rep('b', 31) .. '\195\169 end'
-        local out = Util.sanitizeText(text, 32)
-        truthy(out)
-        truthy(wellFormed(out), 'a two-byte character is just as splittable')
+    it('cuts on a character boundary', function()
+        local text = string.rep('a', 30) .. '\240\159\148\170 blade'
+        local out = Util.sanitizeText(text, 31)
+        truthy(wellFormed(out), 'the cap must fall on a character boundary')
+        eq(out, string.rep('a', 30) .. '\240\159\148\170', 'the emoji is one character')
+
+        local two = Util.sanitizeText(string.rep('b', 31) .. '\195\169 end', 32)
+        truthy(wellFormed(two))
+        eq(two, string.rep('b', 31) .. '\195\169')
     end)
 
     it('keeps a character that fits exactly', function()
         local text = string.rep('c', 28) .. '\240\159\148\170'
-        local out = Util.sanitizeText(text, 32)
+        local out = Util.sanitizeText(text, 29)
         eq(out, text, 'nothing straddles the cap here')
         truthy(wellFormed(out))
+    end)
+
+    it('does no more work on a huge payload than on a full one', function()
+        -- The validating pass walks every byte it is given, so it is given
+        -- no more than the cap could keep: four bytes a character.
+        local real, longest = Util.toValidUtf8, 0
+        Util.toValidUtf8 = function(text)
+            longest = math.max(longest, #text)
+            return real(text)
+        end
+        local out = Util.sanitizeText(string.rep('\240\159\148\170', 250000), 32)
+        Util.toValidUtf8 = real
+        eq(utf8.len(out), 32)
+        truthy(wellFormed(out))
+        truthy(longest <= 32 * 4, 'a megabyte walked to keep 32 characters: ' .. longest)
     end)
 
     it('drops bytes that were never valid to begin with', function()

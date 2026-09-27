@@ -98,6 +98,44 @@ describe('coming back to a contract', function()
         truthy(told, 'and told why')
     end)
 
+    it('is not charged twice for anonymity on the same contract', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Anonymity.HunterFee = 1000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        local start = money(3)
+        truthy(s.contracts.accept(f.hunter, c.id, true))
+        eq(start - money(3), 1000, 'the first stint pays for it')
+        truthy(s.contracts.abandon(f.hunter, c.id))
+
+        -- Nothing left to pay a second fee with.
+        Env.players[3].PlayerData.money.cash, Env.players[3].PlayerData.money.bank = 0, 0
+        local ok, err = s.contracts.accept(f.hunter, c.id, true)
+        truthy(ok, 'refused a contract they were already anonymous on: ' .. tostring(err))
+        falsy(s.projection.contract(s.storage.readContract(c.id), 'CREATOR1').hunters[1].name,
+            'and still anonymous')
+    end)
+
+    it('tells the page what the server recorded', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.abandon(f.hunter, c.id))
+        truthy(s.contracts.accept(f.hunter, c.id, true), 'back, asking to be anonymous')
+        eq(s.projection.contract(s.storage.readContract(c.id), 'HUNTER01').myAnonymous, false,
+            'the page said "accepted, anonymously" from the button that was pressed')
+        local settings = s.projection.listing('HUNTER01', 1).settings
+        eq(settings.anonymityFees.hunter, Config.Anonymity.HunterFee)
+        eq(settings.messageMaxLength, Config.Relay.MaxLength)
+    end)
+
     it('may still come back anonymous after an anonymous stint', function()
         local s = newStack()
         local f = fixture(s)
@@ -217,5 +255,77 @@ describe('a handover re-armed and then walked away from', function()
         local answer = s.app.handlers.kidnapProgress(f.hunter, { id = c.id })
         falsy(type(answer) == 'table' and answer.done, 'the poller told a hunter who had just '
             .. 'walked away that a handover from a minute earlier had failed')
+    end)
+end)
+
+describe('owed goods that will not fit, with money queued behind them', function()
+    --- A pass tries MaxRetriesPerLogin entries and an entry that cannot be
+    --- handed over stays where it was. The mysql store returns the queue
+    --- oldest first, so the same goods were tried on every pass and a buyout
+    --- premium queued after them was never reached, however many times the
+    --- player logged in.
+    for _, which in ipairs({ 'memory', 'mysql' }) do
+        it(which .. ': the money is reached', function()
+            local s = which == 'mysql' and mysqlStack() or newStack()
+            local names, inventory = {}, {}
+            for i = 1, Config.PendingEscrow.MaxRetriesPerLogin + 1 do
+                names[i] = 'goods' .. i
+                inventory[i] = { name = names[i], count = 1 }
+            end
+            local f = fixture(s, { creatorInventory = inventory })
+            local items = {}
+            for i = 1, #names do items[i] = { name = names[i], count = 1 } end
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', reward = { baseline = { items = items } },
+            })
+            truthy(c, 'placed')
+            truthy(s.contracts.accept(f.hunter, c.id, false))
+            Env.players[3]._inventoryFull = true
+            truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+            eq(#s.storage.readPending('HUNTER01'), #names, 'every stack owed')
+            Env.advance(1)
+            truthy(s.escrow.owe('HUNTER01', c.id, 4000, 'bank', 'test'))
+
+            local before = Env.players[3].PlayerData.money.bank
+            for _ = 1, 3 do s.escrow.retryPending('HUNTER01') end
+            eq(Env.players[3].PlayerData.money.bank - before, 4000,
+                'the same goods were tried on every pass and the money behind them never was')
+            eq(#s.storage.readPending('HUNTER01'), #names, 'and the goods are still owed')
+        end)
+    end
+end)
+
+describe('the handover countdown thread', function()
+    --- Nothing wrapped the tick, so one error killed the thread with its
+    --- running flag still set, and Kidnap.start never made another.
+    it('keeps counting after one tick throws', function()
+        local s, f, c = handover(1)
+        local before = #Env.threads
+        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        eq(#Env.threads - before, 1, 'arming started the countdown thread')
+
+        local realWait, realRead, realPrint = _G.Wait, s.storage.readContract, _G.print
+        local thrown = false
+        _G.Wait = coroutine.yield
+        _G.print = function() end
+        s.storage.readContract = function(id)
+            if not thrown then
+                thrown = true
+                error('mysql: connection lost')
+            end
+            return realRead(id)
+        end
+        local co = coroutine.create(Env.threads[#Env.threads])
+        for _ = 1, Config.Kidnap.CountdownSeconds + 5 do
+            if coroutine.status(co) == 'dead' then break end
+            coroutine.resume(co)
+        end
+        _G.Wait, s.storage.readContract, _G.print = realWait, realRead, realPrint
+
+        truthy(thrown, 'the read failed once')
+        local outcome = s.kidnap.outcome(c.id, 'HUNTER01')
+        eq(outcome and outcome.outcome, 'paid',
+            'one failed read stopped every handover on the server for good')
+        local _ = f
     end)
 end)

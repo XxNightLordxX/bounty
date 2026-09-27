@@ -46,7 +46,8 @@ function Bridges.onPlayerReady(modules, src)
     if delivered > 0 then
         modules.notify.toCitizen(actor.cid, 'Outstanding payment',
             ('%d outstanding item%s been delivered.')
-                :format(delivered, delivered == 1 and ' has' or 's have'))
+                :format(delivered, delivered == 1 and ' has' or 's have'),
+            { bypassBudget = true })
     end
     return delivered
 end

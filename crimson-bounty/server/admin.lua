@@ -217,7 +217,8 @@ function Admin.void(src, contractId, reason)
         { reason = Util.sanitizeText(reason, 120) or 'none given' })
 
     Notify.toCitizen(contract.creator_cid, 'Contract voided',
-        'Staff closed your contract. Your escrow has been returned.')
+        'Staff closed your contract. Your escrow has been returned.',
+        { bypassBudget = true })
 
     return true
 end

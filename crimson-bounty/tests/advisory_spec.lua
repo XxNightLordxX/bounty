@@ -107,6 +107,46 @@ describe('threat advisory', function()
     end)
 end)
 
+describe('with the advisory switched off', function()
+    --- Whether officers are told is one setting. It also decided whether an
+    --- officer counted as one, so switching the bulletins off put officers
+    --- back on the board on a server that had forbidden it.
+    it('still refuses a contract on an officer where that is forbidden', function()
+        local s, f = seeded(leoJob('trooper'))
+        Config.Advisory.Enabled = false
+        Config.Targeting.AllowProtectedJobTargets = false
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        falsy(c, 'placed on a sworn officer on a server that forbids it')
+        eq(err, CB.ERR.TARGET_IS_LEO)
+    end)
+
+    it('still marks a contract on an officer, so both sides are warned', function()
+        local s, f = seeded(leoJob('trooper'))
+        Config.Advisory.Enabled = false
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        truthy(c)
+        eq(s.storage.readContract(c.id).target_protected, true)
+        eq(countNotifications('THREAT ADVISORY'), 0, 'and sends no bulletin')
+    end)
+
+    it('gives the officer the paranoid alert in place of the advisory', function()
+        local s, f = seeded(leoJob('trooper'))
+        Config.Advisory.Enabled = false
+        s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        local found = false
+        for _, note in ipairs(Natives.calls.notifications) do
+            if tostring(note.content):find('eyes on you') then found = true end
+        end
+        truthy(found, 'an officer with a price on their head was told nothing at all')
+    end)
+end)
+
 describe('app access', function()
     it('bars every law enforcement and emergency job from the app', function()
         local s = newStack()

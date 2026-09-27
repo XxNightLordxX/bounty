@@ -231,9 +231,21 @@ end
 function Contracts.isImmune(targetActor, opts)
     -- Session length is measured by this resource, so it is always known
     -- for anyone who connected while it was running.
+    local deathAgo = opts and opts.deathAt
+        and ((Util.monotonicMs() - opts.deathAt) / 1000) or nil
+
     local session = Identity.sessionMinutes(targetActor.cid)
     if session ~= nil and session < Config.Immunity.MinTargetSessionMinutes then
-        return true, CB.ERR.TARGET_JUST_ON
+        -- Except a claim on a death from before this session began. A target
+        -- who quit while dead and came straight back started a new session,
+        -- and the floor — ten minutes, against a proof window of one —
+        -- refused the hunter standing over the body, told them to wait, and
+        -- let the kill expire. Quitting was already not a way out of a kill;
+        -- rejoining was.
+        local sessionAgo = Identity.sessionSeconds and Identity.sessionSeconds(targetActor.cid)
+        if not (deathAgo ~= nil and sessionAgo ~= nil and deathAgo > sessionAgo) then
+            return true, CB.ERR.TARGET_JUST_ON
+        end
     end
 
     local hours = Identity.playtimeHours(targetActor)
@@ -260,8 +272,6 @@ function Contracts.isImmune(targetActor, opts)
         local since = Death.sinceRespawn(targetActor.cid)
         if since and since < Config.Immunity.PostRespawnSeconds then
             local respawnedAgo = since
-            local deathAgo = opts and opts.deathAt
-                and ((Util.monotonicMs() - opts.deathAt) / 1000) or nil
             local claimPredatesRespawn = deathAgo ~= nil and deathAgo > respawnedAgo
             if not claimPredatesRespawn then return true, CB.ERR.TARGET_JUST_UP end
         end
@@ -670,8 +680,7 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- and the thread are the same ones, so a creator who was shown
     -- "Operative #1 (their name)" and that operative's messages knows
     -- exactly who the anonymous Operative #1 is — and the fee used to be
-    -- taken for it all the same. Named again, and charged nothing, the way
-    -- a hunter who cannot cover the fee is simply named.
+    -- taken for it all the same. Named again, charged nothing, and told why.
     local renamed = false
     if previous and not previous.anon and anonymous then
         anonymous = false
@@ -742,8 +751,14 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- the one thing in this resource that cannot be given back once it has
     -- been lost, so it is not something to downgrade on somebody's behalf.
     -- Every refusal from here on puts the fee back.
+    --
+    -- Once per contract. Coming back anonymous after an anonymous stint is
+    -- the same alias and the same thread, anonymity already paid for here;
+    -- charging it again bought nothing, and a hunter who could not cover
+    -- the second fee was refused a contract they were already anonymous on.
     local feeAccount = Config.Anonymity.FeeAccount or 'bank'
-    local fee = (anonymous and (Config.Anonymity.HunterFee or 0) > 0)
+    local paidBefore = previousAnon == true
+    local fee = (anonymous and not paidBefore and (Config.Anonymity.HunterFee or 0) > 0)
         and Config.Anonymity.HunterFee or 0
     if fee > 0 and not Util.charge(actor.player, feeAccount, fee) then
         if advanced then
@@ -1342,7 +1357,8 @@ function Contracts.cancel(actor, contractId)
         and ('Nobody had taken it. Most of what you put up is back; %d thing(s) '
              .. 'would not fit and are waiting for you — they arrive when you '
              .. 'next have room.'):format(owed)
-        or 'Nobody had taken it, so everything you put up has been returned.')
+        or 'Nobody had taken it, so everything you put up has been returned.',
+        { bypassBudget = true })
     return true, nil, { owed = owed }
 end
 

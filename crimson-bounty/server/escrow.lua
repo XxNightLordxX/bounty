@@ -16,9 +16,21 @@ local Storage, Audit
 --- the earliest moment to try them again. See Escrow.retryWaiting.
 local waiting = {}
 
+--- When each queued entry that could not be handed over was last tried, by
+--- citizen id and then pending entry id, as an attempt number.
+---
+--- A pass tries at most MaxRetriesPerLogin entries, and one that cannot be
+--- handed over stays queued where it was. Taken oldest first, the same five
+--- items that would not fit were tried on every pass for ever, and whatever
+--- was queued behind them — a buyout premium in cash, which always fits —
+--- was never tried at all. Least recently tried goes first instead.
+local lastTried = {}
+local attempts = 0
+
 function Escrow.init(storage, audit)
     Storage, Audit = storage, audit
     waiting = {}
+    lastTried = {}
 end
 
 --- Remember that this player has a delivery queued, so the tick tries it
@@ -1106,15 +1118,28 @@ end
 ---@param cid string
 ---@return integer delivered
 function Escrow.retryPending(cid)
-    local queued = Storage.readPending(cid)
+    local queued = Storage.readPending(cid) or {}
     local delivered = 0
+    local tried = lastTried[cid] or {}
 
-    for i = 1, math.min(#queued, Config.PendingEscrow.MaxRetriesPerLogin) do
-        local entry = queued[i]
+    -- Least recently tried first; among entries tried equally long ago
+    -- (never, to begin with), the oldest first, as before.
+    local order = {}
+    for i = 1, #queued do order[i] = i end
+    table.sort(order, function(a, b)
+        local ta, tb = tried[queued[a].id] or 0, tried[queued[b].id] or 0
+        if ta ~= tb then return ta < tb end
+        return a < b
+    end)
+
+    local gone, stillTried, left = {}, {}, 0
+    for k = 1, math.min(#queued, Config.PendingEscrow.MaxRetriesPerLogin or 0) do
+        local entry = queued[order[k]]
         local line = Storage.readEscrowLine(entry.line_id)
         if line and line.state == CB.ESCROW_STATE.HELD
             and (line.owed_to == nil or line.owed_to == cid) then
             local claimed = Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING)
+            local handed = false
             if claimed then
                 if Escrow.deliver(cid, line) then
                     if not Storage.settleEscrowLine(line.id, cid) then
@@ -1123,14 +1148,38 @@ function Escrow.retryPending(cid)
                     end
                     Storage.clearPending(entry.id)
                     delivered = delivered + 1
+                    handed = true
+                    gone[entry.id] = true
                 else
                     Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
                 end
             end
+            if not handed then
+                attempts = attempts + 1
+                stillTried[entry.id] = attempts
+            end
         else
             Storage.clearPending(entry.id)
+            gone[entry.id] = true
         end
     end
+
+    -- Carried forward for entries this pass did not reach; forgotten for
+    -- the ones no longer queued, so this is bounded by the queue.
+    for i = 1, #queued do
+        local id = queued[i].id
+        if not gone[id] then
+            left = left + 1
+            if stillTried[id] == nil and tried[id] ~= nil then stillTried[id] = tried[id] end
+        end
+    end
+    lastTried[cid] = next(stillTried) ~= nil and stillTried or nil
+
+    -- Whatever is still owed is tried again while they are online, not only
+    -- at their next login. Only what this process queued was ever in that
+    -- set, so pockets still full at login — or a queue longer than one pass
+    -- — waited for a relog nobody had asked for.
+    if left > 0 then Escrow.noteWaiting(cid) end
 
     if delivered > 0 then
         Audit.financial('pending_delivered', cid, nil, { count = delivered })
