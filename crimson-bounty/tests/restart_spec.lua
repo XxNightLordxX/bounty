@@ -878,6 +878,28 @@ describe('an acceptance as the deadline runs out', function()
         eq(money(3), before, 'refused, and the stake paid to the client all the same')
     end)
 
+    it('returns the stake of a hunter who joined after the deadline, when it then expires', function()
+        -- Open when checked, the deadline passing while the row is written,
+        -- and the pass only running after the acceptance has gone through:
+        -- the hunter is on it, but joined a clock that had already run out.
+        local main, s, f, c = due()
+        Env.advance(Config.Limits.DefaultDeadlineSeconds - 2)
+        local realRead = s.storage.readHunterById
+        local moved = false
+        s.storage.readHunterById = function(id)
+            if not moved then moved = true; Env.advance(5) end
+            return realRead(id)
+        end
+        local before = money(3)
+        truthy(s.contracts.accept(f.hunter, c.id, false), 'open when it was read again')
+        s.storage.readHunterById = realRead
+        eq(before - money(3), 2000, 'staked')
+        main.markPresenceChanged()
+        main.expire()
+        eq(s.storage.readContract(c.id).state, CB.STATE.EXPIRED)
+        eq(money(3), before, 'forfeited to a deadline that had passed before they joined')
+    end)
+
     it('does not forfeit a stake taken after the deadline passed', function()
         local main, s, f, c = due()
         -- Seconds left when the acceptance starts; gone by the time its row
@@ -1134,6 +1156,50 @@ describe('a crash part-way through an acceptance', function()
             eq(s2.storage.readHunter(c.id, 'HUNTER01').state, 'refused')
             truthy(s2.contracts.accept(s2.identity.resolve(3), c.id, false),
                 'and can be taken, by them or anyone')
+        end)
+    end
+end)
+
+describe('an extension written while the expiry pass ends a pause', function()
+    --- The extension reads the deadline, adds to it and writes it back. The
+    --- pass ending a pause in between moved the deadline on by the pause,
+    --- and an unguarded write of the figure read before it took that away.
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': keeps the pause as well as the extension', function()
+            local main, s = boot(mode)
+            Config.Limits.ExclusiveIdleReleaseSeconds = 0
+            Config.Limits.ExclusiveAttemptWindowSeconds = 0
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x',
+                reward = { baseline = { cash = 10000 } },
+            })
+            truthy(s.contracts.accept(f.hunter, c.id))
+            local before = s.storage.readContract(c.id).deadline_at
+            local target = Env.players[2]
+            Env.removePlayer(2)
+            main.markPresenceChanged()
+            main.expire()
+            Env.advance(600)
+            Env.players[2] = target
+            Env.byCitizen['TARGET01'] = 2
+
+            local real = s.storage.setDeadline
+            local once = false
+            s.storage.setDeadline = function(...)
+                if not once then
+                    once = true
+                    main.markPresenceChanged()
+                    main.expire()
+                end
+                return real(...)
+            end
+            truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE,
+                { seconds = 3600 }))
+            s.storage.setDeadline = real
+            truthy(once)
+            eq(s.storage.readContract(c.id).deadline_at - before, 600 + 3600,
+                mode .. ': one of the two was written over')
         end)
     end
 end)
