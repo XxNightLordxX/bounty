@@ -1,0 +1,256 @@
+--- Bugs found by walking whole player journeys rather than single calls.
+---
+--- Each of these needs several steps in order before it appears, which is why
+--- no per-module spec had caught them: every individual call does what it
+--- says, and the fault is in what the sequence leaves behind.
+
+describe('giving a later collection back by agreement', function()
+    --- A collection the creator took back stayed on sale, worth nothing.
+    ---
+    --- reduce_reward releases the named slot's escrow and left
+    --- contract.payout_slots where it was. So the emptied collection was still
+    --- one the contract sold: next_slot walks onto it, the board shows the
+    --- contract at nothing for the current collection, and a hunter who
+    --- eliminates the target for it is paid out of an empty slot.
+    ---
+    --- The app's own dialog already promised otherwise: "Collection N of M
+    --- goes back to the client. M-1 would remain."
+    local function twoCollections()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        Env.players[3].PlayerData.money.bank = 400000
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 } },
+                                 { baseline = { cash = 40000 } } } },
+        })
+        truthy(c, 'a contract with two collections')
+        eq(s.storage.readContract(c.id).payout_slots, 2)
+        truthy(s.contracts.accept(f.hunter, c.id), 'a hunter')
+        return s, f, c
+    end
+
+    it('leaves the contract with one collection fewer', function()
+        local s, f, c = twoCollections()
+
+        local proposal = s.amendments.propose(f.creator, c.id,
+            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+        truthy(proposal, 'propose giving collection 2 back')
+        truthy(s.amendments.respond(f.hunter, proposal.id, true), 'agreed')
+
+        eq(s.storage.readContract(c.id).payout_slots, 1,
+            'the collection was emptied and left on sale: next_slot walks onto '
+            .. 'it, the board shows the contract at nothing, and a hunter who '
+            .. 'kills the target for it is paid out of an empty slot')
+    end)
+
+    it('does not pay a hunter nothing for a real elimination', function()
+        local s, f, c = twoCollections()
+        local proposal = s.amendments.propose(f.creator, c.id,
+            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+        truthy(proposal)
+        truthy(s.amendments.respond(f.hunter, proposal.id, true))
+
+        -- Collection 1 pays out and the contract should close, because there
+        -- is no second collection any more.
+        local before = Env.players[3].PlayerData.money.cash
+                     + Env.players[3].PlayerData.money.bank
+        local ok = s.contracts.claimSlot(c.id, f.hunter.cid,
+            CB.FULFILMENT.ELIMINATION, {})
+        truthy(ok, 'the first collection is real and should pay')
+        local after = Env.players[3].PlayerData.money.cash
+                    + Env.players[3].PlayerData.money.bank
+        truthy(after > before, 'and it paid something')
+
+        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED,
+            'with the given-back collection gone, one elimination finishes the '
+            .. 'contract rather than leaving an empty slot to be worked for')
+    end)
+
+    it('still refuses to give back the collection being competed for', function()
+        -- The guard the fix must not have widened. It bites at apply time
+        -- rather than at propose time: Amendments.sanitize validates the shape
+        -- of a payload and has no contract to check a slot bound against, so
+        -- the proposal is made and refused when it is agreed.
+        --
+        -- That is a real wart — both parties can negotiate something that can
+        -- never succeed, and the app says "Waiting on the other party" about
+        -- it — but it is a separate concern from the money the slot count was
+        -- losing, and apply is the authority either way. Asserted here as what
+        -- it actually is rather than as what would be nicer.
+        local s, f, c = twoCollections()
+        local proposal = s.amendments.propose(f.creator, c.id,
+            CB.AMENDMENT.REDUCE_REWARD, { slot = 1 })
+        truthy(proposal, 'the proposal is made, un-validated against the slots')
+
+        local ok, err = s.amendments.respond(f.hunter, proposal.id, true)
+        falsy(ok, 'the live collection is not the creator\'s to take back')
+        eq(err, CB.ERR.INVALID_INPUT)
+        eq(s.storage.readContract(c.id).payout_slots, 2,
+            'and the count is untouched by a refused reduction')
+    end)
+
+    it('refuses to take one out of the middle', function()
+        -- The slots are a sequence next_slot walks, so removing a middle one
+        -- would renumber every slot after it and orphan the escrow filed
+        -- against their old numbers.
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        Env.players[3].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 } },
+                                 { baseline = { cash = 2000 } },
+                                 { baseline = { cash = 3000 } } } },
+        })
+        truthy(c, 'three collections')
+        truthy(s.contracts.accept(f.hunter, c.id))
+
+        local proposal = s.amendments.propose(f.creator, c.id,
+            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+        truthy(proposal)
+        local ok, err = s.amendments.respond(f.hunter, proposal.id, true)
+        falsy(ok, 'the middle one is not removable')
+        eq(err, CB.ERR.INVALID_INPUT)
+        eq(s.storage.readContract(c.id).payout_slots, 3)
+
+        -- The last one is.
+        local last = s.amendments.propose(f.creator, c.id,
+            CB.AMENDMENT.REDUCE_REWARD, { slot = 3 })
+        truthy(last)
+        truthy(s.amendments.respond(f.hunter, last.id, true))
+        eq(s.storage.readContract(c.id).payout_slots, 2)
+    end)
+end)
+
+describe('buying informant data on a contract that has closed', function()
+    --- The one purchase in this resource that is deliberately never refunded.
+    ---
+    --- An empty result costs the premium on purpose (§14.29): a refund would
+    --- turn the fee into a free oracle for "is anyone hunting me?". That makes
+    --- it the one purchase that MUST refuse before it charges — and there was
+    --- no state check anywhere in Informant.buy, so a tap on a card that had
+    --- not been redrawn yet took the money for information about a contract
+    --- that no longer existed.
+    local function closedContract(state)
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        Env.players[2].PlayerData.money.bank = 400000
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        truthy(s.contracts.resolve(c.id, state, f.creator.cid, nil, 'fixture'))
+        return s, f, c
+    end
+
+    for _, state in ipairs({ CB.STATE.CANCELLED, CB.STATE.EXPIRED,
+                             CB.STATE.BAILED_OUT, CB.STATE.VOIDED }) do
+        it('takes nothing once the contract is ' .. state, function()
+            local s, f, c = closedContract(state)
+            local before = Env.players[2].PlayerData.money.cash
+                         + Env.players[2].PlayerData.money.bank
+
+            local ok, err = s.informant.buy(f.target, c.id)
+
+            falsy(ok, 'a closed contract has nobody tracking anybody')
+            eq(err, CB.ERR.ALREADY_SETTLED)
+            eq(Env.players[2].PlayerData.money.cash
+               + Env.players[2].PlayerData.money.bank, before,
+               'and this is the one purchase that is never refunded, so it has '
+               .. 'to refuse BEFORE it charges')
+        end)
+    end
+
+    it('still sells information on a live contract', function()
+        -- The door the fix must not have closed.
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        Env.players[2].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id))
+        truthy(s.informant.buy(f.target, c.id),
+            'the ordinary case has to keep working')
+    end)
+end)
+
+describe('a target who has already paid to get out', function()
+    --- The card was identical before and after their money left.
+    ---
+    --- With a hunter engaged a buyout is queued rather than instant, so there
+    --- is a window in which the premium has gone and the contract has not
+    --- closed. The projection carried no sign of it, so the app could not draw
+    --- one: same "Buy out" button, same price, to a player whose money was
+    --- already spent. No money is lost — the second attempt is refused — but
+    --- the only thing they can do about a payment they cannot see is pay again.
+    local function paidAndWaiting()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        Env.players[2].PlayerData.money.bank = 400000
+        Env.players[3].PlayerData.money.bank = 400000
+        Config.Bailout.ProcessingDelaySeconds = 120
+
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 20000,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hunter, c.id), 'a hunter, so it queues')
+
+        local before = Env.players[2].PlayerData.money.cash
+                     + Env.players[2].PlayerData.money.bank
+        truthy(s.bailout.buy(f.target, c.id), 'the buyout is paid for')
+        truthy(Env.players[2].PlayerData.money.cash
+               + Env.players[2].PlayerData.money.bank < before,
+               'and the premium has actually left')
+        return s, f, c
+    end
+
+    it('tells the target their card, not the one they saw before paying', function()
+        local s, f, c = paidAndWaiting()
+        local view = (s.projection.onMe(f.target.cid) or {})[1]
+        truthy(view, 'the target still sees the contract while it closes')
+        eq(view.bailoutPaid, true,
+            'the projection carried no sign that it was paid for, so the page '
+            .. 'drew the same button at the same price')
+        local _ = c
+    end)
+
+    it('says nothing of the sort before they have paid', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 20000,
+        })
+        truthy(c)
+        local view = (s.projection.onMe(f.target.cid) or {})[1]
+        truthy(view, 'the target sees it')
+        falsy(view.bailoutPaid, 'nothing has been paid')
+        eq(view.bailoutAvailable, true, 'and the buyout is on offer')
+    end)
+
+    it('refuses a second payment, as it always did', function()
+        local s, f, c = paidAndWaiting()
+        local mid = Env.players[2].PlayerData.money.cash
+                  + Env.players[2].PlayerData.money.bank
+        local ok, err = s.bailout.buy(f.target, c.id)
+        falsy(ok, 'paying twice')
+        eq(err, CB.ERR.BUYOUT_PENDING)
+        eq(Env.players[2].PlayerData.money.cash
+           + Env.players[2].PlayerData.money.bank, mid,
+           'and nothing was taken for the second attempt')
+    end)
+end)

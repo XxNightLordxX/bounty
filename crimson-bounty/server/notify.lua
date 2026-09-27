@@ -154,9 +154,26 @@ function Notify.contractAccepted(contract, hunterRecord, activeHunters)
     Notify.push(hunterRecord.hunter_cid, 'accepted')
 end
 
+--- Tell the creator their contract was fulfilled.
+---
+--- The photograph is mentioned only when there is one. This took photoRef and
+--- never read it: the body was a single hardcoded string promising a
+--- verification photo, and the live-delivery route passes nil because a
+--- handover has no photograph to take. So the creator of every delivery was
+--- sent to an archive row with nothing attached — which reads as the archive
+--- having lost the picture rather than as there never having been one.
+---@param contract table
+---@param hunterRecord table|nil
+---@param photoRef string|nil the proof image, where the route produced one
 function Notify.contractCompleted(contract, hunterRecord, photoRef)
+    local hasPhoto = type(photoRef) == 'string' and photoRef ~= ''
     Notify.toCitizen(contract.creator_cid, 'Contract fulfilled',
-        'Contract Fulfilled. Verification photo attached. Check your archives.')
+        hasPhoto
+            and 'Your contract was fulfilled. The verification photograph is '
+                .. 'in your archive.'
+            or  'Your contract was fulfilled by live delivery. There is no '
+                .. 'photograph — the target was handed over in person.')
+    local _ = hunterRecord
 end
 
 --------------------------------------------------------------------------

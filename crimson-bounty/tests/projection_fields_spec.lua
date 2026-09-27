@@ -49,6 +49,9 @@ local CONDITIONAL = {
     -- is the rule, not a gap.
     bailoutAvailable = 'target-only',
     bailoutAmount    = 'target-only, and creator-only for the figure',
+    -- Target-only, and only once they have actually paid. Its absence is how
+    -- the card knows to offer the buy button instead.
+    bailoutPaid      = 'target-only, and only after the premium has been taken',
     -- Exactly one of these two, never both: when the creator chose anonymity
     -- no key carrying their name exists on the payload at all.
     creatorAnonymous = 'present only when the creator chose anonymity',

@@ -609,10 +609,28 @@ function Amendments.apply(proposal)
         -- creator. Only an unclaimed slot may be given back.
         -- Only a slot nobody is competing for yet may be withdrawn. Emptying
         -- the live slot would leave a claimable payout funded with nothing.
+        local slots = contract.payout_slots or 1
         local slot = Util.toPositive(payload.slot, Config.Limits.MaxPayoutSlots)
         if not slot or slot <= (contract.next_slot or 1) then return false, CB.ERR.INVALID_INPUT end
-        if slot > (contract.payout_slots or 1) then return false, CB.ERR.INVALID_INPUT end
+        if slot > slots then return false, CB.ERR.INVALID_INPUT end
+
+        -- Only the LAST one may go, and the count comes down with it.
+        --
+        -- This released the escrow and left payout_slots where it was, so the
+        -- emptied collection stayed one the contract sold: next_slot walks
+        -- onto it, the board shows the contract at nothing for the current
+        -- collection, and a hunter who eliminates the target for it is paid
+        -- out of an empty slot. The app's own dialog already promised
+        -- otherwise — "Collection N of M goes back to the client. M-1 would
+        -- remain."
+        --
+        -- The last one, because the slots are a sequence next_slot walks:
+        -- taking one out of the middle would renumber every slot after it and
+        -- orphan the escrow filed against their old numbers.
+        if slot ~= slots then return false, CB.ERR.INVALID_INPUT end
+
         Escrow.release(proposal.contract_id, contract.creator_cid, { slot = slot }, 'reward_reduced')
+        contract.payout_slots = slots - 1
         -- Applied after the write below, not here: on a durable backend the
         -- contract table this function is holding is a copy, so re-pricing
         -- it now and writing that copy afterwards would put the unclamped

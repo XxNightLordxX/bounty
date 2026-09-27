@@ -4838,6 +4838,96 @@ async function main() {
     })();
   })();
 
+  /* ---------- refusals that mean something else here ---------- */
+  await (async function refusalsWordedForThisPath() {
+    const hunt = { ok: true, data: { created: [], accepted: [{
+      id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive',
+      state: 'accepted', reward: { baseline: 5000 },
+      slots: 1, slotsClaimed: 0, currentSlot: 1,
+      huntersActive: 1, huntersMax: 1,
+      targetName: 'Dana Reyes', role: 'hunter',
+      deadline: Math.floor(Date.now() / 1000) + 7500
+    }], onMe: [] } };
+
+    await (async function protectedOnTheKillPath() {
+      const app = boot({
+        mine: hunt,
+        takeVerificationPhoto: { ok: false, err: 'target_protected' }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Verify kill');
+      await settle(); await settle();
+
+      it('tells a hunter over a body why the kill did not count', function () {
+        const said = app.notice();
+        // The shared table words this code for the CREATION path, which is a
+        // rule about placing contracts on people — not something a hunter
+        // standing over a body they just photographed has done.
+        falsy(said.indexOf('cannot be listed') !== -1,
+          'a hunter was told about a rule for listing contracts: ' + said);
+        truthy(said.indexOf('just got up') !== -1, said);
+        truthy(said.indexOf('try again') !== -1,
+          'and that the kill is not lost: ' + said);
+      });
+    })();
+
+    await (async function everyLineTickedInTheRewardEditor() {
+      const own = { ok: true, data: { created: [{
+        id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive',
+        state: 'active', reward: { baseline: 5000 },
+        slots: 1, slotsClaimed: 0, currentSlot: 1,
+        huntersActive: 0, huntersMax: 5, hunters: [],
+        targetName: 'Dana Reyes', role: 'creator',
+        deadline: Math.floor(Date.now() / 1000) + 7500
+      }], accepted: [], onMe: [] } };
+
+      const app = boot({
+        mine: own,
+        rewardBreakdown: { ok: true, data: {
+          editable: true, slots: 1, currentSlot: 1,
+          lines: [{ id: 'ct00000001:1', slot: 1, portion: 'baseline',
+                    source: 'cash', amount: 5000, withdrawable: true }]
+        } },
+        // What the server answers when a collection would be left empty.
+        withdrawReward: { ok: false, err: 'invalid_reward' }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Change reward');
+      await settle(); await settle();
+
+      // Tick the only line and send it.
+      const boxes = app.view.all().filter(function (n) {
+        return n.tagName === 'INPUT' && n.type === 'checkbox';
+      });
+      truthy(boxes.length >= 1, 'a line to tick');
+      boxes[0].checked = true;
+      if (boxes[0].onchange) { boxes[0].onchange(); }
+
+      const send = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Take back') === 0;
+      })[0];
+      truthy(send, 'the button that sends it');
+      send.onclick();
+      await settle(); await settle();
+
+      it('says what the rule actually is, and where the whole-reward button is', function () {
+        const said = app.notice();
+        // The amounts add up perfectly; the rule is about what has to be LEFT.
+        falsy(said.indexOf('does not add up') !== -1,
+          'the creator was sent back to re-read figures that were never the '
+          + 'problem: ' + said);
+        truthy(said.indexOf('keep something in it') !== -1, said);
+        truthy(said.indexOf('Withdraw') !== -1,
+          'and told about the button two taps away that does what they wanted: '
+          + said);
+      });
+    })();
+  })();
+
   /* ---------- the compose box ---------- */
   await (async function composeBox() {
     function threadFixture(sendAnswer) {

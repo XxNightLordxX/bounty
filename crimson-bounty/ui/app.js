@@ -1133,7 +1133,14 @@
     }
 
     if (contract.role === 'target') {
-      if (contract.bailoutAvailable) {
+      // Already paid for, and closing once the delay runs out. Drawn before
+      // the buy button so a player who has paid is not offered the same
+      // price again on a card identical to the one before their money left.
+      if (contract.bailoutPaid) {
+        row.appendChild(el('div', 'hint',
+          'You have paid to close this. A hunter is engaged, so it is not '
+          + 'instant \u2014 it closes shortly and your money is already gone.'));
+      } else if (contract.bailoutAvailable) {
         var out = el('button', 'primary danger', 'Buy out \u2014 ' + money(contract.bailoutAmount));
         out.onclick = function () { bailout(contract); };
         row.appendChild(out);
@@ -1327,7 +1334,27 @@
   function verifyKill(contract) {
     // Returned, so `once` knows when the camera and the upload are done.
     return post('takeVerificationPhoto', { id: contract.id }).then(function (r) {
-      if (!r.ok) return fail(r);
+      if (!r.ok) {
+        /* Two codes mean something different on this path than in the shared
+           table, and both reach a hunter standing over a body they have just
+           photographed.
+
+           target_protected is worded there for the CREATION path — "That
+           target cannot be listed right now" — which is a rule about placing
+           contracts on people, not about a kill. armKidnap, the other
+           fulfilment route, already words the same code correctly for a
+           player in the field. This one did not.
+
+           invalid_reward likewise belongs to the Place form. */
+        var here = {
+          target_protected: 'They only just got up. The kill does not count '
+            + 'while they are protected \u2014 wait a moment and try again.',
+          rate_limited: 'Too many attempts just now. Wait a few seconds and '
+            + 'photograph them again; the kill is still yours to claim.'
+        };
+        if (here[r.err]) { return say(here[r.err]); }
+        return fail(r);
+      }
 
       // Not "Payment released" unconditionally. A reward that includes items
       // or a weapon can be verified and then fail to reach a hunter whose
@@ -1976,7 +2003,23 @@
 
     post('withdrawReward', { id: edit.contract.id, lines: ids }).then(function (r) {
       edit.sending = false;
-      if (!r.ok) { return fail(r); }
+      if (!r.ok) {
+        /* The amounts add up perfectly; the rule is about what has to be LEFT
+           on the contract. Taking all of it back is a real thing to want, and
+           it has a button of its own two taps away.
+
+           The shared table words invalid_reward for the Place form — "That
+           reward does not add up" — so a creator who ticked every line was
+           sent back to re-read figures that were never the problem, about a
+           rule nobody had told them, with no hint that Withdraw does what
+           they were trying to do. */
+        if (r.err === 'invalid_reward') {
+          return say('A collection has to keep something in it. To take the '
+            + 'whole reward back, use Withdraw \u2014 that closes the contract '
+            + 'and returns everything.');
+        }
+        return fail(r);
+      }
 
       var queued = (r.data && r.data.queued) || 0;
       say(queued

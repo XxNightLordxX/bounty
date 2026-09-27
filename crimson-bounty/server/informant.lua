@@ -60,6 +60,17 @@ function Informant.buy(actor, contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
     if not authorised(contract, actor) then return false, CB.ERR.NOT_PARTICIPANT end
 
+    -- A contract that is over has nobody tracking anybody.
+    --
+    -- Checked here, before the charge, because this is the one purchase in
+    -- the resource that is deliberately never refunded: an empty result costs
+    -- the premium on purpose (§14.29), so that the fee cannot become a free
+    -- oracle for "is anyone hunting me?". That makes a missing state check
+    -- more expensive here than anywhere else — a tap on a card that had not
+    -- been redrawn yet took the money for information about a contract that
+    -- no longer existed, and nothing gave it back.
+    if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
+
     local key = contractId .. ':' .. actor.cid
     local existing = reveals[key]
 

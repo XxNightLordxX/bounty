@@ -165,6 +165,16 @@ function Projection.contract(contract, viewerCid)
     elseif role == 'target' then
         out.bailoutAmount = contract.bailout_amount
         out.bailoutAvailable = (contract.bailout_amount or 0) > 0
+        -- A buyout already paid for, waiting out its processing delay.
+        --
+        -- The projection carried no sign of it, so the app could not draw
+        -- one: a target who had just paid saw the same "Buy out" button at
+        -- the same price, on a card identical to the one before their money
+        -- left. No money is lost — the second attempt is refused as
+        -- buyout_pending — but the player has no way to tell a payment that
+        -- went through from one that did not, and the only thing they can do
+        -- about it is pay again.
+        out.bailoutPaid = contract.bailout_queued_at ~= nil or nil
     end
 
     return out
@@ -435,7 +445,8 @@ Projection.ALLOWED_KEYS = {
     },
     creator = { bailoutAmount = true, hunters = true },
     hunter  = { myAlias = true, myClaims = true, kidnapProgress = true },
-    target  = { bailoutAmount = true, bailoutAvailable = true },
+    target  = { bailoutAmount = true, bailoutAvailable = true,
+                bailoutPaid = true },
     public  = {},
 }
 
