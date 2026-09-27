@@ -130,6 +130,10 @@ ConfigDefaults.Penalty = {
     MaxAmount = 100000,
     MaxFractionOfEscrow = 2.0,
     RequireDisclosureOnAccept = true,
+    --- A staked acceptance is refused with less than this long left before
+    --- the deadline, so a hunter cannot stake on a contract about to run
+    --- out and lose the stake to the client at once.
+    MinWindowMinutes = 30,
 }
 
 --------------------------------------------------------------------------

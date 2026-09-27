@@ -1148,6 +1148,14 @@ describe('a safety switch added to a section the operator already had', function
         resetConfig()
     end)
 
+    it('fills the stake window, which absent let a stake be taken with seconds left', function()
+        -- Read as `or 0`, so a Penalty section from before it would take a
+        -- stake on a contract about to run out and hand it to the client.
+        boot(function() Config.Penalty.MinWindowMinutes = nil end)
+        eq(Config.Penalty.MinWindowMinutes, 30)
+        resetConfig()
+    end)
+
     it('fills the coercion detectors and death providers when they are absent', function()
         boot(function()
             Config.Kidnap.Coercion = nil

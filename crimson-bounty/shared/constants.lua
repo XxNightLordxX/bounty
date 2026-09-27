@@ -213,6 +213,8 @@ CB.ERR = {
     --- runs out of clock, so charging a figure the player did not agree to
     --- is the one repricing that cannot be undone by refreshing (§14.18).
     TERMS_CHANGED    = 'terms_changed',
+    -- A staked contract too close to its deadline to be worth the stake.
+    TOO_LITTLE_TIME  = 'too_little_time',
     INSUFFICIENT     = 'insufficient_funds',
     INVALID_REWARD   = 'invalid_reward',
     INVALID_INPUT    = 'invalid_input',

@@ -406,8 +406,10 @@
        rather than charged, because a stake is taken on the tap and forfeits
        to the client if the hunter later walks away — the one repricing a
        player cannot undo by looking again. */
-    terms_changed: 'The stake on this contract changed while you were looking '
-      + 'at it. Refreshing now — check the new figure before you take it.',
+    terms_changed: 'The stake or the deadline on this contract changed while you '
+      + 'were looking at it. Refreshing now — check the new terms before you take it.',
+    too_little_time: 'This contract runs out too soon to stake on. Taking it now '
+      + 'would hand your stake to the client before you could work it.',
     target_protected: 'That target cannot be listed right now.',
 
     /* One message covered six different rules, and a player reading it had
@@ -1540,7 +1542,10 @@
       // construction rather than by timing.
       post('accept', {
         id: contract.id, anonymous: anonymous,
-        penaltyAmount: contract.penaltyAmount || 0
+        penaltyAmount: contract.penaltyAmount || 0,
+        // And the deadline, which the stake is forfeit to: brought forward
+        // since it was shown, the server refuses rather than takes the stake.
+        deadline: contract.deadline
       }).then(function (r) {
         if (!r.ok) {
           // Told and shown. A message saying the figure changed, with the
@@ -1578,6 +1583,11 @@
             ? ' Accepting stakes ' + money(contract.penaltyAmount)
               + ' of yours, returned when you finish and forfeit to the client'
               + ' if you walk away or run out of time.'
+            : '')
+          // How much time that is. The stake is forfeit to the deadline, and
+          // nothing on the dialog said when it was.
+          + (minutesLeft(contract) !== null && minutesLeft(contract) > 0
+            ? ' It runs out in ' + durationText(minutesLeft(contract)) + '.'
             : ''),
         options: [
           { label: 'Anonymously', primary: true, run: function () { take(true); } },

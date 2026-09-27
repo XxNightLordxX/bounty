@@ -606,6 +606,212 @@ describe('accepting a contract that carries a stake', function()
 end)
 
 
+--- A stake on a contract about to run out (§14.18).
+---
+--- A client can set a contract nobody holds to run out in minutes, and a
+--- stake forfeits to the client at the deadline. So a hunter could stake,
+--- have no time at all to work the target, and hand the stake over. And
+--- the deadline, like the stake, could be brought forward between the card
+--- being read and Accept being tapped, with nothing to say so.
+describe('a stake on a contract about to run out', function()
+    local function staked(stake)
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } },
+            penaltyAmount = stake,
+        })
+        truthy(c)
+        Env.players[3].PlayerData.money.bank = 50000
+        return s, f, c
+    end
+
+    local function nobodyOn(s, c)
+        eq(Env.players[3].PlayerData.money.bank, 50000, 'nothing was taken')
+        eq(#s.storage.readHunters(c.id), 0, 'and nobody is on the contract')
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE,
+            'nor did the refusal move the contract')
+    end
+
+    it('refuses a staked accept with too little time left', function()
+        local s, f, c = staked(2000)
+        truthy(s.contracts.revise(f.creator, c.id, { deadlineSeconds = 600 }))
+        local deadline = s.storage.readContract(c.id).deadline_at
+        truthy(deadline - os.time() < Config.Penalty.MinWindowMinutes * 60,
+            'the fixture must be inside the window')
+
+        local reply = call('accept', 3, { id = c.id, anonymous = false,
+            penaltyAmount = 2000, deadline = deadline })
+        falsy(reply.ok, 'a stake the hunter cannot work for is a gift to the client')
+        eq(reply.err, CB.ERR.TOO_LITTLE_TIME)
+        nobodyOn(s, c)
+    end)
+
+    it('lets a contract with no stake be taken however little time is left', function()
+        local s, f, c = staked(0)
+        truthy(s.contracts.revise(f.creator, c.id, { deadlineSeconds = 600 }))
+        ok('accept', 3, { id = c.id, anonymous = false,
+            deadline = s.storage.readContract(c.id).deadline_at },
+            'there is nothing to lose, so nothing to protect')
+    end)
+
+    it('draws the line at the configured window, not before it', function()
+        local s, _, c = staked(2000)
+        local window = Config.Penalty.MinWindowMinutes * 60
+
+        s.storage.setDeadline(c.id, nil, os.time() + window - 1)
+        local reply = call('accept', 3, { id = c.id, anonymous = false,
+            penaltyAmount = 2000, deadline = os.time() + window - 1 })
+        eq(reply.err, CB.ERR.TOO_LITTLE_TIME, 'a second short is short')
+
+        s.storage.setDeadline(c.id, nil, os.time() + window)
+        ok('accept', 3, { id = c.id, anonymous = false,
+            penaltyAmount = 2000, deadline = os.time() + window },
+            'exactly the window is enough')
+        eq(Env.players[3].PlayerData.money.bank, 48000, 'and the stake was taken')
+    end)
+
+    it('counts a paused clock as the time it will have, not the time since', function()
+        -- Paused while the target is away, the deadline is pushed back by
+        -- however long the pause lasts. What is left is what was left when
+        -- it stopped, and the wall clock since then is nobody's lost time.
+        local s, _, c = staked(2000)
+        local stoppedAt = os.time() - 3600
+        s.storage.setDeadline(c.id, nil, os.time() + 600)
+        s.storage.startPause(c.id, stoppedAt)
+        ok('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 2000,
+            deadline = os.time() + 600 },
+            'seventy minutes on a stopped clock is seventy minutes')
+    end)
+
+    it('refuses when the deadline was brought forward while the page showed it', function()
+        local s, f, c = staked(2000)
+        local shown = s.storage.readContract(c.id).deadline_at
+
+        truthy(s.contracts.revise(f.creator, c.id,
+            { deadlineSeconds = Config.Limits.DefaultDeadlineSeconds // 2 }))
+        local now = s.storage.readContract(c.id).deadline_at
+        truthy(now < shown - 60, 'the fixture must move it forward')
+
+        local reply = call('accept', 3, { id = c.id, anonymous = false,
+            penaltyAmount = 2000, deadline = shown })
+        falsy(reply.ok, 'the stake forfeits to a deadline the hunter was not shown')
+        eq(reply.err, CB.ERR.TERMS_CHANGED)
+        nobodyOn(s, c)
+
+        ok('accept', 3, { id = c.id, anonymous = false,
+            penaltyAmount = 2000, deadline = now },
+            'shown the new one, it is taken')
+    end)
+
+    it('takes it when the deadline moved later instead', function()
+        local s, f, c = staked(2000)
+        local shown = s.storage.readContract(c.id).deadline_at
+        s.storage.setDeadline(c.id, nil, shown + 3600)
+        ok('accept', 3, { id = c.id, anonymous = false,
+            penaltyAmount = 2000, deadline = shown },
+            'more time than the hunter was shown takes nothing from them')
+    end)
+
+    it('gives the clock a minute of slack', function()
+        local s, _, c = staked(2000)
+        local stored = s.storage.readContract(c.id).deadline_at
+        ok('accept', 3, { id = c.id, anonymous = false,
+            penaltyAmount = 2000, deadline = stored + 60 },
+            'a minute is the clock, not a change of terms')
+    end)
+
+    it('does not check the deadline of a contract with no stake', function()
+        local s, _, c = staked(0)
+        local stored = s.storage.readContract(c.id).deadline_at
+        ok('accept', 3, { id = c.id, anonymous = false, deadline = stored + 7200 },
+            'there is nothing for it to be forfeit to')
+    end)
+
+    it('leaves the deadline echo off where the operator turned disclosure off', function()
+        local s, f, c = staked(2000)
+        local shown = s.storage.readContract(c.id).deadline_at
+        s.storage.setDeadline(c.id, nil, shown - 3600)
+        Config.Penalty.RequireDisclosureOnAccept = false
+        local reply = call('accept', 3, { id = c.id, anonymous = false,
+            penaltyAmount = 2000, deadline = shown })
+        Config.Penalty.RequireDisclosureOnAccept = true
+        truthy(reply.ok, 'the switch turns the echo off for both terms: '
+            .. tostring(reply.err))
+    end)
+
+    it('survives any deadline a hostile client sends', function()
+        -- A number or nothing: anything else is ignored rather than
+        -- compared, and a figure far in the future refuses only the sender.
+        local s, _, c = staked(2000)
+        for _, junk in ipairs({ {}, 'soon', '9e999', true, -1e308, 1e308,
+                                '0x7fffffff', 0 / 0 }) do
+            local reply = call('accept', 3, { id = c.id, anonymous = false,
+                penaltyAmount = 2000, deadline = junk })
+            truthy(reply, 'no reply to deadline ' .. tostring(junk))
+            falsy(tostring(reply.err):find('THREW', 1, true),
+                'deadline ' .. tostring(junk) .. ' threw: ' .. tostring(reply.err))
+            if reply.ok then
+                truthy(s.contracts.abandon(s.identity.resolve(3), c.id))
+                Env.players[3].PlayerData.money.bank = 50000
+                Env.advance(Config.Limits.SlotCooldownSeconds or 0)
+            end
+        end
+        eq(s.storage.readContract(c.id).deadline_at % 300, 0, 'nor did any of it move the clock')
+    end)
+
+    it('takes a staked accept from a page that sends no deadline', function()
+        -- A page from before the echo: the stake is still disclosed, so it
+        -- is not locked out. The window still applies.
+        local s, _, c = staked(2000)
+        ok('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 2000 })
+    end)
+end)
+
+--- A deadline set from the moment something happened carries that moment,
+--- and every viewer is sent it: on an anonymous contract, when its client
+--- placed or edited it, to the second (§14.32).
+describe('the deadline of an anonymous contract', function()
+    local function placed()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE, anonymous = true,
+            reward = { baseline = { cash = 10000 } },
+        })
+        truthy(c)
+        return s, f, c
+    end
+
+    it('does not date the placement to the second', function()
+        Env.time = Env.time + 17
+        local before = os.time()
+        local s, _, c = placed()
+        local stored = s.storage.readContract(c.id)
+        eq(stored.deadline_at % 300, 0, 'the deadline dates the placement')
+        eq(stored.expires_at % 300, 0, 'the lifetime dates the placement')
+        truthy(stored.deadline_at >= before + Config.Limits.DefaultDeadlineSeconds,
+            'rounded down, the hunter is given less time than promised')
+        truthy(stored.deadline_at < before + Config.Limits.DefaultDeadlineSeconds + 300)
+        truthy(stored.expires_at >= before + Config.Limits.ContractLifetimeSeconds)
+    end)
+
+    it('does not date an edit to the second either', function()
+        local s, f, c = placed()
+        Env.advance(123)
+        local before = os.time()
+        truthy(s.contracts.revise(f.creator, c.id, { deadlineSeconds = 7200 }))
+        local deadline = s.storage.readContract(c.id).deadline_at
+        eq(deadline % 300, 0, 'the edit is dated')
+        truthy(deadline >= before + 7200, 'and never less than was asked for')
+        truthy(deadline < before + 7200 + 300)
+    end)
+end)
+
+
 --- What happens when a handler throws.
 ---
 --- The resource's last line of defence, and line coverage showed it had

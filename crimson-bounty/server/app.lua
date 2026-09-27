@@ -525,7 +525,8 @@ function App.register()
         end
 
         local ok, err = deps.contracts.accept(actor, payload.id, payload.anonymous,
-            { checkDisclosure = true, disclosed = payload.penaltyAmount })
+            { checkDisclosure = true, disclosed = payload.penaltyAmount,
+              shownDeadline = tonumber(payload.deadline) })
         if not ok then return false, err end
         local contract = deps.storage.readContract(Util.toId(payload.id))
         return deps.projection.contract(contract, actor.cid)

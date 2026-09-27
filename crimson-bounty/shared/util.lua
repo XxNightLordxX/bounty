@@ -186,6 +186,19 @@ function Util.sanitizeText(text, maxLength)
     return text
 end
 
+--- A time on the clock rounded up to the next five minutes.
+---
+--- A deadline set from the moment something happened carries that moment
+--- to the second, and every viewer is sent the deadline: on an anonymous
+--- contract, when its client placed or edited it (§14.32). Rounded up, so
+--- nobody is given less time than they were promised.
+---@param at integer os.time()
+---@return integer
+function Util.roundClock(at)
+    local step = 300
+    return at + ((step - (at % step)) % step)
+end
+
 --- Whether law enforcement is told at this stage: 'posted' or 'accepted'.
 ---
 --- The one answer to that question, asked by the advisory itself and by the

@@ -125,6 +125,12 @@ Config.Penalty = {
     --- predates this cannot be locked out of the contracts where there is
     --- nothing to disclose.
     RequireDisclosureOnAccept = true,
+    --- A staked acceptance is refused with less than this long left before
+    --- the deadline (§14.18). A client can set a contract nobody holds to
+    --- run out in minutes; without this a hunter could stake on it and lose
+    --- the stake to the client almost at once, having had no chance to work
+    --- it. Contracts that carry no stake are not affected.
+    MinWindowMinutes = 30,
 }
 
 --------------------------------------------------------------------------

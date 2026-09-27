@@ -205,6 +205,27 @@ end)
 
 
 --- Minting an id nothing is using.
+describe('Util.roundClock', function()
+    it('rounds up to the next five minutes', function()
+        eq(Util.roundClock(1700000000), 1700000100)
+        eq(Util.roundClock(1700000101), 1700000400)
+        eq(Util.roundClock(1700000399), 1700000400)
+    end)
+
+    it('leaves a time already on the five minutes where it is', function()
+        eq(Util.roundClock(1700000100), 1700000100)
+        eq(Util.roundClock(0), 0)
+    end)
+
+    it('never gives less time than it was handed', function()
+        for at = 1700000000, 1700000000 + 900 do
+            local r = Util.roundClock(at)
+            truthy(r >= at and r < at + 300 and r % 300 == 0,
+                ('roundClock(%d) = %d'):format(at, r))
+        end
+    end)
+end)
+
 describe('Util.mintId', function()
     local Util = require('crimson-bounty.shared.util')
 

@@ -67,7 +67,11 @@ agrees.
 **Taking one.** Accept from the board, anonymously if you like. More hunters
 may accept than there are payouts; the first to fulfil are paid. If the
 contract carries a penalty, you stake it when you accept — walk away and the
-client keeps it. You can take it up again later, staking again; the wait
+client keeps it. The accept dialog says how long is left, and a staked
+contract with less than `Config.Penalty.MinWindowMinutes` to go cannot be
+taken; if the stake or the deadline changed while you were looking at it, the
+acceptance is refused and the board refreshes rather than taking a stake on
+terms you were not shown. You can take it up again later, staking again; the wait
 between payouts on one contract (`Config.Limits.SlotCooldownSeconds`) carries
 over, so walking away is not a way round it. Where the server charges for
 hunter anonymity and you cannot cover it, the acceptance is refused rather
@@ -165,7 +169,7 @@ CB_SUITES=journeys_spec lua crimson-bounty/tests/run.lua   # one area, in second
 
 Five kinds of check, because each catches what the others cannot:
 
-- **Server suite** (about 1,650 tests) — escrow arithmetic, the state machine,
+- **Server suite** (about 1,720 tests) — escrow arithmetic, the state machine,
   every payout and refund path, whole player journeys, every action against
   every contract state, deliberate exploit attempts, storage conformance
   across all three backends, and randomised simulations asserting that no

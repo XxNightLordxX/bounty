@@ -130,6 +130,7 @@ local DEFAULTS = {
     },
     Penalty = {
         RequireDisclosureOnAccept = true,
+        MinWindowMinutes = 30,
     },
     Bailout = {
         BlockWhileIncapacitated = true,
@@ -401,6 +402,7 @@ local function validateConfig()
         -- Both go straight into math.min on every contract creation.
         { 'Penalty', 'MaxAmount' },
         { 'Penalty', 'MaxFractionOfEscrow' },
+        { 'Penalty', 'MinWindowMinutes' },
         { 'Ledger', 'Depth' },
         { 'Ledger', 'MaxDepthHardCap' },
         { 'Informant', 'RerollLockMinutes' },

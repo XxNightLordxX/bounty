@@ -4709,6 +4709,8 @@ async function main() {
   await (async function theStakeOnTheBoard() {
     const STAKED = JSON.parse(JSON.stringify(BOARD));
     STAKED.data.contracts[0].penaltyAmount = 4000;
+    const DEADLINE = Math.floor(Date.now() / 1000) + 5430;
+    STAKED.data.contracts[0].deadline = DEADLINE;
 
     const app = boot({ list: STAKED, mine: MINE, ledger: LEDGER });
     await settle(); await settle();
@@ -4730,6 +4732,14 @@ async function main() {
         + shown);
     });
 
+    it('and how long there is before it is forfeit', function () {
+      // The stake forfeits at the deadline, and nothing on the dialog said
+      // when that was.
+      const shown = app.view.textContent;
+      truthy(shown.indexOf('It runs out in 1h 30m') !== -1,
+        'the dialog that takes the stake must say when it runs out: ' + shown);
+    });
+
     click(app, 'Under my name');
     await settle(); await settle();
 
@@ -4741,6 +4751,9 @@ async function main() {
       eq(sent.length, 1, 'one acceptance was sent');
       eq(sent[0].body.penaltyAmount, 4000,
         'the acceptance must carry the stake the player was shown: '
+        + JSON.stringify(sent[0].body));
+      eq(sent[0].body.deadline, DEADLINE,
+        'and the deadline it is forfeit to, so one brought forward is refused: '
         + JSON.stringify(sent[0].body));
     });
 
@@ -4795,6 +4808,30 @@ async function main() {
       truthy(after > before,
         'a message saying the figure changed, with the old figure still on '
         + 'screen, is half an answer');
+    });
+  })();
+
+  /* A staked contract too close to its deadline to stake on. */
+  await (async function tooLittleTimeToStake() {
+    const STAKED = JSON.parse(JSON.stringify(BOARD));
+    STAKED.data.contracts[0].penaltyAmount = 4000;
+    STAKED.data.contracts[0].deadline = Math.floor(Date.now() / 1000) + 600;
+
+    const app = boot({
+      list: STAKED, mine: MINE, ledger: LEDGER,
+      accept: { ok: false, err: 'too_little_time' }
+    });
+    await settle(); await settle();
+    click(app, 'Accept contract');
+    await settle();
+    click(app, 'Under my name');
+    await settle(); await settle();
+
+    it('says the contract runs out too soon, not that something went wrong', function () {
+      const said = app.notice();
+      truthy(said.indexOf('runs out too soon') !== -1,
+        'the refusal has to say why: ' + said);
+      falsy(said.indexOf('Something went wrong') !== -1, said);
     });
   })();
 

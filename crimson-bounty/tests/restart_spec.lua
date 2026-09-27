@@ -273,7 +273,7 @@ describe('a crash while a contract runs out', function()
             main.expire()
             truthy(s.storage.readContract(c.id).paused_since, 'the deadline is paused')
 
-            Env.advance(Config.Limits.ContractLifetimeSeconds + 60)
+            Env.advance(Config.Limits.ContractLifetimeSeconds + 360)
             main.markPresenceChanged()
             dies(main, s)
             Env.players[2] = target
@@ -288,7 +288,7 @@ describe('a crash while a contract runs out', function()
         it(mode .. ': the deadline running out still forfeits it', function()
             local main, s, _, c = held(mode)
             local before = money(3)
-            Env.advance(Config.Limits.DefaultDeadlineSeconds + 60)
+            Env.advance(Config.Limits.DefaultDeadlineSeconds + 360)
             main.markPresenceChanged()
             dies(main, s)
 
@@ -579,7 +579,7 @@ describe('an anonymous client away from the city', function()
         Env.removePlayer(1)
         main.markPresenceChanged()
         main.tick()
-        Env.advance(Config.Limits.DefaultDeadlineSeconds + 60)
+        Env.advance(Config.Limits.DefaultDeadlineSeconds + 360)
         main.tick()
         eq(s.storage.readContract(c.id).state, CB.STATE.EXPIRED)
     end)
@@ -831,6 +831,10 @@ describe('an acceptance as the deadline runs out', function()
     --- contract had closed.
     local function due()
         local main, s = boot('memory')
+        -- A stake this close to the deadline is refused outright now (the
+        -- minimum window); off here, to keep measuring what lies under it on
+        -- a server that turns it off.
+        Config.Penalty.MinWindowMinutes = 0
         Config.Limits.ExclusiveIdleReleaseSeconds = 0
         Config.Limits.ExclusiveAttemptWindowSeconds = 0
         local f = fixture(s)
@@ -845,7 +849,7 @@ describe('an acceptance as the deadline runs out', function()
 
     it('is refused, and charged nothing, once the deadline has passed', function()
         local _, s, f, c = due()
-        Env.advance(Config.Limits.DefaultDeadlineSeconds + 5)
+        Env.advance(Config.Limits.DefaultDeadlineSeconds + 305)
         local before = money(3)
         local ok, err = s.contracts.accept(f.hunter, c.id, false)
         falsy(ok, 'accepted a contract whose time was up')
@@ -883,7 +887,7 @@ describe('an acceptance as the deadline runs out', function()
         -- and the pass only running after the acceptance has gone through:
         -- the hunter is on it, but joined a clock that had already run out.
         local main, s, f, c = due()
-        Env.advance(Config.Limits.DefaultDeadlineSeconds - 2)
+        Env.advance(s.storage.readContract(c.id).deadline_at - os.time() - 2)
         local realRead = s.storage.readHunterById
         local moved = false
         s.storage.readHunterById = function(id)
@@ -904,7 +908,7 @@ describe('an acceptance as the deadline runs out', function()
         local main, s, f, c = due()
         -- Seconds left when the acceptance starts; gone by the time its row
         -- is written, and the expiry pass runs in that same wait.
-        Env.advance(Config.Limits.DefaultDeadlineSeconds - 2)
+        Env.advance(s.storage.readContract(c.id).deadline_at - os.time() - 2)
         local realRead = s.storage.readHunterById
         local moved = false
         s.storage.readHunterById = function(id)
@@ -1103,7 +1107,7 @@ describe('an extension landing as the expiry pass decides', function()
             truthy(c)
             truthy(s.contracts.accept(f.hunter, c.id))
             main.tick()
-            Env.advance(Config.Limits.DefaultDeadlineSeconds + 5)
+            Env.advance(Config.Limits.DefaultDeadlineSeconds + 305)
             local hunterBefore = money(3)
 
             local real = s.storage.readContract

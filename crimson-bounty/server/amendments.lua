@@ -752,10 +752,13 @@ function Amendments.apply(proposal)
         --
         -- checkAgainst() above has already refused a cut longer than what is
         -- left now, including time that passed while it waited for an answer.
-        local moved = Contracts.moveDeadline(proposal.contract_id, function(current)
+        -- And not over anybody who did not agree to it: a hunter who took
+        -- the contract while this was being decided is put back on the
+        -- deadline they accepted (Contracts.bringDeadlineIn).
+        local moved, moveErr = Contracts.bringDeadlineIn(proposal.contract_id, function(current)
             return (current.deadline_at or os.time()) - seconds
-        end)
-        if not moved then return false, CB.ERR.LOCKED end
+        end, proposal.approvals)
+        if not moved then return false, moveErr end
         contract.deadline_at = moved
 
     elseif kind == CB.AMENDMENT.CHANGE_MODE then
