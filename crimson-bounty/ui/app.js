@@ -1227,6 +1227,12 @@
             function () {
               post('abandon', { id: contract.id }).then(function (r) {
                 if (!r.ok) return fail(r);
+                // A handover being watched on it ends with it. Left running,
+                // the poller read that ending as a failed delivery and told
+                // a hunter who had just walked away to get the target back
+                // to the client and try again.
+                if (countdownFor === contract.id) { stopCountdown(); }
+                delete state.progress[contract.id];
                 say('You are off the contract.');
                 refresh();
               });
@@ -1640,13 +1646,16 @@
      And nothing cancelled it when the player left the screen, so two of them
      could run at once against different contracts. */
   var countdownTimer = null;
+  var countdownFor = null;
 
   function stopCountdown() {
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    countdownFor = null;
   }
 
   function pollCountdown(id) {
     stopCountdown();
+    countdownFor = id;
 
     var deadline = Date.now() + 120000;
 

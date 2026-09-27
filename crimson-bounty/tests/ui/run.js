@@ -4172,6 +4172,33 @@ async function main() {
         'the poll stopped at a full bar: ' + waitingPage.notice());
     });
 
+    /* Walking away mid-handover. The poller outlived the abandon, and the
+       server's answer for a delivery on a contract the hunter has left is
+       that there is none — which the page reads as a failed one. */
+    let left = false;
+    const leaving = await onMine({
+      armKidnap: { ok: true, data: true },
+      kidnapProgress: function () {
+        return left ? { ok: false, err: 'no_handover' }
+          : { ok: true, data: { elapsed: 5, required: 30 } };
+      },
+      abandon: function () { left = true; return { ok: true, data: true }; }
+    });
+    click(leaving, 'Deliver alive');
+    await settle();
+    const leaveTick = leaving.timers.filter(function (t) { return t.repeating && t.ms === 1000; })[0];
+    leaveTick.fn(); await settle(); await settle();
+    click(leaving, 'Abandon');
+    click(leaving, 'Yes');
+    await settle(); await settle();
+    if (!leaveTick.cleared) { leaveTick.fn(); await settle(); await settle(); }
+    it('stops watching a handover when the hunter walks away from the contract', function () {
+      truthy(left, 'the abandon was never sent');
+      truthy(leaveTick.cleared, 'still polling a handover on a contract the hunter left');
+      falsy(/try again/i.test(leaving.notice()),
+        'told a hunter who had walked away to get the target back: ' + leaving.notice());
+    });
+
     const tooSoon = await endedWith({ outcome: 'refused', reason: 'slot_cooldown' });
     it('names the wait between payouts when that is why', function () {
       truthy(tooSoon.notice().indexOf('very recently') !== -1, tooSoon.notice());
