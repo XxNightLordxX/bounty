@@ -1739,6 +1739,14 @@ do
         ['crimson_contracts.anon_creator']    = 'chosen at creation and not revisitable',
         ['crimson_contracts.payout_slots']    = 'the shape of the contract hunters accepted',
         ['crimson_contracts.created_at']      = 'when it was placed',
+        -- The buyout queue. Moves only through setBailoutQueue, because a
+        -- caller writing back a copy it read before a buyout was paid used to
+        -- erase the buyout: premium charged, nothing left to settle it.
+        ['crimson_contracts.bailout_queued_at']    = 'moves only through setBailoutQueue',
+        ['crimson_contracts.bailout_paid_by']      = 'moves only through setBailoutQueue',
+        ['crimson_contracts.bailout_paid_amount']  = 'moves only through setBailoutQueue',
+        ['crimson_contracts.bailout_paid_account'] = 'moves only through setBailoutQueue',
+        ['crimson_contracts.bailout_attempts']     = 'moves only through setBailoutQueue',
         ['crimson_contracts.state']           = 'moves only through compareSetContractState, which '
             .. 'is guarded; writing it from a caller-held copy could resurrect a contract that '
             .. 'closed while the caller was reading',

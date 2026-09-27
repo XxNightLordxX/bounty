@@ -138,11 +138,17 @@ function Bailout.buy(actor, contractId)
     if engaged and Config.Bailout.ProcessingDelaySeconds > 0 then
         -- Persisted, not held in memory: the target's money is already gone,
         -- so a restart inside the delay window must still settle.
-        contract.bailout_queued_at = os.time()
-        contract.bailout_paid_by = actor.cid
-        contract.bailout_paid_amount = amount
-        contract.bailout_paid_account = account
-        Storage.writeContract(contract)
+        -- Through the narrow write, not writeContract. The target's money is
+        -- already gone at this point, and a writeContract from any other
+        -- handler holding an older copy of this row used to erase the queue
+        -- on top of it: premium charged, nothing left to settle or refund it.
+        Storage.setBailoutQueue(contract.id, {
+            bailout_queued_at = os.time(),
+            bailout_paid_by = actor.cid,
+            bailout_paid_amount = amount,
+            bailout_paid_account = account,
+            bailout_attempts = 0,
+        })
 
         Notify.toCitizen(contract.creator_cid, 'Contract challenged',
             'Your target is buying out the contract. It closes shortly.')
@@ -192,8 +198,13 @@ function Bailout.settle(contractId, amount, targetCid, account, opts)
         if err == CB.ERR.LOCKED and opts and opts.retryable then
             local attempts = (contract.bailout_attempts or 0) + 1
             if attempts < (Config.Bailout.MaxSettleAttempts or 10) then
-                contract.bailout_attempts = attempts
-                Storage.writeContract(contract)
+                Storage.setBailoutQueue(contract.id, {
+                    bailout_queued_at = contract.bailout_queued_at,
+                    bailout_paid_by = contract.bailout_paid_by,
+                    bailout_paid_amount = contract.bailout_paid_amount,
+                    bailout_paid_account = contract.bailout_paid_account,
+                    bailout_attempts = attempts,
+                })
                 return false, err
             end
             Audit.financial('bailout_retries_exhausted', targetCid, contractId,
@@ -278,15 +289,7 @@ function Bailout.owe(cid, contractId, amount, account, reason)
 end
 
 function Bailout.clearQueue(contractId)
-    local contract = Storage.readContract(contractId)
-    if not contract then return false end
-    contract.bailout_queued_at = nil
-    contract.bailout_paid_by = nil
-    contract.bailout_paid_amount = nil
-    contract.bailout_paid_account = nil
-    contract.bailout_attempts = nil
-    Storage.writeContract(contract)
-    return true
+    return Storage.setBailoutQueue(contractId, nil)
 end
 
 --- Process queued buyouts whose delay has elapsed. Driven by the main tick.

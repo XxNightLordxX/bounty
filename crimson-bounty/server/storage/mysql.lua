@@ -340,11 +340,9 @@ function MySQLStore.writeContract(c)
             slots_claimed = VALUES(slots_claimed), next_slot = VALUES(next_slot),
             deadline_at = VALUES(deadline_at), paused_ms = VALUES(paused_ms),
             paused_since = VALUES(paused_since),
-            bailout_queued_at = VALUES(bailout_queued_at),
-            bailout_paid_by = VALUES(bailout_paid_by),
-            bailout_paid_amount = VALUES(bailout_paid_amount),
-            bailout_paid_account = VALUES(bailout_paid_account),
-            bailout_attempts = VALUES(bailout_attempts),
+            -- The five bailout_* columns are deliberately absent: they move
+            -- only through setBailoutQueue, so a caller writing back a copy
+            -- it read before a buyout was paid cannot erase the buyout.
             resolved_at = VALUES(resolved_at), resolution = VALUES(resolution)
     ]], {
         c.id, c.creator_cid, c.creator_account, c.creator_name, c.target_cid, c.target_name,
@@ -356,6 +354,40 @@ function MySQLStore.writeContract(c)
         c.bailout_attempts or 0, c.resolved_at, c.resolution,
     })
     return true
+end
+
+--- The buyout queue columns, which move ONLY through setBailoutQueue.
+---
+--- Any caller that reads a contract, works, and writes it back carries the
+--- queue fields it read. Between that read and that write a target can pay for
+--- a buyout — on mysql every read is an await, so another handler runs in the
+--- gap — and the stale copy then lands on top of it: the premium charged, the
+--- queue erased, nothing that will ever settle or refund it. Eight callers
+--- have that read-work-write shape. The codebase had already found this hazard
+--- twice and fixed it for one of them (advanceSlot, for claimSlot); the queue
+--- itself got nothing. So these fields leave writeContract entirely, the way
+--- `state` moves only through compareSetContractState.
+function MySQLStore.setBailoutQueue(id, fields)
+    local affected
+    if fields then
+        affected = MySQL.update.await([[
+            UPDATE crimson_contracts
+            SET bailout_queued_at = ?, bailout_paid_by = ?, bailout_paid_amount = ?,
+                bailout_paid_account = ?, bailout_attempts = ?
+            WHERE id = ?
+        ]], { fields.bailout_queued_at, fields.bailout_paid_by,
+              fields.bailout_paid_amount, fields.bailout_paid_account,
+              fields.bailout_attempts or 0, id })
+    else
+        affected = MySQL.update.await([[
+            UPDATE crimson_contracts
+            SET bailout_queued_at = NULL, bailout_paid_by = NULL,
+                bailout_paid_amount = NULL, bailout_paid_account = NULL,
+                bailout_attempts = 0
+            WHERE id = ?
+        ]], { id })
+    end
+    return (tonumber(affected) or 0) > 0
 end
 
 local function hydrateContract(row)

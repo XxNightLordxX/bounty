@@ -1486,9 +1486,8 @@ describe('rewriting a contract', function()
         slots_claimed = 2, next_slot = 3,
         deadline_at = 1800000001, expires_at = 1800000002,
         paused_ms = 7000, paused_since = 1800000003,
-        bailout_queued_at = 1800000004, bailout_paid_by = 'TARGET01',
-        bailout_paid_amount = 999, bailout_paid_account = 'cash',
-        bailout_attempts = 3,
+        -- The five bailout_* fields are NOT here: they move only through
+        -- setBailoutQueue, and the test below holds every backend to that.
         resolved_at = 1800000005, resolution = 'completed',
     }
 
@@ -1505,6 +1504,60 @@ describe('rewriting a contract', function()
                 eq(read[key], value, ('%s: %s was discarded on rewrite'):format(
                     b.name, key))
             end
+        end
+    end)
+end)
+
+describe('the buyout queue', function()
+    --- Moves only through setBailoutQueue, never through writeContract.
+    ---
+    --- A caller that read a contract before a buyout was paid, and writes it
+    --- back after, used to erase the buyout: on mysql every read is an await,
+    --- so another handler runs in the gap. The premium was charged and there
+    --- was nothing left to settle or refund it.
+    local QUEUED = {
+        bailout_queued_at = 1800000100, bailout_paid_by = 'TARGET01',
+        bailout_paid_amount = 12000, bailout_paid_account = 'bank',
+        bailout_attempts = 2,
+    }
+
+    it('is set and cleared through its own write, in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ctq1'))
+            truthy(b.store.setBailoutQueue('ctq1', QUEUED), b.name .. ': set')
+
+            local read = b.store.readContract('ctq1')
+            for key, value in pairs(QUEUED) do
+                eq(read[key], value, b.name .. ': ' .. key)
+            end
+
+            truthy(b.store.setBailoutQueue('ctq1', nil), b.name .. ': clear')
+            falsy(b.store.readContract('ctq1').bailout_queued_at,
+                b.name .. ': cleared')
+        end
+    end)
+
+    it('survives a writeContract of a copy read before it was set', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ctq2'))
+
+            -- A handler reads the row...
+            local stale = {}
+            for k, v in pairs(b.store.readContract('ctq2')) do stale[k] = v end
+
+            -- ...the target pays in the gap...
+            b.store.setBailoutQueue('ctq2', QUEUED)
+
+            -- ...and the handler writes back what it read.
+            stale.reason = 'edited meanwhile'
+            b.store.writeContract(stale)
+
+            local read = b.store.readContract('ctq2')
+            eq(read.reason, 'edited meanwhile', b.name .. ': the edit landed')
+            eq(read.bailout_queued_at, QUEUED.bailout_queued_at,
+                b.name .. ': the stale copy erased a buyout the target had '
+                .. 'already paid for')
+            eq(read.bailout_paid_amount, QUEUED.bailout_paid_amount, b.name)
         end
     end)
 end)

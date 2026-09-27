@@ -322,8 +322,15 @@ local function insert(sql, params)
         -- Only the columns the UPDATE clause names are changed, which is how
         -- `state` stays out of writeContract's reach.
         local clause = sql:match('ON DUPLICATE KEY UPDATE (.*)$') or ''
+        -- Written even when nil. `col = VALUES(col)` with a NULL parameter
+        -- sets the column to NULL on a real database; this used to skip nil
+        -- values, so a stale copy carrying nil could never erase a column
+        -- here while it did on MySQL. That is exactly the shape of the
+        -- buyout-queue fault — a row read before the target paid, written
+        -- back after with nil in the queue columns — and the simulator was
+        -- incapable of showing it.
         for column in clause:gmatch('([%w_]+) = VALUES%(') do
-            if row[column] ~= nil then existing[column] = row[column] end
+            existing[column] = row[column]
         end
         return {}
     end

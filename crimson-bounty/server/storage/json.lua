@@ -604,13 +604,43 @@ end
 
 --- State is not written here: it changes only through
 --- compareSetContractState, so a stale copy cannot revert a transition.
+--- The buyout queue columns, which move ONLY through setBailoutQueue.
+---
+--- Any caller that reads a contract, works, and writes it back carries the
+--- queue fields it read. Between that read and that write a target can pay for
+--- a buyout — on mysql every read is an await, so another handler runs in the
+--- gap — and the stale copy then lands on top of it: the premium charged, the
+--- queue erased, nothing that will ever settle or refund it. Eight callers
+--- have that read-work-write shape. The codebase had already found this hazard
+--- twice and fixed it for one of them (advanceSlot, for claimSlot); the queue
+--- itself got nothing. So these fields leave writeContract entirely, the way
+--- `state` moves only through compareSetContractState.
+local BAILOUT_QUEUE = {
+    'bailout_queued_at', 'bailout_paid_by', 'bailout_paid_amount',
+    'bailout_paid_account', 'bailout_attempts',
+}
+
 function JsonStore.writeContract(c)
     local existing = db.contracts[c.id]
     if existing and existing ~= c then
         c.state = existing.state
+        for i = 1, #BAILOUT_QUEUE do
+            c[BAILOUT_QUEUE[i]] = existing[BAILOUT_QUEUE[i]]
+        end
     end
     db.contracts[c.id] = c
     touch(true, c.id)
+    return true
+end
+
+--- Set or clear the buyout queue on one contract. nil clears it.
+function JsonStore.setBailoutQueue(id, fields)
+    local c = db.contracts[id]
+    if not c then return false end
+    for i = 1, #BAILOUT_QUEUE do
+        c[BAILOUT_QUEUE[i]] = fields and fields[BAILOUT_QUEUE[i]] or nil
+    end
+    touch(true, id)
     return true
 end
 
