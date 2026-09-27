@@ -81,6 +81,8 @@ end
 --- Pay the premium and close the contract.
 ---@return boolean ok
 ---@return string|nil err
+local settleUnlocked
+
 function Bailout.buy(actor, contractId)
     contractId = Util.toId(contractId)
     if not contractId then return false, CB.ERR.INVALID_INPUT end
@@ -161,14 +163,18 @@ function Bailout.buy(actor, contractId)
     -- contract bought out with the premium in no line, no queue and no
     -- pocket. Recorded, the next tick finishes it like a queued buyout, and
     -- settle clears the record when it is done.
-    Storage.setBailoutQueue(contract.id, {
-        bailout_queued_at = os.time() - (Config.Bailout.ProcessingDelaySeconds or 0),
-        bailout_paid_by = actor.cid,
-        bailout_paid_amount = amount,
-        bailout_paid_account = account,
-        bailout_attempts = 0,
-    })
-    return Bailout.settle(contractId, amount, actor.cid, account)
+    -- Under the settle lock from the record on, so the tick cannot settle
+    -- it too in between (Bailout.settle).
+    return Contracts.serialized({ 'settle:' .. tostring(contractId) }, function()
+        Storage.setBailoutQueue(contract.id, {
+            bailout_queued_at = os.time() - (Config.Bailout.ProcessingDelaySeconds or 0),
+            bailout_paid_by = actor.cid,
+            bailout_paid_amount = amount,
+            bailout_paid_account = account,
+            bailout_attempts = 0,
+        })
+        return settleUnlocked(contractId, amount, actor.cid, account)
+    end)
 end
 
 --- Put money into a player's hands, or on the books for them.
@@ -225,9 +231,25 @@ end
 --- Close a bought-out contract: the creator gets their escrow back plus the
 --- premium, and the contract resolves once.
 ---@param opts table|nil { retryable = true } when driven by the queue
+--- One settle per contract at a time (Contracts.serialized). An instant
+--- buyout is recorded as due before it settles, so the tick's processQueue
+--- could settle the same buyout in its awaits: one of the two lost the
+--- resolve and refunded the target a buyout they had been given, while the
+--- creator was paid the premium. The loser now answers busy and the tick
+--- tries again next time, when it finds the queue cleared.
 function Bailout.settle(contractId, amount, targetCid, account, opts)
+    return Contracts.serialized({ 'settle:' .. tostring(contractId) },
+        settleUnlocked, contractId, amount, targetCid, account, opts)
+end
+
+settleUnlocked = function(contractId, amount, targetCid, account, opts)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
+    -- The queue read this record before another settle finished it and
+    -- cleared the queue: nothing is left to settle or to refund.
+    if opts and opts.retryable and not contract.bailout_queued_at then
+        return false, CB.ERR.ALREADY_SETTLED
+    end
     account = account or contract.bailout_paid_account or 'bank'
 
     -- Already bought out, with this buyout still queued: the only thing

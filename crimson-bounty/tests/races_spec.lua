@@ -1467,3 +1467,40 @@ describe('proposals while a hunter is part-way on', function()
             'and it can be made again')
     end)
 end)
+
+describe('RACE F20: the tick settles an instant buyout alongside buy()', function()
+    local function run(order) return function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[2].PlayerData.money.bank = 100000
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 10000 } }, bailoutAmount = 15000 })
+        local creator, target = money(1), money(2)
+        local real, fired = s.storage.setBailoutQueue, false
+        local queued
+        s.storage.setBailoutQueue = function(...)
+            local r = table.pack(real(...))
+            if not fired then
+                fired = true
+                if order == 'during' then s.bailout.processQueue() else
+                    local row = s.storage.readContract(c.id)
+                    queued = { bailout_paid_amount = row.bailout_paid_amount,
+                        bailout_paid_by = row.bailout_paid_by, bailout_paid_account = row.bailout_paid_account }
+                end
+            end
+            return table.unpack(r, 1, r.n)
+        end
+        s.bailout.buy(f.target, c.id)
+        s.storage.setBailoutQueue = real
+        if order == 'after' then
+            -- The tick read the record before buy() finished, and settles now.
+            s.bailout.settle(c.id, queued.bailout_paid_amount, queued.bailout_paid_by,
+                queued.bailout_paid_account, { retryable = true })
+        end
+        s.bailout.processQueue()
+        eq(target - money(2), 15000, 'the target was refunded a buyout they got')
+        eq(money(1) - creator, 25000)
+    end end
+    it('while buy() is settling', run('during'))
+    it('after buy() has settled', run('after'))
+end)

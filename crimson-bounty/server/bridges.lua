@@ -586,6 +586,10 @@ function Bridges.installCommands(modules)
                 return reply(src, ('Buy one out with /%s <id>'):format(Config.Bailout.Command))
             end
 
+            -- Not while boot recovery runs (App.ready), like every app request.
+            if modules.app and modules.app.ready == false then
+                return reply(src, 'The server is still starting. Try again in a moment.')
+            end
             if not modules.ratelimit.check(actor, 'bailout') then return slowDown('bailout') end
 
             local ok, err = modules.bailout.buy(actor, args[1])
