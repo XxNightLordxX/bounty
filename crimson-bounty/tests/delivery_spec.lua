@@ -394,6 +394,40 @@ describe('two changes to a contract inside one second', function()
         local _ = f
     end)
 
+    it('does not let a message held behind an acceptance take its place', function()
+        -- The page re-reads only the thread for a message, and everything
+        -- for anything else. A message after the acceptance in the same
+        -- second left the creator's card showing one operative.
+        local s = newStack()
+        s.notify.clearPush('CREATOR1')
+        local f = fixture(s)
+        Env.clientEvents = {}
+        truthy(s.notify.push('CREATOR1', 'a'))
+        s.notify.push('CREATOR1', 'accepted')
+        s.notify.push('CREATOR1', 'message')
+        Env.advance(2)
+        local last
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:push' and event.target == 1 then
+                last = event.args[1] and event.args[1].reason
+            end
+        end
+        eq(last, 'accepted', 'the held push became a thread re-read')
+
+        -- And the other way round, the fuller reason wins.
+        Env.clientEvents = {}
+        s.notify.push('CREATOR1', 'message')
+        s.notify.push('CREATOR1', 'improved')
+        Env.advance(2)
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:push' and event.target == 1 then
+                last = event.args[1] and event.args[1].reason
+            end
+        end
+        eq(last, 'improved')
+        local _ = f
+    end)
+
     it('does not push a player who has left', function()
         local s = newStack()
         local f = fixture(s)

@@ -96,7 +96,10 @@ camera for the baseline. With `sc-ambulance`, downing them is not the kill:
 they are in last stand, and you have to finish them. The kill is credited to
 whoever landed a hit within `Config.Completion.DeathReportWindowMs` (30
 seconds) of the death, and bleeding out takes minutes, so a target left to
-bleed out pays nobody. A revive before you photograph them cancels it. Or take them alive to the client and hold them there
+bleed out pays nobody. A revive before you photograph them cancels it; a
+defibrillator that only brings them back to last stand does not, and finishing
+them again is a new kill. A kill waits for its photograph for at most two
+photo-token lifetimes, however many tokens are asked for. Or take them alive to the client and hold them there
 for thirty seconds for baseline plus bonus.
 
 **Counter-play.** A target can see the price on their head and buy it out.
@@ -171,7 +174,7 @@ the read-only ones (`cb-diag`, `cb-timeline`, `cb-stuck`); `cb-void` and
 Faults the phone page hits are reported to the server, printed to the console
 and kept for `/cb-diag`; `Config.Debug = true` adds each one's full stack trace.
 The page log `/cb-diag` asks a player's phone for is printed whatever Debug
-says. The staff webhook (`Config.Audit.Webhook`) sends one message per audit
+says, once, and only within thirty seconds of being asked for. The staff webhook (`Config.Audit.Webhook`) sends one message per audit
 flush rather than one per row, and backs off when Discord says to.
 On the phone, tapping the build line at the bottom of the Ledger tab five times
 opens a diagnostics panel showing the page's recent requests and faults.

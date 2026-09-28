@@ -371,8 +371,8 @@ function MySQLStore.writeContract(c)
             -- collection just given back by agreement.
             --
             -- And the clock — deadline_at, paused_ms, paused_since — moves
-            -- only through setDeadline, startPause, endPause and resetClock,
-            -- for the same reason: the expiry pass wrote a copy over an
+            -- only through setDeadline, startPause and endPause, for the
+            -- same reason: the expiry pass wrote a copy over an
             -- extension the client made while it waited, and a copy written
             -- by anything else erased a pause the pass had just begun.
             -- The five bailout_* columns are deliberately absent: they move
@@ -567,6 +567,7 @@ local SETTABLE = {
     penalty_amount = 'UPDATE crimson_contracts SET penalty_amount = ? WHERE id = ?',
     resolved_at = 'UPDATE crimson_contracts SET resolved_at = ? WHERE id = ?',
     resolution = 'UPDATE crimson_contracts SET resolution = ? WHERE id = ?',
+    expires_at = 'UPDATE crimson_contracts SET expires_at = ? WHERE id = ?',
 }
 function MySQLStore.setContractFields(id, fields)
     for k in pairs(fields) do
@@ -597,13 +598,6 @@ function MySQLStore.endPause(id, since, seconds)
         SET deadline_at = deadline_at + ?, paused_ms = paused_ms + ?, paused_since = NULL
         WHERE id = ? AND paused_since = ?
     ]], { seconds, seconds * 1000, id, since })
-    return (tonumber(affected) or 0) > 0
-end
-
-function MySQLStore.resetClock(id, deadline)
-    local affected = MySQL.update.await(
-        'UPDATE crimson_contracts SET deadline_at = ?, paused_since = NULL WHERE id = ?',
-        { deadline, id })
     return (tonumber(affected) or 0) > 0
 end
 

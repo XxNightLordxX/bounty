@@ -122,6 +122,33 @@ describe('starting on a config that predates a setting', function()
         resetConfig()
     end)
 
+    it('keeps the ten-second tick for an Audit section without a flush interval', function()
+        -- Missing read as below the floor, and every maintenance job, the
+        -- prune among them, ran each second.
+        local said = {}
+        local realPrint = _G.print
+        _G.print = function(...)
+            local parts = {}
+            for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+            said[#said + 1] = table.concat(parts, ' ')
+        end
+        boot(function()
+            Config.Audit = { LogAllActions = true, MaxQueueSize = 5000, RetentionDays = 30 }
+        end)
+        _G.print = realPrint
+        eq(Config.Audit.FlushIntervalMs, 10000)
+        local told = table.concat(said, ' | ')
+        falsy(told:find('not a number', 1, true),
+            'a setting the operator never had is filled in, not reported as broken: ' .. told)
+        resetConfig()
+        boot(function() Config.Audit.FlushIntervalMs = 'soon' end)
+        eq(Config.Audit.FlushIntervalMs, 10000, 'not a number is the default, not the floor')
+        resetConfig()
+        boot(function() Config.Audit.FlushIntervalMs = 0 end)
+        eq(Config.Audit.FlushIntervalMs, 1000, 'a number below the floor is held to it')
+        resetConfig()
+    end)
+
     it('fills the failure-stake ceilings on a config that never had them', function()
         -- Config.Penalty is a whole new section, so the section fill covers
         -- it — but Contracts.clampPenalty indexes MaxAmount on every
@@ -1282,6 +1309,7 @@ describe('the page log a staff member asks for', function()
         s.app.init(s)
         fixture(s)
         Config.Debug = false
+        s.admin.diagnose(0, 3)
         local printed = {}
         local realPrint = _G.print
         _G.print = function(...) printed[#printed + 1] = table.concat({ ... }, ' ') end
@@ -1295,5 +1323,38 @@ describe('the page log a staff member asks for', function()
         local joined = table.concat(printed, '\n')
         truthy(joined:find('1.0s post list', 1, true) and joined:find('1.2s reply list ok', 1, true),
             joined)
+    end)
+
+    --- The page says it was asked, and any player can script the page: a
+    --- log nobody asked for was lines on the console on demand.
+    it('is printed only for a page staff asked, and once', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+        Config.Debug = false
+        local function report(src)
+            local printed = {}
+            local realPrint = _G.print
+            _G.print = function(...) printed[#printed + 1] = table.concat({ ... }, ' ') end
+            _G.source = src
+            pcall(Env.events['crimson-bounty:pageError'], {
+                what = 'page diagnostics', where = 'requested',
+                stack = 'forged line one || forged line two', build = 'test',
+            })
+            _G.source = nil
+            _G.print = realPrint
+            Env.advance(5)
+            return table.concat(printed, '\n')
+        end
+        falsy(report(3):find('forged line one', 1, true), 'printed a log nobody asked for')
+
+        s.admin.diagnose(0, 3)
+        truthy(report(3):find('forged line one', 1, true), 'the asked-for log')
+        falsy(report(3):find('forged line one', 1, true), 'and again, unasked')
+
+        s.admin.diagnose(0, 3)
+        falsy(report(2):find('forged line one', 1, true), 'another player answered for them')
+        Env.advance(60)
+        falsy(report(3):find('forged line one', 1, true), 'an answer long after the question')
     end)
 end)

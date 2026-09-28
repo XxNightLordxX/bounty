@@ -77,6 +77,9 @@ local DEFAULTS = {
     Audit = {
         ContractRetentionDays = 30,
         ContractsPrunedPerTick = 200,
+        -- Missing, it was read as below the floor and held to one second:
+        -- every maintenance job, the prune among them, ten times as often.
+        FlushIntervalMs = 10000,
     },
     --- Read by the boot validation itself, which runs after this fills the
     --- gaps — but only just. A config without it took the whole resource
@@ -470,11 +473,17 @@ local function validateConfig()
     -- The interval drives the whole maintenance tick, not only the audit
     -- flush: at 0 the tick, a database prune included, ran every frame.
     local flushMs = tonumber(Config.Audit.FlushIntervalMs)
-    if not flushMs or flushMs < 1000 then
+    if not flushMs then
+        warn[#warn + 1] = ('Audit.FlushIntervalMs is %s, not a number of milliseconds; '
+            .. 'using 10000.'):format(tostring(Config.Audit.FlushIntervalMs))
+        Config.Audit.FlushIntervalMs = 10000
+    elseif flushMs < 1000 then
         warn[#warn + 1] = ('Audit.FlushIntervalMs is %s; it paces every maintenance job '
             .. 'including the database prune, so it is held to at least 1000.')
             :format(tostring(Config.Audit.FlushIntervalMs))
         Config.Audit.FlushIntervalMs = 1000
+    else
+        Config.Audit.FlushIntervalMs = flushMs
     end
 
     if Config.Audit.MaxQueueSize < 1 then

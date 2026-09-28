@@ -83,6 +83,16 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
             and (line.owed_to == nil or line.owed_to == actor.cid)
     end
 
+    -- And asked again where it binds: after the release has taken the line
+    -- out of `held`, when nothing else can pay it. The read above is a
+    -- filter, not a promise; a claim landing in the awaits between it and
+    -- the release could still queue the line for its hunter first.
+    local function stillReturnable(line)
+        local current = Storage.readEscrowLine(line.id)
+        return current ~= nil
+            and (current.owed_to == nil or current.owed_to == actor.cid)
+    end
+
     local now = Storage.readContract(contractId)
     local state = now and now.state
     local open = state == CB.STATE.ACTIVE or state == CB.STATE.ACCEPTED
@@ -90,24 +100,36 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
         return true
     end
 
+    -- A claim part-way through paying is not a closed contract. Read as one,
+    -- every top-up went back, the ones for collections still to come
+    -- included, while the raise that made them was reported as applied: the
+    -- later collections were advertised at the new bonus and escrowed at the
+    -- old. The collection being paid, and any before it, can go back; the
+    -- rest stay.
+    local completing = state == CB.STATE.COMPLETING
+
     -- Still open, and a claim moved the slot on in the awaits. Only lines on
     -- a collection already paid are stranded; those on collections still to
     -- come are as good as ever, and a line the claim paid out went where it
     -- was meant to. Handing every line back and then reporting the top-up as
     -- made told a bonus raise it had applied — its percent stored and shown
     -- — while the collections after it went back to the old bonus.
-    if open then
+    if open or completing then
+        local paying = now.next_slot or 1
         local back, kept = {}, false
         for id in pairs(ids or {}) do
             local line = Storage.readEscrowLine(id)
-            if returnable(line) and (line.slot or 0) < (now.next_slot or 1) then
+            local passed = (line and line.slot or 0) < paying
+                or (completing and line and line.slot == paying)
+            if returnable(line) and passed then
                 back[id] = true
             elseif line then
                 kept = true
             end
         end
         if next(back) then
-            Escrow.release(contractId, actor.cid, { lines = back }, 'escrow_added_to_moved')
+            Escrow.release(contractId, actor.cid, { lines = back }, 'escrow_added_to_moved',
+                stillReturnable)
         end
         if kept then return true end
         Audit.rejected('escrow_added_to_moved', actor.cid, contractId, { state = state })
@@ -120,7 +142,8 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
             if returnable(Storage.readEscrowLine(id)) then back[id] = true end
         end
         if next(back) then
-            Escrow.release(contractId, actor.cid, { lines = back }, 'escrow_added_to_moved')
+            Escrow.release(contractId, actor.cid, { lines = back }, 'escrow_added_to_moved',
+                stillReturnable)
         end
 
         -- A claim that moved the slot after these lines were written paid
@@ -148,10 +171,19 @@ end
 --- the same path as creation, so the added value is as safe as the original.
 ---@return boolean ok
 ---@return string|nil err
+local addEscrowUnlocked
+
+--- One change to what a contract holds at a time: a top-up reads the value
+--- and line counts it is checked against, and a bonus raise beside it read
+--- the same ones.
 function Amendments.addEscrow(actor, contractId, rewardSpec)
     contractId = Util.toId(contractId)
     if not contractId then return false, CB.ERR.INVALID_INPUT end
+    return Contracts.serialized({ 'contract:' .. contractId },
+        addEscrowUnlocked, actor, contractId, rewardSpec)
+end
 
+addEscrowUnlocked = function(actor, contractId, rewardSpec)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CB.ERR.NOT_PARTICIPANT end
@@ -219,7 +251,12 @@ function Amendments.improve(actor, contractId, kind, payload)
     -- wrote an owed line and only one lowered the stake, and a crash between
     -- them had boot pay both; a cut beside an acceptance skipped the stake
     -- it was taking and left it staked at the old figure.
-    if kind == CB.AMENDMENT.LOWER_PENALTY then
+    --
+    -- Raising the bonus too. Each raise prices its top-up from the percent it
+    -- read, and two at once both read the old one: a double tap of 10 to 20
+    -- and 10 to 30 took both top-ups, 40 points of escrow, and showed
+    -- whichever percent was written last.
+    if kind == CB.AMENDMENT.LOWER_PENALTY or kind == CB.AMENDMENT.RAISE_BONUS then
         return Contracts.serialized({ 'contract:' .. contractId },
             improveUnlocked, actor, contractId, kind, payload)
     end
@@ -266,7 +303,11 @@ improveUnlocked = function(actor, contractId, kind, payload)
             if current.expires_at and deadline > current.expires_at then
                 deadline = current.expires_at
             end
-            return deadline
+            -- But never below where it stands. A banked pause can carry a
+            -- deadline past the lifetime, and clamping that to the ceiling
+            -- brought it in, under a hunter's stake, before refusing the
+            -- extension as already at its limit.
+            return math.max(current.deadline_at or 0, deadline)
         end)
         if not moved then return false, CB.ERR.LOCKED end
         -- Already at the ceiling: nothing moved. It answered "Deadline

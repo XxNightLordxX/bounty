@@ -539,6 +539,102 @@ describe('a top-up a payout queued for the hunter', function()
     end
 end)
 
+describe('a top-up handed back while a claim queues it', function()
+    --- The hand-back checked each line before releasing it, and the release
+    --- itself overrides who a line is owed to. A claim queueing the line for
+    --- its hunter between the check and the release lost it to the client.
+    it('mysql: leaves it with the hunter it was queued for', function()
+        local s = mysqlStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        -- The claim lands after the top-up is written, but pays slot 1 from
+        -- the lines it read before it: the top-up is left held and unowed on
+        -- a collection already paid, so the hand-back picks it.
+        local realWrite = s.storage.writeEscrow
+        local topUp
+        s.storage.writeEscrow = function(id, lines)
+            local out = realWrite(id, lines)
+            if not topUp and lines[1] and lines[1].portion == CB.PORTION.BASELINE
+                and lines[1].amount == 500 then
+                topUp = lines[1].id
+                local row = s.storage.readContract(c.id)
+                row.next_slot = 2
+                s.storage.writeContract(row)
+            end
+            return out
+        end
+        -- And the racing claim queues it for the hunter just before the
+        -- hand-back's release takes it.
+        local realRead = s.storage.readEscrow
+        local queued = false
+        s.storage.readEscrow = function(id)
+            if topUp and not queued then
+                queued = true
+                local line = s.storage.readEscrowLine(topUp)
+                line.owed_to = 'HUNTER01'
+                realWrite(c.id, { line })
+            end
+            return realRead(id)
+        end
+        s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 500 } })
+        s.storage.writeEscrow, s.storage.readEscrow = realWrite, realRead
+        truthy(queued, 'the race was run')
+
+        local line = s.storage.readEscrowLine(topUp)
+        eq(line.owed_to, 'HUNTER01')
+        falsy(line.settled_to == 'CREATOR1', 'handed to the client over the hunter it was queued for')
+    end)
+end)
+
+describe('a bonus raise landing while a claim is paying', function()
+    --- A claim part-way through was read as a closed contract: every top-up
+    --- went back, the later collections' included, while the raise was
+    --- reported applied and its percent stored.
+    it('keeps the top-ups for the collections still to come', function()
+        local s = mysqlStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE, bonusPercent = 10,
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } },
+                                 { baseline = { cash = 1000 } } } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        -- The claim on slot 1 takes COMPLETING once the top-ups are written.
+        local realWrite, realRead = s.storage.writeEscrow, s.storage.readContract
+        local claiming = false
+        s.storage.writeEscrow = function(id, lines)
+            local out = realWrite(id, lines)
+            if lines[1] and lines[1].derived then claiming = true end
+            return out
+        end
+        s.storage.readContract = function(id)
+            local row = realRead(id)
+            if claiming and row and id == c.id then row.state = CB.STATE.COMPLETING end
+            return row
+        end
+        local ok, err = s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 50 })
+        s.storage.writeEscrow, s.storage.readContract = realWrite, realRead
+        truthy(claiming, 'the race was run')
+        truthy(ok, tostring(err))
+
+        local later = 0
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.derived and l.slot > 1 and l.state == CB.ESCROW_STATE.HELD then
+                later = later + l.amount
+            end
+        end
+        eq(later, 2 * (100 + 400), 'the raise the later collections were shown is escrowed for them')
+    end)
+end)
+
 describe('a handover tick that throws part-way through', function()
     --- Every finished countdown was taken out of the live set before any
     --- was claimed, and one throw ended the pass: the ones not yet claimed

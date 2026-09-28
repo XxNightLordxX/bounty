@@ -1742,8 +1742,8 @@ do
         ['crimson_contracts.next_slot']       = 'moves only through advanceSlot',
         ['crimson_contracts.slots_claimed']   = 'moves only through advanceSlot',
         ['crimson_contracts.payout_slots']    = 'moves only through reduceSlots, for the same reason',
-        -- The clock. Moves only through setDeadline, startPause, endPause and
-        -- resetClock: the expiry pass wrote its copy over an extension made
+        -- The clock. Moves only through setDeadline, startPause and endPause:
+        -- the expiry pass wrote its copy over an extension made
         -- while it waited, and any other copy erased a pause it had begun.
         ['crimson_contracts.deadline_at']     = 'moves only through setDeadline and endPause',
         ['crimson_contracts.paused_ms']       = 'moves only through endPause',

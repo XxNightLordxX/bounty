@@ -238,6 +238,39 @@ describe('photo verification', function()
         truthy(ok, 'the body is still on the ground: ' .. tostring(err))
     end)
 
+    it('does not keep a kill alive by asking for token after token', function()
+        -- Each token held the kill for its own lifetime, and a token can be
+        -- asked for while the kill is held: a hunter asking every few
+        -- minutes could claim a target revived out of the watcher's sight
+        -- an hour later. Two lifetimes from the death is the most.
+        local s, f, c = seeded()
+        killTarget(s)
+        local lifetime = Config.Completion.PhotoTokenLifetimeSeconds
+        local token
+        for _ = 1, 6 do
+            Env.advance(lifetime - 5)
+            token = s.photo.issue(f.hunter, c.id) or token
+            s.death.sweep()
+        end
+        eq(s.death.getPending(c.id, 'HUNTER01'), nil, 'the kill lapsed')
+        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        falsy(ok, 'paid for a kill six lifetimes old')
+        truthy(err == CB.ERR.PHOTO_REVIVED or err == CB.ERR.TOKEN_INVALID, tostring(err))
+    end)
+
+    it('holds the kill for a token asked for at the end of its window', function()
+        local s, f, c = seeded()
+        killTarget(s)
+        local lifetime = Config.Completion.PhotoTokenLifetimeSeconds
+        Env.advance(lifetime - 1)
+        local token = s.photo.issue(f.hunter, c.id)
+        truthy(token)
+        Env.advance(lifetime - 2)
+        s.death.sweep()
+        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        truthy(ok, 'the first token outlived its own kill: ' .. tostring(err))
+    end)
+
     it('refuses a photo long after the target was revived', function()
         local s, f, c, token = ready()
         Env.players[2].PlayerData.metadata.isdead = false

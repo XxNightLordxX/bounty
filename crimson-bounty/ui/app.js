@@ -2785,21 +2785,11 @@
         // more while it was in flight. The same thread only, so a draft
         // never follows the player into a conversation with somebody else.
         var keep = state.drafts[threadKey(contract, thread)] || '';
-        // And the keyboard stays up. The thread is redrawn whole, and a
-        // reply landing mid-sentence took the focus out of the box.
-        var active = document.activeElement;
-        var typing = !!(active && active.id === 'compose-input');
+        // The keyboard stays up through the redraw: render() sees to it.
         state.thread = { contract: contract, thread: thread,
                          messages: asList(r.data), draft: keep };
         state.tab = 'thread';
         render();
-        if (typing) {
-          var box = document.getElementById('compose-input');
-          if (box && box.focus) {
-            box.focus();
-            try { box.setSelectionRange(box.value.length, box.value.length); } catch (e) { /* not every input type */ }
-          }
-        }
       });
   }
 
@@ -4360,8 +4350,24 @@
      shipped render crashes took. Now the failure is drawn, reported, and
      leaves a way out. */
   function render() {
+    /* And the keyboard stays up. The screen is redrawn whole, and anything
+       that redrew it while the player was typing - a reply landing, their
+       own send going out and coming back, a push refreshing the page -
+       took the focus out of the message box mid-sentence. It was put back
+       after a thread re-read only. */
+    var active = document.activeElement;
+    var typing = !!(active && active.id === 'compose-input');
     var drawn = Diag.guard('render:' + state.tab, draw);
-    if (drawn !== Diag.FAILED) { return; }
+    if (drawn !== Diag.FAILED) {
+      if (typing) {
+        var box = document.getElementById('compose-input');
+        if (box && box.focus) {
+          box.focus();
+          try { box.setSelectionRange(box.value.length, box.value.length); } catch (e) { /* not every input type */ }
+        }
+      }
+      return;
+    }
 
     var view = document.getElementById('view');
     if (!view) { return; }

@@ -524,6 +524,15 @@ local engineDeathAt, engineKiller
 local UP_CONFIRM_TICKS = 4
 local upFor = 0
 
+-- Dead once more after a defibrillator. The shock takes a player from dead
+-- to last stand, not to their feet, and the one death report stayed spent
+-- until they stood up: finished again on the ground, their second death was
+-- never reported and the hunter who finished them was never credited. Not
+-- dead for as long as a revive has to be up re-arms the report; whether a
+-- revive is reported still waits on standing up, after any death at all.
+local notDeadFor = 0
+local diedSinceUp = false
+
 CreateThread(function()
     while true do
         Wait(1000)
@@ -555,8 +564,16 @@ CreateThread(function()
         end
         wasEngineDead = engineDead
 
+        if dead then
+            notDeadFor = 0
+        elseif reportedDead then
+            notDeadFor = notDeadFor + 1
+            if notDeadFor >= UP_CONFIRM_TICKS then reportedDead = false end
+        end
+
         if dead and not reportedDead then
             reportedDead = true
+            diedSinceUp = true
 
             -- The victim reports who killed them, read from their own game.
             -- A killer's claim about their own kill is exactly what an
@@ -581,8 +598,8 @@ CreateThread(function()
                 -- up from last stand never died, and the server takes a
                 -- revive from a player it never saw dead as a probe, and
                 -- posts it to the staff webhook as one.
-                if reportedDead then TriggerServerEvent('crimson-bounty:iRevived') end
-                reportedDead = false
+                if diedSinceUp then TriggerServerEvent('crimson-bounty:iRevived') end
+                reportedDead, diedSinceUp = false, false
                 engineDeathAt, engineKiller = nil, nil
                 wasDown, upFor = false, 0
             end

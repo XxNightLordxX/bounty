@@ -799,7 +799,7 @@ end
 --- an ending's resolution. Only these columns, and never the state, the
 --- slot counters, the clock or the buyout queue, which have their own.
 local SETTABLE = { reason = true, mode = true, bonus_percent = true, bailout_amount = true,
-    penalty_amount = true, resolved_at = true, resolution = true }
+    penalty_amount = true, resolved_at = true, resolution = true, expires_at = true }
 function JsonStore.setContractFields(id, fields)
     local c = db.contracts[id]
     if not c then return false end
@@ -833,14 +833,6 @@ function JsonStore.endPause(id, since, seconds)
     c.deadline_at = (c.deadline_at or 0) + seconds
     c.paused_ms = (c.paused_ms or 0) + seconds * 1000
     c.paused_since = nil
-    touch(true, id)
-    return true
-end
-
-function JsonStore.resetClock(id, deadline)
-    local c = db.contracts[id]
-    if not c then return false end
-    c.deadline_at, c.paused_since = deadline, nil
     touch(true, id)
     return true
 end

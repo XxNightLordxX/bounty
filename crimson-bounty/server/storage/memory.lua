@@ -49,8 +49,8 @@ local BAILOUT_QUEUE = {
 --- just paid back on sale.
 local SLOT_COUNTERS = { 'next_slot', 'slots_claimed', 'payout_slots' }
 
---- The clock: moves only through setDeadline, startPause, endPause and
---- resetClock, never through writeContract. Every other writer carries a
+--- The clock: moves only through setDeadline, startPause and endPause,
+--- never through writeContract. Every other writer carries a
 --- copy read before its own awaits, and writing these back undid a pause the
 --- expiry pass had just started, or an extension the client had just made.
 local CLOCK = { 'deadline_at', 'paused_ms', 'paused_since' }
@@ -123,7 +123,7 @@ end
 --- an ending's resolution. Only these columns, and never the state, the
 --- slot counters, the clock or the buyout queue, which have their own.
 local SETTABLE = { reason = true, mode = true, bonus_percent = true, bailout_amount = true,
-    penalty_amount = true, resolved_at = true, resolution = true }
+    penalty_amount = true, resolved_at = true, resolution = true, expires_at = true }
 function Memory.setContractFields(id, fields)
     local c = db.contracts[id]
     if not c then return false end
@@ -157,14 +157,6 @@ function Memory.endPause(id, since, seconds)
     c.deadline_at = (c.deadline_at or 0) + seconds
     c.paused_ms = (c.paused_ms or 0) + seconds * 1000
     c.paused_since = nil
-    return true
-end
-
---- Staff: a new deadline and no pause.
-function Memory.resetClock(id, deadline)
-    local c = db.contracts[id]
-    if not c then return false end
-    c.deadline_at, c.paused_since = deadline, nil
     return true
 end
 

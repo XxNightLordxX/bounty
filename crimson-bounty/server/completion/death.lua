@@ -280,9 +280,15 @@ function Death.watchTargets(contracts)
                 -- too early (a medical script resurrects the ped while the
                 -- player is still down) and be refused, and then never comes
                 -- again. Up and alive by the medical state is the revive.
+                -- Up means neither dead nor in last stand: a defibrillator
+                -- takes a player from dead to last stand, and reading that
+                -- as a revive voided the kill and gave a target still on
+                -- the ground five minutes' immunity.
+                local dead, lastStand, resolved = Identity.deathState(target.source)
                 if Identity.isTrulyDead(target.source) then
                     Death.markDead(target.cid)
-                elseif Death.wasSeenDead(target.cid) then
+                elseif resolved and not dead and not lastStand
+                    and Death.wasSeenDead(target.cid) then
                     Death.onRevived(target.cid)
                 end
 
@@ -518,9 +524,17 @@ end
 
 --- Keep a pending kill for as long as a photo token issued against it. A
 --- revive still clears it, since that clears the record outright.
+---
+--- Never past two lifetimes from the death itself. Each token the kill
+--- still stood for extended it, and a token can be asked for while the
+--- kill is held, so asking again every few minutes kept it alive for good:
+--- a target revived out of sight of the watcher, or back after a restart
+--- the revive was lost in, could be claimed an hour later.
 function Death.holdPending(contractId, hunterCid, untilMs)
     local record = pending[contractId .. ':' .. hunterCid]
-    if record then record.heldUntil = math.max(record.heldUntil or 0, untilMs) end
+    if not record then return end
+    local cap = record.at + 2 * Config.Completion.PhotoTokenLifetimeSeconds * 1000
+    record.heldUntil = math.max(record.heldUntil or 0, math.min(untilMs, cap))
 end
 
 function Death.clearPending(contractId, hunterCid)
@@ -536,6 +550,14 @@ end
 function Death.onRevivedVerified(source, cid)
     if Identity.isTrulyDead(source) then
         Audit.rejected('revive_claim_while_dead', cid, nil, {})
+        return 0
+    end
+    -- Nor while still on the ground. A target shocked back into last stand
+    -- claiming the revive voided the kill that put them there, and took the
+    -- immunity with them.
+    local _, lastStand, resolved = Identity.deathState(source)
+    if resolved and lastStand then
+        Audit.rejected('revive_claim_while_down', cid, nil, {})
         return 0
     end
 

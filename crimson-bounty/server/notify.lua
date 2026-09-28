@@ -102,7 +102,13 @@ function Notify.push(cid, reason)
                 if held then Notify.push(cid, held) end
             end)
         end
-        trailing[cid] = reason
+        -- A message re-reads only the thread on the page, and anything else
+        -- re-reads the thread as well. So a message held behind an
+        -- acceptance must not take its place: the creator's card never
+        -- showed the new operative.
+        if not (reason == 'message' and trailing[cid] and trailing[cid] ~= 'message') then
+            trailing[cid] = reason
+        end
         return false
     end
 

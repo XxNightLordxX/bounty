@@ -736,6 +736,7 @@ function Admin.diagnose(source, subjectId)
     -- console and the audit log — so the report says so rather than leaving
     -- a reader waiting for something that is not coming.
     if subject then
+        if App and App.expectDump then App.expectDump(subject) end
         TriggerClientEvent('crimson-bounty:askDiagnostics', subject)
         say(('  asked player %s\'s app for its own log; if it is open, the '
             .. 'answer follows in this console within a second or two.')
@@ -801,12 +802,20 @@ function Admin.refreshTimers(src)
 
     local contracts = Storage.allContracts()
     for i = 1, #contracts do
-        local contract = contracts[i]
+        -- As it stands now, not as the list had it (see below). One gone
+        -- since has nothing left to refresh.
+        local contract = Storage.readContract(contracts[i].id) or {}
         local live = contract.state == CB.STATE.ACTIVE
             or contract.state == CB.STATE.ACCEPTED
             or contract.state == CB.STATE.COMPLETING
 
         if live then
+            -- Column by column, each against the row as it is now. The row
+            -- was read a pass ago, and every store call since is a yield on
+            -- mysql: writing it back whole put back whatever a claim, a
+            -- buyout or an amendment had changed in the meantime, a
+            -- contract settled a moment before live again among them.
+            --
             -- The lifetime first: the deadline is clamped to it, so setting
             -- the deadline against a stale ceiling would clamp it straight
             -- back to the value being refreshed.
@@ -815,24 +824,27 @@ function Admin.refreshTimers(src)
             -- deadline the client had extended to forty hours came back to
             -- three, and the expiry that followed forfeited the hunter's
             -- stake to the creator: a console command moving money, which
-            -- is the one thing this must not do. A paused deadline counts
-            -- with the pause it has banked, since clearing the pause below
-            -- would otherwise take that time away.
-            contract.expires_at = math.max(contract.expires_at or 0,
-                now + (tonumber(Config.Limits.ContractLifetimeSeconds) or 0))
-            local standing = contract.deadline_at or 0
-            if contract.paused_since and contract.deadline_at then
-                standing = contract.deadline_at + math.max(0, now - contract.paused_since)
+            -- is the one thing this must not do.
+            local lifetime = now + (tonumber(Config.Limits.ContractLifetimeSeconds) or 0)
+            if (contract.expires_at or 0) < lifetime then
+                Storage.setContractFields(contract.id, { expires_at = lifetime })
             end
-            local deadline = math.max(standing, now + (tonumber(Config.Limits.DefaultDeadlineSeconds) or 0))
-            if deadline > contract.expires_at then deadline = contract.expires_at end
-            contract.deadline_at = deadline
-            -- A pause that began before the refresh would be paid out as an
-            -- extension on top of the deadline just granted.
-            contract.paused_since = nil
-            Storage.writeContract(contract)
-            -- The clock moves only through its own writes.
-            Storage.resetClock(contract.id, deadline)
+
+            -- A running pause is banked, then ended, by its own write. Left
+            -- running it would be paid out as an extension on top of the
+            -- deadline granted here; dropped, the time it had banked went
+            -- with it.
+            local fresh = Storage.readContract(contract.id)
+            local since = fresh and fresh.paused_since
+            if since then
+                Storage.endPause(contract.id, since, math.max(0, now - since))
+            end
+
+            local default = now + (tonumber(Config.Limits.DefaultDeadlineSeconds) or 0)
+            Contracts.moveDeadline(contract.id, function(current)
+                local target = math.min(default, current.expires_at or default)
+                return math.max(current.deadline_at or 0, target)
+            end)
             counts.deadlines = counts.deadlines + 1
 
             local hunters = Storage.readHunters(contract.id)
@@ -848,10 +860,14 @@ function Admin.refreshTimers(src)
 
             local open = Storage.readOpenAmendments(contract.id)
             for a = 1, #open do
-                local proposal = open[a]
-                proposal.expires_at = now + (tonumber(Config.Amendments.ProposalExpirySeconds) or 0)
-                Storage.writeAmendment(proposal)
-                counts.proposals = counts.proposals + 1
+                -- Re-read, for the same reason: one answered while the
+                -- proposals before it were written would be put back open.
+                local proposal = Storage.readAmendment(open[a].id)
+                if proposal and proposal.outcome == 'open' then
+                    proposal.expires_at = now + (tonumber(Config.Amendments.ProposalExpirySeconds) or 0)
+                    Storage.writeAmendment(proposal)
+                    counts.proposals = counts.proposals + 1
+                end
             end
         elseif contract.resolved_at then
             -- The one field, not the row read a pass ago.

@@ -302,6 +302,24 @@ function App.recentPageFaults()
     return out
 end
 
+--- Pages a staff member has asked for their log, and until when the answer
+--- is taken. [source] = os.time() deadline.
+---
+--- The page says it was asked, and the page is a browser any player can
+--- script: the printed log was a way to write to the server console on
+--- demand, several lines at a time. It prints only for a page that was.
+local dumpsAsked = {}
+local DUMP_ANSWER_SECONDS = 30
+
+--- Note that this player's page has been asked for its log.
+function App.expectDump(src)
+    local now = os.time()
+    for asked, until_ in pairs(dumpsAsked) do
+        if until_ < now then dumpsAsked[asked] = nil end
+    end
+    if src then dumpsAsked[src] = now + DUMP_ANSWER_SECONDS end
+end
+
 --------------------------------------------------------------------------
 -- Handlers
 --------------------------------------------------------------------------
@@ -854,6 +872,8 @@ function App.register()
         -- promised to them in this console and, with Debug off, never came.
         -- One line per event, as the page recorded them.
         local requested = what == 'page diagnostics' and where == 'requested'
+            and (dumpsAsked[actor.source] or 0) >= os.time()
+        if requested then dumpsAsked[actor.source] = nil end
         if (Config.Debug or requested) and stack and stack ~= '' then
             for line in (stack .. ' || '):gmatch('(.-) || ') do
                 if line ~= '' then print(('[crimson-bounty]   %s'):format(line)) end

@@ -605,6 +605,63 @@ describe('refreshing every timer for testing', function()
             'the refresh must not hand a buyer the whole roster')
     end)
 
+    it('writes nothing back from the list it read at the start', function()
+        -- Every store call is a yield on mysql. The pass wrote back the row
+        -- it listed, putting back whatever a bonus raise or a re-price had
+        -- changed while it waited.
+        local s, f, c = seeded()
+        local real = s.storage.allContracts
+        s.storage.allContracts = function()
+            local copies = {}
+            for i, row in ipairs(real()) do
+                local copy = {}
+                for k, v in pairs(row) do copy[k] = v end
+                copies[i] = copy
+            end
+            s.storage.setContractFields(c.id, { bonus_percent = 40, bailout_amount = 777 })
+            return copies
+        end
+        Env.aces[3] = { ['crimson.admin'] = true }
+        local ok, err = pcall(cmd(s), 3, {})
+        s.storage.allContracts = real
+        truthy(ok, tostring(err))
+
+        local after = s.storage.readContract(c.id)
+        eq(after.bonus_percent, 40, 'the raise was undone')
+        eq(after.bailout_amount, 777, 'the re-price was undone')
+        truthy(after.deadline_at > os.time(), 'and the refresh itself still happened')
+    end)
+
+    it('does not reopen a proposal answered while it worked', function()
+        local s, f, c = seeded({ accept = true })
+        local ok, err0 = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_REASON,
+            { reason = 'A better reason' })
+        truthy(ok, 'a proposal to refresh: ' .. tostring(err0))
+        local open = s.storage.readOpenAmendments(c.id)
+        eq(#open, 1)
+
+        local real = s.storage.readOpenAmendments
+        s.storage.readOpenAmendments = function(id)
+            local rows = {}
+            for i, row in ipairs(real(id)) do
+                local copy = {}
+                for k, v in pairs(row) do copy[k] = v end
+                rows[i] = copy
+            end
+            -- Declined in the moment the pass waited.
+            local live = s.storage.readAmendment(open[1].id)
+            live.outcome = 'declined'
+            s.storage.writeAmendment(live)
+            return rows
+        end
+        Env.aces[3] = { ['crimson.admin'] = true }
+        local ran, err = pcall(cmd(s), 3, {})
+        s.storage.readOpenAmendments = real
+        truthy(ran, tostring(err))
+        eq(s.storage.readAmendment(open[1].id).outcome, 'declined',
+            'the refresh put an answered proposal back open')
+    end)
+
     it('writes down that somebody did it', function()
         local s, f, c = seeded()
         Env.aces[3] = { ['crimson.admin'] = true }

@@ -1495,6 +1495,33 @@ describe('more of the acceptance, pinned', function()
         eq(#extra, 1, 'the cash baseline, which the contract still pays')
     end)
 
+    it('prices two raises one after the other, not both from the same start', function()
+        -- Both read 10%, both took their top-up: 40 points of escrow for a
+        -- bonus shown at 20 or 30.
+        local s = mysqlStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE, bonusPercent = 10,
+            reward = { slots = { { baseline = { cash = 1000 } } } },
+        })
+        local real, second = s.storage.readEscrow, nil
+        s.storage.readEscrow = function(...)
+            if not second then
+                second = table.pack(s.amendments.improve(f.creator, c.id,
+                    CB.AMENDMENT.RAISE_BONUS, { percent = 30 }))
+            end
+            return real(...)
+        end
+        s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 20 })
+        s.storage.readEscrow = real
+        falsy(second[1], 'the second raise ran inside the first')
+        eq(second[2], CB.ERR.BUSY)
+        local bonus = s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS })
+        eq(bonus, math.floor(1000 * s.storage.readContract(c.id).bonus_percent / 100),
+            'the bonus held is the bonus shown')
+    end)
+
     it('never leaves one player over the cap when the second lands before the first row', function()
         local s = newStack()
         local f = fixture(s)
@@ -1603,16 +1630,21 @@ describe('RACE F21: a write-back of a stale contract after a re-clamp', function
         for _, l in ipairs(s.storage.readEscrow(c.id)) do
             if l.portion == CB.PORTION.BONUS then bonus = l.id end
         end
+        -- A re-price landing while the raise is in its awaits. A withdrawal
+        -- can no longer be it (both hold the contract), so it is written
+        -- directly: the point is that the raise does not write back the
+        -- figures it read before it.
         local real, fired, clamped = s.storage.readEscrow, false, nil
         s.storage.readEscrow = function(...)
             if not fired then
                 fired = true
-                truthy(s.contracts.withdrawReward(f.creator, c.id, { bonus }))
+                truthy(s.contracts.withdrawReward(f.creator, c.id, { bonus }) == false,
+                    'the withdrawal waits its turn')
+                s.storage.setContractFields(c.id, { bailout_amount = 12345 })
                 clamped = s.storage.readContract(c.id).bailout_amount
             end
             return real(...)
         end
-        -- The client extends the deadline; improve read the row first.
         s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 10 })
         s.storage.readEscrow = real
         truthy(fired)

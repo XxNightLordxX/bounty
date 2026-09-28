@@ -638,6 +638,19 @@ describe('additive improvements apply without approval', function()
         eq(#Natives.calls.notifications, 0, 'and nobody was told the terms improved')
     end)
 
+    it('never brings in a deadline a pause carried past the lifetime', function()
+        local s, f, c = seededImprove()
+        local stored = s.storage.readContract(c.id)
+        local past = stored.expires_at + 3600
+        truthy(s.storage.setDeadline(c.id, stored.deadline_at, past))
+        local ok, err = s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE,
+            { seconds = 1800 })
+        falsy(ok)
+        eq(err, CB.ERR.DEADLINE_AT_LIMIT)
+        eq(s.storage.readContract(c.id).deadline_at, past,
+            'an extension moved the deadline earlier')
+    end)
+
     it('raises the bonus but never lowers it', function()
         local s, f, c = seededImprove()
         truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 80 }))
@@ -2665,6 +2678,37 @@ describe('a revive the client reported too early', function()
         -- Up again; the client's report was refused and will not come again.
         s.death.watchTargets(s.storage.allContracts())
         falsy(s.death.wasSeenDead('TARGET01'), 'the revive was never recorded')
+    end)
+
+    it('is not read into a defibrillator taking them to last stand', function()
+        -- Dead to last stand is not up. Read as a revive, it voided the kill
+        -- and gave a target still on the ground five minutes' immunity.
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        Env.players[2]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[3]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 140
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        truthy(s.death.onVictimReport(2, 3) >= 1, 'the kill is pending')
+
+        local meta = Env.players[2].PlayerData.metadata
+        meta.isdead, meta.inlaststand = false, true
+        -- Past the proof window, where a revive would clear the kill.
+        Env.advance((Config.Completion.ProofWindowSeconds or 0) + 5)
+        s.death.watchTargets(s.storage.allContracts())
+        truthy(s.death.wasSeenDead('TARGET01'), 'last stand is still down')
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the kill still stands')
+        eq(s.death.onRevivedVerified(2, 'TARGET01'), 0, 'nor may they claim it')
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the claim voided the kill')
+        truthy(s.death.wasSeenDead('TARGET01'), 'the claim was taken as a revive')
+
+        meta.inlaststand = false
+        s.death.watchTargets(s.storage.allContracts())
+        falsy(s.death.wasSeenDead('TARGET01'), 'up for real is the revive')
     end)
 end)
 

@@ -1531,6 +1531,38 @@ describe('reporting your own death', function()
         eq(reported('iRevived'), 1, 'and up for real later')
     end)
 
+    it('reports a second death after a defibrillator, and one revive', function()
+        -- Shocked back to last stand, then finished on the ground. The one
+        -- death report stayed spent until they stood up, so the hunter who
+        -- finished them was never credited.
+        watching()
+        local meta = underMedical()
+        meta.isdead = true
+        Client.ticks(1)
+        eq(reported('iDied'), 1)
+        meta.isdead, meta.inlaststand = false, true
+        Client.ticks(5)
+        meta.inlaststand, meta.isdead = false, true
+        Client.ticks(2)
+        eq(reported('iDied'), 2, 'the second death is reported')
+        eq(reported('iRevived'), 0, 'never up in between')
+        meta.isdead = false
+        Client.ticks(5)
+        eq(reported('iRevived'), 1, 'and one revive when they stand up')
+    end)
+
+    it('does not report a flicker of the death flag as a second death', function()
+        watching()
+        local meta = underMedical()
+        meta.isdead = true
+        Client.ticks(1)
+        meta.isdead = false
+        Client.ticks(2)
+        meta.isdead = true
+        Client.ticks(2)
+        eq(reported('iDied'), 1, 'one death, however the flag blinks')
+    end)
+
     it('forgets who downed them once they are back up', function()
         watching()
         local meta = underMedical()

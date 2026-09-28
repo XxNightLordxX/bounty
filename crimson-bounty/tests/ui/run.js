@@ -6990,6 +6990,48 @@ async function main() {
         truthy(app.document.activeElement === box, 'the focus left the box');
       });
     })();
+
+    await (async function aFullRefreshKeepsTheKeyboard() {
+      const app = openApp({ ok: true, data: [] });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Message');
+      await settle(); await settle();
+      const input = composeOnScreen(app);
+      truthy(input, 'in the thread');
+      input.focus();
+      input.value = 'still typing';
+      input.oninput();
+      // Somebody accepted: the whole page refreshes, not only the thread.
+      app.sandbox.window._message({ data: { type: 'push', reason: 'accepted' } });
+      const due = app.timers.filter(function (t) { return t.ms === 250; });
+      if (due.length) { due[due.length - 1].fn(); }
+      for (let i = 0; i < 5; i++) { await settle(); }
+      it('keeps the keyboard through a refresh a push caused', function () {
+        const box = composeOnScreen(app);
+        eq(box && box.value, 'still typing');
+        truthy(box && app.document.activeElement === box,
+          'a push redrew the thread and the focus left the box mid-sentence');
+      });
+    })();
+
+    await (async function aRedrawAwayFromTheBoxDoesNotGrabIt() {
+      const app = openApp({ ok: true, data: [] });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Message');
+      await settle(); await settle();
+      app.document.activeElement = null;
+      app.sandbox.window._message({ data: { type: 'push', reason: 'message' } });
+      for (let i = 0; i < 4; i++) { await settle(); }
+      it('does not raise the keyboard for a player who was not typing', function () {
+        const box = composeOnScreen(app);
+        truthy(box, 'still in the thread');
+        falsy(app.document.activeElement === box, 'the keyboard came up on its own');
+      });
+    })();
   })();
 
   console.log('');
