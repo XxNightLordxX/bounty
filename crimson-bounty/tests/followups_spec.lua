@@ -563,40 +563,45 @@ describe('a top-up handed back while a claim queues it', function()
             if not topUp and lines[1] and lines[1].portion == CB.PORTION.BASELINE
                 and lines[1].amount == 500 then
                 topUp = lines[1].id
-                local row = s.storage.readContract(c.id)
-                row.next_slot = 2
-                s.storage.writeContract(row)
+                -- Through the store's own move: a whole-row write leaves the
+                -- slot counters alone, and the hand-back never ran.
+                truthy(s.storage.advanceSlot(c.id, 1))
             end
             return out
         end
         -- And the racing claim queues it for the hunter just before the
-        -- hand-back's release takes it.
-        local realRead = s.storage.readEscrow
+        -- hand-back's release takes it: after every read the hand-back makes
+        -- of it, in the await the release's own claim of the line is.
+        local realClaim = s.storage.claimEscrowLine
         local queued = false
-        s.storage.readEscrow = function(id)
-            if topUp and not queued then
+        s.storage.claimEscrowLine = function(id, from, to)
+            if topUp and id == topUp and not queued then
                 queued = true
                 local line = s.storage.readEscrowLine(topUp)
                 line.owed_to = 'HUNTER01'
                 realWrite(c.id, { line })
             end
-            return realRead(id)
+            return realClaim(id, from, to)
         end
-        s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 500 } })
-        s.storage.writeEscrow, s.storage.readEscrow = realWrite, realRead
+        local ok, err = s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 500 } })
+        s.storage.writeEscrow, s.storage.claimEscrowLine = realWrite, realClaim
         truthy(queued, 'the race was run')
 
         local line = s.storage.readEscrowLine(topUp)
         eq(line.owed_to, 'HUNTER01')
         falsy(line.settled_to == 'CREATOR1', 'handed to the client over the hunter it was queued for')
+        truthy(ok, 'queued for the hunter, and the client was told it failed: ' .. tostring(err))
     end)
 end)
 
 describe('a bonus raise landing while a claim is paying', function()
     --- A claim part-way through was read as a closed contract: every top-up
     --- went back, the later collections' included, while the raise was
-    --- reported applied and its percent stored.
-    it('keeps the top-ups for the collections still to come', function()
+    --- reported applied. Read by its slot instead, the next collection's
+    --- top-up went back, since a claim moves the slot on before it lets go,
+    --- and a refused claim's collection lost its own. The raise waits for the
+    --- claim to finish, and decides on what it did.
+    local function placed()
         local s = mysqlStack()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 400000
@@ -606,32 +611,163 @@ describe('a bonus raise landing while a claim is paying', function()
                                  { baseline = { cash = 1000 } } } },
         })
         truthy(s.contracts.accept(f.hunter, c.id, false))
+        return s, f, c
+    end
 
-        -- The claim on slot 1 takes COMPLETING once the top-ups are written.
-        local realWrite, realRead = s.storage.writeEscrow, s.storage.readContract
-        local claiming = false
-        s.storage.writeEscrow = function(id, lines)
-            local out = realWrite(id, lines)
-            if lines[1] and lines[1].derived then claiming = true end
-            return out
+    local function bonusHeld(s, c, slot)
+        local held = 0
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.slot == slot and l.portion == CB.PORTION.BONUS
+                and l.state == CB.ESCROW_STATE.HELD then held = held + l.amount end
         end
-        s.storage.readContract = function(id)
-            local row = realRead(id)
-            if claiming and row and id == c.id then row.state = CB.STATE.COMPLETING end
-            return row
+        return held
+    end
+
+    --- Raise to 50% with `during` run once the top-ups are written, and the
+    --- server's Wait standing in for time passing while the raise waits.
+    local function raiseWhile(s, c, during, onWait)
+        local realTake, realWait = s.escrow.take, _G.Wait
+        local raced = false
+        s.escrow.take = function(actor, id, lines)
+            local a, b, d = realTake(actor, id, lines)
+            if not raced and lines[1] and lines[1].derived then
+                raced = true
+                during()
+            end
+            return a, b, d
         end
-        local ok, err = s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 50 })
-        s.storage.writeEscrow, s.storage.readContract = realWrite, realRead
-        truthy(claiming, 'the race was run')
+        _G.Wait = function() if onWait then onWait() end end
+        local ok, err = s.amendments.improve(s.identity.byCitizenId('CREATOR1'), c.id,
+            CB.AMENDMENT.RAISE_BONUS, { percent = 50 })
+        s.escrow.take, _G.Wait = realTake, realWait
+        truthy(raced, 'the race was run')
+        return ok, err
+    end
+
+    it('keeps the later collections\' top-ups when the claim pays and moves on', function()
+        local s, f, c = placed()
+        -- The claim pays slot 1 and has moved the slot on, but not let go.
+        local claim
+        local realAdvance = s.storage.advanceSlot
+        s.storage.advanceSlot = function(...)
+            local r = realAdvance(...)
+            if coroutine.running() == claim then coroutine.yield() end
+            return r
+        end
+        local ok, err = raiseWhile(s, c, function()
+            claim = coroutine.create(function()
+                return s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+            end)
+            coroutine.resume(claim)
+        end, function()
+            if claim and coroutine.status(claim) == 'suspended' then coroutine.resume(claim) end
+        end)
+        s.storage.advanceSlot = realAdvance
         truthy(ok, tostring(err))
 
-        local later = 0
-        for _, l in ipairs(s.storage.readEscrow(c.id)) do
-            if l.derived and l.slot > 1 and l.state == CB.ESCROW_STATE.HELD then
-                later = later + l.amount
+        local row = s.storage.readContract(c.id)
+        eq(row.next_slot, 2, 'the claim paid')
+        eq(row.bonus_percent, 50)
+        eq(bonusHeld(s, c, 2), 500, 'collection 2 is shown 50% and escrowed at 10%')
+        eq(bonusHeld(s, c, 3), 500)
+    end)
+
+    it('keeps the collection a refused claim was on', function()
+        local s, f, c = placed()
+        local ok, err = raiseWhile(s, c, function()
+            truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming_slot'))
+        end, function()
+            if s.storage.readContract(c.id).state == CB.STATE.COMPLETING then
+                s.contracts.transition(c.id, CB.STATE.COMPLETING, CB.STATE.ACCEPTED, 'claim_refused')
+            end
+        end)
+        truthy(ok, tostring(err))
+        for slot = 1, 3 do
+            eq(bonusHeld(s, c, slot), 500, 'collection ' .. slot .. ' is underfunded')
+        end
+    end)
+
+    it('hands the raise back whole and says busy when the claim stalls', function()
+        local s, f, c = placed()
+        local before = Env.players[1].PlayerData.money.bank
+        local ok, err = raiseWhile(s, c, function()
+            truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming_slot'))
+        end)
+        falsy(ok, 'reported applied')
+        eq(err, CB.ERR.BUSY)
+        eq(s.storage.readContract(c.id).bonus_percent, 10, 'the percent was stored anyway')
+        eq(Env.players[1].PlayerData.money.bank, before, 'and the client kept paying for it')
+        for slot = 1, 3 do eq(bonusHeld(s, c, slot), 100) end
+    end)
+
+    it('does not call a raise applied when a stalled claim took only part of it', function()
+        local s, f, c = placed()
+        local ok, err = raiseWhile(s, c, function()
+            truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming_slot'))
+            -- The claim paid the collection it was on, top-up and all.
+            for _, l in ipairs(s.storage.readEscrow(c.id)) do
+                if l.derived and l.slot == 1 and l.amount == 400 then
+                    truthy(s.storage.claimEscrowLine(l.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING))
+                    truthy(s.storage.settleEscrowLine(l.id, 'HUNTER01'))
+                end
+            end
+        end)
+        falsy(ok, 'reported applied with the later collections handed back')
+        eq(err, CB.ERR.BUSY)
+        eq(s.storage.readContract(c.id).bonus_percent, 10)
+        eq(bonusHeld(s, c, 2), 100)
+    end)
+end)
+
+describe('a top-up the claim it waited on paid out', function()
+    it('is reported made, not locked', function()
+        local s = mysqlStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        -- The claim holds the contract and has not yet read what to pay.
+        local claim, paused = nil, false
+        local realReadEscrow = s.storage.readEscrow
+        s.storage.readEscrow = function(id)
+            if claim and coroutine.running() == claim and not paused then
+                paused = true
+                coroutine.yield()
+            end
+            return realReadEscrow(id)
+        end
+        local realTake, realWait = s.escrow.take, _G.Wait
+        local topUp
+        s.escrow.take = function(actor, id, lines)
+            local a, b, d = realTake(actor, id, lines)
+            if not topUp and lines[1] and lines[1].amount == 500 then
+                for _, l in ipairs(realReadEscrow(c.id)) do
+                    if l.amount == 500 and l.portion == CB.PORTION.BASELINE then topUp = l.id end
+                end
+                claim = coroutine.create(function()
+                    return s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+                end)
+                coroutine.resume(claim)
+            end
+            return a, b, d
+        end
+        local resumed = false
+        _G.Wait = function()
+            if claim and not resumed and coroutine.status(claim) == 'suspended' then
+                resumed = true
+                coroutine.resume(claim)
             end
         end
-        eq(later, 2 * (100 + 400), 'the raise the later collections were shown is escrowed for them')
+        local ok, err = s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 500 } })
+        s.escrow.take, _G.Wait, s.storage.readEscrow = realTake, realWait, realReadEscrow
+        truthy(resumed, 'the claim was waited on')
+
+        eq(s.storage.readEscrowLine(topUp).settled_to, 'HUNTER01', 'the claim paid the top-up')
+        truthy(ok, 'the top-up reached the hunter and the client was told: ' .. tostring(err))
     end)
 end)
 

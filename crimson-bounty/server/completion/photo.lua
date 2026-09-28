@@ -163,9 +163,13 @@ function Photo.issue(actor, contractId)
         issuedAt   = Util.monotonicMs(),
         used       = false,
     }
-    -- The kill this token proves is kept as long as the token is good.
-    Death.holdPending(contractId, actor.cid,
-        tokens[token].issuedAt + Config.Completion.PhotoTokenLifetimeSeconds * 1000)
+    -- The kill this token proves is kept as long as the token is good, and
+    -- the token is good no longer than the kill is kept. A token asked for
+    -- late outlived its kill, and the photograph was refused as a revive
+    -- with the body still on the ground.
+    local lifetimeMs = Config.Completion.PhotoTokenLifetimeSeconds * 1000
+    tokens[token].expiresAt = Death.holdPending(contractId, actor.cid,
+        tokens[token].issuedAt + lifetimeMs) or (tokens[token].issuedAt + lifetimeMs)
 
     Audit.action('photo_token_issued', actor.cid, contractId, {})
     return token
@@ -208,7 +212,8 @@ function Photo.submit(actor, rawToken, rawUrl)
         return false, CB.ERR.TOKEN_INVALID
     end
 
-    if Util.monotonicMs() - record.issuedAt > (Config.Completion.PhotoTokenLifetimeSeconds * 1000) then
+    if Util.monotonicMs() - record.issuedAt > (Config.Completion.PhotoTokenLifetimeSeconds * 1000)
+        or (record.expiresAt and Util.monotonicMs() > record.expiresAt) then
         tokens[token] = nil
         return false, CB.ERR.TOKEN_INVALID
     end
@@ -233,10 +238,18 @@ function Photo.submit(actor, rawToken, rawUrl)
     -- then gone offline, or dead again of something else, passed the check
     -- below, and the hunter was paid for a kill that had been undone.
     local stillPending = Death.getPending(record.contractId, actor.cid)
-    if not stillPending or (record.diedAt and stillPending.at ~= record.diedAt) then
+    if not stillPending then
         Audit.rejected('photo_kill_undone', actor.cid, record.contractId, {})
         tokens[token] = nil
         return false, CB.ERR.PHOTO_REVIVED
+    end
+    -- A newer kill of theirs took its place: the target got up and this
+    -- hunter put them down again. That one needs its own photograph, and
+    -- being told they had been brought back read as the kill being lost.
+    if record.diedAt and stillPending.at ~= record.diedAt then
+        Audit.rejected('photo_kill_replaced', actor.cid, record.contractId, {})
+        tokens[token] = nil
+        return false, CB.ERR.TOKEN_INVALID
     end
 
     -- Still dead? A target revived between the kill and the photo was not
@@ -246,6 +259,16 @@ function Photo.submit(actor, rawToken, rawUrl)
     local victim = Identity.byCitizenId(record.victimCid)
     if victim and not Identity.isTrulyDead(victim.source) then
         local sinceDeath = (Util.monotonicMs() - (record.diedAt or record.issuedAt)) / 1000
+        -- On the ground again, not on their feet: a defibrillator takes
+        -- them from dead to last stand. Not a kill until they are finished,
+        -- and not a revive either, so the kill is kept and the hunter told
+        -- what to do. Refused as revived, the kill was thrown away with the
+        -- target still lying there.
+        local _, down, known = Identity.deathState(victim.source)
+        if sinceDeath > (Config.Completion.ProofWindowSeconds or 0) and known and down then
+            Audit.rejected('photo_target_down', actor.cid, record.contractId, {})
+            return false, CB.ERR.PHOTO_STILL_DOWN
+        end
         if sinceDeath > (Config.Completion.ProofWindowSeconds or 0) then
             Audit.rejected('photo_target_revived', actor.cid, record.contractId,
                 { since = math.floor(sinceDeath) })

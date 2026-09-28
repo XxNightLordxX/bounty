@@ -2676,6 +2676,9 @@ describe('a revive the client reported too early', function()
         s.death.markDead('TARGET01')
         truthy(s.death.wasSeenDead('TARGET01'))
         -- Up again; the client's report was refused and will not come again.
+        -- Seen up, and still up once a revive would have had to last.
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(5)
         s.death.watchTargets(s.storage.allContracts())
         falsy(s.death.wasSeenDead('TARGET01'), 'the revive was never recorded')
     end)
@@ -2708,7 +2711,89 @@ describe('a revive the client reported too early', function()
 
         meta.inlaststand = false
         s.death.watchTargets(s.storage.allContracts())
+        Env.advance(5)
+        s.death.watchTargets(s.storage.allContracts())
         falsy(s.death.wasSeenDead('TARGET01'), 'up for real is the revive')
+    end)
+end)
+
+describe('the moment a defibrillator leaves between dead and last stand', function()
+    --- sc-ambulance clears isdead a second or more before it writes
+    --- inlaststand. One reading in that gap was a revive: the kill voided and
+    --- the target, still on the ground, immune for five minutes.
+    local function downed()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        Env.players[2]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[3]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 140
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        truthy(s.death.onVictimReport(2, 3) >= 1, 'the kill is pending')
+        Env.advance((Config.Completion.ProofWindowSeconds or 0) + 5)
+        return s, f, c, Env.players[2].PlayerData.metadata
+    end
+
+    it('is not a revive to the watcher', function()
+        local s, f, c, meta = downed()
+        meta.isdead = false                 -- the gap
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(1)
+        meta.inlaststand = true             -- last stand lands
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(5)
+        s.death.watchTargets(s.storage.allContracts())
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the kill was voided in the gap')
+        falsy(s.death.sinceRespawn('TARGET01'), 'and immunity handed out')
+    end)
+
+    it('starts the wait again after they are seen down', function()
+        -- The gap, then a long last stand, then a single reading up: an
+        -- up-since left over from the gap counted it as a revive at once.
+        local s, f, c, meta = downed()
+        meta.isdead = false
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(1)
+        meta.inlaststand = true
+        for _ = 1, 10 do
+            s.death.watchTargets(s.storage.allContracts())
+            Env.advance(1)
+        end
+        meta.inlaststand = false
+        s.death.watchTargets(s.storage.allContracts())
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'one reading up was a revive')
+    end)
+
+    it('is not a revive to a claim fired inside it', function()
+        local s, f, c, meta = downed()
+        meta.isdead = false
+        eq(s.death.onRevivedVerified(2, 'TARGET01'), 0, 'taken at its word')
+        Env.advance(1)
+        meta.inlaststand = true
+        Env.advance(5)
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the timed claim voided the kill')
+        falsy(s.death.sinceRespawn('TARGET01'), 'and immunity handed out')
+    end)
+
+    it('still counts a revive that lasts', function()
+        local s, f, c, meta = downed()
+        meta.isdead = false
+        s.death.onRevivedVerified(2, 'TARGET01')
+        Env.advance(5)
+        truthy(s.death.sinceRespawn('TARGET01'), 'a real revive was lost')
+        falsy(s.death.getPending(c.id, 'HUNTER01'), 'and it voids the kill it ends')
+    end)
+
+    it('takes a claim at once from a target the watch has seen up', function()
+        local s, f, c, meta = downed()
+        meta.isdead = false
+        s.death.watchTargets(s.storage.allContracts())
+        Env.gameTimer = Env.gameTimer + 4500    -- the watch saw them up this long
+        truthy(s.death.onRevivedVerified(2, 'TARGET01') >= 0)
+        truthy(s.death.sinceRespawn('TARGET01'), 'a revive the server has watched is taken')
     end)
 end)
 

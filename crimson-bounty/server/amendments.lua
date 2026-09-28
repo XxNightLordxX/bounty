@@ -56,6 +56,10 @@ end
 -- Additive changes (§12.1)
 --------------------------------------------------------------------------
 
+--- How long a top-up waits on a claim part-way through paying, and how often
+--- it looks. A claim is a handful of store calls.
+local CLAIM_WAIT_MS, CLAIM_POLL_MS = 3000, 100
+
 --- Hand back escrow this call has just taken, if the contract moved under
 --- it while the take was in flight.
 ---
@@ -93,20 +97,36 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
             and (current.owed_to == nil or current.owed_to == actor.cid)
     end
 
+    -- Where a line went, when it is not back with the client: paid out or
+    -- queued by a claim, which is where a top-up was meant to go.
+    local function paidTo(id)
+        local line = Storage.readEscrowLine(id)
+        local to = line and (line.settled_to or line.releasing_to or line.owed_to)
+        if to and to ~= actor.cid then return to end
+        return nil
+    end
+
+    -- A claim part-way through paying is waited out, briefly. Which
+    -- collection it is paying cannot be read off the row: it moves the slot
+    -- on before it lets go, and it can yet be refused and pay nothing.
+    -- Guessed from the slot, the next collection's top-up went back while
+    -- the raise was reported applied, and a refused claim's collection lost
+    -- its own. Read as closed, every top-up went back, the later ones too.
+    -- A claim is a handful of store calls; one still going after this has
+    -- stalled, and is answered below without guessing.
     local now = Storage.readContract(contractId)
+    local waited = 0
+    while now and now.state == CB.STATE.COMPLETING and waited < CLAIM_WAIT_MS do
+        Wait(CLAIM_POLL_MS)
+        waited = waited + CLAIM_POLL_MS
+        now = Storage.readContract(contractId)
+    end
+
     local state = now and now.state
     local open = state == CB.STATE.ACTIVE or state == CB.STATE.ACCEPTED
     if open and (expectedSlot == nil or (now.next_slot or 1) == expectedSlot) then
         return true
     end
-
-    -- A claim part-way through paying is not a closed contract. Read as one,
-    -- every top-up went back, the ones for collections still to come
-    -- included, while the raise that made them was reported as applied: the
-    -- later collections were advertised at the new bonus and escrowed at the
-    -- old. The collection being paid, and any before it, can go back; the
-    -- rest stay.
-    local completing = state == CB.STATE.COMPLETING
 
     -- Still open, and a claim moved the slot on in the awaits. Only lines on
     -- a collection already paid are stranded; those on collections still to
@@ -114,14 +134,12 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
     -- was meant to. Handing every line back and then reporting the top-up as
     -- made told a bonus raise it had applied — its percent stored and shown
     -- — while the collections after it went back to the old bonus.
-    if open or completing then
+    if open then
         local paying = now.next_slot or 1
         local back, kept = {}, false
         for id in pairs(ids or {}) do
             local line = Storage.readEscrowLine(id)
-            local passed = (line and line.slot or 0) < paying
-                or (completing and line and line.slot == paying)
-            if returnable(line) and passed then
+            if returnable(line) and (line.slot or 0) < paying then
                 back[id] = true
             elseif line then
                 kept = true
@@ -130,6 +148,10 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
         if next(back) then
             Escrow.release(contractId, actor.cid, { lines = back }, 'escrow_added_to_moved',
                 stillReturnable)
+            -- One a claim took from under the release went to its hunter.
+            for id in pairs(back) do
+                if paidTo(id) then kept = true end
+            end
         end
         if kept then return true end
         Audit.rejected('escrow_added_to_moved', actor.cid, contractId, { state = state })
@@ -153,17 +175,23 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
         -- hunter had the money. That holds when the claim was the last one
         -- and closed the contract, too. A contract that closed any other way
         -- is told as closed: its ending returned the lines to the client.
+        --
+        -- A claim that stalled is still going, and only a top-up it took
+        -- whole went through: with any of it back with the client, the rest
+        -- of the raise was not made.
+        local to, handedBack = nil, false
         for id in pairs(ids) do
-            local line = Storage.readEscrowLine(id)
-            local to = line and (line.settled_to or line.releasing_to or line.owed_to)
-            if to and to ~= actor.cid then
-                Audit.action('escrow_added_paid_out', actor.cid, contractId, { to = to })
-                return true
-            end
+            local paid = paidTo(id)
+            if paid then to = to or paid else handedBack = true end
+        end
+        if to and (CB.TERMINAL[state] or not handedBack) then
+            Audit.action('escrow_added_paid_out', actor.cid, contractId, { to = to })
+            return true
         end
     end
     Audit.rejected('escrow_added_to_moved', actor.cid, contractId, { state = state })
     if CB.TERMINAL[state] then return false, CB.ERR.ALREADY_SETTLED end
+    if state == CB.STATE.COMPLETING then return false, CB.ERR.BUSY end
     return false, CB.ERR.LOCKED
 end
 

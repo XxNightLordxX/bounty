@@ -271,6 +271,46 @@ describe('photo verification', function()
         truthy(ok, 'the first token outlived its own kill: ' .. tostring(err))
     end)
 
+    it('says a token asked for late has expired, not that the target was revived', function()
+        -- The second token outlived the kill it proved, and the photograph
+        -- was refused as a revive with the body still on the ground.
+        local s, f, c = seeded()
+        killTarget(s)
+        local lifetime = Config.Completion.PhotoTokenLifetimeSeconds
+        Env.advance(lifetime - 10)
+        truthy(s.photo.issue(f.hunter, c.id))
+        Env.advance(lifetime - 10)
+        local token = s.photo.issue(f.hunter, c.id)
+        truthy(token, 'the kill is held by the first token')
+        Env.advance(30)
+        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        falsy(ok)
+        eq(err, CB.ERR.TOKEN_INVALID, 'told the target was revived: ' .. tostring(err))
+    end)
+
+    it('tells a hunter a target shocked back to last stand is still down', function()
+        local s, f, c, token = ready()
+        local meta = Env.players[2].PlayerData.metadata
+        meta.isdead, meta.inlaststand = false, true
+        Env.advance(Config.Completion.ProofWindowSeconds + 10)
+        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        falsy(ok, 'last stand is not a kill')
+        eq(err, CB.ERR.PHOTO_STILL_DOWN)
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the kill was thrown away')
+
+        -- Finished on the ground: a new kill, and a new photograph for it.
+        s.death.watch('TARGET01', 2, true)
+        Env.players[2]._health = Env.players[2]._health - 30
+        s.death.recordDamage(3, 2, 123456)
+        meta.isdead, meta.inlaststand = true, false
+        truthy(s.death.onVictimReport(2) >= 1)
+        local _, stale = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        eq(stale, CB.ERR.TOKEN_INVALID, 'the old token is for the old kill')
+        local fresh = s.photo.issue(f.hunter, c.id)
+        local paid, why = s.photo.submit(f.hunter, fresh, 'https://cdn.fivemanage.com/p.png')
+        truthy(paid, 'the finishing kill pays: ' .. tostring(why))
+    end)
+
     it('refuses a photo long after the target was revived', function()
         local s, f, c, token = ready()
         Env.players[2].PlayerData.metadata.isdead = false
@@ -457,6 +497,7 @@ describe('damage claims are corroborated, not trusted', function()
         Env.players[2].PlayerData.metadata.isdead = false
         truthy(s.death.onRevivedVerified(2, 'TARGET01') ~= nil)
         Env.players[2]._health = 200            -- back on their feet
+        Env.advance(5)                          -- and still up: the revive is confirmed
 
         s.death.recordDamage(3, 2, 123456)      -- no new damage since
         Env.players[2].PlayerData.metadata.isdead = true
@@ -903,6 +944,7 @@ describe('a revive claim needs a death behind it', function()
 
         Env.players[2].PlayerData.metadata.isdead = false
         s.death.onRevivedVerified(2, 'TARGET01')
+        Env.advance(5)
         truthy(s.death.sinceRespawn('TARGET01'), 'and a real revive counts')
     end)
 
@@ -916,6 +958,7 @@ describe('a revive claim needs a death behind it', function()
 
         Env.players[2].PlayerData.metadata.isdead = false
         s.death.onRevivedVerified(2, 'TARGET01')
+        Env.advance(5)
         truthy(s.death.sinceRespawn('TARGET01'),
             'a target who dies to the world can still come back')
     end)
@@ -927,6 +970,7 @@ describe('a revive claim needs a death behind it', function()
         Env.players[2].PlayerData.metadata.isdead = false
 
         s.death.onRevivedVerified(2, 'TARGET01')
+        Env.advance(5)
         local first = s.death.sinceRespawn('TARGET01')
         truthy(first, 'the first claim takes')
 

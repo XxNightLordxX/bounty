@@ -454,6 +454,7 @@
     photo_too_far: 'You are too far from the body. Stand over them and take it again.',
     photo_revived: 'They were brought back before you sent the photo, so this is '
       + 'not an elimination any more.',
+    photo_still_down: 'They are down, not dead. Finish them, then take the photo.',
     photo_bad_host: 'That image host is not on this server\u2019s allow list. '
       + 'An admin sets which hosts the camera may upload to.',
     bad_state: 'Not right now.',

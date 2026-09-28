@@ -96,10 +96,12 @@ camera for the baseline. With `sc-ambulance`, downing them is not the kill:
 they are in last stand, and you have to finish them. The kill is credited to
 whoever landed a hit within `Config.Completion.DeathReportWindowMs` (30
 seconds) of the death, and bleeding out takes minutes, so a target left to
-bleed out pays nobody. A revive before you photograph them cancels it; a
-defibrillator that only brings them back to last stand does not, and finishing
-them again is a new kill. A kill waits for its photograph for at most two
-photo-token lifetimes, however many tokens are asked for. Or take them alive to the client and hold them there
+bleed out pays nobody. A revive before you photograph them cancels it, once
+they have stayed up for a few seconds. A defibrillator that only brings them
+back to last stand does not, but the photograph needs them dead: the app says
+they are still down, and finishing them is a new kill with its own photograph.
+A kill waits for its photograph for at most two photo-token lifetimes, however
+many tokens are asked for. Or take them alive to the client and hold them there
 for thirty seconds for baseline plus bonus.
 
 **Counter-play.** A target can see the price on their head and buy it out.
