@@ -543,6 +543,20 @@ describe('an exclusive contract held by somebody who is not working it', functio
         local _ = f
     end)
 
+    it('is not released while the target is in prison', function()
+        -- The deadline stops for a sentence; the hold's idle clock ran on,
+        -- and the hunter was taken off for not going near a target locked
+        -- in Bolingbroke.
+        local s, f, c = held()
+        local zone = Config.Limits.JailZone
+        Env.players[2].PlayerData.metadata.injail = 120
+        Env.players[2]._coords = { x = zone.x, y = zone.y, z = 45.0 }
+        s.contracts.releaseIdleHolds()
+        run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 5)
+        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'active', 'still theirs')
+        local _ = f
+    end)
+
     it('gives the stake back', function()
         local s, f, c = held({ penalty = 2000 })
         truthy((s.storage.readContract(c.id).penalty_amount or 0) > 0)
@@ -726,5 +740,54 @@ describe('an anonymous operative logging off', function()
         truthy(s.contracts.abandon(f.hunter, c.id))
         local ok = s.comms.send(f.creator, c.id, handle, 'hello?')
         falsy(ok, 'writing to an operative who is no longer on it')
+    end)
+end)
+
+describe('odd values where a table or a page number goes', function()
+    --- Each of these threw inside its handler. A thrown handler answers
+    --- server_error and refunds its own rate limit, so it could be sent
+    --- again at the flood guard's pace, and every one wrote a console line
+    --- and an audit row.
+    it('refuses a proposal whose payload is not a table', function()
+        local s = newStack()
+        s.app.init(s)
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        for _, payload in ipairs({ true, 0, 'x' }) do
+            local reply = call('propose', 1, { id = c.id, kind = 'cancel', payload = payload })
+            truthy(reply, 'answered')
+            falsy(tostring(reply.err):find('THREW', 1, true), tostring(reply.err))
+            eq(reply.err, CB.ERR.INVALID_INPUT, tostring(payload))
+        end
+    end)
+
+    it('answers a board page far past the end', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+        for _, page in ipairs({ 2^62, math.huge, -5, 0/0 }) do
+            local reply = call('list', 3, { page = page })
+            truthy(reply and reply.ok, 'page ' .. tostring(page) .. ': ' .. tostring(reply and reply.err))
+            truthy(reply.data.page == math.floor(reply.data.page) and reply.data.page >= 1,
+                'a page number that means something: ' .. tostring(reply.data.page))
+        end
+    end)
+end)
+
+describe('a refused request, over and over', function()
+    --- Every rate-limited request wrote an audit row: hundreds a minute from
+    --- one client, kept for a month in a file rewritten in full each flush.
+    it('is written down once per window, not once per request', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+        Config.Cooldowns.wallet = { per = 60, burst = 1 }
+        for _ = 1, 40 do call('rewardOptions', 3, {}) end
+        s.audit.flush()
+        local rows = 0
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'ratelimit_rewardOptions' then rows = rows + 1 end
+        end
+        eq(rows, 1, 'one refusal is one fact, however often it is repeated')
     end)
 end)

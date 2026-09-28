@@ -495,14 +495,32 @@ end
 
 --- Fetch an open pending completion, if it has not expired.
 ---@return table|nil
+--- Whether a pending kill has aged out: past its own lifetime and past any
+--- photo token issued against it. A token is good for its whole lifetime
+--- from issue, and the kill it proves used to lapse lifetime-from-death,
+--- so a hunter who took their photo late in that window was told the
+--- target had been revived.
+local function aged(record, now)
+    local lifetime = Config.Completion.PhotoTokenLifetimeSeconds * 1000
+    if now - record.at <= lifetime then return false end
+    return not (record.heldUntil and now <= record.heldUntil)
+end
+
 function Death.getPending(contractId, hunterCid)
     local record = pending[contractId .. ':' .. hunterCid]
     if not record then return nil end
-    if Util.monotonicMs() - record.at > (Config.Completion.PhotoTokenLifetimeSeconds * 1000) then
+    if aged(record, Util.monotonicMs()) then
         pending[contractId .. ':' .. hunterCid] = nil
         return nil
     end
     return record
+end
+
+--- Keep a pending kill for as long as a photo token issued against it. A
+--- revive still clears it, since that clears the record outright.
+function Death.holdPending(contractId, hunterCid, untilMs)
+    local record = pending[contractId .. ':' .. hunterCid]
+    if record then record.heldUntil = math.max(record.heldUntil or 0, untilMs) end
 end
 
 function Death.clearPending(contractId, hunterCid)
@@ -586,7 +604,7 @@ function Death.sweep()
     local removed = 0
 
     for key, record in pairs(pending) do
-        if now - record.at > (Config.Completion.PhotoTokenLifetimeSeconds * 1000) then
+        if aged(record, now) then
             pending[key] = nil
             removed = removed + 1
         end

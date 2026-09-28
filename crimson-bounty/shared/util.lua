@@ -389,6 +389,12 @@ function Util.resetMonotonic()
     lastRaw, carried = 0, 0
 end
 
+--- The reason qbx_core is given for every balance change this resource
+--- makes. It is what its money log and the banking resource's own records
+--- show against the line; left out, they read "unknown", and staff looking
+--- into a player's missing money had nothing to follow.
+Util.MONEY_REASON = 'crimson-bounty'
+
 --- Take money from a player, refusing rather than overdrawing them.
 ---
 --- RemoveMoney's return is not an affordability check. qbx_core applies its
@@ -415,7 +421,7 @@ function Util.charge(player, account, amount)
     amount = tonumber(amount) or 0
     if amount <= 0 then return true end
     if (player.Functions.GetMoney(account) or 0) < amount then return false end
-    return player.Functions.RemoveMoney(account, amount) and true or false
+    return player.Functions.RemoveMoney(account, amount, Util.MONEY_REASON) and true or false
 end
 
 --- Give money to a player, treating a raise like a refusal.
@@ -440,7 +446,7 @@ end
 ---@return boolean credited
 function Util.credit(player, account, amount)
     if not player or not player.Functions then return false end
-    local ok, gave = pcall(player.Functions.AddMoney, account, amount)
+    local ok, gave = pcall(player.Functions.AddMoney, account, amount, Util.MONEY_REASON)
     return (ok and gave) and true or false
 end
 

@@ -413,3 +413,58 @@ describe('the headshot cache', function()
         eq(s.mugshot.count(), 1, 'one player is one entry, however many renders')
     end)
 end)
+
+describe('a contract the viewer can never take', function()
+    --- The board drew Accept on these and acceptance refused every time.
+    it('says so to a hunter whose hold was released for sitting on it', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local row = s.storage.readHunter(c.id, 'HUNTER01')
+        s.storage.updateHunter(row.id, { state = 'released' })
+        local listed
+        for _, entry in ipairs(s.projection.listing('HUNTER01', 1).contracts) do
+            if entry.id == c.id then listed = entry end
+        end
+        truthy(listed, 'still on the board for everyone')
+        eq(listed.barred, 'hold_released')
+        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        falsy(ok)
+        eq(err, CB.ERR.HOLD_RELEASED, 'and it is the refusal acceptance gives')
+    end)
+
+    it('says so to another character on the creator account', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } },
+        })
+        Env.addPlayer({ source = 12, citizenid = 'ALTCHAR1', license = 'license:aaa',
+            firstname = 'Alt', lastname = 'Ego' })
+        local listed
+        for _, entry in ipairs(s.projection.listing('ALTCHAR1', 1).contracts) do
+            if entry.id == c.id then listed = entry end
+        end
+        truthy(listed)
+        eq(listed.barred, 'same_account')
+    end)
+
+    it('says nothing to anybody who can take it', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } },
+        })
+        local listed
+        for _, entry in ipairs(s.projection.listing('HUNTER01', 1).contracts) do
+            if entry.id == c.id then listed = entry end
+        end
+        truthy(listed)
+        eq(listed.barred, nil)
+    end)
+end)

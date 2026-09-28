@@ -39,6 +39,19 @@ end
 --- caller a refusal; erring the other way costs the server.
 RateLimit.FALLBACK = { per = 10, burst = 10 }
 
+--- The rule for a bucket, or the fallback where the configured one is not a
+--- usable rule. Boot replaces a malformed one, but the config is a global a
+--- later edit can reach, and a rule missing `burst` threw inside the net
+--- event, before the handler's own guard, leaving the request unanswered.
+local function ruleFor(action)
+    local rule = Config.Cooldowns and Config.Cooldowns[action]
+    if type(rule) == 'table' and type(rule.per) == 'number' and rule.per > 0
+        and type(rule.burst) == 'number' and rule.burst >= 1 then
+        return rule
+    end
+    return RateLimit.FALLBACK
+end
+
 --- How long until this action is allowed again, in whole seconds.
 ---
 --- "Slow down" on its own is not something a player can act on: they cannot
@@ -49,7 +62,7 @@ RateLimit.FALLBACK = { per = 10, burst = 10 }
 ---@param action string key into Config.Cooldowns
 ---@return integer seconds 0 when it is allowed right now
 function RateLimit.retryAfter(who, action)
-    local rule = Config.Cooldowns[action] or RateLimit.FALLBACK
+    local rule = ruleFor(action)
     local cid = keyFor(who)
     if not cid then return 0 end
 
@@ -71,7 +84,7 @@ end
 --- @param action string key into Config.Cooldowns
 --- @return boolean allowed
 function RateLimit.check(who, action)
-    local rule = Config.Cooldowns[action] or RateLimit.FALLBACK
+    local rule = ruleFor(action)
 
     local cid = keyFor(who)
     -- No identity at all is not a licence to act; it is the one case where
@@ -111,7 +124,7 @@ end
 ---@param who table|string
 ---@param action string
 function RateLimit.refund(who, action)
-    local rule = Config.Cooldowns[action] or RateLimit.FALLBACK
+    local rule = ruleFor(action)
     local cid = keyFor(who)
     if not cid then return false end
 

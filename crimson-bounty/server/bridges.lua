@@ -184,6 +184,20 @@ function Bridges.install(modules)
         Bridges.onWeaponDamage(modules, sender, data)
     end)
 
+    -- A sentence starting or ending moves a contract's clock as a player
+    -- arriving or leaving does. qbx_core announces every metadata write on
+    -- the server; a local event, so no client can raise it.
+    --
+    -- Going in and coming out only. sc-police writes the sentence down a
+    -- month at a time, every thirty seconds, for every inmate, and a full
+    -- pass on each write was the table read the expiry skip exists to save.
+    AddEventHandler('qbx_core:server:onSetMetaData', function(key, old, new)
+        if key ~= 'injail' or not modules.scheduler then return end
+        local was = (tonumber(old) or 0) > 0
+        local now = (tonumber(new) or 0) > 0
+        if was ~= now then modules.scheduler.presenceChanged() end
+    end)
+
     ---@param untrusted boolean|nil true for the event any client can fire
     local function remember(src, untrusted)
         local actor = modules.identity.resolve(src)
@@ -237,6 +251,19 @@ function Bridges.install(modules)
     --
     -- The decision is the server's, because the client cannot be trusted
     -- with it and because the job blacklist lives in the server's config.
+    --- The app going away because of a job the player holds but is not
+    --- working. They may not have taken it themselves (a department boss
+    --- can hire anybody through the MDT), so they are told which job it is
+    --- and how to get the app back, once, when it goes.
+    local function explainHeld(actor, was)
+        if was == false then return end
+        local job, held = modules.identity.barredBy(actor)
+        if not job or not held then return end
+        modules.notify.toCitizen(actor.cid, 'Crimson-Bounty',
+            ('Closed to you while you hold the %s job. Quit it from your job '
+            .. 'menu to use it again.'):format(job), { bypassBudget = true })
+    end
+
     local function tellAccess(src)
         if not src or src <= 0 then return end
         local actor = modules.identity.resolve(src)
@@ -246,7 +273,8 @@ function Bridges.install(modules)
         if not actor then return end
 
         local allowed = Config.HideAppFromBlockedJobs == false
-            or not modules.identity.isBlockedJob(actor.job)
+            or not modules.identity.isBarred(actor)
+        if not allowed then explainHeld(actor, lastAccess[src]) end
         lastAccess[src] = allowed
         TriggerClientEvent('crimson-bounty:access', src, allowed)
     end
@@ -277,8 +305,9 @@ function Bridges.install(modules)
                 local ok, actor = pcall(modules.identity.resolve, src)
                 if ok and actor then
                     local allowed = Config.HideAppFromBlockedJobs == false
-                        or not modules.identity.isBlockedJob(actor.job)
+                        or not modules.identity.isBarred(actor)
                     if lastAccess[src] ~= allowed then
+                        if not allowed then explainHeld(actor, lastAccess[src]) end
                         lastAccess[src] = allowed
                         TriggerClientEvent('crimson-bounty:access', src, allowed)
                     end
@@ -489,14 +518,14 @@ function Bridges.installCommands(modules)
     end, true)
 
     command(names.stuck, Config.Admin.Ace, function(src)
-        local lines = Admin.interrupted()
+        local lines = Admin.interrupted(src)
         if #lines == 0 then return reply(src, 'No interrupted releases.') end
 
         reply(src, ('%d escrow line(s) were mid-release at a shutdown:'):format(#lines))
         for i = 1, #lines do
             local line = lines[i]
-            reply(src, ('  %s  contract %s  %s  was paying %s  (%s)'):format(
-                line.line, line.contract, describeLine(line),
+            reply(src, ('  %s  contract %s  %s %s  was paying %s  (%s)'):format(
+                line.line, line.contract, tostring(line.portion), describeLine(line),
                 tostring(line.intended), os.date('%Y-%m-%d %H:%M', line.at)))
         end
         reply(src, ('Settle each with /%s <line> pay|return'):format(names.settle))
@@ -522,6 +551,9 @@ function Bridges.installCommands(modules)
 
     command(names.settle, Config.Admin.Ace, function(src, args)
         local ok, err = Admin.settleLine(src, args[1], args[2])
+        if ok and err == 'queued' then
+            return reply(src, 'Queued: they are not in the city, so it is delivered at their next login.')
+        end
         reply(src, ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err)))
     end, true)
 

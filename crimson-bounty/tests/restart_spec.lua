@@ -645,6 +645,31 @@ describe('informant data across a restart', function()
             eq(before - money(2), Config.Informant.Cost, 'one purchase, one fee')
         end)
 
+        it(mode .. ': a repeat inside the lock gives the answer given then, not a fresh look', function()
+            -- Kept in memory only, a restart made the free repeat a new
+            -- read of whether the hunter was in the city: a presence check
+            -- for nothing, as often as the buyer liked.
+            local _, s = boot(mode)
+            Config.Informant.RequireProximity = false
+            local f = fixture(s)
+            Env.players[2].PlayerData.money.bank = 200000
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x',
+                reward = { baseline = { cash = 10000 } },
+            })
+            truthy(s.contracts.accept(f.hunter, c.id))
+            local ok, _, data = s.informant.buy(f.target, c.id)
+            truthy(ok)
+
+            Env.advance(300)
+            local _, s2 = restart(mode, s)
+            Env.removePlayer(3)
+            local again, _, data2 = s2.informant.buy(s2.identity.resolve(2), c.id)
+            truthy(again)
+            eq(json.encode(data2), json.encode(data),
+                'the repeat read the hunter afresh and said whether they were here')
+        end)
+
         it(mode .. ': the ceiling still counts what was bought before', function()
             local _, s = boot(mode)
             Config.Informant.RequireProximity = false
@@ -1510,5 +1535,155 @@ describe('queued payments across a restart', function()
         s2.storage.queuePending('HUNTER01', 'ct000000001', 'owe00000002')
         eq(#s2.storage.readPending('HUNTER01'), 2,
             'the sequence started again at boot, and the second landed on the first')
+    end)
+end)
+
+--- sc-police keeps a prisoner's remaining sentence in the 'injail' metadata.
+--- A target in prison is as far out of a hunter's reach as one who has
+--- logged off, and the deadline ran on through their sentence: a hunter
+--- could stake, have the target jailed out from under them, and lose the
+--- stake without the target ever being in the city to find.
+describe('a target in prison', function()
+    local function held(mode)
+        local main, s = boot(mode)
+        Config.Limits.ExclusiveIdleReleaseSeconds = 0
+        Config.Limits.ExclusiveAttemptWindowSeconds = 0
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hunter, c.id))
+        main.markPresenceChanged()
+        main.expire()
+        return main, s, f, c
+    end
+
+    local function jail(minutes)
+        Env.players[2].PlayerData.metadata.injail = minutes
+        -- And inside the prison, where a real sentence puts them.
+        local zone = Config.Limits.JailZone
+        Env.players[2]._coords = { x = zone.x + 10.0, y = zone.y - 10.0, z = 45.0 }
+    end
+
+    for _, mode in ipairs({ 'memory', 'mysql' }) do
+        it(mode .. ': stops the deadline while they serve, and moves it on after', function()
+            local main, s, _, c = held(mode)
+            local before = s.storage.readContract(c.id).deadline_at
+            jail(30)
+            main.markPresenceChanged()
+            main.expire()
+            truthy(s.storage.readContract(c.id).paused_since, 'paused while in prison')
+
+            Env.advance(1800)
+            jail(0)
+            main.markPresenceChanged()
+            main.expire()
+            local after = s.storage.readContract(c.id)
+            falsy(after.paused_since, 'running again once released')
+            eq(after.deadline_at - before, 1800, 'moved on by the time served')
+        end)
+
+        it(mode .. ': does not expire the contract while they are inside', function()
+            local main, s, _, c = held(mode)
+            local before = money(3)
+            jail(600)
+            -- Seen going in, as the metadata hook makes sure it is.
+            main.markPresenceChanged()
+            main.expire()
+            Env.advance(Config.Limits.DefaultDeadlineSeconds + 360)
+            main.markPresenceChanged()
+            main.expire()
+            local row = s.storage.readContract(c.id)
+            eq(row.state, CB.STATE.ACCEPTED, 'the hunter still holds it')
+            eq(money(3), before, 'and nothing was forfeited')
+        end)
+    end
+
+    it('notices a release without a player arriving', function()
+        -- Only a player coming or going wakes the pass early, and a release
+        -- from prison is neither: the pause ran on to the longest skip.
+        local main, s, _, c = held('memory')
+        jail(5)
+        main.markPresenceChanged()
+        main.expire()
+        truthy(s.storage.readContract(c.id).paused_since)
+
+        Env.advance(61)
+        jail(0)
+        main.expire()
+        falsy(s.storage.readContract(c.id).paused_since, 'resumed within a minute')
+    end)
+
+    it('wakes the pass when the sentence is written', function()
+        local main, s, _, c = held('memory')
+        main.expire()
+        jail(30)
+        local handler = Env.handlers['qbx_core:server:onSetMetaData']
+        truthy(handler, 'listening for metadata writes')
+        handler('injail', 0, 30, 2)
+        main.expire()
+        truthy(s.storage.readContract(c.id).paused_since,
+            'paused at once, not at the next scheduled pass')
+    end)
+
+    it('does not run a full pass for every month a sentence counts down', function()
+        -- sc-police writes the sentence every thirty seconds for every
+        -- inmate; a pass on each write was the table read the skip saves.
+        local main, s, _, c = held('memory')
+        main.expire()
+        jail(30)
+        local handler = Env.handlers['qbx_core:server:onSetMetaData']
+        handler('injail', 31, 30, 2)
+        main.expire()
+        falsy(s.storage.readContract(c.id).paused_since,
+            'a countdown write is not somebody going in or coming out')
+    end)
+
+    --- sc-police lets a client write its own sentence. A target who sends
+    --- one from the city, and never goes near the prison, is not in it.
+    it('does not stop the clock for a sentence served outside the prison', function()
+        local main, s, _, c = held('memory')
+        Env.players[2].PlayerData.metadata.injail = 99999
+        Env.players[2]._coords = { x = 0.0, y = 0.0, z = 0.0 }
+        main.markPresenceChanged()
+        main.expire()
+        falsy(s.storage.readContract(c.id).paused_since, 'a sentence the target wrote for themselves')
+        Env.advance(Config.Limits.DefaultDeadlineSeconds + 360)
+        main.markPresenceChanged()
+        main.expire()
+        eq(s.storage.readContract(c.id).state, CB.STATE.EXPIRED, 'and the deadline still ends it')
+    end)
+
+    it('does not count a prison with no zone configured', function()
+        local main, s, _, c = held('memory')
+        Config.Limits.JailZone = nil
+        Env.players[2].PlayerData.metadata.injail = 30
+        Env.players[2]._coords = { x = 1693.3, y = 2569.5, z = 45.0 }
+        main.markPresenceChanged()
+        main.expire()
+        falsy(s.storage.readContract(c.id).paused_since)
+    end)
+
+    it('does not turn an expiry into a pause after the deadline has gone', function()
+        local main, s, _, c = held('memory')
+        local before = money(3)
+        Env.advance(Config.Limits.DefaultDeadlineSeconds + 360)
+        jail(600)
+        main.markPresenceChanged()
+        main.expire()
+        eq(s.storage.readContract(c.id).state, CB.STATE.EXPIRED)
+        eq(money(3), before, 'the stake is not handed back by a sentence written late')
+    end)
+
+    it('runs the clock on as before when the setting is off', function()
+        local main, s, _, c = held('memory')
+        Config.Limits.PauseWhileTargetJailed = false
+        jail(600)
+        Env.advance(Config.Limits.DefaultDeadlineSeconds + 360)
+        main.markPresenceChanged()
+        main.expire()
+        eq(s.storage.readContract(c.id).state, CB.STATE.EXPIRED)
     end)
 end)

@@ -73,6 +73,22 @@ local function shouldLogGate(src)
     return true
 end
 
+--- Whether a rate-limit refusal for this player and bucket is worth writing
+--- down: once per window, as the gate's are. One row per refused request
+--- let a single client write hundreds of rows a minute, and on the json
+--- store every row is kept for the retention period in a file rewritten in
+--- full on each flush.
+local ratelimitLogged = {}
+
+local function shouldLogRatelimit(cid, name)
+    local key = tostring(cid) .. ':' .. tostring(name)
+    local now = Util.monotonicMs()
+    local last = ratelimitLogged[key]
+    if last and now - last < FLOOD_WINDOW_MS then return false end
+    ratelimitLogged[key] = now
+    return true
+end
+
 local function floodCheck(src)
     local now = Util.monotonicMs()
     local entry = floodCounters[src]
@@ -100,6 +116,9 @@ function App.sweepFloodCounters()
     for src, at in pairs(gateLogged) do
         if now - at > 60000 then gateLogged[src] = nil end
     end
+    for key, at in pairs(ratelimitLogged) do
+        if now - at > 60000 then ratelimitLogged[key] = nil end
+    end
 end
 
 --- Forget every flood counter, for the staff timer refresh.
@@ -115,6 +134,7 @@ function App.resetFloodCounters()
         forgotten = forgotten + 1
     end
     for src in pairs(gateLogged) do gateLogged[src] = nil end
+    for key in pairs(ratelimitLogged) do ratelimitLogged[key] = nil end
     return forgotten
 end
 
@@ -199,7 +219,9 @@ local function handler(name, action, fn)
         end
 
         if action and not deps.ratelimit.check(actor, action) then
-            deps.audit.rejected('ratelimit_' .. name, actor.cid, nil, {})
+            if shouldLogRatelimit(actor.cid, name) then
+                deps.audit.rejected('ratelimit_' .. name, actor.cid, nil, {})
+            end
             -- With the wait, because "slow down" on its own is not something
             -- a player can act on: they cannot tell two seconds from five
             -- minutes, so they tap again, read the same words, and decide
@@ -331,7 +353,7 @@ function App.register()
                     -- nobody places a contract on an officer unaware (§7.5).
                     -- Which force they serve is not: that would make search
                     -- a roster of who is on duty tonight.
-                    protected = deps.identity.isProtectedJob(candidate.job),
+                    protected = deps.identity.isProtected(candidate),
                 }
                 if #out >= Config.Targeting.MaxResults then break end
             end
@@ -421,7 +443,7 @@ function App.register()
                 name = entry.actor.name,
                 -- Whether the target is law enforcement is disclosed, so
                 -- nobody places a contract on an officer unaware (§7.5).
-                protected = deps.identity.isProtectedJob(entry.actor.job),
+                protected = deps.identity.isProtected(entry.actor),
                 -- Rounded: an exact figure is a rangefinder, and a rough one
                 -- is all it takes to tell two people with the same name
                 -- apart.
@@ -496,6 +518,10 @@ function App.register()
                 -- Without it the form could build a contract that is always
                 -- refused, and blame the amounts.
                 maxLines = Config.Limits.MaxEscrowLines,
+                -- And the most one contract may be worth in money, bonus
+                -- included. Over it the server refused the contract as not
+                -- adding up, about amounts that each sat inside their caps.
+                maxValue = Config.MaxContractValue,
             },
         }
     end)
@@ -824,8 +850,14 @@ function App.register()
         -- the console gone. Kept in the audit row either way, so turning the
         -- switch on is about where it is convenient to read, not about
         -- whether it was recorded.
-        if Config.Debug and stack and stack ~= '' then
-            print(('[crimson-bounty]   %s'):format(stack))
+        -- Except the log a staff member asked for with /cb-diag, which was
+        -- promised to them in this console and, with Debug off, never came.
+        -- One line per event, as the page recorded them.
+        local requested = what == 'page diagnostics' and where == 'requested'
+        if (Config.Debug or requested) and stack and stack ~= '' then
+            for line in (stack .. ' || '):gmatch('(.-) || ') do
+                if line ~= '' then print(('[crimson-bounty]   %s'):format(line)) end
+            end
         end
 
         deps.audit.rejected('page_error', actor.cid, nil, {
@@ -862,7 +894,9 @@ function App.register()
         local actor = deps.identity.resolve(src)
         if not actor then return end
         if not deps.ratelimit.check(actor, 'death') then
-            deps.audit.rejected('ratelimit_iDied', actor.cid, nil, {})
+            if shouldLogRatelimit(actor.cid, 'iDied') then
+                deps.audit.rejected('ratelimit_iDied', actor.cid, nil, {})
+            end
             return
         end
 
@@ -881,7 +915,9 @@ function App.register()
         local actor = deps.identity.resolve(src)
         if not actor then return end
         if not deps.ratelimit.check(actor, 'death') then
-            deps.audit.rejected('ratelimit_iRevived', actor.cid, nil, {})
+            if shouldLogRatelimit(actor.cid, 'iRevived') then
+                deps.audit.rejected('ratelimit_iRevived', actor.cid, nil, {})
+            end
             return
         end
         local ok, err = pcall(deps.death.onRevivedVerified, src, actor.cid)
@@ -1002,8 +1038,8 @@ function App.escrowableItems(actor, carried)
         local name = slot and slot.name
         if type(name) == 'string'
             and not isWeapon(name)
-            and name ~= Config.Sources.dirty.item
-            and not Config.EscrowBlacklist[name] then
+            and not deps.escrow.isDirtyItem(name)
+            and not deps.escrow.blacklisted(name) then
             if not totals[name] then
                 totals[name] = { name = name, label = slot.label or name, count = 0 }
                 order[#order + 1] = totals[name]
@@ -1031,7 +1067,7 @@ function App.escrowableWeapons(actor, carried)
         -- record without one cannot be escrowed and must not be offered:
         -- picking it would hand the server a payload it can only refuse.
         local invSlot = slot and tonumber(slot.slot)
-        if isWeapon(name) and invSlot and not Config.EscrowBlacklist[name] then
+        if isWeapon(name) and invSlot and not deps.escrow.blacklisted(name) then
             out[#out + 1] = {
                 name  = name,
                 label = slot.label or name,

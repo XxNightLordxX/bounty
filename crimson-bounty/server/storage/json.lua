@@ -391,6 +391,24 @@ end
 --- `force` writes every dirty shard; an ordinary flush writes at most
 --- MaxDirtyShardsPerFlush of them and leaves the rest for the next one, so a
 --- burst of activity cannot turn one flush into an unbounded stall.
+--- Shard files a prune is waiting to remove until the index without them
+--- is safely on disk (JsonStore.prune).
+local pendingUnlinks = {}
+
+--- Remove them, once an index that no longer names them has been written.
+--- Any index written after the prune qualifies, since the prune already
+--- took them off it. Only the prune used to do this, and it returned early
+--- when it found nothing new to prune, so an index write that failed once
+--- left the files on disk for good.
+local function unlinkPending()
+    if #pendingUnlinks == 0 then return end
+    local base = GetResourcePath and GetResourcePath(resource)
+    if base and base ~= '' then
+        for i = 1, #pendingUnlinks do os.remove(base .. '/' .. pendingUnlinks[i]) end
+    end
+    pendingUnlinks = {}
+end
+
 function JsonStore.save(force)
     if not db then return false end
     if not force and not dirty then return false end
@@ -422,7 +440,10 @@ function JsonStore.save(force)
     if indexDirty or force then
         db.seq = seq
         indexOk = writeFile(path(), buildIndex())
-        if indexOk then indexDirty = false end
+        if indexOk then
+            indexDirty = false
+            unlinkPending()
+        end
     end
 
     if not next(dirtyShards) and not indexDirty then
@@ -499,10 +520,6 @@ local function prunableContracts(cutoff, limit)
     return out
 end
 
---- Shard files a prune is waiting to remove until the index without them
---- is safely on disk (JsonStore.prune).
-local pendingUnlinks = {}
-
 function JsonStore.prune()
     local days = Config.Audit.ContractRetentionDays or 0
     if days <= 0 then return true end
@@ -552,11 +569,7 @@ function JsonStore.prune()
     if #pendingUnlinks > 0 then
         if writeFile(path(), buildIndex()) then
             indexDirty = false
-            local base = GetResourcePath and GetResourcePath(resource)
-            if base and base ~= '' then
-                for i = 1, #pendingUnlinks do os.remove(base .. '/' .. pendingUnlinks[i]) end
-            end
-            pendingUnlinks = {}
+            unlinkPending()
         else
             indexDirty = true
         end
@@ -1132,13 +1145,33 @@ end
 
 function JsonStore.writeAudit(entry)
     db.audit[#db.audit + 1] = entry
-    local cutoff = os.time() - (Config.Audit.RetentionDays * 86400)
-    while db.audit[1] and db.audit[1].ts < cutoff do table.remove(db.audit, 1) end
+    -- 0 keeps it, as the retention settings beside it do. Read as a number
+    -- of days, 0 made the cutoff now, and every row older than the current
+    -- second went, including the ones /cb-stuck is built from.
+    local days = tonumber(Config.Audit.RetentionDays) or 0
+    if days > 0 then
+        local cutoff = os.time() - (days * 86400)
+        while db.audit[1] and db.audit[1].ts < cutoff do table.remove(db.audit, 1) end
+    end
     touch(false)
     return true
 end
 
 function JsonStore.readAudit() return db.audit end
+
+--- Every audit row with one action, oldest first, the newest `limit` of them.
+function JsonStore.auditByAction(action, limit)
+    local out = {}
+    for i = 1, #db.audit do
+        if db.audit[i].action == action then out[#out + 1] = db.audit[i] end
+    end
+    if limit and #out > limit then
+        local trimmed = {}
+        for i = #out - limit + 1, #out do trimmed[#trimmed + 1] = out[i] end
+        return trimmed
+    end
+    return out
+end
 
 --- Every audit row naming one contract, oldest first.
 function JsonStore.auditForContract(contractId, limit)

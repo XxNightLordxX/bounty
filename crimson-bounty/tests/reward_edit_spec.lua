@@ -273,7 +273,7 @@ describe('what a reward reduction must refuse', function()
         local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
         local ok, err = s.contracts.withdrawReward(f.creator, c.id, { bonus[1].id })
         falsy(ok, 'a reward was pulled out from under a working hunter')
-        eq(err, CB.ERR.BAD_STATE)
+        eq(err, CB.ERR.CONTRACT_TAKEN, 'and the refusal says a hunter has it')
         eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 2500,
             'and nothing moved')
     end)
@@ -482,36 +482,66 @@ describe('a hunter accepting while the reward is being reduced', function()
     --- database. An acceptance landing in one of those windows would take a
     --- contract whose reward then shrank underneath them.
     ---
-    --- Simulated by accepting from inside the release itself, which is
-    --- exactly where the real one would land.
-    local function acceptDuringRelease(s, f, c)
+    --- An acceptance cannot land there any more: both hold the contract, so
+    --- it is told to try again. The guard inside the release stays as the
+    --- backstop for a holder appearing by any other route, and is exercised
+    --- here by writing one straight into the store at the moment the real
+    --- acceptance used to land.
+    local function holderDuringRelease(s, f, c)
         local realClaim = s.storage.claimEscrowLine
-        local accepted = false
+        local appeared = false
         s.storage.claimEscrowLine = function(id, expected, next_)
             local out = realClaim(id, expected, next_)
             -- Once, on the way out of `held`: the instant the withdrawal has
             -- taken a line and is about to hand it over.
-            if out and not accepted and expected == CB.ESCROW_STATE.HELD then
-                accepted = true
-                s.contracts.accept(f.hunter, c.id, false)
+            if out and not appeared and expected == CB.ESCROW_STATE.HELD then
+                appeared = true
+                s.storage.addHunter({ id = 'hn_backstop', contract_id = c.id,
+                    hunter_cid = f.hunter.cid, hunter_name = f.hunter.name,
+                    hunter_account = f.hunter.account, state = 'active',
+                    accepted_at = os.time() })
             end
             return out
         end
         return function() s.storage.claimEscrowLine = realClaim end
     end
 
-    it('does not shrink the reward under the hunter who just took it', function()
+    it('tells an acceptance landing mid-withdrawal to try again', function()
+        local s = newStack()
+        local f, c = placed(s)
+        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local realClaim = s.storage.claimEscrowLine
+        local answer
+        s.storage.claimEscrowLine = function(id, expected, next_)
+            local out = realClaim(id, expected, next_)
+            if out and not answer and expected == CB.ESCROW_STATE.HELD then
+                answer = table.pack(s.contracts.accept(f.hunter, c.id, false))
+            end
+            return out
+        end
+        local ok, err = s.contracts.withdrawReward(f.creator, c.id, { bonus[1].id })
+        s.storage.claimEscrowLine = realClaim
+        truthy(ok, tostring(err))
+        truthy(answer)
+        falsy(answer[1], 'the acceptance landed inside the withdrawal')
+        eq(answer[2], CB.ERR.BUSY)
+        -- And a moment later it goes through, on the contract as it now is.
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 0)
+    end)
+
+    it('does not shrink the reward under a holder who appears mid-release', function()
         local s = newStack()
         local f, c = placed(s)
         local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
         local before = Env.players[1].PlayerData.money.cash
 
-        local restore = acceptDuringRelease(s, f, c)
+        local restore = holderDuringRelease(s, f, c)
         local ok, err = s.contracts.withdrawReward(f.creator, c.id, { bonus[1].id })
         restore()
 
         falsy(ok, 'the withdrawal went through on a contract somebody had just taken')
-        eq(err, CB.ERR.BAD_STATE)
+        eq(err, CB.ERR.CONTRACT_TAKEN)
         eq(Env.players[1].PlayerData.money.cash, before, 'and no money moved')
         eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 2500,
             'the hunter still has the reward they accepted')
@@ -538,7 +568,12 @@ describe('a hunter accepting while the reward is being reduced', function()
             local out = realClaim(id, expected, next_)
             if out and expected == CB.ESCROW_STATE.HELD then
                 seen = seen + 1
-                if seen == 2 then s.contracts.accept(f.hunter, c.id, false) end
+                if seen == 2 then
+                    s.storage.addHunter({ id = 'hn_backstop', contract_id = c.id,
+                        hunter_cid = f.hunter.cid, hunter_name = f.hunter.name,
+                        hunter_account = f.hunter.account, state = 'active',
+                        accepted_at = os.time() })
+                end
             end
             return out
         end
@@ -562,7 +597,7 @@ describe('a hunter accepting while the reward is being reduced', function()
         local f, c = placed(s)
         local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
 
-        local restore = acceptDuringRelease(s, f, c)
+        local restore = holderDuringRelease(s, f, c)
         s.contracts.withdrawReward(f.creator, c.id, { bonus[1].id })
         restore()
 
@@ -575,10 +610,8 @@ describe('a hunter accepting while the reward is being reduced', function()
             'a refused line must go back to held, not sit in releasing forever')
 
         -- And the contract still pays what it says it pays.
-        truthy(s.contracts.claimSlot(c.id, f.hunter.cid, CB.FULFILMENT.KIDNAPPING),
-            'the hunter should still be able to collect')
-        eq(Env.players[3].PlayerData.money.cash, 5000 + 5000 + 2500,
-            'the hunter was paid the whole reward they accepted')
+        eq(s.escrow.moneyValue(c.id), 5000 + 2500,
+            'the holder still has the whole reward they took')
     end)
 end)
 

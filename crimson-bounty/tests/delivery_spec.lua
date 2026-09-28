@@ -406,3 +406,43 @@ describe('two changes to a contract inside one second', function()
         local _ = f
     end)
 end)
+
+describe('the other party\'s open page', function()
+    --- A phone notification does not change a page that is already open;
+    --- only a push does, and none was sent for any of these. A proposal ran
+    --- out unseen, a thread never showed the reply, and a card kept showing
+    --- terms that had changed.
+    local function ready()
+        local s, f, c = placed(1)
+        s.notify.clearPush('CREATOR1')
+        s.notify.clearPush('HUNTER01')
+        Env.clientEvents = {}
+        return s, f, c
+    end
+
+    it('is pushed when a change is proposed to it', function()
+        local s, f, c = ready()
+        truthy(s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 900 }))
+        truthy(pushesTo(3) >= 1, 'the hunter is not told to re-read')
+        eq(pushesTo(2), 0, 'and never the target')
+    end)
+
+    it('is pushed when a message arrives in its thread', function()
+        local s, f, c = ready()
+        local thread = s.comms.threads(f.creator, c.id)[1]
+        truthy(s.comms.send(f.creator, c.id, thread.handle, 'there yet?'))
+        truthy(pushesTo(3) >= 1, 'the reply never reached an open thread')
+    end)
+
+    it('is pushed when the reward is added to', function()
+        local s, f, c = ready()
+        truthy(s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 500 } }))
+        truthy(pushesTo(3) >= 1, 'the hunter card kept the old reward')
+    end)
+
+    it('is pushed when a hunter walks away', function()
+        local s, f, c = ready()
+        truthy(s.contracts.abandon(f.hunter, c.id))
+        truthy(pushesTo(1) >= 1, 'the client card still showed an operative on it')
+    end)
+end)

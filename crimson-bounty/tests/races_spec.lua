@@ -649,7 +649,7 @@ describe('RACE F9b: the client edits once the staking hunter\'s row exists', fun
             { checkDisclosure = true, disclosed = 1000, shownDeadline = original })
         s.storage.writeEscrow = realWrite
         falsy(revised, 'the deadline was cut under a hunter part-way through staking')
-        eq(why, CB.ERR.BAD_STATE)
+        eq(why, CB.ERR.CONTRACT_TAKEN)
         truthy(ok, tostring(err))
         eq(s.storage.readContract(c.id).deadline_at, original, 'on the deadline they were shown')
     end end
@@ -1370,11 +1370,14 @@ describe('more of the acceptance, pinned', function()
             if l.portion == CB.PORTION.BONUS then bonus = l.id end
         end
         local shown = s.storage.readContract(c2.id).penalty_amount
+        -- A withdrawal can no longer land inside an acceptance (both hold
+        -- the contract), so the re-price is written directly: the re-read
+        -- is the backstop for any path that re-prices without the lock.
         local real, fired = s.storage.countHunterContracts, false
         s.storage.countHunterContracts = function(...)
             if not fired then
                 fired = true
-                truthy(s.contracts.withdrawReward(f.creator, c2.id, { bonus }))
+                s.storage.setContractFields(c2.id, { penalty_amount = shown - 1000 })
             end
             return real(...)
         end
@@ -1382,11 +1385,41 @@ describe('more of the acceptance, pinned', function()
         local ok, err = s.contracts.accept(f.hunter, c2.id, false,
             { checkDisclosure = true, disclosed = shown })
         s.storage.countHunterContracts = real
-        truthy(fired, 'the withdrawal never landed')
-        truthy(s.storage.readContract(c2.id).penalty_amount < shown, 'the fixture re-clamps')
+        truthy(fired, 'the re-price never landed')
+        truthy(s.storage.readContract(c2.id).penalty_amount < shown, 'the fixture re-prices')
         falsy(ok, 'staked at a penalty the contract no longer asks for')
         eq(err, CB.ERR.TERMS_CHANGED)
         eq(money(3), before)
+    end)
+
+    it('does not let a withdrawal land inside an acceptance', function()
+        local s, f = staked(mysqlStack, 0)
+        local c2 = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'y', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
+            penaltyAmount = 999999,
+        })
+        truthy(c2)
+        local bonus
+        for _, l in ipairs(s.storage.readEscrow(c2.id)) do
+            if l.portion == CB.PORTION.BONUS then bonus = l.id end
+        end
+        local shown = s.storage.readContract(c2.id).penalty_amount
+        local real, answer = s.storage.countHunterContracts, nil
+        s.storage.countHunterContracts = function(...)
+            if not answer then
+                answer = table.pack(s.contracts.withdrawReward(f.creator, c2.id, { bonus }))
+            end
+            return real(...)
+        end
+        local ok, err = s.contracts.accept(f.hunter, c2.id, false,
+            { checkDisclosure = true, disclosed = shown })
+        s.storage.countHunterContracts = real
+        truthy(answer)
+        falsy(answer[1])
+        eq(answer[2], CB.ERR.BUSY, 'the client is told to try again')
+        truthy(ok, tostring(err))
+        eq(s.storage.readContract(c2.id).penalty_amount, shown, 'and nothing was re-priced')
     end)
 
     it('does not count a returned top-up as a paid collection', function()
@@ -1407,6 +1440,59 @@ describe('more of the acceptance, pinned', function()
         local onTwo = false
         for _, l in ipairs(extra) do if l.slot == 2 then onTwo = true end end
         truthy(onTwo, 'a collection nobody has been paid for was treated as paid')
+    end)
+
+    it('does not top up a collection the payout queued for its hunter', function()
+        -- Paid, but held: the hunter's pockets were full, so the baseline
+        -- is owed to them. No later claim reaches a bonus added beside it,
+        -- so topping it up locked the client's money away until the end.
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE, bonusPercent = 10,
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } } } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        Env.players[3]._refuseMoney = true
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        Env.players[3]._refuseMoney = false
+        eq(s.storage.readContract(c.id).next_slot, 2)
+
+        local before = money(1)
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 50 }))
+        eq(before - money(1), 400, 'only the collection still to come is topped up')
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            falsy(l.slot == 1 and l.derived and l.state == CB.ESCROW_STATE.HELD and not l.owed_to,
+                'a new bonus line on the collection already paid')
+        end
+    end)
+
+    it('does not top up a baseline on its way back to the client', function()
+        -- Withdrawn, but queued: the client's pockets were full. It is owed
+        -- to them and no longer the contract's to pay, so a bonus beside it
+        -- was money locked away until the contract ended.
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE, bonusPercent = 10,
+            reward = { slots = { { baseline = { cash = 1000, bank = 1000 } } } },
+        })
+        local bankLine
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CB.PORTION.BASELINE and l.source == 'bank' then bankLine = l.id end
+        end
+        Env.players[1]._refuseMoney = true
+        truthy(s.contracts.withdrawReward(f.creator, c.id, { bankLine }))
+        Env.players[1]._refuseMoney = false
+        eq(s.storage.readEscrowLine(bankLine).owed_to, 'CREATOR1', 'queued back to the client')
+
+        local extra = s.escrow.bonusTopUp(c.id, 10, 50, 1)
+        for _, l in ipairs(extra) do
+            falsy(l.source == 'bank', 'a bonus on a baseline the client is being given back')
+        end
+        eq(#extra, 1, 'the cash baseline, which the contract still pays')
     end)
 
     it('never leaves one player over the cap when the second lands before the first row', function()
@@ -1535,4 +1621,45 @@ describe('RACE F21: a write-back of a stale contract after a re-clamp', function
     end end
     it('keeps the re-clamp (copying)', run(newCopyingStack))
     it('keeps the re-clamp (mysql)', run(mysqlStack))
+end)
+
+describe('two withdrawals from one collection at once', function()
+    --- Each checked that the collection stayed funded against lines it read
+    --- before its awaits. Two at once, each taking a different line off the
+    --- same collection, both passed and left a live contract paying $0.
+    it('lets one through and tells the other it was busy', function()
+        local s = mysqlStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000, bank = 2000 } }, bonusPercent = 0,
+        })
+        truthy(c)
+        local cashLine, bankLine
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.portion == CB.PORTION.BASELINE and line.source == 'cash' then cashLine = line.id end
+            if line.portion == CB.PORTION.BASELINE and line.source == 'bank' then bankLine = line.id end
+        end
+        truthy(cashLine and bankLine)
+
+        -- The second is sent while the first is waiting on its read of the
+        -- escrow, which is where the two used to see each other's line as
+        -- still there.
+        local real = s.storage.readEscrow
+        local second
+        s.storage.readEscrow = function(...)
+            if not second then
+                second = table.pack(s.contracts.withdrawReward(f.creator, c.id, { bankLine }))
+            end
+            return real(...)
+        end
+        local ok, err = s.contracts.withdrawReward(f.creator, c.id, { cashLine })
+        s.storage.readEscrow = real
+
+        truthy(ok, tostring(err))
+        truthy(second)
+        falsy(second[1], 'the second ran inside the first')
+        eq(second[2], CB.ERR.BUSY)
+        truthy(s.escrow.moneyValue(c.id) > 0, 'the live collection still pays something')
+    end)
 end)

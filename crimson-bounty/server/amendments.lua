@@ -36,6 +36,22 @@ local function participants(contract)
     return out
 end
 
+--- Move the open app of everyone on a contract but the one who acted.
+---
+--- A phone notification does not change a page that is already open; only
+--- a push does, and nothing here sent one. A proposal never appeared on the
+--- other party's open Mine tab, so it ran out unseen; a decline or an
+--- expiry left the proposer's panel waiting on an answer that had come; an
+--- improvement left a hunter's card showing the old terms. The target is
+--- never among them: a push to them would say something had changed on a
+--- contract they are not told exists.
+local function pushOthers(contract, actorCid, reason)
+    if not contract then return end
+    for cid in pairs(participants(contract)) do
+        if cid ~= actorCid then Notify.push(cid, reason) end
+    end
+end
+
 --------------------------------------------------------------------------
 -- Additive changes (§12.1)
 --------------------------------------------------------------------------
@@ -57,6 +73,16 @@ end
 ---@return boolean stillOpen
 ---@return string|nil err
 local function keptOrReturned(actor, contractId, expectedSlot, ids)
+    -- Only a line nobody else has been given can be handed back. A claim
+    -- landing in the awaits can already have paid a new line to its hunter
+    -- and, with their pockets full, queued it for them: still held, but
+    -- owed to them. A named release overrides that, so handing it back gave
+    -- the creator the hunter's money and cleared the hunter's queue entry.
+    local function returnable(line)
+        return line ~= nil and line.state == CB.ESCROW_STATE.HELD
+            and (line.owed_to == nil or line.owed_to == actor.cid)
+    end
+
     local now = Storage.readContract(contractId)
     local state = now and now.state
     local open = state == CB.STATE.ACTIVE or state == CB.STATE.ACCEPTED
@@ -74,8 +100,7 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
         local back, kept = {}, false
         for id in pairs(ids or {}) do
             local line = Storage.readEscrowLine(id)
-            if line and line.state == CB.ESCROW_STATE.HELD
-                and (line.slot or 0) < (now.next_slot or 1) then
+            if returnable(line) and (line.slot or 0) < (now.next_slot or 1) then
                 back[id] = true
             elseif line then
                 kept = true
@@ -90,22 +115,27 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
     end
 
     if ids and next(ids) then
-        Escrow.release(contractId, actor.cid, { lines = ids }, 'escrow_added_to_moved')
+        local back = {}
+        for id in pairs(ids) do
+            if returnable(Storage.readEscrowLine(id)) then back[id] = true end
+        end
+        if next(back) then
+            Escrow.release(contractId, actor.cid, { lines = back }, 'escrow_added_to_moved')
+        end
 
         -- A claim that moved the slot after these lines were written paid
         -- them out with its collection, and there was nothing to hand back:
         -- the top-up went where it was meant to go. Answering "someone got
         -- there first" told the client it had not gone through, while a
-        -- hunter had the money. A contract that closed is told as closed —
-        -- its ending returned the lines to the client.
-        if not CB.TERMINAL[state] then
-            for id in pairs(ids) do
-                local line = Storage.readEscrowLine(id)
-                local to = line and (line.settled_to or line.releasing_to or line.owed_to)
-                if to and to ~= actor.cid then
-                    Audit.action('escrow_added_paid_out', actor.cid, contractId, { to = to })
-                    return true
-                end
+        -- hunter had the money. That holds when the claim was the last one
+        -- and closed the contract, too. A contract that closed any other way
+        -- is told as closed: its ending returned the lines to the client.
+        for id in pairs(ids) do
+            local line = Storage.readEscrowLine(id)
+            local to = line and (line.settled_to or line.releasing_to or line.owed_to)
+            if to and to ~= actor.cid then
+                Audit.action('escrow_added_paid_out', actor.cid, contractId, { to = to })
+                return true
             end
         end
     end
@@ -168,6 +198,7 @@ function Amendments.addEscrow(actor, contractId, rewardSpec)
                 'The client has increased the reward on a contract you hold.')
         end
     end
+    pushOthers(contract, actor.cid, 'improved')
 
     return true
 end
@@ -229,7 +260,7 @@ improveUnlocked = function(actor, contractId, kind, payload)
         if not seconds then return false, CB.ERR.INVALID_INPUT end
         -- Against the deadline as it stands when written, not as this call
         -- read it: the expiry pass may have ended a pause in the meantime.
-        local moved = Contracts.moveDeadline(contractId, function(current)
+        local moved, was = Contracts.moveDeadline(contractId, function(current)
             local deadline = (current.deadline_at or os.time()) + seconds
             -- The absolute lifetime is a ceiling, not a suggestion.
             if current.expires_at and deadline > current.expires_at then
@@ -238,6 +269,10 @@ improveUnlocked = function(actor, contractId, kind, payload)
             return deadline
         end)
         if not moved then return false, CB.ERR.LOCKED end
+        -- Already at the ceiling: nothing moved. It answered "Deadline
+        -- extended." and told every hunter the terms had improved, and the
+        -- page went on offering an extension that did nothing each time.
+        if was ~= nil and moved <= was then return false, CB.ERR.DEADLINE_AT_LIMIT end
         contract.deadline_at = moved
 
     elseif kind == CB.AMENDMENT.RAISE_BONUS then
@@ -261,7 +296,7 @@ improveUnlocked = function(actor, contractId, kind, payload)
         -- so a payout landing during the take would move this underneath us.
         local slotAtRead = contract.next_slot or 1
 
-        local extra = Escrow.bonusTopUp(contractId, was, percent)
+        local extra = Escrow.bonusTopUp(contractId, was, percent, slotAtRead)
 
         -- The same ceiling the rest of the escrow answers to. This path
         -- builds its lines itself rather than going through validate, so
@@ -396,6 +431,7 @@ improveUnlocked = function(actor, contractId, kind, payload)
                 'The client has improved the terms of a contract you hold.')
         end
     end
+    pushOthers(contract, actor.cid, 'improved')
 
     return true
 end
@@ -484,6 +520,10 @@ function Amendments.propose(actor, contractId, kind, payload)
     end
 
     -- The target is never amendable: retargeting is a new contract (§12.3).
+    -- A payload is a table or nothing. Indexed as one when it was a boolean
+    -- or a number, this threw, and a thrown handler refunds its own rate
+    -- limit, so it could be repeated at the flood guard's pace.
+    if payload ~= nil and type(payload) ~= 'table' then return nil, CB.ERR.INVALID_INPUT end
     if payload and (payload.targetCid or payload.target) then
         return nil, CB.ERR.INVALID_INPUT
     end
@@ -530,6 +570,7 @@ function Amendments.propose(actor, contractId, kind, payload)
         if cid ~= actor.cid then
             Notify.toCitizen(cid, 'Contract change proposed',
                 'The other party has proposed a change to a contract you hold.')
+            Notify.push(cid, 'proposal')
         end
     end
 
@@ -758,6 +799,7 @@ respondUnlocked = function(actor, amendmentId, approve)
         Audit.action('amendment_declined', actor.cid, proposal.contract_id, { kind = proposal.kind })
         Notify.toCitizen(proposal.proposer, 'Change declined',
             'Your proposed contract change was declined. The original terms stand.')
+        pushOthers(contract, actor.cid, 'proposal')
         return true, nil, 'declined'
     end
 
@@ -766,6 +808,8 @@ respondUnlocked = function(actor, amendmentId, approve)
     for cid in pairs(people) do
         if not proposal.approvals[cid] then
             Storage.writeAmendment(proposal)
+            -- Who is still to answer changed, and the panels say so.
+            pushOthers(contract, actor.cid, 'proposal')
             return true, nil, 'pending'
         end
     end
@@ -786,6 +830,8 @@ respondUnlocked = function(actor, amendmentId, approve)
             'Your proposed contract change was agreed, but the contract had '
             .. 'moved on and it no longer applies. The terms are unchanged.')
     end
+    -- An applied change pushes from apply, with the contract as it now is.
+    if not ok then pushOthers(contract, actor.cid, 'proposal') end
 
     return ok, err, proposal.outcome
 end
@@ -950,6 +996,7 @@ applyUnlocked = function(proposal)
     local people = participants(contract)
     for cid in pairs(people) do
         Notify.toCitizen(cid, 'Contract amended', 'A contract you hold has been changed by agreement.')
+        Notify.push(cid, 'amended')
     end
 
     return true
@@ -963,16 +1010,21 @@ function Amendments.expire()
     for contractId in pairs(openContracts) do
         local open = Storage.readOpenAmendments(contractId)
         local remaining = 0
+        local closed = false
         for j = 1, #open do
             if now > open[j].expires_at then
                 open[j].outcome = 'expired'
                 Storage.writeAmendment(open[j])
                 expired = expired + 1
+                closed = true
             else
                 remaining = remaining + 1
             end
         end
         if remaining == 0 then openContracts[contractId] = nil end
+        -- An expired proposal was still drawn as answerable on every page
+        -- that had it open.
+        if closed then pushOthers(Storage.readContract(contractId), nil, 'proposal') end
     end
 
     return expired

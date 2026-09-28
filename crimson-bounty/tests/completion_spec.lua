@@ -222,6 +222,22 @@ describe('photo verification', function()
         truthy(ok, 'the kill happened; respawning is not a defence: ' .. tostring(err))
     end)
 
+    it('accepts a photo taken late on a token taken late, with the body still down', function()
+        -- The token is good for its lifetime from when it was issued; the
+        -- kill it proves lapsed that long after the death. A hunter who
+        -- tapped Verify late was told the target had been revived.
+        local s, f, c = seeded()
+        killTarget(s)
+        local lifetime = Config.Completion.PhotoTokenLifetimeSeconds
+        Env.advance(lifetime - 20)
+        local token = s.photo.issue(f.hunter, c.id)
+        truthy(token)
+        Env.advance(25)
+        s.death.sweep()
+        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        truthy(ok, 'the body is still on the ground: ' .. tostring(err))
+    end)
+
     it('refuses a photo long after the target was revived', function()
         local s, f, c, token = ready()
         Env.players[2].PlayerData.metadata.isdead = false

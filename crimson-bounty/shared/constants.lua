@@ -243,6 +243,13 @@ CB.ERR = {
     -- player, in this instant; or the resource is still starting. Nothing
     -- was changed, and the same request a moment later goes through.
     BUSY             = 'busy',
+    -- A hunter holds the contract, so its creator can no longer withdraw it,
+    -- edit it or take reward back; only add to it or propose a change.
+    CONTRACT_TAKEN   = 'contract_taken',
+    -- The deadline is already as late as the contract's lifetime allows.
+    DEADLINE_AT_LIMIT = 'deadline_at_limit',
+    -- A buyout price was set on a reward with no cash or bank in it.
+    BUYOUT_NEEDS_CLEAN = 'buyout_needs_clean',
 }
 
 return CB

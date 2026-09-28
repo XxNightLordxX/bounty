@@ -83,10 +83,20 @@ near the target without ever making an attempt on them — no hit landed, no
 handover armed — for `Config.Limits.ExclusiveAttemptWindowSeconds`. The
 deadline pauses the same way. Both follow the target alone when the client is anonymous, because
 a clock that stops while they are away tells everyone watching it when they
-logged off.
+logged off. A target serving a prison sentence counts as away too, so the
+deadline stops for the sentence and moves on by the time served, and an
+exclusive hold is not released for idleness meanwhile
+(`Config.Limits.PauseWhileTargetJailed`). "In prison" means an `injail`
+sentence, as `sc-police` writes it, and standing inside
+`Config.Limits.JailZone` (Bolingbroke by default): `sc-police` lets a client
+write its own sentence, so the metadata alone is not trusted.
 
 **Finishing it.** Kill the target and photograph the body through the app's
-camera for the baseline. Or take them alive to the client and hold them there
+camera for the baseline. With `sc-ambulance`, downing them is not the kill:
+they are in last stand, and you have to finish them. The kill is credited to
+whoever landed a hit within `Config.Completion.DeathReportWindowMs` (30
+seconds) of the death, and bleeding out takes minutes, so a target left to
+bleed out pays nobody. A revive before you photograph them cancels it. Or take them alive to the client and hold them there
 for thirty seconds for baseline plus bonus.
 
 **Counter-play.** A target can see the price on their head and buy it out.
@@ -102,7 +112,13 @@ would say whether they are.
 **Hunting a cop.** Allowed, and loud. Every officer online is advised when the
 contract is posted and again on each acceptance, with a running count, on
 their phone and in dispatch. Both the creator and the hunter are warned first,
-and the listing is flagged. Nobody hunts a cop by accident.
+and the listing is flagged. Nobody hunts a cop by accident. The dispatch entry
+is closed when the contract ends. An officer is an officer by every job they
+hold (`qbx_core` multi-job, `sc-multijob`): switching to a second job for the
+evening neither opens the app to them nor takes them off the protected list.
+A player barred by a job they hold but are not working is told which one on
+their phone, since a department boss can hire somebody through the MDT
+without asking them; quitting it from their job menu gives the app back.
 
 ---
 
@@ -148,12 +164,15 @@ the read-only ones (`cb-diag`, `cb-timeline`, `cb-stuck`); `cb-void` and
 | `/cb-timeline <contract>` | One contract's state, escrow lines and audit trail |
 | `/cb-whois <contract>` | Who is really behind an anonymous creator or hunter. Needs `crimson.identity`, a separate ACE |
 | `/cb-void <contract> [reason]` | Close a contract and return its escrow to the creator |
-| `/cb-stuck` | Escrow lines that were mid-payment when the server stopped |
-| `/cb-settle <line> pay\|return` | Finish one of those by hand |
-| `/bountyadmin timers` | Test servers: bring every wait and cooldown forward. `crimson.admin` itself only — the extra ACEs do not open it — and audited |
+| `/cb-stuck` | Escrow lines that were mid-payment when the server stopped. Who each was paying is shown as a role (the client, an operative) unless you also hold `crimson.identity` |
+| `/cb-settle <line> pay\|return` | Finish one of those by hand. `pay` goes to whom the interrupted payment was for; `return` goes to whoever put the line up, so a hunter's stake goes back to that hunter. A player who is offline gets it at their next login, and the command says so |
+| `/bountyadmin timers` | Test servers: bring every wait and cooldown forward. Deadlines are only ever moved later, never earlier. `crimson.admin` itself only — the extra ACEs do not open it — and audited |
 
 Faults the phone page hits are reported to the server, printed to the console
 and kept for `/cb-diag`; `Config.Debug = true` adds each one's full stack trace.
+The page log `/cb-diag` asks a player's phone for is printed whatever Debug
+says. The staff webhook (`Config.Audit.Webhook`) sends one message per audit
+flush rather than one per row, and backs off when Discord says to.
 On the phone, tapping the build line at the bottom of the Ledger tab five times
 opens a diagnostics panel showing the page's recent requests and faults.
 
@@ -171,7 +190,7 @@ CB_SUITES=journeys_spec lua crimson-bounty/tests/run.lua   # one area, in second
 
 Five kinds of check, because each catches what the others cannot:
 
-- **Server suite** (about 1,780 tests) — escrow arithmetic, the state machine,
+- **Server suite** (about 1,870 tests) — escrow arithmetic, the state machine,
   every payout and refund path, whole player journeys, every action against
   every contract state, deliberate exploit attempts, storage conformance
   across all three backends, and randomised simulations asserting that no

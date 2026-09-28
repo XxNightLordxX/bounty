@@ -367,6 +367,33 @@ describe('finished contracts do not accumulate forever', function()
             'the file went while the index on disk still named it')
     end)
 
+    it('json: removes the file on the next flush when the prune could not write the index', function()
+        -- Only the prune drained the list, and it returns early when there
+        -- is nothing new to prune: one failed index write left the file on
+        -- disk for good.
+        local old = os.time() - (Config.Audit.ContractRetentionDays + 1) * DAY
+        local store
+        for _, backend in ipairs(backends()) do
+            if backend.name == 'json' then store = backend.store end
+        end
+        settled(store, 'ct00000029', old)
+        store.save(true)
+
+        local removed = {}
+        local realRemove, realPath = os.remove, _G.GetResourcePath
+        _G.GetResourcePath = function() return '/srv/resources/crimson-bounty' end
+        os.remove = function(path) removed[#removed + 1] = path return true end
+        Natives.blocked = { ['data/store.json'] = true }
+        pcall(store.prune)
+        Natives.blocked = {}
+        eq(#removed, 0, 'not while the index still names it')
+        local ok = pcall(store.save, true)
+        os.remove, _G.GetResourcePath = realRemove, realPath
+        truthy(ok)
+        eq(removed[1], '/srv/resources/crimson-bounty/data/contracts/ct00000029.json',
+            'removed once an index without it is on disk')
+    end)
+
     it('keeps one that has only just finished', function()
         local recent = os.time() - DAY
         for _, backend in ipairs(backends()) do
@@ -1748,6 +1775,37 @@ describe('the narrow writes added for the second review', function()
             b.store.compareSetContractState('ctslots8', CB.STATE.COMPLETING, CB.STATE.ACCEPTED)
             truthy(b.store.reduceSlots('ctslots8', 2), b.name .. ': and gives it back otherwise')
             eq(b.store.readContract('ctslots8').payout_slots, 1, b.name)
+        end
+    end)
+end)
+
+describe('audit retention', function()
+    --- 0 kept a finished contract and a ledger photo forever, and deleted
+    --- the audit log: the cutoff became now, and every row older than the
+    --- current second went, including what /cb-stuck is built from.
+    it('keeps the log when set to 0, and prunes by age otherwise', function()
+        for _, backend in ipairs(backends()) do
+            local store = backend.store
+            if backend.name ~= 'memory' then
+                local function has(action)
+                    for _, row in ipairs(store.readAudit(1000) or {}) do
+                        if row.action == action then return true end
+                    end
+                    return false
+                end
+                Config.Audit.RetentionDays = 0
+                store.writeAudit({ ts = os.time() - 40 * 86400, kind = 'financial',
+                    action = 'old_row', detail = {} })
+                store.writeAudit({ ts = os.time(), kind = 'financial', action = 'new_row', detail = {} })
+                if store.prune then store.prune() end
+                truthy(has('old_row'), backend.name .. ': 0 deleted the log')
+
+                Config.Audit.RetentionDays = 30
+                store.writeAudit({ ts = os.time(), kind = 'financial', action = 'newer_row', detail = {} })
+                if store.prune then store.prune() end
+                falsy(has('old_row'), backend.name .. ': a row past the retention age is pruned')
+                truthy(has('new_row'), backend.name .. ': and a recent one kept')
+            end
         end
     end)
 end)

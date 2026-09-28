@@ -158,7 +158,30 @@ describe('staff webhook', function()
         s.audit.flush()
 
         Config.Audit.Webhook = false
-        eq(#Natives.calls.http, 2, 'financial and rejected, not routine conduct')
+        eq(#Natives.calls.http, 1, 'one message for the flush')
+        local body = tostring(Natives.calls.http[1].body)
+        truthy(body:find('payout', 1, true) and body:find('photo_forged', 1, true),
+            'financial and rejected: ' .. body)
+        falsy(body:find('contract_created', 1, true), 'not routine conduct')
+    end)
+
+    --- One POST per row. Discord answers the rest with 429 past about five a
+    --- second, and enough of those gets the server's address banned for
+    --- every integration on the box.
+    it('sends one message per flush however many rows it drained', function()
+        local s = newStack()
+        fixture(s)
+        Config.Audit.Webhook = 'https://discord.example/hook'
+        Natives.calls.http = {}
+        for i = 1, 80 do s.audit.financial('escrow_taken', 'CREATOR1', 'ct' .. i, {}) end
+        for _ = 1, 50 do s.audit.rejected('ratelimit_list', 'HUNTER01', nil, {}) end
+        s.audit.flush()
+        Config.Audit.Webhook = false
+        eq(#Natives.calls.http, 1)
+        local body = tostring(Natives.calls.http[1].body)
+        truthy(body:find('and 65 more', 1, true), 'the rest counted: ' .. body)
+        truthy(body:find('50 refused', 1, true), 'the refusal noise counted, not listed: ' .. body)
+        truthy(#body < 2100, 'under Discord\'s limit: ' .. #body)
     end)
 
     it('never puts a citizen id in the webhook body', function()
@@ -242,5 +265,24 @@ describe('informant selection is not steerable', function()
             eq(results[i], results[1],
                 'waiting a second must not let a buyer choose which hunter is unmasked')
         end
+    end)
+end)
+
+describe('the audit queue, set to nothing', function()
+    --- A size of 0 moved the head past every row as it was pushed: nothing
+    --- was ever written, not even the overflow row, and the rows stayed in
+    --- memory.
+    it('still writes, and says what it had to drop', function()
+        local s = newStack()
+        fixture(s)
+        Config.Audit.MaxQueueSize = 0
+        for i = 1, 5 do s.audit.financial('payout', 'HUNTER01', 'ct' .. i, {}) end
+        local written = s.audit.flush()
+        truthy(written >= 1, 'the log went silent')
+        local overflow = false
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'audit_overflow' then overflow = true end
+        end
+        truthy(overflow, 'and the gap is recorded')
     end)
 end)

@@ -180,6 +180,9 @@ function Comms.send(actor, contractId, threadHandle, rawBody)
 
     local recipient = ctx.role == 'creator' and ctx.hunterCid or ctx.contract.creator_cid
     Notify.toCitizen(recipient, 'Contract message', ('%s: %s'):format(ctx.alias, body))
+    -- And the thread, if they have it open: a buzz does not change a page,
+    -- so two people in the same conversation never saw each other's replies.
+    Notify.push(recipient, 'message')
 
     Audit.action('relay_message', actor.cid, contractId, { role = ctx.role })
     return true

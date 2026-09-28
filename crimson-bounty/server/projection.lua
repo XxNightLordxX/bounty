@@ -134,6 +134,31 @@ function Projection.contract(contract, viewerCid)
         penaltyAmount = contract.penalty_amount or 0,
     }
 
+    -- Why this viewer can never take it, where that is so. The board drew
+    -- Accept on these and acceptance refused every time: a hold released
+    -- for sitting on it (on this character or another of the account's),
+    -- and a contract another of the viewer's own characters placed or is
+    -- the target of. Only the reason is sent, never whose account matched.
+    if role == 'public' then
+        local viewer = Identity.byCitizenId(viewerCid)
+        local account = viewer and viewer.account
+        for i = 1, #hunters do
+            local h = hunters[i]
+            if h.state == 'released' and (h.hunter_cid == viewerCid
+                or Identity.sameAccount(h.hunter_account, account)) then
+                out.barred = 'hold_released'
+                break
+            end
+        end
+        if not out.barred and Config.AntiCollusion.BlockSameAccount and account then
+            local target = Identity.byCitizenId(contract.target_cid)
+            if Identity.sameAccount(contract.creator_account, account)
+                or (target and Identity.sameAccount(target.account, account)) then
+                out.barred = 'same_account'
+            end
+        end
+    end
+
     -- The creator's identity is present only when they chose to be seen.
     -- When anonymous, no key carrying it exists on the payload.
     if not contract.anon_creator then
@@ -144,6 +169,10 @@ function Projection.contract(contract, viewerCid)
 
     if role == 'creator' then
         out.bailoutAmount = contract.bailout_amount
+        -- What the contract holds in money, against the ceiling on what one
+        -- contract may be worth: the add-to-reward box offered amounts the
+        -- server could only refuse, as a reward that did not add up.
+        out.valueHeld = Escrow.moneyValue(contract.id)
         -- The creator learns how many operatives are on it, never who they
         -- are, unless a hunter chose to be seen.
         out.hunters = {}
@@ -202,7 +231,12 @@ end
 ---@param page integer|nil
 ---@return table
 local function buildListing(viewerCid, page)
-    page = math.max(1, math.floor(tonumber(page) or 1))
+    -- Bounded before it is multiplied: a page of 2^62 wrapped the offset
+    -- negative and indexed past the list, and a NaN or an infinity went
+    -- straight back to the page. Clamped to the real last page below.
+    page = tonumber(page) or 1
+    if page ~= page or page < 1 or page > 100000 then page = 1 end
+    page = math.floor(page)
     local pageSize = Config.Listing.PageSize
 
     local all = Storage.allContracts()
@@ -496,11 +530,11 @@ Projection.ALLOWED_KEYS = {
         targetImageId = true, penaltyAmount = true,
         creatorName = true, creatorAnonymous = true,
     },
-    creator = { bailoutAmount = true, hunters = true },
+    creator = { bailoutAmount = true, hunters = true, valueHeld = true },
     hunter  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
                 bailoutPaid = true },
-    public  = {},
+    public  = { barred = true },
 }
 
 return Projection

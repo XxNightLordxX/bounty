@@ -23,7 +23,7 @@ Config.BlockedJobTypes = {
 Config.BlockedJobNames = {
     police = true, sheriff = true, leo = true, trooper = true, sasp = true,
     bcso = true, fib = true, ranger = true, doj = true, lawyer = true,
-    ambulance = true, fire = true,
+    sast = true, k9 = true, ambulance = true, fire = true,
 }
 
 --- Off-duty players are still blocked by default: a police officer who clocks
@@ -199,6 +199,16 @@ Config.Limits = {
 
     ContractLifetimeSeconds = 172800,   -- absolute ceiling, pause included
     DefaultDeadlineSeconds  = 10800,
+    --- The deadline stops while the target is in prison, as it does while
+    --- they are offline, and is moved on by however long they served. The
+    --- lifetime above still ends the contract. In prison means a sentence
+    --- ('injail' metadata, as sc-police writes it) AND standing inside
+    --- JailZone: sc-police lets a client write the sentence for itself, so
+    --- the metadata alone would let a target stop the clock from anywhere.
+    PauseWhileTargetJailed  = true,
+    --- The prison grounds, as a centre and a radius in metres. Bolingbroke
+    --- by default; set it to your prison if it is elsewhere.
+    JailZone = { x = 1693.3, y = 2569.5, radius = 300 },
 
     --- An exclusive contract goes back on the board when the one operative
     --- holding it has not been near the target for this long (§14.8). The
@@ -463,13 +473,13 @@ Config.Advisory = {
     --- Job types that trigger an advisory when targeted.
     TriggerJobTypes = { leo = true, police = true, ems = true, fire = true },
     --- Job names that trigger one, for jobs with an unusual type.
-    TriggerJobNames = { doj = true, lawyer = true, ranger = true },
+    TriggerJobNames = { doj = true, lawyer = true, ranger = true, sast = true, k9 = true },
     --- Who receives the advisory. Law enforcement only by default; EMS are
     --- not a response unit for a contract killing.
     RecipientJobTypes = { leo = true, police = true },
     RecipientJobNames = {
         police = true, sheriff = true, bcso = true, fib = true,
-        trooper = true, sasp = true, ranger = true,
+        trooper = true, sasp = true, ranger = true, sast = true, k9 = true,
     },
     --- Also raise a dispatch entry through sc-dispatch when present.
     UseDispatch = true,
@@ -652,7 +662,7 @@ Config.Audit = {
     LogReasonText = true,
     FlushIntervalMs = 10000,
     MaxQueueSize = 5000,
-    RetentionDays = 30,
+    RetentionDays = 30,   -- 0 keeps the audit log forever
     --- How long a finished contract and its rows are kept, in days. 0 keeps
     --- them forever, which is what this did before it was a setting.
     ---

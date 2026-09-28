@@ -368,6 +368,10 @@ function Natives.exportsProxy()
             local src = Env.byCitizen[cid]
             return src and Env.players[src] or nil
         end,
+        GetJob = function(_, name)
+            Natives.calls.getJob = (Natives.calls.getJob or 0) + 1
+            return Env.jobDefinitions and Env.jobDefinitions[name] or nil
+        end,
     }
 
     --- The optional headshot renderer. Optional to the resource, but a test
@@ -533,6 +537,11 @@ function Natives.exportsProxy()
         AddNotification = function(_, data)
             table.insert(Natives.calls.dispatch, data)
             return 1
+        end,
+        ClearNotification = function(_, uid, jobs)
+            Natives.calls.dispatchCleared = Natives.calls.dispatchCleared or {}
+            table.insert(Natives.calls.dispatchCleared, { uid = uid, jobs = jobs })
+            return true
         end,
     }
 

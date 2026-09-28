@@ -526,6 +526,21 @@ function Memory.writeAudit(entry)
 end
 function Memory.readAudit() return db.audit end
 
+--- Every audit row with one action, oldest first, the newest `limit` of
+--- them. One pass over the log, where asking per contract was one each.
+function Memory.auditByAction(action, limit)
+    local out = {}
+    for i = 1, #db.audit do
+        if db.audit[i].action == action then out[#out + 1] = db.audit[i] end
+    end
+    if limit and #out > limit then
+        local trimmed = {}
+        for i = #out - limit + 1, #out do trimmed[#trimmed + 1] = out[i] end
+        return trimmed
+    end
+    return out
+end
+
 --- Every audit row naming one contract, oldest first. The admin timeline
 --- reads this; walking the whole log per lookup is a full scan on mysql.
 function Memory.auditForContract(contractId, limit)

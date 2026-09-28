@@ -624,6 +624,20 @@ describe('additive improvements apply without approval', function()
         truthy(stored.deadline_at <= stored.expires_at, 'the lifetime ceiling holds')
     end)
 
+    it('says so when the deadline is already as late as it can go', function()
+        -- It answered ok, told the hunter the terms had improved, and moved
+        -- nothing, every time it was asked.
+        local s, f, c = seededImprove()
+        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE,
+            { seconds = Config.Limits.ContractLifetimeSeconds }))
+        Natives.calls.notifications = {}
+        local ok, err = s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE,
+            { seconds = 1800 })
+        falsy(ok, 'an extension that moved nothing')
+        eq(err, CB.ERR.DEADLINE_AT_LIMIT)
+        eq(#Natives.calls.notifications, 0, 'and nobody was told the terms improved')
+    end)
+
     it('raises the bonus but never lowers it', function()
         local s, f, c = seededImprove()
         truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 80 }))
@@ -2366,6 +2380,33 @@ describe('browsing for a target', function()
             if person.name == 'Ada Quill' then flagged = person.protected end
         end
         truthy(flagged, 'nobody should contract an officer unaware')
+    end)
+
+    it('says who is law enforcement when they are working another job', function()
+        local s = newStack()
+        crowd(s)
+        Env.players[10].PlayerData.job = { name = 'mechanic', type = 'mechanic', onduty = true }
+        Env.players[10].PlayerData.jobs = { mechanic = 0, police = 1 }
+        local data = browse(1, { scope = 'all' }).data
+        local flagged
+        for _, person in ipairs(data.people) do
+            if person.name == 'Ada Quill' then flagged = person.protected end
+        end
+        truthy(flagged, 'a second job for the evening does not make them a civilian')
+    end)
+
+    it('says so in a search by name too', function()
+        local s = newStack()
+        crowd(s)
+        Env.players[10].PlayerData.job = { name = 'mechanic', type = 'mechanic', onduty = true }
+        Env.players[10].PlayerData.jobs = { mechanic = 0, police = 1 }
+        local reply = call('searchTargets', 1, { query = 'Ada' })
+        truthy(reply and reply.data, 'the search must answer')
+        local flagged
+        for _, person in ipairs(reply.data) do
+            if person.name == 'Ada Quill' then flagged = person.protected end
+        end
+        truthy(flagged)
     end)
 
     it('pages rather than sending a whole busy server at once', function()

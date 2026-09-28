@@ -539,15 +539,22 @@ describe('a withdrawal that queued a line', function()
         -- No room for the black money: the first line out is queued.
         Env.players[1]._inventoryFull = true
 
-        -- The hunter accepts as the SECOND line leaves `held` — the window the
-        -- release guard exists for.
+        -- A holder appears as the SECOND line leaves `held` — the window the
+        -- release guard exists for. Written straight into the store: an
+        -- acceptance can no longer land inside a withdrawal (both hold the
+        -- contract), so the guard is the backstop for any other route.
         local realClaim = s.storage.claimEscrowLine
         local seen = 0
         s.storage.claimEscrowLine = function(id, expected, next_)
             local out = realClaim(id, expected, next_)
             if out and expected == CB.ESCROW_STATE.HELD then
                 seen = seen + 1
-                if seen == 2 then s.contracts.accept(f.hunter, c.id, false) end
+                if seen == 2 then
+                    s.storage.addHunter({ id = 'hn_backstop', contract_id = c.id,
+                        hunter_cid = f.hunter.cid, hunter_name = f.hunter.name,
+                        hunter_account = f.hunter.account, state = 'active',
+                        accepted_at = os.time() })
+                end
             end
             return out
         end

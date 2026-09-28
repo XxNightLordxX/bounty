@@ -1204,3 +1204,93 @@ describe('a settle the store will not take', function()
         end
     end)
 end)
+
+describe('the weapons list', function()
+    --- It took any name. A lockpick sent as a weapon was escrowed past the
+    --- item switch an operator had turned off and past the stack limits, and
+    --- shown on the board as a weapon.
+    it('takes weapons and nothing else', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Sources.item.enabled = false
+        local slot
+        for _, entry in ipairs(Env.players[1]._inventory) do
+            if entry.name == 'lockpick' then slot = entry.slot end
+        end
+        truthy(slot)
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000, weapons = { { name = 'lockpick', slot = slot } } } },
+        })
+        falsy(c, 'a lockpick is not a weapon')
+        eq(err, CB.ERR.INVALID_REWARD)
+
+        local ok = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000, weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } },
+        })
+        truthy(ok, 'a pistol still is')
+    end)
+end)
+
+describe('item names, as the inventory reads them', function()
+    --- ox_inventory folds case on every lookup, so a capital letter was the
+    --- same item to it and a different one to the blacklist.
+    local function withFoldingInventory(s)
+        local inv = exports.ox_inventory
+        local real = { GetItem = inv.GetItem, RemoveItem = inv.RemoveItem }
+        local function fold(name)
+            local lower = tostring(name):lower()
+            if lower:sub(1, 7) == 'weapon_' then return lower:upper() end
+            return lower
+        end
+        inv.GetItem = function(self, src, name, ...) return real.GetItem(self, src, fold(name), ...) end
+        inv.RemoveItem = function(self, src, name, ...) return real.RemoveItem(self, src, fold(name), ...) end
+        return function() inv.GetItem, inv.RemoveItem = real.GetItem, real.RemoveItem end
+    end
+
+    it('keeps a blacklisted item out however it is capitalised', function()
+        local s = newStack()
+        local f = fixture(s)
+        table.insert(Env.players[1]._inventory, { name = 'handcuffs', count = 1, slot = 20 })
+        local restore = withFoldingInventory(s)
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000, items = { { name = 'Handcuffs', count = 1 } } } },
+        })
+        restore()
+        falsy(c, 'handcuffs went into escrow under a capital H')
+        eq(err, CB.ERR.INVALID_REWARD)
+    end)
+
+    it('keeps black money out of the item list however it is capitalised', function()
+        local s = newStack()
+        local f = fixture(s)
+        local restore = withFoldingInventory(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000, items = { { name = 'Black_Money', count = 100 } } } },
+        })
+        restore()
+        falsy(c, 'black money escrowed as an item, past its own cap')
+    end)
+end)
+
+describe('an item name written in odd case', function()
+    --- The inventory folds case; a lookup under the name as sent found no
+    --- such item and refused a creator who was holding it.
+    it('is taken under the inventory\'s own spelling', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000, items = { { name = 'LockPick', count = 1 } } } },
+        })
+        truthy(c, tostring(err))
+        local stored
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.source == CB.SOURCE.ITEM then stored = l.item end
+        end
+        eq(stored, 'lockpick')
+    end)
+end)

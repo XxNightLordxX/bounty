@@ -42,9 +42,20 @@ local function recordFor(contractId, cid)
     if locksAgedAt and at <= locksAgedAt then
         at = os.time() - ((Config.Informant.RerollLockMinutes or 0) * 60 + 1)
     end
+    -- The answer given at the time, kept with the reveal. Kept in memory
+    -- only, a restart inside the reroll lock turned the free repeat back
+    -- into a fresh look at who was online.
+    local answer
+    if type(stored.answer) == 'table' then
+        answer = stored.answer
+    elseif type(stored.answer) == 'string' and stored.answer ~= '' then
+        local ok, decoded = pcall(json.decode, stored.answer)
+        if ok and type(decoded) == 'table' then answer = decoded end
+    end
     reveals[key] = {
         hunterCid = stored.hunter_cid, at = at,
         purchases = tonumber(stored.purchases) or 0, seed = tonumber(stored.seed),
+        answer = answer,
     }
     return reveals[key]
 end
@@ -55,6 +66,7 @@ local function remember(contractId, cid, record)
         Storage.writeReveal(contractId, cid, {
             hunter_cid = record.hunterCid, revealed_at = record.at,
             purchases = record.purchases, seed = record.seed,
+            answer = type(record.answer) == 'table' and json.encode(record.answer) or nil,
         })
     end
 end

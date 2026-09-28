@@ -79,6 +79,11 @@ local function withPhone(fn, ...)
     _G.exports = setmetatable({}, {
         __index = function(_, resource)
             if resource == 'lb-phone' then return Client.exports end
+            -- The client's own qbx_core: its player data, which is where the
+            -- medical resource's metadata reaches this player.
+            if resource == 'qbx_core' and Client.playerData ~= nil then
+                return { GetPlayerData = function() return Client.playerData end }
+            end
             return realExports[resource]
         end,
     })
@@ -118,6 +123,12 @@ function Client.boot(opts)
     _G.RegisterNUICallback = function(name, fn) Client.nui[name] = fn end
     _G.PlayerPedId = function() return Client.ped or 1003 end
     _G.IsEntityDead = function() return Client.dead == true end
+    -- What a medical resource says about this player: nil player data is a
+    -- qbx_core that cannot be read, which is every test that does not set it.
+    Client.playerData, Client.state = nil, {}
+    _G.LocalPlayer = setmetatable({}, { __index = function(_, key)
+        if key == 'state' then return Client.state end
+    end })
     _G.TriggerServerEvent = function(name, ...)
         table.insert(Client.toServer, { name = name, args = { ... } })
     end
@@ -170,6 +181,17 @@ function Client.ticks(n)
     local threads = {}
     for i = 1, #Env.threads do threads[i] = Env.threads[i] end
 
+    -- Inside the client's view of the exports, as the game runs them.
+    local realExports = _G.exports
+    _G.exports = setmetatable({}, {
+        __index = function(_, resource)
+            if resource == 'qbx_core' and Client.playerData ~= nil then
+                return { GetPlayerData = function() return Client.playerData end }
+            end
+            return realExports[resource]
+        end,
+    })
+
     for _, fn in ipairs(threads) do
         local count = 0
         _G.Wait = function()
@@ -178,12 +200,12 @@ function Client.ticks(n)
         end
         local ok, err = pcall(fn)
         if not ok and err ~= STOP then
-            _G.Wait = realWait
+            _G.Wait, _G.exports = realWait, realExports
             error(err, 0)
         end
     end
 
-    _G.Wait = realWait
+    _G.Wait, _G.exports = realWait, realExports
 end
 
 --- Run whatever CreateThread queued, with lb-phone's exports in place.

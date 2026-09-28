@@ -1215,3 +1215,85 @@ describe('a set or a list the operator wrote', function()
         resetConfig()
     end)
 end)
+
+describe('settings an operator can set to something that breaks the server', function()
+    it('answers a request whose rate-limit rule has no burst', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+        Config.Cooldowns.wallet = { per = 10 }
+        local handler = Env.events['crimson-bounty:rewardOptions']
+        Env.clientEvents = {}
+        _G.source = 3
+        local ok = pcall(handler, {})
+        _G.source = nil
+        truthy(ok, 'the net event threw before its handler could answer')
+        local answered = false
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-bounty:result' then answered = true end
+        end
+        truthy(answered, 'and the page waits fifteen seconds for nothing')
+    end)
+
+    it('diagnoses a server with a fractional rate-limit rule', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+        Config.Cooldowns.image = { per = 0.5, burst = 20 }
+        local ok, lines = pcall(s.admin.diagnose, 1)
+        truthy(ok, 'the diagnosis threw: ' .. tostring(lines))
+    end)
+end)
+
+describe('a server whose phone uploads nowhere this resource accepts', function()
+    --- The warning sat inside "the list changed", and from nothing to nothing
+    --- is no change, so on the one server it was written for it never showed.
+    it('says so at the first load, and in the diagnosis', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+        -- Natives is shared by every test in the run: put it back.
+        local realPhone = Natives.phoneConfig
+        Natives.phoneConfig = {}
+        Config.Completion.ExtraPhotoHosts = {}
+        local printed = {}
+        local realPrint = _G.print
+        _G.print = function(...) printed[#printed + 1] = table.concat({ ... }, ' ') end
+        local ok = pcall(s.photo.loadAllowedHosts)
+        _G.print = realPrint
+        truthy(ok)
+        local warned = false
+        for _, line in ipairs(printed) do
+            if line:find('every verification photo will be rejected', 1, true) then warned = true end
+        end
+        truthy(warned, 'the one warning that matters was never printed')
+
+        local report = table.concat(s.admin.diagnose(1) or {}, '\n')
+        Natives.phoneConfig = realPhone
+        s.photo.loadAllowedHosts()
+        truthy(report:find('photo hosts: 0', 1, true), report)
+    end)
+end)
+
+describe('the page log a staff member asks for', function()
+    --- /cb-diag says it follows in the console; with Debug off it never did.
+    it('is printed, a line per event, whatever Debug says', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+        Config.Debug = false
+        local printed = {}
+        local realPrint = _G.print
+        _G.print = function(...) printed[#printed + 1] = table.concat({ ... }, ' ') end
+        _G.source = 3
+        pcall(Env.events['crimson-bounty:pageError'], {
+            what = 'page diagnostics', where = 'requested',
+            stack = '1.0s post list || 1.2s reply list ok', build = 'test',
+        })
+        _G.source = nil
+        _G.print = realPrint
+        local joined = table.concat(printed, '\n')
+        truthy(joined:find('1.0s post list', 1, true) and joined:find('1.2s reply list ok', 1, true),
+            joined)
+    end)
+end)

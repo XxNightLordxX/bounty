@@ -164,6 +164,7 @@ local SCHEMA = {
         revealed_at INT NOT NULL,
         purchases INT DEFAULT 0,
         seed INT,
+        answer TEXT,
         INDEX idx_reveal_contract (contract_id)
     )]],
     -- Small facts about the store itself. Holds the heartbeat: when this
@@ -1018,6 +1019,17 @@ function MySQLStore.auditForContract(contractId, limit)
     return hydrateAuditRows(rows)
 end
 
+--- Every audit row with one action, oldest first, the newest `limit` of
+--- them: one query, where /cb-stuck asked once per contract.
+function MySQLStore.auditByAction(action, limit)
+    local newest = MySQL.query.await(
+        'SELECT * FROM crimson_audit WHERE action = ? ORDER BY id DESC LIMIT ?',
+        { action, limit or 500 }) or {}
+    local rows = {}
+    for i = #newest, 1, -1 do rows[#rows + 1] = newest[i] end
+    return hydrateAuditRows(rows)
+end
+
 --- Drop the photo reference from rows older than the cutoff (§14.43).
 --- One indexed UPDATE rather than reading the ledger into Lua.
 function MySQLStore.forgetLedgerPhotos(cutoff)
@@ -1028,8 +1040,12 @@ function MySQLStore.forgetLedgerPhotos(cutoff)
 end
 
 function MySQLStore.prune()
-    MySQL.query.await('DELETE FROM crimson_audit WHERE ts < ?',
-        { os.time() - (Config.Audit.RetentionDays * 86400) })
+    -- 0 keeps the log, as the retention settings beside it do.
+    local auditDays = tonumber(Config.Audit.RetentionDays) or 0
+    if auditDays > 0 then
+        MySQL.query.await('DELETE FROM crimson_audit WHERE ts < ?',
+            { os.time() - (auditDays * 86400) })
+    end
 
     local days = Config.Audit.ContractRetentionDays or 0
     if days > 0 then MySQLStore.pruneContracts(os.time() - (days * 86400)) end
@@ -1096,14 +1112,14 @@ end
 function MySQLStore.writeReveal(contractId, buyerCid, record)
     MySQL.query.await([[
         INSERT INTO crimson_reveals
-            (id, contract_id, buyer_cid, hunter_cid, revealed_at, purchases, seed)
-        VALUES (?,?,?,?,?,?,?)
+            (id, contract_id, buyer_cid, hunter_cid, revealed_at, purchases, seed, answer)
+        VALUES (?,?,?,?,?,?,?,?)
         ON DUPLICATE KEY UPDATE hunter_cid = VALUES(hunter_cid),
             revealed_at = VALUES(revealed_at), purchases = VALUES(purchases),
-            seed = VALUES(seed)
+            seed = VALUES(seed), answer = VALUES(answer)
     ]], {
         contractId .. ':' .. buyerCid, contractId, buyerCid, record.hunter_cid,
-        record.revealed_at, record.purchases or 0, record.seed,
+        record.revealed_at, record.purchases or 0, record.seed, record.answer,
     })
     return true
 end

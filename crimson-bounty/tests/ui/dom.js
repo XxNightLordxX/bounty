@@ -125,8 +125,13 @@ function makeDocument() {
       set: function (v) { node._id = v; byId[v] = node; },
       configurable: true
     });
+    // Focus, as the page reads it back: which element the keyboard is in.
+    node.focus = function () { doc.activeElement = node; };
+    node.blur = function () { if (doc.activeElement === node) { doc.activeElement = null; } };
+    node.setSelectionRange = function () {};
     return node;
   };
+  doc.activeElement = null;
 
   /* Only nodes that are still in the document.
    *

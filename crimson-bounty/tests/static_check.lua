@@ -260,7 +260,7 @@ local DYNAMIC = {
     -- Job tables are membership sets.
     police = true, sheriff = true, leo = true, trooper = true, sasp = true,
     bcso = true, fib = true, ranger = true, doj = true, lawyer = true,
-    ambulance = true, fire = true, ems = true,
+    ambulance = true, fire = true, ems = true, sast = true, k9 = true,
     -- Death-state provider entries.
     resource = true, dead = true, lastStand = true,
     -- MIME allowlist entries and escrow blacklist entries.
@@ -675,7 +675,6 @@ do
         ['Comms.resetMaskingCache']    = 'the same, for the alias mapping',
         ['Mugshot.get']                = 'the stored image, without going through a handle',
         ['Notify.clearPush']           = 'the push cooldown, so a test can send twice',
-        ['Photo.allowedHosts']         = 'the host allowlist as it was actually parsed',
         ['Photo.tokenCount']           = 'how many photo tokens are outstanding',
         ['Audit.pending']              = 'how many rows are queued but not yet flushed',
         ['RateLimit.count']            = 'how many buckets are held, so a test can watch them expire',

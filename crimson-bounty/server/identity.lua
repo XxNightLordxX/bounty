@@ -273,6 +273,132 @@ function Identity.isAdvisoryRecipient(job)
     return (name and Config.Advisory.RecipientJobNames[name]) == true
 end
 
+--- Job definitions by name, as qbx_core holds them. A job a player holds
+--- but is not working is only a name and a grade in their player data; its
+--- type is in the framework's job list. Job definitions change when an
+--- owner edits them, which is rare, so a read is kept for a few minutes
+--- rather than asked for on every request.
+local JOB_CACHE_SECONDS = 300
+local jobDefinitions = {}
+
+local function jobDefinition(name)
+    local now = os.time()
+    local cached = jobDefinitions[name]
+    if cached and now - cached.at < JOB_CACHE_SECONDS then return cached.job end
+    local ok, job = pcall(function() return exports.qbx_core:GetJob(name) end)
+    job = ok and type(job) == 'table' and job or nil
+    jobDefinitions[name] = { at = now, job = job }
+    return job
+end
+
+--- Every job a player holds besides the one they are working, as job tables
+--- the checks here can read, each off duty.
+---
+--- qbx_core keeps a player's jobs as { [name] = grade }, and sc-multijob and
+--- its kind let them pick which one is primary. Only the primary was read,
+--- so an officer with a second job switched to it and was a civilian: into
+--- the app, and on the board as a target.
+---@param actor table
+---@return table[]
+function Identity.heldJobs(actor)
+    local data = actor and actor.player and actor.player.PlayerData
+    local jobs = data and data.jobs
+    local out = {}
+    if type(jobs) ~= 'table' then return out end
+    local primary = actor.job and actor.job.name
+    for name in pairs(jobs) do
+        if type(name) == 'string' and name ~= primary then
+            local definition = jobDefinition(name)
+            out[#out + 1] = {
+                name = name,
+                type = definition and definition.type or nil,
+                onduty = false,
+            }
+        end
+    end
+    return out
+end
+
+--- Whether a player is barred from the app: by the job they are working,
+--- or by any other job they hold. Switching primary job is clocking off by
+--- another route, so a held job is read as off duty, and it bars them
+--- exactly when BlockOffDuty would.
+---@param actor table
+---@return boolean
+function Identity.isBarred(actor)
+    return Identity.barredBy(actor) ~= nil
+end
+
+--- What bars a player, if anything: the job's name, and whether it is one
+--- they hold rather than the one they are working. A held job can be put
+--- on a player by somebody else (a department's boss hiring them through
+--- the MDT), so they are told which one and that quitting it gives the app
+--- back.
+---@param actor table
+---@return string|nil jobName
+---@return boolean held
+function Identity.barredBy(actor)
+    if not actor then return nil, false end
+    if Identity.isBlockedJob(actor.job) then
+        return tostring(actor.job.label or actor.job.name or 'job'), false
+    end
+    local held = Identity.heldJobs(actor)
+    for i = 1, #held do
+        if Identity.isBlockedJob(held[i]) then return held[i].name, true end
+    end
+    return nil, false
+end
+
+--- Whether a player is law enforcement, by any job they hold. Being an
+--- officer is not a matter of which job is primary today, any more than of
+--- being on duty (isProtectedJob does not read duty either).
+---@param actor table
+---@return boolean
+function Identity.isProtected(actor)
+    return Identity.protectedBy(actor) ~= nil
+end
+
+--- The job that makes a player law enforcement, or nil: the one they are
+--- working if it does, otherwise the first held job that does.
+---@param actor table
+---@return table|nil job
+function Identity.protectedBy(actor)
+    if not actor then return nil end
+    if Identity.isProtectedJob(actor.job) then return actor.job end
+    local held = Identity.heldJobs(actor)
+    for i = 1, #held do
+        if Identity.isProtectedJob(held[i]) then return held[i] end
+    end
+    return nil
+end
+
+--- Whether a player is in prison: serving a sentence, and inside the prison.
+---
+--- sc-police and the QBox prison scripts keep the time left in the 'injail'
+--- metadata, and sc-police lets a client write it for themselves with a net
+--- event. Read alone, a target could declare a sentence and stop the
+--- hunter's clock while walking around the city. So the sentence counts only
+--- where the server can see them inside the prison grounds
+--- (Config.Limits.JailZone); with no zone configured, it never counts.
+---@param actor table
+---@return boolean
+function Identity.isJailed(actor)
+    local data = actor and actor.player and actor.player.PlayerData
+    local meta = data and data.metadata
+    local left = type(meta) == 'table' and tonumber(meta.injail) or nil
+    if not left or left <= 0 then return false end
+
+    local zone = Config.Limits.JailZone
+    if type(zone) ~= 'table' or not tonumber(zone.x) or not tonumber(zone.y)
+        or not tonumber(zone.radius) then
+        return false
+    end
+    local ok, coords = pcall(function() return GetEntityCoords(GetPlayerPed(actor.source)) end)
+    if not ok or not coords then return false end
+    local dx, dy = coords.x - zone.x, coords.y - zone.y
+    return dx * dx + dy * dy <= zone.radius * zone.radius
+end
+
 --- Resolve and gate in one call. Every net event handler starts with this.
 ---@param source number
 ---@return table|nil actor
@@ -280,7 +406,7 @@ end
 function Identity.gate(source)
     local actor, err = Identity.resolve(source)
     if not actor then return nil, err end
-    if Identity.isBlockedJob(actor.job) then return nil, CB.ERR.BLACKLISTED_JOB end
+    if Identity.isBarred(actor) then return nil, CB.ERR.BLACKLISTED_JOB end
     return actor
 end
 

@@ -436,35 +436,124 @@ end
 -- The client reports only about itself, and the server treats the report as
 -- a prompt to check its own records rather than as a fact.
 
---- The medical resource's view, read without trusting it to exist.
+--- The medical resource's view, read without trusting it to exist. The
+--- metadata is what sc-ambulance, qbx_medical and qb-ambulancejob all write
+--- (isdead, inlaststand); the state bags are read too, under the names each
+--- of them uses. The third answer is whether any of it could be read at all.
 local function medical()
     local ok, state = pcall(function() return LocalPlayer.state end)
     local okData, data = pcall(function() return exports.qbx_core:GetPlayerData() end)
-    local meta = okData and type(data) == 'table' and data.metadata or nil
+    local meta = okData and type(data) == 'table' and type(data.metadata) == 'table' and data.metadata or nil
     state = ok and state or nil
-    local dead = (state and state.isDead == true) or (type(meta) == 'table' and meta.isdead == true)
-    local lastStand = (state and state.inLastStand == true)
-        or (type(meta) == 'table' and meta.inlaststand == true)
-    return dead, lastStand
+    -- qbx_medical's isDead bag is true in last stand as well, so it means
+    -- down, not dead; its deathState is 2 in last stand and 3 when dead.
+    -- Read as dead, it spent the one death report on the downing.
+    local deathState = state and tonumber(state['qbx_medical:deathState']) or nil
+    local dead = (state and (state.dead == true or deathState == 3))
+        or (meta and meta.isdead == true)
+    local lastStand = (state and (state.isDead == true or state.inLastStand == true
+            or state.laststand == true or deathState == 2))
+        or (meta and meta.inlaststand == true)
+    return dead == true, lastStand == true, meta ~= nil
 end
 
--- Two questions, kept apart. Dead: reported as a death, once, when the
--- player is dead by the engine or the medical resource — not in last
--- stand, which the server does not count, and reporting it then used up
--- the one report so the real death that followed was never sent. Down
--- (dead or in last stand): what a revive ends. qbx_medical and
--- qb-ambulancejob resurrect the ped a moment after a death while the
--- player stays down, so by the engine alone the revive came too early,
--- was refused, and the real one was never reported.
-local reportedDead, wasDown = false, false
+--- The medical resources this build knows, for an operator config that
+--- replaced the Completion section without naming them.
+local DEFAULT_PROVIDERS = { { resource = 'sc-ambulance' }, { resource = 'qbx_medical' } }
+
+--- Whether a medical resource decides when this player is dead: one of the
+--- configured death-state providers is running.
+local function medicalRunning()
+    local providers = Config and Config.Completion and Config.Completion.DeathStateProviders
+    if type(providers) ~= 'table' or #providers == 0 then providers = DEFAULT_PROVIDERS end
+    for _, provider in ipairs(providers) do
+        if type(provider) == 'table' and provider.resource
+            and GetResourceState(provider.resource) == 'started' then
+            return true
+        end
+    end
+    return false
+end
+
+-- Two questions, kept apart. Dead: reported as a death, once. Down (dead or
+-- in last stand): what a revive ends.
+--
+-- Under a medical resource, both are its word, not the engine's. sc-ambulance
+-- and its kind let the engine kill the ped when a player is downed, then
+-- resurrect it into last stand and, when they bleed out or are finished,
+-- resurrect it again as dead. Reporting on the engine spent the one death
+-- report on the downing, which the server refuses (last stand is not dead),
+-- and the real death that followed was never reported, so the kill that
+-- finished them was never credited. Without a medical resource, or when its
+-- state cannot be read, the engine is all there is.
+local reportedDead, wasDown, wasEngineDead = false, false, false
+
+--- Who the engine says killed this ped, as a server id, or nil for nobody
+--- who is a player: the world, an NPC, or themselves.
+local function killerOf(ped)
+    local killer = GetPedSourceOfDeath(ped)
+    if killer and killer ~= 0 and killer ~= ped and IsPedAPlayer(killer) then
+        local killerPlayer = NetworkGetPlayerIndexFromPed(killer)
+        if killerPlayer and killerPlayer ~= -1 then
+            return GetPlayerServerId(killerPlayer)
+        end
+    end
+    return nil
+end
+
+-- The wrap-safe clock shared/util.lua publishes; the manifest loads it first.
+local function nowMs() return CrimsonUtil.monotonicMs() end
+
+-- The engine's last death on this ped, and who it named, taken when the
+-- watcher saw it. A medical resource declares the death after resurrecting
+-- the ped, when its source of death no longer says anything reliable, so
+-- the name is taken from the engine death just before, if there was one.
+-- Only a fresh one: a kill older than that is the downing, not the death,
+-- and naming the player who downed them handed the kill to them when
+-- somebody else finished it. A finish the watcher did not see (the ped
+-- resurrected inside one tick) names nobody, and the server takes the kill
+-- from its own damage log, which holds the finishing hit.
+local KILLER_FRESH_MS = 3000
+local engineDeathAt, engineKiller
+
+-- How many ticks in a row a player has to be up before it counts as a
+-- revive. A defibrillator takes them from dead to last stand, and
+-- sc-ambulance clears isdead a second or more before it writes inlaststand:
+-- read at once, that gap was a revive, and a revive gives the target five
+-- minutes' immunity while they are still on the ground.
+local UP_CONFIRM_TICKS = 4
+local upFor = 0
 
 CreateThread(function()
     while true do
         Wait(1000)
         local ped = PlayerPedId()
-        local medDead, lastStand = medical()
-        local dead = IsEntityDead(ped) or medDead
-        local down = dead or lastStand
+        local medDead, lastStand, readable = medical()
+        local engineDead = IsEntityDead(ped)
+        -- Its word counts only when it can be read. A medical resource that
+        -- is running but whose state never reaches this client would
+        -- otherwise mean no death is ever reported.
+        local managed = readable and medicalRunning()
+
+        local dead, down
+        if managed then
+            dead = medDead
+            -- The engine's death at the downing is followed by a resurrect,
+            -- and only then by last stand: a tick between the two read the
+            -- player as up again and reported a revive that never happened.
+            down = medDead or lastStand
+        else
+            -- And its word is kept while it restarts. The metadata stays;
+            -- falling back to the engine for those ticks read a dead player
+            -- as revived, then reported the same death a second time.
+            dead = engineDead or (readable and medDead)
+            down = dead or engineDead or (readable and lastStand)
+        end
+
+        if engineDead and not wasEngineDead then
+            engineDeathAt, engineKiller = nowMs(), killerOf(ped)
+        end
+        wasEngineDead = engineDead
 
         if dead and not reportedDead then
             reportedDead = true
@@ -472,23 +561,32 @@ CreateThread(function()
             -- The victim reports who killed them, read from their own game.
             -- A killer's claim about their own kill is exactly what an
             -- attacker forges; a victim has no reason to hand credit to
-            -- their killer, and the server corroborates it either way.
-            local killer = GetPedSourceOfDeath(ped)
-            local killerServerId
-            if killer and killer ~= 0 and killer ~= ped and IsPedAPlayer(killer) then
-                local killerPlayer = NetworkGetPlayerIndexFromPed(killer)
-                if killerPlayer and killerPlayer ~= -1 then
-                    killerServerId = GetPlayerServerId(killerPlayer)
-                end
+            -- their killer, and the server corroborates it either way,
+            -- against a damage log with a window of its own.
+            local killer
+            if engineDead then
+                killer = killerOf(ped)
+            elseif engineDeathAt and nowMs() - engineDeathAt <= KILLER_FRESH_MS then
+                killer = engineKiller
             end
-
-            TriggerServerEvent('crimson-bounty:iDied', killerServerId)
+            TriggerServerEvent('crimson-bounty:iDied', killer)
         end
-        if not down and wasDown then
-            reportedDead = false
-            TriggerServerEvent('crimson-bounty:iRevived')
+        if down then
+            upFor = 0
+            wasDown = true
+        elseif wasDown then
+            upFor = upFor + 1
+            if upFor >= UP_CONFIRM_TICKS then
+                -- Only after a death this client reported. Somebody picked
+                -- up from last stand never died, and the server takes a
+                -- revive from a player it never saw dead as a probe, and
+                -- posts it to the staff webhook as one.
+                if reportedDead then TriggerServerEvent('crimson-bounty:iRevived') end
+                reportedDead = false
+                engineDeathAt, engineKiller = nil, nil
+                wasDown, upFor = false, 0
+            end
         end
-        wasDown = down
     end
 end)
 

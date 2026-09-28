@@ -211,6 +211,20 @@ end
 -- Law enforcement threat advisory (§7.5)
 --------------------------------------------------------------------------
 
+--- The departments the dispatch entry is for: the job names configured to
+--- receive advisories, so the MDT and the phones are told the same people.
+--- It was a list of its own, and a department added to one was missing
+--- from the other.
+local function dispatchJobs()
+    local jobs = {}
+    for name, on in pairs(Config.Advisory.RecipientJobNames or {}) do
+        if on == true and type(name) == 'string' then jobs[#jobs + 1] = name end
+    end
+    table.sort(jobs)
+    if #jobs == 0 then jobs = { 'police' } end
+    return jobs
+end
+
 --- Advise every online law enforcement player, and the officer themselves,
 --- that a contract exists or has gone live.
 ---
@@ -278,7 +292,7 @@ function Notify.advisory(contract, stage, activeHunters)
                 message = content,
                 priority = Config.Advisory.DispatchPriority,
                 caller = 'Criminal Intelligence',
-                job_table = { 'police', 'sheriff', 'bcso', 'fib', 'trooper', 'sasp' },
+                job_table = dispatchJobs(),
                 unique_id = 'cb-' .. contract.id .. '-' .. stage,
             })
         end)
@@ -295,9 +309,28 @@ function Notify.clearPlayer(cid)
     trailing[cid] = nil
 end
 
-function Notify.clearContract(contractId)
+function Notify.clearContract(contractId, contract)
     for key in pairs(advisorySent) do
         if key:sub(1, #contractId + 1) == contractId .. ':' then advisorySent[key] = nil end
+    end
+
+    -- Take the threat off the MDT. sc-dispatch files an advisory as an
+    -- active call, and nothing closed it: an officer's dispatch list kept a
+    -- live threat against a colleague for a contract long since settled.
+    -- Every stage that could have been filed is cleared, because what was
+    -- sent before a restart is not remembered. In a thread of its own: the
+    -- export waits on the database, and this is the end of a settlement.
+    if contract and contract.target_protected
+        and Config.Advisory.UseDispatch and GetResourceState('sc-dispatch') == 'started' then
+        local jobs = dispatchJobs()
+        for _, stage in ipairs({ 'posted', 'accepted' }) do
+            if Notify.advises(stage) then
+                local uid = 'cb-' .. contractId .. '-' .. stage
+                CreateThread(function()
+                    pcall(function() exports['sc-dispatch']:ClearNotification(uid, jobs) end)
+                end)
+            end
+        end
     end
 end
 

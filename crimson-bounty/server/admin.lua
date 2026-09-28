@@ -15,7 +15,7 @@ local Util = require_shared('util')
 
 local Admin = {}
 
-local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit, Death
+local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit, Death, Photo
 local Informant, Kidnap, Mugshot
 
 function Admin.init(deps)
@@ -24,6 +24,9 @@ function Admin.init(deps)
     -- Optional, and only for its counters: the diagnosis reports how many
     -- completions are waiting on proof, which is otherwise invisible.
     Death = deps.death
+    -- And the photo allowlist, which the diagnosis reports: an empty one
+    -- refuses every kill photo, and nothing else on the report said so.
+    Photo = deps.photo
 
     -- Taken from the wiring like every other collaborator, rather than
     -- required here. `require('server.app')` and the path the rest of the
@@ -138,42 +141,73 @@ function Admin.timeline(contractId)
     }
 end
 
---- Escrow lines that were mid-release when the server stopped.
+--- Every interrupted release still open, and who it was paying.
 ---
---- Recovery returns these to `held` rather than leaving them unreachable,
---- which means they may have been paid already. Only a person can tell.
----@return table[] lines
-function Admin.interrupted()
+--- Read in one pass over the log's release_interrupted rows. It asked the
+--- log once per contract, which on the json and memory stores is a scan of
+--- the whole log each time: a thousand contracts against a month of audit
+--- froze the server for over a second per run.
+---
+--- Who it was paying is a citizen id, and on an anonymous contract that is
+--- exactly what staff without the identity permission may not see. Shown
+--- as the party's role to them; shown as the id, and recorded, to staff
+--- who hold it.
+---@param src number|nil who is asking
+function Admin.interrupted(src)
     Audit.flush()
 
-    local out = {}
-    local contracts = Storage.allContracts()
+    local canIdentify = src == nil or src == 0
+        or Admin.allowed(src, Config.Admin.IdentityAce, true)
+    local rows = Storage.auditByAction('release_interrupted', 1000) or {}
+    local out, seen, contracts = {}, {}, {}
 
-    for i = 1, #contracts do
-        local rows = Storage.auditForContract(contracts[i].id, Config.Admin.TimelineRows) or {}
-        for j = 1, #rows do
-            local detail = rows[j].detail or {}
-            if rows[j].action == 'release_interrupted' and detail.line then
-                local line = Storage.readEscrowLine(detail.line)
-                -- Only still-open ones: a line settled since is not a
-                -- question anybody needs to answer.
-                if line and line.state ~= CB.ESCROW_STATE.SETTLED then
-                    out[#out + 1] = {
-                        line = detail.line,
-                        contract = contracts[i].id,
-                        amount = line.amount,
-                        source = line.source,
-                        item = line.item,
-                        portion = line.portion,
-                        intended = rows[j].actor_cid,
-                        at = rows[j].ts,
-                    }
+    for i = #rows, 1, -1 do
+        local row = rows[i]
+        local detail = row.detail or {}
+        local lineId = detail.line
+        -- The newest row for a line is the one that counts.
+        if lineId and not seen[lineId] then
+            seen[lineId] = true
+            local line = Storage.readEscrowLine(lineId)
+            -- Only still-open ones: a line settled since is not a question
+            -- anybody needs to answer.
+            if line and line.state ~= CB.ESCROW_STATE.SETTLED then
+                local contractId = line.contract_id or row.contract_id
+                local contract = contracts[contractId]
+                if contract == nil then
+                    contract = Storage.readContract(contractId) or false
+                    contracts[contractId] = contract
                 end
+                local intended = row.actor_cid
+                if not canIdentify then
+                    intended = Admin.partyRole(contract or nil, intended)
+                end
+                out[#out + 1] = {
+                    line = lineId,
+                    contract = contractId,
+                    amount = line.amount,
+                    source = line.source,
+                    item = line.item,
+                    portion = line.portion,
+                    intended = intended,
+                    at = row.ts,
+                }
             end
         end
     end
 
+    Audit.staff(canIdentify and 'admin_stuck_identified' or 'admin_stuck', callerCid(src), nil,
+        { lines = #out })
     return out
+end
+
+--- A party to a contract by role, for staff who may not see who they are.
+function Admin.partyRole(contract, cid)
+    if not cid then return '(nobody)' end
+    if not contract then return '(a player)' end
+    if cid == contract.creator_cid then return 'the client' end
+    if cid == contract.target_cid then return 'the target' end
+    return 'an operative'
 end
 
 --------------------------------------------------------------------------
@@ -246,21 +280,53 @@ function Admin.settleLine(src, lineId, disposition)
     -- paying; without one there is nobody to pay and it can only go back.
     -- `releasing_to` is written before the money moves, so a line caught
     -- mid-release at a shutdown still names who it was going to.
-    local recipient = disposition == 'pay'
-        and (line.owed_to or line.releasing_to or line.settled_to)
-        or contract.creator_cid
+    --
+    -- Pay goes to whom the interrupted release was paying, as the log
+    -- recorded it when it was interrupted. owed_to and releasing_to are
+    -- rewritten by every later release, so a 'return' that queued for an
+    -- offline creator made a 'pay' after it go to the creator too.
+    --
+    -- Return goes to whoever put the line up. A stake is the hunter's own
+    -- money: returned "to the creator", an interrupted stake was handed to
+    -- the one party it was never theirs to take. A line owed to somebody
+    -- has no payer this can name.
+    local recipient
+    if disposition == 'pay' then
+        local recorded
+        local rows = Storage.auditByAction('release_interrupted', 1000) or {}
+        for i = #rows, 1, -1 do
+            if (rows[i].detail or {}).line == lineId then recorded = rows[i].actor_cid; break end
+        end
+        recipient = recorded or line.owed_to or line.releasing_to or line.settled_to
+    elseif line.portion == CB.PORTION.STAKE then
+        recipient = line.staker
+    elseif line.portion == CB.PORTION.OWED then
+        return false, CB.ERR.INVALID_INPUT
+    else
+        recipient = contract.creator_cid
+    end
     if not recipient then return false, CB.ERR.INVALID_INPUT end
+
+    -- Already queued for somebody by an earlier settle: settling it again
+    -- to somebody else would take it off them.
+    if line.owed_to and line.owed_to ~= recipient then return false, CB.ERR.LOCKED end
 
     -- Through the normal release path, filtered to this one line, so the
     -- compare-and-set and the never-destroy-property rules still apply.
     local _, result = Escrow.release(line.contract_id, recipient,
         { line = lineId }, 'admin_' .. disposition)
+    local settled = result and result.settled or 0
+    local pending = result and result.pending or 0
 
     Audit.financial('admin_settle_line', callerCid(src), line.contract_id,
         { line = lineId, disposition = disposition, recipient = recipient,
-          settled = result and result.settled or 0 })
+          settled = settled, pending = pending })
 
-    return (result and result.settled or 0) > 0, nil
+    -- Queued is done: it is theirs, delivered at their next login. It was
+    -- reported as "Could not settle it", so staff settled it again.
+    if settled > 0 then return true, nil end
+    if pending > 0 then return true, 'queued' end
+    return false, CB.ERR.LOCKED
 end
 
 --- Who is behind an anonymous party on a contract.
@@ -589,6 +655,18 @@ function Admin.diagnose(source, subjectId)
         end
     end
 
+    -- Photo hosts ---------------------------------------------------------
+    if Photo and Photo.allowedHosts then
+        local okHosts, hosts = pcall(Photo.allowedHosts)
+        hosts = okHosts and type(hosts) == 'table' and hosts or {}
+        say(('photo hosts: %d%s'):format(#hosts,
+            #hosts > 0 and (' (' .. table.concat(hosts, ', ') .. ')') or ''))
+        if #hosts == 0 then
+            say('  -> no upload host is allowed: every kill photo will be refused. Check '
+                .. 'lb-phone\'s upload config or set Config.Completion.ExtraPhotoHosts')
+        end
+    end
+
     -- Rate limits ---------------------------------------------------------
     -- Checked last and reported without spending anything a caller needs:
     -- a diagnosis that exhausts the bucket it is diagnosing is no use.
@@ -598,19 +676,22 @@ function Admin.diagnose(source, subjectId)
     -- report agreed the server was fine while every action a player took
     -- was being refused by a rule nobody could see.
     local buckets = { 'load', 'search', 'wallet', 'create', 'accept', 'amend',
-                      'informant', 'bailout', 'photo', 'message', 'progress',
-                      'death', 'mugshot', 'image' }
+                      'informant', 'bailout', 'photo', 'photoSubmit', 'message',
+                      'progress', 'death', 'mugshot', 'image', 'diagnostic' }
     local parts, missing = {}, 0
     for i = 1, #buckets do
         local rule = Config.Cooldowns[buckets[i]]
         if not rule then missing = missing + 1 end
+        -- %s, not %d: a rule of half a second is a real setting, and %d
+        -- threw on it and took the whole diagnosis down with it.
         parts[#parts + 1] = ('%s=%s'):format(buckets[i],
-            rule and ('%d/%ds'):format(rule.burst, rule.per) or 'MISSING')
+            type(rule) == 'table' and ('%s/%ss'):format(tostring(rule.burst), tostring(rule.per))
+                or 'MISSING')
     end
     say(('rate limits: %s'):format(table.concat(parts, '  ')))
     if missing > 0 then
         say(('  -> %d bucket(s) your config does not set; those actions fall '
-            .. 'back to %d/%ds, which may be stricter or looser than intended')
+            .. 'back to %s/%ss, which may be stricter or looser than intended')
             :format(missing, RateLimit and RateLimit.FALLBACK.burst or 10,
                     RateLimit and RateLimit.FALLBACK.per or 10))
     end
@@ -729,8 +810,21 @@ function Admin.refreshTimers(src)
             -- The lifetime first: the deadline is clamped to it, so setting
             -- the deadline against a stale ceiling would clamp it straight
             -- back to the value being refreshed.
-            contract.expires_at = now + (tonumber(Config.Limits.ContractLifetimeSeconds) or 0)
-            local deadline = now + (tonumber(Config.Limits.DefaultDeadlineSeconds) or 0)
+            --
+            -- Only ever later. Both were set to now plus the defaults, so a
+            -- deadline the client had extended to forty hours came back to
+            -- three, and the expiry that followed forfeited the hunter's
+            -- stake to the creator: a console command moving money, which
+            -- is the one thing this must not do. A paused deadline counts
+            -- with the pause it has banked, since clearing the pause below
+            -- would otherwise take that time away.
+            contract.expires_at = math.max(contract.expires_at or 0,
+                now + (tonumber(Config.Limits.ContractLifetimeSeconds) or 0))
+            local standing = contract.deadline_at or 0
+            if contract.paused_since and contract.deadline_at then
+                standing = contract.deadline_at + math.max(0, now - contract.paused_since)
+            end
+            local deadline = math.max(standing, now + (tonumber(Config.Limits.DefaultDeadlineSeconds) or 0))
             if deadline > contract.expires_at then deadline = contract.expires_at end
             contract.deadline_at = deadline
             -- A pause that began before the refresh would be paid out as an
@@ -760,8 +854,8 @@ function Admin.refreshTimers(src)
                 counts.proposals = counts.proposals + 1
             end
         elseif contract.resolved_at then
-            contract.resolved_at = now - back
-            Storage.writeContract(contract)
+            -- The one field, not the row read a pass ago.
+            Storage.setContractFields(contract.id, { resolved_at = now - back })
             counts.resolved = counts.resolved + 1
         end
     end

@@ -45,6 +45,12 @@ end
 local CONDITIONAL = {
     -- Written by the page from its own kidnapProgress polling.
     kidnapProgress = 'the page fills this in, not the projection',
+    -- Only to a viewer who can never take the contract, with the reason.
+    -- Its absence is what lets the board draw Accept.
+    barred = 'public viewers only, and only when acceptance would be refused',
+    -- What the contract holds in money. The creator's alone: it is the
+    -- figure they can add up to the ceiling from, and nobody else adds.
+    valueHeld = 'creator-only',
     -- Only on a contract the viewer is the target of. Its absence elsewhere
     -- is the rule, not a gap.
     bailoutAvailable = 'target-only',

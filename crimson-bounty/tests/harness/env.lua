@@ -81,6 +81,8 @@ function Env.addPlayer(opts)
             license = opts.license or ('license:' .. opts.citizenid),
             charinfo = { firstname = opts.firstname or 'Test', lastname = opts.lastname or ('P' .. src) },
             job = opts.job or { name = 'unemployed', type = 'none', onduty = false },
+            -- Every job held, as qbx_core keeps them: { [name] = grade }.
+            jobs = opts.jobs,
             money = { cash = opts.cash or 0, bank = opts.bank or 0 },
             metadata = opts.metadata or {
                 isdead = false, inlaststand = false, ishandcuffed = false,
@@ -98,7 +100,9 @@ function Env.addPlayer(opts)
 
     player.Functions = {
         SetMetaData = function(key, value) player.PlayerData.metadata[key] = value end,
-        AddMoney = function(account, amount)
+        AddMoney = function(account, amount, reason)
+            player._moneyReasons = player._moneyReasons or {}
+            player._moneyReasons[#player._moneyReasons + 1] = reason
             -- qbx_core's AddMoney returns a boolean: false for an account it
             -- does not know or an amount it will not take, and servers
             -- commonly patch a balance ceiling into it. A harness that
@@ -119,7 +123,9 @@ function Env.addPlayer(opts)
         --- value an affordability check, which it is not, and any call site
         --- treating it as one passed here and gave the thing away on a
         --- live server.
-        RemoveMoney = function(account, amount)
+        RemoveMoney = function(account, amount, reason)
+            player._moneyReasons = player._moneyReasons or {}
+            player._moneyReasons[#player._moneyReasons + 1] = reason
             if not Env.MONEY_ACCOUNTS[account] then return false end
             local have = player.PlayerData.money[account] or 0
             if Env.NO_OVERDRAFT[account] and have < amount then return false end
@@ -151,6 +157,15 @@ function Env.reset()
     Env.commands, Env.chat, Env.aces, Env.consoleOut = {}, {}, {}, {}
     Env.handlers = {}
     Env.threads, Env.timers, Env.console = {}, {}, {}
+    -- qbx_core's job list, which GetJob answers from. Only the jobs a test
+    -- names; a job missing here reads as one the framework does not know.
+    Env.jobDefinitions = {
+        police = { label = 'Police', type = 'leo' },
+        bcso = { label = 'BCSO', type = 'leo' },
+        ambulance = { label = 'EMS', type = 'ems' },
+        mechanic = { label = 'Mechanic', type = 'mechanic' },
+        unemployed = { label = 'Civilian', type = 'none' },
+    }
 end
 
 --------------------------------------------------------------------------

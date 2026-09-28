@@ -5,6 +5,11 @@
 --- These cover the four things staff can now do — and, as importantly, what
 --- someone without the ACE cannot.
 
+local function money(src)
+    local m = Env.players[src].PlayerData.money
+    return m.cash + m.bank
+end
+
 local function seeded(opts)
     opts = opts or {}
     local s = newStack()
@@ -200,6 +205,60 @@ describe('interrupted releases', function()
         local s, f, c, line = stranded()
         truthy(s.admin.settleLine(0, line.id, 'return'))
         eq(#s.admin.interrupted(), 0, 'a resolved question is not a question')
+    end)
+
+    it('returns an interrupted stake to the hunter who put it up', function()
+        -- "Return" sent every line to the creator, including a hunter's own
+        -- stake, which was never the creator's.
+        local s, f, c = seeded()
+        s.storage.writeContract((function()
+            local row = s.storage.readContract(c.id); row.penalty_amount = 2000; return row
+        end)())
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local stake
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CB.PORTION.STAKE then stake = l end
+        end
+        truthy(stake, 'the hunter staked')
+        truthy(s.storage.claimEscrowLine(stake.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING))
+        truthy(s.storage.claimEscrowLine(stake.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD))
+        s.audit.financial('release_interrupted', 'HUNTER01', c.id, { line = stake.id, review = true })
+        s.audit.flush()
+        local creatorBefore, hunterBefore = money(1), money(3)
+        truthy(s.admin.settleLine(0, stake.id, 'return'))
+        eq(money(3) - hunterBefore, 2000, 'back to the hunter who staked it')
+        eq(money(1), creatorBefore, 'and not to the creator')
+    end)
+
+    it('says a payment to somebody offline is queued, not failed', function()
+        local s, f, c, line = stranded()
+        Env.removePlayer(3)
+        local ok, note = s.admin.settleLine(0, line.id, 'pay')
+        truthy(ok, 'queued is settled as far as staff are concerned')
+        eq(note, 'queued')
+    end)
+
+    it('pays whom the interrupted release was paying, after a return was queued', function()
+        -- A 'return' queued for an offline creator rewrote who the line was
+        -- owed to, and a 'pay' after it then went to the creator as well.
+        local s, f, c, line = stranded()
+        Env.removePlayer(1)
+        local ok = s.admin.settleLine(0, line.id, 'return')
+        truthy(ok)
+        local again, err = s.admin.settleLine(0, line.id, 'pay')
+        falsy(again, 'queued for the creator already, so not paid again elsewhere')
+        eq(err, CB.ERR.LOCKED)
+    end)
+
+    it('hides who it was paying from staff without the identity permission', function()
+        local s, f, c, line = stranded()
+        Env.aces[7] = { command = true }
+        Env.addPlayer({ source = 7, citizenid = 'STAFF001', license = 'license:st' })
+        local rows = s.admin.interrupted(7)
+        eq(#rows, 1)
+        eq(rows[1].intended, 'an operative', 'a citizen id behind an anonymous party')
+        Env.aces[7] = { command = true, ['crimson.identity'] = true }
+        eq(s.admin.interrupted(7)[1].intended, 'HUNTER01', 'shown to staff who may see it')
     end)
 
     it('pays the intended recipient when staff say to', function()
@@ -490,6 +549,41 @@ describe('refreshing every timer for testing', function()
             'the deadline is still clamped to the lifetime')
         eq(after.state, CB.STATE.ACTIVE,
             'refreshing must never resolve a contract, which would move money')
+    end)
+
+    it('leaves a deadline the client extended where it is', function()
+        -- Set to now plus the default, a forty-hour deadline came back to
+        -- three hours, and the expiry after it forfeited the hunter's stake.
+        local s, f, c = seeded()
+        local contract = s.storage.readContract(c.id)
+        contract.deadline_at = os.time() + 40 * 3600
+        contract.expires_at = os.time() + 48 * 3600
+        s.storage.writeContract(contract)
+
+        Env.aces[3] = { ['crimson.admin'] = true }
+        cmd(s)(3, {})
+
+        local after = s.storage.readContract(c.id)
+        truthy(after.deadline_at >= os.time() + 40 * 3600,
+            'the refresh brought the deadline forward by '
+            .. (os.time() + 40 * 3600 - after.deadline_at) .. 's')
+        truthy(after.expires_at >= os.time() + 48 * 3600, 'nor the lifetime')
+    end)
+
+    it('counts a pause already banked when it clears it', function()
+        local s, f, c = seeded()
+        local contract = s.storage.readContract(c.id)
+        contract.deadline_at = os.time() + 4 * 3600
+        contract.paused_since = os.time() - 2 * 3600
+        s.storage.writeContract(contract)
+
+        Env.aces[3] = { ['crimson.admin'] = true }
+        cmd(s)(3, {})
+
+        local after = s.storage.readContract(c.id)
+        falsy(after.paused_since)
+        truthy(after.deadline_at >= os.time() + 6 * 3600,
+            'two hours of pause were owed to the deadline and the refresh dropped them')
     end)
 
     it('leaves the counts that are limits rather than waits alone', function()

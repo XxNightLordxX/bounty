@@ -234,6 +234,25 @@ describe('a reward built from all three at once', function()
     end)
 end)
 
+describe('what the money log is told', function()
+    --- qbx_core writes the reason it is given against every balance change,
+    --- and the banking resource shows it. Without one every line read
+    --- "unknown", and staff following a player's missing money had nothing
+    --- to go on.
+    it('names this resource on every charge and every credit', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { bank = 1000 } },
+        })
+        truthy(c)
+        s.contracts.cancel(f.creator, c.id)
+        local reasons = f.creatorPlayer._moneyReasons or {}
+        truthy(#reasons >= 2, 'taken into escrow and given back')
+        for _, reason in ipairs(reasons) do eq(reason, 'crimson-bounty') end
+    end)
+end)
+
 describe('what the app offers as a reward', function()
     it('reports a balance for all three, read the right way', function()
         local s = newStack()

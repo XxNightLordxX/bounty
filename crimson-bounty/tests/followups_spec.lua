@@ -487,6 +487,58 @@ describe('a top-up that a payout lands on', function()
     end)
 end)
 
+describe('a top-up a payout queued for the hunter', function()
+    --- The claim paid the new line to the hunter, but their pockets were full,
+    --- so it was queued for them: still held, owed to them. The hand-back
+    --- then released it to the client by name, which overrides who it is
+    --- owed to, and the hunter's queued money went to the client.
+    for _, slots in ipairs({ 2, 1 }) do
+        it(slots .. ' collection(s): stays owed to the hunter', function()
+            local s = mysqlStack()
+            local f = fixture(s)
+            Env.players[1].PlayerData.money.bank = 400000
+            local spec = { { baseline = { cash = 1000 } } }
+            if slots == 2 then spec[2] = { baseline = { cash = 2000 } } end
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                reward = { slots = spec },
+            })
+            truthy(s.contracts.accept(f.hunter, c.id, false))
+            local creatorBefore = money(1)
+            Env.players[3]._refuseMoney = true
+
+            local real = s.storage.writeEscrow
+            local claimed = false
+            s.storage.writeEscrow = function(id, lines)
+                local out = real(id, lines)
+                if not claimed and lines[1] and lines[1].portion == CB.PORTION.BASELINE then
+                    claimed = true
+                    truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+                end
+                return out
+            end
+            local ok, err = s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 5000 } })
+            s.storage.writeEscrow = real
+            truthy(claimed)
+
+            local topUp
+            for _, line in ipairs(s.storage.readEscrow(c.id)) do
+                if line.portion == CB.PORTION.BASELINE and line.amount == 5000 then topUp = line end
+            end
+            truthy(topUp, 'the top-up line exists')
+            eq(topUp.owed_to, 'HUNTER01', 'still owed to the hunter who was paid it')
+            falsy(topUp.settled_to == 'CREATOR1', 'and not handed to the client')
+            eq(money(1) - creatorBefore, -5000, 'the client paid for it once')
+            truthy(ok, 'and is told it went in: ' .. tostring(err))
+
+            -- And it reaches the hunter once they can take it.
+            Env.players[3]._refuseMoney = false
+            s.escrow.retryPending('HUNTER01')
+            eq(s.storage.readEscrowLine(topUp.id).settled_to, 'HUNTER01')
+        end)
+    end
+end)
+
 describe('a handover tick that throws part-way through', function()
     --- Every finished countdown was taken out of the live set before any
     --- was claimed, and one throw ended the pass: the ones not yet claimed

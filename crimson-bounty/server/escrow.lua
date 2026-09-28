@@ -158,6 +158,38 @@ local function isWeaponName(name)
     return type(name) == 'string' and name:upper():sub(1, 7) == 'WEAPON_'
 end
 
+--- An item name as ox_inventory reads it: lower case, and a weapon's in upper
+--- case. It folds case on every lookup, so 'Handcuffs' and 'handcuffs' are
+--- one item to it — and the blacklist and the dirty-money check compared
+--- the name exactly as the client sent it, so a capital letter walked a
+--- blacklisted item, or black money past its own cap, into escrow.
+local function canonicalItem(name)
+    if type(name) ~= 'string' then return name end
+    local lower = name:lower()
+    if lower:sub(1, 7) == 'weapon_' then return lower:upper() end
+    return lower
+end
+
+--- Whether a name is on the blacklist, compared the way the inventory
+--- compares names. An operator writing 'Handcuffs' in the config is covered
+--- too.
+local function blacklisted(name)
+    local wanted = canonicalItem(name)
+    for listed, on in pairs(Config.EscrowBlacklist or {}) do
+        if on and canonicalItem(listed) == wanted then return true end
+    end
+    return false
+end
+
+local function isDirtyItem(name)
+    local dirtyItem = Config.Sources.dirty and Config.Sources.dirty.item
+    return dirtyItem ~= nil and canonicalItem(dirtyItem) == canonicalItem(name)
+end
+
+-- The picker offers what the server will take, by the same rule.
+Escrow.blacklisted = blacklisted
+Escrow.isDirtyItem = isDirtyItem
+
 function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue)
     if type(spec) ~= 'table' then return nil, CB.ERR.INVALID_REWARD end
 
@@ -232,10 +264,10 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
         for i = 1, #list do
             local entry = list[i]
             if type(entry) ~= 'table' then return CB.ERR.INVALID_REWARD end
-            local name = Util.sanitizeText(entry.name, 64)
+            local name = canonicalItem(Util.sanitizeText(entry.name, 64))
             local count = Util.toPositive(entry.count, Config.Sources.item.maxPerStack)
             if not name or not count then return CB.ERR.INVALID_REWARD end
-            if Config.EscrowBlacklist[name] then return CB.ERR.INVALID_REWARD end
+            if blacklisted(name) then return CB.ERR.INVALID_REWARD end
 
             -- Dirty money is an inventory item, so without this it can be
             -- escrowed twice over: once as `dirty`, which is capped by
@@ -248,8 +280,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
             --
             -- Compared against the configured item name rather than a
             -- literal, because that name is the operator's to choose.
-            local dirtyItem = Config.Sources.dirty and Config.Sources.dirty.item
-            if dirtyItem and name == dirtyItem then return CB.ERR.INVALID_REWARD end
+            if isDirtyItem(name) then return CB.ERR.INVALID_REWARD end
 
             -- A weapon is one physical object with a serial, attachments and
             -- wear. Through this path it would be stored as a bare name and
@@ -313,14 +344,19 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
         for i = 1, #list do
             local entry = list[i]
             if type(entry) ~= 'table' then return CB.ERR.INVALID_REWARD end
-            local name = Util.sanitizeText(entry.name, 64)
+            local name = canonicalItem(Util.sanitizeText(entry.name, 64))
             -- The inventory slot the weapon is being taken FROM. Named
             -- distinctly from the payout slot (`slotIndex`, set by the
             -- enclosing loop): they are different numbers with different
             -- meanings, and conflating them orphans the escrow line.
             local invSlot = Util.toPositive(entry.slot, 200)
             if not name or not invSlot then return CB.ERR.INVALID_REWARD end
-            if Config.EscrowBlacklist[name] then return CB.ERR.INVALID_REWARD end
+            if blacklisted(name) then return CB.ERR.INVALID_REWARD end
+            -- The weapons list takes weapons. Anything else sent here was
+            -- escrowed as a "weapon": past the item switch an operator had
+            -- turned off, past the item stack limits, and on the board as a
+            -- weapon. The items list refuses weapons the same way round.
+            if not isWeaponName(name) then return CB.ERR.INVALID_REWARD end
 
             -- Dirty money is an inventory item, so without this it can be
             -- escrowed twice over: once as `dirty`, which is capped by
@@ -333,8 +369,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
             --
             -- Compared against the configured item name rather than a
             -- literal, because that name is the operator's to choose.
-            local dirtyItem = Config.Sources.dirty and Config.Sources.dirty.item
-            if dirtyItem and name == dirtyItem then return CB.ERR.INVALID_REWARD end
+            if isDirtyItem(name) then return CB.ERR.INVALID_REWARD end
 
             -- Read the weapon's real metadata from the server-side inventory
             -- and snapshot it (§9.4). The client's copy is never stored.
@@ -967,8 +1002,9 @@ end
 ---@param fromPercent integer
 ---@param toPercent integer
 ---@return table[] lines  empty when there is nothing to top up
-function Escrow.bonusTopUp(contractId, fromPercent, toPercent)
+function Escrow.bonusTopUp(contractId, fromPercent, toPercent, nextSlot)
     local held = Storage.readEscrow(contractId)
+    nextSlot = nextSlot or 1
 
     -- Slots the creator funded a bonus on by hand, and slots already settled.
     local explicit, settled = {}, {}
@@ -988,9 +1024,18 @@ function Escrow.bonusTopUp(contractId, fromPercent, toPercent)
     local extra = {}
     for i = 1, #held do
         local line = held[i]
+        -- Only a collection still to be paid. One the payout has reached is
+        -- paid even while its baseline is held: queued for a hunter whose
+        -- pockets were full, it is owed to them and no later claim reaches
+        -- a bonus added beside it. A baseline owed back to the client is not
+        -- the contract's to pay either. Topping up either locked the new
+        -- money away until the contract ended and counted it against the
+        -- value ceiling meanwhile.
         if line.portion == CB.PORTION.BASELINE
             and CB.MONEY_SOURCES[line.source]
             and line.state ~= CB.ESCROW_STATE.SETTLED
+            and not line.owed_to
+            and (line.slot or 1) >= nextSlot
             and not explicit[line.slot]
             and not settled[line.slot] then
 

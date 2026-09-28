@@ -154,7 +154,8 @@ local ACTIONS = {
     { name = 'cancel', source = 1,
       payload = function(c) return { id = c.id } end,
       allowed = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true },
-      refusals = { already_settled = true, bad_state = true, locked = true },
+      refusals = { already_settled = true, bad_state = true, locked = true,
+                   contract_taken = true },
       why = 'a finished contract cannot be cancelled again' },
 
     { name = 'bailout', source = 2,
@@ -215,7 +216,7 @@ local ACTIONS = {
       payload = function(c) return { id = c.id, slot = 1 } end,
       allowed = { [CB.STATE.ACTIVE] = true },
       refusals = { already_settled = true, bad_state = true, invalid_input = true,
-                   not_participant = true, locked = true },
+                   not_participant = true, locked = true, contract_taken = true },
       why = 'taking a reward back out once a hunter is on it is not the creator\'s call' },
 
     -- Reads. These may answer on a finished contract — a party is allowed to

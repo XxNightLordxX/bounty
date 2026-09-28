@@ -72,7 +72,7 @@ describe('cancelling a contract nobody has taken', function()
 
         local ok, err = s.contracts.cancel(f.creator, c.id)
         falsy(ok, 'a contract somebody is hunting is not the creator to take back')
-        eq(err, CB.ERR.BAD_STATE)
+        eq(err, CB.ERR.CONTRACT_TAKEN, 'and the refusal says why')
         eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED, 'and it stands')
     end)
 
@@ -308,7 +308,7 @@ describe('editing a contract nobody has taken', function()
         truthy(s.contracts.accept(f.hunter, c.id, false))
         local ok, err = s.contracts.revise(f.creator, c.id, { reason = 'changed my mind' })
         falsy(ok, 'a hunter accepted the contract as written')
-        eq(err, CB.ERR.BAD_STATE)
+        eq(err, CB.ERR.CONTRACT_TAKEN)
         eq(s.storage.readContract(c.id).reason, 'Unpaid debt')
     end)
 

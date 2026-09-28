@@ -352,6 +352,44 @@ describe('the failure stake', function()
                 :format(worth, after.bailout_amount))
     end)
 
+    it('re-prices against the creator escrow, not the hunters stakes', function()
+        -- A stake is held on the contract too. Counting it priced the
+        -- buyout against the hunters' own money: giving back a collection
+        -- raised what the target paid to escape.
+        local s = newCopyingStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = {
+                { baseline = { cash = 10000 } },
+                { baseline = { cash = 10000 } },
+            } },
+            penaltyAmount = 40000,
+            bailoutAmount = 20000,
+        })
+        truthy(c)
+        local pricedAt = s.storage.readContract(c.id).bailout_amount
+        truthy(s.contracts.accept(f.hunter, c.id))
+
+        local proposal = s.amendments.propose(f.creator, c.id,
+            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+        truthy(proposal)
+        if proposal.outcome ~= 'applied' then
+            truthy(s.amendments.respond(f.hunter, proposal.id, true))
+        end
+
+        local after = s.storage.readContract(c.id)
+        local worth = s.escrow.moneyValue(c.id)
+        eq(worth, 10000)
+        truthy(after.bailout_amount <= pricedAt,
+            ('taking reward out raised the buyout from %d to %d'):format(pricedAt, after.bailout_amount))
+        truthy(after.bailout_amount <= math.floor(worth * Config.Bailout.MaxMultiplier),
+            ('the contract is worth %d and prices the buyout at %d'):format(worth, after.bailout_amount))
+        truthy(after.penalty_amount <= math.floor(worth * Config.Penalty.MaxFractionOfEscrow),
+            ('the contract is worth %d and asks the next hunter for %d'):format(worth, after.penalty_amount))
+    end)
+
     --- §3.6: "A hunter who cannot cover it cannot accept the contract, and
     --- is told so." §14.18: "The required stake is shown prominently on the
     --- listing before the accept button." The figure reached the creator

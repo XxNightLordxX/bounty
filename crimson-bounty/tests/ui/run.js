@@ -938,6 +938,40 @@ async function main() {
     });
   })();
 
+  /* Answering a proposal the server has closed. The panel kept Agree and
+     Decline for good and the words were the shared table's. */
+  await (async function answeringAClosedProposal() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hunter';
+    held.myAlias = 'Operative #1';
+    let open = true;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+      ledger: LEDGER,
+      amendments: function () {
+        return { ok: true, data: open ? [{
+          id: 'am00000002', kind: 'shorten_deadline', payload: { seconds: 900 },
+          proposer: 'The client', mine: false, answered: false, waiting: 1, expires: 0
+        }] : [] };
+      },
+      respondAmendment: function () { open = false; return { ok: false, err: 'bad_state' }; }
+    });
+    await settle(); await settle(); await settle();
+    tab(app, 'mine');
+    await settle();
+    click(app, 'Agree');
+    await settle(); await settle(); await settle();
+    it('says the proposal ran out, in words about proposals', function () {
+      truthy(app.notice().indexOf('ran out') !== -1, 'the notice: ' + app.notice());
+    });
+    it('stops offering an answer to it', function () {
+      const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      falsy(labels.indexOf('Agree') !== -1, 'Agree is still drawn: ' + labels.join(' | '));
+    });
+  })();
+
   await (async function ownProposalIsNotAnswerable() {
     const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
     held.role = 'hunter';
@@ -2410,6 +2444,42 @@ async function main() {
       return app;
     }
 
+    /* A held contract: lines without ids, not editable. "Take back" was
+       drawn anyway and only ever said "Nothing ticked". */
+    const heldEditor = await openEditor({ rewardBreakdown: { ok: true, data: {
+      editable: false, reason: 'Somebody is hunting this, so it can only be added to.',
+      slots: 1, currentSlot: 1,
+      lines: [{ slot: 1, portion: 'baseline', source: 'cash', amount: 5000 }]
+    } } });
+    it('offers no take-back on a contract somebody holds', function () {
+      const labels = heldEditor.view.all().concat(heldEditor.document.body.all())
+        .filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      falsy(labels.indexOf('Take back what I ticked') !== -1, labels.join(' | '));
+      truthy(labels.indexOf('Add cash') !== -1, 'adding is still offered: ' + labels.join(' | '));
+    });
+
+    /* Taken while the editor was open: the server says so, and the page
+       says so in words and closes the editor. */
+    const raced = await openEditor({ withdrawReward: { ok: false, err: 'contract_taken' } });
+    const tick = raced.view.all().concat(raced.document.body.all())
+      .filter(function (n) { return n.tagName === 'INPUT' && n.type === 'checkbox'; })[0];
+    if (tick) { tick.checked = true; tick.onchange(); }
+    const takeBack = raced.view.all().concat(raced.document.body.all())
+      .filter(function (n) { return n.tagName === 'BUTTON' && n.textContent === 'Take back what I ticked'; })[0];
+    if (takeBack) { takeBack.onclick(); }
+    await settle(); await settle();
+    it('says a hunter took it, rather than "Not right now."', function () {
+      truthy(tick && takeBack, 'the editor drew a line and the button');
+      truthy(raced.notice().indexOf('Somebody has taken this contract') !== -1,
+        'the notice: ' + raced.notice());
+    });
+    it('closes the editor, whose take-backs no longer apply', function () {
+      const still = raced.view.all().concat(raced.document.body.all())
+        .filter(function (n) { return n.tagName === 'BUTTON' && n.textContent === 'Take back what I ticked'; });
+      eq(still.length, 0, 'the editor stayed open offering what the server will refuse');
+    });
+
     /* Three collections funded alike drew three identical rows. */
     const threeAlike = await openEditor({ rewardBreakdown: { ok: true, data: {
       editable: true, slots: 3, currentSlot: 1,
@@ -3700,6 +3770,112 @@ async function main() {
     });
   })();
 
+  /* A refused target list, answering after the form was rebuilt: it was
+     written into the picker that asked, no longer on screen. */
+  await (async function refusedListReachesTheScreen() {
+    let release;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+      ledger: LEDGER,
+      browseTargets: function () {
+        return new Promise(function (resolve) { release = resolve; });
+      },
+      rewardOptions: { ok: true, data: { cash: 1000, bank: 0, dirty: 0, items: [], weapons: [],
+        inventoryRead: true, caps: { cashEnabled: true, bankEnabled: true, dirtyEnabled: true } } }
+    });
+    await settle(); await settle();
+    tab(app, 'place');
+    await settle(); await settle(); await settle();
+    truthy(typeof release === 'function', 'the list was asked for');
+    release({ ok: false, err: 'rate_limited' });
+    await settle(); await settle();
+    it('shows why the list is empty, on the picker on screen', function () {
+      truthy(app.view.textContent.indexOf('Looking too fast') !== -1,
+        'a blank picker with no words: ' + app.view.textContent.slice(0, 200));
+    });
+    it('offers a way to ask again', function () {
+      const again = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Try again';
+      });
+      eq(again.length, 1);
+    });
+  })();
+
+  /* What the Place form works out before it sends: the bonus taken on
+     top, every payout against one balance, the contract's value ceiling,
+     and a buyout with no clean money to price it against. Each was a
+     server refusal worded as something else. */
+  await (async function placeFormTotals() {
+    async function place(opts) {
+      const app = boot({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+        ledger: LEDGER,
+        searchTargets: { ok: true, data: [{ handle: 'tg00000001', name: 'Ann Ryder' }] },
+        rewardOptions: { ok: true, data: {
+          cash: opts.cash, bank: opts.bank || 0, dirty: opts.dirty || 0,
+          items: [], weapons: [], inventoryRead: true,
+          caps: { itemsEnabled: false, weaponsEnabled: false, slots: 5,
+                  cash: 500000, bank: 500000, dirty: 500000,
+                  cashEnabled: true, bankEnabled: true, dirtyEnabled: true,
+                  maxLines: 60, maxValue: opts.maxValue || 1000000 }
+        } },
+        create: { ok: true, data: { id: 'ct00000001' } }
+      });
+      await settle(); await settle();
+      tab(app, 'place');
+      await settle(); await settle();
+      const query = app.document.getElementById('target-query');
+      query.value = 'Ryder';
+      query.oninput();
+      app.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+      await settle(); await settle();
+      app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Ann Ryder') === 0;
+      })[0].onclick();
+      await settle();
+      function set(id, value) {
+        const field = app.view.all().filter(function (n) { return n._id === id; })[0];
+        if (field) { field.value = String(value); if (field.oninput) { field.oninput(); } }
+      }
+      Object.keys(opts.fields).forEach(function (id) { set(id, opts.fields[id]); });
+      app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Place contract';
+      })[0].onclick();
+      await settle(); await settle();
+      return app;
+    }
+    function created(app) { return app.sent.filter(function (x) { return x.name === 'create'; }).length; }
+
+    const exact = await place({ cash: 10000, fields: { 'slot-cash-1': 10000 } });
+    it('counts the bonus taken on top against what the creator holds', function () {
+      eq(created(exact), 0, 'sent for a refusal the page could have seen');
+      truthy(exact.notice().indexOf('15,000') !== -1 && exact.notice().indexOf('bonus') !== -1,
+        exact.notice());
+    });
+
+    const noBonus = await place({ cash: 10000, fields: { 'slot-cash-1': 10000, bonus: 0 } });
+    it('sends it when there is no bonus on top', function () {
+      eq(created(noBonus), 1, noBonus.notice());
+    });
+
+    const tooBig = await place({ cash: 2000000, bank: 2000000, maxValue: 1000000,
+      fields: { 'slot-cash-1': 200000, 'slot-bank-1': 500000 } });
+    it('names the value ceiling rather than calling the reward wrong', function () {
+      eq(created(tooBig), 0);
+      truthy(tooBig.notice().indexOf('1,050,000') !== -1
+        && tooBig.notice().indexOf('1,000,000') !== -1, tooBig.notice());
+    });
+
+    const dirtyBuyout = await place({ cash: 0, dirty: 50000,
+      fields: { 'slot-dirty-1': 10000, bailout: 20000, bonus: 0 } });
+    it('says a buyout needs cash or bank behind it', function () {
+      eq(created(dirtyBuyout), 0);
+      truthy(dirtyBuyout.notice().indexOf('cash or bank') !== -1, dirtyBuyout.notice());
+    });
+  })();
+
   /* The ceiling on how many separate rewards one contract may hold.
    *
    * caps.maxLines was computed and sent and never read, the same way
@@ -3770,9 +3946,11 @@ async function main() {
         + 'anyway, for a refusal that blames the amounts');
     });
 
+    // Twelve baselines and, at the form's opening 50% bonus, a derived
+    // bonus beside each: twenty-four, which is what the server counts.
     it('says how many there are and how many are allowed', function () {
       const shown = over.notice();
-      truthy(shown.indexOf('12') !== -1 && shown.indexOf('5') !== -1,
+      truthy(shown.indexOf('24') !== -1 && shown.indexOf('5') !== -1,
         'a creator cannot act on this without both numbers: '
         + JSON.stringify(shown));
     });
@@ -6660,6 +6838,160 @@ async function main() {
       });
     })();
   })();
+  /* Staff asking for the page's log after it has used up its fault reports:
+     it went through the same cap, and the answer never came. */
+  await (async function diagnosticsPastTheCap() {
+    const app = boot({ list: BOARD, mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+                       ledger: LEDGER });
+    await settle(); await settle();
+    for (let i = 0; i < 30; i++) {
+      app.sandbox.window._message({ data: { type: 'diagnostics' } });
+    }
+    const dumps = app.sent.filter(function (m) {
+      return m.name === 'pageError' && m.body.what === 'page diagnostics';
+    });
+    it('answers every request for the log', function () {
+      eq(dumps.length, 30, 'capped like a fault report');
+    });
+    it('sends the newest part of it', function () {
+      truthy(dumps.length && String(dumps[0].body.stack).length <= 900);
+    });
+  })();
+
+  /* A notice's timer clears that notice and nothing newer. */
+  await (async function aNoticeOutlivesAnOlderTimer() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hunter';
+    let calls = 0;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+      ledger: LEDGER,
+      readThread: function () {
+        calls += 1;
+        return calls === 1 ? { ok: false, err: 'rate_limited' } : { ok: false, err: 'invalid_input' };
+      }
+    });
+    await settle(); await settle();
+    tab(app, 'mine');
+    await settle();
+    click(app, 'Message');
+    await settle(); await settle();
+    const first = app.timers.filter(function (t) { return t.ms === 4000 && !t.cleared; });
+    click(app, 'Message');
+    await settle(); await settle();
+    const second = app.notice();
+    first.forEach(function (t) { t.fn(); });
+    it('keeps a notice raised after an older one began to time out', function () {
+      truthy(second.length > 0, 'the second notice was raised');
+      eq(app.notice(), second, 'the first notice timer blanked the second');
+    });
+  })();
+
+  /* Threads and the replies that arrive for them.
+     A late reply switched the view wherever the player had gone; a message
+     push cost a full refresh; a re-read took the keyboard out of the box. */
+  await (async function threadsAndLateReplies() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hunter';
+    held.myAlias = 'Operative #1';
+
+    // On screen, not merely registered: the shim keeps a detached node
+    // findable by id while its old parent chain still reaches the page.
+    function composeOnScreen(app) {
+      return app.view.all().filter(function (n) { return n.id === 'compose-input'; })[0] || null;
+    }
+
+    function deferred() {
+      let release;
+      const promise = new Promise(function (resolve) { release = resolve; });
+      return { promise: promise, release: release };
+    }
+
+    function openApp(readThread) {
+      const app = boot({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+        ledger: LEDGER,
+        readThread: readThread,
+        rewardOptions: { ok: true, data: { cash: 0, bank: 0, dirty: 0, items: [], weapons: [], caps: {} } }
+      });
+      return app;
+    }
+
+    await (async function aLateOpenDoesNotPullThePlayerBack() {
+      let pending = null;
+      const app = openApp(function () { pending = deferred(); return pending.promise; });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Message');
+      await settle();
+      tab(app, 'place');
+      await settle();
+      pending.release({ ok: true, data: [{ alias: 'The client', body: 'hello' }] });
+      await settle(); await settle();
+      it('stays where the player went while the thread was opening', function () {
+        falsy(app.view.textContent.indexOf('hello') !== -1,
+          'the late reply dragged the player into the thread: ' + app.view.textContent.slice(0, 120));
+      });
+    })();
+
+    await (async function backDuringARereadStaysBack() {
+      let pending = null;
+      const app = openApp(function () {
+        pending = deferred();
+        return pending.promise;
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Message');
+      await settle();
+      pending.release({ ok: true, data: [] });
+      await settle(); await settle();
+      truthy(composeOnScreen(app), 'in the thread');
+      // A push re-reads it; the player presses Back before it lands.
+      app.sandbox.window._message({ data: { type: 'push', reason: 'message' } });
+      await settle();
+      click(app, 'Back');
+      await settle();
+      pending.release({ ok: true, data: [{ alias: 'The client', body: 'late' }] });
+      await settle(); await settle();
+      it('does not put the player back into a thread they left', function () {
+        falsy(!!composeOnScreen(app), 'Back was undone by a re-read landing after it');
+      });
+    })();
+
+    await (async function aMessagePushOnlyRereadsTheThread() {
+      const app = openApp({ ok: true, data: [] });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Message');
+      await settle(); await settle();
+      const input = composeOnScreen(app);
+      truthy(input, 'in the thread');
+      input.focus();
+      input.value = 'half a sen';
+      input.oninput();
+      const before = app.sent.length;
+      app.sandbox.window._message({ data: { type: 'push', reason: 'message' } });
+      await settle(); await settle();
+      for (let i = 0; i < 3; i++) { await settle(); }
+      const after = app.sent.slice(before).map(function (m) { return m.name; });
+      it('re-reads the open thread and nothing else on a message', function () {
+        eq(after.join(','), 'readThread',
+          'a message cost a whole refresh, and a quick exchange ran into the rate limit');
+      });
+      it('keeps the half-typed message and the keyboard', function () {
+        const box = composeOnScreen(app);
+        eq(box && box.value, 'half a sen');
+        truthy(app.document.activeElement === box, 'the focus left the box');
+      });
+    })();
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

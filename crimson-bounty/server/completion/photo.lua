@@ -84,13 +84,22 @@ function Photo.loadAllowedHosts()
                 #removed > 0 and ('-' .. table.concat(removed, ' -')) or ''))
         end
 
-        if next(allowedHosts) == nil then
+        Photo.hostsChangedAt = os.time()
+    end
+
+    -- Outside the change block. On the first load an empty list is "no
+    -- change" from nothing, so the one warning that says every kill photo
+    -- will be refused was never printed on the server it was written for.
+    -- Once, and again only after hosts have come and gone.
+    if next(allowedHosts) == nil then
+        if not Photo.warnedEmpty then
+            Photo.warnedEmpty = true
             print('[crimson-bounty] warning: no photo upload host is allowed; ' ..
                 'every verification photo will be rejected. Check lb-phone\'s upload ' ..
                 'config or set Config.Completion.ExtraPhotoHosts')
         end
-
-        Photo.hostsChangedAt = os.time()
+    else
+        Photo.warnedEmpty = false
     end
 
     return allowedHosts
@@ -154,6 +163,9 @@ function Photo.issue(actor, contractId)
         issuedAt   = Util.monotonicMs(),
         used       = false,
     }
+    -- The kill this token proves is kept as long as the token is good.
+    Death.holdPending(contractId, actor.cid,
+        tokens[token].issuedAt + Config.Completion.PhotoTokenLifetimeSeconds * 1000)
 
     Audit.action('photo_token_issued', actor.cid, contractId, {})
     return token

@@ -480,7 +480,11 @@ local function delete(sql, params)
     if not tableName then return {} end
 
     local whereClause = sql:match('WHERE (.*)$')
-    local column, comparison = whereClause and whereClause:match('([%w_]+) ([<>]=?) %?')
+    -- Both captures. `a and f()` keeps only f()'s first result, so the
+    -- comparison was always nil and no DELETE with one ever matched a row:
+    -- the audit prune on mysql was never exercised.
+    local column, comparison
+    if whereClause then column, comparison = whereClause:match('([%w_]+) ([<>]=?) %?') end
 
     for key, row in pairs(Exec.tables[tableName] or {}) do
         if column then

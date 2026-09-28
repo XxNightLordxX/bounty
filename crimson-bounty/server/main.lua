@@ -141,6 +141,10 @@ local DEFAULTS = {
     Limits = {
         ExclusiveIdleReleaseSeconds = 1800,
         ExclusiveAttemptWindowSeconds = 7200,
+        -- Absent read as off, and a jailed target's deadline ran on through
+        -- the sentence on every server that upgraded.
+        PauseWhileTargetJailed = true,
+        JailZone = { x = 1693.3, y = 2569.5, radius = 300 },
     },
     --- Absent read as off, and an anonymous client calling a named operative
     --- on a phone that cannot mask was dialled from their own number.
@@ -450,6 +454,49 @@ local function validateConfig()
     if Config.Ledger.Depth > Config.Ledger.MaxDepthHardCap then
         warn[#warn + 1] = ('Ledger.Depth (%d) exceeds the hard cap (%d); the cap wins')
             :format(Config.Ledger.Depth, Config.Ledger.MaxDepthHardCap)
+    end
+
+    -- A deadline past the lifetime is one that never arrives: the contract
+    -- ends on its lifetime instead, and a lifetime ending hands the stake
+    -- back, so the penalty a hunter agreed to could never be taken.
+    if Config.Limits.DefaultDeadlineSeconds > Config.Limits.ContractLifetimeSeconds then
+        warn[#warn + 1] = ('Limits.DefaultDeadlineSeconds (%d) is longer than '
+            .. 'ContractLifetimeSeconds (%d); a contract would end on its lifetime '
+            .. 'before its deadline and no stake could ever be forfeited. Using the lifetime.')
+            :format(Config.Limits.DefaultDeadlineSeconds, Config.Limits.ContractLifetimeSeconds)
+        Config.Limits.DefaultDeadlineSeconds = Config.Limits.ContractLifetimeSeconds
+    end
+
+    -- The interval drives the whole maintenance tick, not only the audit
+    -- flush: at 0 the tick, a database prune included, ran every frame.
+    local flushMs = tonumber(Config.Audit.FlushIntervalMs)
+    if not flushMs or flushMs < 1000 then
+        warn[#warn + 1] = ('Audit.FlushIntervalMs is %s; it paces every maintenance job '
+            .. 'including the database prune, so it is held to at least 1000.')
+            :format(tostring(Config.Audit.FlushIntervalMs))
+        Config.Audit.FlushIntervalMs = 1000
+    end
+
+    if Config.Audit.MaxQueueSize < 1 then
+        warn[#warn + 1] = 'Audit.MaxQueueSize is below 1; the queue holds at least one row.'
+    end
+    if Config.Audit.RetentionDays < 0 then
+        warn[#warn + 1] = 'Audit.RetentionDays is negative; the audit log is kept forever.'
+    end
+
+    -- Every rate-limit rule is a table of a positive `per` and a `burst` of
+    -- at least one. A rule missing `burst` threw inside the net event, before
+    -- the handler's own guard, so every request in that bucket went
+    -- unanswered and the page waited fifteen seconds each time.
+    for name, rule in pairs(Config.Cooldowns or {}) do
+        local good = type(rule) == 'table'
+            and type(rule.per) == 'number' and rule.per > 0
+            and type(rule.burst) == 'number' and rule.burst >= 1
+        if not good then
+            warn[#warn + 1] = ('Cooldowns.%s is not { per = <seconds above 0>, burst = <1 or '
+                .. 'more> }; using the fallback rule for it.'):format(tostring(name))
+            Config.Cooldowns[name] = { per = 10, burst = 10 }
+        end
     end
 
     -- Settings that name a money account and are handed straight to
@@ -1119,8 +1166,19 @@ function ExpireContracts()
                 -- is online and elsewhere as by one who has logged off.
                 local creatorOnline = contract.anon_creator == true
                     or modules.identity.byCitizenId(contract.creator_cid) ~= nil
-                local targetOnline = modules.identity.byCitizenId(contract.target_cid) ~= nil
-                local paused = not (creatorOnline and targetOnline)
+                local targetActor = modules.identity.byCitizenId(contract.target_cid)
+                -- A target in prison is as far out of reach as one who has
+                -- logged off, and the hunter's clock ran on while they
+                -- served their time. Not once the deadline has gone,
+                -- though: a sentence written after it would otherwise turn
+                -- an expiry into a pause, and the lifetime then hands the
+                -- hunter back a stake they had already lost.
+                local overdue = not contract.paused_since
+                    and contract.deadline_at ~= nil and now > contract.deadline_at
+                local jailed = Config.Limits.PauseWhileTargetJailed and targetActor ~= nil
+                    and not overdue and modules.identity.isJailed(targetActor)
+                local targetAvailable = targetActor ~= nil and not jailed
+                local paused = not (creatorOnline and targetAvailable)
 
                 if paused then
                     -- Record when the pause began, once. The deadline is
@@ -1132,6 +1190,12 @@ function ExpireContracts()
                     -- extended, most of all.
                     if not contract.paused_since and Storage.startPause(contract.id, now) then
                         contract.paused_since = now
+                    end
+                    -- A release from prison is not a player arriving, and on
+                    -- a framework that does not announce it nothing else
+                    -- would bring the pass back before its longest skip.
+                    if targetActor and not targetAvailable and now + 60 < soonest then
+                        soonest = now + 60
                     end
                 else
                     if contract.paused_since then

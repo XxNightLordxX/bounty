@@ -5,6 +5,8 @@
 
 local Audit = {}
 
+local Util = require_shared('util')
+
 local Storage
 local queue = {}
 local head, tail = 1, 0
@@ -21,7 +23,11 @@ end
 --- table.remove(queue, 1) is O(n), which turns a flood of rejected events
 --- into quadratic work at exactly the moment the server is under load.
 local function push(kind, action, actorCid, contractId, detail)
-    if (tail - head + 1) >= Config.Audit.MaxQueueSize then
+    -- At least one. A size of 0 moved the head past every row as it was
+    -- pushed, so flush found nothing, not even the overflow row, and the
+    -- log went silent while the rows it never wrote stayed in memory.
+    local cap = math.max(1, math.floor(tonumber(Config.Audit.MaxQueueSize) or 5000))
+    if (tail - head + 1) >= cap then
         queue[head] = nil
         head = head + 1
         dropped = dropped + 1
@@ -66,17 +72,63 @@ end
 --- happened, and anything sent to a third party outlives the server's own
 --- retention rules. The full record stays in the database, where staff can
 --- look it up under the ACE that gates identity lookups.
-local function mirror(entry)
+--- Whether a row is one the webhook carries.
+local function mirrored(entry)
+    if entry.kind ~= 'rejected' and entry.kind ~= 'financial' then return false end
+    -- Refusal noise is counted, not listed: a player hammering a button
+    -- would otherwise fill the channel with the same line.
+    local action = tostring(entry.action or '')
+    if action:sub(1, 10) == 'ratelimit_' or action:sub(1, 6) == 'flood_'
+        or action:sub(1, 5) == 'gate_' then
+        return 'noise'
+    end
+    return true
+end
+
+-- Held back after Discord answers 429, until this moment.
+local backoffUntil = 0
+local MAX_LINES, MAX_CHARS = 15, 1900
+
+--- One POST per flush, however many rows it drained.
+---
+--- It sent one per row. Discord takes about five requests every two seconds
+--- per webhook and answers the rest with 429; enough of those and its edge
+--- bans the server's address for every integration on the box, not only
+--- this one. A single message carries the flush: up to fifteen lines, then
+--- how many more, with the refusal noise as a count.
+local function mirrorBatch(rows)
     local url = Config.Audit.Webhook
     if not url or url == false or url == '' then return false end
-    if entry.kind ~= 'rejected' and entry.kind ~= 'financial' then return false end
+    if Util.monotonicMs() < backoffUntil then return false end
 
-    local body = json.encode({
-        content = ('`%s` · %s · contract %s'):format(
-            entry.kind, entry.action, entry.contract_id or 'n/a'),
-    })
+    local lines, more, noise = {}, 0, 0
+    for i = 1, #rows do
+        local entry = rows[i]
+        local kind = mirrored(entry)
+        if kind == 'noise' then
+            noise = noise + 1
+        elseif kind then
+            if #lines < MAX_LINES then
+                lines[#lines + 1] = ('`%s` · %s · contract %s'):format(
+                    entry.kind, entry.action, entry.contract_id or 'n/a')
+            else
+                more = more + 1
+            end
+        end
+    end
+    if more > 0 then lines[#lines + 1] = ('…and %d more'):format(more) end
+    if noise > 0 then lines[#lines + 1] = ('%d refused request(s)'):format(noise) end
+    if #lines == 0 then return false end
 
-    PerformHttpRequest(url, function() end, 'POST', body,
+    local content = table.concat(lines, '\n')
+    if #content > MAX_CHARS then content = content:sub(1, MAX_CHARS) end
+
+    PerformHttpRequest(url, function(status, _, headers)
+        if tonumber(status) == 429 then
+            local wait = headers and tonumber(headers['Retry-After'] or headers['retry-after']) or 5
+            backoffUntil = Util.monotonicMs() + math.max(1, wait) * 1000
+        end
+    end, 'POST', json.encode({ content = content }),
         { ['Content-Type'] = 'application/json' })
     return true
 end
@@ -101,12 +153,23 @@ end
 --- counted as dropped. A second flush started meanwhile (the staff commands
 --- flush before they read) walked the same rows and wrote them twice.
 function Audit.flush()
-    if tail < head then return 0 end
+    -- An overflow is reported even when there is nothing else to write.
+    if tail < head then
+        if dropped > 0 then
+            local count = dropped
+            dropped = 0
+            pcall(Storage.writeAudit, {
+                ts = os.time(), kind = 'system', action = 'audit_overflow',
+                detail = { dropped = count },
+            })
+        end
+        return 0
+    end
 
     local batch, first, last = queue, head, tail
     queue, head, tail = {}, 1, 0
 
-    local written = 0
+    local written, drained = 0, {}
     for i = first, last do
         local entry = batch[i]
         if entry then
@@ -115,10 +178,11 @@ function Audit.flush()
             else
                 dropped = dropped + 1
             end
-            pcall(mirror, entry)
+            drained[#drained + 1] = entry
             batch[i] = nil
         end
     end
+    pcall(mirrorBatch, drained)
 
     -- A silent drop is worse than a noisy one: if the queue overflowed, the
     -- server owner needs to know their log has gaps.

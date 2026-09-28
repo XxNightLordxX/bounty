@@ -167,7 +167,7 @@ local function finalise(contractId, contract, forfeitStakes)
     local settled = Storage.readContract(contractId)
     Notify.pushParties(settled or contract, hunterCids, (settled or contract).state)
 
-    Notify.clearContract(contractId)
+    Notify.clearContract(contractId, settled or contract)
     if Contracts.onResolved then Contracts.onResolved(contractId) end
     if Contracts.onChanged then Contracts.onChanged() end
 end
@@ -190,7 +190,7 @@ function Contracts.canCreate(actor, targetActor)
         return false, CB.ERR.SAME_ACCOUNT
     end
 
-    if Identity.isProtectedJob(targetActor.job) and not Config.Targeting.AllowProtectedJobTargets then
+    if Identity.isProtected(targetActor) and not Config.Targeting.AllowProtectedJobTargets then
         return false, CB.ERR.TARGET_IS_LEO
     end
 
@@ -432,7 +432,7 @@ function Contracts.clampBailout(requested, lines)
     -- A bailout needs a clean money escrow to be a multiple of. A contract
     -- funded only in goods or only in black money cannot offer one, for the
     -- same reason an items-only contract cannot.
-    if moneyValue == 0 then return 0, CB.ERR.INVALID_INPUT end
+    if moneyValue == 0 then return 0, CB.ERR.BUYOUT_NEEDS_CLEAN end
 
     local min = math.floor(moneyValue * Config.Bailout.MinMultiplier)
     local max = math.floor(moneyValue * Config.Bailout.MaxMultiplier)
@@ -601,6 +601,7 @@ function Contracts.create(actor, req)
     end
 
     local now = os.time()
+    local protectingJob = Identity.protectedBy(targetActor)
     local contract = {
         id            = contractId,
         creator_cid   = actor.cid,
@@ -608,8 +609,12 @@ function Contracts.create(actor, req)
         creator_name  = actor.name,
         target_cid    = targetActor.cid,
         target_name   = targetActor.name,
-        target_protected = Identity.isProtectedJob(targetActor.job),
-        target_job    = targetActor.job and targetActor.job.name or nil,
+        target_protected = protectingJob ~= nil,
+        -- The job that makes them an officer, where one does: the advisory
+        -- names it, and an officer on a second job for the evening was
+        -- announced to their colleagues as a mechanic.
+        target_job    = (protectingJob and protectingJob.name)
+                        or (targetActor.job and targetActor.job.name) or nil,
         reason        = reason,
         mode          = mode,
         state         = CB.STATE.ACTIVE,
@@ -622,7 +627,9 @@ function Contracts.create(actor, req)
         penalty_amount = penalty,
         created_at    = now,
         -- Rounded, so neither dates the placement to the second (§14.32).
-        deadline_at   = Util.roundClock(now + Config.Limits.DefaultDeadlineSeconds),
+        -- Never past the lifetime, which would be a deadline that never came.
+        deadline_at   = Util.roundClock(now + math.min(Config.Limits.DefaultDeadlineSeconds,
+                            Config.Limits.ContractLifetimeSeconds)),
         expires_at    = Util.roundClock(now + Config.Limits.ContractLifetimeSeconds),
         paused_ms     = 0,
     }
@@ -1206,6 +1213,16 @@ function Contracts.abandon(actor, contractId)
         Contracts.onHunterLeft(contractId, actor.cid, 'abandoned')
     end
 
+    -- The client's card still said who was on it, and Edit and Withdraw
+    -- stayed hidden after the last hunter walked away.
+    local after = Storage.readContract(contractId) or contract
+    local others = {}
+    for _, row in ipairs(Storage.readHunters(contractId) or {}) do
+        if holds(row) and row.hunter_cid ~= actor.cid then others[#others + 1] = row.hunter_cid end
+    end
+    Notify.push(after.creator_cid, 'abandoned')
+    for i = 1, #others do Notify.push(others[i], 'abandoned') end
+
     Audit.action('contract_abandoned', actor.cid, contractId, {})
     return true
 end
@@ -1337,8 +1354,15 @@ function Contracts.releaseIdleHolds()
             -- An anonymous creator's presence is not asked, as for the
             -- deadline: a release timed by it tells the holder when the
             -- client was in the city.
+            -- A target in prison counts as away here too, as it does for the
+            -- deadline: the hold's idle clock ran on through the sentence,
+            -- and the hunter was taken off for not going near a target
+            -- locked in Bolingbroke.
+            local targetActor = Identity.byCitizenId(c.target_cid)
+            local targetHere = targetActor ~= nil
+                and not (Config.Limits.PauseWhileTargetJailed and Identity.isJailed(targetActor))
             local bothHere = (c.anon_creator == true or Identity.byCitizenId(c.creator_cid) ~= nil)
-                and Identity.byCitizenId(c.target_cid) ~= nil
+                and targetHere
 
             for _, h in ipairs(Storage.readHunters(c.id)) do
                 if h.state == 'active' then
@@ -1726,7 +1750,7 @@ function Contracts.cancel(actor, contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CB.ERR.NOT_PARTICIPANT end
     if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
-    if heldByAnyone(contractId) then return false, CB.ERR.BAD_STATE end
+    if heldByAnyone(contractId) then return false, CB.ERR.CONTRACT_TAKEN end
 
     local ok, err = Contracts.resolve(contractId, CB.STATE.CANCELLED,
         actor.cid, nil, 'cancelled_by_creator')
@@ -1779,7 +1803,7 @@ function Contracts.revise(actor, contractId, changes)
     if not contract then return false, CB.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CB.ERR.NOT_PARTICIPANT end
     if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
-    if heldByAnyone(contractId) then return false, CB.ERR.BAD_STATE end
+    if heldByAnyone(contractId) then return false, CB.ERR.CONTRACT_TAKEN end
 
     -- Held as values, never written onto `contract`: on the memory store it
     -- is the stored row, and a change made to it here would stand even
@@ -1878,16 +1902,12 @@ end
 ---@return boolean ok
 ---@return string|nil err
 ---@return table|nil result
-function Contracts.withdrawReward(actor, contractId, lineIds)
-    contractId = Util.toId(contractId)
-    if not contractId then return false, CB.ERR.INVALID_INPUT end
-    if type(lineIds) ~= 'table' then return false, CB.ERR.INVALID_INPUT end
-
+local function withdrawRewardUnlocked(actor, contractId, lineIds)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CB.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CB.ERR.NOT_PARTICIPANT end
     if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
-    if heldByAnyone(contractId) then return false, CB.ERR.BAD_STATE end
+    if heldByAnyone(contractId) then return false, CB.ERR.CONTRACT_TAKEN end
 
     -- Bounded before anything is read: a client naming ten thousand ids
     -- must not become ten thousand lookups.
@@ -2007,7 +2027,7 @@ function Contracts.withdrawReward(actor, contractId, lineIds)
         -- further down. Measured: a contract worth 9,500 left at 8,500, the
         -- creator told the withdrawal failed, the hunter told nothing.
         if result.settled == 0 and result.pending == 0 then
-            return false, CB.ERR.BAD_STATE
+            return false, CB.ERR.CONTRACT_TAKEN
         end
 
         -- Something did. The guard runs per line, so an acceptance landing
@@ -2061,6 +2081,19 @@ function Contracts.withdrawReward(actor, contractId, lineIds)
     return true, nil, result
 end
 
+--- One withdrawal at a time per contract. Each checks that every collection
+--- stays funded against lines it read before its awaits, so two at once,
+--- each taking a different line off the same collection, both passed and
+--- left a live contract paying nothing. The key is the one acceptance holds,
+--- so an acceptance cannot land in the middle of one either.
+function Contracts.withdrawReward(actor, contractId, lineIds)
+    contractId = Util.toId(contractId)
+    if not contractId then return false, CB.ERR.INVALID_INPUT end
+    if type(lineIds) ~= 'table' then return false, CB.ERR.INVALID_INPUT end
+    return Contracts.serialized({ 'contract:' .. contractId },
+        withdrawRewardUnlocked, actor, contractId, lineIds)
+end
+
 --- Re-price both figures that are meant to be proportional to the escrow,
 --- after some of that escrow has been taken back out.
 ---
@@ -2091,7 +2124,14 @@ function Contracts.reclampToEscrow(contractId, actorCid)
         -- what re-prices the buyout and the failure stake against what the
         -- contract still holds. Counting a queued line left the target being
         -- charged a price set against money the contract no longer pays.
-        if line.state == CB.ESCROW_STATE.HELD and not line.owed_to then
+        --
+        -- The creator's escrow only, as creation measures it. A hunter's
+        -- stake is held on the contract too, and counting it priced the
+        -- buyout against the hunters' own money: giving back a collection
+        -- raised what the target paid to escape, and left the stake quoted
+        -- to the next hunter at four times what the contract still paid.
+        if line.state == CB.ESCROW_STATE.HELD and not line.owed_to
+            and line.portion ~= CB.PORTION.STAKE and line.portion ~= CB.PORTION.OWED then
             held[#held + 1] = line
             if CB.MONEY_ACCOUNTS[line.source] then
                 heldMoney = heldMoney + (line.amount or 0)

@@ -1346,11 +1346,270 @@ describe('reporting your own death', function()
         Client.dead = true
         Client.ticks(2)
         Client.dead = false
-        Client.ticks(2)
+        Client.ticks(5)
         Client.dead = true
         Client.ticks(2)
 
         eq(reported('iDied'), 2, 'dying twice is two reports')
         eq(reported('iRevived'), 1)
+    end)
+
+    --- sc-ambulance's own sequence, as its client runs it. The engine kills
+    --- the ped when the player goes down; the resource resurrects it into
+    --- last stand (inlaststand in the metadata); and only when they bleed
+    --- out or are finished does it write isdead, resurrecting the ped again.
+    --- The client used to report the engine death at the downing, which the
+    --- server refuses because last stand is not dead, and then had nothing
+    --- left to report when the player really died.
+    local function underMedical(meta)
+        Client.playerData = { metadata = meta or {} }
+        return Client.playerData.metadata
+    end
+
+    it('does not spend the death report on being downed', function()
+        watching()
+        local meta = underMedical()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+        Env.players[3]._killerPed = 1004
+
+        -- Shot: the engine death, then last stand.
+        Client.dead = true
+        Client.ticks(1)
+        Client.dead = false
+        meta.inlaststand = true
+        Client.ticks(3)
+        eq(reported('iDied'), 0, 'downed is not dead')
+        eq(reported('iRevived'), 0, 'and not yet up')
+    end)
+
+    it('reports the death when the medical resource declares it, once', function()
+        watching()
+        local meta = underMedical()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+        Env.players[3]._killerPed = 1004
+
+        Client.dead = true
+        Client.ticks(1)
+        Client.dead = false
+        meta.inlaststand = true
+        Client.ticks(2)
+
+        -- Bled out, minutes later. The ped has been resurrected again, and
+        -- its source of death is no longer the hunter's.
+        Env.gameTimer = Env.gameTimer + 300000
+        Env.players[3]._killerPed = 0
+        meta.inlaststand, meta.isdead = false, true
+        Client.ticks(5)
+        local count, said = reported('iDied')
+        eq(count, 1, 'one death, reported once')
+        eq(said[1], nil, 'naming nobody: the downing was not the death, and the '
+            .. 'server has its own record of who landed the last hit')
+
+        meta.isdead = false
+        Client.ticks(5)
+        eq(reported('iRevived'), 1, 'and the hospital revive is reported once')
+    end)
+
+    it('names whoever finished them over whoever downed them', function()
+        watching()
+        local meta = underMedical()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+        Env.addPlayer({ source = 5, citizenid = 'KILLER02', license = 'license:k2' })
+        Env.players[3]._killerPed = 1004
+
+        Client.dead = true
+        Client.ticks(1)
+        Client.dead = false
+        meta.inlaststand = true
+        Client.ticks(1)
+
+        -- The finishing shot: a second engine death, by somebody else.
+        Env.players[3]._killerPed = 1005
+        Client.dead = true
+        Client.ticks(1)
+        Client.dead = false
+        meta.inlaststand, meta.isdead = false, true
+        Client.ticks(2)
+        local count, said = reported('iDied')
+        eq(count, 1)
+        eq(said[1], 5, 'the finisher')
+    end)
+
+    it('names nobody for a finish it did not see, rather than whoever downed them', function()
+        -- The watcher looks once a second, and the medical resource can
+        -- resurrect a finished player inside that second (on a stretcher,
+        -- in a stopped car). The engine death is never seen, and the
+        -- resurrected ped's source of death says nothing reliable. Naming
+        -- the player who downed them gave the kill to them when somebody
+        -- else finished it; naming nobody leaves it to the server's own
+        -- damage log, which holds the finishing hit.
+        watching()
+        local meta = underMedical()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+        Env.addPlayer({ source = 5, citizenid = 'KILLER02', license = 'license:k2' })
+        Env.players[3]._killerPed = 1004
+        Client.dead = true
+        Client.ticks(1)
+        Client.dead = false
+        meta.inlaststand = true
+        Client.ticks(1)
+
+        Env.gameTimer = Env.gameTimer + 20000
+        Env.players[3]._killerPed = 1004
+        meta.inlaststand, meta.isdead = false, true
+        Client.ticks(2)
+        local count, said = reported('iDied')
+        eq(count, 1)
+        eq(said[1], nil, 'not the player who downed them twenty seconds ago')
+    end)
+
+    it('does not read the moment between the downing and last stand as a revive', function()
+        -- The engine death, then the resurrect, then last stand set a round
+        -- trip later: a tick in between saw nobody dead and nobody down.
+        watching()
+        local meta = underMedical()
+        Client.dead = true
+        Client.ticks(1)
+        Client.dead = false
+        Client.ticks(1)
+        meta.inlaststand = true
+        Client.ticks(2)
+        eq(reported('iRevived'), 0, 'a revive that never happened')
+        meta.inlaststand, meta.isdead = false, true
+        Client.ticks(1)
+        eq(reported('iDied'), 1)
+    end)
+
+    it('keeps a dead player dead while the medical resource restarts', function()
+        watching()
+        local meta = underMedical()
+        meta.isdead = true
+        Client.ticks(1)
+        eq(reported('iDied'), 1)
+
+        Natives.resourceStates['sc-ambulance'] = 'stopped'
+        Client.ticks(6)
+        eq(reported('iRevived'), 0, 'still dead by the metadata the restart left')
+        Natives.resourceStates['sc-ambulance'] = 'started'
+        Client.ticks(2)
+        eq(reported('iDied'), 1, 'and the same death is not reported twice')
+    end)
+
+    it('reports no revive for somebody picked up from last stand', function()
+        -- They never died, so there is no death to undo; the server takes a
+        -- revive from a player it never saw dead as a probe, and posted it
+        -- to the staff webhook as one.
+        watching()
+        local meta = underMedical()
+        Client.dead = true
+        Client.ticks(1)
+        Client.dead = false
+        meta.inlaststand = true
+        Client.ticks(2)
+        meta.inlaststand = false
+        Client.ticks(5)
+        eq(reported('iDied'), 0)
+        eq(reported('iRevived'), 0, 'picked up by a medic, never dead')
+    end)
+
+    it('does not read a defibrillator bringing them round as a revive', function()
+        -- Dead, then last stand: sc-ambulance clears isdead a second or more
+        -- before it writes inlaststand. A revive read in that gap gave a
+        -- target still on the floor five minutes of immunity.
+        watching()
+        local meta = underMedical()
+        meta.isdead = true
+        Client.ticks(1)
+        eq(reported('iDied'), 1)
+        meta.isdead = false
+        Client.ticks(2)
+        meta.inlaststand = true
+        Client.ticks(3)
+        eq(reported('iRevived'), 0, 'still down, in last stand')
+        meta.inlaststand = false
+        Client.ticks(5)
+        eq(reported('iRevived'), 1, 'and up for real later')
+    end)
+
+    it('forgets who downed them once they are back up', function()
+        watching()
+        local meta = underMedical()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+        Env.players[3]._killerPed = 1004
+        Client.dead = true
+        Client.ticks(1)
+        Client.dead = false
+        meta.inlaststand = true
+        Client.ticks(1)
+        meta.inlaststand = false
+        Client.ticks(5)
+
+        -- Later, dead of something that names nobody.
+        Env.players[3]._killerPed = 0
+        meta.isdead = true
+        Client.ticks(2)
+        local count, said = reported('iDied')
+        eq(count, 1)
+        eq(said[1], nil, 'the earlier downing is not this death')
+    end)
+
+    it('reads the state bags qbx_medical writes', function()
+        -- Its isDead bag is true in last stand too; its deathState says
+        -- which: 2 in last stand, 3 dead.
+        watching()
+        underMedical()
+        Natives.resourceStates['qbx_medical'] = 'started'
+        Client.state.isDead = true
+        Client.state['qbx_medical:deathState'] = 2
+        Client.ticks(2)
+        eq(reported('iDied'), 0, 'last stand is not dead')
+        Client.state['qbx_medical:deathState'] = 3
+        Client.ticks(2)
+        eq(reported('iDied'), 1)
+        Client.state.isDead = false
+        Client.state['qbx_medical:deathState'] = 1
+        Client.ticks(5)
+        eq(reported('iRevived'), 1)
+    end)
+
+    it('falls back to the engine when the medical state cannot be read', function()
+        -- sc-ambulance running, but qbx_core's player data unavailable.
+        -- Waiting on a state that never arrives would report no death ever.
+        watching()
+        Client.playerData = nil
+        Client.dead = true
+        Client.ticks(2)
+        eq(reported('iDied'), 1)
+    end)
+
+    it('goes by the engine when no medical resource is running', function()
+        watching()
+        local meta = underMedical()
+        Natives.resourceStates['sc-ambulance'] = 'stopped'
+        Natives.resourceStates['qbx_medical'] = 'missing'
+        Client.dead = true
+        Client.ticks(2)
+        eq(reported('iDied'), 1, 'the engine death is the death')
+        meta.isdead = false
+        Client.dead = false
+        Client.ticks(5)
+        eq(reported('iRevived'), 1)
+    end)
+
+    it('knows the medical resources when the config does not name them', function()
+        watching()
+        local meta = underMedical()
+        local saved = Config.Completion.DeathStateProviders
+        Config.Completion.DeathStateProviders = nil
+        local ok, err = pcall(function()
+            Client.dead = true
+            Client.ticks(1)
+            Client.dead = false
+            meta.inlaststand = true
+            Client.ticks(2)
+            eq(reported('iDied'), 0, 'still sc-ambulance rules: downed is not dead')
+        end)
+        Config.Completion.DeathStateProviders = saved
+        if not ok then error(err, 0) end
     end)
 end)
