@@ -344,7 +344,7 @@ function MySQLStore.writeContract(c)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         -- Every column a caller can change after creation has to be in this
         -- list. Two were missing, and both were invisible in memory and json
-        -- mode, which is where the tests ran:
+        -- mode, which is where the tests ran.
         --
         --   bonus_percent — raise_bonus escrows the DIFFERENCE between the
         --   stored percentage and the new one. The escrow lines were written,
@@ -364,7 +364,7 @@ function MySQLStore.writeContract(c)
             bonus_percent = VALUES(bonus_percent), expires_at = VALUES(expires_at),
             bailout_amount = VALUES(bailout_amount), penalty_amount = VALUES(penalty_amount),
             -- next_slot, slots_claimed and payout_slots are deliberately
-            -- absent: they move only through advanceSlot and reduceSlots.
+            -- absent, as they move only through advanceSlot and reduceSlots.
             -- Every other writer carries a copy read before its own awaits,
             -- and writing them back undid a claim that landed in between —
             -- the collection just paid was put back on sale — or put back a
@@ -372,10 +372,10 @@ function MySQLStore.writeContract(c)
             --
             -- And the clock — deadline_at, paused_ms, paused_since — moves
             -- only through setDeadline, startPause and endPause, for the
-            -- same reason: the expiry pass wrote a copy over an
+            -- same reason. The expiry pass wrote a copy over an
             -- extension the client made while it waited, and a copy written
             -- by anything else erased a pause the pass had just begun.
-            -- The five bailout_* columns are deliberately absent: they move
+            -- The five bailout_* columns are deliberately absent, as they move
             -- only through setBailoutQueue, so a caller writing back a copy
             -- it read before a buyout was paid cannot erase the buyout.
             resolved_at = VALUES(resolved_at), resolution = VALUES(resolution)
@@ -623,7 +623,7 @@ local ESCROW_UPSERT = [[
         (id, contract_id, slot, portion, source, amount, item, quantity, metadata,
          staker, inv_slot, owed_to, releasing_to, state, derived)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    -- State and amount are NOT written here: they move only through
+    -- State and amount are NOT written here, as they move only through
     -- claimEscrowLine / settleEscrowLine / setEscrowAmount, which are
     -- guarded. Writing them from a caller-held copy could resurrect a
     -- line that settled while the caller was reading.
@@ -862,7 +862,7 @@ function MySQLStore.writeAmendment(a)
             approvals = VALUES(approvals), outcome = VALUES(outcome),
             declined_by = VALUES(declined_by),
             -- Left out of this list, and so silently discarded on the backend
-            -- that ships by default: a proposal re-written with a new expiry
+            -- that ships by default. A proposal re-written with a new expiry
             -- kept the old one. Nothing rewrote an expiry until the staff
             -- timer refresh did, and it would have worked in memory mode and
             -- done nothing on a real server.

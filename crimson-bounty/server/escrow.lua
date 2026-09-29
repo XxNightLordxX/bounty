@@ -681,10 +681,28 @@ takeUnlocked = function(actor, contractId, lines)
         records[#records + 1] = line
     end
 
-    local ok = Storage.writeEscrow(contractId, records)
-    if not ok then
+    -- A write that raised may or may not have landed — a connection can drop
+    -- after the commit — so it is not refunded blind: that paid the creator
+    -- back and left the lines to be returned to them a second time. What the
+    -- store holds decides, below. One that raised with nothing stored used
+    -- to keep the creator's money with nothing held for it.
+    local wrote, ok = pcall(Storage.writeEscrow, contractId, records)
+    if wrote and not ok then
         rollback()
         return false, CB.ERR.BAD_STATE
+    end
+    if not wrote then
+        Audit.rejected('escrow_write_failed', actor.cid, contractId, { error = tostring(ok) })
+        local present = {}
+        for _, line in ipairs(Storage.readEscrow(contractId) or {}) do present[line.id] = true end
+        local any = false
+        for i = 1, #records do
+            if present[records[i].id] then any = true end
+        end
+        if not any then
+            rollback()
+            return false, CB.ERR.BAD_STATE
+        end
     end
 
     -- Read back what was written. Ids are allocated from the lines the

@@ -470,6 +470,150 @@ describe('damage observation is actually wired', function()
         falsy(s.death.recordFor('TARGET01', 'HUNTER02'), 'one drop credited twice')
     end)
 
+    it('gives a drop to the shooter the victim\'s game names, not the first in line', function()
+        -- A rival's event a moment before a real shot, with no shot behind it,
+        -- took that shot's damage and the kill.
+        local s = wiredStack()
+        local f, c = placed(s)
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
+            coords = { x = 52.0, y = 50.0, z = 30.0 } })
+        s.contracts.accept(s.identity.resolve(4), c.id, false)
+        shoot(4)                               -- forged: no round behind it
+        shoot(3)                               -- the real one
+        Env.players[2]._health = 120
+        Env.players[2]._damageSource = 1003    -- hunter one's ped
+        Env.advance(2)
+        truthy(s.death.recordFor('TARGET01', 'HUNTER01'), 'the shooter lost their hit')
+        falsy(s.death.recordFor('TARGET01', 'HUNTER02'), 'the forger was credited')
+    end)
+
+    it('gives a drop the victim\'s game puts down to nobody to nobody', function()
+        -- A queued hit that never landed took a fall's damage.
+        local s = wiredStack()
+        local f, c = placed(s)
+        shoot(3)
+        Env.players[2]._health = 120
+        Env.players[2]._damageSource = 0
+        Env.advance(2)
+        falsy(s.death.recordFor('TARGET01', 'HUNTER01'), 'credited with a fall')
+    end)
+
+    it('does not count a round into the target\'s car as a hit on them', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        local realOwner, realExists = _G.NetworkGetEntityOwner, _G.DoesEntityExist
+        _G.NetworkGetEntityOwner = function(entity)
+            if entity == 7002 then return 2 end
+            return realOwner(entity)
+        end
+        _G.DoesEntityExist = function(entity) return entity == 7002 or realExists(entity) end
+        local ok, recorded = pcall(s.bridges.onWeaponDamage, s, 3,
+            { weaponDamage = 30, weaponType = 123456, hitGlobalIds = { 7002 } })
+        _G.NetworkGetEntityOwner, _G.DoesEntityExist = realOwner, realExists
+        truthy(ok, tostring(recorded))
+        eq(recorded, 0, 'the car is not the driver')
+    end)
+
+    it('credits the finishing shot on a body raised at once', function()
+        -- In a car or on a stretcher sc-ambulance puts a dead player back at
+        -- full health in the same frame: the lethal reading never shows.
+        local s = wiredStack()
+        local f, c = placed(s)
+        local meta = Env.players[2].PlayerData.metadata
+        Env.players[2]._health = 150
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(40)                        -- the downing's hits long gone
+        shoot(3)
+        meta.inlaststand, meta.isdead = false, true
+        Env.players[2]._health = 200           -- raised, dead, at full health
+        s.death.onVictimReport(2)
+        Env.advance(2)
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the finishing shot opened no kill')
+    end)
+
+    it('attributes the death of a victim who leaves before it is checked', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        Env.players[2]._health = 120
+        shoot(3)                               -- the downing, already showing
+        Env.advance(0.3)
+        shoot(3)                               -- a round into the body, still waiting
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.onVictimReport(2)
+        s.death.clearPlayer('TARGET01')        -- gone within the second
+        Env.advance(2)
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'quitting took the kill away')
+    end)
+
+    it('does not credit a drop twice across a heal', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
+            coords = { x = 52.0, y = 50.0, z = 30.0 } })
+        s.contracts.accept(s.identity.resolve(4), c.id, false)
+        shoot(3)
+        shoot(4)                               -- never lands
+        Env.players[2]._health = 170
+        Env.advance(0.2)                       -- hunter one's 30 is credited
+        Env.players[2]._health = 180           -- a bandage
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(2)
+        truthy(s.death.recordFor('TARGET01', 'HUNTER01'))
+        falsy(s.death.recordFor('TARGET01', 'HUNTER02'), 'paid for the drop hunter one was paid for')
+    end)
+
+    it('records a deferred attribution that fails', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        shoot(3)
+        Env.players[2]._health = 0
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.onVictimReport(2)
+        local real = s.death.attributeDeath
+        s.death.attributeDeath = function() error('storage went away', 0) end
+        Env.advance(2)
+        s.death.attributeDeath = real
+        s.audit.flush()
+        local found = false
+        for _, row in ipairs(s.storage.readAudit(200) or {}) do
+            if row.action == 'error_iDied' then found = true end
+        end
+        truthy(found, 'a lost kill left no trace')
+    end)
+
+    it('does not hand a hit a drop already showing that somebody else caused', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        Env.players[2]._health = 150           -- a fall, just before the event
+        Env.players[2]._damageSource = 0
+        shoot(3)                               -- a round that never lands
+        Env.advance(2)
+        falsy(s.death.recordFor('TARGET01', 'HUNTER01'), 'credited with the fall')
+    end)
+
+    it('gives a body raised at once to the finisher the victim\'s game names', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
+            coords = { x = 52.0, y = 50.0, z = 30.0 } })
+        s.contracts.accept(s.identity.resolve(4), c.id, false)
+        local meta = Env.players[2].PlayerData.metadata
+        Env.players[2]._health = 150
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(40)
+        shoot(3)                               -- misses the body
+        shoot(4)                               -- the finishing round
+        meta.inlaststand, meta.isdead = false, true
+        Env.players[2]._health = 200
+        Env.players[2]._damageSource = 1004    -- hunter two's ped
+        s.death.onVictimReport(2)
+        Env.advance(2)
+        truthy(s.death.getPending(c.id, 'HUNTER02'), 'the finisher opened no kill')
+        falsy(s.death.getPending(c.id, 'HUNTER01'), 'the first in line took it')
+    end)
+
     it('registers sc-ambulance\'s defibrillator event', function()
         local s = wiredStack()
         truthy(Env.events['sc-ambulance:server:UseDefib'],
@@ -529,7 +673,10 @@ describe('damage claims are corroborated, not trusted', function()
         -- No health drop: the claim has nothing behind it.
         s.death.recordDamage(3, 2, 123456)
         Env.players[2].PlayerData.metadata.isdead = true
-        eq(s.death.onVictimReport(2), 0, 'a claim with no observed damage is discarded')
+        s.death.onVictimReport(2)
+        Env.advance(2)   -- past the window the hit's damage is looked for in
+        falsy(s.death.recordFor('TARGET01', 'HUNTER01'), 'a claim with no observed damage is discarded')
+        falsy(s.death.getPending(c.id, 'HUNTER01'))
     end)
 
     it('rejects a fabricated hit from a hunter who never fired', function()
@@ -585,9 +732,14 @@ describe('damage claims are corroborated, not trusted', function()
         Env.players[2]._health = 200            -- back on their feet
         Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)                          -- and still up: the revive is confirmed
 
+        local first = s.death.getPending(c.id, 'HUNTER01')
         s.death.recordDamage(3, 2, 123456)      -- no new damage since
         Env.players[2].PlayerData.metadata.isdead = true
-        eq(s.death.onVictimReport(2), 0, 'a heal is not a hit')
+        s.death.onVictimReport(2)
+        Env.advance(2)
+        falsy(s.death.recordFor('TARGET01', 'HUNTER01'), 'a heal is not a hit')
+        local now = s.death.getPending(c.id, 'HUNTER01')
+        truthy(not now or (first and now.at == first.at), 'a second kill was opened on no damage')
     end)
 end)
 
@@ -648,7 +800,10 @@ describe('corroboration does not punish legitimate hits', function()
 
         s.death.recordDamage(3, 2, 123456)
         Env.players[2].PlayerData.metadata.isdead = true
-        eq(s.death.onVictimReport(2), 0)
+        s.death.onVictimReport(2)
+        Env.advance(2)
+        falsy(s.death.recordFor('TARGET01', 'HUNTER01'), 'no loss of condition, and a hit recorded')
+        falsy(s.death.getPending(c.id, 'HUNTER01'))
     end)
 end)
 

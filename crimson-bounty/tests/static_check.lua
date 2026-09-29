@@ -1893,6 +1893,42 @@ do
 end
 
 --------------------------------------------------------------------------
+-- No ':' or '@' in any SQL the MySQL store sends.
+--
+-- Parameters here are positional Lua tables, and FiveM sends a table with a
+-- nil in it as a map, not a list. Given a map, oxmysql compiles the
+-- statement for named placeholders whenever its text holds ':' or '@' —
+-- a colon in a comment is enough — and then numbers the '?' from 0, so
+-- every value lands one column over: the id went in as NULL and the write
+-- failed, for every contract, amendment and escrow line.
+--------------------------------------------------------------------------
+
+do
+    local path = 'crimson-bounty/server/storage/mysql.lua'
+    local f = io.open(path, 'r')
+    local src = f and f:read('*a') or ''
+    if f then f:close() end
+    local function checkSql(body, where)
+        local sql = body:upper()
+        if not (sql:find('SELECT') or sql:find('INSERT') or sql:find('UPDATE')
+            or sql:find('DELETE') or sql:find('CREATE') or sql:find('ALTER')) then return end
+        if body:find('[:@]') then
+            failures[#failures + 1] = ('%s has a SQL statement containing \':\' or \'@\' '
+                .. '(%s). oxmysql reads that as named placeholders whenever the '
+                .. 'parameters arrive as a map, which they do whenever one is nil, '
+                .. 'and every value shifts a column. Reword the comment.'):format(path, where)
+        end
+    end
+    for eq, body in src:gmatch('%[(=*)%[(.-)%]%1%]') do
+        local line = body:match('[^\n]*[:@][^\n]*') or ''
+        checkSql(body, line:gsub('^%s+', ''))
+    end
+    for body in src:gmatch("'([^'\n]*)'") do
+        checkSql(body, body)
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

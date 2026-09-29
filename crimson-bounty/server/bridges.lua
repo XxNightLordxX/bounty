@@ -28,7 +28,12 @@ function Bridges.onWeaponDamage(modules, sender, data)
         local ped = NetworkGetEntityFromNetworkId(hits[i])
         if ped and ped ~= 0 and DoesEntityExist(ped) then
             local victimSrc = NetworkGetEntityOwner(ped)
-            if victimSrc and victimSrc > 0 and victimSrc ~= sender then
+            -- The player's own ped, and nothing else they own. A player's
+            -- client owns their car and the NPCs around them too, and a round
+            -- into any of those was queued as a hit on them, to take the
+            -- damage of the next real shot that landed.
+            if victimSrc and victimSrc > 0 and victimSrc ~= sender
+                and ped == GetPlayerPed(victimSrc) then
                 modules.death.recordDamage(sender, victimSrc, data.weaponType)
                 recorded = recorded + 1
             end
@@ -186,9 +191,12 @@ function Bridges.install(modules)
 
     -- sc-ambulance's defibrillator, heard as it is sent to sc-ambulance: the
     -- moment it leaves between dead and last stand is no revive, whatever
-    -- lands in it. Every check sc-ambulance makes is made again in
-    -- Death.noteDefib, so a client firing this proves nothing it could not
-    -- already do with the real device.
+    -- lands in it. Death.noteDefib asks what sc-ambulance asks — an on-duty
+    -- medic of Config.Completion.MedicJobs, holding the DefibItem, within
+    -- DefibRange of a patient who is dead — so a medic firing it proves
+    -- nothing they could not do with the real device. What it cannot read
+    -- is whether sc-ambulance's defibrillator is switched on at all: with
+    -- it off, set MedicJobs = {} so none is heard.
     RegisterNetEvent('sc-ambulance:server:UseDefib', function(targetId)
         local src = source
         if not modules.death or not modules.death.noteDefib then return end

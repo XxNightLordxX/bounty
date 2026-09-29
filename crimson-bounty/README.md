@@ -102,10 +102,13 @@ and a kill in the protection a revive gives does not pay. A defibrillator that o
 back to last stand does not, even if they are hit while it takes effect, but
 the photograph needs them dead: the app says they are still down, and
 finishing them is a new kill with its own photograph. A hit counts once the
-server sees the damage it did, which reaches it a moment after the shot.
-The defibrillator is heard from sc-ambulance's own event, from the jobs in
-`Config.Completion.MedicJobs` within `DefibRange` of the patient; match them
-to sc-ambulance's `Config.Defib`.
+server sees the damage it did, which reaches it a moment after the shot, and
+only on the target's own body: a round into their car is not a hit on them.
+Where the target's game says who damaged them, that is who the damage goes to.
+The defibrillator is heard from sc-ambulance's own event, from an on-duty
+medic of `Config.Completion.MedicJobs` holding `DefibItem` within `DefibRange`
+of the patient. Match them to sc-ambulance's `Config.Defib`: `MedicJobs = false`
+when it does not require EMS, `MedicJobs = {}` when its defibrillator is off.
 A kill waits for its photograph for at most two photo-token lifetimes, however
 many tokens are asked for. Or take them alive to the client and hold them there
 for thirty seconds for baseline plus bonus.

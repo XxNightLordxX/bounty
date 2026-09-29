@@ -344,20 +344,25 @@ Config.Completion = {
     --- side of the trade. Turn it off only if that matters more than the
     --- attribution being observed.
     RequireObservedDamage = true,
-    --- The jobs whose defibrillator the kill logic listens for, and how close
-    --- the medic must stand. sc-ambulance's defibrillator brings a dead
-    --- player back to last stand after a gap in which they read as up; that
-    --- gap is never a revive, whatever lands in it. Match these to
-    --- sc-ambulance's own Config.Defib (its RequireEMS job and Distance).
+    --- The defibrillator the kill logic listens for. sc-ambulance's brings a
+    --- dead player back to last stand after a gap in which they read as up;
+    --- that gap is never a revive, whatever lands in it. Match these to
+    --- sc-ambulance's own Config.Defib: MedicJobs to its RequireEMS job
+    --- (false when RequireEMS is false: any job; {} when its defibrillator
+    --- is off: none), DefibItem to its Item, DefibRange to its Distance.
     MedicJobs = { ambulance = true },
+    DefibItem = 'defibrillator',
     DefibRange = 3.0,
     --- How often the condition of a live contract's target is sampled.
     ---
-    --- Each damage event is credited with the drop since the last sample,
-    --- so a slow sampler lets a hunter who lands one shot inherit whatever
-    --- else happened to the target in between — an explosion, a fall, or
-    --- somebody else's firefight, none of which raise a weapon damage event
-    --- of their own. Bounded by the number of live contracts.
+    --- A damage event is credited with the drop the server sees across it:
+    --- one already showing since the last sample, or one that appears in the
+    --- second after it (the damage reaches the server after the event). The
+    --- target's own game says who last damaged them, and a drop it puts down
+    --- to somebody else, or to nobody — a fall, a blast — goes to no hit.
+    --- Where the server cannot read that, a slow sampler lets a hunter who
+    --- lands one shot inherit whatever else happened to the target in
+    --- between. Bounded by the number of live contracts.
     ConditionSampleMs = 1000,
     MaxWeaponRange      = 250.0,
     PhotoRadius         = 5.0,

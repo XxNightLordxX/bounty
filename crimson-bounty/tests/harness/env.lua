@@ -186,13 +186,12 @@ function Env.runTimers()
     local due, keep = {}, {}
     for i = 1, #Env.timers do
         local t = Env.timers[i]
-        t.order = t.order or i
         if t.at <= Env.gameTimer then due[#due + 1] = t else keep[#keep + 1] = t end
     end
     Env.timers = keep
     table.sort(due, function(a, b)
         if a.at ~= b.at then return a.at < b.at end
-        return a.order < b.order
+        return (a.seq or 0) < (b.seq or 0)
     end)
     for i = 1, #due do due[i].fn() end
 end

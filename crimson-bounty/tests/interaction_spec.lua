@@ -2852,9 +2852,11 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         eq(err, CB.ERR.TARGET_PROTECTED)
     end)
 
-    local function medic()
+    local function medic(opts)
+        opts = opts or {}
         Env.addPlayer({ source = 5, citizenid = 'MEDIC001', license = 'license:m',
-            job = { name = 'ambulance', type = 'ems', onduty = true },
+            job = opts.job or { name = 'ambulance', type = 'ems', onduty = true },
+            inventory = opts.inventory or { { name = 'defibrillator', count = 1 } },
             coords = { x = 101.0, y = 101.0, z = 30.0 } })
         return 5
     end
@@ -2910,6 +2912,8 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         falsy(s.death.noteDefib(3, 2), 'a hunter is no medic')
         Env.players[m].PlayerData.job.onduty = false
         falsy(s.death.noteDefib(m, 2), 'nor one off duty')
+        Env.players[m].PlayerData.job.onduty = nil
+        falsy(s.death.noteDefib(m, 2), 'nor one whose duty is unknown, as sc-ambulance refuses')
         Env.players[m].PlayerData.job.onduty = true
         Env.players[m]._coords = { x = 200.0, y = 200.0, z = 30.0 }
         falsy(s.death.noteDefib(m, 2), 'nor one across the street')
@@ -2949,6 +2953,62 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         s.death.watchTargets(s.storage.allContracts())
         truthy(s.death.getPending(c.id, 'HUNTER01'), 'the gap voided the kill')
         falsy(s.death.sinceRespawn('TARGET01'))
+    end)
+
+    it('does not hear a medic without a defibrillator', function()
+        local s, f, c, meta = downed()
+        local m = medic({ inventory = {} })
+        falsy(s.death.noteDefib(m, 2), 'sc-ambulance refuses them, and so must this')
+    end)
+
+    it('hears any job when sc-ambulance does not require a medic, and none when told', function()
+        local s, f, c, meta = downed()
+        local m = medic({ job = { name = 'unemployed', type = 'none' } })
+        falsy(s.death.noteDefib(m, 2))
+        Config.Completion.MedicJobs = false
+        truthy(s.death.noteDefib(m, 2), 'RequireEMS = false')
+        Config.Completion.MedicJobs = {}
+        falsy(s.death.noteDefib(m, 2), 'its defibrillator switched off')
+        Config.Completion.MedicJobs = { ambulance = true }
+    end)
+
+    it('does not let a defibrillator mark hide a revive from last stand after it', function()
+        -- Shocked to last stand, then revived properly by EMS a few seconds
+        -- later and put down again by a hunter: the mark had done its work.
+        local s, f, c, meta = downed()
+        truthy(s.death.noteDefib(medic(), 2))
+        meta.isdead, meta.inlaststand = false, true      -- the gap, too short to see
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(2)
+        meta.inlaststand = false                         -- up for real
+        Env.players[2]._health = 200
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(1)
+        Env.players[2]._health = 150
+        s.death.recordDamage(3, 2, 123456)
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        truthy(s.death.sinceRespawn('TARGET01'), 'the revive cut short went unrecorded')
+    end)
+
+    it('does not take a revive seconds after a defibrillator for its gap', function()
+        -- The gap is first seen within a sample of the shock. A revive that
+        -- begins later, cut short by a hunter, is a revive.
+        local s, f, c, meta = downed()
+        truthy(s.death.noteDefib(medic(), 2))
+        for _ = 1, 4 do
+            s.death.watchTargets(s.storage.allContracts())
+            Env.advance(1)
+        end
+        meta.isdead = false                     -- up, well after the shock
+        Env.players[2]._health = 200
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(1)
+        Env.players[2]._health = 150
+        s.death.recordDamage(3, 2, 123456)
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        truthy(s.death.sinceRespawn('TARGET01'), 'the revive was hidden by the shock before it')
     end)
 
     it('counts a revive ended by a death with no weapon in it', function()

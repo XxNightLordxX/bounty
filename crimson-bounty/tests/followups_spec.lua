@@ -776,6 +776,67 @@ describe('a top-up a stalled elimination has already shared out', function()
     end)
 end)
 
+describe('an escrow write that raises', function()
+    --- On MySQL a statement can raise rather than return false, and a take
+    --- that raised after the money had moved kept it with nothing held for
+    --- it; a claim whose marks raised was left holding the contract.
+    it('gives a creator their money back', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 10000
+        local real = s.storage.writeEscrow
+        s.storage.writeEscrow = function() error('Column id cannot be null', 0) end
+        local c, err = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { bank = 5000 } } })
+        s.storage.writeEscrow = real
+        falsy(c, 'placed with no escrow behind it')
+        truthy(err)
+        falsy(err == CB.ERR.LOCKED, 'told somebody else got there first')
+        eq(Env.players[1].PlayerData.money.bank, 10000, 'the creator was charged')
+    end)
+
+    it('does not refund a write that landed before the error', function()
+        -- A connection that drops after the commit: refunded blind, the
+        -- creator was paid back and the stored lines returned to them again.
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 10000
+        local real = s.storage.writeEscrow
+        s.storage.writeEscrow = function(...)
+            real(...)
+            error('connection lost', 0)
+        end
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { bank = 5000 } } })
+        s.storage.writeEscrow = real
+        truthy(c, 'the stored escrow was thrown away')
+        eq(Env.players[1].PlayerData.money.bank, 5000, 'charged once, and not refunded')
+        eq(#s.storage.readEscrow(c.id), 1)
+    end)
+
+    it('does not leave a claim holding the contract', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 10000
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CB.MODE.COMPETITIVE, reward = { baseline = { bank = 5000 } } })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local hunterBefore = Env.players[3].PlayerData.money.bank
+        local real = s.storage.writeEscrow
+        local raised = false
+        s.storage.writeEscrow = function(...)
+            if not raised then raised = true; error('lost connection', 0) end
+            return real(...)
+        end
+        local ok, err = pcall(s.contracts.claimSlot, c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.storage.writeEscrow = real
+        truthy(raised, 'the marks were written')
+        truthy(ok, 'the claim threw: ' .. tostring(err))
+        falsy(s.storage.readContract(c.id).state == CB.STATE.COMPLETING, 'the contract is stuck')
+        eq(Env.players[3].PlayerData.money.bank - hunterBefore, 5000, 'and the hunter was paid')
+    end)
+end)
+
 describe('a claim that stalls between the lines of its marks', function()
     --- On mysql the marks went out one statement a line. A top-up reading
     --- between two of them saw its baseline owed to the hunter and its bonus

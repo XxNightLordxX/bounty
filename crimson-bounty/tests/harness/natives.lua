@@ -14,7 +14,10 @@ function Natives.install()
     _G.os_time_real = os.time
     _G.CreateThread = function(fn) table.insert(Env.threads, fn) end
     _G.SetTimeout = function(ms, fn)
-        table.insert(Env.timers, { at = Env.gameTimer + ms, fn = fn })
+        -- Numbered as set, so timers due together run in the order they
+        -- were set, as the engine runs them.
+        Env.timerSeq = (Env.timerSeq or 0) + 1
+        table.insert(Env.timers, { at = Env.gameTimer + ms, fn = fn, seq = Env.timerSeq })
     end
     _G.Wait = function() end
     _G.GetCurrentResourceName = function() return 'crimson-bounty' end
@@ -103,6 +106,13 @@ function Natives.install()
     _G.GetEntityHealth = function(ped)
         local p = Env.players[ped - 1000]
         return p and p._health or 0
+    end
+    -- Who the victim's game says last damaged them. nil — this server cannot
+    -- say — unless a test names somebody, as it does where attribution
+    -- between shooters is the point.
+    _G.GetPedSourceOfDamage = function(ped)
+        local p = Env.players[ped - 1000]
+        return p and p._damageSource or nil
     end
     _G.GetPedSourceOfDeath = function(ped)
         local p = Env.players[ped - 1000]

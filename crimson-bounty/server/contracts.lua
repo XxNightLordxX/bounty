@@ -1619,7 +1619,17 @@ function Contracts.claimSlot(contractId, hunterCid, fulfilment, opts)
             end
         end
     end
-    if #marks > 0 then Storage.writeEscrow(contractId, marks) end
+    -- The marks guard a crash between the two releases below, and nothing
+    -- else: a write that fails leaves the releases to go ahead as they did
+    -- before marks existed. One that raised left the contract held by a
+    -- claim until the next restart.
+    if #marks > 0 then
+        local wrote, ok = pcall(Storage.writeEscrow, contractId, marks)
+        if not wrote or not ok then
+            Audit.rejected('claim_marks_not_written', hunterCid, contractId,
+                { error = not wrote and tostring(ok) or nil })
+        end
+    end
 
     -- A kidnapping releases the slot's baseline and its bonus; an elimination
     -- releases the baseline only, and the bonus returns to the creator.
