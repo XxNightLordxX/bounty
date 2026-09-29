@@ -516,6 +516,28 @@ local function nowMs() return CrimsonUtil.monotonicMs() end
 local KILLER_FRESH_MS = 3000
 local engineDeathAt, engineKiller
 
+-- Who the game said killed this player, the moment it did: the damage event
+-- sc-ambulance itself moves a player from last stand to dead on. A body in a
+-- car or on a stretcher is raised in the same frame it dies, so a watcher
+-- looking once a second never saw the engine death and named nobody; the
+-- server then had no word from the victim to credit the finishing shot with.
+-- A bleed-out raises no such event, and so names nobody.
+local lethalBy, lethalByAt
+
+AddEventHandler('gameEventTriggered', function(name, data)
+    if name ~= 'CEventNetworkEntityDamage' or type(data) ~= 'table' then return end
+    local ped = PlayerPedId()
+    if data[1] ~= ped then return end
+    local died = data[4]
+    if not died or died == 0 then return end
+    lethalBy, lethalByAt = nil, nowMs()
+    local attacker = data[2]
+    if attacker and attacker ~= 0 and attacker ~= ped and IsPedAPlayer(attacker) then
+        local index = NetworkGetPlayerIndexFromPed(attacker)
+        if index and index ~= -1 then lethalBy = GetPlayerServerId(index) end
+    end
+end)
+
 -- How many ticks in a row a player has to be up before it counts as a
 -- revive. A defibrillator takes them from dead to last stand, and
 -- sc-ambulance clears isdead a second or more before it writes inlaststand:
@@ -586,7 +608,9 @@ CreateThread(function()
             -- their killer, and the server corroborates it either way,
             -- against a damage log with a window of its own.
             local killer
-            if engineDead then
+            if lethalByAt and nowMs() - lethalByAt <= KILLER_FRESH_MS then
+                killer = lethalBy
+            elseif engineDead then
                 killer = killerOf(ped)
             elseif engineDeathAt and nowMs() - engineDeathAt <= KILLER_FRESH_MS then
                 killer = engineKiller

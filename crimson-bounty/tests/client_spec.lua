@@ -1568,6 +1568,40 @@ describe('reporting your own death', function()
         eq(reported('iRevived'), 0)
     end)
 
+    it('names the finisher of a body raised in the same frame', function()
+        -- In a car or on a stretcher sc-ambulance raises a dead player at
+        -- once: the engine death lasts a frame and the watcher never sees
+        -- it. The game's own damage event does.
+        watching()
+        local meta = underMedical()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+        meta.inlaststand = true
+        Client.ticks(1)
+        local fire = Client.handlers['gameEventTriggered']
+        truthy(fire, 'nothing listens for the game\'s damage event')
+        fire('CEventNetworkEntityDamage', { 1003, 1004, 0, 1 })
+        meta.inlaststand, meta.isdead = false, true
+        Client.ticks(1)
+        local count, said = reported('iDied')
+        eq(count, 1)
+        eq(said[1], 4, 'the finisher went unnamed')
+    end)
+
+    it('names nobody for a bleed-out', function()
+        watching()
+        local meta = underMedical()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+        -- Downed by them, long ago.
+        Client.handlers['gameEventTriggered']('CEventNetworkEntityDamage', { 1003, 1004, 0, 1 })
+        meta.inlaststand = true
+        Client.ticks(1)
+        Env.gameTimer = Env.gameTimer + 400000
+        meta.inlaststand, meta.isdead = false, true
+        Client.ticks(1)
+        local _, said = reported('iDied')
+        eq(said[1], nil, 'a bleed-out was credited to whoever downed them')
+    end)
+
     it('does not report a flicker of the death flag as a second death', function()
         watching()
         local meta = underMedical()

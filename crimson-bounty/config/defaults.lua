@@ -358,10 +358,11 @@ ConfigDefaults.Completion = {
     --- one already showing since the last sample, or one that appears in the
     --- second after it (the damage reaches the server after the event). The
     --- target's own game says who last damaged them, and a drop it puts down
-    --- to somebody else, or to nobody — a fall, a blast — goes to no hit.
-    --- Where the server cannot read that, a slow sampler lets a hunter who
-    --- lands one shot inherit whatever else happened to the target in
-    --- between. Bounded by the number of live contracts.
+    --- to somebody else — an NPC, a player with no hit waiting — goes to no
+    --- hit. Where it says nothing (sc-ambulance clears it within a tenth of a
+    --- second), a slow sampler lets a hunter who lands one shot inherit
+    --- whatever else happened to the target in between — a fall, a blast.
+    --- Bounded by the number of live contracts.
     ConditionSampleMs = 1000,
     MaxWeaponRange      = 250.0,
     PhotoRadius         = 5.0,

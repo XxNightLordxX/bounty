@@ -172,9 +172,27 @@ end
 -- Clock control
 --------------------------------------------------------------------------
 
+--- Move both clocks on, firing each timer at its own moment on the way: a
+--- timer that sets another sees the clock as it was when it fired, and the
+--- one it sets fires in this advance too if it falls due inside it. Jumping
+--- to the end first ran a chain of timers one link at a time.
 function Env.advance(seconds)
     Env.time = Env.time + seconds
-    Env.gameTimer = Env.gameTimer + (seconds * 1000)
+    local target = Env.gameTimer + (seconds * 1000)
+    while true do
+        local soonest
+        for i = 1, #Env.timers do
+            local t = Env.timers[i]
+            if t.at <= target and (not soonest or t.at < soonest.at
+                or (t.at == soonest.at and (t.seq or 0) < (soonest.seq or 0))) then
+                soonest = t
+            end
+        end
+        if not soonest then break end
+        if soonest.at > Env.gameTimer then Env.gameTimer = soonest.at end
+        Env.runTimers()
+    end
+    Env.gameTimer = target
     Env.runTimers()
 end
 

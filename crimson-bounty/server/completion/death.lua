@@ -102,6 +102,14 @@ local credited = {}
 --- is never credited twice.
 local lethalAt = {}
 
+--- [cid] = hits that landed on them while they were down and whose damage
+--- never showed, kept a few seconds in case the victim's own report names
+--- the shooter as their killer (see Death.attributeDeath).
+local downHits = {}
+
+--- [cid] = true while a check of their waiting hits is scheduled.
+local polling = {}
+
 --- [cid] = a death report waiting on its hits to be checked, so a victim
 --- who leaves meanwhile is attributed with what is known rather than not
 --- at all.
@@ -150,7 +158,7 @@ function Death.init(deps)
     damage, pending, hitBy = {}, {}, {}
     upSince, reviveClaims, lastHitAt = {}, {}, {}
     defibAt, lastUp, inflight, credited = {}, {}, {}, {}
-    lethalAt, deferred = {}, {}
+    lethalAt, deferred, downHits, polling = {}, {}, {}, {}
 end
 
 --------------------------------------------------------------------------
@@ -180,9 +188,21 @@ end
 --- Health and armour as one figure: a shot into a vest costs no health.
 local function total(c) return (c.health or 0) + (c.armour or 0) end
 
---- How long after a hit its damage is looked for, and when.
+--- How long after a hit its damage is looked for, and how often. Often:
+--- sc-ambulance clears the record of who last damaged its player within a
+--- tenth of a second of every hit, and that record is what says whose a
+--- drop is.
 Death.HIT_WINDOW_MS = 1000
-local HIT_CHECKS_MS = { 150, 300, 500, 750, 1000 }
+Death.HIT_POLL_MS = 50
+
+--- How many of one attacker's hits may wait on one victim. A client can send
+--- damage events as fast as it likes, and each waiting hit is looked at on
+--- every check.
+Death.MAX_WAITING_PER_ATTACKER = 24
+
+--- How long a hit on somebody down, whose damage never showed, is kept for
+--- their death report.
+Death.DOWN_HIT_KEEP_MS = 10000
 
 --- Put a corroborated hit on the record.
 local function credit(cid, hit, lost, reading)
@@ -226,13 +246,15 @@ local function credit(cid, hit, lost, reading)
     Death.prune(cid)
 end
 
---- Who the victim's own game says last damaged them, as the ped that did
---- it: 0 for nobody, nil where this server cannot say. It is synced with the
---- health it explains, from the victim's side, so a shooter cannot write it.
+--- Who the victim's own game says last damaged them, as the entity that
+--- did it; nil where this server cannot say. Synced with the health it
+--- explains, from the victim's side, so a shooter cannot write it. 0 is
+--- "cannot say" too: sc-ambulance clears it within a tenth of a second of
+--- every hit, so 0 is what it reads nearly all the time, whoever fired.
 local function damageSource(victimSource)
     if type(GetPedSourceOfDamage) ~= 'function' then return nil end
     local ok, src = pcall(function() return GetPedSourceOfDamage(GetPlayerPed(victimSource)) end)
-    if not ok then return nil end
+    if not ok or src == 0 then return nil end
     return src
 end
 
@@ -241,9 +263,19 @@ local function pedOf(source)
     return ok and ped or nil
 end
 
+--- Whether the entity the victim's game names is this attacker: their ped,
+--- or the vehicle they are in.
+local function isAttacker(hit, src)
+    local ped = pedOf(hit.attackerSource)
+    if not ped or ped == 0 then return false end
+    if ped == src then return true end
+    local ok, vehicle = pcall(GetVehiclePedIsIn, ped, false)
+    return ok and vehicle ~= nil and vehicle ~= 0 and vehicle == src
+end
+
 --- Which of the waiting hits a drop belongs to: the oldest by the attacker
 --- the victim's game names, or the oldest of all where it cannot say. nil:
---- none of them.
+--- it names somebody none of them is — an NPC, another player.
 ---
 --- Oldest-first alone gave a drop to whichever hit was at the head of the
 --- queue, whether it had done damage or not: a round into the target's car,
@@ -251,9 +283,8 @@ end
 --- shot took that shot's damage, and the kill with it.
 local function ownerOf(list, candidates, src)
     if src == nil then return candidates[1] end
-    if src == 0 then return nil end
     for _, i in ipairs(candidates) do
-        if pedOf(list[i].attackerSource) == src then return i end
+        if isAttacker(list[i], src) then return i end
     end
     return nil
 end
@@ -268,7 +299,6 @@ local function checkHits(cid)
     local now = Util.monotonicMs()
     local victimSource = list[1].source
     local reading = total(readCondition(victimSource))
-    local src = damageSource(victimSource)
 
     -- A drop some waiting hit has not had yet.
     local candidates = {}
@@ -278,41 +308,32 @@ local function checkHits(cid)
         end
     end
     if candidates[1] then
-        local i = ownerOf(list, candidates, src)
+        local i = ownerOf(list, candidates, damageSource(victimSource))
         if i then
             local hit = table.remove(list, i)
             credit(cid, hit, math.min(hit.base, credited[cid] or math.huge) - reading, reading)
         else
-            -- Damage the victim's game puts down to nobody waiting: a fall,
-            -- a blast, a player whose hit was never reported. Nobody's, and
-            -- no hit still waiting takes it.
+            -- Damage the victim's game puts down to somebody none of the
+            -- waiting hits is. Theirs, and no hit still waiting takes it.
             credited[cid] = reading
             if reading <= 100 then lethalAt[cid] = now end
             Audit.rejected('damage_unattributed', nil, nil, { victim = cid })
         end
     end
 
-    -- Hits whose damage never showed.
-    local i = 1
-    while list[i] do
-        local hit = list[i]
-        if now - hit.at < Death.HIT_WINDOW_MS then
-            i = i + 1
-        else
-            table.remove(list, i)
-            -- Finished in last stand and raised at once, where the body lay
-            -- still — in a car, on a stretcher: sc-ambulance puts a dead
-            -- player back at full health in the same frame, and the lethal
-            -- reading never reaches the server. Dead now, and down but not
-            -- dead when it landed, this hit is what killed them — unless the
-            -- victim's game names somebody else.
-            if hit.down and (lethalAt[cid] or -math.huge) < hit.at
-                and Identity.isTrulyDead(hit.source)
-                and (src == nil or src == 0 or pedOf(hit.attackerSource) == src) then
-                credit(cid, hit, math.max(1, math.min(hit.base, credited[cid] or math.huge)), 0)
-            else
-                Audit.rejected('damage_unsupported', hit.attackerCid, nil, { victim = cid })
-            end
+    -- Hits whose damage never showed. They are in the order they came, so
+    -- the ones past their window are at the front.
+    while list[1] and now - list[1].at >= Death.HIT_WINDOW_MS do
+        local hit = table.remove(list, 1)
+        Audit.rejected('damage_unsupported', hit.attackerCid, nil, { victim = cid })
+        -- Landed on somebody down who is dead now: it may be the shot that
+        -- finished them, on a body sc-ambulance raised at full health in the
+        -- same frame — in a car, on a stretcher — so the lethal reading never
+        -- reached the server. A bleed-out reads exactly the same from here,
+        -- so it is kept for the victim's own report to say which.
+        if hit.down and (lethalAt[cid] or -math.huge) < hit.at then
+            downHits[cid] = downHits[cid] or {}
+            table.insert(downHits[cid], hit)
         end
     end
 
@@ -320,6 +341,26 @@ local function checkHits(cid)
         inflight[cid] = nil
         lastUp[cid] = nil
     end
+end
+
+--- Check a victim's waiting hits until none are left.
+local function poll(cid)
+    if polling[cid] then return end
+    polling[cid] = true
+    local function tick()
+        polling[cid] = nil
+        local ok, err = pcall(checkHits, cid)
+        if not ok then
+            inflight[cid] = nil
+            Audit.rejected('error_checkHits', nil, nil, { victim = cid, error = tostring(err) })
+            return
+        end
+        if inflight[cid] then
+            polling[cid] = true
+            SetTimeout(Death.HIT_POLL_MS, tick)
+        end
+    end
+    SetTimeout(Death.HIT_POLL_MS, tick)
 end
 
 --- Record a damage event.
@@ -388,6 +429,15 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
     local now = total(current)
     if credited[victim.cid] and now > credited[victim.cid] then credited[victim.cid] = now end
 
+    -- Every event is a reading: a drop that landed before it is settled now,
+    -- while the victim's game still names who did it, and before this hit
+    -- could be mistaken for it.
+    if inflight[victim.cid] then
+        checkHits(victim.cid)
+        now = total(readCondition(victimSource))
+        if credited[victim.cid] and now > credited[victim.cid] then credited[victim.cid] = now end
+    end
+
     -- Already showing: the damage reached the server before the event did,
     -- as a burst's later rounds find the earlier ones'. Taken now, unless
     -- earlier hits are still waiting on theirs — and only if the victim's
@@ -396,7 +446,7 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
     local floor = math.min(total(previous), credited[victim.cid] or math.huge)
     if not inflight[victim.cid] and now < floor then
         local src = damageSource(victimSource)
-        if src == nil or src == pedOf(attackerSource) then
+        if src == nil or isAttacker(hit, src) then
             credit(victim.cid, hit, floor - now, now)
             return
         end
@@ -405,12 +455,27 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
     end
 
     hit.base = math.min(now, credited[victim.cid] or math.huge)
-    inflight[victim.cid] = inflight[victim.cid] or {}
-    table.insert(inflight[victim.cid], hit)
-    local cid = victim.cid
-    for _, ms in ipairs(HIT_CHECKS_MS) do
-        SetTimeout(ms, function() checkHits(cid) end)
+    local list = inflight[victim.cid] or {}
+    inflight[victim.cid] = list
+
+    -- One attacker's flood: the oldest of theirs gives way. The newest is kept,
+    -- as it carries the victim's state now.
+    local mine, oldest = 0, nil
+    for i = 1, #list do
+        if list[i].attackerCid == attacker.cid then
+            mine = mine + 1
+            oldest = oldest or i
+        end
     end
+    if mine >= Death.MAX_WAITING_PER_ATTACKER and oldest then
+        table.remove(list, oldest)
+        if mine == Death.MAX_WAITING_PER_ATTACKER then
+            Audit.rejected('flood_damage', attacker.cid, nil, { victim = victim.cid })
+        end
+    end
+
+    table.insert(list, hit)
+    poll(victim.cid)
 end
 
 function Death.prune(victimCid)
@@ -804,6 +869,29 @@ function Death.onVictimReport(victimSource, killerServerId)
     return Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoords)
 end
 
+--- The kept hit on a downed victim by this attacker, credited as the one
+--- that killed them. Only on the victim's own word (see checkHits).
+---@return table|nil record the damage record it made
+function Death.takeDownHit(victimCid, attackerCid)
+    local list = downHits[victimCid]
+    if not list then return nil end
+    local now = Util.monotonicMs()
+    local found
+    for i = #list, 1, -1 do
+        local hit = list[i]
+        if now - hit.at > Death.DOWN_HIT_KEEP_MS then
+            table.remove(list, i)
+        elseif not found and hit.attackerCid == attackerCid
+            and (lethalAt[victimCid] or -math.huge) < hit.at then
+            found = table.remove(list, i)
+        end
+    end
+    if not list[1] then downHits[victimCid] = nil end
+    if not found then return nil end
+    credit(victimCid, found, math.max(1, math.min(found.base, credited[victimCid] or math.huge)), 0)
+    return Death.recordFor(victimCid, attackerCid)
+end
+
 --- Open a pending kill on every live contract naming this victim, for the
 --- hunter the death is credited to.
 ---@return integer opened
@@ -830,6 +918,13 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
                 -- server never saw touch the target — the victim's client
                 -- is the one naming them, and it is a client.
                 hit = Death.recordFor(victim.cid, named)
+
+                -- No damage of theirs showed, but the victim's own game says
+                -- they are the one who killed them, and a hit of theirs landed
+                -- while the victim was down: the shot that finished them, on a
+                -- body raised in the same frame. A bleed-out names nobody, so
+                -- it is never taken for one.
+                if not hit then hit = Death.takeDownHit(victim.cid, named) end
 
                 if not hit and not Config.Completion.RequireObservedDamage then
                     hit = {
@@ -1003,6 +1098,7 @@ function Death.onRevived(cid, since)
     upSince[cid] = nil
     lastUp[cid] = nil
     defibAt[cid] = nil
+    downHits[cid] = nil
 
     -- A revive ends the fight. Damage recorded before it must not
     -- corroborate a death that happens afterwards, or a hunter who shot
@@ -1117,6 +1213,8 @@ function Death.clearPlayer(cid)
     inflight[cid] = nil
     credited[cid] = nil
     lethalAt[cid] = nil
+    downHits[cid] = nil
+    polling[cid] = nil
     for key, record in pairs(pending) do
         if record.hunterCid == cid then pending[key] = nil end
     end

@@ -814,6 +814,24 @@ describe('an escrow write that raises', function()
         eq(#s.storage.readEscrow(c.id), 1)
     end)
 
+    it('does not refund a transaction that landed but answered false', function()
+        -- oxmysql's transaction answers false for a commit whose
+        -- acknowledgement was lost, where a single statement raises.
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 20000
+        local real = s.storage.writeEscrow
+        s.storage.writeEscrow = function(...)
+            real(...)
+            return false
+        end
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { slots = { { baseline = { bank = 5000 } }, { baseline = { bank = 5000 } } } } })
+        s.storage.writeEscrow = real
+        truthy(c, 'the stored escrow was thrown away')
+        eq(Env.players[1].PlayerData.money.bank, 10000, 'charged once, and not refunded')
+    end)
+
     it('does not leave a claim holding the contract', function()
         local s = newStack()
         local f = fixture(s)

@@ -487,15 +487,80 @@ describe('damage observation is actually wired', function()
         falsy(s.death.recordFor('TARGET01', 'HUNTER02'), 'the forger was credited')
     end)
 
-    it('gives a drop the victim\'s game puts down to nobody to nobody', function()
-        -- A queued hit that never landed took a fall's damage.
+    it('gives a drop the victim\'s game puts down to somebody else to nobody', function()
+        -- A queued hit that never landed took an NPC's damage.
         local s = wiredStack()
         local f, c = placed(s)
         shoot(3)
         Env.players[2]._health = 120
-        Env.players[2]._damageSource = 0
+        Env.players[2]._damageSource = 1099    -- not a hunter: an NPC
         Env.advance(2)
-        falsy(s.death.recordFor('TARGET01', 'HUNTER01'), 'credited with a fall')
+        falsy(s.death.recordFor('TARGET01', 'HUNTER01'), 'credited with somebody else\'s damage')
+    end)
+
+    it('credits a hit whose source sc-ambulance has already cleared', function()
+        -- sc-ambulance clears the record of who damaged its player within a
+        -- tenth of a second of every hit: nearly every check reads 0, and 0
+        -- read as nobody wrote every real hit off.
+        local s = wiredStack()
+        local f, c = placed(s)
+        shoot(3)
+        Env.advance(0.055)
+        Env.players[2]._health = 150
+        Env.players[2]._damageSource = 1003
+        Env.advance(0.01)
+        Env.players[2]._damageSource = 0       -- cleared before the server looked
+        Env.advance(2)
+        truthy(s.death.recordFor('TARGET01', 'HUNTER01'), 'an honest hit was written off')
+    end)
+
+    it('credits a shooter the victim\'s game names by the car they fire from', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        Env.players[3]._vehicle = 5003
+        shoot(3)
+        Env.players[2]._health = 150
+        Env.players[2]._damageSource = 5003
+        Env.advance(2)
+        truthy(s.death.recordFor('TARGET01', 'HUNTER01'), 'a drive-by was written off')
+    end)
+
+    it('settles a drop at the next event, while its shooter is still named', function()
+        -- Hunter one's round lands before hunter two fires; hunter two's
+        -- then lands. The first drop went to nobody, or to hunter two.
+        local s = wiredStack()
+        local f, c = placed(s)
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
+            coords = { x = 52.0, y = 50.0, z = 30.0 } })
+        s.contracts.accept(s.identity.resolve(4), c.id, false)
+        shoot(3)
+        Env.advance(0.02)
+        Env.players[2]._health = 170
+        Env.players[2]._damageSource = 1003
+        shoot(4)                               -- settles hunter one's drop first
+        Env.advance(0.02)
+        Env.players[2]._health = 150
+        Env.players[2]._damageSource = 1004
+        Env.advance(2)
+        local one = s.death.recordFor('TARGET01', 'HUNTER01')
+        local two = s.death.recordFor('TARGET01', 'HUNTER02')
+        truthy(one and one.damage == 30, 'hunter one\'s damage went elsewhere')
+        truthy(two and two.damage == 20, 'hunter two lost their own')
+    end)
+
+    it('keeps no more than a few of one attacker\'s hits waiting', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        for _ = 1, 60 do shoot(3) end
+        s.audit.flush()
+        local flooded = false
+        for _, row in ipairs(s.storage.readAudit(400) or {}) do
+            if row.action == 'flood_damage' then flooded = true end
+        end
+        truthy(flooded, 'a flood of events queued without bound')
+        Env.players[2]._health = 150
+        Env.advance(2)
+        truthy(s.death.recordFor('TARGET01', 'HUNTER01'), 'and the real hit in it was lost')
     end)
 
     it('does not count a round into the target\'s car as a hit on them', function()
@@ -527,9 +592,28 @@ describe('damage observation is actually wired', function()
         shoot(3)
         meta.inlaststand, meta.isdead = false, true
         Env.players[2]._health = 200           -- raised, dead, at full health
-        s.death.onVictimReport(2)
+        s.death.onVictimReport(2, 3)           -- the victim's game names the finisher
         Env.advance(2)
         truthy(s.death.getPending(c.id, 'HUNTER01'), 'the finishing shot opened no kill')
+    end)
+
+    it('does not pay a hit that did nothing when a downed target bleeds out', function()
+        -- A bleed-out reads on the server exactly like a body raised at once.
+        -- The victim's game names nobody for it, and nobody is paid.
+        local s = wiredStack()
+        local f, c = placed(s)
+        local meta = Env.players[2].PlayerData.metadata
+        Env.players[2]._health = 150
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(40)
+        shoot(3)                               -- no round behind it
+        Env.advance(0.5)
+        meta.inlaststand, meta.isdead = false, true
+        Env.players[2]._health = 200
+        s.death.onVictimReport(2)              -- bled out: no killer
+        Env.advance(2)
+        falsy(s.death.getPending(c.id, 'HUNTER01'), 'paid for a bleed-out')
     end)
 
     it('attributes the death of a victim who leaves before it is checked', function()
@@ -585,11 +669,11 @@ describe('damage observation is actually wired', function()
     it('does not hand a hit a drop already showing that somebody else caused', function()
         local s = wiredStack()
         local f, c = placed(s)
-        Env.players[2]._health = 150           -- a fall, just before the event
-        Env.players[2]._damageSource = 0
+        Env.players[2]._health = 150           -- an NPC's round, just before the event
+        Env.players[2]._damageSource = 1099
         shoot(3)                               -- a round that never lands
         Env.advance(2)
-        falsy(s.death.recordFor('TARGET01', 'HUNTER01'), 'credited with the fall')
+        falsy(s.death.recordFor('TARGET01', 'HUNTER01'), 'credited with the NPC\'s damage')
     end)
 
     it('gives a body raised at once to the finisher the victim\'s game names', function()
@@ -603,12 +687,11 @@ describe('damage observation is actually wired', function()
         meta.inlaststand = true
         s.death.watchTargets(s.storage.allContracts())
         Env.advance(40)
-        shoot(3)                               -- misses the body
         shoot(4)                               -- the finishing round
+        shoot(3)                               -- misses the body
         meta.inlaststand, meta.isdead = false, true
         Env.players[2]._health = 200
-        Env.players[2]._damageSource = 1004    -- hunter two's ped
-        s.death.onVictimReport(2)
+        s.death.onVictimReport(2, 4)           -- the victim's game names hunter two
         Env.advance(2)
         truthy(s.death.getPending(c.id, 'HUNTER02'), 'the finisher opened no kill')
         falsy(s.death.getPending(c.id, 'HUNTER01'), 'the first in line took it')
