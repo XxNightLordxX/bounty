@@ -157,7 +157,6 @@ function Env.reset()
     Env.commands, Env.chat, Env.aces, Env.consoleOut = {}, {}, {}, {}
     Env.handlers = {}
     Env.threads, Env.timers, Env.console = {}, {}, {}
-    Env.eventCanceled = nil
     -- qbx_core's job list, which GetJob answers from. Only the jobs a test
     -- names; a job missing here reads as one the framework does not know.
     Env.jobDefinitions = {

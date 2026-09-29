@@ -439,14 +439,6 @@ function Admin.diagnose(source, subjectId)
             say(('  %d hit(s) on downed players kept for their death reports.'):format(kept))
         end
     end
-    -- Victims' word on who hit them, kept a couple of seconds: a number that
-    -- stays high between fights is the sweep not running.
-    if Death and Death.keptReports then
-        local kept = Death.keptReports()
-        if kept > 0 then
-            say(('  %d report(s) of who hit whom kept.'):format(kept))
-        end
-    end
 
     -- Contracts the store could not load. They are not on the board and
     -- their escrow cannot be returned automatically, so they belong at the

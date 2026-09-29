@@ -2942,32 +2942,6 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         truthy(s.death.sinceRespawn('TARGET01'), 'the revive went unrecorded')
     end)
 
-    it('counts a revive cut short by a drop nobody can be credited with', function()
-        -- Two hunters' hits wait on the one drop that put them down, and
-        -- nothing says whose landed: nobody is paid for it, and it ended
-        -- their time up all the same.
-        local s, f, c, meta = downed()
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
-            cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
-        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
-        Env.players[4]._coords = { x = 102.0, y = 100.0, z = 30.0 }
-        meta.isdead = false
-        Env.players[2]._health = 200
-        s.death.watchTargets(s.storage.allContracts())
-        Env.advance(1)
-        s.death.watchTargets(s.storage.allContracts())
-        Env.advance(0.5)
-        s.death.recordDamage(3, 2, 123456)
-        s.death.recordDamage(4, 2, 123456)
-        Env.players[2]._health = 150
-        meta.inlaststand = true
-        s.death.watchTargets(s.storage.allContracts())
-        Env.advance(0.5)
-        falsy(s.death.recordFor('TARGET01', 'HUNTER02'), 'the drop was guessed at')
-        falsy(s.death.getPending(c.id, 'HUNTER01'), 'the kill the revive undid still pays')
-        truthy(s.death.sinceRespawn('TARGET01'), 'the revive went unrecorded')
-    end)
-
     it('does not read a defibrillator\'s gap as a death where they stood', function()
         -- A medical resource that leaves the ped dead through the gap.
         local s, f, c, meta = downed()

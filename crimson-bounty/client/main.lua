@@ -488,27 +488,17 @@ end
 -- state cannot be read, the engine is all there is.
 local reportedDead, wasDown, wasEngineDead = false, false, false
 
---- The server id of the player behind an entity the engine names: the ped
---- itself, or whoever is driving the car it is. nil for nobody who is a
---- player — the world, an NPC, an empty car, or this player themselves —
---- and for the car this player is sitting in: a crash is not its driver
---- hitting them.
-local function playerBehind(entity, ped)
-    if entity and entity ~= 0 and IsEntityAVehicle(entity) then
-        if entity == GetVehiclePedIsIn(ped, false) then return nil end
-        entity = GetPedInVehicleSeat(entity, -1)
-    end
-    if entity and entity ~= 0 and entity ~= ped and IsPedAPlayer(entity) then
-        local index = NetworkGetPlayerIndexFromPed(entity)
-        if index and index ~= -1 then return GetPlayerServerId(index) end
+--- Who the engine says killed this ped, as a server id, or nil for nobody
+--- who is a player: the world, an NPC, or themselves.
+local function killerOf(ped)
+    local killer = GetPedSourceOfDeath(ped)
+    if killer and killer ~= 0 and killer ~= ped and IsPedAPlayer(killer) then
+        local killerPlayer = NetworkGetPlayerIndexFromPed(killer)
+        if killerPlayer and killerPlayer ~= -1 then
+            return GetPlayerServerId(killerPlayer)
+        end
     end
     return nil
-end
-
---- Who the engine says killed this ped, as a server id, or nil for nobody
---- who is a player.
-local function killerOf(ped)
-    return playerBehind(GetPedSourceOfDeath(ped), ped)
 end
 
 -- The wrap-safe clock shared/util.lua publishes; the manifest loads it first.
@@ -542,46 +532,18 @@ local LETHAL_FLAG = (function()
     return (build >= 2189 and 6) or (build >= 2060 and 5) or 4
 end)()
 
--- And who hit this player at all, told to the server as it happens: a
--- forged damage event never reaches this game, so the server can tell a hit
--- that landed from one that did not when two shooters' hits wait on the same
--- drop. A burst, or a shotgun's pellets, is counted into one report, at most
--- one every REPORT_BATCH_MS for each shooter, rather than any of it going
--- untold. Each carries this player's condition just after the first and the
--- last hit it counts — read here, where the damage has already been taken —
--- which is what lets the server tie it to the drop it saw.
-local REPORT_BATCH_MS = 50
-local told = {}   -- [server id] = { at, hits, first, last }
-
-local function tell(id, condition)
-    local t = told[id]
-    if not t then
-        t = { at = -math.huge, hits = 0 }
-        told[id] = t
-    end
-    t.hits = t.hits + 1
-    t.last = condition
-    if t.hits > 1 then return end            -- already on its way
-    t.first = condition
-    local function send()
-        TriggerServerEvent('crimson-bounty:hitBy', id, t.hits, t.first, t.last)
-        t.at, t.hits = nowMs(), 0
-    end
-    local wait = REPORT_BATCH_MS - (nowMs() - t.at)
-    if wait <= 0 then send() else SetTimeout(wait, send) end
-end
-
 AddEventHandler('gameEventTriggered', function(name, data)
     if name ~= 'CEventNetworkEntityDamage' or type(data) ~= 'table' then return end
     local ped = PlayerPedId()
     if data[1] ~= ped then return end
-
-    local by = playerBehind(data[2], ped)
-    if by then tell(by, GetEntityHealth(ped) + GetPedArmour(ped)) end
-
     local died = data[LETHAL_FLAG]
     if died ~= 1 and died ~= true then return end
-    lethalBy, lethalByAt = by, nowMs()
+    lethalBy, lethalByAt = nil, nowMs()
+    local attacker = data[2]
+    if attacker and attacker ~= 0 and attacker ~= ped and IsPedAPlayer(attacker) then
+        local index = NetworkGetPlayerIndexFromPed(attacker)
+        if index and index ~= -1 then lethalBy = GetPlayerServerId(index) end
+    end
 end)
 
 -- How many ticks in a row a player has to be up before it counts as a
