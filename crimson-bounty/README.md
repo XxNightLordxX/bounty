@@ -106,13 +106,17 @@ server sees the damage it did, which reaches it a moment after the shot, and
 only on the target's own body: a round into their car is not a hit on them.
 Where the target's game says who damaged them, that is who the damage goes to.
 sc-ambulance usually clears that within a tenth of a second, so the target's
-client also tells the server who hit them, and how many times, as the hits
-land. Each hit it reports settles one piece of damage. When two hunters both
-have a hit waiting on the same damage, the damage goes to the one the target
-names; if it names both, or nobody within a moment (longer on a slow
-connection), it counts for neither. A hunter firing alone is credited unless
-the target has named somebody else instead. A hit another resource (an
-anti-cheat) cancels is never counted.
+client also tells the server who hit them, how many times, and what their
+health and armour read just after, as the hits land. That reading ties each
+report to the damage the server saw, and each hit it reports settles one
+piece of that damage. When hunters have hits waiting on the same damage,
+the server waits a moment, longer on a slow connection, for the target's word
+on every one of them: the damage goes to the one hunter the target names; if
+it names two, or nobody, it counts for neither. A player whose game runs this
+resource (every player's does, from when it starts) is held to that word even
+when only one hunter is shooting, so damage the target never reports, such as
+a fall, an NPC or a last-stand bleed, is nobody's. A hit another resource
+(an anti-cheat) cancels is never counted.
 The defibrillator is heard from sc-ambulance's own event, from an on-duty
 medic of `Config.Completion.MedicJobs` holding `DefibItem` within `DefibRange`
 of the patient. Match them to sc-ambulance's `Config.Defib`: `MedicJobs = false`

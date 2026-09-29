@@ -355,6 +355,9 @@ function Bridges.install(modules)
         local src = source
         if not modules.app.floodOk(src, 'whoami') then return end
         tellAccess(src)
+        -- It is running this resource's client, which tells of every hit it
+        -- takes: from now on its drops are credited on its word.
+        if modules.death and modules.death.clientReports then modules.death.clientReports(src) end
     end)
 
     -- A player who takes a barred job loses the app, and one who leaves it
@@ -394,6 +397,7 @@ function Bridges.install(modules)
         end
         connected[src] = nil
         readying[src] = nil
+        if modules.death and modules.death.forgetSource then modules.death.forgetSource(src) end
         Bridges.onPlayerDropped(modules, cid)
     end)
 

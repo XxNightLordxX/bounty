@@ -1617,11 +1617,13 @@ describe('reporting your own death', function()
             { 1003, by, 1109393408, 0, 0, died and 1 or 0, 453432689, 0, 0, 0, 0, 0, 0 })
     end
 
-    --- What the client told the server, as { id, hits }.
+    --- What the client told the server, as { id, hits, first, last }.
     local function reportsTold()
         local out = {}
         for _, call in ipairs(Client.toServer) do
-            if call.name == 'crimson-bounty:hitBy' then out[#out + 1] = { call.args[1], call.args[2] } end
+            if call.name == 'crimson-bounty:hitBy' then
+                out[#out + 1] = { call.args[1], call.args[2], call.args[3], call.args[4] }
+            end
         end
         return out
     end
@@ -1630,18 +1632,29 @@ describe('reporting your own death', function()
         watching()
         Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
         Env.addPlayer({ source = 5, citizenid = 'KILLER02', license = 'license:k2' })
+        local me = Env.players[3]
+        me._health, me._armour = 180, 20
         hit(1004)                          -- told at once
+        me._health = 160
         hit(1004)
+        me._armour = 0
         hit(1004)                          -- the rest of the burst, held
+        me._health = 150
         hit(1005)                          -- somebody else, told at once
+        me._health = 100                   -- after the burst: not its to tell
         local told = reportsTold()
         eq(#told, 2, 'a burst was told round by round')
         eq(told[1][1], 4); eq(told[1][2], 1)
+        eq(told[1][3], 200, 'the condition just after the first round')
+        eq(told[1][4], 200)
         eq(told[2][1], 5); eq(told[2][2], 1)
+        eq(told[2][3], 150); eq(told[2][4], 150)
         Env.advance(0.06)
         told = reportsTold()
         eq(#told, 3, 'the rest of the burst went untold')
         eq(told[3][1], 4); eq(told[3][2], 2, 'the held rounds were not all counted')
+        eq(told[3][3], 180, 'the condition after the first held round')
+        eq(told[3][4], 160, 'the condition after the last held round, not when it was sent')
         Env.advance(0.2)
         hit(1004)
         eq(#reportsTold(), 4, 'a round after a quiet spell was held')

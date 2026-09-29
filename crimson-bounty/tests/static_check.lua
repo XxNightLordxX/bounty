@@ -676,6 +676,8 @@ do
         ['Mugshot.get']                = 'the stored image, without going through a handle',
         ['Notify.clearPush']           = 'the push cooldown, so a test can send twice',
         ['Photo.tokenCount']           = 'how many photo tokens are outstanding',
+        ['Death.recordsFor']           = 'every hit credited against a victim, where '
+            .. 'recordFor shows only the latest of one attacker\'s',
         ['Audit.pending']              = 'how many rows are queued but not yet flushed',
         ['RateLimit.count']            = 'how many buckets are held, so a test can watch them expire',
         ['Mugshot.count']              = 'how many faces are cached, so a test can watch the '

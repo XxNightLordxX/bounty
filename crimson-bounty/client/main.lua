@@ -545,23 +545,26 @@ end)()
 -- And who hit this player at all, told to the server as it happens: a
 -- forged damage event never reaches this game, so the server can tell a hit
 -- that landed from one that did not when two shooters' hits wait on the same
--- drop. Each report says how many hits it stands for, since the server
--- spends one on each drop it settles: a burst, or a shotgun's pellets, is
--- counted into one report, at most one every REPORT_BATCH_MS for each
--- shooter, rather than any of it going untold.
+-- drop. A burst, or a shotgun's pellets, is counted into one report, at most
+-- one every REPORT_BATCH_MS for each shooter, rather than any of it going
+-- untold. Each carries this player's condition just after the first and the
+-- last hit it counts — read here, where the damage has already been taken —
+-- which is what lets the server tie it to the drop it saw.
 local REPORT_BATCH_MS = 50
-local told = {}   -- [server id] = { at = when last told, hits = not yet told }
+local told = {}   -- [server id] = { at, hits, first, last }
 
-local function tell(id)
+local function tell(id, condition)
     local t = told[id]
     if not t then
         t = { at = -math.huge, hits = 0 }
         told[id] = t
     end
     t.hits = t.hits + 1
+    t.last = condition
     if t.hits > 1 then return end            -- already on its way
+    t.first = condition
     local function send()
-        TriggerServerEvent('crimson-bounty:hitBy', id, t.hits)
+        TriggerServerEvent('crimson-bounty:hitBy', id, t.hits, t.first, t.last)
         t.at, t.hits = nowMs(), 0
     end
     local wait = REPORT_BATCH_MS - (nowMs() - t.at)
@@ -574,7 +577,7 @@ AddEventHandler('gameEventTriggered', function(name, data)
     if data[1] ~= ped then return end
 
     local by = playerBehind(data[2], ped)
-    if by then tell(by) end
+    if by then tell(by, GetEntityHealth(ped) + GetPedArmour(ped)) end
 
     local died = data[LETHAL_FLAG]
     if died ~= 1 and died ~= true then return end

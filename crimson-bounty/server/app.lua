@@ -943,7 +943,7 @@ function App.register()
     -- allowance the death report shares, and a victim who could not report
     -- their death paid nobody. What it can do is small — choose among
     -- attackers who already have a hit waiting — and it is kept a moment.
-    RegisterNetEvent('crimson-bounty:hitBy', function(attackerServerId, hits)
+    RegisterNetEvent('crimson-bounty:hitBy', function(attackerServerId, hits, first, last)
         local src = source
         if not App.ready then return end
         local now = Util.monotonicMs()
@@ -954,7 +954,7 @@ function App.register()
         end
         bucket.count = bucket.count + 1
         if bucket.count > HIT_REPORT_LIMIT then return end
-        local ok, err = pcall(deps.death.victimSaw, src, attackerServerId, hits)
+        local ok, err = pcall(deps.death.victimSaw, src, attackerServerId, hits, first, last)
         if not ok then deps.audit.rejected('error_hitBy', nil, nil, { error = tostring(err) }) end
     end)
 
