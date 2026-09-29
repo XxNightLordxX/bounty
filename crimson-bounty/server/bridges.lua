@@ -186,6 +186,11 @@ function Bridges.install(modules)
     end
 
     AddEventHandler('weaponDamageEvent', function(sender, data)
+        -- A hit another resource has cancelled — an anti-cheat, as a rule —
+        -- is never passed on to the victim's game, so it can land nothing.
+        -- Only those that ran before this one are seen; the victim's own word
+        -- on who hit them covers the rest.
+        if WasEventCanceled and WasEventCanceled() then return end
         Bridges.onWeaponDamage(modules, sender, data)
     end)
 

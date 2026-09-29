@@ -1617,20 +1617,45 @@ describe('reporting your own death', function()
             { 1003, by, 1109393408, 0, 0, died and 1 or 0, 453432689, 0, 0, 0, 0, 0, 0 })
     end
 
-    it('tells the server who hit this player, once a tenth of a second for each', function()
+    --- What the client told the server, as { id, hits }.
+    local function reportsTold()
+        local out = {}
+        for _, call in ipairs(Client.toServer) do
+            if call.name == 'crimson-bounty:hitBy' then out[#out + 1] = { call.args[1], call.args[2] } end
+        end
+        return out
+    end
+
+    it('tells the server who hit this player, counting a burst into one report', function()
         watching()
         Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
         Env.addPlayer({ source = 5, citizenid = 'KILLER02', license = 'license:k2' })
+        hit(1004)                          -- told at once
         hit(1004)
-        hit(1004)                          -- the same burst
-        hit(1005)                          -- somebody else, at once
-        Env.gameTimer = Env.gameTimer + 100
+        hit(1004)                          -- the rest of the burst, held
+        hit(1005)                          -- somebody else, told at once
+        local told = reportsTold()
+        eq(#told, 2, 'a burst was told round by round')
+        eq(told[1][1], 4); eq(told[1][2], 1)
+        eq(told[2][1], 5); eq(told[2][2], 1)
+        Env.advance(0.06)
+        told = reportsTold()
+        eq(#told, 3, 'the rest of the burst went untold')
+        eq(told[3][1], 4); eq(told[3][2], 2, 'the held rounds were not all counted')
+        Env.advance(0.2)
         hit(1004)
-        local ids = hitsTold()
-        eq(#ids, 3, 'every round of a burst was told, or a shooter went untold')
-        eq(ids[1], 4)
-        eq(ids[2], 5)
-        eq(ids[3], 4)
+        eq(#reportsTold(), 4, 'a round after a quiet spell was held')
+    end)
+
+    it('names nobody for the car this player is sitting in', function()
+        -- A passenger in a crash: the car is the damage's entity, and its
+        -- driver did not hit them.
+        watching()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+        Env.players[4]._vehicle, Env.players[4]._seat = 7004, -1
+        Env.players[3]._vehicle, Env.players[3]._seat = 7004, 0
+        hit(7004, true)
+        eq(#hitsTold(), 0, 'the driver was told as hitting their passenger')
     end)
 
     it('tells the server of nobody who is not a player, or of this player', function()

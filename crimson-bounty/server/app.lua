@@ -83,7 +83,9 @@ local ratelimitLogged = {}
 --- [source] = { since, count }: the victim's reports of who hit them, on a
 --- budget of their own (see crimson-bounty:hitBy).
 local hitReports = {}
-local HIT_REPORT_LIMIT = 30
+-- The client tells of each attacker at most every 50 ms, counting the hits
+-- between: three attackers at full rate, with room to spare.
+local HIT_REPORT_LIMIT = 60
 
 local function shouldLogRatelimit(cid, name)
     local key = tostring(cid) .. ':' .. tostring(name)
@@ -941,7 +943,7 @@ function App.register()
     -- allowance the death report shares, and a victim who could not report
     -- their death paid nobody. What it can do is small — choose among
     -- attackers who already have a hit waiting — and it is kept a moment.
-    RegisterNetEvent('crimson-bounty:hitBy', function(attackerServerId)
+    RegisterNetEvent('crimson-bounty:hitBy', function(attackerServerId, hits)
         local src = source
         if not App.ready then return end
         local now = Util.monotonicMs()
@@ -952,7 +954,7 @@ function App.register()
         end
         bucket.count = bucket.count + 1
         if bucket.count > HIT_REPORT_LIMIT then return end
-        local ok, err = pcall(deps.death.victimSaw, src, attackerServerId)
+        local ok, err = pcall(deps.death.victimSaw, src, attackerServerId, hits)
         if not ok then deps.audit.rejected('error_hitBy', nil, nil, { error = tostring(err) }) end
     end)
 
