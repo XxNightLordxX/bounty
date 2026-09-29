@@ -488,17 +488,24 @@ end
 -- state cannot be read, the engine is all there is.
 local reportedDead, wasDown, wasEngineDead = false, false, false
 
---- Who the engine says killed this ped, as a server id, or nil for nobody
---- who is a player: the world, an NPC, or themselves.
-local function killerOf(ped)
-    local killer = GetPedSourceOfDeath(ped)
-    if killer and killer ~= 0 and killer ~= ped and IsPedAPlayer(killer) then
-        local killerPlayer = NetworkGetPlayerIndexFromPed(killer)
-        if killerPlayer and killerPlayer ~= -1 then
-            return GetPlayerServerId(killerPlayer)
-        end
+--- The server id of the player behind an entity the engine names: the ped
+--- itself, or whoever is driving the car it is. nil for nobody who is a
+--- player — the world, an NPC, an empty car, or this player themselves.
+local function playerBehind(entity, ped)
+    if entity and entity ~= 0 and IsEntityAVehicle(entity) then
+        entity = GetPedInVehicleSeat(entity, -1)
+    end
+    if entity and entity ~= 0 and entity ~= ped and IsPedAPlayer(entity) then
+        local index = NetworkGetPlayerIndexFromPed(entity)
+        if index and index ~= -1 then return GetPlayerServerId(index) end
     end
     return nil
+end
+
+--- Who the engine says killed this ped, as a server id, or nil for nobody
+--- who is a player.
+local function killerOf(ped)
+    return playerBehind(GetPedSourceOfDeath(ped), ped)
 end
 
 -- The wrap-safe clock shared/util.lua publishes; the manifest loads it first.
@@ -532,18 +539,29 @@ local LETHAL_FLAG = (function()
     return (build >= 2189 and 6) or (build >= 2060 and 5) or 4
 end)()
 
+-- And who hit this player at all, told to the server as it happens: a
+-- forged damage event never reaches this game, so the server can tell a hit
+-- that landed from one that did not when two shooters' hits wait on the same
+-- drop. At most one a tenth of a second for each shooter.
+local toldAt = {}
+
 AddEventHandler('gameEventTriggered', function(name, data)
     if name ~= 'CEventNetworkEntityDamage' or type(data) ~= 'table' then return end
     local ped = PlayerPedId()
     if data[1] ~= ped then return end
+
+    local by = playerBehind(data[2], ped)
+    if by then
+        local now = nowMs()
+        if not toldAt[by] or now - toldAt[by] >= 100 then
+            toldAt[by] = now
+            TriggerServerEvent('crimson-bounty:hitBy', by)
+        end
+    end
+
     local died = data[LETHAL_FLAG]
     if died ~= 1 and died ~= true then return end
-    lethalBy, lethalByAt = nil, nowMs()
-    local attacker = data[2]
-    if attacker and attacker ~= 0 and attacker ~= ped and IsPedAPlayer(attacker) then
-        local index = NetworkGetPlayerIndexFromPed(attacker)
-        if index and index ~= -1 then lethalBy = GetPlayerServerId(index) end
-    end
+    lethalBy, lethalByAt = by, nowMs()
 end)
 
 -- How many ticks in a row a player has to be up before it counts as a

@@ -626,6 +626,7 @@ MATRIX.requestCall = {
 local CUSTOM = {
     iDied    = 'a death report acts on its caller and on nobody else',
     iRevived = 'a death report acts on its caller and on nobody else',
+    hitBy    = 'a death report acts on its caller and on nobody else',
     -- The three registered in bridges.lua rather than app.lua. Same kind of
     -- rule and no permit/refuse cell: each acts on whoever fired it and on
     -- nobody else, and none of them answers a request.
@@ -653,6 +654,8 @@ MATRIX.iDied = { custom = true,
     why = 'only the victim own client can report their death' }
 MATRIX.iRevived = { custom = true,
     why = 'only the victim own client can report their revival' }
+MATRIX.hitBy = { custom = true,
+    why = 'only the victim own client can say who hit them, and it only chooses among hits already waiting' }
 
 MATRIX.pageError = { custom = true,
     why = 'a fault report is about the caller own page and names no contract' }

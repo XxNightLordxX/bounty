@@ -1603,6 +1603,68 @@ describe('reporting your own death', function()
         eq(said[1], nil, 'a graze was taken for the killing shot')
     end)
 
+    --- What the client told the server, in order, of who hit it.
+    local function hitsTold()
+        local ids = {}
+        for _, call in ipairs(Client.toServer) do
+            if call.name == 'crimson-bounty:hitBy' then ids[#ids + 1] = call.args[1] end
+        end
+        return ids
+    end
+
+    local function hit(by, died)
+        Client.handlers['gameEventTriggered']('CEventNetworkEntityDamage',
+            { 1003, by, 1109393408, 0, 0, died and 1 or 0, 453432689, 0, 0, 0, 0, 0, 0 })
+    end
+
+    it('tells the server who hit this player, once a tenth of a second for each', function()
+        watching()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+        Env.addPlayer({ source = 5, citizenid = 'KILLER02', license = 'license:k2' })
+        hit(1004)
+        hit(1004)                          -- the same burst
+        hit(1005)                          -- somebody else, at once
+        Env.gameTimer = Env.gameTimer + 100
+        hit(1004)
+        local ids = hitsTold()
+        eq(#ids, 3, 'every round of a burst was told, or a shooter went untold')
+        eq(ids[1], 4)
+        eq(ids[2], 5)
+        eq(ids[3], 4)
+    end)
+
+    it('tells the server of nobody who is not a player, or of this player', function()
+        watching()
+        hit(2500)                          -- an NPC
+        hit(1003)                          -- themselves
+        hit(0)
+        Client.handlers['gameEventTriggered']('CEventNetworkEntityDamage', { 1009, 1004 })
+        eq(#hitsTold(), 0, 'told of a hit that was not a player\'s, or not on this player')
+    end)
+
+    it('names the driver of a car that hit this player', function()
+        watching()
+        local meta = underMedical()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+        Env.players[4]._vehicle, Env.players[4]._seat = 7004, -1
+        meta.inlaststand = true
+        Client.ticks(1)
+        hit(7004, true)                    -- run over, and finished by it
+        eq(hitsTold()[1], 4, 'the driver went untold')
+        meta.inlaststand, meta.isdead = false, true
+        Client.ticks(1)
+        local _, said = reported('iDied')
+        eq(said[1], 4, 'the driver was not named as the killer')
+    end)
+
+    it('names nobody for an empty car rolling into this player', function()
+        watching()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+        Env.players[4]._vehicle, Env.players[4]._seat = 7004, 0     -- a passenger
+        hit(7004)
+        eq(#hitsTold(), 0, 'a passenger was told as the driver')
+    end)
+
     it('names nobody for a bleed-out', function()
         watching()
         local meta = underMedical()

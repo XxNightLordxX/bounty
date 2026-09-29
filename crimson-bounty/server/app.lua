@@ -80,6 +80,11 @@ end
 --- full on each flush.
 local ratelimitLogged = {}
 
+--- [source] = { since, count }: the victim's reports of who hit them, on a
+--- budget of their own (see crimson-bounty:hitBy).
+local hitReports = {}
+local HIT_REPORT_LIMIT = 30
+
 local function shouldLogRatelimit(cid, name)
     local key = tostring(cid) .. ':' .. tostring(name)
     local now = Util.monotonicMs()
@@ -119,6 +124,9 @@ function App.sweepFloodCounters()
     for key, at in pairs(ratelimitLogged) do
         if now - at > 60000 then ratelimitLogged[key] = nil end
     end
+    for src, bucket in pairs(hitReports) do
+        if now - bucket.since > 60000 then hitReports[src] = nil end
+    end
 end
 
 --- Forget every flood counter, for the staff timer refresh.
@@ -135,6 +143,7 @@ function App.resetFloodCounters()
     end
     for src in pairs(gateLogged) do gateLogged[src] = nil end
     for key in pairs(ratelimitLogged) do ratelimitLogged[key] = nil end
+    for src in pairs(hitReports) do hitReports[src] = nil end
     return forgotten
 end
 
@@ -925,6 +934,26 @@ function App.register()
         -- that the condition loss was observed.
         local ok, err = pcall(deps.death.onVictimReport, src, tonumber(killerServerId))
         if not ok then deps.audit.rejected('error_iDied', actor.cid, nil, { error = tostring(err) }) end
+    end)
+
+    -- The victim's own game saying who hit them, per hit. On its own budget,
+    -- not the flood guard's: a firefight's worth of these would spend the
+    -- allowance the death report shares, and a victim who could not report
+    -- their death paid nobody. What it can do is small — choose among
+    -- attackers who already have a hit waiting — and it is kept a moment.
+    RegisterNetEvent('crimson-bounty:hitBy', function(attackerServerId)
+        local src = source
+        if not App.ready then return end
+        local now = Util.monotonicMs()
+        local bucket = hitReports[src]
+        if not bucket or now - bucket.since > 1000 then
+            bucket = { since = now, count = 0 }
+            hitReports[src] = bucket
+        end
+        bucket.count = bucket.count + 1
+        if bucket.count > HIT_REPORT_LIMIT then return end
+        local ok, err = pcall(deps.death.victimSaw, src, attackerServerId)
+        if not ok then deps.audit.rejected('error_hitBy', nil, nil, { error = tostring(err) }) end
     end)
 
     RegisterNetEvent('crimson-bounty:iRevived', function()

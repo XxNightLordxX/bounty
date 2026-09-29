@@ -129,6 +129,13 @@ function Natives.install()
         local p = Env.players[ped - 1000]
         return p and p._vehicle or 0
     end
+    -- A car is whatever a player fixture sits in; every other entity is not.
+    _G.IsEntityAVehicle = function(entity)
+        for _, p in pairs(Env.players) do
+            if p._vehicle and p._vehicle ~= 0 and p._vehicle == entity then return true end
+        end
+        return false
+    end
     _G.GetPedInVehicleSeat = function(veh, seat)
         for src, p in pairs(Env.players) do
             if p._vehicle == veh and p._seat == seat then return 1000 + src end

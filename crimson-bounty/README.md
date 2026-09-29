@@ -105,6 +105,11 @@ finishing them is a new kill with its own photograph. A hit counts once the
 server sees the damage it did, which reaches it a moment after the shot, and
 only on the target's own body: a round into their car is not a hit on them.
 Where the target's game says who damaged them, that is who the damage goes to.
+sc-ambulance usually clears that within a tenth of a second, so the target's
+client also tells the server who hit them as each hit lands. When two hunters
+both have a hit waiting on the same damage, that report decides; if it does
+not arrive within a moment, the damage counts for neither of them. A hunter
+firing alone is not affected.
 The defibrillator is heard from sc-ambulance's own event, from an on-duty
 medic of `Config.Completion.MedicJobs` holding `DefibItem` within `DefibRange`
 of the patient. Match them to sc-ambulance's `Config.Defib`: `MedicJobs = false`
