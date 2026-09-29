@@ -47,25 +47,44 @@ function Death.wasSeenDead(cid)
 end
 
 --- How long a player has to stay up, neither dead nor in last stand, for it
---- to count as a revive. A defibrillator takes them from dead to last stand,
---- and sc-ambulance clears isdead a second or more before it writes
---- inlaststand: one reading in that gap voided the kill that put them down
---- and gave a target still on the ground five minutes' immunity. The client
---- waits out the same gap before it reports.
-Death.REVIVE_CONFIRM_MS = 4000
+--- to count as a revive on its own. A defibrillator takes them from dead to
+--- last stand, and sc-ambulance clears isdead first, then waits a second and
+--- up to five more for the body to settle before it writes inlaststand. Read
+--- in that gap, a revive voided the kill that put them down and gave a
+--- target still on the ground five minutes' immunity.
+---
+--- A revive cut short is still a revive when a hit cut it short: somebody
+--- put them down again, which the gap never does. It counts from when they
+--- stood up, so the kill before it is void and the one after it waits out
+--- the protection a revive gives. Dropped instead, both kills paid.
+Death.REVIVE_CONFIRM_MS = 8000
 
 --- [cid] = Util.monotonicMs() the server first saw them up after a death,
 --- and saw them nowhere else since.
 local upSince = {}
 
+--- [cid] = Util.monotonicMs() of the last hit on them the server corroborated.
+local lastHitAt = {}
+
 --- [cid] = true while a revive the client claimed waits to be confirmed.
 local reviveClaims = {}
+
+--- The end of a time up after a death, read as down again: a revive if a
+--- hit is what ended it, and nothing if not.
+local function endUpPeriod(cid)
+    local since = upSince[cid]
+    if not since then return end
+    upSince[cid] = nil
+    if seenDead[cid] and (lastHitAt[cid] or -math.huge) > since then
+        Death.onRevived(cid, since)
+    end
+end
 
 function Death.init(deps)
     Storage, Identity, Contracts, Audit, Photo =
         deps.storage, deps.identity, deps.contracts, deps.audit, deps.photo
     damage, pending, hitBy = {}, {}, {}
-    upSince, reviveClaims = {}, {}
+    upSince, reviveClaims, lastHitAt = {}, {}, {}
 end
 
 --------------------------------------------------------------------------
@@ -151,9 +170,10 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
     hitBy[victim.cid] = hitBy[victim.cid] or {}
     hitBy[victim.cid][attacker.cid] = os.time()
 
+    lastHitAt[victim.cid] = Util.monotonicMs()
     list[#list + 1] = {
         attackerCid = attacker.cid,
-        at = Util.monotonicMs(),
+        at = lastHitAt[victim.cid],
         weapon = weaponHash,
         distance = distance,
         coords = victimCoords,
@@ -300,21 +320,20 @@ function Death.watchTargets(contracts)
                 -- takes a player from dead to last stand, and reading that
                 -- as a revive voided the kill and gave a target still on
                 -- the ground five minutes' immunity.
-                -- And up for a while, not for one reading: see
-                -- REVIVE_CONFIRM_MS.
+                -- And up for a while, not for one reading, or put down
+                -- again by a hit: see REVIVE_CONFIRM_MS.
                 local dead, lastStand, resolved = Identity.deathState(target.source)
-                if Identity.isTrulyDead(target.source) then
-                    Death.markDead(target.cid)
-                    upSince[target.cid] = nil
-                elseif resolved and not dead and not lastStand
-                    and Death.wasSeenDead(target.cid) then
+                if resolved and not dead and not lastStand and Death.wasSeenDead(target.cid) then
                     local at = Util.monotonicMs()
                     upSince[target.cid] = upSince[target.cid] or at
                     if at - upSince[target.cid] >= Death.REVIVE_CONFIRM_MS then
-                        Death.onRevived(target.cid)
+                        Death.onRevived(target.cid, upSince[target.cid])
                     end
                 else
-                    upSince[target.cid] = nil
+                    endUpPeriod(target.cid)
+                end
+                if Identity.isTrulyDead(target.source) then
+                    Death.markDead(target.cid)
                 end
 
                 local targetCoords = GetEntityCoords(GetPlayerPed(target.source))
@@ -452,6 +471,10 @@ function Death.onVictimReport(victimSource, killerServerId)
         Audit.rejected('death_report_not_dead', victim.cid, nil, {})
         return 0
     end
+
+    -- A time up before this death, ended by the hit that caused it, was a
+    -- revive: settled first, so it cannot touch the kill opened below.
+    endUpPeriod(victim.cid)
 
     -- The server has now seen this player dead, which is what a later
     -- revive claim from them is checked against.
@@ -599,15 +622,15 @@ function Death.onRevivedVerified(source, cid)
 
     -- A revived player is back at full health; the next hit measures from
     -- there rather than being read as a decrease from their dying value.
-    local function revive()
+    local function revive(since)
         Death.resetHealth(cid, source)
-        return Death.onRevived(cid)
+        return Death.onRevived(cid, since)
     end
 
     -- Up for long enough, by the server's own watch: taken at once.
     local at = Util.monotonicMs()
     if upSince[cid] and at - upSince[cid] >= Death.REVIVE_CONFIRM_MS then
-        return revive()
+        return revive(upSince[cid])
     end
 
     -- Otherwise asked again once a revive would have had to last. The client
@@ -616,41 +639,61 @@ function Death.onRevivedVerified(source, cid)
     -- every check above.
     if reviveClaims[cid] then return 0 end
     reviveClaims[cid] = true
+    upSince[cid] = upSince[cid] or at
     SetTimeout(Death.REVIVE_CONFIRM_MS, function()
         reviveClaims[cid] = nil
         local actor = Identity.resolve(source)
         if not actor or actor.cid ~= cid or not seenDead[cid] then return end
         local dead, down, known = Identity.deathState(source)
-        -- Down again since the claim, by the watch or by the medical state.
-        if (known and (dead or down)) or (upSince[cid] and upSince[cid] > at) then
+        if known and (dead or down) then
+            -- Down again: a revive only if a hit put them there.
+            endUpPeriod(cid)
+            if seenDead[cid] then Audit.rejected('revive_claim_not_up', cid, nil, {}) end
+            return
+        end
+        -- Down and up again since the claim, by the watch: it is still
+        -- waiting on this time up, and will decide it.
+        if not upSince[cid] or upSince[cid] > at then
             Audit.rejected('revive_claim_not_up', cid, nil, {})
             return
         end
-        revive()
+        revive(upSince[cid])
     end)
     return 0
 end
 
-function Death.onRevived(cid)
-    respawnedAt[cid] = os.time()
+---@param cid string
+---@param since integer|nil Util.monotonicMs() they stood up; now when omitted
+function Death.onRevived(cid, since)
+    local now = Util.monotonicMs()
+    since = math.min(since or now, now)
+    -- From when they stood up, not from when that was confirmed: the
+    -- protection a revive gives starts with the revive.
+    respawnedAt[cid] = os.time() - math.floor((now - since) / 1000)
     -- One death, one revive. A second claim has to wait for a second death.
     seenDead[cid] = nil
     upSince[cid] = nil
 
     -- A revive ends the fight. Damage recorded before it must not
     -- corroborate a death that happens afterwards, or a hunter who shot
-    -- someone an hour ago inherits their next death.
-    damage[cid] = nil
+    -- someone an hour ago inherits their next death. What came after it,
+    -- the hits of a revive cut short, is the next fight's.
+    local list = damage[cid]
+    if list then
+        for i = #list, 1, -1 do
+            if list[i].at <= since then table.remove(list, i) end
+        end
+        if #list == 0 then damage[cid] = nil end
+    end
 
     local window = (Config.Completion.ProofWindowSeconds or 0) * 1000
-    local now = Util.monotonicMs()
 
     local cleared = 0
     for key, record in pairs(pending) do
         -- A pending completion inside the proof window survives: the kill
         -- happened, and a target respawning must not erase it from under the
-        -- hunter standing over the body.
-        if record.victimCid == cid and (now - record.at) > window then
+        -- hunter standing over the body. Nor does one made after the revive.
+        if record.victimCid == cid and record.at < since and (since - record.at) > window then
             pending[key] = nil
             cleared = cleared + 1
         end
@@ -727,6 +770,7 @@ function Death.clearPlayer(cid)
     seenDead[cid] = nil
     upSince[cid] = nil
     reviveClaims[cid] = nil
+    lastHitAt[cid] = nil
     for key, record in pairs(pending) do
         if record.hunterCid == cid then pending[key] = nil end
     end

@@ -455,6 +455,8 @@
     photo_revived: 'They were brought back before you sent the photo, so this is '
       + 'not an elimination any more.',
     photo_still_down: 'They are down, not dead. Finish them, then take the photo.',
+    photo_not_dead: 'They are not lying dead right now. If they are still down, '
+      + 'try again in a moment; if they were brought back, the kill does not count.',
     photo_bad_host: 'That image host is not on this server\u2019s allow list. '
       + 'An admin sets which hosts the camera may upload to.',
     bad_state: 'Not right now.',

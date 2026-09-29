@@ -2678,7 +2678,7 @@ describe('a revive the client reported too early', function()
         -- Up again; the client's report was refused and will not come again.
         -- Seen up, and still up once a revive would have had to last.
         s.death.watchTargets(s.storage.allContracts())
-        Env.advance(5)
+        Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)
         s.death.watchTargets(s.storage.allContracts())
         falsy(s.death.wasSeenDead('TARGET01'), 'the revive was never recorded')
     end)
@@ -2711,7 +2711,7 @@ describe('a revive the client reported too early', function()
 
         meta.inlaststand = false
         s.death.watchTargets(s.storage.allContracts())
-        Env.advance(5)
+        Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)
         s.death.watchTargets(s.storage.allContracts())
         falsy(s.death.wasSeenDead('TARGET01'), 'up for real is the revive')
     end)
@@ -2744,7 +2744,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         Env.advance(1)
         meta.inlaststand = true             -- last stand lands
         s.death.watchTargets(s.storage.allContracts())
-        Env.advance(5)
+        Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)
         s.death.watchTargets(s.storage.allContracts())
         truthy(s.death.getPending(c.id, 'HUNTER01'), 'the kill was voided in the gap')
         falsy(s.death.sinceRespawn('TARGET01'), 'and immunity handed out')
@@ -2773,16 +2773,106 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         eq(s.death.onRevivedVerified(2, 'TARGET01'), 0, 'taken at its word')
         Env.advance(1)
         meta.inlaststand = true
-        Env.advance(5)
+        Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)
         truthy(s.death.getPending(c.id, 'HUNTER01'), 'the timed claim voided the kill')
         falsy(s.death.sinceRespawn('TARGET01'), 'and immunity handed out')
+    end)
+
+    it('is not a revive when the body takes six seconds to settle', function()
+        -- sc-ambulance waits a second, then up to five more for a ragdolled
+        -- body to stop, before it writes last stand.
+        local s, f, c, meta = downed()
+        meta.isdead = false
+        for _ = 1, 6 do
+            s.death.watchTargets(s.storage.allContracts())
+            Env.advance(1)
+        end
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'a slow gap voided the kill')
+        falsy(s.death.sinceRespawn('TARGET01'))
+    end)
+
+    it('counts a revive a hit cut short, from when they stood up', function()
+        -- Up for two readings, then put down and finished by another hunter.
+        -- Dropped, the kill the revive undid and the re-kill both paid.
+        local s, f, c, meta = downed()
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
+            cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        Env.players[4]._coords = { x = 102.0, y = 100.0, z = 30.0 }
+
+        meta.isdead = false
+        Env.players[2]._health = 200
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(1)
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(1)
+
+        Env.players[2]._health = 150
+        s.death.recordDamage(4, 2, 123456)
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        falsy(s.death.getPending(c.id, 'HUNTER01'), 'the kill the revive undid still stands')
+        truthy(s.death.sinceRespawn('TARGET01'), 'the revive was never recorded')
+
+        meta.inlaststand, meta.isdead = false, true
+        truthy(s.death.onVictimReport(2, 4) >= 1, 'the re-kill is attributed')
+        local rekill = s.death.getPending(c.id, 'HUNTER02')
+        truthy(rekill)
+        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER02', CB.FULFILMENT.ELIMINATION,
+            { deathAt = rekill.at })
+        falsy(ok, 'a target killed again seconds after getting up paid out')
+        eq(err, CB.ERR.TARGET_PROTECTED)
+    end)
+
+    it('settles a revive cut short when the re-kill is reported before the watch looks', function()
+        local s, f, c, meta = downed()
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
+            cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        Env.players[4]._coords = { x = 102.0, y = 100.0, z = 30.0 }
+
+        meta.isdead = false
+        Env.players[2]._health = 200
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(2)
+        -- Shot and killed between two looks of the watch; the client's
+        -- report of the death is what arrives first.
+        Env.players[2]._health = 150
+        s.death.recordDamage(4, 2, 123456)
+        meta.isdead = true
+        truthy(s.death.onVictimReport(2, 4) >= 1)
+        falsy(s.death.getPending(c.id, 'HUNTER01'), 'the kill the revive undid still stands')
+        local rekill = s.death.getPending(c.id, 'HUNTER02')
+        truthy(rekill, 'the re-kill was swept away with the revive')
+        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER02', CB.FULFILMENT.ELIMINATION,
+            { deathAt = rekill.at })
+        falsy(ok, 'paid before the watch had looked')
+        eq(err, CB.ERR.TARGET_PROTECTED)
+    end)
+
+    it('does not throw a kill away for a photograph taken in the gap', function()
+        local s, f, c, meta = downed()
+        Config.Completion.ExtraPhotoHosts = { 'cdn.fivemanage.com' }
+        s.photo.loadAllowedHosts()
+        local token = s.photo.issue(f.hunter, c.id)
+        truthy(token)
+        meta.isdead = false
+        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        falsy(ok)
+        eq(err, CB.ERR.PHOTO_NOT_DEAD)
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the kill went on one reading')
+        meta.inlaststand = true
+        local _, still = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        eq(still, CB.ERR.PHOTO_STILL_DOWN, 'and the token with it')
     end)
 
     it('still counts a revive that lasts', function()
         local s, f, c, meta = downed()
         meta.isdead = false
         s.death.onRevivedVerified(2, 'TARGET01')
-        Env.advance(5)
+        Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)
         truthy(s.death.sinceRespawn('TARGET01'), 'a real revive was lost')
         falsy(s.death.getPending(c.id, 'HUNTER01'), 'and it voids the kill it ends')
     end)
@@ -2791,7 +2881,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         local s, f, c, meta = downed()
         meta.isdead = false
         s.death.watchTargets(s.storage.allContracts())
-        Env.gameTimer = Env.gameTimer + 4500    -- the watch saw them up this long
+        Env.gameTimer = Env.gameTimer + s.death.REVIVE_CONFIRM_MS + 500    -- the watch saw them up this long
         truthy(s.death.onRevivedVerified(2, 'TARGET01') >= 0)
         truthy(s.death.sinceRespawn('TARGET01'), 'a revive the server has watched is taken')
     end)

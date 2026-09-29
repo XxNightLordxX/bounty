@@ -269,6 +269,15 @@ function Photo.submit(actor, rawToken, rawUrl)
             Audit.rejected('photo_target_down', actor.cid, record.contractId, {})
             return false, CB.ERR.PHOTO_STILL_DOWN
         end
+        -- Up, but not yet for long enough to be a revive: the moment a
+        -- defibrillator leaves before last stand reads the same way. The
+        -- kill is the revive's to void, once it is one; thrown away here,
+        -- on one reading, it went with the target still on the ground.
+        if sinceDeath > (Config.Completion.ProofWindowSeconds or 0)
+            and Death.wasSeenDead(record.victimCid) then
+            Audit.rejected('photo_target_not_dead', actor.cid, record.contractId, {})
+            return false, CB.ERR.PHOTO_NOT_DEAD
+        end
         if sinceDeath > (Config.Completion.ProofWindowSeconds or 0) then
             Audit.rejected('photo_target_revived', actor.cid, record.contractId,
                 { since = math.floor(sinceDeath) })

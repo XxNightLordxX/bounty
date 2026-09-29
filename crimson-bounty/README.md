@@ -97,7 +97,8 @@ they are in last stand, and you have to finish them. The kill is credited to
 whoever landed a hit within `Config.Completion.DeathReportWindowMs` (30
 seconds) of the death, and bleeding out takes minutes, so a target left to
 bleed out pays nobody. A revive before you photograph them cancels it, once
-they have stayed up for a few seconds. A defibrillator that only brings them
+they have stayed up for a few seconds or somebody has put them down again,
+and a kill in the protection a revive gives does not pay. A defibrillator that only brings them
 back to last stand does not, but the photograph needs them dead: the app says
 they are still down, and finishing them is a new kill with its own photograph.
 A kill waits for its photograph for at most two photo-token lifetimes, however

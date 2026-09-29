@@ -314,7 +314,10 @@ describe('photo verification', function()
     it('refuses a photo long after the target was revived', function()
         local s, f, c, token = ready()
         Env.players[2].PlayerData.metadata.isdead = false
+        -- Seen up by the server's watch, and still up when it looks again.
+        s.death.watchTargets(s.storage.allContracts())
         Env.advance(Config.Completion.ProofWindowSeconds + 10)
+        s.death.watchTargets(s.storage.allContracts())
         local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
         falsy(ok, 'a target who has been up and about for a minute is not proof of death')
         eq(err, CB.ERR.PHOTO_REVIVED)
@@ -497,7 +500,7 @@ describe('damage claims are corroborated, not trusted', function()
         Env.players[2].PlayerData.metadata.isdead = false
         truthy(s.death.onRevivedVerified(2, 'TARGET01') ~= nil)
         Env.players[2]._health = 200            -- back on their feet
-        Env.advance(5)                          -- and still up: the revive is confirmed
+        Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)                          -- and still up: the revive is confirmed
 
         s.death.recordDamage(3, 2, 123456)      -- no new damage since
         Env.players[2].PlayerData.metadata.isdead = true
@@ -944,7 +947,7 @@ describe('a revive claim needs a death behind it', function()
 
         Env.players[2].PlayerData.metadata.isdead = false
         s.death.onRevivedVerified(2, 'TARGET01')
-        Env.advance(5)
+        Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)
         truthy(s.death.sinceRespawn('TARGET01'), 'and a real revive counts')
     end)
 
@@ -958,7 +961,7 @@ describe('a revive claim needs a death behind it', function()
 
         Env.players[2].PlayerData.metadata.isdead = false
         s.death.onRevivedVerified(2, 'TARGET01')
-        Env.advance(5)
+        Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)
         truthy(s.death.sinceRespawn('TARGET01'),
             'a target who dies to the world can still come back')
     end)
@@ -970,7 +973,7 @@ describe('a revive claim needs a death behind it', function()
         Env.players[2].PlayerData.metadata.isdead = false
 
         s.death.onRevivedVerified(2, 'TARGET01')
-        Env.advance(5)
+        Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)
         local first = s.death.sinceRespawn('TARGET01')
         truthy(first, 'the first claim takes')
 

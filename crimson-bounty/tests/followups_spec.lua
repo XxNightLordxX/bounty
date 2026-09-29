@@ -719,6 +719,63 @@ describe('a bonus raise landing while a claim is paying', function()
     end)
 end)
 
+describe('a top-up a stalled elimination has already shared out', function()
+    --- The claim marks the baseline for its hunter and the bonus back to the
+    --- client, since an elimination does not earn it, then stalls. The bonus
+    --- going back was counted as the top-up failing, and the client was told
+    --- busy while the hunter was paid the baseline.
+    it('is reported made', function()
+        local s = mysqlStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { bank = 1000 } }, { baseline = { bank = 2000 } } } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        local claim, paused = nil, false
+        local realWrite = s.storage.writeEscrow
+        s.storage.writeEscrow = function(id, lines)
+            local out = realWrite(id, lines)
+            -- The claim's marks written, and nothing released yet.
+            if claim and coroutine.running() == claim and not paused then
+                paused = true
+                coroutine.yield()
+            end
+            return out
+        end
+        local realTake = s.escrow.take
+        local started = false
+        s.escrow.take = function(actor, id, lines)
+            local a, b, d = realTake(actor, id, lines)
+            if not started then
+                started = true
+                claim = coroutine.create(function()
+                    return s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+                end)
+                coroutine.resume(claim)
+            end
+            return a, b, d
+        end
+        local before = Env.players[1].PlayerData.money.bank
+        local ok, err = s.amendments.addEscrow(f.creator, c.id,
+            { baseline = { bank = 500 }, bonus = { bank = 300 } })
+        s.escrow.take = realTake
+        truthy(paused, 'the claim stalled with its marks written')
+        coroutine.resume(claim)
+        s.storage.writeEscrow = realWrite
+
+        local baseline
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CB.PORTION.BASELINE and l.amount == 500 then baseline = l end
+        end
+        eq(baseline.settled_to, 'HUNTER01', 'the hunter was paid the top-up')
+        truthy(ok, 'and the client was told: ' .. tostring(err))
+        eq(before - Env.players[1].PlayerData.money.bank, 500, 'the unearned bonus came back')
+    end)
+end)
+
 describe('a top-up the claim it waited on paid out', function()
     it('is reported made, not locked', function()
         local s = mysqlStack()

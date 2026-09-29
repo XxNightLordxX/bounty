@@ -238,6 +238,7 @@ CB.ERR = {
     PHOTO_TOO_FAR    = 'photo_too_far',
     PHOTO_REVIVED    = 'photo_revived',
     PHOTO_STILL_DOWN = 'photo_still_down',
+    PHOTO_NOT_DEAD   = 'photo_not_dead',
     PHOTO_BAD_HOST   = 'photo_bad_host',
     LOCKED           = 'locked',
     -- Something else is being done to the same contract, or by the same

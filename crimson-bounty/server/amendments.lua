@@ -159,9 +159,14 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
     end
 
     if ids and next(ids) then
-        local back = {}
+        local back, routed = {}, {}
         for id in pairs(ids) do
-            if returnable(Storage.readEscrowLine(id)) then back[id] = true end
+            local line = Storage.readEscrowLine(id)
+            if returnable(line) then back[id] = true end
+            -- Already owed back to the client by the claim itself: the bonus
+            -- an elimination does not earn. The claim settled it; it is not
+            -- a top-up this call failed to make.
+            if line and line.owed_to == actor.cid then routed[id] = true end
         end
         if next(back) then
             Escrow.release(contractId, actor.cid, { lines = back }, 'escrow_added_to_moved',
@@ -182,7 +187,7 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
         local to, handedBack = nil, false
         for id in pairs(ids) do
             local paid = paidTo(id)
-            if paid then to = to or paid else handedBack = true end
+            if paid then to = to or paid elseif not routed[id] then handedBack = true end
         end
         if to and (CB.TERMINAL[state] or not handedBack) then
             Audit.action('escrow_added_paid_out', actor.cid, contractId, { to = to })
