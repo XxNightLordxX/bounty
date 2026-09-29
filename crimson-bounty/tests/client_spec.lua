@@ -1579,7 +1579,9 @@ describe('reporting your own death', function()
         Client.ticks(1)
         local fire = Client.handlers['gameEventTriggered']
         truthy(fire, 'nothing listens for the game\'s damage event')
-        fire('CEventNetworkEntityDamage', { 1003, 1004, 0, 1 })
+        -- As build 3258 sends it: victim, attacker, damage, two values later
+        -- builds added, then "the victim died", then the weapon.
+        fire('CEventNetworkEntityDamage', { 1003, 1004, 1109393408, 0, 0, 1, 453432689, 0, 0, 0, 0, 0, 0 })
         meta.inlaststand, meta.isdead = false, true
         Client.ticks(1)
         local count, said = reported('iDied')
@@ -1587,12 +1589,27 @@ describe('reporting your own death', function()
         eq(said[1], 4, 'the finisher went unnamed')
     end)
 
+    it('does not read a hit that did not kill as the killer', function()
+        watching()
+        local meta = underMedical()
+        Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
+        meta.inlaststand = true
+        Client.ticks(1)
+        Client.handlers['gameEventTriggered']('CEventNetworkEntityDamage',
+            { 1003, 1004, 1109393408, 0, 0, 0, 453432689, 0, 0, 0, 0, 0, 0 })
+        meta.inlaststand, meta.isdead = false, true
+        Client.ticks(1)
+        local _, said = reported('iDied')
+        eq(said[1], nil, 'a graze was taken for the killing shot')
+    end)
+
     it('names nobody for a bleed-out', function()
         watching()
         local meta = underMedical()
         Env.addPlayer({ source = 4, citizenid = 'KILLER01', license = 'license:k' })
         -- Downed by them, long ago.
-        Client.handlers['gameEventTriggered']('CEventNetworkEntityDamage', { 1003, 1004, 0, 1 })
+        Client.handlers['gameEventTriggered']('CEventNetworkEntityDamage',
+            { 1003, 1004, 1109393408, 0, 0, 1, 453432689, 0, 0, 0, 0, 0, 0 })
         meta.inlaststand = true
         Client.ticks(1)
         Env.gameTimer = Env.gameTimer + 400000

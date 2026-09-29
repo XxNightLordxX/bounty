@@ -456,7 +456,7 @@ describe('damage observation is actually wired', function()
         truthy(s.death.recordFor('TARGET01', 'HUNTER01'), 'the sample erased the hit')
     end)
 
-    it('credits one drop to one hit, the one that came first', function()
+    it('credits one drop to one hit, the one the victim\'s game names', function()
         local s = wiredStack()
         local f, c = placed(s)
         Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
@@ -465,9 +465,26 @@ describe('damage observation is actually wired', function()
         shoot(3)
         shoot(4)                          -- claims a hit it never landed
         Env.players[2]._health = 110      -- one shot's damage
+        Env.players[2]._damageSource = 1003
         Env.advance(2)
         truthy(s.death.recordFor('TARGET01', 'HUNTER01'))
         falsy(s.death.recordFor('TARGET01', 'HUNTER02'), 'one drop credited twice')
+    end)
+
+    it('gives a drop between two hunters the victim\'s game cannot name to neither', function()
+        -- sc-ambulance has cleared who did it, as it nearly always has. First
+        -- in line took it: a rival's event sent a moment before an honest
+        -- shot took the shot's damage, and the kill.
+        local s = wiredStack()
+        local f, c = placed(s)
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
+            coords = { x = 52.0, y = 50.0, z = 30.0 } })
+        s.contracts.accept(s.identity.resolve(4), c.id, false)
+        shoot(4)                          -- the rival's, first, with nothing behind it
+        shoot(3)
+        Env.players[2]._health = 130
+        Env.advance(2)
+        falsy(s.death.recordFor('TARGET01', 'HUNTER02'), 'the rival took the shot\'s damage')
     end)
 
     it('gives a drop to the shooter the victim\'s game names, not the first in line', function()
@@ -639,12 +656,67 @@ describe('damage observation is actually wired', function()
         shoot(3)
         shoot(4)                               -- never lands
         Env.players[2]._health = 170
+        Env.players[2]._damageSource = 1003
         Env.advance(0.2)                       -- hunter one's 30 is credited
+        Env.players[2]._damageSource = 0
         Env.players[2]._health = 180           -- a bandage
         s.death.watchTargets(s.storage.allContracts())
         Env.advance(2)
         truthy(s.death.recordFor('TARGET01', 'HUNTER01'))
         falsy(s.death.recordFor('TARGET01', 'HUNTER02'), 'paid for the drop hunter one was paid for')
+    end)
+
+    it('keeps a named finisher\'s hit when the victim quits before it is checked', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        local meta = Env.players[2].PlayerData.metadata
+        Env.players[2]._health = 150
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(40)
+        shoot(3)                               -- the finishing round, in a car
+        meta.inlaststand, meta.isdead = false, true
+        Env.players[2]._health = 200
+        s.death.onVictimReport(2, 3)
+        s.death.clearPlayer('TARGET01')        -- gone within the second
+        Env.advance(2)
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'quitting took the finisher\'s kill')
+    end)
+
+    it('forgets hits on somebody down once they are too old to name', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        local meta = Env.players[2].PlayerData.metadata
+        Env.players[2]._health = 150
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        local function kept()
+            local lines = table.concat(s.admin.diagnose(0, 2) or {}, '\n')
+            return tonumber(lines:match('(%d+) hit%(s%) on downed players')) or 0
+        end
+        for _ = 1, 40 do
+            shoot(3)                           -- a client sending events at the body
+            Env.advance(0.5)
+        end
+        truthy(kept() <= 24, 'kept ' .. kept() .. ' hits for a death report ten seconds long')
+        -- Picked up from last stand, and never reported: the sweep drops them.
+        Env.advance(20)
+        s.death.sweep()
+        eq(kept(), 0, 'kept hits outlived any report that could name them')
+    end)
+
+    it('does not hand an unnamed drop to a rival once the honest hit has expired', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
+            coords = { x = 52.0, y = 50.0, z = 30.0 } })
+        s.contracts.accept(s.identity.resolve(4), c.id, false)
+        shoot(3)
+        Env.advance(0.02)
+        shoot(4)                               -- the rival's, just after, with nothing behind it
+        Env.players[2]._health = 130
+        Env.advance(2)
+        falsy(s.death.recordFor('TARGET01', 'HUNTER02'), 'the rival took the drop once the shot expired')
     end)
 
     it('records a deferred attribution that fails', function()

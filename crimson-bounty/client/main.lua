@@ -524,12 +524,20 @@ local engineDeathAt, engineKiller
 -- A bleed-out raises no such event, and so names nobody.
 local lethalBy, lethalByAt
 
+-- Where the event carries "the victim died". Builds 2060 and 2189 each put a
+-- value in ahead of it, so on the build Qbox enforces it is the sixth, and
+-- the fourth is always 0: read there, no death was ever seen.
+local LETHAL_FLAG = (function()
+    local build = type(GetGameBuildNumber) == 'function' and GetGameBuildNumber() or 0
+    return (build >= 2189 and 6) or (build >= 2060 and 5) or 4
+end)()
+
 AddEventHandler('gameEventTriggered', function(name, data)
     if name ~= 'CEventNetworkEntityDamage' or type(data) ~= 'table' then return end
     local ped = PlayerPedId()
     if data[1] ~= ped then return end
-    local died = data[4]
-    if not died or died == 0 then return end
+    local died = data[LETHAL_FLAG]
+    if died ~= 1 and died ~= true then return end
     lethalBy, lethalByAt = nil, nowMs()
     local attacker = data[2]
     if attacker and attacker ~= 0 and attacker ~= ped and IsPedAPlayer(attacker) then

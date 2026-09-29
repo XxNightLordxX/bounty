@@ -121,6 +121,8 @@ function Client.boot(opts)
 
     -- The client half of the runtime.
     _G.RegisterNUICallback = function(name, fn) Client.nui[name] = fn end
+    -- The build Qbox enforces, whose event layouts the client reads.
+    _G.GetGameBuildNumber = function() return Client.gameBuild or opts.gameBuild or 3258 end
     _G.PlayerPedId = function() return Client.ped or 1003 end
     _G.IsEntityDead = function() return Client.dead == true end
     -- What a medical resource says about this player: nil player data is a

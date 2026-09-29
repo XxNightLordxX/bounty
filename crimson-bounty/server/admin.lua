@@ -431,6 +431,14 @@ function Admin.diagnose(source, subjectId)
             say(('  %d completion(s) waiting on proof.'):format(waiting))
         end
     end
+    -- Hits on downed players kept for their death reports: a number that
+    -- stays high is a client sending events at somebody on the ground.
+    if Death and Death.keptDownHits then
+        local kept = Death.keptDownHits()
+        if kept > 0 then
+            say(('  %d hit(s) on downed players kept for their death reports.'):format(kept))
+        end
+    end
 
     -- Contracts the store could not load. They are not on the board and
     -- their escrow cannot be returned automatically, so they belong at the

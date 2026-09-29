@@ -281,12 +281,36 @@ end
 --- queue, whether it had done damage or not: a round into the target's car,
 --- a pellet that missed, or an event a rival sent a moment before a real
 --- shot took that shot's damage, and the kill with it.
+---
+--- Where the victim's game cannot say (sc-ambulance has cleared it, as it
+--- nearly always has), the oldest takes it only if every hit waiting on it is
+--- one attacker's. Between two attackers it is nobody's: a rival sending an
+--- event a moment before an honest shot took that shot's damage and the kill.
+---@return integer|nil index
+---@return boolean|nil ambiguous
 local function ownerOf(list, candidates, src)
-    if src == nil then return candidates[1] end
+    if src == nil then
+        local first = list[candidates[1]].attackerCid
+        for k = 2, #candidates do
+            if list[candidates[k]].attackerCid ~= first then return nil, true end
+        end
+        return candidates[1]
+    end
     for _, i in ipairs(candidates) do
         if isAttacker(list[i], src) then return i end
     end
     return nil
+end
+
+--- Keep a hit on a downed victim for their death report (see checkHits).
+--- In the order they landed, so the ones past keeping come off the front:
+--- a client sending events at somebody down for minutes grew this without
+--- end.
+local function keepDownHit(cid, hit, now)
+    local kept = downHits[cid] or {}
+    downHits[cid] = kept
+    while kept[1] and now - kept[1].at > Death.DOWN_HIT_KEEP_MS do table.remove(kept, 1) end
+    kept[#kept + 1] = hit
 end
 
 --- Look for the damage of the hits waiting on it.
@@ -308,10 +332,16 @@ local function checkHits(cid)
         end
     end
     if candidates[1] then
-        local i = ownerOf(list, candidates, damageSource(victimSource))
+        local i, ambiguous = ownerOf(list, candidates, damageSource(victimSource))
         if i then
             local hit = table.remove(list, i)
             credit(cid, hit, math.min(hit.base, credited[cid] or math.huge) - reading, reading)
+        elseif ambiguous then
+            -- Nobody's for certain. Consumed, so no later check hands it to
+            -- one of them; the hits stay waiting, and a finishing one is
+            -- still kept for the victim's report to name.
+            credited[cid] = reading
+            Audit.rejected('damage_ambiguous', nil, nil, { victim = cid })
         else
             -- Damage the victim's game puts down to somebody none of the
             -- waiting hits is. Theirs, and no hit still waiting takes it.
@@ -332,8 +362,7 @@ local function checkHits(cid)
         -- reached the server. A bleed-out reads exactly the same from here,
         -- so it is kept for the victim's own report to say which.
         if hit.down and (lethalAt[cid] or -math.huge) < hit.at then
-            downHits[cid] = downHits[cid] or {}
-            table.insert(downHits[cid], hit)
+            keepDownHit(cid, hit, now)
         end
     end
 
@@ -1167,7 +1196,21 @@ function Death.sweep()
         if #list == 0 then damage[cid] = nil end
     end
 
+    -- Kept hits on somebody picked up from last stand, or never reported.
+    for cid, kept in pairs(downHits) do
+        while kept[1] and now - kept[1].at > Death.DOWN_HIT_KEEP_MS do table.remove(kept, 1) end
+        if not kept[1] then downHits[cid] = nil end
+    end
+
     return removed
+end
+
+--- How many hits on downed players are being kept, for tests and the
+--- diagnosis.
+function Death.keptDownHits()
+    local n = 0
+    for _, kept in pairs(downHits) do n = n + #kept end
+    return n
 end
 
 function Death.pendingCount()
@@ -1195,6 +1238,14 @@ function Death.clearPlayer(cid)
     local d = deferred[cid]
     if d then
         deferred[cid] = nil
+        -- Hits still waiting that landed while they were down are kept, as
+        -- they would have been had the victim stayed: the report may name
+        -- one of them as the shot that finished them.
+        local now = Util.monotonicMs()
+        for _, hit in ipairs(inflight[cid] or {}) do
+            if hit.down and (lethalAt[cid] or -math.huge) < hit.at then keepDownHit(cid, hit, now) end
+        end
+        inflight[cid] = nil
         local ok, err = pcall(Death.attributeDeath, d.victim, d.source, d.named, d.at, d.coords)
         if not ok then
             Audit.rejected('error_iDied', cid, nil, { error = tostring(err), deferred = true })
