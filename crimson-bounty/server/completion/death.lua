@@ -146,20 +146,14 @@ local heard = {}
 --- while the victim's word on it is waited for.
 local dropSince = {}
 --- How long, plus the victim's ping up to DROP_WAIT_PING_MS more: the word
---- is a reliable event, and one lost packet costs it a round trip that the
---- health it arrives beside does not wait for.
-Death.DROP_WAIT_MS = 150
-Death.DROP_WAIT_PING_MS = 250
---- A report can reach the server ahead of the drop it tells of by no more
---- than a drop can wait for one. One from earlier is about some other drop
---- — one already settled, perhaps without it — and names nobody for this.
-Death.REPORT_LEAD_MS = Death.DROP_WAIT_MS + Death.DROP_WAIT_PING_MS
-
---- [cid] = { attackerCid, hit, level, top }: a drop one attacker alone had
---- a hit on, settled for nobody because the victim's word on it had not
---- come. Word that comes a little late still credits it, while that hit is
---- still waiting.
-local unsettled = {}
+--- is a reliable event, and one lost packet costs it a round trip or more
+--- that the health it arrives beside does not wait for. Long enough that a
+--- word a moment late still settles its drop; a drop the word never comes
+--- for is nobody's.
+Death.DROP_WAIT_MS = 300
+Death.DROP_WAIT_PING_MS = 500
+--- How many more waits a death report sits out for drops still waiting.
+Death.DEFER_RETRIES = 8
 
 --- [cid] = a death report waiting on its hits to be checked, so a victim
 --- who leaves meanwhile is attributed with what is known rather than not
@@ -210,7 +204,7 @@ function Death.init(deps)
     upSince, reviveClaims, lastHitAt = {}, {}, {}
     defibAt, lastUp, inflight, credited = {}, {}, {}, {}
     lethalAt, deferred, downHits, polling = {}, {}, {}, {}
-    saw, dropSince, heard, unsettled = {}, {}, {}, {}
+    saw, dropSince, heard = {}, {}, {}
 end
 
 --------------------------------------------------------------------------
@@ -333,16 +327,18 @@ end
 
 --- The victim's report on this attacker that tells of damage in this drop:
 --- the condition it read falls between the drop's top — the attacker's
---- hit's own starting point — and the level it was first seen at, and it
---- came no longer before the drop was seen than one can. One ending at or
---- above the top is about damage already settled; one starting below the
---- level, about damage still to come — unless `healed`, for an attacker
---- alone on the drop, where a heal between the hit and the server's first
---- look can lift the level above what the victim's game read.
-local function reportFor(cid, attackerCid, top, drop, healed)
+--- hit's own starting point — and the level it was first seen at. One
+--- ending at or above the top is about damage already settled; one starting
+--- below the level, about damage still to come.
+---
+--- Nothing looser: a report on a later round of the attacker's own always
+--- ends below the top, so letting one start below the level — for a heal,
+--- say, between the hit and the server's first look — let a forger's own
+--- next graze vouch for the forged event ahead of it, over damage the victim
+--- put down to somebody else or to nobody at all.
+local function reportFor(cid, attackerCid, top, level)
     for _, r in ipairs(saw[cid] or {}) do
-        if r.attackerCid == attackerCid and r.left > 0 and r.last < top
-            and (healed or r.first >= drop.reading) and r.at >= drop.at - Death.REPORT_LEAD_MS then
+        if r.attackerCid == attackerCid and r.left > 0 and r.last < top and r.first >= level then
             return r
         end
     end
@@ -367,15 +363,11 @@ end
 --- too — except for a victim whose
 --- game has never told of a hit, judged as before: one attacker's hits take
 --- their own drop, and between attackers it is nobody's.
---- A heal between an attacker's hit and the server's first look lifts the
---- level above what the victim's game read. Where that attacker is alone on
---- the drop, a report ending below its top still tells of it: only the
---- victim's game makes one, and a heal only lifts.
----@param drop table { at, reading }: the drop as first seen
+---@param level number the reading the drop was first seen at
 ---@return integer|nil index
 ---@return string|nil why 'wait', 'ambiguous', or nil for somebody else's
 ---@return table|nil report the victim's word it was settled on
-local function ownerOf(cid, list, candidates, src, waited, drop)
+local function ownerOf(cid, list, candidates, src, waited, level)
     if src ~= nil then
         for _, i in ipairs(candidates) do
             if isAttacker(list[i], src) then return i end
@@ -401,9 +393,7 @@ local function ownerOf(cid, list, candidates, src, waited, drop)
     local named, which, report = 0, nil, nil
     for _, attackerCid in ipairs(order) do
         local hit = list[oldest[attackerCid]]
-        local top = math.min(hit.base, credited[cid] or math.huge)
-        local r = reportFor(cid, attackerCid, top, drop)
-            or (#order == 1 and reportFor(cid, attackerCid, top, drop, true))
+        local r = reportFor(cid, attackerCid, math.min(hit.base, credited[cid] or math.huge), level)
         if r then named, which, report = named + 1, oldest[attackerCid], r end
     end
 
@@ -458,24 +448,7 @@ function Death.victimSaw(victimSource, attackerServerId, hits, first, last)
     while list[1] and (now - list[1].at > Death.SAW_KEEP_MS or #list >= Death.SAW_MAX) do
         table.remove(list, 1)
     end
-    local report = { attackerCid = attacker.cid, at = now, left = n, first = first, last = last }
-    list[#list + 1] = report
-
-    -- Late for a drop settled for nobody that this attacker alone had a hit
-    -- on: credited now, if the hit is still waiting and the word tells of it.
-    local late = unsettled[victim.cid]
-    if late and late.attackerCid == attacker.cid and last < late.top then
-        local waiting = inflight[victim.cid] or {}
-        for i = 1, #waiting do
-            if waiting[i] == late.hit then
-                unsettled[victim.cid] = nil
-                table.remove(waiting, i)
-                report.left = report.left - 1
-                record(victim.cid, late.hit, late.top - late.level)
-                break
-            end
-        end
-    end
+    list[#list + 1] = { attackerCid = attacker.cid, at = now, left = n, first = first, last = last }
     return true
 end
 
@@ -495,6 +468,7 @@ local function checkHits(cid)
     local list = inflight[cid]
     if not list or not list[1] then
         inflight[cid] = nil
+        dropSince[cid] = nil
         return
     end
     local now = Util.monotonicMs()
@@ -528,7 +502,7 @@ local function checkHits(cid)
         end
         local ping = tonumber(GetPlayerPing and GetPlayerPing(victimSource)) or 0
         local wait = Death.DROP_WAIT_MS + math.max(0, math.min(Death.DROP_WAIT_PING_MS, ping))
-        i, why, report = ownerOf(cid, list, candidates, src, now - drop.at >= wait, drop)
+        i, why, report = ownerOf(cid, list, candidates, src, now - drop.at >= wait, level)
     end
     -- 'wait': looked at again on the next check, with the victim's word.
     if why ~= 'wait' then dropSince[cid] = nil end
@@ -542,16 +516,23 @@ local function checkHits(cid)
             if list[k].attackerCid ~= list[i].attackerCid then list[k].shared = true end
         end
         local hit = table.remove(list, i)
-        if report then report.left = report.left - 1 end
-        credit(cid, hit, math.min(hit.base, credited[cid] or math.huge) - level, level)
-        credited[cid] = settle
+        -- No further than the victim's word takes it: what they lost below
+        -- the condition it read is somebody else's, or this attacker's next
+        -- round's, and is decided as a drop of its own — with its own wait,
+        -- so a word a moment late from another attacker still counts there.
+        -- The whole drop went to the one attacker heard from in time.
+        local to = level
+        if report then
+            report.left = report.left - 1
+            if report.last > to then to = report.last end
+        end
+        credit(cid, hit, math.min(hit.base, credited[cid] or math.huge) - to, to)
+        credited[cid] = math.max(reading, to)
     elseif why == 'ambiguous' then
         -- Nobody's for certain. Consumed, so no later check hands it to one
         -- of them; the hits stay waiting, and a finishing one is still kept
         -- for the victim's report to name. Whoever fired, a hit that landed
         -- on them standing ended that time up.
-        local oldest = list[candidates[1]]
-        local top = math.min(oldest.base, credited[cid] or math.huge)
         credited[cid] = settle
         local attackers, listed = {}, {}
         for _, k in ipairs(candidates) do
@@ -560,10 +541,6 @@ local function checkHits(cid)
                 listed[list[k].attackerCid] = true
                 attackers[#attackers + 1] = list[k].attackerCid
             end
-        end
-        -- One attacker alone, and the victim's word late: it may yet come.
-        if #attackers == 1 then
-            unsettled[cid] = { attackerCid = attackers[1], hit = oldest, level = level, top = top }
         end
         Audit.rejected('damage_ambiguous', nil, nil, { victim = cid, attackers = attackers })
     elseif candidates[1] and why == nil then
@@ -576,8 +553,13 @@ local function checkHits(cid)
 
     -- Hits whose damage never showed. They are in the order they came, so
     -- the ones past their window are at the front — but not while a drop
-    -- one of them may own waits on the victim's word.
-    while why ~= 'wait' and list[1] and now - list[1].at >= Death.HIT_WINDOW_MS do
+    -- one of them may own is showing still to be decided: waiting on the
+    -- victim's word, or left behind one just settled. Expired on its
+    -- settling, the rounds of a drop held back by an earlier one's wait were
+    -- lost before they were ever looked at.
+    local floor = credited[cid] or math.huge
+    while why ~= 'wait' and list[1] and now - list[1].at >= Death.HIT_WINDOW_MS
+        and not (reading < math.min(list[1].base, floor)) do
         local hit = table.remove(list, 1)
         Audit.rejected('damage_unsupported', hit.attackerCid, nil, { victim = cid })
         -- Landed on somebody down who is dead now: it may be the shot that
@@ -605,6 +587,7 @@ local function poll(cid)
         local ok, err = pcall(checkHits, cid)
         if not ok then
             inflight[cid] = nil
+            dropSince[cid] = nil
             Audit.rejected('error_checkHits', nil, nil, { victim = cid, error = tostring(err) })
             return
         end
@@ -1124,18 +1107,28 @@ function Death.onVictimReport(victimSource, killerServerId)
         local entry = { victim = victim, source = victimSource, named = named,
             at = reportedAt, coords = victimCoords }
         deferred[victim.cid] = entry
-        SetTimeout(math.max(0, last - reportedAt) + 50, function()
+        -- A drop still waiting on the victim's word then — one settled late
+        -- leaves another behind it, with a wait of its own — is waited out
+        -- too, a few times at most.
+        local tries = 0
+        local function settle()
             if deferred[victim.cid] ~= entry then return end
+            local ok, err = pcall(checkHits, victim.cid)
+            if ok and dropSince[victim.cid] and tries < Death.DEFER_RETRIES then
+                tries = tries + 1
+                SetTimeout(Death.DROP_WAIT_MS, settle)
+                return
+            end
             deferred[victim.cid] = nil
             -- Outside the report's own guard now, so given one of its own.
-            local ok, err = pcall(function()
-                checkHits(victim.cid)
-                Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoords)
-            end)
+            if ok then
+                ok, err = pcall(Death.attributeDeath, victim, victimSource, named, reportedAt, victimCoords)
+            end
             if not ok then
                 Audit.rejected('error_iDied', victim.cid, nil, { error = tostring(err), deferred = true })
             end
-        end)
+        end
+        SetTimeout(math.max(0, last - reportedAt) + 50, settle)
         return 0
     end
 
@@ -1526,7 +1519,6 @@ function Death.clearPlayer(cid)
     downHits[cid] = nil
     polling[cid] = nil
     saw[cid] = nil
-    unsettled[cid] = nil
     dropSince[cid] = nil
     for key, record in pairs(pending) do
         if record.hunterCid == cid then pending[key] = nil end

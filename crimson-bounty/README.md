@@ -108,16 +108,16 @@ Where the target's game says who damaged them, that is who the damage goes to.
 sc-ambulance usually clears that within a tenth of a second, so the target's
 client also tells the server who hit them, how many times, and what their
 health and armour read just after, as the hits land. That reading ties each
-report to the damage the server saw, and each hit it reports settles one
-piece of that damage. When hunters have hits waiting on the same damage,
-the server waits a moment, longer on a slow connection, for the target's word
-on every one of them: the damage goes to the one hunter the target names; if
-it names two, or nobody, it counts for neither (a word a moment late still
-counts for a hunter shooting alone). A player whose game runs this
-resource (every player's does, from when it starts) is held to that word even
-when only one hunter is shooting, so damage the target never reports, such as
-a fall, an NPC or a last-stand bleed, is nobody's. A hit another resource
-(an anti-cheat) cancels is never counted.
+report to the damage the server saw: a hunter is credited only with damage
+the target's report on them covers, down to the reading it gave. When hunters
+have hits waiting on the same damage, the server waits for the target's word
+on every one of them, up to about a third of a second (longer on a slow
+connection): the damage goes to the one hunter the target names; if it names
+two, or nobody in that time, it counts for neither. A player whose game runs
+this resource (every player's does, from when it starts) is held to that word
+even when only one hunter is shooting, so damage the target never reports,
+such as a fall, an NPC or a last-stand bleed, is nobody's. A hit another
+resource (an anti-cheat) cancels is never counted.
 The defibrillator is heard from sc-ambulance's own event, from an on-duty
 medic of `Config.Completion.MedicJobs` holding `DefibItem` within `DefibRange`
 of the patient. Match them to sc-ambulance's `Config.Defib`: `MedicJobs = false`

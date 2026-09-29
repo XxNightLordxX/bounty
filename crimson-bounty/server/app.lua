@@ -80,17 +80,16 @@ end
 --- full on each flush.
 local ratelimitLogged = {}
 
---- [source] = { since, count, by = { [attacker] = count } }: the victim's
+--- [source] = { since, by = { [attacker] = count } }: the victim's
 --- reports of who hit them, on a budget of their own (see
 --- crimson-bounty:hitBy).
 local hitReports = {}
 -- The client tells of each attacker at most every 50 ms, counting the hits
 -- between, so each attacker gets a budget of their own: one pool per victim
--- let players who never came in range fill it, and have the honest hunter's
--- word refused while a rival's was heard. A ceiling over all of them keeps
--- the cost bounded.
+-- — or a ceiling over all of them — let players who never came in range
+-- fill it, and have the honest hunter's word refused. Only a player who is
+-- here is budgeted, so it is bounded by who is on the server.
 local HIT_REPORT_LIMIT = 25
-local HIT_REPORT_CEILING = 200
 
 local function shouldLogRatelimit(cid, name)
     local key = tostring(cid) .. ':' .. tostring(name)
@@ -955,17 +954,14 @@ function App.register()
         local by = tonumber(attackerServerId)
         if not by or by ~= by or by < 1 or by > 65535 then return end
         by = math.floor(by)
+        if not deps.identity.resolve(by) then return end
         local bucket = hitReports[src]
         if not bucket or now - bucket.since > 1000 then
-            bucket = { since = now, count = 0, by = {} }
+            bucket = { since = now, by = {} }
             hitReports[src] = bucket
         end
-        -- An attacker's own budget first, so one attacker's flood never
-        -- reaches the ceiling the others share.
         bucket.by[by] = (bucket.by[by] or 0) + 1
         if bucket.by[by] > HIT_REPORT_LIMIT then return end
-        bucket.count = bucket.count + 1
-        if bucket.count > HIT_REPORT_CEILING then return end
         local ok, err = pcall(deps.death.victimSaw, src, attackerServerId, hits, first, last)
         if not ok then deps.audit.rejected('error_hitBy', nil, nil, { error = tostring(err) }) end
     end)
