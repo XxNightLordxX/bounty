@@ -568,7 +568,12 @@ CreateThread(function()
             notDeadFor = 0
         elseif reportedDead then
             notDeadFor = notDeadFor + 1
-            if notDeadFor >= UP_CONFIRM_TICKS then reportedDead = false end
+            -- Down but not dead after a reported death is last stand, and
+            -- only a defibrillator takes a player there from dead: finished
+            -- seconds after the shock, the new death went unreported and the
+            -- hunter who finished them was never credited. A bare blink of
+            -- the death flag, with no last stand in it, still waits.
+            if down or notDeadFor >= UP_CONFIRM_TICKS then reportedDead = false end
         end
 
         if dead and not reportedDead then

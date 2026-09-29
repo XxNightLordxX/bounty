@@ -614,6 +614,14 @@ function Exec.install(Natives)
         local result = Exec.run(sql, params)
         return type(result) == 'number' and result or 0
     end }
+    -- All of it, in one await: nothing else runs in between, as nothing sees
+    -- a transaction half-applied on a real database.
+    Natives.mysql.transaction = { await = function(queries)
+        for _, q in ipairs(queries) do
+            Exec.run(q.query or q[1], q.values or q.parameters or q[2])
+        end
+        return true
+    end }
 end
 
 return Exec

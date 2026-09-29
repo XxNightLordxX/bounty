@@ -178,15 +178,22 @@ function Env.advance(seconds)
     Env.runTimers()
 end
 
+--- Run every timer that is due, in the order the engine would: soonest
+--- first, and in the order they were set among those due together. They
+--- used to run last-set first, so a check scheduled after another ran
+--- before it — which no server does.
 function Env.runTimers()
-    local due = {}
-    for i = #Env.timers, 1, -1 do
+    local due, keep = {}, {}
+    for i = 1, #Env.timers do
         local t = Env.timers[i]
-        if t.at <= Env.gameTimer then
-            table.insert(due, t)
-            table.remove(Env.timers, i)
-        end
+        t.order = t.order or i
+        if t.at <= Env.gameTimer then due[#due + 1] = t else keep[#keep + 1] = t end
     end
+    Env.timers = keep
+    table.sort(due, function(a, b)
+        if a.at ~= b.at then return a.at < b.at end
+        return a.order < b.order
+    end)
     for i = 1, #due do due[i].fn() end
 end
 

@@ -395,6 +395,87 @@ describe('damage observation is actually wired', function()
         truthy(s.death.getPending(c.id, 'HUNTER01'))
     end)
 
+    --- On a live server the event comes first: weaponDamageEvent is the
+    --- shooter's game asking for the hit, and the victim's health reaches the
+    --- server only once their game has applied it. Read at the event, a lone
+    --- shot never showed any damage.
+    local function placed(s)
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        s.contracts.accept(f.hunter, c.id, false)
+        Env.players[3]._coords = { x = 50.0, y = 50.0, z = 30.0 }
+        Env.players[2]._coords = { x = 51.0, y = 50.0, z = 30.0 }
+        s.death.watchTargets(s.storage.allContracts())
+        return f, c
+    end
+
+    local function shoot(attacker)
+        Env.handlers['weaponDamageEvent'](attacker, {
+            weaponDamage = 50, weaponType = 123456, hitGlobalIds = { 1002 },
+        })
+    end
+
+    it('credits a single shot whose damage lands after the event', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        shoot(3)                          -- the event, before any damage
+        Env.players[2]._health = 150      -- then the victim's game applies it
+        Env.advance(0.3)
+        shoot(3)                          -- the finishing shot, the same way
+        Env.players[2]._health = 0
+        Env.players[2].PlayerData.metadata.isdead = true
+        Env.advance(0.3)
+        s.death.onVictimReport(2)
+        Env.advance(2)
+        truthy(s.death.getPending(c.id, 'HUNTER01'),
+            'a target downed with one shot and finished with another opened no kill')
+    end)
+
+    it('waits for the finishing shot when the death is reported first', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        shoot(3)
+        Env.players[2]._health = 0
+        Env.players[2].PlayerData.metadata.isdead = true
+        -- The death report arrives before any check of the shot has run.
+        eq(s.death.onVictimReport(2), 0, 'attributed before the hit was checked')
+        Env.advance(2)
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the kill went to nobody')
+    end)
+
+    it('does not lose a hit to the sampler looking before the damage lands', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        shoot(3)
+        s.death.watchTargets(s.storage.allContracts())   -- a sample, pre-damage
+        Env.players[2]._health = 120
+        Env.advance(0.5)
+        truthy(s.death.recordFor('TARGET01', 'HUNTER01'), 'the sample erased the hit')
+    end)
+
+    it('credits one drop to one hit, the one that came first', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
+            coords = { x = 52.0, y = 50.0, z = 30.0 } })
+        s.contracts.accept(s.identity.resolve(4), c.id, false)
+        shoot(3)
+        shoot(4)                          -- claims a hit it never landed
+        Env.players[2]._health = 110      -- one shot's damage
+        Env.advance(2)
+        truthy(s.death.recordFor('TARGET01', 'HUNTER01'))
+        falsy(s.death.recordFor('TARGET01', 'HUNTER02'), 'one drop credited twice')
+    end)
+
+    it('registers sc-ambulance\'s defibrillator event', function()
+        local s = wiredStack()
+        truthy(Env.events['sc-ambulance:server:UseDefib'],
+            'a defibrillator\'s gap would read as a revive whatever landed in it')
+    end)
+
     it('ignores a damage event reporting no damage', function()
         local s = wiredStack()
         local f = fixture(s)
@@ -462,10 +543,12 @@ describe('damage claims are corroborated, not trusted', function()
         s.death.recordDamage(3, 2, 123456)
 
         -- Hunter two fires an event immediately afterwards without shooting.
+        -- Its damage is looked for for a second, and never shows.
         s.death.recordDamage(4, 2, 123456)
 
         Env.players[2].PlayerData.metadata.isdead = true
-        eq(s.death.onVictimReport(2), 1)
+        s.death.onVictimReport(2)
+        Env.advance(2)
         truthy(s.death.getPending(c.id, 'HUNTER01'), 'the hunter who actually shot is credited')
         falsy(s.death.getPending(c.id, 'HUNTER02'), 'the one who only claimed is not')
     end)

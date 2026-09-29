@@ -2852,6 +2852,119 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         eq(err, CB.ERR.TARGET_PROTECTED)
     end)
 
+    local function medic()
+        Env.addPlayer({ source = 5, citizenid = 'MEDIC001', license = 'license:m',
+            job = { name = 'ambulance', type = 'ems', onduty = true },
+            coords = { x = 101.0, y = 101.0, z = 30.0 } })
+        return 5
+    end
+
+    it('does not read a shot into a defibrillator\'s gap as a revive', function()
+        -- The hunter shooting the body while the shock takes effect, or a
+        -- friend punching it, read as a revive cut short: the kill void and
+        -- the target, still on the ground, protected.
+        local s, f, c, meta = downed()
+        truthy(s.death.noteDefib(medic(), 2), 'an on-duty medic over a dead patient')
+        meta.isdead = false
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(0.4)
+        Env.players[2]._health = Env.players[2]._health - 30
+        s.death.recordDamage(3, 2, 123456)
+        Env.advance(0.6)
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the kill was voided')
+        falsy(s.death.sinceRespawn('TARGET01'), 'and the target protected')
+
+        -- Finishing them is a kill that pays.
+        Env.players[2]._health = Env.players[2]._health - 30
+        s.death.recordDamage(3, 2, 123456)
+        meta.inlaststand, meta.isdead = false, true
+        truthy(s.death.onVictimReport(2, 3) >= 1)
+        local kill = s.death.getPending(c.id, 'HUNTER01')
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION,
+            { deathAt = kill.at }), 'the finishing kill was refused')
+    end)
+
+    it('does not count a shot at a body already in last stand as ending a revive', function()
+        -- No defibrillator heard: the gap, last stand, and the finishing shot
+        -- reported before the watch looks again.
+        local s, f, c, meta = downed()
+        meta.isdead = false
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(1)
+        meta.inlaststand = true
+        Env.players[2]._health = Env.players[2]._health - 30
+        s.death.recordDamage(3, 2, 123456)
+        meta.inlaststand, meta.isdead = false, true
+        truthy(s.death.onVictimReport(2, 3) >= 1)
+        falsy(s.death.sinceRespawn('TARGET01'), 'a hit on the downed body was a revive')
+        local kill = s.death.getPending(c.id, 'HUNTER01')
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION,
+            { deathAt = kill.at }), 'the finishing kill was refused')
+    end)
+
+    it('only hears a defibrillator from an on-duty medic over a dead patient', function()
+        local s, f, c, meta = downed()
+        local m = medic()
+        falsy(s.death.noteDefib(3, 2), 'a hunter is no medic')
+        Env.players[m].PlayerData.job.onduty = false
+        falsy(s.death.noteDefib(m, 2), 'nor one off duty')
+        Env.players[m].PlayerData.job.onduty = true
+        Env.players[m]._coords = { x = 200.0, y = 200.0, z = 30.0 }
+        falsy(s.death.noteDefib(m, 2), 'nor one across the street')
+        Env.players[m]._coords = { x = 101.0, y = 101.0, z = 30.0 }
+        meta.isdead = false
+        falsy(s.death.noteDefib(m, 2), 'nor over a patient who is not dead')
+        falsy(s.death.noteDefib(m, 'x'), 'nor for a patient who is nobody')
+    end)
+
+    it('counts a revive cut short by a hit whose damage the watch saw last', function()
+        -- The hit's event came first; last stand reached the watch before
+        -- the hit's own damage was checked.
+        local s, f, c, meta = downed()
+        meta.isdead = false
+        Env.players[2]._health = 200
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(1)
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(0.5)
+        s.death.recordDamage(3, 2, 123456)           -- no damage showing yet
+        Env.players[2]._health = 150
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(0.3)                              -- now the check sees it
+        falsy(s.death.getPending(c.id, 'HUNTER01'), 'the kill the revive undid still pays')
+        truthy(s.death.sinceRespawn('TARGET01'), 'the revive went unrecorded')
+    end)
+
+    it('does not read a defibrillator\'s gap as a death where they stood', function()
+        -- A medical resource that leaves the ped dead through the gap.
+        local s, f, c, meta = downed()
+        truthy(s.death.noteDefib(medic(), 2))
+        meta.isdead = false
+        Env.players[2]._health = 0
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(1)
+        s.death.watchTargets(s.storage.allContracts())
+        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the gap voided the kill')
+        falsy(s.death.sinceRespawn('TARGET01'))
+    end)
+
+    it('counts a revive ended by a death with no weapon in it', function()
+        -- Up after a real revive, then killed by a blast, a fire, a car or a
+        -- fall: no weapon event, and the ped dead before last stand.
+        local s, f, c, meta = downed()
+        meta.isdead = false
+        Env.players[2]._health = 200
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(2)
+        Env.players[2]._health = 0
+        s.death.watchTargets(s.storage.allContracts())
+        falsy(s.death.getPending(c.id, 'HUNTER01'), 'the kill the revive undid still pays')
+        truthy(s.death.sinceRespawn('TARGET01'), 'the revive went unrecorded')
+    end)
+
     it('does not throw a kill away for a photograph taken in the gap', function()
         local s, f, c, meta = downed()
         Config.Completion.ExtraPhotoHosts = { 'cdn.fivemanage.com' }

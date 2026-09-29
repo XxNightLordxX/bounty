@@ -1551,6 +1551,23 @@ describe('reporting your own death', function()
         eq(reported('iRevived'), 1, 'and one revive when they stand up')
     end)
 
+    it('reports a finish seconds after a defibrillator', function()
+        -- Shocked to last stand and finished two seconds later, inside the
+        -- wait the re-arm used to need.
+        watching()
+        local meta = underMedical()
+        meta.isdead = true
+        Client.ticks(1)
+        meta.isdead = false                 -- the gap
+        Client.ticks(1)
+        meta.inlaststand = true             -- last stand
+        Client.ticks(1)
+        meta.inlaststand, meta.isdead = false, true
+        Client.ticks(1)
+        eq(reported('iDied'), 2, 'the finishing death went unreported')
+        eq(reported('iRevived'), 0)
+    end)
+
     it('does not report a flicker of the death flag as a second death', function()
         watching()
         local meta = underMedical()

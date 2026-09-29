@@ -344,6 +344,13 @@ Config.Completion = {
     --- side of the trade. Turn it off only if that matters more than the
     --- attribution being observed.
     RequireObservedDamage = true,
+    --- The jobs whose defibrillator the kill logic listens for, and how close
+    --- the medic must stand. sc-ambulance's defibrillator brings a dead
+    --- player back to last stand after a gap in which they read as up; that
+    --- gap is never a revive, whatever lands in it. Match these to
+    --- sc-ambulance's own Config.Defib (its RequireEMS job and Distance).
+    MedicJobs = { ambulance = true },
+    DefibRange = 3.0,
     --- How often the condition of a live contract's target is sampled.
     ---
     --- Each damage event is credited with the drop since the last sample,

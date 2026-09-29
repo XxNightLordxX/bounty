@@ -63,11 +63,44 @@ Death.REVIVE_CONFIRM_MS = 8000
 --- and saw them nowhere else since.
 local upSince = {}
 
---- [cid] = Util.monotonicMs() of the last hit on them the server corroborated.
+--- [cid] = Util.monotonicMs() of the last corroborated hit that landed while
+--- they were up. A hit on somebody already down or dead cannot be what put
+--- them down, and counting one read a defibrillator's patient, shot where
+--- they lay, as a revive cut short.
 local lastHitAt = {}
 
 --- [cid] = true while a revive the client claimed waits to be confirmed.
 local reviveClaims = {}
+
+--- [cid] = Util.monotonicMs() a medic used a defibrillator on them.
+---
+--- The time up that follows is sc-ambulance clearing isdead before it writes
+--- last stand, and nothing in the medical state tells it from a real revive:
+--- a hit landing in it, even the hunter's own, read as a revive cut short —
+--- the kill void, and the target, still on the ground, protected.
+local defibAt = {}
+
+--- How long after a defibrillator its gap can run: a second's wait and up
+--- to five more for the body to settle, and some to spare.
+Death.DEFIB_GAP_MS = 7000
+
+--- [cid] = when a time up began that has ended while a hit that may have
+--- ended it was still being checked (see the hit checks below).
+local lastUp = {}
+
+--- Hits waiting for the server to see the damage they did. [cid] = list, in
+--- the order they were reported.
+local inflight = {}
+
+--- [cid] = the lowest condition already credited to a hit, so one drop is
+--- never credited twice. Cleared once a reading rises above it.
+local credited = {}
+
+--- A defibrillator's own gap, which is no revive whatever lands in it.
+local function shocked(cid, since)
+    local at = defibAt[cid]
+    return at ~= nil and since >= at - 1000 and since - at <= Death.DEFIB_GAP_MS
+end
 
 --- The end of a time up after a death, read as down again: a revive if a
 --- hit is what ended it, and nothing if not.
@@ -75,8 +108,22 @@ local function endUpPeriod(cid)
     local since = upSince[cid]
     if not since then return end
     upSince[cid] = nil
-    if seenDead[cid] and (lastHitAt[cid] or -math.huge) > since then
+    if shocked(cid, since) then
+        defibAt[cid] = nil
+        return
+    end
+    if not seenDead[cid] then return end
+    if (lastHitAt[cid] or -math.huge) > since then
         Death.onRevived(cid, since)
+        return
+    end
+    -- A hit whose damage the server has not seen yet may still be what ended
+    -- it: the check that confirms it decides.
+    for _, hit in ipairs(inflight[cid] or {}) do
+        if hit.up and hit.at > since then
+            lastUp[cid] = since
+            return
+        end
     end
 end
 
@@ -85,6 +132,7 @@ function Death.init(deps)
         deps.storage, deps.identity, deps.contracts, deps.audit, deps.photo
     damage, pending, hitBy = {}, {}, {}
     upSince, reviveClaims, lastHitAt = {}, {}, {}
+    defibAt, lastUp, inflight, credited = {}, {}, {}, {}
 end
 
 --------------------------------------------------------------------------
@@ -111,6 +159,81 @@ local function readCondition(source)
     }
 end
 
+--- Health and armour as one figure: a shot into a vest costs no health.
+local function total(c) return (c.health or 0) + (c.armour or 0) end
+
+--- How long after a hit its damage is looked for, and when.
+Death.HIT_WINDOW_MS = 1000
+local HIT_CHECKS_MS = { 150, 300, 500, 750, 1000 }
+
+--- Put a corroborated hit on the record.
+local function credit(cid, hit, lost, reading)
+    credited[cid] = reading
+
+    local list = damage[cid]
+    if not list then
+        list = {}
+        damage[cid] = list
+    end
+
+    -- Landing a hit is working the contract, from however far away.
+    hitBy[cid] = hitBy[cid] or {}
+    hitBy[cid][hit.attackerCid] = os.time()
+
+    list[#list + 1] = {
+        attackerCid = hit.attackerCid,
+        at = hit.at,
+        weapon = hit.weapon,
+        distance = hit.distance,
+        coords = hit.coords,
+        -- How much condition the server saw disappear, so the hunter who did
+        -- the most damage wins attribution rather than whoever claimed last.
+        damage = lost,
+    }
+
+    if hit.up then
+        lastHitAt[cid] = math.max(lastHitAt[cid] or -math.huge, hit.at)
+        -- The time up it ended was over before its damage was seen: a revive
+        -- cut short all the same.
+        local since = lastUp[cid]
+        if since and hit.at > since and seenDead[cid] then
+            lastUp[cid] = nil
+            Death.onRevived(cid, since)
+            if Identity.isTrulyDead(hit.source) then Death.markDead(cid) end
+        end
+    end
+
+    -- Keep the window small: old damage cannot corroborate a later death.
+    Death.prune(cid)
+end
+
+--- Look for the damage of the hits waiting on it, oldest first. A later hit
+--- waits for an earlier one, so a drop goes to the hit that caused it and
+--- not to whichever check looked first.
+local function checkHits(cid)
+    local list = inflight[cid]
+    if not list then return end
+    local now = Util.monotonicMs()
+    while list[1] do
+        local hit = list[1]
+        local reading = total(readCondition(hit.source))
+        local base = math.min(hit.base, credited[cid] or math.huge)
+        if reading < base then
+            table.remove(list, 1)
+            credit(cid, hit, base - reading, reading)
+        elseif now - hit.at >= Death.HIT_WINDOW_MS then
+            table.remove(list, 1)
+            Audit.rejected('damage_unsupported', hit.attackerCid, nil, { victim = cid })
+        else
+            break
+        end
+    end
+    if not list[1] then
+        inflight[cid] = nil
+        lastUp[cid] = nil
+    end
+end
+
 --- Record a damage event.
 ---
 --- Only `sender` is engine-supplied. The entity list, weapon and damage
@@ -118,6 +241,14 @@ end
 --- corroborated here against the victim's health as the server reads it: a
 --- player who never fired cannot produce a decrease, and a claim without one
 --- is discarded.
+---
+--- The event arrives before the damage does. weaponDamageEvent is the
+--- shooter's game asking for the hit, raised before it is sent on to the
+--- victim's, and the victim's health reaches the server only once their game
+--- has applied it. Read at the event, a lone shot always looked like no
+--- damage at all: a target downed with one aimed round and finished with
+--- another opened no kill. So a hit whose damage is not already showing is
+--- held for up to a second and credited when the drop appears.
 ---@param attackerSource number
 ---@param victimSource number
 ---@param weaponHash number|nil
@@ -143,13 +274,6 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
         return
     end
 
-    local lost = (previous.health - current.health) + (previous.armour - current.armour)
-    if lost <= 0 then
-        Audit.rejected('damage_unsupported', attacker.cid, nil,
-            { victim = victim.cid, health = current.health, armour = current.armour })
-        return
-    end
-
     local attackerCoords = GetEntityCoords(GetPlayerPed(attackerSource))
     local victimCoords = GetEntityCoords(GetPlayerPed(victimSource))
     local distance = math.sqrt(Util.dist2(attackerCoords, victimCoords))
@@ -160,30 +284,36 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
         return
     end
 
-    local list = damage[victim.cid]
-    if not list then
-        list = {}
-        damage[victim.cid] = list
-    end
-
-    -- Landing a hit is working the contract, from however far away.
-    hitBy[victim.cid] = hitBy[victim.cid] or {}
-    hitBy[victim.cid][attacker.cid] = os.time()
-
-    lastHitAt[victim.cid] = Util.monotonicMs()
-    list[#list + 1] = {
+    local dead, down, known = Identity.deathState(victimSource)
+    local hit = {
         attackerCid = attacker.cid,
-        at = lastHitAt[victim.cid],
         weapon = weaponHash,
         distance = distance,
         coords = victimCoords,
-        -- How much condition the server saw disappear, so the hunter who did
-        -- the most damage wins attribution rather than whoever claimed last.
-        damage = lost,
+        at = Util.monotonicMs(),
+        up = not (known and (dead or down)),
+        source = victimSource,
     }
 
-    -- Keep the window small: old damage cannot corroborate a later death.
-    Death.prune(victim.cid)
+    local now = total(current)
+    if credited[victim.cid] and now > credited[victim.cid] then credited[victim.cid] = nil end
+
+    -- Already showing: the damage reached the server before the event did,
+    -- as a burst's later rounds find the earlier ones'. Taken now, unless
+    -- earlier hits are still waiting on theirs.
+    local floor = math.min(total(previous), credited[victim.cid] or math.huge)
+    if not inflight[victim.cid] and now < floor then
+        credit(victim.cid, hit, floor - now, now)
+        return
+    end
+
+    hit.base = math.min(now, credited[victim.cid] or math.huge)
+    inflight[victim.cid] = inflight[victim.cid] or {}
+    table.insert(inflight[victim.cid], hit)
+    local cid = victim.cid
+    for _, ms in ipairs(HIT_CHECKS_MS) do
+        SetTimeout(ms, function() checkHits(cid) end)
+    end
 end
 
 function Death.prune(victimCid)
@@ -239,12 +369,14 @@ function Death.watch(cid, source, refresh)
 
     -- The baseline is refreshed, not merely seeded: health and armour both
     -- recover over time, and a stale low baseline would make every later
-    -- hit look like an increase and be rejected as uncorroborated.
-    --
-    -- Refreshing is safe against a hit landing in between, because a damage
-    -- event arrives within milliseconds while this runs on the tick.
+    -- hit look like an increase and be rejected as uncorroborated. A hit
+    -- whose damage lands after a refresh is not lost to it: the check for
+    -- it measures from the hit, not from the baseline.
     if condition[cid] == nil or refresh then
         condition[cid] = readCondition(source)
+        -- Healed, armoured up or revived past what was credited: the next
+        -- drop is measured from here.
+        if credited[cid] and total(condition[cid]) > credited[cid] then credited[cid] = nil end
     end
     return true
 end
@@ -325,9 +457,21 @@ function Death.watchTargets(contracts)
                 local dead, lastStand, resolved = Identity.deathState(target.source)
                 if resolved and not dead and not lastStand and Death.wasSeenDead(target.cid) then
                     local at = Util.monotonicMs()
-                    upSince[target.cid] = upSince[target.cid] or at
-                    if at - upSince[target.cid] >= Death.REVIVE_CONFIRM_MS then
+                    -- Killed where they stood: the ped is dead and the
+                    -- medical resource has not yet put them in last stand.
+                    -- A blast, a fire, a car or a fall ends a revive with
+                    -- no weapon event to say so. A defibrillator's gap never
+                    -- reads like this: the body it works on was raised at
+                    -- full health when it died.
+                    local health = GetEntityHealth(GetPlayerPed(target.source)) or 0
+                    if upSince[target.cid] and health <= 100
+                        and not shocked(target.cid, upSince[target.cid]) then
                         Death.onRevived(target.cid, upSince[target.cid])
+                    else
+                        upSince[target.cid] = upSince[target.cid] or at
+                        if at - upSince[target.cid] >= Death.REVIVE_CONFIRM_MS then
+                            Death.onRevived(target.cid, upSince[target.cid])
+                        end
                     end
                 else
                     endUpPeriod(target.cid)
@@ -424,11 +568,45 @@ end
 --- Reset the health baseline for a player, so a respawn is not read as a
 --- decrease and the next real hit is measured from full.
 function Death.resetHealth(cid, source)
+    credited[cid] = nil
     if source then
         condition[cid] = readCondition(source)
     else
         condition[cid] = nil
     end
+end
+
+--- A medic used a defibrillator on this player: the time up that follows is
+--- its gap, not a revive (see defibAt).
+---
+--- Heard from sc-ambulance's own net event, so the same checks it makes are
+--- made here: the sender is an on-duty medic standing over a patient who is
+--- dead. Anyone else could otherwise mark a player, and have a revive cut
+--- short read as the gap.
+---@param medicSource number the sender, engine-supplied
+---@param targetSource any the patient's server id, from the medic's client
+---@return boolean noted
+function Death.noteDefib(medicSource, targetSource)
+    local patientSource = tonumber(targetSource)
+    if not patientSource then return false end
+    local medic = Identity.resolve(medicSource)
+    local patient = Identity.resolve(patientSource)
+    if not medic or not patient or medic.cid == patient.cid then return false end
+
+    local jobs = (Config.Completion and Config.Completion.MedicJobs) or { ambulance = true }
+    local job = medic.job or {}
+    if not jobs[job.name] or job.onduty == false then return false end
+
+    local dead = Identity.deathState(patientSource)
+    if not dead then return false end
+
+    local reach = ((Config.Completion and Config.Completion.DefibRange) or 3.0) + 2.0
+    local gap = Util.dist2(GetEntityCoords(GetPlayerPed(medicSource)),
+        GetEntityCoords(GetPlayerPed(patientSource)))
+    if gap > reach * reach then return false end
+
+    defibAt[patient.cid] = Util.monotonicMs()
+    return true
 end
 
 --------------------------------------------------------------------------
@@ -480,6 +658,32 @@ function Death.onVictimReport(victimSource, killerServerId)
     -- revive claim from them is checked against.
     Death.markDead(victim.cid)
 
+    local reportedAt = Util.monotonicMs()
+
+    -- The finishing shot's damage can still be on its way to the server,
+    -- and attributing now would give the kill to nobody, or to whoever hit
+    -- them earlier. Once the hits have been checked, then.
+    local waiting = inflight[victim.cid]
+    if waiting and waiting[1] then
+        local last = reportedAt
+        for i = 1, #waiting do last = math.max(last, waiting[i].at + Death.HIT_WINDOW_MS) end
+        SetTimeout(math.max(0, last - reportedAt) + 50, function()
+            checkHits(victim.cid)
+            local still = Identity.resolve(victimSource)
+            if still and still.cid == victim.cid then
+                Death.attributeDeath(victim, victimSource, named, reportedAt)
+            end
+        end)
+        return 0
+    end
+
+    return Death.attributeDeath(victim, victimSource, named, reportedAt)
+end
+
+--- Open a pending kill on every live contract naming this victim, for the
+--- hunter the death is credited to.
+---@return integer opened
+function Death.attributeDeath(victim, victimSource, named, reportedAt)
     local opened = 0
     local contracts = Storage.allContracts()
 
@@ -525,7 +729,7 @@ function Death.onVictimReport(victimSource, killerServerId)
                     contractId = contract.id,
                     hunterCid  = hit.attackerCid,
                     victimCid  = victim.cid,
-                    at         = Util.monotonicMs(),
+                    at         = reportedAt or Util.monotonicMs(),
                     coords     = hit.coords,
                     weapon     = hit.weapon,
                 }
@@ -673,6 +877,8 @@ function Death.onRevived(cid, since)
     -- One death, one revive. A second claim has to wait for a second death.
     seenDead[cid] = nil
     upSince[cid] = nil
+    lastUp[cid] = nil
+    defibAt[cid] = nil
 
     -- A revive ends the fight. Damage recorded before it must not
     -- corroborate a death that happens afterwards, or a hunter who shot
@@ -771,6 +977,10 @@ function Death.clearPlayer(cid)
     upSince[cid] = nil
     reviveClaims[cid] = nil
     lastHitAt[cid] = nil
+    defibAt[cid] = nil
+    lastUp[cid] = nil
+    inflight[cid] = nil
+    credited[cid] = nil
     for key, record in pairs(pending) do
         if record.hunterCid == cid then pending[key] = nil end
     end

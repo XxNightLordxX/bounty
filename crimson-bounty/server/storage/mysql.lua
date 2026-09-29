@@ -612,33 +612,50 @@ end
 -- Escrow
 --------------------------------------------------------------------------
 
+--- Every line in one transaction: a reader sees all of a write or none of it.
+--- A statement a line let a reader land between two of them. A claim marks
+--- each line of the collection it pays — the baseline for its hunter, an
+--- elimination's bonus back to the client — and a top-up that found its
+--- baseline marked and its bonus not handed the bonus back and was told it
+--- had failed, while the hunter was paid the baseline.
+local ESCROW_UPSERT = [[
+    INSERT INTO crimson_escrow
+        (id, contract_id, slot, portion, source, amount, item, quantity, metadata,
+         staker, inv_slot, owed_to, releasing_to, state, derived)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    -- State and amount are NOT written here: they move only through
+    -- claimEscrowLine / settleEscrowLine / setEscrowAmount, which are
+    -- guarded. Writing them from a caller-held copy could resurrect a
+    -- line that settled while the caller was reading.
+    ON DUPLICATE KEY UPDATE owed_to = VALUES(owed_to),
+        releasing_to = VALUES(releasing_to)
+]]
+
+local function escrowParams(contractId, l)
+    return {
+        l.id, contractId, l.slot or 1, l.portion, l.source, l.amount or 0,
+        l.item, l.quantity or 0, l.metadata and json.encode(l.metadata) or nil,
+        l.staker, l.inv_slot, l.owed_to, l.releasing_to, l.state,
+        -- Whether this resource worked the bonus out, or the creator
+        -- named it. Escrow.bonusTopUp raises only the former, so a line
+        -- that loses this flag is a slot raise_bonus will not touch —
+        -- and with no column at all, that was every slot on this
+        -- backend.
+        l.derived and 1 or 0,
+    }
+end
+
 function MySQLStore.writeEscrow(contractId, lines)
-    for i = 1, #lines do
-        local l = lines[i]
-        MySQL.query.await([[
-            INSERT INTO crimson_escrow
-                (id, contract_id, slot, portion, source, amount, item, quantity, metadata,
-                 staker, inv_slot, owed_to, releasing_to, state, derived)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            -- State and amount are NOT written here: they move only through
-            -- claimEscrowLine / settleEscrowLine / setEscrowAmount, which are
-            -- guarded. Writing them from a caller-held copy could resurrect a
-            -- line that settled while the caller was reading.
-            ON DUPLICATE KEY UPDATE owed_to = VALUES(owed_to),
-                releasing_to = VALUES(releasing_to)
-        ]], {
-            l.id, contractId, l.slot or 1, l.portion, l.source, l.amount or 0,
-            l.item, l.quantity or 0, l.metadata and json.encode(l.metadata) or nil,
-            l.staker, l.inv_slot, l.owed_to, l.releasing_to, l.state,
-            -- Whether this resource worked the bonus out, or the creator
-            -- named it. Escrow.bonusTopUp raises only the former, so a line
-            -- that loses this flag is a slot raise_bonus will not touch —
-            -- and with no column at all, that was every slot on this
-            -- backend.
-            l.derived and 1 or 0,
-        })
+    if #lines == 0 then return true end
+    if #lines == 1 then
+        MySQL.query.await(ESCROW_UPSERT, escrowParams(contractId, lines[1]))
+        return true
     end
-    return true
+    local queries = {}
+    for i = 1, #lines do
+        queries[i] = { query = ESCROW_UPSERT, values = escrowParams(contractId, lines[i]) }
+    end
+    return MySQL.transaction.await(queries) ~= false
 end
 
 local function hydrateEscrow(row)

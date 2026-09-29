@@ -184,6 +184,17 @@ function Bridges.install(modules)
         Bridges.onWeaponDamage(modules, sender, data)
     end)
 
+    -- sc-ambulance's defibrillator, heard as it is sent to sc-ambulance: the
+    -- moment it leaves between dead and last stand is no revive, whatever
+    -- lands in it. Every check sc-ambulance makes is made again in
+    -- Death.noteDefib, so a client firing this proves nothing it could not
+    -- already do with the real device.
+    RegisterNetEvent('sc-ambulance:server:UseDefib', function(targetId)
+        local src = source
+        if not modules.death or not modules.death.noteDefib then return end
+        pcall(modules.death.noteDefib, src, targetId)
+    end)
+
     -- A sentence starting or ending moves a contract's clock as a player
     -- arriving or leaving does. qbx_core announces every metadata write on
     -- the server; a local event, so no client can raise it.

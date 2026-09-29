@@ -776,6 +776,70 @@ describe('a top-up a stalled elimination has already shared out', function()
     end)
 end)
 
+describe('a claim that stalls between the lines of its marks', function()
+    --- On mysql the marks went out one statement a line. A top-up reading
+    --- between two of them saw its baseline owed to the hunter and its bonus
+    --- not yet marked back to the client: it handed the bonus back, called
+    --- the top-up failed, and the claim then paid the hunter the baseline.
+    it('shows the top-up all of the marks or none', function()
+        local s = mysqlStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { bank = 1000 } }, { baseline = { bank = 2000 } } } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        -- The claim stalls after its first write to escrow: after one line
+        -- of its marks, if they go one statement a line.
+        local claim, paused = nil, false
+        local realQuery, realTx = MySQL.query, MySQL.transaction
+        local function stallAfter(fn)
+            return { await = function(sql, params)
+                local out = fn.await(sql, params)
+                local text = type(sql) == 'string' and sql or ''
+                if type(sql) == 'table' then text = sql[1] and (sql[1].query or sql[1][1]) or '' end
+                if claim and coroutine.running() == claim and not paused
+                    and text:find('INSERT INTO crimson_escrow') then
+                    paused = true
+                    coroutine.yield()
+                end
+                return out
+            end }
+        end
+        local realTake = s.escrow.take
+        local started = false
+        s.escrow.take = function(actor, id, lines)
+            local a, b, d = realTake(actor, id, lines)
+            if not started then
+                started = true
+                MySQL.query, MySQL.transaction = stallAfter(realQuery), stallAfter(realTx)
+                claim = coroutine.create(function()
+                    return s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+                end)
+                coroutine.resume(claim)
+            end
+            return a, b, d
+        end
+        local before = Env.players[1].PlayerData.money.bank
+        local ok, err = s.amendments.addEscrow(f.creator, c.id,
+            { baseline = { bank = 500 }, bonus = { bank = 300 } })
+        s.escrow.take = realTake
+        truthy(paused, 'the claim stalled in its marks')
+        coroutine.resume(claim)
+        MySQL.query, MySQL.transaction = realQuery, realTx
+
+        local baseline
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CB.PORTION.BASELINE and l.amount == 500 then baseline = l end
+        end
+        eq(baseline.settled_to, 'HUNTER01', 'the hunter was paid the top-up')
+        truthy(ok, 'and the client was told: ' .. tostring(err))
+        eq(before - Env.players[1].PlayerData.money.bank, 500)
+    end)
+end)
+
 describe('a top-up the claim it waited on paid out', function()
     it('is reported made, not locked', function()
         local s = mysqlStack()
