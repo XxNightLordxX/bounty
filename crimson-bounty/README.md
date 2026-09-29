@@ -112,7 +112,8 @@ report to the damage the server saw, and each hit it reports settles one
 piece of that damage. When hunters have hits waiting on the same damage,
 the server waits a moment, longer on a slow connection, for the target's word
 on every one of them: the damage goes to the one hunter the target names; if
-it names two, or nobody, it counts for neither. A player whose game runs this
+it names two, or nobody, it counts for neither (a word a moment late still
+counts for a hunter shooting alone). A player whose game runs this
 resource (every player's does, from when it starts) is held to that word even
 when only one hunter is shooting, so damage the target never reports, such as
 a fall, an NPC or a last-stand bleed, is nobody's. A hit another resource

@@ -890,12 +890,18 @@ describe('damage observation is actually wired', function()
     end)
 
     it('lets no report stand for more hits than a burst can have', function()
+        -- A victim's game claiming a billion hits in one report. The cap is
+        -- lowered so the drops it would settle fit in the time a report can
+        -- tell of them.
         local s = wiredStack()
         local f, c = placed(s)
         hearing(s)
+        local cap = s.death.SAW_MAX_HITS
+        s.death.SAW_MAX_HITS = 4
         local rounds = s.death.SAW_MAX_HITS + 1
         for _ = 1, rounds do shoot(3) end
         told(2, 3, 1e9, 195, 200 - rounds * 5)
+        s.death.SAW_MAX_HITS = cap
         local health = 200
         for _ = 1, rounds do
             health = health - 5
@@ -907,7 +913,7 @@ describe('damage observation is actually wired', function()
         for _, row in ipairs(s.death.recordsFor('TARGET01')) do
             if row.attackerCid == 'HUNTER01' then credited = credited + 1 end
         end
-        eq(credited, s.death.SAW_MAX_HITS, 'one report settled drops without end, or too few')
+        eq(credited, rounds - 1, 'one report settled drops without end, or too few')
     end)
 
     it('keeps a report whose condition rose between its hits, a heal among them', function()
@@ -930,6 +936,152 @@ describe('damage observation is actually wired', function()
         end
         eq(rounds, 2, 'a report whose readings rose was dropped')
         falsy(s.death.recordFor('TARGET01', 'HUNTER02'))
+    end)
+
+    it('does not let whoever the victim\'s game names during the wait take the drop before it', function()
+        -- A rival's round lands while the hunter's drop waits on the rival's
+        -- word, and the engine names the rival: read again, that settled
+        -- the hunter's drop on the rival.
+        local s = wiredStack()
+        local f, c = placed(s)
+        rival(s, c)
+        hearing(s)
+        shoot(4)                          -- forged, first in line
+        shoot(3)
+        Env.players[2]._health = 150
+        told(2, 3)
+        Env.advance(0.06)                 -- seen: the hunter named, the rival not
+        shoot(4)                          -- a real graze, in the wait
+        Env.players[2]._health = 140
+        Env.players[2]._damageSource = 1004
+        Env.advance(0.05)
+        Env.players[2]._damageSource = 0
+        Env.advance(2)
+        local total = { HUNTER01 = 0, HUNTER02 = 0 }
+        for _, row in ipairs(s.death.recordsFor('TARGET01')) do
+            total[row.attackerCid] = total[row.attackerCid] + row.damage
+        end
+        eq(total.HUNTER01, 50, 'the hunter\'s round went to the rival')
+        truthy(total.HUNTER02 <= 10, 'the rival was credited with more than their graze')
+    end)
+
+    it('does not write off the damage landing in the wait when the engine names somebody else', function()
+        -- A lone hunter's drop waits on their word; another hunter's
+        -- finishing round lands meanwhile and the engine names them.
+        local s = wiredStack()
+        local f, c = placed(s)
+        rival(s, c)
+        hearing(s)
+        shoot(3)
+        Env.players[2]._health = 170
+        Env.advance(0.06)                 -- seen before the word
+        shoot(4)
+        Env.players[2]._health = 90
+        Env.players[2]._damageSource = 1004
+        Env.advance(0.05)
+        Env.players[2]._damageSource = 0
+        told(2, 3, 1, 170, 170)
+        told(2, 4, 1, 90, 90)
+        Env.advance(2)
+        local one, two = s.death.recordFor('TARGET01', 'HUNTER01'), s.death.recordFor('TARGET01', 'HUNTER02')
+        truthy(one and one.damage == 30, 'the hunter\'s round was written off')
+        truthy(two and two.damage == 80, 'the finishing round was written off')
+    end)
+
+    it('holds a player to their word though they asked who they were before choosing a character', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        rival(s, c)
+        local target = Env.players[2]
+        Env.removePlayer(2)               -- in character select
+        hearing(s)
+        Env.players[2], Env.byCitizen.TARGET01 = target, 2
+        shoot(4)                          -- forged, alone
+        Env.players[2]._health = 150      -- damage with no event of its own
+        Env.advance(0.06)
+        told(2, 3)
+        Env.advance(2)
+        falsy(s.death.recordFor('TARGET01', 'HUNTER02'), 'the forger took the damage')
+    end)
+
+    it('credits a lone hunter whose target healed a little before the server looked', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        hearing(s)
+        shoot(3)
+        told(2, 3, 1, 150, 150)           -- the round, as the victim read it
+        Env.players[2]._health = 160      -- a bandage, before the first look
+        Env.advance(2)
+        local one = s.death.recordFor('TARGET01', 'HUNTER01')
+        truthy(one and one.damage == 40, 'a heal voided the round')
+    end)
+
+    it('does not let a report on a drop long settled name its attacker for a later one', function()
+        -- A round whose drop was settled for nobody left its report behind;
+        -- half a second later another hunter's drop was voided by it.
+        local s = wiredStack()
+        local f, c = placed(s)
+        rival(s, c)
+        hearing(s)
+        Env.addPlayer({ source = 5, citizenid = 'HUNTER03', license = 'license:h3',
+            coords = { x = 52.0, y = 51.0, z = 30.0 } })
+        s.contracts.accept(s.identity.resolve(5), c.id, false)
+        shoot(5)                          -- forged
+        shoot(4)
+        told(2, 4, 1, 150, 150)
+        Env.players[2]._health = 160      -- healed before the first look
+        Env.advance(0.5)                  -- nobody's
+        shoot(3)
+        Env.players[2]._health = 130
+        told(2, 3)
+        Env.advance(2)
+        local one = s.death.recordFor('TARGET01', 'HUNTER01')
+        truthy(one and one.damage == 30, 'an old report voided the later hunter\'s drop')
+    end)
+
+    it('credits a lone hunter whose word came just after the wait', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        hearing(s)
+        shoot(3)
+        Env.players[2]._health = 150
+        Env.advance(0.4)                  -- settled for nobody
+        falsy(s.death.recordFor('TARGET01', 'HUNTER01'))
+        told(2, 3, 1, 200, 200)           -- about nothing that drop held
+        falsy(s.death.recordFor('TARGET01', 'HUNTER01'), 'a late word on no damage settled it')
+        told(2, 3, 1, 150, 150)
+        local one = s.death.recordFor('TARGET01', 'HUNTER01')
+        truthy(one and one.damage == 50, 'a word a moment late lost the round')
+        -- The hit is settled: more damage, and more word, is not its again.
+        Env.players[2]._health = 100
+        told(2, 3, 1, 100, 100)
+        Env.advance(2)
+        told(2, 3, 1, 150, 150)
+        eq(#s.death.recordsFor('TARGET01'), 1, 'a late word credited the round twice')
+    end)
+
+    it('does not credit a lone forged event on a late word naming somebody else', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        rival(s, c)
+        hearing(s)
+        shoot(4)                          -- forged, alone
+        Env.players[2]._health = 150      -- the hunter's damage, with no event
+        Env.advance(0.4)                  -- settled for nobody
+        told(2, 3, 1, 150, 150)
+        falsy(s.death.recordFor('TARGET01', 'HUNTER02'), 'the forger was credited on the hunter\'s word')
+    end)
+
+    it('does not take a word for a drop settled for nobody once its hit has gone', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        hearing(s)
+        shoot(3)
+        Env.players[2]._health = 150
+        Env.advance(0.4)
+        Env.advance(s.death.HIT_WINDOW_MS / 1000)
+        told(2, 3, 1, 150, 150)
+        falsy(s.death.recordFor('TARGET01', 'HUNTER01'), 'a word after the hit\'s window settled the drop')
     end)
 
     it('does not queue a hit another resource cancelled', function()
@@ -1127,20 +1279,34 @@ describe('damage observation is actually wired', function()
         eq(kept(), 0, 'kept after the victim left')
     end)
 
-    it('hears a victim\'s reports of who hit them on a budget of their own', function()
+    it('hears a victim\'s reports of who hit them on a budget for each attacker', function()
+        -- One pool per victim let players who never came in range fill it, and
+        -- have the honest hunter's word refused while a rival's was heard.
         local s = wiredStack()
         placed(s)
-        local real, heard = s.death.victimSaw, 0
-        s.death.victimSaw = function(...) heard = heard + 1; return real(...) end
+        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2' })
+        local real, heard = s.death.victimSaw, {}
+        s.death.victimSaw = function(victim, by, ...)
+            heard[by] = (heard[by] or 0) + 1
+            return real(victim, by, ...)
+        end
         for _ = 1, 200 do told(2, 3) end
-        s.death.victimSaw = real
-        eq(heard, 60, 'a flood of reports was heard in full')
+        told(2, 4)
+        eq(heard[3], 25, 'a flood of reports on one attacker was heard in full')
+        eq(heard[4], 1, 'the flood spent another attacker\'s budget')
         truthy(s.app.floodOk(2, 'iDied'), 'and spent the allowance the death report shares')
-        s.death.victimSaw = function(...) heard = heard + 1; return real(...) end
         Env.advance(1.1)
         told(2, 3)
+        eq(heard[3], 26, 'the next second\'s report went unheard')
+        -- However many attackers, a ceiling.
+        for id = 10, 30 do
+            Env.addPlayer({ source = id, citizenid = 'X' .. id, license = 'license:x' .. id })
+            for _ = 1, 25 do told(2, id) end
+        end
+        local total = 0
+        for id = 10, 30 do total = total + (heard[id] or 0) end
         s.death.victimSaw = real
-        eq(heard, 61, 'the next second\'s report went unheard')
+        eq(total, 200 - 1, 'no ceiling over all attackers together')
     end)
 
     it('keeps no report naming the victim themselves, or nobody', function()
@@ -1163,6 +1329,7 @@ describe('damage observation is actually wired', function()
         end
         truthy(s.death.victimSaw(2, 3, 1, 150, 150), 'refused a report that is fine')
         told(2, { nested = { 1 } })
+        for _, junk in ipairs({ 0 / 0, -1, 1e9, 1.5, '3' }) do told(2, junk) end
     end)
 
     it('gives a drop to the shooter the victim\'s game names, not the first in line', function()
