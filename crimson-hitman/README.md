@@ -30,7 +30,6 @@ are created automatically on first start. Nothing to import either way.
 | `Config.Database.Mode` | `json` (as shipped; no database at all), `mysql` (oxmysql), `memory` (testing only — nothing survives a restart) |
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who cannot open the app. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit |
 | `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry |
-| `Config.Payout.AllowConversion` | Leave **off**. See "Dirty money" below |
 | `Config.Limits` | Contract caps, payout slots, cooldowns |
 | `Config.Immunity` | Playtime and session floors that protect new players from being farmed |
 
@@ -40,10 +39,10 @@ are created automatically on first start. Nothing to import either way.
 **18% more** than clean money there. Paying a contract out as dirty money at
 face value would turn every contract into a risk-free laundering rail, so:
 
-- Escrow pays out in **exactly the sources it holds**. Cash in, cash out.
-- Conversion is a separate, opt-in step (`Config.Payout.AllowConversion`),
-  and when enabled it converts at `0.85` — matching your black market, so
-  converting is value-neutral rather than profitable.
+- Escrow pays out in **exactly the sources it holds**. Cash in, cash out;
+  dirty money in, dirty money out.
+- There is no conversion option. A client who wants the hit paid in blood
+  money funds it with dirty money, and the hitman is paid in dirty money.
 
 ---
 
@@ -97,12 +96,16 @@ camera for the baseline. With `sc-ambulance`, downing them is not the kill:
 they are in last stand, and you have to finish them. The kill is credited to
 whoever landed a hit within `Config.Completion.DeathReportWindowMs` (30
 seconds) of the death, and bleeding out takes minutes, so a target left to
-bleed out pays nobody. A revive before you photograph them cancels it, once
-they have stayed up for a few seconds or somebody has put them down again,
-and a kill in the protection a revive gives does not pay. A defibrillator that only brings them
-back to last stand does not, even if they are hit while it takes effect, but
-the photograph needs them dead: the app says they are still down, and
-finishing them is a new kill with its own photograph. A hit counts once the
+bleed out pays nobody. For `Config.Completion.ProofWindowSeconds` (60
+seconds) after the death, the photograph counts whatever has happened to them
+since, whether a respawn, a revive or a defibrillator, so none of these can
+take a kill away from a hitman standing over the body. After that, a revive
+cancels the kill once they have stayed up for a few seconds or somebody has
+put them down again, and a kill made while a revive's protection lasts does
+not pay. A defibrillator that only brings them back to last stand does not
+cancel it, even if they are hit while it takes effect. Once that minute has
+passed, though, the photograph needs them dead: the app says they are still
+down, and finishing them is a new kill with its own photograph. A hit counts once the
 server sees the damage it did, which reaches it a moment after the shot, and
 only on the target's own body: a round into their car is not a hit on them.
 Where the target's game says who damaged them, that is who the damage goes to.
@@ -151,7 +154,8 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
   searches and threads use expiring per-viewer handles.
 - **A kill has to be real.** Death is attributed from damage the server
   observed, corroborated against the medical state. A downed player is not a
-  kill, and a revive voids a pending claim.
+  kill, and a revive more than `ProofWindowSeconds` (60 s) after the death
+  voids a pending claim.
 - **A delivery has to be real.** The target must be alive, conscious and
   restrained or in your vehicle, checked on every tick of the countdown.
 - **Anonymity is enforced by omission.** An anonymous party's identity is
@@ -186,8 +190,23 @@ the read-only ones (`ch-diag`, `ch-timeline`, `ch-stuck`); `ch-void` and
 Faults the phone page hits are reported to the server, printed to the console
 and kept for `/ch-diag`; `Config.Debug = true` adds each one's full stack trace.
 The page log `/ch-diag` asks a player's phone for is printed whatever Debug
-says, once, and only within thirty seconds of being asked for. The staff webhook (`Config.Audit.Webhook`) sends one message per audit
-flush rather than one per row, and backs off when Discord says to.
+says, once, and only within thirty seconds of being asked for.
+
+The staff webhook is optional and is set in `server.cfg`, never in
+`config.lua`, which every player's game downloads:
+
+```
+set crimson_hitman_webhook "https://discord.com/api/webhooks/..."
+```
+
+Use `set`, never `setr`: `setr` sends the value to every player too. It
+mirrors financial movements and refused attempts, without identities, as one
+message per audit flush rather than one per row, and backs off when Discord
+says to. An older `config.lua` that still sets `Config.Audit.Webhook` gets a
+warning at startup and the URL is not used: it has already been sent to
+every player, so regenerate it in Discord and move the new one to
+`server.cfg`.
+
 On the phone, tapping the build line at the bottom of the Ledger tab five times
 opens a diagnostics panel showing the page's recent requests and faults.
 

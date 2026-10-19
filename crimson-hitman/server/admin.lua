@@ -606,16 +606,54 @@ function Admin.diagnose(source, subjectId)
     -- The gate ------------------------------------------------------------
     --
     -- Every request passes through it and nothing above tests it. Resolving
-    -- a player is only its first step; the job blacklist is its second, and
-    -- a player refused there gets an empty app with no other symptom.
+    -- a player is only its first step; the blocked-jobs check
+    -- (Config.BlockedJobTypes / BlockedJobNames) is its second, and a player
+    -- refused there has no app, or one that answers nothing, with no other
+    -- symptom.
     local gateOk, gateActor, gateErr = pcall(Identity.gate, subject)
     if not gateOk then
         say(('gate: THREW  %s'):format(tostring(gateActor)))
         say('  -> every request from this player is refused. Nothing can work.')
     elseif not gateActor then
         say(('gate: REFUSES this player (%s)'):format(tostring(gateErr)))
-        say('  -> their job is on Config.Blacklist, so the app is empty for them '
-            .. 'by design. Nothing else below will look wrong.')
+        -- Which job, and which setting it matched. This used to name a
+        -- Config.Blacklist that does not exist, and an admin who searched
+        -- config.lua for it found only EscrowBlacklist, which is unrelated.
+        local barredName, held
+        if actor then barredName, held = Identity.barredBy(actor) end
+        if barredName then
+            -- barredBy names the job they are working by its label, and
+            -- neither setting is keyed by label: they take the job's name
+            -- and its type, so those are what is printed.
+            local job = actor.job or {}
+            if held then
+                job = { name = barredName }
+                for _, holding in ipairs(Identity.heldJobs(actor)) do
+                    if holding.name == barredName then job = holding end
+                end
+            end
+            local jobType = job.type and tostring(job.type):lower() or nil
+            local jobName = job.name and tostring(job.name):lower() or nil
+            -- In the order Identity.isBlockedJob checks them.
+            local matched = 'Config.BlockedJobTypes or Config.BlockedJobNames'
+            if jobType and Config.BlockedJobTypes[jobType] then
+                matched = ('Config.BlockedJobTypes (%s)'):format(jobType)
+            elseif jobName and Config.BlockedJobNames[jobName] then
+                matched = ('Config.BlockedJobNames (%s)'):format(jobName)
+            end
+            say(('  -> barred by the %s job%s%s: it matches %s'):format(
+                tostring(jobName or barredName),
+                jobType and (' (type ' .. jobType .. ')') or '',
+                held and ', which they hold but are not working' or '',
+                matched))
+            if Config.BlockOffDuty and (held or job.onduty == false) then
+                say('     off duty still counts while Config.BlockOffDuty is on')
+            end
+            say('  -> ' .. (Config.HideAppFromBlockedJobs == false
+                    and 'the app is installed but answers nothing for them'
+                    or 'the app is hidden from their phone')
+                .. ', by design. Nothing else below will look wrong.')
+        end
     else
         say('gate: passes')
     end

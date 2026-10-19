@@ -66,7 +66,7 @@ function Audit.rejected(action, actorCid, contractId, detail)
     push('rejected', action, actorCid, contractId, detail)
 end
 
---- Mirror a line to a staff webhook.
+--- Mirror a line to the staff webhook (the crimson_hitman_webhook convar).
 ---
 --- Identity is deliberately absent: the webhook is a heads-up that something
 --- happened, and anything sent to a third party outlives the server's own
@@ -97,8 +97,14 @@ local MAX_LINES, MAX_CHARS = 15, 1900
 --- this one. A single message carries the flush: up to fifteen lines, then
 --- how many more, with the refusal noise as a count.
 local function mirrorBatch(rows)
-    local url = Config.Audit.Webhook
-    if not url or url == false or url == '' then return false end
+    -- A server convar, never config.lua. That file is a shared script, so
+    -- every player's game downloads it, and a URL written there let anyone
+    -- post forged lines into the staff channel or delete the hook. `set`
+    -- keeps a convar on the server; `setr` would send it to every player
+    -- too, so the README says set. Read on every flush, so it can be
+    -- changed from the console without a restart.
+    local url = GetConvar('crimson_hitman_webhook', '')
+    if type(url) ~= 'string' or url == '' then return false end
     if Util.monotonicMs() < backoffUntil then return false end
 
     local lines, more, noise = {}, 0, 0

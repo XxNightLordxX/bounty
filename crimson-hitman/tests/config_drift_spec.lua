@@ -604,6 +604,48 @@ describe('diagnosing an app that shows nothing', function()
             .. 'the gate has to be reported: ' .. out)
     end)
 
+    --- The line used to send staff to Config.Blacklist, which does not
+    --- exist: searching config.lua for it finds only EscrowBlacklist. It
+    --- names the job, by the name and type the settings are keyed on, and
+    --- which of the two settings it matched.
+    it('names the job that bars a player and the setting it matched', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+
+        Env.players[1].PlayerData.job = { name = 'police', label = 'LSPD', type = 'leo', onduty = true }
+        local byType = said(s.admin.diagnose(1))
+        Env.players[1].PlayerData.job = { name = 'doj', label = 'DOJ', type = 'none', onduty = true }
+        local byName = said(s.admin.diagnose(1))
+
+        truthy(byType:find('barred by the police job (type leo): it matches '
+            .. 'Config.BlockedJobTypes (leo)', 1, true), byType)
+        truthy(byName:find('barred by the doj job (type none): it matches '
+            .. 'Config.BlockedJobNames (doj)', 1, true), byName)
+        falsy(byType:find('Config.Blacklist', 1, true), 'a setting that does not exist: ' .. byType)
+        falsy(byType:find('LSPD', 1, true), 'a label is not a key in config: ' .. byType)
+        truthy(byType:find('the app is hidden from their phone', 1, true),
+            'HideAppFromBlockedJobs is on as shipped, so the app is not empty, it is gone: '
+            .. byType)
+    end)
+
+    it('names a job they hold but are not working, and why off duty counts', function()
+        local s = newStack()
+        s.app.init(s)
+        fixture(s)
+        Env.players[1].PlayerData.jobs = { unemployed = 0, police = 2 }
+
+        local out
+        withConfig({ { Config, 'HideAppFromBlockedJobs', false } }, function()
+            out = said(s.admin.diagnose(1))
+        end)
+
+        truthy(out:find('barred by the police job (type leo), which they hold but '
+            .. 'are not working', 1, true), out)
+        truthy(out:find('Config.BlockOffDuty', 1, true), out)
+        truthy(out:find('installed but answers nothing for them', 1, true), out)
+    end)
+
     --- An elimination pays only on a target this resource can see is dead.
     --- With nothing able to answer that, every photo of a genuine kill is
     --- refused as "the target was revived" — a kill that simply never works,
@@ -1356,5 +1398,70 @@ describe('the page log a staff member asks for', function()
         falsy(report(2):find('forged line one', 1, true), 'another player answered for them')
         Env.advance(60)
         falsy(report(3):find('forged line one', 1, true), 'an answer long after the question')
+    end)
+end)
+
+--- The staff webhook used to be Config.Audit.Webhook. config.lua is a
+--- shared script, so every player's game downloads it, and a URL written
+--- there let anyone post into the staff channel or delete the hook. It is
+--- the crimson_hitman_webhook server convar now.
+describe('a staff webhook left in config.lua', function()
+    it('is not in the config this resource ships', function()
+        resetConfig()
+        eq(Config.Audit.Webhook, nil, 'the field is what invited a URL into a file every player has')
+        eq(ConfigDefaults.Audit.Webhook, nil, 'and boot does not fill it back in')
+    end)
+
+    it('is reported at boot, with where the webhook goes now', function()
+        boot(function() Config.Audit.Webhook = 'https://discord.com/api/webhooks/1/abc' end)
+        local told = table.concat(Env.console, ' | ')
+        boot(function() Config.Audit.Webhook = false end)
+        local quiet = table.concat(Env.console, ' | ')
+        resetConfig()
+
+        truthy(told:find('warning: Audit.Webhook is set in config/config.lua', 1, true),
+            'the URL has been sent to every player, and the operator has to be told: ' .. told)
+        truthy(told:find('set crimson_hitman_webhook', 1, true), 'and where it goes now: ' .. told)
+        truthy(told:find('never setr', 1, true), 'and that setr would leak it again: ' .. told)
+        falsy(told:find('discord.com/api/webhooks/1/abc', 1, true),
+            'the console is not one more place to print the URL: ' .. told)
+        falsy(quiet:find('Audit.Webhook', 1, true),
+            'false, as older configs shipped it, is not a URL: ' .. quiet)
+    end)
+end)
+
+--- Immunity.PlaytimeProvider in a shape the code cannot call was a silent
+--- no-op, and a number there threw at boot and on every contract placed.
+describe('a playtime provider in the wrong shape', function()
+    local function validate(provider)
+        newStack()
+        local main = require('server.main')
+        Config.Immunity.PlaytimeProvider = provider
+        Env.console = {}
+        local ok, err = pcall(main.validateConfig)
+        local after = Config.Immunity.PlaytimeProvider
+        resetConfig()
+        return ok, err, table.concat(Env.console, ' | '), after
+    end
+
+    local SHAPE = 'Immunity.PlaytimeProvider has to be'
+
+    it('names the shape it needs, and reads metadata instead', function()
+        local ok, err, told, after = validate({ resource = 'my_playtime' })
+        truthy(ok, tostring(err))
+        truthy(told:find(SHAPE, 1, true) and told:find('export', 1, true),
+            'a provider with no export was called on every contract and never said so: ' .. told)
+        eq(after, nil, 'dropped, so metadata answers, as it already did')
+
+        local good = { resource = 'my_playtime', export = 'GetMinutes' }
+        local _, _, quiet, kept = validate(good)
+        falsy(quiet:find(SHAPE, 1, true), 'a provider in the right shape: ' .. quiet)
+        eq(kept, good, 'is left alone')
+    end)
+
+    it('starts on a provider that is not a table at all', function()
+        local ok, err, told = validate(5)
+        truthy(ok, 'a number there took the resource down at boot: ' .. tostring(err))
+        truthy(told:find(SHAPE, 1, true), told)
     end)
 end)

@@ -81,13 +81,6 @@ local DEFAULTS = {
         -- every maintenance job, the prune among them, ten times as often.
         FlushIntervalMs = 10000,
     },
-    --- Read by the boot validation itself, which runs after this fills the
-    --- gaps — but only just. A config without it took the whole resource
-    --- down before it could say what was wrong.
-    Payout = {
-        AllowConversion = false,
-        DirtyConversionRate = 0.85,
-    },
     Cooldowns = {
         -- Split out of one shared bucket. On a config that predates the
         -- split these are absent, and an absent rule is not a licence to
@@ -533,17 +526,23 @@ local function validateConfig()
         end
     end
 
-    if Config.Payout.AllowConversion then
-        -- Honest about what it currently does, which is nothing. The branch
-        -- it gates (escrow.lua, `line.convertTo == 'dirty'`) reads a field
-        -- no code in this resource ever writes, so no payout has ever been
-        -- converted. Warning about a laundering rail that does not exist
-        -- sends an operator looking for a risk they do not have, and would
-        -- have them believe a feature is live that is not.
-        warn[#warn + 1] = 'Payout.AllowConversion is on, but nothing selects a '
-            .. 'conversion: escrow always pays out in the source it was taken '
-            .. 'in. The setting has no effect today. Leave it off unless a '
-            .. 'later version wires it up'
+    -- A staff webhook left in config.lua by an older version. That file is
+    -- a shared script, so every player's game has downloaded the URL, and
+    -- anyone holding it can post into the staff channel or delete the hook.
+    -- It is not used: the URL is already out, and carrying on with it would
+    -- hide that. The webhook is the crimson_hitman_webhook convar now.
+    --
+    -- Read through the section, not by its full path: the key is gone from
+    -- the shipped config on purpose, and the static check holds every
+    -- full-path read to a key the shipped config defines.
+    local audit = Config.Audit
+    if type(audit.Webhook) == 'string' and audit.Webhook ~= '' then
+        warn[#warn + 1] = 'Audit.Webhook is set in config/config.lua, which every '
+            .. 'player\'s game downloads, so that URL is exposed and is not used. '
+            .. 'Delete or regenerate the webhook in Discord, remove it from '
+            .. 'config.lua, and put the new one in server.cfg as: set '
+            .. 'crimson_hitman_webhook "<url>" (set, never setr: setr sends it to '
+            .. 'every player too)'
     end
 
     if mode == 'memory' then
@@ -557,6 +556,24 @@ local function validateConfig()
     -- reports nothing at all — it takes the resource down before it can
     -- say what is wrong, which is the worst way to learn about a missing
     -- setting. Defaults above should mean it never comes to this.
+    --
+    -- A provider in the wrong shape was a silent no-op: a table with no
+    -- export failed inside a pcall on every contract and fell back to
+    -- metadata, and a bare string read as no provider at all. A number
+    -- threw here and on every contract placed. It is dropped with a word,
+    -- which is what it was doing anyway, without the silence.
+    local provider = Config.Immunity.PlaytimeProvider
+    if provider ~= nil and not (type(provider) == 'table'
+        and type(provider.resource) == 'string' and provider.resource ~= ''
+        and type(provider.export) == 'string' and provider.export ~= '') then
+        warn[#warn + 1] = ('Immunity.PlaytimeProvider has to be { resource = '
+            .. '\'<resource>\', export = \'<function>\' }, an export returning total '
+            .. 'minutes played; it is %s, so it is ignored and playtime is read '
+            .. 'from QBox metadata'):format(type(provider) == 'table'
+                and 'missing its resource or export' or ('a ' .. type(provider)))
+        Config.Immunity.PlaytimeProvider = nil
+    end
+
     if (tonumber(Config.Immunity.MinTargetPlaytimeHours) or 0) > 0
         and not (Config.Immunity.PlaytimeProvider and Config.Immunity.PlaytimeProvider.resource) then
         warn[#warn + 1] = ('Immunity.MinTargetPlaytimeHours is %d but no PlaytimeProvider is set; ' ..

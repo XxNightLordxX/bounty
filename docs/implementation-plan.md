@@ -28,7 +28,7 @@ Read directly from the uploaded server resources, not assumed:
 
 ## 2. Decisions taken (owner delegated these)
 
-1. **Dirty-money payouts are source-faithful by default.** Escrow pays out in exactly the sources it holds (§14.10). Cross-currency conversion is a separate, explicit, **opt-in and lossy** step: `Config.Payout.AllowConversion = false`, and when enabled `Config.Payout.DirtyConversionRate = 0.85` — deliberately matching `sc-blackmarket`'s rate so converting is value-neutral rather than profitable. This closes the clean→dirty laundering arbitrage without removing the flavour.
+1. **Dirty-money payouts are source-faithful by default.** Escrow pays out in exactly the sources it holds (§14.10). There is no cross-currency conversion: a client who wants the hit paid in dirty money funds it with dirty money. This closes the clean→dirty laundering arbitrage without removing the flavour. (An `AllowConversion` setting once stood here; nothing ever selected a conversion, so it was removed rather than left as a switch that does nothing.)
 2. **Job blacklist is by type *and* name.** Blocked job types: `leo`, `police`, `ems`, `fire`. Blocked names: `police, sheriff, leo, trooper, sasp, bcso, fib, ranger, doj, lawyer, ambulance, fire`. Both lists are config-editable; the type check is what stops a new LEO job from silently gaining access.
 3. **Crypto = `cryptostick` item.** No crypto balance integration until one exists on the server.
 4. **Account identity for anti-alt checks** comes from the player's license identifier, resolved server-side, never from the client (§13.1, §14.7).

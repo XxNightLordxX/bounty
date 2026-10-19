@@ -1,6 +1,8 @@
 --- Crimson Hitman System — configuration.
---- Every value here is read by the resource. Nothing in this file is sent
---- to a client except through an explicit projection (server/projection.lua).
+--- Every value here is read by the resource. This file is shared: every
+--- player's game downloads it and runs it, so any player can read anything
+--- written here. Never put a secret in it (a webhook URL, an API key); the
+--- staff webhook is set in server.cfg instead (see the Audit section).
 ---
 --- A setting that does nothing is worse than no setting at all: an owner
 --- tunes it and gets silence. Anything that stops being read should be
@@ -68,22 +70,6 @@ Config.EscrowBlacklist = {
 Config.Bonus = {
     --- Ceiling on the kidnapping bonus percentage a creator may set.
     maxPercent = 200,
-}
-
---------------------------------------------------------------------------
--- Payout currency (§14.10)
---------------------------------------------------------------------------
-
-Config.Payout = {
-    --- Escrow pays out in exactly the sources it holds. Leave this false.
-    --- Turning it on lets a creator escrow clean money and have it paid as
-    --- dirty money, which on this server is a laundering rail: sc-blackmarket
-    --- prices dirty money at 0.85, making it worth ~1.18x clean.
-    AllowConversion = false,
-    --- Conversion rate applied when AllowConversion is on. Matched to
-    --- sc-blackmarket's BlackMoneyRate so converting is value-neutral, never
-    --- profitable.
-    DirtyConversionRate = 0.85,
 }
 
 --------------------------------------------------------------------------
@@ -298,8 +284,15 @@ Config.Immunity = {
     PostRespawnSeconds       = 300,
     AfterBailoutSeconds      = 3600,
     --- Where total playtime comes from. Leave nil to read QBox character
-    --- metadata. If nothing can answer, the playtime rule is skipped and the
-    --- resource says so at startup — it does not silently refuse everyone.
+    --- metadata (metadata.playtime, in minutes). To use another script, give
+    --- its resource and export, e.g.
+    ---   PlaytimeProvider = { resource = 'my_playtime', export = 'GetMinutes' },
+    --- It is called as exports.my_playtime:GetMinutes(citizenid) and must
+    --- return TOTAL MINUTES played, as a number. An export that answers in
+    --- hours or seconds makes the playtime floor wrong for everyone. If the
+    --- call errors or returns a non-number, metadata is used instead. If
+    --- nothing can answer, the playtime rule is skipped and the resource says
+    --- so at startup — it does not silently refuse everyone.
     PlaytimeProvider = nil,
 }
 
@@ -506,9 +499,11 @@ Config.Advisory = {
     --- Warn the creator before escrow is taken, and the hitman before they
     --- accept, that the target is law enforcement. The listing also carries a
     --- permanent flag. Nobody puts a hit on a cop by accident.
-    --- Advisories fire at creation and again on the first acceptance, so
-    --- the department learns both that a threat exists and that it went
-    --- live. Later acceptances on a competitive contract stay silent.
+    --- Advisories fire when the contract is posted and again on every
+    --- acceptance, each carrying the running count of operatives, so one
+    --- contract raises at most Limits.MaxHitmenPerContract acceptance
+    --- bulletins on every officer's phone. The dispatch entry for
+    --- acceptances shares one id per contract.
     OnCreate = true,
     OnAccept = true,
     WarnCreator = true,
@@ -697,10 +692,14 @@ Config.Audit = {
     --- a long-lived database has a lot to get through, and doing it all in
     --- one tick would stall the server.
     ContractsPrunedPerTick = 200,
-    --- Optional staff webhook. Financial movements and rejected attempts are
-    --- mirrored as a heads-up; identity is never included, because anything
-    --- sent to a third party outlives this server's retention rules.
-    Webhook = false,
+    --- The staff webhook is set in server.cfg, never here: this file is sent
+    --- to every player's game, and anyone holding the URL can post into the
+    --- staff channel or delete the hook.
+    ---   set crimson_hitman_webhook "https://discord.com/api/webhooks/..."
+    --- `set`, never `setr`: setr sends the value to every player as well.
+    --- Financial movements and rejected attempts are mirrored there as a
+    --- heads-up; identity is never included, because anything sent to a
+    --- third party outlives this server's retention rules.
 }
 
 Config.AntiCollusion = {

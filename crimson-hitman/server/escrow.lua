@@ -929,13 +929,11 @@ function Escrow.deliver(recipientCid, line)
 
     if line.source == 'cash' or line.source == 'bank' then
         local account, amount = line.source, line.amount
-        if Config.Payout.AllowConversion and line.convertTo == 'dirty' then
-            -- Conversion is lossy by design: the rate matches the server's
-            -- black market so converting is never profitable (§14.10).
-            local converted = math.floor(amount * Config.Payout.DirtyConversionRate)
-            if converted <= 0 then return false end
-            return exports.ox_inventory:AddItem(src, Config.Sources.dirty.item, converted) and true or false
-        end
+        -- Paid in the account it was taken from, always (§14.10). There is
+        -- no conversion to dirty money: clean money paid out as dirty is a
+        -- laundering rail, and the setting that claimed to offer it was
+        -- never wired to anything.
+        --
         -- The answer matters. qbx_core's AddMoney returns false for an
         -- account it will not credit, and servers commonly patch a balance
         -- ceiling into it. Reporting success regardless settled the line

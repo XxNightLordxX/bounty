@@ -81,6 +81,57 @@ describe('contract creation', function()
         truthy(contract, 'a missing playtime source must not stop the resource: ' .. tostring(err))
     end)
 
+    --- Another script's playtime, for a framework whose metadata has none.
+    --- The shape and unit config.lua documents: an export called with the
+    --- citizen id that answers total minutes played. Nothing set a provider
+    --- before these, so the path an owner is told to configure never ran.
+    local PROVIDER = { resource = 'my_playtime', export = 'GetMinutes' }
+
+    local function createWithProvider(s, f, answer)
+        local contract, err
+        -- Set on the proxy itself and taken off again whatever happens: the
+        -- harness's exports outlive every stack.
+        rawset(exports, 'my_playtime', { GetMinutes = answer })
+        local ok, failure = pcall(withConfig, {
+            { Config.Immunity, 'PlaytimeProvider', PROVIDER },
+            { Natives.resourceStates, 'my_playtime', 'started' },
+        }, function()
+            contract, err = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
+            })
+        end)
+        rawset(exports, 'my_playtime', nil)
+        if not ok then error(failure, 0) end
+        return contract, err
+    end
+
+    it('reads playtime from a configured provider, in minutes', function()
+        local s = newStack()
+        local f = fixture(s)
+        local asked = {}
+        -- Metadata says a hundred hours; the provider says one, and wins.
+        local contract, err = createWithProvider(s, f, function(_, cid)
+            asked[#asked + 1] = cid
+            return 60
+        end)
+        falsy(contract, 'one hour played is under the floor')
+        eq(err, CH.ERR.TARGET_TOO_NEW)
+        eq(asked[1], 'TARGET01', 'asked about the target, by citizen id')
+    end)
+
+    it('falls back to metadata when the provider cannot answer', function()
+        for _, answer in ipairs({
+            function() error('playtime database is down') end,
+            function() return 'sixty' end,
+        }) do
+            local s = newStack()
+            local f = fixture(s)
+            -- And metadata, at a hundred hours, says they have played enough.
+            local contract, err = createWithProvider(s, f, answer)
+            truthy(contract, 'a provider that fails is not a target too new: ' .. tostring(err))
+        end
+    end)
+
     it('rejects a reason containing a link or a phone number', function()
         local s = newStack()
         local f = fixture(s)

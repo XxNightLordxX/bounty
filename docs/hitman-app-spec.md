@@ -196,7 +196,7 @@ A hitman must **explicitly accept** the contract via the phone app to participat
 - The script confirms completion only if the target player's entity is within a short radius of the hitman at capture time.
 - On verification: the photo is transmitted instantly to the creator's app as proof of death, **baseline rewards** are released, and the contract closes for all hitmen.
 - **No payout** if the target dies by local elements, suicide, or a player who did not accept the contract.
-- **The target must be genuinely dead, not downed.** A player in a downed / bleeding-out / last-stand state is *not* a completed elimination: the server requires the QBox death state (`isdead`), and explicitly rejects `inlaststand`. A hitman who downs a target and photographs them mid-bleedout gets nothing until the target actually dies. This is re-checked at photo submission, not only at the death report — a target revived between the two invalidates the pending completion.
+- **The target must be genuinely dead, not downed.** A player in a downed / bleeding-out / last-stand state is *not* a completed elimination: the server requires the QBox death state (`isdead`), and explicitly rejects `inlaststand`. A hitman who downs a target and photographs them mid-bleedout gets nothing until the target actually dies. This is re-checked at photo submission, not only at the death report — a target revived between the two invalidates the pending completion, once the proof window after the death has passed.
 
 Attribution and photo binding:
 
@@ -271,7 +271,7 @@ The following must be config-driven:
 - Alt-account protection toggle (account-level identifier check)
 - `Config.Progression` — enabled, resource name, trust per elimination and per kidnapping
 - `Config.Mugshot.MaxImageBytes` — bound on a client-rendered headshot
-- `Config.Audit.Webhook` — staff mirror for financial and rejected lines
+- `crimson_hitman_webhook` server convar (`set` in server.cfg, never `setr`, never config.lua) — staff mirror for financial and rejected lines
 
 ---
 
@@ -839,7 +839,7 @@ Severity is the damage if the rule is absent, not the difficulty of the fix.
 
 **Rule.** The log is never part of the debounced state document: in json mode it is a daily-rotated, genuinely append-only file written with plain appends, never a read-modify-write; in mysql mode it is its own table. Writes are buffered into a bounded queue flushed as one batched insert every `Config.Audit.FlushIntervalMs` — never one insert per event and never synchronously on the payout path, since it is the contract state transition, not the audit row, that §14.11 requires to flush. The authoritative copy is local: identity fields are never included in any outbound webhook or console-mirrored line, which carries contract id, source, amount and timestamp only, and webhook mirroring defaults to off. An in-game identity lookup for dispute adjudication is ACE-gated, requires a free-text reason, and writes its own access record. `Config.Audit.RetentionDays` prunes at startup and daily, with pending-escrow entries exempt because an unpaid refund may outlive the cap, and the log's own retention and access are treated as a data-handling obligation the owner is told about. A purge hook on character deletion and permanent ban releases or writes off any pending escrow first, then deletes photos via the §14.43 index, then drops identity fields referencing that character while leaving financial entries intact with the identity replaced by the contract id — purge on ban is delayed by default so a ban appeal or duplication investigation still has its evidence. The same code path is exposed as an admin purge command, and the spec carries a short table of what this resource retains, where, and for how long.
 
-*Config:* Config.Audit.FlushIntervalMs, Config.Audit.MaxQueueSize, Config.Audit.RetentionDays, Config.Audit.Webhook, Config.Audit.IdentityRevealAce, Config.Audit.LogReads, Config.Retention.PurgeOnCharacterDelete, Config.Retention.PurgeOnBan
+*Config:* Config.Audit.FlushIntervalMs, Config.Audit.MaxQueueSize, Config.Audit.RetentionDays, the crimson_hitman_webhook convar, Config.Audit.IdentityRevealAce, Config.Audit.LogReads, Config.Retention.PurgeOnCharacterDelete, Config.Retention.PurgeOnBan
 
 #### 14.45 Weapon serials and unique item identifiers never leave the holder
 
@@ -1125,7 +1125,7 @@ Every `config.lua` entry implied by §8, §10 and §15, as one list. Defaults be
 - Config.Audit.FlushIntervalMs — batched queue flush, never on the payout path
 - Config.Audit.MaxQueueSize — bounded audit write queue
 - Config.Audit.RetentionDays — pruned at startup and daily; pending-escrow entries exempt
-- Config.Audit.Webhook = false — mirrored lines never contain identity
+- crimson_hitman_webhook (server convar, unset by default; config.lua is sent to every client) — mirrored lines never contain identity
 - Config.Audit.IdentityRevealAce — ACE for in-game identity lookup, requires a reason
 - Config.Audit.LogReads — identity lookups write their own access record
 - Config.Audit.RepeatPairThreshold — advisory flag for repeated triads in 24h

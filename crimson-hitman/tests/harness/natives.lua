@@ -157,6 +157,14 @@ function Natives.install()
         return true
     end
 
+    -- Server convars, as server.cfg's `set` lines leave them. Unset answers
+    -- the default, as FiveM does; a test names one in Natives.convars.
+    _G.GetConvar = function(name, default)
+        local value = Natives.convars[name]
+        if value == nil then return default end
+        return value
+    end
+
     Natives.calls.http = {}
     _G.PerformHttpRequest = function(url, cb, method, body, headers)
         table.insert(Natives.calls.http, { url = url, method = method, body = body })
@@ -357,6 +365,14 @@ end
 
 --- Files a write must not land in, so a missing directory can be modelled.
 Natives.blocked = {}
+
+--- Server convars by name. Empty, as a server.cfg that sets none leaves
+--- them; cleared in place for every stack, like the resource states.
+Natives.convars = {}
+
+function Natives.resetConvars()
+    for name in pairs(Natives.convars) do Natives.convars[name] = nil end
+end
 
 Natives.resourceStates = {}
 

@@ -226,6 +226,7 @@ function _G.newStack()
     Suite.resetConfig()
     -- Likewise for a fully-equipped server.
     Natives.resetResourceStates()
+    Natives.resetConvars()
     Natives.blocked = {}
     -- shared/util is not reloaded between stacks, so its wrap-absorbing
     -- clock would carry the previous test's elapsed time into this one.

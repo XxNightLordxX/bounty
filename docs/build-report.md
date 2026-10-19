@@ -51,7 +51,8 @@ You said to use my judgement. These are the ones that were mine:
    money at 0.85, making it worth about 18% more than clean money there.
    Paying escrow out as dirty money at face value would have turned every
    contract into a risk-free laundering rail. Escrow pays out in the sources
-   it holds; conversion is opt-in and value-neutral.
+   it holds, and there is no conversion option: a client who wants the
+   hitman paid in dirty money funds the contract with dirty money.
 2. **The job blacklist blocks by type as well as name**, so a new LEO job is
    blocked without a config edit. Your server has eleven such jobs, not the
    five the original spec listed.

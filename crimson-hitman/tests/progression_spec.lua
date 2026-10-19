@@ -136,6 +136,11 @@ describe('criminal progression hook', function()
     end)
 end)
 
+--- The webhook is the crimson_hitman_webhook convar, set in server.cfg.
+--- config.lua is a shared script that every player's game downloads, so a
+--- URL there was published to the whole server.
+local HOOK = 'https://discord.example/hook'
+
 describe('staff webhook', function()
     it('sends nothing when no webhook is configured', function()
         local s = newStack()
@@ -149,7 +154,7 @@ describe('staff webhook', function()
     it('mirrors financial and rejected lines when one is configured', function()
         local s = newStack()
         fixture(s)
-        Config.Audit.Webhook = 'https://discord.example/hook'
+        Natives.convars.crimson_hitman_webhook = HOOK
         Natives.calls.http = {}
 
         s.audit.financial('payout', 'HITMAN01', 'ct1', { amount = 5000 })
@@ -157,7 +162,7 @@ describe('staff webhook', function()
         s.audit.action('contract_created', 'CREATOR1', 'ct1', {})
         s.audit.flush()
 
-        Config.Audit.Webhook = false
+        Natives.convars.crimson_hitman_webhook = nil
         eq(#Natives.calls.http, 1, 'one message for the flush')
         local body = tostring(Natives.calls.http[1].body)
         truthy(body:find('payout', 1, true) and body:find('photo_forged', 1, true),
@@ -171,12 +176,12 @@ describe('staff webhook', function()
     it('sends one message per flush however many rows it drained', function()
         local s = newStack()
         fixture(s)
-        Config.Audit.Webhook = 'https://discord.example/hook'
+        Natives.convars.crimson_hitman_webhook = HOOK
         Natives.calls.http = {}
         for i = 1, 80 do s.audit.financial('escrow_taken', 'CREATOR1', 'ct' .. i, {}) end
         for _ = 1, 50 do s.audit.rejected('ratelimit_list', 'HITMAN01', nil, {}) end
         s.audit.flush()
-        Config.Audit.Webhook = false
+        Natives.convars.crimson_hitman_webhook = nil
         eq(#Natives.calls.http, 1)
         local body = tostring(Natives.calls.http[1].body)
         truthy(body:find('and 65 more', 1, true), 'the rest counted: ' .. body)
@@ -187,16 +192,43 @@ describe('staff webhook', function()
     it('never puts a citizen id in the webhook body', function()
         local s = newStack()
         fixture(s)
-        Config.Audit.Webhook = 'https://discord.example/hook'
+        Natives.convars.crimson_hitman_webhook = HOOK
         Natives.calls.http = {}
 
         s.audit.financial('payout', 'HITMAN01', 'ct1', { amount = 5000 })
         s.audit.flush()
-        Config.Audit.Webhook = false
+        Natives.convars.crimson_hitman_webhook = nil
 
         truthy(#Natives.calls.http > 0)
         falsy(tostring(Natives.calls.http[1].body):find('HITMAN01'),
             'identity must not leave the server')
+    end)
+
+    it('posts to the URL the server convar names', function()
+        local s = newStack()
+        fixture(s)
+        withConfig({ { Natives.convars, 'crimson_hitman_webhook', HOOK } }, function()
+            Natives.calls.http = {}
+            s.audit.financial('payout', 'HITMAN01', 'ct1', { amount = 5000 })
+            s.audit.flush()
+        end)
+        eq(#Natives.calls.http, 1)
+        eq(Natives.calls.http[1].url, HOOK)
+    end)
+
+    --- An older config.lua may still carry one. Every player has had that
+    --- URL since they joined, so it is reported at boot and never used:
+    --- carrying on with it would hide that it needs regenerating.
+    it('never posts to a webhook left in config.lua', function()
+        local s = newStack()
+        fixture(s)
+        withConfig({ { Config.Audit, 'Webhook', HOOK } }, function()
+            Natives.calls.http = {}
+            s.audit.financial('payout', 'HITMAN01', 'ct1', { amount = 5000 })
+            s.audit.rejected('photo_forged', 'HITMAN01', 'ct1', {})
+            s.audit.flush()
+        end)
+        eq(#Natives.calls.http, 0, 'a URL every player holds is not a staff channel')
     end)
 end)
 
