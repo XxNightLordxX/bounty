@@ -62,9 +62,16 @@ end
 --- lb-phone's SendNotification is a *client* export — there is no server-side
 --- equivalent — so the server hands the notification to that player's client,
 --- which calls the export locally.
+---
+--- opts.muted: the recipient muted the thread this came from (§11.4). It is
+--- charged to their budget exactly as a sent one is, and then not sent.
+--- Left uncharged, a muted thread would leave room in the budget that an
+--- unmuted one fills, and the next notice — a call request, whose sender is
+--- told when it could not get through — would tell the sender which it was.
 function Notify.toCitizen(cid, title, content, opts)
     if not cid then return false end
     if not (opts and opts.bypassBudget) and not withinBudget(cid) then return false end
+    if opts and opts.muted then return false end
 
     local actor = Identity.byCitizenId(cid)
     if not actor then return false end

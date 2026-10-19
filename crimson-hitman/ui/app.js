@@ -3642,9 +3642,15 @@
         // more while it was in flight. The same thread only, so a draft
         // never follows the player into a conversation with somebody else.
         var keep = state.drafts[threadKey(contract, thread)] || '';
+        // { messages, muted }: the reader's own mute rides with the read, so
+        // the Mute button is right for a hitman too, who opens their thread
+        // with no entry to carry it. A bare list is the messages alone.
+        var data = r.data || [];
+        var list = Array.isArray(data) ? data : asList(data.messages);
         // The keyboard stays up through the redraw: render() sees to it.
         state.thread = { contract: contract, thread: thread,
-                         messages: asList(r.data), draft: keep };
+                         messages: list, draft: keep,
+                         muted: !Array.isArray(data) && data.muted === true };
         state.tab = 'thread';
 
         /* Opened on the latest message, with the compose box under it. The
@@ -3738,6 +3744,35 @@
       }
       var line = CALL_NOT_PLACED[r.data && r.data.reason];
       say(typeof line === 'string' ? line : CALL_NOT_PLACED.not_placed, 'ok');
+    });
+  }
+
+  /* Mute or unmute the open thread, for this player only (§11.4): their
+     phone stops ringing for its messages, which still arrive and still
+     show here. Nothing about it reaches the other side. */
+  function toggleMute() {
+    var t = state.thread;
+    if (!t) { return; }
+
+    return post('muteThread', {
+      id: t.contract.id,
+      thread: t.thread ? t.thread.handle : null,
+      muted: !t.muted
+    }).then(function (r) {
+      if (!r.ok) {
+        if (leaveDeadThread(r, t.contract, t.thread)) { return; }
+        return fail(r);
+      }
+      var muted = !!(r.data && r.data.muted === true);
+      // Onto the thread as it stands now — a push can have re-read it
+      // meanwhile — and redrawn only where the player still is.
+      if (sameThread(state.thread, t.contract, t.thread)) {
+        state.thread.muted = muted;
+        if (state.tab === 'thread') { render(); }
+      }
+      say(muted
+        ? 'Muted: new messages will not ring your phone. Contract updates still will.'
+        : 'Unmuted: new messages will ring your phone again.', 'ok');
     });
   }
 
@@ -4073,6 +4108,15 @@
         row.appendChild(call);
       }
     }
+
+    // Silences this thread's ring on this phone only. Words rather than an
+    // icon, because which way it is set is the whole point of the button.
+    var mute = actionButton('ghost', t.muted ? 'Unmute' : 'Mute',
+      'mute:' + threadKey(t.contract, t.thread),
+      t.muted ? 'Unmuting\u2026' : 'Muting\u2026',
+      function () { return toggleMute(); });
+    mute.id = 'thread-mute';
+    row.appendChild(mute);
 
     view.appendChild(row);
 

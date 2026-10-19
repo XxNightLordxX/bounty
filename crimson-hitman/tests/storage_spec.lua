@@ -283,6 +283,35 @@ describe('storage conformance', function()
         end
     end)
 
+    --- A thread mute (§11.4): one per thread and person, the same when
+    --- written twice, and gone on unmute.
+    it('keeps a thread mute per thread and person in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.setMute('ct1', 'ct1|HITMAN01', 'CREATOR1', true, 100)
+            b.store.setMute('ct1', 'ct1|HITMAN01', 'CREATOR1', true, 200)
+            truthy(b.store.readMute('ct1|HITMAN01', 'CREATOR1'), b.name .. ': muted')
+            falsy(b.store.readMute('ct1|HITMAN01', 'HITMAN01'),
+                b.name .. ': for the one who muted it, not the other end')
+            falsy(b.store.readMute('ct1|HITMAN02', 'CREATOR1'), b.name .. ': and that thread only')
+            b.store.setMute('ct1', 'ct1|HITMAN01', 'CREATOR1', false, 300)
+            falsy(b.store.readMute('ct1|HITMAN01', 'CREATOR1'), b.name .. ': unmuted')
+        end
+    end)
+
+    it('json: keeps a thread mute across a restart', function()
+        local store
+        for _, b in ipairs(backends()) do
+            if b.name == 'json' then store = b.store end
+        end
+        store.writeContract(contractFixture('ct00000041'))
+        store.setMute('ct00000041', 'ct00000041|HITMAN01', 'CREATOR1', true, 100)
+        store.save(true)
+
+        store.open()
+        truthy(store.readMute('ct00000041|HITMAN01', 'CREATOR1'),
+            'a restart started the phone ringing again for a muted thread')
+    end)
+
     it('keeps pending escrow queryable in every backend', function()
         for _, b in ipairs(backends()) do
             b.store.queuePending('HITMAN01', 'ct1', 'ct1:1')
@@ -335,8 +364,12 @@ describe('finished contracts do not accumulate forever', function()
             settled(backend.store, 'ct00000001', old)
             truthy(backend.store.readContract('ct00000001'),
                 backend.name .. ': the fixture must exist')
+            backend.store.setMute('ct00000001', 'ct00000001|HITMAN01', 'CREATOR1', true, old)
 
             backend.store.prune()
+
+            falsy(backend.store.readMute('ct00000001|HITMAN01', 'CREATOR1'),
+                backend.name .. ': a mute goes with the thread it silenced')
 
             falsy(backend.store.readContract('ct00000001'),
                 backend.name .. ': a finished contract is not kept forever')

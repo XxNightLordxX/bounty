@@ -616,6 +616,9 @@ ConfigDefaults.Notifications = {
     --- And at most one per target in this many minutes, however many
     --- contracts are placed on them, so neither do the alerts count them.
     ParanoidCooldownMinutes = 30,
+    --- Phone notifications one player can be sent, per minute and per hour.
+    --- A message into a thread they muted is counted here and not sent, so
+    --- the sender cannot tell a muted thread from one that rang.
     MaxPerRecipientPerMinute = 6,
     MaxPerRecipientPerHour = 40,
 

@@ -416,7 +416,7 @@ local UI_EVENTS = {
     'bailout', 'informant',
     'addEscrow', 'rewardBreakdown', 'withdrawReward',
     'improve', 'propose', 'respondAmendment', 'amendments',
-    'threads', 'readThread', 'sendMessage', 'requestCall', 'endCall',
+    'threads', 'readThread', 'sendMessage', 'requestCall', 'endCall', 'muteThread',
     -- The page telling the server it broke. Through the same gate as
     -- everything else: it is an NUI endpoint like any other and is
     -- addressable from any frame the phone draws.

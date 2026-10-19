@@ -599,6 +599,15 @@ MATRIX.requestCall = {
     why = 'ringing somebody masked phone is for the party they are dealing with',
 }
 
+MATRIX.muteThread = {
+    arrange = function(w) w.handle = creatorThreadHandle(w) end,
+    payload = function(w, role, contract)
+        return { id = contract.id, thread = w.handle, muted = true }
+    end,
+    expect = BOTH_SIDES,
+    why = 'a thread is muted by one of its two ends, for themselves alone',
+}
+
 MATRIX.endCall = { payload = {}, expect = ANYONE,
     why = 'hangs up the caller own call and names no contract' }
 

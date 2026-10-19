@@ -795,3 +795,114 @@ describe('a refused request, over and over', function()
         eq(rows, 1, 'one refusal is one fact, however often it is repeated')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- A muted thread (§11.4)
+--------------------------------------------------------------------------
+
+describe('a muted thread', function()
+    --- A named contract with one operative on it, and the client's handle
+    --- for their thread.
+    local function talking()
+        local s = newStack()
+        local f = fixture(s)
+        local c = place(s, f.creator)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        return s, f, c, s.comms.threads(f.creator, c.id)[1].handle
+    end
+
+    local function count(name, target, title)
+        local n = 0
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == name and event.target == target
+                and (not title or event.args[1].title == title) then
+                n = n + 1
+            end
+        end
+        return n
+    end
+
+    it('does not ring the one who muted it, and the message still arrives', function()
+        local s, f, c, handle = talking()
+        local reply = call('muteThread', 1, { id = c.id, thread = handle, muted = true })
+        truthy(reply and reply.ok, tostring(reply and reply.err))
+        eq(reply.data.muted, true)
+
+        s.notify.clearPush('CREATOR1')
+        Env.clientEvents = {}
+        truthy(s.comms.send(f.hitman, c.id, nil, 'On my way.'))
+        eq(count('crimson-hitman:notify', 1, 'Contract message'), 0, 'the muted thread rang')
+        eq(count('crimson-hitman:push', 1), 1, 'an open thread still has to redraw')
+
+        local read = call('readThread', 1, { id = c.id, thread = handle })
+        eq(read.data.messages[#read.data.messages].body, 'On my way.')
+        eq(read.data.muted, true, 'the client is shown their own mute')
+    end)
+
+    it('silences only the one who muted it, and rings again once unmuted', function()
+        local s, f, c, handle = talking()
+        truthy(s.comms.mute(f.creator, c.id, handle, true))
+
+        Env.clientEvents = {}
+        truthy(s.comms.send(f.creator, c.id, handle, 'Where are you?'))
+        eq(count('crimson-hitman:notify', 3, 'Contract message'), 1,
+            'the operative did not mute anything')
+
+        truthy(s.comms.mute(f.creator, c.id, handle, false))
+        Env.clientEvents = {}
+        truthy(s.comms.send(f.hitman, c.id, nil, 'Here.'))
+        eq(count('crimson-hitman:notify', 1, 'Contract message'), 1)
+    end)
+
+    it('still lets contract notices through', function()
+        local s, f, c = talking()
+        truthy(s.comms.mute(f.hitman, c.id, nil, true))
+        truthy(s.comms.mute(f.creator, c.id, s.comms.threads(f.creator, c.id)[1].handle, true))
+        Env.clientEvents = {}
+        truthy(s.amendments.propose(f.hitman, c.id, 'shorten_deadline', { seconds = 600 }))
+        eq(count('crimson-hitman:notify', 1, 'Contract change proposed'), 1,
+            'a proposal is not thread text and a mute does not silence it')
+    end)
+
+    it('cannot be told from the other side', function()
+        --- Two worlds that differ only in whether the client muted. What the
+        --- operative sends, reads and is told must come out the same — the
+        --- call request included, whose "could not be reached" depends on
+        --- the client's notice budget, which a muted message still spends.
+        local function world(mute)
+            local s, f, c, handle = talking()
+            if mute then truthy(s.comms.mute(f.creator, c.id, handle, true)) end
+            local seen = {}
+            -- The acceptance spent one; the two messages spend the rest.
+            withConfig({ { Config.Notifications, 'MaxPerRecipientPerMinute', 3 } }, function()
+                for i = 1, 2 do
+                    local sent = call('sendMessage', 3, { id = c.id, body = 'Ping ' .. i })
+                    seen[#seen + 1] = tostring(sent.ok) .. ':' .. tostring(sent.err)
+                end
+                seen[#seen + 1] = 'budget left: ' .. tostring(s.notify.toCitizen('CREATOR1', 'Probe', '.'))
+                local read = call('readThread', 3, { id = c.id })
+                seen[#seen + 1] = #read.data.messages .. ':' .. tostring(read.data.muted)
+                local rang = call('requestCall', 3, { id = c.id })
+                seen[#seen + 1] = tostring(rang.ok) .. ':' .. tostring(rang.data.placed)
+                    .. ':' .. tostring(rang.data.reason)
+            end)
+            return table.concat(seen, ' | ')
+        end
+
+        local open = world(false)
+        truthy(open:find('budget left: false', 1, true),
+            'the fixture has to spend the budget, or it proves nothing: ' .. open)
+        eq(world(true), open, 'the operative could tell they had been muted')
+    end)
+
+    it('is kept per thread and person, and an outsider cannot set it', function()
+        local s, f, c, handle = talking()
+        local reply = call('muteThread', 2, { id = c.id, thread = handle, muted = true })
+        falsy(reply.ok, 'the target muted somebody else\'s thread')
+        eq(reply.err, CH.ERR.NOT_PARTICIPANT)
+        eq(call('muteThread', 1, { id = c.id, thread = handle, muted = 'yes' }).err,
+            CH.ERR.INVALID_INPUT, 'only a yes or a no is an answer')
+        falsy(s.storage.readMute(c.id .. '|HITMAN01', 'CREATOR1'))
+        falsy(s.storage.readMute(c.id .. '|HITMAN01', 'TARGET01'))
+    end)
+end)

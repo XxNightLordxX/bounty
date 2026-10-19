@@ -15,7 +15,8 @@ local resource = GetCurrentResourceName and GetCurrentResourceName() or 'crimson
 
 local EMPTY = {
     contracts = {}, escrow = {}, hitmen = {}, amendments = {},
-    messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, reveals = {}, seq = 0,
+    messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, reveals = {}, mutes = {},
+    seq = 0,
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -70,7 +71,7 @@ end
 local function shardOf(contractId)
     local shard = {
         contract = db.contracts[contractId],
-        escrow = {}, hitmen = {}, amendments = {}, messages = {},
+        escrow = {}, hitmen = {}, amendments = {}, messages = {}, mutes = {},
     }
 
     for id, line in pairs(db.escrow) do
@@ -87,6 +88,9 @@ local function shardOf(contractId)
             shard.messages[#shard.messages + 1] = db.messages[i]
         end
     end
+    for key, row in pairs(db.mutes) do
+        if row.contract_id == contractId then shard.mutes[key] = row end
+    end
 
     return shard
 end
@@ -102,6 +106,10 @@ local function absorb(shard)
     for id, amendment in pairs(shard.amendments or {}) do db.amendments[id] = amendment end
     for i = 1, #(shard.messages or {}) do
         db.messages[#db.messages + 1] = shard.messages[i]
+    end
+    -- Absent from a file written before threads could be muted.
+    for key, row in pairs(type(shard.mutes) == 'table' and shard.mutes or {}) do
+        db.mutes[key] = row
     end
     return true
 end
@@ -569,6 +577,9 @@ function JsonStore.prune()
         end
         for key, row in pairs(db.reveals) do
             if row.contract_id == id then db.reveals[key] = nil end
+        end
+        for key, row in pairs(db.mutes) do
+            if row.contract_id == id then db.mutes[key] = nil end
         end
         db.contracts[id] = nil
 
@@ -1100,6 +1111,23 @@ function JsonStore.readMessages(contractId, threadId)
         if m.contract_id == contractId and m.thread_id == threadId then out[#out + 1] = m end
     end
     return out
+end
+
+--- Threads somebody has muted; see the memory backend. In the contract's
+--- own file, beside the messages they silence.
+function JsonStore.readMute(threadId, cid)
+    return db.mutes[threadId .. ':' .. cid] ~= nil
+end
+
+function JsonStore.setMute(contractId, threadId, cid, muted, at)
+    local key = threadId .. ':' .. cid
+    if muted then
+        db.mutes[key] = { contract_id = contractId, thread_id = threadId, cid = cid, muted_at = at }
+    else
+        db.mutes[key] = nil
+    end
+    touch(false, contractId)
+    return true
 end
 
 function JsonStore.writeLedger(entry)

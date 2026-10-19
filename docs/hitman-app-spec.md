@@ -384,6 +384,9 @@ Each contract issues a stable per-contract **alias** to every participant — `C
 - All relayed text passes through lb-phone's `ContainsBlacklistedWord` export before delivery, and is length-capped.
 - Per-participant message rate limit (config-backed).
 - Either participant can **mute a thread**; muting does not affect contract state. A muted hitman still receives contract-critical notifications (amendments, completion, expiry) — those are system messages, not player text.
+  - The toggle is the thread header's **Mute / Unmute** button, and it is per participant: it silences only the phone notification a new message would send the one who muted. The message is still stored and still appears in the thread (an open thread still refreshes).
+  - Muting is invisible to the other side. Nothing the sender sends, reads or is told changes, and a muted message is charged to the recipient's notification budget exactly as a delivered one is, so a later notice that is or is not let through (a call request reporting "could not be reached") cannot tell the sender whether they were muted.
+  - The mute is stored per thread and participant in the configured storage mode (memory, json, mysql), so it survives a restart where the thread does, and is removed with the contract's messages when the contract is pruned.
 - Threads are retained only while the contract is open, plus the ledger retention window (§6.3). Staff-facing logs record that a thread existed and its participants, not its contents, unless the server enables full logging in config.
 
 ---

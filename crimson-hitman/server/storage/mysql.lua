@@ -170,6 +170,17 @@ local SCHEMA = {
         answer TEXT,
         INDEX idx_reveal_contract (contract_id)
     )]],
+    -- Threads somebody has muted (§11.4): a row is a mute, and unmuting
+    -- deletes it. Created on an existing database by the CREATE TABLE IF
+    -- NOT EXISTS below at the next start, like any table added since.
+    [[CREATE TABLE IF NOT EXISTS crimson_mutes (
+        id VARCHAR(120) PRIMARY KEY,
+        contract_id VARCHAR(32) NOT NULL,
+        thread_id VARCHAR(80) NOT NULL,
+        cid VARCHAR(32) NOT NULL,
+        muted_at INT NOT NULL,
+        INDEX idx_mute_contract (contract_id)
+    )]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
     -- nobody could play.
@@ -1150,6 +1161,7 @@ function MySQLStore.pruneContracts(cutoff)
             MySQL.query.await('DELETE FROM crimson_amendments WHERE contract_id = ?', { id })
             MySQL.query.await('DELETE FROM crimson_messages WHERE contract_id = ?', { id })
             MySQL.query.await('DELETE FROM crimson_reveals WHERE contract_id = ?', { id })
+            MySQL.query.await('DELETE FROM crimson_mutes WHERE contract_id = ?', { id })
             MySQL.query.await('DELETE FROM crimson_contracts WHERE id = ?', { id })
             removed = removed + 1
         end
@@ -1182,6 +1194,27 @@ end
 
 function MySQLStore.clearReveals(contractId)
     MySQL.query.await('DELETE FROM crimson_reveals WHERE contract_id = ?', { contractId })
+    return true
+end
+
+--- Threads somebody has muted; see the memory backend.
+function MySQLStore.readMute(threadId, cid)
+    local rows = MySQL.query.await('SELECT id FROM crimson_mutes WHERE id = ?',
+        { threadId .. ':' .. cid }) or {}
+    return rows[1] ~= nil
+end
+
+function MySQLStore.setMute(contractId, threadId, cid, muted, at)
+    local id = threadId .. ':' .. cid
+    if muted then
+        MySQL.query.await([[
+            INSERT INTO crimson_mutes (id, contract_id, thread_id, cid, muted_at)
+            VALUES (?,?,?,?,?)
+            ON DUPLICATE KEY UPDATE muted_at = VALUES(muted_at)
+        ]], { id, contractId, threadId, cid, at })
+    else
+        MySQL.query.await('DELETE FROM crimson_mutes WHERE id = ?', { id })
+    end
     return true
 end
 

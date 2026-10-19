@@ -734,8 +734,43 @@ describe('arming the same kidnap twice', function()
     end)
 end)
 
+--------------------------------------------------------------------------
+-- Muting a thread
+--------------------------------------------------------------------------
+
+describe('muting the same thread twice', function()
+    it('is one mute, and one unmute undoes it', function()
+        local s, f, c = seeded()
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local handle = s.comms.threads(f.creator, c.id)[1].handle
+
+        local first, second, third = replay(s, 'muteThread', function()
+            return call('muteThread', 1, { id = c.id, thread = handle, muted = true })
+        end)
+        for _, reply in ipairs({ first[1], second[1], third[1] }) do
+            truthy(reply and reply.ok, 'a repeat is the answer already given, not a refusal')
+            eq(reply.data.muted, true)
+        end
+
+        local rows, audited = 0, 0
+        for _, row in pairs(s.storage._raw().mutes) do
+            if row.cid == 'CREATOR1' then rows = rows + 1 end
+        end
+        s.audit.flush()
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'relay_muted' then audited = audited + 1 end
+        end
+        eq(rows, 1, 'one thread, one person, one mute')
+        eq(audited, 1, 'and one entry for it, not one per tap')
+
+        truthy(call('muteThread', 1, { id = c.id, thread = handle, muted = false }).ok)
+        falsy(s.storage.readMute(c.id .. '|HITMAN01', 'CREATOR1'),
+            'a mute is not a counter that takes as many unmutes as taps')
+    end)
+end)
+
 describe('what this file leaves out', function()
-    --- The blocks above name twelve actions. The resource has more, and a
+    --- The blocks above name thirteen actions. The resource has more, and a
     --- hand-kept list has no way of noticing the next one — which is the
     --- failure mode journey_spec's coverage guard had before it was derived
     --- from App.handlers.
@@ -748,6 +783,7 @@ describe('what this file leaves out', function()
         accept = true, cancel = true, abandon = true, bailout = true,
         withdrawReward = true, propose = true, respondAmendment = true,
         informant = true, submitPhoto = true, armKidnap = true,
+        muteThread = true,
     }
 
     --- Repeating these is a legitimate thing to do, not a double effect.

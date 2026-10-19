@@ -137,7 +137,11 @@ ringing them, since a phone that rings only when its owner is in the city
 would say whether they are. Calls go through lb-phone's `CreateCall` export
 with the caller's alias shown, and are hung up from the thread. On a phone
 build without it the Call button is not drawn, and when both sides are
-anonymous neither can ring the other: they use messages.
+anonymous neither can ring the other: they use messages. Either side can
+Mute a thread from its header: their phone stops ringing for its messages,
+which still arrive and show in the thread, while contract updates still
+ring. The mute is theirs alone, is kept across restarts, and the other side
+cannot tell.
 
 **Putting a hit on a cop.** Allowed, and loud. Every officer online is advised when the
 contract is posted and again on each acceptance, with a running count, on

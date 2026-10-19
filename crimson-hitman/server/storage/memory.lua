@@ -11,7 +11,7 @@ local db
 function Memory.open()
     db = {
         contracts = {}, escrow = {}, hitmen = {}, amendments = {},
-        messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, seq = 0,
+        messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {}, seq = 0,
     }
     return true
 end
@@ -453,6 +453,25 @@ function Memory.readMessages(contractId, threadId)
     return out
 end
 
+--- Threads somebody has muted (§11.4), one row per thread and participant:
+--- a row is a mute and unmuting removes it. In the store with the thread it
+--- silences, so a restart does not start a phone ringing again for a
+--- conversation its owner muted days ago, and it goes when the contract's
+--- messages do.
+function Memory.readMute(threadId, cid)
+    return db.mutes[threadId .. ':' .. cid] ~= nil
+end
+
+function Memory.setMute(contractId, threadId, cid, muted, at)
+    local key = threadId .. ':' .. cid
+    if muted then
+        db.mutes[key] = { contract_id = contractId, thread_id = threadId, cid = cid, muted_at = at }
+    else
+        db.mutes[key] = nil
+    end
+    return true
+end
+
 function Memory.writeLedger(entry)
     db.ledger[#db.ledger + 1] = entry
 
@@ -628,6 +647,9 @@ function Memory.prune()
         end
         for key, row in pairs(db.reveals) do
             if row.contract_id == id then db.reveals[key] = nil end
+        end
+        for key, row in pairs(db.mutes) do
+            if row.contract_id == id then db.mutes[key] = nil end
         end
         db.contracts[id] = nil
     end

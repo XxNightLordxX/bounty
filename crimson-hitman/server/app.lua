@@ -815,10 +815,21 @@ function App.register()
         return deps.comms.threads(actor, payload.id)
     end)
 
+    -- With the reader's own mute, so the thread's Mute button says what is
+    -- true for both roles: a hitman opens their thread without a handle and
+    -- has no thread entry to carry it on.
     handler('readThread', 'load', function(actor, payload)
-        local messages, err = deps.comms.read(actor, payload.id, payload.thread)
+        local messages, err, about = deps.comms.read(actor, payload.id, payload.thread)
         if not messages then return false, err end
-        return messages
+        return { messages = messages, muted = about and about.muted == true }
+    end)
+
+    -- In the relay's bucket, as a call request is: each toggle is a store
+    -- write, and one that cost nothing could be tapped into a stream of them.
+    handler('muteThread', 'message', function(actor, payload)
+        local ok, err, result = deps.comms.mute(actor, payload.id, payload.thread, payload.muted)
+        if not ok then return false, err end
+        return { muted = result and result.muted == true }
     end)
 
     -- No bucket here: Comms.send owns the message throttle, and applying it

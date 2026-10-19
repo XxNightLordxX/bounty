@@ -240,6 +240,13 @@ local ACTIONS = {
       refusals = { not_participant = true, not_found = true, invalid_input = true },
       why = 'a party may read who they can talk to' },
 
+    -- The hitman's own thread, which they name by the contract alone.
+    { name = 'muteThread', source = 3,
+      payload = function(c) return { id = c.id, muted = true } end,
+      allowed = { [CH.STATE.ACCEPTED] = true, [CH.STATE.COMPLETING] = true },
+      refusals = { already_settled = true, not_participant = true, invalid_input = true },
+      why = 'a thread closes with its contract, and nobody is on an open one yet' },
+
     { name = 'kidnapProgress', source = 3, read = true,
       payload = function(c) return { id = c.id } end,
       allowed = 'all',

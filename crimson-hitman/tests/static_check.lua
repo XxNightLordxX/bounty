@@ -1795,6 +1795,10 @@ do
         ['crimson_reveals.id']                = 'the primary key',
         ['crimson_reveals.contract_id']       = 'which contract the purchases were on',
         ['crimson_reveals.buyer_cid']         = 'who bought them',
+        ['crimson_mutes.id']                  = 'the primary key',
+        ['crimson_mutes.contract_id']         = 'which contract the thread is on',
+        ['crimson_mutes.thread_id']           = 'which thread was muted',
+        ['crimson_mutes.cid']                 = 'who muted it',
     }
 
     local sql = read('crimson-hitman/server/storage/mysql.lua')

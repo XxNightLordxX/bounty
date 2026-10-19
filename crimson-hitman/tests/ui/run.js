@@ -1146,6 +1146,70 @@ async function main() {
     });
   })();
 
+  // A thread can be muted from its head, for this player only (spec 11.4).
+  // A hitman opens their thread with no entry to carry the mute on, so it
+  // comes back with the read.
+  await (async function threadMute() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hitman';
+    held.myAlias = 'Operative #1';
+
+    let mutedOnServer = true;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: { calls: true } } },
+      mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+      ledger: LEDGER,
+      readThread: function () {
+        return { ok: true, data: {
+          messages: [{ alias: 'Client', body: 'Still there?', at: 1 }],
+          muted: mutedOnServer } };
+      },
+      muteThread: function (body) {
+        mutedOnServer = body.muted === true;
+        return { ok: true, data: { muted: mutedOnServer } };
+      }
+    });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
+    app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Message';
+    })[0].onclick();
+    await settle(); await settle();
+
+    const first = app.document.getElementById('thread-mute');
+
+    it('opens on the mute the server read back, messages and all', function () {
+      truthy(first, 'a mute button in the thread head');
+      eq(first && first.textContent, 'Unmute');
+      truthy(app.view.textContent.indexOf('Still there?') !== -1,
+        'a muted thread still shows its messages');
+    });
+
+    if (first) { first.onclick(); await settle(); await settle(); }
+
+    it('unmutes this thread through the server', function () {
+      const sent = app.sent.filter(function (s) { return s.name === 'muteThread'; });
+      eq(sent.length, 1);
+      eq(sent[0].body.id, 'ct00000001', 'the contract, not undefined');
+      eq(sent[0].body.muted, false);
+      eq(app.document.getElementById('thread-mute').textContent, 'Mute');
+      truthy(app.notice().indexOf('ring your phone again') !== -1, 'the notice: ' + app.notice());
+    });
+
+    const second = app.document.getElementById('thread-mute');
+    if (second) { second.onclick(); await settle(); await settle(); }
+
+    it('mutes it again, and says contract updates still ring', function () {
+      const sent = app.sent.filter(function (s) { return s.name === 'muteThread'; });
+      eq(sent.length, 2);
+      eq(sent[1].body.muted, true);
+      eq(app.document.getElementById('thread-mute').textContent, 'Unmute');
+      truthy(app.notice().indexOf('Contract updates still will') !== -1,
+        'the notice: ' + app.notice());
+    });
+  })();
+
   // The app refreshes only on an unsolicited push, because refreshing on every
   // mirrored reply was an exponential storm. Nothing sent a push, so an open
   // app never moved.

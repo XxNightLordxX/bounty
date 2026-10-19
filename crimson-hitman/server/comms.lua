@@ -179,7 +179,12 @@ function Comms.send(actor, contractId, threadHandle, rawBody)
     })
 
     local recipient = ctx.role == 'creator' and ctx.hitmanCid or ctx.contract.creator_cid
-    Notify.toCitizen(recipient, 'Contract message', ('%s: %s'):format(ctx.alias, body))
+    -- Not a ring when they muted this thread (§11.4). The message is kept
+    -- and the push below still redraws a thread they have open; only the
+    -- phone notification is silenced, and it is charged to their notice
+    -- budget all the same so the sender cannot tell (Notify.toCitizen).
+    Notify.toCitizen(recipient, 'Contract message', ('%s: %s'):format(ctx.alias, body),
+        { muted = Storage.readMute(ctx.threadId, recipient) == true })
     -- And the thread, if they have it open: a buzz does not change a page,
     -- so two people in the same conversation never saw each other's replies.
     Notify.push(recipient, 'message')
@@ -188,10 +193,42 @@ function Comms.send(actor, contractId, threadHandle, rawBody)
     return true
 end
 
+--- Mute or unmute a thread, for the caller alone (§11.4).
+---
+--- Muting silences the phone notification a message into this thread would
+--- send the caller, and nothing else. Messages still arrive and the thread
+--- still shows them; contract notices (proposals, completion, expiry) are
+--- not thread messages and still reach them; the contract is not touched.
+---
+--- Invisible to the other side. Nothing they send or read changes, and a
+--- muted message is charged to the notice budget as a rung one is, so not
+--- even "could not be reached" on a call request tells them.
+---@param muted boolean
+---@return boolean ok
+---@return string|nil err
+---@return table|nil result { muted = boolean }
+function Comms.mute(actor, contractId, threadHandle, muted)
+    if not Config.Relay.Enabled then return false, CH.ERR.RELAY_OFF end
+
+    local ctx, err = Comms.context(actor, contractId, threadHandle)
+    if not ctx then return false, err end
+    if type(muted) ~= 'boolean' then return false, CH.ERR.INVALID_INPUT end
+
+    -- Written only when it changes: a second tap of the same answer is the
+    -- answer already given, not another row or another audit entry.
+    if (Storage.readMute(ctx.threadId, actor.cid) == true) ~= muted then
+        Storage.setMute(ctx.contract.id, ctx.threadId, actor.cid, muted, os.time())
+        Audit.action(muted and 'relay_muted' or 'relay_unmuted', actor.cid, ctx.contract.id,
+            { role = ctx.role })
+    end
+    return true, nil, { muted = muted }
+end
+
 --- Read a thread. Returns only alias-attributed messages: the caller cannot
 --- learn who the other party is from what comes back.
 ---@return table[]|nil messages
 ---@return string|nil err
+---@return table|nil about { muted = boolean } — the caller's own mute, never the other side's
 function Comms.read(actor, contractId, threadHandle)
     -- The switch applies to the whole relay, not only to sending. It was
     -- read by send() alone, so with it off the thread still opened, with a
@@ -215,7 +252,7 @@ function Comms.read(actor, contractId, threadHandle)
             mine  = rows[i].from_cid == actor.cid,
         }
     end
-    return out
+    return out, nil, { muted = Storage.readMute(ctx.threadId, actor.cid) == true }
 end
 
 --- Threads visible to the caller, for the app's inbox.

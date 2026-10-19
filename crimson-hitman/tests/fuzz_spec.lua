@@ -10,7 +10,7 @@ local HANDLERS = {
     'create', 'accept', 'abandon', 'requestPhotoToken', 'submitPhoto',
     'armKidnap', 'kidnapProgress', 'bailout', 'informant', 'addEscrow',
     'improve', 'amendments', 'propose', 'respondAmendment',
-    'threads', 'readThread', 'sendMessage', 'requestCall',
+    'threads', 'readThread', 'sendMessage', 'requestCall', 'muteThread',
 }
 
 --- A table that is its own child. Anything walking it without a depth guard
