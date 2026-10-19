@@ -62,6 +62,12 @@
     // Half-typed messages, one per conversation — keyed by contract and
     // operative, so a draft never turns up in somebody else's thread.
     drafts: {},
+    // What Verify kill last refused on each contract, kept under its
+    // buttons until the hitman's next go. The photo refusals are the longest
+    // messages in the app and the ones that say what to fix before the kill
+    // runs out, and a hitman back from the camera read them in a notice that
+    // was gone in four seconds.
+    lastRefusal: {},
     // The thread (by threadKey) a call placed from here is live in. The
     // phone draws no call screen for it, so this is what puts Hang up there.
     call: null
@@ -438,7 +444,9 @@
     target_just_up: 'They have only just got back on their feet. Give it a moment.',
     target_recently_on: 'There was a contract on them very recently. There is a '
       + 'cooling-off period before another one.',
-    insufficient_funds: 'You do not have that.',
+    // The paths a player meets most — accept, buy out, place — word their
+    // own; this is what is left, and it at least says it is about money.
+    insufficient_funds: 'You do not have enough money for that.',
     invalid_reward: 'That reward does not add up.',
     invalid_input: 'Check what you entered.',
     server_error: 'Something broke on the server, not on your end. '
@@ -792,6 +800,14 @@
         block.appendChild(button);
         block.appendChild(el('div', 'hint', option.note));
         row.appendChild(block);
+      } else if (annotated) {
+        // A row like its neighbours, without the note. Left bare it took the
+        // default centred button style, so of two operatives offered side by
+        // side, the anonymous one looked like a confirm button and the named
+        // one like a different kind of thing altogether.
+        var plain = el('div', 'choice');
+        plain.appendChild(button);
+        row.appendChild(plain);
       } else {
         row.appendChild(button);
       }
@@ -845,16 +861,35 @@
 
   /* Each notice clears itself and nothing newer. The timer used to blank
      whatever was showing when it fired, so a second message raised within
-     four seconds of the first vanished half a second after it appeared. */
+     four seconds of the first vanished half a second after it appeared.
+
+     Up for as long as it takes to read, not a flat four seconds: the
+     instructions a hitman gets back from the camera run to thirty-odd words
+     and were gone before they were halfway through. A refusal (red) has no
+     timer at all — it says what to fix, so it stays until the player's next
+     tap — and any notice goes the moment it is tapped.
+
+     `kind` is 'red' for a refusal, 'ok' for a confirmation, and 'caution'
+     for the brass shield, which is kept for the warnings the stylesheet
+     reserves it for: a sworn officer, a handover under way. Confirmations
+     wore it too, so "Contract placed." looked like the law-enforcement
+     warning. */
   function say(message, kind) {
     var notice = { message: message, kind: kind || 'red' };
     state.notice = notice;
     renderNotice();
+    if (notice.kind === 'red') { return; }
+    var length = String(message || '').length;
     setTimeout(function () {
       if (state.notice !== notice) { return; }
       state.notice = null;
       renderNotice();
-    }, 4000);
+    }, Math.min(12000, Math.max(4000, 1200 + 55 * length)));
+  }
+
+  function dismissNotice() {
+    state.notice = null;
+    renderNotice();
   }
 
   // The notice lives outside #view and is mutated in place. Re-rendering the
@@ -867,26 +902,39 @@
     slot.innerHTML = '';
     if (!state.notice) { slot.className = ''; return; }
     slot.className = 'notice-slot';
-    slot.appendChild(el('div', 'notice' + (state.notice.kind === 'gold' ? ' gold' : ''),
-      state.notice.message));
+    var kind = state.notice.kind;
+    var node = el('div', 'notice' + (kind === 'caution' ? ' gold' : kind === 'ok' ? ' ok' : ''),
+      state.notice.message);
+    // Dismissed by a tap. It floats over the top of the view and took every
+    // tap aimed there — the thread's Back and Call did nothing for as long
+    // as it was up. Not pointer-events: none, which would let the tap fall
+    // through and press the hidden button the player could not see.
+    node.onclick = dismissNotice;
+    slot.appendChild(node);
   }
 
   function fail(result) {
+    var text = failText(result);
+    if (text) { say(text); }
+  }
+
+  // What fail() would say, or null for nothing at all.
+  function failText(result) {
     // A null entry means the player did this on purpose; saying anything
     // would read as a failure.
-    if (result.err in ERRORS && ERRORS[result.err] === null) return;
+    if (result.err in ERRORS && ERRORS[result.err] === null) return null;
 
     // A wait the player can act on. "Slow down" alone reads as a broken
     // button, because tapping again says exactly the same thing.
     if (result.err === 'rate_limited' && result.data && result.data.retryAfter) {
         var wait = result.data.retryAfter;
-        return say(wait >= 60
+        return wait >= 60
           ? 'Slow down — try again in about ' + Math.ceil(wait / 60) + ' minute'
             + (wait >= 120 ? 's' : '') + '.'
-          : 'Slow down — try again in ' + wait + ' second' + (wait === 1 ? '' : 's') + '.');
+          : 'Slow down — try again in ' + wait + ' second' + (wait === 1 ? '' : 's') + '.';
     }
 
-    say(ERRORS[result.err] || 'Something went wrong.');
+    return ERRORS[result.err] || 'Something went wrong.';
   }
 
   /* ---------- actions already running ----------------------------------
@@ -1246,6 +1294,15 @@
     }
     node.appendChild(meta);
 
+    // What this player's informant came back with, kept by the server with
+    // the purchase. It used to be said once, in a notice that cleared itself
+    // after four seconds, and nothing on the card or anywhere else held the
+    // name the premium had paid for.
+    if (contract.informantAnswer) {
+      node.appendChild(el('div', 'informant-answer ico i-search',
+        'Informant: ' + contract.informantAnswer));
+    }
+
     if (contract.targetProtected && context === 'board') {
       node.appendChild(el('div', 'notice gold', 'This target is a sworn officer.'
         + (advised('posted') ? ' Their department has been advised.' : '')));
@@ -1343,6 +1400,16 @@
         row.appendChild(el('div', 'hint', why));
         return row;
       }
+      // Disabled while the acceptance is in flight. The button opens a
+      // dialog rather than doing the work, so it is not an actionButton; the
+      // request it leads to is keyed the same, and a second tap during the
+      // round trip sent a second accept and told the player "Contract
+      // accepted" and then "You are already on this contract".
+      var acceptKey = 'accept:' + contract.id;
+      if (isBusy(acceptKey)) {
+        row.appendChild(actionButton('primary', 'Accept contract', acceptKey, 'Accepting\u2026'));
+        return row;
+      }
       var take = el('button', 'primary', 'Accept contract');
       take.onclick = function () { acceptContract(contract); };
       row.appendChild(take);
@@ -1369,6 +1436,11 @@
       row.appendChild(actionButton(null, 'Deliver alive',
         'kidnap:' + contract.id, 'Starting handover\u2026',
         function () { return armKidnap(contract); }));
+
+      // What the last photo was refused for, under the buttons that retry
+      // it, until the next go at either.
+      var refused = state.lastRefusal[contract.id];
+      if (refused) { row.appendChild(el('div', 'hint is-refusal', refused)); }
 
       // How each one is done, for a hitman who has never finished a
       // contract. Every rule was only learned by tapping and failing, in a
@@ -1402,7 +1474,7 @@
                 // to the client and try again.
                 if (countdownFor === contract.id) { stopCountdown(); }
                 delete state.progress[contract.id];
-                say('You are off the contract.');
+                say('You are off the contract.', 'ok');
                 refresh();
               });
             });
@@ -1462,11 +1534,7 @@
       // client's purchase only ever draws an anonymous one, so with none it
       // bought a certain "nobody" on the one purchase never refunded.
       var anyAnonymous = asList(contract.hitmen).some(function (h) { return !h.name; });
-      if (settings().informant && anyAnonymous) {
-        var buy = el('button', 'ghost ico i-search', 'Buy informant data');
-        buy.onclick = function () { buyInformant(contract); };
-        more.appendChild(buy);
-      }
+      if (settings().informant && anyAnonymous) { more.appendChild(informantButton(contract)); }
 
       // Same shape, same reason: {} has no .length, so this read as "no
       // hitmen" whether or not there were any.
@@ -1521,9 +1589,15 @@
           'You have paid to close this. A hitman is engaged, so it is not '
           + 'instant \u2014 it closes shortly and your money is already gone.'));
       } else if (contract.bailoutAvailable) {
-        var out = el('button', 'primary danger', 'Buy out \u2014 ' + money(contract.bailoutAmount));
-        out.onclick = function () { bailout(contract); };
-        row.appendChild(out);
+        var buyoutKey = 'bailout:' + contract.id;
+        var buyoutLabel = 'Buy out \u2014 ' + money(contract.bailoutAmount);
+        if (isBusy(buyoutKey)) {
+          row.appendChild(actionButton('primary danger', buyoutLabel, buyoutKey, 'Paying\u2026'));
+        } else {
+          var out = el('button', 'primary danger', buyoutLabel);
+          out.onclick = function () { bailout(contract); };
+          row.appendChild(out);
+        }
       } else if (settings().buyouts === false) {
         // Not the client's doing. Saying "no buyout was offered" here blamed
         // the one person who had not decided it.
@@ -1531,11 +1605,7 @@
       } else {
         row.appendChild(el('div', 'hint', 'No buyout was offered on this contract.'));
       }
-      if (settings().informant) {
-        var informant = el('button', 'ghost ico i-search', 'Buy informant data');
-        informant.onclick = function () { buyInformant(contract); };
-        more.appendChild(informant);
-      }
+      if (settings().informant) { more.appendChild(informantButton(contract)); }
       return withMore();
     }
 
@@ -1626,7 +1696,7 @@
           say(queued > 0
             ? 'Contract withdrawn. Some of what you put up would not fit and is '
               + 'waiting for you — it arrives when you next have room.'
-            : 'Contract withdrawn. Everything you put up has been returned.', 'gold');
+            : 'Contract withdrawn. Everything you put up has been returned.', 'ok');
           refresh();
         });
       });
@@ -1711,19 +1781,24 @@
           reasonPreset: preset > 0 ? preset : undefined
         }).then(function (r) {
           if (!r.ok) { return takenOr(r); }
-          say('Contract updated.', 'gold');
+          say('Contract updated.', 'ok');
           refresh();
         });
       });
   }
 
   function acceptContract(contract) {
+    var feeAccount = (settings().anonymityFees || {}).account === 'cash' ? 'cash' : 'bank';
+
     function take(anonymous) {
+      // Through `once`, keyed as the board's button is drawn, so the button
+      // is disabled from the moment an answer is picked until the reply.
+      once('accept:' + contract.id, function () {
       // The stake this player was shown, sent back with the acceptance.
       // The server refuses if it is not the stake on the contract, so the
       // figure on the dialog and the figure debited are the same number by
       // construction rather than by timing.
-      post('accept', {
+      return post('accept', {
         id: contract.id, anonymous: anonymous,
         penaltyAmount: contract.penaltyAmount || 0,
         // And the deadline, which the stake is forfeit to: brought forward
@@ -1740,6 +1815,26 @@
               || r.err === 'contract_full' || r.err === 'already_holding') {
             refresh();
           }
+          // How much, and from where (§14.18: "naming the shortfall").
+          // Not which charge failed — it can be the fee alone — but both,
+          // and that the stake is never split between bank and cash.
+          var stake = contract.penaltyAmount || 0;
+          var fee = anonymous ? anonymityFee('hitman') : 0;
+          if (r.err === 'insufficient_funds' && (stake > 0 || fee > 0)) {
+            return say(stake > 0
+              ? 'You need ' + money(stake) + ' in your bank or in your cash for the '
+                + 'stake \u2014 it is not split between them'
+                + (fee > 0 ? ', plus ' + money(fee) + ' in your ' + feeAccount
+                  + ' for anonymity' : '') + '.'
+              : 'Anonymity costs ' + money(fee) + ' from your ' + feeAccount
+                + ', and it does not hold that much.');
+          }
+          // Holding as many as the server allows. The shared wording said
+          // "too many", with no number and nothing to do about it.
+          if (r.err === 'limit_reached') {
+            return say('You are already working as many contracts as this server '
+              + 'allows. Finish one under Mine before you take another.');
+          }
           return fail(r);
         }
         // Worded from what the server recorded, not from the button. A
@@ -1749,8 +1844,9 @@
           ? r.data.myAnonymous : anonymous;
         say(recorded ? 'Contract accepted, anonymously.'
           : anonymous ? 'Contract accepted under your name: the client already knows you on this one.'
-          : 'Contract accepted.', 'gold');
+          : 'Contract accepted.', 'ok');
         refresh();
+      });
       });
     }
 
@@ -1760,11 +1856,15 @@
         question: 'Take this one anonymously?',
         detail: 'The client will see an operative, not a name.'
           + (anonymityFee('hitman') > 0
-            ? ' Anonymity costs ' + money(anonymityFee('hitman')) + '.'
+            ? ' Anonymity costs ' + money(anonymityFee('hitman')) + ' from your '
+              + feeAccount + '.'
             : '')
+          // Taken whole from one account, which nothing said until a
+          // player with half in each was refused.
           + (contract.penaltyAmount > 0
             ? ' Accepting stakes ' + money(contract.penaltyAmount)
-              + ' of yours, returned when you finish and forfeit to the client'
+              + ' of yours, taken whole from your bank or whole from your cash,'
+              + ' returned when you finish and forfeit to the client'
               + ' if you walk away or run out of time.'
             : '')
           // How much time that is. The stake is forfeit to the deadline, and
@@ -1823,6 +1923,7 @@
   var noKillOn = {};
 
   function verifyKill(contract) {
+    delete state.lastRefusal[contract.id];
     // Returned, so `once` knows when the camera and the upload are done.
     return post('takeVerificationPhoto', { id: contract.id }).then(function (r) {
       if (!r.ok) {
@@ -1857,8 +1958,12 @@
             + (noKill ? 'try again.'
               : 'photograph them again; the kill is still yours to claim.')
         };
-        if (here[r.err]) { return say(here[r.err]); }
-        return fail(r);
+        // Kept on the card as well as said: the notice is read by someone
+        // just back from the camera, and it is the only thing that says
+        // what to fix before the kill runs out.
+        var why = here[r.err] || failText(r);
+        if (why) { state.lastRefusal[contract.id] = why; }
+        return here[r.err] ? say(here[r.err]) : fail(r);
       }
 
       // Not "Payment released" unconditionally. A reward that includes items
@@ -1871,12 +1976,14 @@
       say(owed
         ? 'Verified. Some of the reward would not fit and is being held for '
           + 'you \u2014 make room and it will be handed over.'
-        : 'Verified. Payment released.', 'gold');
+        : 'Verified. Payment released.', 'ok');
       refresh();
     });
   }
 
   function armKidnap(contract) {
+    // A different go at the same contract: the photo's refusal is stale.
+    delete state.lastRefusal[contract.id];
     return post('armKidnap', { id: contract.id }).then(function (r) {
       if (!r.ok) {
         var reasons = {
@@ -1895,7 +2002,7 @@
         };
         return say(reasons[r.err] || ERRORS[r.err] || 'Cannot start the handover.');
       }
-      say('Hold position.', 'gold');
+      say('Hold position.', 'caution');
       pollCountdown(contract.id);
     });
   }
@@ -2007,7 +2114,7 @@
       return say(ended.pending
         ? 'Delivered. Some of the reward would not fit and is being held for '
           + 'you \u2014 make room and it will be handed over.'
-        : 'Delivered. Payment released.', 'gold');
+        : 'Delivered. Payment released.', 'ok');
     }
     if (ended.outcome === 'closed') {
       return say('The contract closed before the handover finished.');
@@ -2037,15 +2144,46 @@
   }
 
   function bailout(contract) {
-    ask('Pay ' + money(contract.bailoutAmount) + ' to close this contract?',
-        'The client gets their money back along with your payment.',
+    var amount = money(contract.bailoutAmount);
+    // Which pocket it comes from, said before they agree: the server takes
+    // the whole of it from the bank, or the whole of it from cash, and never
+    // splits it — so $50,000 in each fails a $90,000 buyout, and nothing
+    // said why.
+    ask('Pay ' + amount + ' to close this contract?',
+        'The client gets their money back along with your payment. It is taken '
+          + 'whole from your bank, or whole from your cash if the bank is short '
+          + '\u2014 never split between them.',
         function () {
-          post('bailout', { id: contract.id }).then(function (r) {
-            if (!r.ok) return fail(r);
-            say('Paid. The contract closes shortly.', 'gold');
-            refresh();
+          // Through `once`, so the button is disabled for the round trip: up
+          // to half a million, and a second tap sent a second request.
+          once('bailout:' + contract.id, function () {
+            return post('bailout', { id: contract.id }).then(function (r) {
+              if (!r.ok) {
+                if (r.err === 'insufficient_funds') {
+                  return say('The buyout is ' + amount + ', taken whole from your bank '
+                    + 'or whole from your cash. Neither holds that much \u2014 move it '
+                    + 'into one account and try again.');
+                }
+                return fail(r);
+              }
+              say('Paid. The contract closes shortly.', 'ok');
+              refresh();
+            });
           });
         });
+  }
+
+  /* Buy informant data, disabled while a purchase is in flight: the one
+     purchase that is never refunded, and the button stayed live through
+     the round trip. */
+  function informantButton(contract) {
+    var key = 'informant:' + contract.id;
+    if (isBusy(key)) {
+      return actionButton('ghost ico i-search', 'Buy informant data', key, 'Buying\u2026');
+    }
+    var buy = el('button', 'ghost ico i-search', 'Buy informant data');
+    buy.onclick = function () { buyInformant(contract); };
+    return buy;
   }
 
   function buyInformant(contract) {
@@ -2082,11 +2220,24 @@
         + 'moved on it yet cannot be found.';
     }
 
+    // A repeat inside the reroll lock is free and gives the answer already
+    // bought, once the rate limit lets a second request through — and the
+    // dialog quoted the full fee for that too.
+    var waitMinutes = Math.ceil((Number(rules.askEverySeconds) || 0) / 60);
+    var freeMinutes = Number(rules.repeatFreeMinutes) || 0;
+    if (freeMinutes > waitMinutes) {
+      detail += ' Asked about this contract again ' + (waitMinutes > 0
+        ? 'between ' + waitMinutes + ' and ' + freeMinutes + ' minutes after an answer'
+        : 'within ' + freeMinutes + ' minutes of an answer')
+        + ', the informant repeats that answer at no charge.';
+    }
+
     ask('Buy informant data?', detail, function () { doBuyInformant(contract); });
   }
 
   function doBuyInformant(contract) {
-    post('informant', { id: contract.id }).then(function (r) {
+    once('informant:' + contract.id, function () {
+    return post('informant', { id: contract.id }).then(function (r) {
       if (!r.ok) {
         // limit_reached means something else entirely here, and the shared
         // message for it — "You are holding too many contracts" — described
@@ -2113,7 +2264,10 @@
       // the same whether that is because there was nobody or because the
       // operative is not somewhere they could be described.
       say('Informant: ' + ((r.data && (r.data.name || r.data.description))
-        || 'Unknown operative'), 'gold');
+        || 'Unknown operative'), 'ok');
+      // The answer is kept on the card too; the refresh brings it.
+      refresh();
+    });
     });
   }
 
@@ -2215,7 +2369,7 @@
       var outcome = r.data && r.data.outcome;
       say(outcome === 'applied' ? 'Agreed — the change is in effect.'
         : outcome === 'declined' ? 'Declined.'
-        : 'Recorded. Waiting on the other party.', 'gold');
+        : 'Recorded. Waiting on the other party.', 'ok');
       state.proposals = {};
       refresh();
     });
@@ -2571,14 +2725,14 @@
          proposal the card never drew and that blocked the next one. */
       state.proposals = {};
       if (r.data && r.data.outcome === 'applied') {
-        say('Done \u2014 the change is in effect.', 'gold');
+        say('Done \u2014 the change is in effect.', 'ok');
         return refresh();
       }
       if (r.data && r.data.outcome === 'failed') {
         say(ERRORS[r.data.err] || 'That change no longer fits this contract.');
         return refresh();
       }
-      say('Proposed. The other party has to agree.', 'gold');
+      say('Proposed. The other party has to agree.', 'ok');
       refresh();
     });
   }
@@ -2613,7 +2767,7 @@
                   payload: { seconds: minutes * 60 }
                 }).then(function (r) {
                   if (!r.ok) return fail(r);
-                  say('Deadline extended.', 'gold');
+                  say('Deadline extended.', 'ok');
                   refresh();
                 });
               },
@@ -2857,7 +3011,7 @@
       say(queued
         ? 'Taken off the contract. Some of it could not fit and is waiting '
           + 'for you — it arrives when you next have room.'
-        : 'Taken off the contract and returned to you.', 'gold');
+        : 'Taken off the contract and returned to you.', 'ok');
 
       state.reward = null;
       state.dialog = null;
@@ -2918,7 +3072,7 @@
                 + 'may be worth on this server.');
             }
             if (!r.ok) return fail(r);
-            say('Added to the reward.', 'gold');
+            say('Added to the reward.', 'ok');
             state.wallet = null;
             refresh();
           });
@@ -3118,10 +3272,10 @@
         if (state.tab === 'thread' && sameThread(state.thread, t.contract, t.thread)) {
           render();
         }
-        return say('Calling. Hang up here when you are done.', 'gold');
+        return say('Calling. Hang up here when you are done.', 'ok');
       }
       var line = CALL_NOT_PLACED[r.data && r.data.reason];
-      say(typeof line === 'string' ? line : CALL_NOT_PLACED.not_placed, 'gold');
+      say(typeof line === 'string' ? line : CALL_NOT_PLACED.not_placed, 'ok');
     });
   }
 
@@ -3132,7 +3286,7 @@
       if (state.tab === 'thread') { render(); }
       // Over already — the other side hung up or never answered — is said
       // as it is, rather than claiming this ended it.
-      say(r.data && r.data.ended ? 'Call ended.' : 'The call had already ended.', 'gold');
+      say(r.data && r.data.ended ? 'Call ended.' : 'The call had already ended.', 'ok');
     });
   }
 
@@ -4186,13 +4340,23 @@
     // Every payout drawn from one balance, bonus included, against what the
     // player holds: each payout passing on its own is not the contract
     // passing.
+    //
+    // The anonymity fee too, which the server takes from the same pockets
+    // before the escrow. Left out, this check passed a form the server then
+    // refused, and the player was told only "You do not have that."
+    var need = { cash: totals.cash, bank: totals.bank, dirty: totals.dirty };
+    var creatorFee = state.draft.anon === true ? anonymityFee('creator') : 0;
+    var creatorFeeAccount = (settings().anonymityFees || {}).account === 'cash' ? 'cash' : 'bank';
+    need[creatorFeeAccount] += creatorFee;
     var wallet = state.wallet || {};
     for (var held in labels) {
       var have = Number(wallet[held]);
-      if (totals[held] > 0 && isFinite(have) && totals[held] > have) {
+      if (need[held] > 0 && isFinite(have) && need[held] > have) {
         return say(labels[held] + ' across every payout'
           + (bonusPct > 0 ? ', with the ' + bonusPct + '% kidnapping bonus taken now on top,' : '')
-          + ' comes to ' + money(totals[held]) + '. You hold ' + money(have) + '.');
+          + (creatorFee > 0 && held === creatorFeeAccount
+            ? ' plus the ' + money(creatorFee) + ' anonymity fee,' : '')
+          + ' comes to ' + money(need[held]) + '. You hold ' + money(have) + '.');
       }
     }
 
@@ -4278,9 +4442,28 @@
             + 'the city. The list has been read again; choose who this is for.');
           return render();
         }
+        // Nothing staged, so it is the money: the balances this form checked
+        // against were read when it opened. Read again, and said so.
+        if (r.err === 'insufficient_funds') {
+          state.wallet = null;
+          state.walletFailed = null;
+          say('The server could not take that much from you \u2014 your balances '
+            + 'may have changed since you opened this form. They have been read '
+            + 'again; check the amounts.');
+          return render();
+        }
+        // The limit is on contracts placed, counted across the account's
+        // characters. "You are holding too many contracts" was said to a
+        // client holding none.
+        if (r.err === 'limit_reached') {
+          return say('You already have as many contracts out as this server '
+            + 'allows, counting the ones placed from your other characters. '
+            + 'Wait for one to close, or withdraw one nobody has taken yet '
+            + 'under Mine.');
+        }
         return fail(r);
       }
-      say('Contract placed.', 'gold');
+      say('Contract placed.', 'ok');
       // The goods are gone from the player's pockets now; leaving them
       // staged would offer them again on the next contract.
       state.picked = {};
@@ -4626,7 +4809,7 @@
           say('That is a sworn officer.'
             + (advised('posted') ? ' Placing this will alert their department.'
               : advised('accepted') ? ' Their department is told when someone accepts.' : ''),
-            'gold');
+            'caution');
         }
       };
       return pick;
@@ -4911,6 +5094,12 @@
   // sends three requests, each reply triggers another refresh, and the app
   // buries itself within seconds. Only an unsolicited push is acted on.
   var pushTimer = null;
+
+  // A refusal stays up until the player does something else. Captured, so
+  // it is cleared before the tap's own handler runs and can raise the next.
+  document.addEventListener('click', function () {
+    if (state.notice && state.notice.kind === 'red') { dismissNotice(); }
+  }, true);
 
   window.addEventListener('message', function (event) {
     var data = event.data || {};

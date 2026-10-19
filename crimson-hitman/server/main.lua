@@ -787,7 +787,7 @@ function StartCrimsonHitman()
     mugshot.init({ identity = identity, audit = audit })
     projection.init({ storage = Storage, identity = identity, escrow = escrow,
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
-                      comms = comms })
+                      comms = comms, informant = informant })
 
     modules = {
         storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,

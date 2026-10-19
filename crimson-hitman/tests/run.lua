@@ -211,7 +211,8 @@ function _G.newCopyingStack()
                            audit = stack.audit, death = stack.death })
     stack.projection.init({ storage = copying, identity = stack.identity,
                             escrow = stack.escrow, kidnap = stack.kidnap,
-                            mugshot = stack.mugshot, progression = stack.progression })
+                            mugshot = stack.mugshot, progression = stack.progression,
+                            informant = stack.informant })
 
     stack.storage = copying
     return stack
@@ -309,7 +310,7 @@ function _G.newStack()
     mugshot.init({ identity = identity, audit = audit })
     projection.init({ storage = storage, identity = identity, escrow = escrow,
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
-                      comms = comms })
+                      comms = comms, informant = informant })
 
     -- Wired exactly as main.lua wires it. The app was previously left
     -- uninitialised here, so anything it reached for through deps was

@@ -661,6 +661,18 @@ button.chip:hover { color: var(--ink); border-color: var(--rose); background: rg
   --icon: var(--svg-info);
 }
 .actions > .hint::before { margin-top: 0.1rem; opacity: 0.8; }
+/* What the last Verify kill was refused for, kept under the buttons: the
+   part of the card that says what to fix before trying again. */
+.actions > .hint.is-refusal { color: var(--ink); --icon: var(--svg-alert); }
+.actions > .hint.is-refusal::before { color: var(--crimson-bright); opacity: 1; }
+
+/* What the player's informant came back with, kept on the card it was
+   bought for. */
+.informant-answer {
+  display: flex; gap: 0.45rem; align-items: center;
+  margin-top: 0.7rem; font-size: var(--t-sm); color: var(--ink);
+}
+.informant-answer::before { width: 0.95rem; height: 0.95rem; opacity: 0.75; }
 
 .more {
   flex-basis: 100%;
@@ -1083,7 +1095,10 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
   pointer-events: none;
 }
 .notice-slot .notice {
+  /* Live, so a tap dismisses it rather than falling through to whatever
+     button it is covering. */
   pointer-events: auto;
+  cursor: pointer;
   background: #2a1d1c;
   box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(0, 0, 0, 0.4);
   --icon: var(--svg-alert);
@@ -1109,6 +1124,16 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
   --icon: var(--svg-shield);
 }
 .notice.gold::before { color: var(--gold); }
+/* A confirmation: plain ink and a tick, neither the crimson of a refusal nor
+   the brass of a caution. Placed after the slot's own rule, whose alert icon
+   would otherwise win. */
+.notice.ok {
+  border-color: rgba(237, 228, 211, 0.22); background: rgba(237, 228, 211, 0.05);
+  color: var(--ink);
+  --icon: var(--svg-usercheck);
+}
+.notice.ok::before { color: var(--ink-dim); }
+.notice-slot .notice.ok { background: #221e1a; }
 .card > .notice { margin-top: 0.8rem; }
 
 /* Nothing here, said quietly, under a faint seal. */

@@ -6891,15 +6891,18 @@ async function main() {
       list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
       mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
       ledger: LEDGER,
+      // A confirmation first: a refusal has no timer at all now, it stays
+      // until the next tap, so the older timer has to be a confirmation's.
+      takeVerificationPhoto: { ok: true, data: {} },
       readThread: function () {
         calls += 1;
-        return calls === 1 ? { ok: false, err: 'rate_limited' } : { ok: false, err: 'invalid_input' };
+        return { ok: false, err: 'invalid_input' };
       }
     });
     await settle(); await settle();
     tab(app, 'mine');
     await settle();
-    click(app, 'Message');
+    click(app, 'Verify kill');
     await settle(); await settle();
     const first = app.timers.filter(function (t) { return t.ms === 4000 && !t.cleared; });
     click(app, 'Message');
@@ -6907,6 +6910,7 @@ async function main() {
     const second = app.notice();
     first.forEach(function (t) { t.fn(); });
     it('keeps a notice raised after an older one began to time out', function () {
+      truthy(first.length > 0, 'the confirmation set its timer');
       truthy(second.length > 0, 'the second notice was raised');
       eq(app.notice(), second, 'the first notice timer blanked the second');
     });
@@ -7153,6 +7157,162 @@ async function main() {
       truthy(app.view.textContent.indexOf('$50,000 of this is black money, and $25,000 of the alive bonus') !== -1,
         app.view.textContent);
       falsy(app.view.textContent.indexOf('$75,000 of it') !== -1, app.view.textContent);
+    });
+  })();
+
+
+  /* Notices that last long enough to read, and go when tapped. Every one
+     cleared after a flat four seconds, including thirty-word instructions to
+     a hitman back from the camera and the answer a $25,000 informant gave. */
+  await (async function noticesLongEnoughToRead() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hitman';
+    function onHeld(over) {
+      return boot(Object.assign({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+        ledger: LEDGER
+      }, over));
+    }
+    function noticeNode(app) { return app.document.getElementById('notice').children[0]; }
+
+    const refused = onHeld({ takeVerificationPhoto: { ok: false, err: 'no_kill_to_verify' } });
+    await settle(); await settle();
+    tab(refused, 'mine');
+    await settle();
+    click(refused, 'Verify kill');
+    await settle(); await settle();
+    const shown = refused.notice();
+    const timed = refused.timers.filter(function (t) { return t.ms >= 4000 && !t.repeating; });
+    const kept = refused.view.all().filter(function (n) {
+      return /\bis-refusal\b/.test(n.className || '');
+    });
+
+    it('keeps a refusal up until the player taps, rather than timing it out', function () {
+      truthy(shown.indexOf('Down is not dead') !== -1, shown);
+      eq(timed.length, 0, 'a refusal set a timer: ' + timed.map(function (t) { return t.ms; }));
+    });
+
+    it('keeps the photo refusal under the card\'s buttons as well', function () {
+      eq(kept.length, 1, refused.view.textContent);
+      eq(kept[0].textContent, shown);
+    });
+
+    it('clears a refusal on the next tap anywhere', function () {
+      const listeners = refused.document._listeners.click || [];
+      truthy(listeners.length > 0, 'nothing listens for the next tap');
+      listeners.forEach(function (fn) { fn({}); });
+      eq(refused.notice(), '', 'the refusal outlived the next tap');
+    });
+
+    const paid = onHeld({ takeVerificationPhoto: { ok: true, data: { pending: true } } });
+    await settle(); await settle();
+    tab(paid, 'mine');
+    await settle();
+    click(paid, 'Verify kill');
+    await settle(); await settle();
+    const message = paid.notice();
+    const lifetime = paid.timers.filter(function (t) { return t.ms >= 4000 && !t.repeating; })
+      .map(function (t) { return t.ms; });
+
+    it('gives a long confirmation as long as it takes to read', function () {
+      eq(lifetime.length, 1, 'timers: ' + lifetime);
+      eq(lifetime[0], Math.min(12000, 1200 + 55 * message.length));
+      truthy(lifetime[0] > 4000, 'still the flat four seconds');
+    });
+
+    it('draws a confirmation as one, not as the sworn-officer caution', function () {
+      truthy(/\bok\b/.test(noticeNode(paid).className), noticeNode(paid).className);
+      falsy(/\bgold\b/.test(noticeNode(paid).className), noticeNode(paid).className);
+    });
+
+    it('dismisses a notice when it is tapped', function () {
+      noticeNode(paid).onclick();
+      eq(paid.notice(), '', 'the notice swallowed the tap and stayed');
+    });
+
+    it('drops the refusal from the card once the hitman tries again', function () {
+      falsy(paid.view.all().some(function (n) { return /\bis-refusal\b/.test(n.className || ''); }),
+        paid.view.textContent);
+    });
+  })();
+
+  /* The informant's answer, kept on the card it was paid for, and the
+     dialog saying when asking again is free. */
+  await (async function informantAnswerKept() {
+    const own = { id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
+      reward: { baseline: 5000, bonus: 2500 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+      hitmenActive: 1, hitmenMax: 5, hitmen: [{ alias: 'Grey' }],
+      targetName: 'Dana Reyes', role: 'creator', informantAnswer: 'Rook Ash' };
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {
+        informant: { cost: 25000, account: 'bank', maxPerContract: 2,
+          repeatFreeMinutes: 30, askEverySeconds: 300 } } } },
+      mine: { ok: true, data: { created: [own], accepted: [], onMe: [] } },
+      ledger: LEDGER
+    });
+    await settle(); await settle();
+    tab(app, 'mine');
+    await settle(); await settle();
+
+    it('keeps what the informant said on the card', function () {
+      truthy(app.view.textContent.indexOf('Informant: Rook Ash') !== -1, app.view.textContent);
+    });
+
+    click(app, 'Buy informant data');
+    it('says a repeat inside the window is free, from the server\'s figures', function () {
+      truthy(app.view.textContent.indexOf('between 5 and 30 minutes after an answer') !== -1,
+        app.view.textContent);
+    });
+  })();
+
+  /* Accept and Buy out: busy while the request runs, and a shortfall that
+     says how much and from where. */
+  await (async function acceptAndBuyout() {
+    let release;
+    const board = JSON.parse(JSON.stringify(BOARD));
+    board.data.contracts[0].penaltyAmount = 5000;
+    board.data.settings.anonymityFees = { creator: 0, hitman: 1000, account: 'bank' };
+    const slow = boot({ list: board, mine: MINE, ledger: LEDGER,
+      accept: function () { return new Promise(function (r) { release = r; }); } });
+    await settle(); await settle();
+    click(slow, 'Accept contract');
+    click(slow, 'Anonymously');
+    await settle(); await settle();
+    const busy = slow.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Accepting…';
+    });
+    it('disables Accept while the acceptance is in flight', function () {
+      eq(busy.length, 1, slow.view.textContent);
+      truthy(busy[0].disabled, 'still live mid-request');
+    });
+    release({ ok: false, err: 'insufficient_funds' });
+    await settle(); await settle();
+    it('names the stake, the fee and where each comes from', function () {
+      const said = slow.notice();
+      truthy(said.indexOf('$5,000') !== -1 && said.indexOf('not split') !== -1
+        && said.indexOf('$1,000 in your bank') !== -1, said);
+    });
+
+    const target = { id: 'ct00000002', reason: 'x', mode: 'exclusive', state: 'active',
+      reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+      hitmenActive: 0, targetName: 'You', role: 'target',
+      bailoutAmount: 90000, bailoutAvailable: true };
+    const broke = boot({ list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [target] } },
+      ledger: LEDGER, bailout: { ok: false, err: 'insufficient_funds' } });
+    await settle(); await settle();
+    tab(broke, 'onme');
+    await settle(); await settle();
+    click(broke, 'Buy out — $90,000');
+    it('says before paying that a buyout is never split', function () {
+      truthy(broke.view.textContent.indexOf('never split') !== -1, broke.view.textContent);
+    });
+    click(broke, 'Yes');
+    await settle(); await settle();
+    it('says a buyout short of money is taken whole from one account', function () {
+      truthy(broke.notice().indexOf('$90,000') !== -1
+        && broke.notice().indexOf('whole from your cash') !== -1, broke.notice());
     });
   })();
 

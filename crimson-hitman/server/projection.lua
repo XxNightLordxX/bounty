@@ -9,12 +9,12 @@ local Projection = {}
 
 local Util = require_shared('util')
 
-local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms
+local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant
 
 function Projection.init(deps)
-    Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms =
+    Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant =
         deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot, deps.progression,
-        deps.comms
+        deps.comms, deps.informant
 end
 
 --- Roles a viewer can hold relative to a contract. The role decides the key
@@ -71,6 +71,16 @@ local function currentReward(contract)
         sources  = Escrow.moneyBySource(contract.id, { slot = slot, portion = CH.PORTION.BASELINE }),
         bonusSources = Escrow.moneyBySource(contract.id, { slot = slot, portion = CH.PORTION.BONUS }),
     }
+end
+
+--- What the viewer's own informant purchase on this contract came back
+--- with, as the words to show. Only ever the viewer's own: the record is
+--- keyed by buyer, so a creator and a target who both bought each see theirs.
+local function informantAnswer(contractId, viewerCid)
+    if not (Informant and Config.Informant.Enabled) then return nil end
+    local answer = Informant.answerFor(contractId, viewerCid)
+    if type(answer) ~= 'table' then return nil end
+    return answer.name or answer.description
 end
 
 --- A single contract, projected for one viewer.
@@ -185,6 +195,7 @@ function Projection.contract(contract, viewerCid)
         -- contract may be worth: the add-to-reward box offered amounts the
         -- server could only refuse, as a reward that did not add up.
         out.valueHeld = Escrow.moneyValue(contract.id)
+        out.informantAnswer = informantAnswer(contract.id, viewerCid)
         -- The creator learns how many operatives are on it, never who they
         -- are, unless a hitman chose to be seen.
         out.hitmen = {}
@@ -233,6 +244,7 @@ function Projection.contract(contract, viewerCid)
         -- went through from one that did not, and the only thing they can do
         -- about it is pay again.
         out.bailoutPaid = contract.bailout_queued_at ~= nil or nil
+        out.informantAnswer = informantAnswer(contract.id, viewerCid)
     end
 
     return out
@@ -362,6 +374,13 @@ local function buildListing(viewerCid, page)
                 account = Config.Informant.Account,
                 maxPerContract = Config.Informant.MaxPurchasesPerContract,
                 needsProximity = Config.Informant.RequireProximity == true,
+                -- When asking again is free: after the rate limit lets a
+                -- second request through, and inside the reroll lock, which
+                -- repeats the answer already bought. Sent so the dialog can
+                -- say so rather than quote the full fee for a repeat.
+                repeatFreeMinutes = Config.Informant.RerollLockMinutes,
+                askEverySeconds = Config.Cooldowns.informant
+                    and Config.Cooldowns.informant.per or nil,
             } or nil,
         },
     }
@@ -555,10 +574,11 @@ Projection.ALLOWED_KEYS = {
         targetImageId = true, penaltyAmount = true,
         creatorName = true, creatorAnonymous = true,
     },
-    creator = { bailoutAmount = true, hitmen = true, valueHeld = true },
+    creator = { bailoutAmount = true, hitmen = true, valueHeld = true,
+                informantAnswer = true },
     hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
-                bailoutPaid = true },
+                bailoutPaid = true, informantAnswer = true },
     public  = { barred = true },
 }
 

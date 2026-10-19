@@ -212,6 +212,19 @@ function Informant.buy(actor, contractId)
     return true, nil, answer
 end
 
+--- The answer this buyer was last given on this contract, for their card.
+---
+--- The stored answer, never a fresh look, so carrying it on every read says
+--- nothing the purchase did not already say: it is not the presence oracle a
+--- free re-ask would be. The paid answer used to exist only in a notice that
+--- cleared itself after four seconds, and a buyer who looked away had paid
+--- the premium for a name they could no longer read.
+---@return table|nil answer { name } or { description }
+function Informant.answerFor(contractId, cid)
+    local record = recordFor(contractId, cid)
+    return record and record.answer or nil
+end
+
 --- What the buyer is shown.
 ---
 --- One shape, whatever happened. There is no `found` flag on the wire: the

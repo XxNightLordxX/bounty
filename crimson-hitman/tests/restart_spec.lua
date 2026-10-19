@@ -670,6 +670,27 @@ describe('informant data across a restart', function()
                 'the repeat read the hitman afresh and said whether they were here')
         end)
 
+        it(mode .. ': the answer stays on the buyer\'s card, and only theirs', function()
+            -- It lived only in a notice that cleared itself in four seconds,
+            -- on the one purchase that is never refunded.
+            local _, s = boot(mode)
+            Config.Informant.RequireProximity = false
+            local f = fixture(s)
+            Env.players[2].PlayerData.money.bank = 200000
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x',
+                reward = { baseline = { cash = 10000 } },
+            })
+            truthy(s.contracts.accept(f.hitman, c.id))
+            truthy(s.informant.buy(f.target, c.id))
+
+            local _, s2 = restart(mode, s)
+            local row = s2.projection.contract(s2.storage.readContract(c.id), 'TARGET01')
+            eq(row.informantAnswer, 'Rook Ash', 'the stored answer, after a restart')
+            local theirs = s2.projection.contract(s2.storage.readContract(c.id), 'CREATOR1')
+            eq(theirs.informantAnswer, nil, 'the client bought nothing and is told nothing')
+        end)
+
         it(mode .. ': the ceiling still counts what was bought before', function()
             local _, s = boot(mode)
             Config.Informant.RequireProximity = false
