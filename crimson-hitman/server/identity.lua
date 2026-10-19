@@ -169,14 +169,14 @@ end
 ---@return string|nil err
 function Identity.resolve(source)
     local src = tonumber(source)
-    if not src or src <= 0 then return nil, CB.ERR.NO_PLAYER end
+    if not src or src <= 0 then return nil, CH.ERR.NO_PLAYER end
 
     local player = exports.qbx_core:GetPlayer(src)
-    if not player or not player.PlayerData then return nil, CB.ERR.NO_PLAYER end
+    if not player or not player.PlayerData then return nil, CH.ERR.NO_PLAYER end
 
     local data = player.PlayerData
     local cid = Util.toCitizenId(data.citizenid)
-    if not cid then return nil, CB.ERR.NO_PLAYER end
+    if not cid then return nil, CH.ERR.NO_PLAYER end
 
     -- Note anyone we have not seen before, so their state is tracked even
     -- if this resource started after they connected.
@@ -215,7 +215,7 @@ end
 --- could not read is nil, and `nil == nil` is true — which made every
 --- player look like another character of whoever was asking. The target
 --- list came back empty, with the whole city filtered out as one person's
---- alts, and no contract could be accepted because every hunter read as
+--- alts, and no contract could be accepted because every hitman read as
 --- their own creator.
 ---
 --- Two unknowns are not the same person. They are two unknowns, and the
@@ -377,7 +377,7 @@ end
 --- sc-police and the QBox prison scripts keep the time left in the 'injail'
 --- metadata, and sc-police lets a client write it for themselves with a net
 --- event. Read alone, a target could declare a sentence and stop the
---- hunter's clock while walking around the city. So the sentence counts only
+--- hitman's clock while walking around the city. So the sentence counts only
 --- where the server can see them inside the prison grounds
 --- (Config.Limits.JailZone); with no zone configured, it never counts.
 ---@param actor table
@@ -406,7 +406,7 @@ end
 function Identity.gate(source)
     local actor, err = Identity.resolve(source)
     if not actor then return nil, err end
-    if Identity.isBarred(actor) then return nil, CB.ERR.BLACKLISTED_JOB end
+    if Identity.isBarred(actor) then return nil, CH.ERR.BLACKLISTED_JOB end
     return actor
 end
 

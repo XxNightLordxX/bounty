@@ -32,11 +32,11 @@ local function heldByResource(storage)
     local total = 0
     for _, contract in ipairs(storage.allContracts()) do
         for _, line in ipairs(storage.readEscrow(contract.id)) do
-            if line.state ~= CB.ESCROW_STATE.SETTLED and CB.MONEY_SOURCES[line.source] then
+            if line.state ~= CH.ESCROW_STATE.SETTLED and CH.MONEY_SOURCES[line.source] then
                 total = total + (line.amount or 0)
             end
         end
-        if not CB.TERMINAL[contract.state] then
+        if not CH.TERMINAL[contract.state] then
             total = total + (contract.bailout_paid_amount or 0)
         end
     end
@@ -89,7 +89,7 @@ describe('the escrow line ceiling', function()
         withConfig({ { Config.Limits, 'MaxEscrowLines', 4 } }, function()
             local c, err = s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'Unpaid debt',
-                mode = CB.MODE.COMPETITIVE, reward = slotsOf(2),
+                mode = CH.MODE.COMPETITIVE, reward = slotsOf(2),
             })
             truthy(c, 'four lines against a ceiling of four is inside it: ' .. tostring(err))
             eq(#s.storage.readEscrow(c.id), 4, 'and all four are stored')
@@ -103,10 +103,10 @@ describe('the escrow line ceiling', function()
             local before = accounted(s.storage)
             local c, err = s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'Unpaid debt',
-                mode = CB.MODE.COMPETITIVE, reward = slotsOf(2, true),
+                mode = CH.MODE.COMPETITIVE, reward = slotsOf(2, true),
             })
             falsy(c, 'five lines against a ceiling of four has to be refused')
-            eq(err, CB.ERR.INVALID_REWARD)
+            eq(err, CH.ERR.INVALID_REWARD)
             eq(accounted(s.storage), before,
                 'a refused contract must not have cost the creator anything')
             eq(#s.storage.allContracts(), 0, 'and must not leave a row behind')
@@ -118,7 +118,7 @@ describe('the escrow line ceiling', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 100 } },
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 100 } },
         })
         truthy(c)
         withConfig({ { Config.Limits, 'MaxEscrowLines', 3 } }, function()
@@ -131,7 +131,7 @@ describe('the escrow line ceiling', function()
             local before = accounted(s.storage)
             local ok, err = s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 50 } })
             falsy(ok, 'the fourth is past the ceiling')
-            eq(err, CB.ERR.INVALID_REWARD)
+            eq(err, CH.ERR.INVALID_REWARD)
             eq(#s.storage.readEscrow(c.id), 3, 'and nothing was written')
             eq(accounted(s.storage), before, 'and nothing was taken')
         end)
@@ -155,13 +155,13 @@ describe('the escrow line ceiling', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE, reward = slotsOf(2),
+            mode = CH.MODE.COMPETITIVE, reward = slotsOf(2),
         })
         truthy(c)
         eq(#s.storage.readEscrow(c.id), 4, 'four baseline lines to start')
 
         for percent = 1, Config.Bonus.maxPercent do
-            s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = percent })
+            s.amendments.improve(f.creator, c.id, CH.AMENDMENT.RAISE_BONUS, { percent = percent })
         end
 
         local lines = #s.storage.readEscrow(c.id)
@@ -183,7 +183,7 @@ describe('the contract value ceiling', function()
         withConfig({ { Config, 'MaxContractValue', 5000 } }, function()
             local c, err = s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'Unpaid debt',
-                mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } },
+                mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } },
             })
             truthy(c, 'the ceiling is inclusive: ' .. tostring(err))
             eq(s.escrow.moneyValue(c.id), 5000)
@@ -197,10 +197,10 @@ describe('the contract value ceiling', function()
             local before = accounted(s.storage)
             local c, err = s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'Unpaid debt',
-                mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 5001 } },
+                mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5001 } },
             })
             falsy(c)
-            eq(err, CB.ERR.INVALID_REWARD)
+            eq(err, CH.ERR.INVALID_REWARD)
             eq(accounted(s.storage), before, 'a refusal must not cost anything')
         end)
     end)
@@ -258,7 +258,7 @@ describe('the notification budget', function()
     end)
 
     --- A receipt is outside it (§14.40). Relay messages spend the same
-    --- budget, so a chatty hunter used to swallow "Contract fulfilled".
+    --- budget, so a chatty hitman used to swallow "Contract fulfilled".
     local function told(title)
         for _, note in ipairs(Natives.calls.notifications) do
             if note.title == title then return true end
@@ -279,11 +279,11 @@ describe('the notification budget', function()
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         spent(s)
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
         -- As the photo route sends it once the claim has paid.
-        s.notify.contractCompleted(s.storage.readContract(c.id), f.hunter,
+        s.notify.contractCompleted(s.storage.readContract(c.id), f.hitman,
             'https://cdn.fivemanage.com/p.png')
         truthy(told('Contract fulfilled'), 'the receipt was lost to the budget')
     end)
@@ -344,23 +344,23 @@ describe('a contract sitting exactly on its deadline', function()
     it('is left alone at the deadline and closed one second past it', function()
         local main, modules, f, c = bootWithContract({ deadline_at = 0 })
         eq(main.expire(), 0, 'exactly due is not overdue')
-        eq(modules.storage.readContract(c.id).state, CB.STATE.ACTIVE)
+        eq(modules.storage.readContract(c.id).state, CH.STATE.ACTIVE)
 
         local before = accounted(modules.storage)
         Env.time = Env.time + 1
         eq(main.expire(), 1, 'one second past it, the contract closes')
-        eq(modules.storage.readContract(c.id).state, CB.STATE.EXPIRED)
+        eq(modules.storage.readContract(c.id).state, CH.STATE.EXPIRED)
         eq(accounted(modules.storage), before, 'and the escrow came back rather than vanishing')
     end)
 
     it('is left alone at the absolute lifetime and closed one second past it', function()
         local main, modules, f, c = bootWithContract({ expires_at = 0, deadline_at = 86400 })
         eq(main.expire(), 0, 'exactly at the ceiling is still inside it')
-        eq(modules.storage.readContract(c.id).state, CB.STATE.ACTIVE)
+        eq(modules.storage.readContract(c.id).state, CH.STATE.ACTIVE)
 
         Env.time = Env.time + 1
         eq(main.expire(), 1, 'one second past the lifetime, the contract closes')
-        eq(modules.storage.readContract(c.id).state, CB.STATE.EXPIRED)
+        eq(modules.storage.readContract(c.id).state, CH.STATE.EXPIRED)
         eq(modules.storage.readContract(c.id).resolution, 'lifetime_exceeded',
             'and closed for the reason that actually applies')
     end)
@@ -388,7 +388,7 @@ describe('the escrow line id sequence with nothing left to mint', function()
     local function boughtOutByAnAbsentCreator(s, f)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 10000 } },
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 10000 } },
             bailoutAmount = 20000,
         })
         truthy(c, 'a contract with a buyout price')

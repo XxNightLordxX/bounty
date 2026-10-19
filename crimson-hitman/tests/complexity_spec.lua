@@ -16,7 +16,7 @@
 --- The claims made here, all of them measured at ten contracts and again at
 --- five hundred:
 ---
----   * opening the board reads exactly one hunter roster per row it shows,
+---   * opening the board reads exactly one hitman roster per row it shows,
 ---     never one per contract on the server;
 ---   * it reads escrow once per contract it has to price, and a fixed
 ---     handful per row it renders — so the whole-board cost is linear with
@@ -24,7 +24,7 @@
 ---   * a player's own tabs (mine / accepted / onMe) never read the whole
 ---     contract table at all;
 ---   * the once-a-second death sampler touches no escrow and no contract
----     rows, only one hunter roster per live contract;
+---     rows, only one hitman roster per live contract;
 ---   * the maintenance tick's whole-table scans are a small constant,
 ---     whatever is on the board.
 ---
@@ -96,7 +96,7 @@ local function scaleLimits()
 end
 
 --- Put `n` live contracts on the board, every one of them created through
---- the real path so the escrow, the hunter rows and the audit trail are the
+--- the real path so the escrow, the hitman rows and the audit trail are the
 --- ones a live server would have.
 ---
 --- Two money sources and a derived kidnapping bonus, which is four escrow
@@ -165,39 +165,39 @@ describe('complexity: opening the board', function()
     --- The one that matters most, because it is the one a refactor breaks
     --- without changing a single byte of output: projecting every visible
     --- contract and slicing the page out afterwards returns exactly the same
-    --- listing, and costs a hunter-roster read per contract on the server
+    --- listing, and costs a hitman-roster read per contract on the server
     --- instead of per row on the screen.
-    it('reads one hunter roster per row shown, not one per contract', function()
+    it('reads one hitman roster per row shown, not one per contract', function()
         local small, big
         atScale(10, function(stack, board, counts, reset)
             reset()
             local listing = stack.projection.listing(board.creators[1].cid, 1)
-            small = { rows = #listing.contracts, hunters = counts.readHunters,
-                      hunter = counts.readHunter, escrow = counts.readEscrow,
+            small = { rows = #listing.contracts, hitmen = counts.readHitmen,
+                      hitman = counts.readHitman, escrow = counts.readEscrow,
                       pages = listing.pages }
         end)
         atScale(500, function(stack, board, counts, reset)
             reset()
             local listing = stack.projection.listing(board.creators[1].cid, 1)
-            big = { rows = #listing.contracts, hunters = counts.readHunters,
-                    hunter = counts.readHunter, escrow = counts.readEscrow,
+            big = { rows = #listing.contracts, hitmen = counts.readHitmen,
+                    hitman = counts.readHitman, escrow = counts.readEscrow,
                     pages = listing.pages }
         end)
 
         eq(small.rows, 10, 'ten contracts fit on one page')
         eq(big.rows, PAGE, 'five hundred do not')
 
-        eq(small.hunters, small.rows,
+        eq(small.hitmen, small.rows,
             'one roster read per row at ten contracts')
-        eq(big.hunters, big.rows,
+        eq(big.hitmen, big.rows,
             ('one roster read per row at five hundred contracts, got %d for %d rows '
              .. '— the board is projecting contracts it will not show')
-            :format(big.hunters, big.rows))
+            :format(big.hitmen, big.rows))
 
         -- The role lookup is per row too, and skipped on the viewer's own
         -- contracts, so it can only ever be smaller.
-        truthy(big.hunter <= big.rows,
-            ('one role lookup per row at most, got %d for %d rows'):format(big.hunter, big.rows))
+        truthy(big.hitman <= big.rows,
+            ('one role lookup per row at most, got %d for %d rows'):format(big.hitman, big.rows))
     end)
 
     --- The scan itself. Sorting by reward means pricing every contract that
@@ -292,7 +292,7 @@ describe('complexity: a player looking at their own contracts', function()
 
             reset()
             stack.projection.accepted(viewerCreator)
-            eq(counts.allContracts, 0, 'the hunter tab must not scan the board')
+            eq(counts.allContracts, 0, 'the hitman tab must not scan the board')
             eq(counts.contractsInvolving, 1, 'it asks for the ones it is in, once')
 
             reset()
@@ -318,7 +318,7 @@ describe('complexity: a player looking at their own contracts', function()
                 reset()
                 local mine = stack.projection.mine(board.creators[1].cid)
                 out = { own = own, rows = #mine, escrow = counts.readEscrow,
-                        hunters = counts.readHunters }
+                        hitmen = counts.readHitmen }
             end)
             return out
         end
@@ -328,14 +328,14 @@ describe('complexity: a player looking at their own contracts', function()
 
         eq(small.escrow / small.rows, big.escrow / big.rows,
             'the escrow reads per contract shown must not move with the board')
-        eq(small.hunters / small.rows, big.hunters / big.rows,
+        eq(small.hitmen / small.rows, big.hitmen / big.rows,
             'nor the roster reads')
     end)
 end)
 
 describe('complexity: the tick and the sampler', function()
     --- The condition sampler runs on its own clock, once a second, over
-    --- every live contract. One hunter roster each is what it needs; an
+    --- every live contract. One hitman roster each is what it needs; an
     --- escrow read or a contract re-read in that loop would be a query per
     --- contract per second for the life of the server.
     it('samples conditions without touching escrow or re-reading contracts', function()
@@ -345,7 +345,7 @@ describe('complexity: the tick and the sampler', function()
             local watched = stack.death.watchTargets(contracts)
 
             eq(watched, board.made, 'every live contract is sampled')
-            eq(counts.readHunters, board.made, 'one roster per live contract')
+            eq(counts.readHitmen, board.made, 'one roster per live contract')
             eq(counts.readEscrow, 0,
                 'the sampler must never price a contract — it runs every second')
             eq(counts.readContract, 0,

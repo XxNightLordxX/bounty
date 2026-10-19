@@ -24,7 +24,7 @@ local function placed(s, opts)
     local f = fixture(s)
     local c = s.contracts.create(f.creator, {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
-        mode = opts.mode or CB.MODE.COMPETITIVE,
+        mode = opts.mode or CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
         penaltyAmount = opts.penalty,
     })
@@ -49,7 +49,7 @@ describe('cancelling a contract nobody has taken', function()
         local s = newStack()
         local f, c = placed(s)
         truthy(s.contracts.cancel(f.creator, c.id))
-        eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.CANCELLED)
         eq(s.storage.readContract(c.id).resolution, 'cancelled_by_creator')
     end)
 
@@ -58,29 +58,29 @@ describe('cancelling a contract nobody has taken', function()
         local f, c = placed(s)
         s.contracts.cancel(f.creator, c.id)
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            eq(line.state, CB.ESCROW_STATE.SETTLED,
+            eq(line.state, CH.ESCROW_STATE.SETTLED,
                 'a cancelled contract holds nothing: ' .. tostring(line.id))
         end
     end)
 
-    it('is refused once a hunter is actually holding it', function()
-        -- The whole point of escrow is that a hunter who has started work
+    it('is refused once a hitman is actually holding it', function()
+        -- The whole point of escrow is that a hitman who has started work
         -- cannot have the reward pulled out from under them.
         local s = newStack()
         local f, c = placed(s)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         local ok, err = s.contracts.cancel(f.creator, c.id)
-        falsy(ok, 'a contract somebody is hunting is not the creator to take back')
-        eq(err, CB.ERR.CONTRACT_TAKEN, 'and the refusal says why')
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED, 'and it stands')
+        falsy(ok, 'a contract somebody is working is not the creator to take back')
+        eq(err, CH.ERR.CONTRACT_TAKEN, 'and the refusal says why')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'and it stands')
     end)
 
-    it('is allowed again once the hunter walks away', function()
+    it('is allowed again once the hitman walks away', function()
         local s = newStack()
         local f, c = placed(s)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        truthy(s.contracts.abandon(f.hunter, c.id))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.contracts.abandon(f.hitman, c.id))
 
         local ok, err = s.contracts.cancel(f.creator, c.id)
         truthy(ok, 'nobody is holding it now: ' .. tostring(err))
@@ -90,10 +90,10 @@ describe('cancelling a contract nobody has taken', function()
     it('is only for the creator', function()
         local s = newStack()
         local f, c = placed(s)
-        local ok, err = s.contracts.cancel(f.hunter, c.id)
+        local ok, err = s.contracts.cancel(f.hitman, c.id)
         falsy(ok, 'a stranger cannot close somebody else contract')
-        eq(err, CB.ERR.NOT_PARTICIPANT)
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE)
+        eq(err, CH.ERR.NOT_PARTICIPANT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE)
     end)
 
     it('cannot be done twice', function()
@@ -110,7 +110,7 @@ describe('cancelling a contract nobody has taken', function()
         local f = fixture(s)
         local ok, err = s.contracts.cancel(f.creator, 'ct99999999')
         falsy(ok)
-        eq(err, CB.ERR.NOT_FOUND)
+        eq(err, CH.ERR.NOT_FOUND)
     end)
 
     it('is reachable from the app', function()
@@ -118,7 +118,7 @@ describe('cancelling a contract nobody has taken', function()
         local f, c = placed(s)
         local reply = call('cancel', 1, { id = c.id })
         truthy(reply and reply.ok, tostring(reply and reply.err))
-        eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.CANCELLED)
     end)
 
     it('is rate limited on the ones that actually go through', function()
@@ -129,7 +129,7 @@ describe('cancelling a contract nobody has taken', function()
         local f = fixture(s)
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 100 } },
         })
         truthy(c, 'a contract to withdraw')
@@ -139,9 +139,9 @@ describe('cancelling a contract nobody has taken', function()
         while s.ratelimit.check(actor, 'accept') do end
 
         local reply = call('cancel', 1, { id = c.id })
-        eq(reply and reply.err, CB.ERR.RATE_LIMITED,
+        eq(reply and reply.err, CH.ERR.RATE_LIMITED,
             'a withdrawal that would really move money is limited like any other')
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'and nothing moved')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'and nothing moved')
     end)
 
     it('is written to the audit log', function()
@@ -197,7 +197,7 @@ describe('editing a contract nobody has taken', function()
                 -- rule and not just something revise happens to dislike.
                 local made = s.contracts.create(f.creator, {
                     targetCid = 'TARGET01', reason = case[2],
-                    mode = CB.MODE.EXCLUSIVE,
+                    mode = CH.MODE.EXCLUSIVE,
                     reward = { baseline = { cash = 1000 } },
                 })
                 falsy(made, 'the fixture is wrong: create allows ' .. case[1])
@@ -205,7 +205,7 @@ describe('editing a contract nobody has taken', function()
                 local before = s.storage.readContract(c.id).reason
                 local ok, err = s.contracts.revise(f.creator, c.id, { reason = case[2] })
                 falsy(ok, 'the Edit button let ' .. case[1] .. ' onto the board')
-                eq(err, CB.ERR.INVALID_INPUT)
+                eq(err, CH.ERR.INVALID_INPUT)
                 eq(s.storage.readContract(c.id).reason, before, 'and left it alone')
             end)
         end
@@ -240,7 +240,7 @@ describe('editing a contract nobody has taken', function()
                 local ok, err = s.contracts.revise(f.creator, c.id,
                     { reason = 'anything I like' })
                 falsy(ok, 'preset mode exists so the text is the operators')
-                eq(err, CB.ERR.INVALID_INPUT)
+                eq(err, CH.ERR.INVALID_INPUT)
             end)
         end)
 
@@ -263,7 +263,7 @@ describe('editing a contract nobody has taken', function()
             withConfig({ { Config.Reason, 'Mode', 'off' } }, function()
                 local ok, err = s.contracts.revise(f.creator, c.id, { reason = 'anything' })
                 falsy(ok, 'nothing was changed, so this is not a success')
-                eq(err, CB.ERR.INVALID_INPUT)
+                eq(err, CH.ERR.INVALID_INPUT)
             end)
         end)
 
@@ -299,25 +299,25 @@ describe('editing a contract nobody has taken', function()
         local f, c = placed(s)
         local ok, err = s.contracts.revise(f.creator, c.id, { deadlineSeconds = 0 })
         falsy(ok, 'a contract that has already expired is not an edit')
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
     end)
 
-    it('is refused once a hunter is holding it', function()
+    it('is refused once a hitman is holding it', function()
         local s = newStack()
         local f, c = placed(s)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         local ok, err = s.contracts.revise(f.creator, c.id, { reason = 'changed my mind' })
-        falsy(ok, 'a hunter accepted the contract as written')
-        eq(err, CB.ERR.CONTRACT_TAKEN)
+        falsy(ok, 'a hitman accepted the contract as written')
+        eq(err, CH.ERR.CONTRACT_TAKEN)
         eq(s.storage.readContract(c.id).reason, 'Unpaid debt')
     end)
 
     it('is only for the creator', function()
         local s = newStack()
         local f, c = placed(s)
-        local ok, err = s.contracts.revise(f.hunter, c.id, { reason = 'nope' })
+        local ok, err = s.contracts.revise(f.hitman, c.id, { reason = 'nope' })
         falsy(ok)
-        eq(err, CB.ERR.NOT_PARTICIPANT)
+        eq(err, CH.ERR.NOT_PARTICIPANT)
     end)
 
     it('refuses an edit that changes nothing', function()
@@ -325,7 +325,7 @@ describe('editing a contract nobody has taken', function()
         local f, c = placed(s)
         local ok, err = s.contracts.revise(f.creator, c.id, {})
         falsy(ok, 'an empty edit is a mistake, not a no-op to be written back')
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
     end)
 
     it('is reachable from the app', function()

@@ -54,7 +54,7 @@ function atLeast(actual, floor, m) {
  *
  * Between the two, a reward block 90px wider than its card passed this
  * suite for as long as it existed: measured at 390x720, the money — the
- * headline number on a bounty board and the entire reason a hunter reads
+ * headline number on a contract board and the entire reason a hitman reads
  * the card — had its right edge at 466px on a card ending at 376px. It was
  * not small and it was not badly placed. It was not on the screen. */
 function escapedFrom(page) {
@@ -85,7 +85,7 @@ function serverStub() {
       mode: 'competitive', state: 'active',
       reward: { baseline: 5000 * i, bonus: 2500 },
       slots: 2, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 1, huntersMax: 5,
+      hitmenActive: 1, hitmenMax: 5,
       targetName: 'Dana Reyes ' + i, targetProtected: i === 3,
       creatorName: 'Vic Marlowe', role: 'public'
     });
@@ -109,7 +109,7 @@ function serverStub() {
               goods: { items: 3, weapons: 2,
                        labels: ['Lockpick', 'Pistol', 'Advanced Repair Kit'] } },
     slots: 3, slotsClaimed: 0, currentSlot: 1,
-    huntersActive: 4, huntersMax: 5,
+    hitmenActive: 4, hitmenMax: 5,
     targetName: 'Maximilian Featherstonehaugh-Cholmondeley',
     creatorName: 'Vic Marlowe', role: 'public'
   });
@@ -119,8 +119,8 @@ function serverStub() {
   const own = contracts.slice(0, 3).map(function (c) {
     const copy = JSON.parse(JSON.stringify(c));
     copy.role = 'creator';
-    copy.huntersActive = 0;
-    copy.hunters = [];
+    copy.hitmenActive = 0;
+    copy.hitmen = [];
     // More than one collection, so "Give back the last payout" is offered
     // and its dialog gets measured too.
     copy.slots = 3;
@@ -130,7 +130,7 @@ function serverStub() {
   });
   const taken = contracts.slice(3, 5).map(function (c) {
     const copy = JSON.parse(JSON.stringify(c));
-    copy.role = 'hunter';
+    copy.role = 'hitman';
     return copy;
   });
 
@@ -148,7 +148,7 @@ function serverStub() {
       id: 'ct00000020', reason: 'Unpaid debt', mode: 'competitive',
       state: 'active', reward: { baseline: 90000 },
       slots: 1, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 2, huntersMax: 5,
+      hitmenActive: 2, hitmenMax: 5,
       targetName: 'You', role: 'target',
       bailoutAvailable: true, bailoutAmount: 90000,
       deadline: Math.floor(Date.now() / 1000) + 7200
@@ -157,7 +157,7 @@ function serverStub() {
       // A full-resolution photograph on somebody else's host, which is what
       // a proof reference actually is. Unbounded this made one history
       // entry taller than the whole viewport.
-      target_name: 'Dana Reyes', reason: 'Unpaid debt', role: 'hunter',
+      target_name: 'Dana Reyes', reason: 'Unpaid debt', role: 'hitman',
       fulfilment: 'elimination', resolved_at: 1700000000,
       photo_ref: 'data:image/svg+xml;base64,' + btoa(
         '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920"></svg>')
@@ -211,7 +211,7 @@ function serverStub() {
    * The UI suite has converted its fixtures for exactly this reason since
    * it was written. This one did not, and it matters most here: the Mine
    * tab is where this file does most of its work, and a creator's own
-   * contract carries hunters = [] from the moment it is placed. So this
+   * contract carries hitmen = [] from the moment it is placed. So this
    * suite was measuring layout, at every viewport, on a page that on a
    * real server threw before it drew anything — and reported 23/23 on the
    * exact contract shape the Mine tab had to be fixed for. */
@@ -480,8 +480,8 @@ async function main() {
    * drawn and the parent reports no overflow of its own.
    *
    * Between the two, a reward block 90px wider than its card passed this
-   * suite: measured at 390x720, the money — the headline number on a bounty
-   * board and the entire reason a hunter reads the card — had its right
+   * suite: measured at 390x720, the money — the headline number on a contract
+   * board and the entire reason a hitman reads the card — had its right
    * edge at 466px on a card ending at 376px. It was not small, and it was
    * not badly placed. It was not on the screen.
    *

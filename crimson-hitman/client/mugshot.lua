@@ -50,7 +50,7 @@ RegisterNetEvent('crimson-hitman:renderMugshot', function()
 end)
 
 --- Appearance changes invalidate the cached image rather than a timer
---- re-rendering every listed bounty (§14.26).
+--- re-rendering every listed contract (§14.26).
 local function announceAppearanceChange()
     TriggerServerEvent('crimson-hitman:appearanceChanged')
 end

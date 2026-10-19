@@ -19,7 +19,7 @@ end
 local function place(s, f, req)
     req.targetCid = req.targetCid or 'TARGET01'
     req.reason = req.reason or 'Unpaid debt'
-    req.mode = req.mode or CB.MODE.EXCLUSIVE
+    req.mode = req.mode or CH.MODE.EXCLUSIVE
     return s.contracts.create(f.creator, req)
 end
 
@@ -34,7 +34,7 @@ end
 local function holding(s, contractId)
     local total = {}
     for _, line in ipairs(s.storage.readEscrow(contractId)) do
-        if line.state ~= CB.ESCROW_STATE.SETTLED then
+        if line.state ~= CH.ESCROW_STATE.SETTLED then
             local key = line.source .. '/' .. tostring(line.item or '-')
             total[key] = (total[key] or 0) + (line.amount or 0) + (line.quantity or 0)
         end
@@ -106,7 +106,7 @@ describe('two ways of saying the same thing', function()
         if added then
             local extra = {}
             for _, line in ipairs(s.storage.readEscrow(c.id)) do
-                if line.amount == 1500 and line.state == CB.ESCROW_STATE.HELD then
+                if line.amount == 1500 and line.state == CH.ESCROW_STATE.HELD then
                     extra[#extra + 1] = line.id
                 end
             end
@@ -224,9 +224,9 @@ describe('changing an input moves the answer the matching way', function()
         truthy(c)
 
         local start = s.storage.readContract(c.id).deadline_at
-        s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE, { seconds = 600 })
+        s.amendments.improve(f.creator, c.id, CH.AMENDMENT.EXTEND_DEADLINE, { seconds = 600 })
         local once = s.storage.readContract(c.id).deadline_at
-        s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE, { seconds = 600 })
+        s.amendments.improve(f.creator, c.id, CH.AMENDMENT.EXTEND_DEADLINE, { seconds = 600 })
         local twice = s.storage.readContract(c.id).deadline_at
 
         truthy(once >= start, 'extending moved the deadline backwards')
@@ -237,9 +237,9 @@ describe('changing an input moves the answer the matching way', function()
     --- once: each purchase costs, and the second cannot refund the first.
     it('never leaves a buyer richer for buying twice', function()
         local s, f = seeded()
-        local c = place(s, f, { mode = CB.MODE.COMPETITIVE,
+        local c = place(s, f, { mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } } })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
 
         Env.players[1].PlayerData.money.bank = 500000
         local start = Env.players[1].PlayerData.money.bank

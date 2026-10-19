@@ -4,7 +4,7 @@
 ---   1. A damage record the server observed itself, via weaponDamageEvent.
 ---   2. The victim's death, read from the server-side medical state.
 ---
---- The hunter is never the source of either. A killer asserting "I killed
+--- The hitman is never the source of either. A killer asserting "I killed
 --- them" is not evidence and is dropped.
 
 local Util = require_shared('util')
@@ -15,7 +15,7 @@ local Storage, Identity, Contracts, Audit, Photo
 
 --- Recent damage the server saw for itself: [victimCid] = { attackerCid, at, weapon, distance }
 local damage = {}
---- Open pending completions: [contractId .. ':' .. hunterCid] = record
+--- Open pending completions: [contractId .. ':' .. hitmanCid] = record
 local pending = {}
 
 --- When each player was last back on their feet, so a target cannot be
@@ -33,7 +33,7 @@ local hitBy = {}
 --- check was that they are not dead *now* — which every living player
 --- passes. Claiming one grants post-respawn immunity and wipes the damage
 --- log, so anyone could stay permanently untargetable and erase the
---- attribution for a hunter who had just shot them, by claiming to have
+--- attribution for a hitman who had just shot them, by claiming to have
 --- come back from a death that never happened.
 local seenDead = {}
 
@@ -76,7 +76,7 @@ local reviveClaims = {}
 ---
 --- The time up that follows is sc-ambulance clearing isdead before it writes
 --- last stand, and nothing in the medical state tells it from a real revive:
---- a hit landing in it, even the hunter's own, read as a revive cut short —
+--- a hit landing in it, even the hitman's own, read as a revive cut short —
 --- the kill void, and the target, still on the ground, protected.
 local defibAt = {}
 
@@ -117,7 +117,7 @@ local deferred = {}
 
 --- A defibrillator's own gap, which is no revive whatever lands in it. The
 --- gap is first seen within one sample of the shock; a time up that begins
---- later is not the gap, and taken for it, a real revive a hunter cut short
+--- later is not the gap, and taken for it, a real revive a hitman cut short
 --- went unrecorded.
 local function shocked(cid, since)
     local at = defibAt[cid]
@@ -225,7 +225,7 @@ local function credit(cid, hit, lost, reading)
         weapon = hit.weapon,
         distance = hit.distance,
         coords = hit.coords,
-        -- How much condition the server saw disappear, so the hunter who did
+        -- How much condition the server saw disappear, so the hitman who did
         -- the most damage wins attribution rather than whoever claimed last.
         damage = lost,
     }
@@ -417,7 +417,7 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
     if attacker.cid == victim.cid then return end
 
     -- Corroboration: the victim must actually have lost condition. Without
-    -- this, a hunter standing anywhere within weapon range can fabricate a
+    -- this, a hitman standing anywhere within weapon range can fabricate a
     -- hit and inherit attribution for a death they had no part in.
     local current = readCondition(victimSource)
     local previous = condition[victim.cid]
@@ -517,15 +517,15 @@ function Death.prune(victimCid)
     if #list == 0 then damage[victimCid] = nil end
 end
 
---- The best-supported attributable damage from any of the given hunters.
+--- The best-supported attributable damage from any of the given hitmen.
 ---
 --- Chosen by how much health the server actually saw the victim lose, not by
 --- who reported last: attributing to the latest claimant hands the kill to
 --- whoever fires an event a second after someone else's real shot.
 ---@param victimCid string
----@param hunterCids table set of citizen ids
+---@param hitmanCids table set of citizen ids
 ---@return table|nil
-function Death.lastAttackerAmong(victimCid, hunterCids)
+function Death.lastAttackerAmong(victimCid, hitmanCids)
     Death.prune(victimCid)
     local list = damage[victimCid]
     if not list then return nil end
@@ -533,7 +533,7 @@ function Death.lastAttackerAmong(victimCid, hunterCids)
     local totals, latest = {}, {}
     for i = 1, #list do
         local record = list[i]
-        if hunterCids[record.attackerCid] then
+        if hitmanCids[record.attackerCid] then
             totals[record.attackerCid] = (totals[record.attackerCid] or 0) + (record.damage or 0)
             if not latest[record.attackerCid] or record.at > latest[record.attackerCid].at then
                 latest[record.attackerCid] = record
@@ -575,7 +575,7 @@ end
 --- Sample the condition of every live contract's target on its own clock.
 ---
 --- A hit whose damage is already showing is credited with the drop since
---- the last sample. On the ten-second maintenance tick that meant a hunter
+--- the last sample. On the ten-second maintenance tick that meant a hitman
 --- who landed one shot inherited whatever else had happened to the target in
 --- the meantime — an explosion, a fall, someone else's firefight — none of
 --- which raise a weapon damage event of their own to consume it first. The
@@ -606,17 +606,17 @@ function Death.startSampler()
     return true
 end
 
---- When the server last saw a hunter close to their target.
+--- When the server last saw a hitman close to their target.
 ---
---- [contractId] = { [hunterCid] = os.time() }
+--- [contractId] = { [hitmanCid] = os.time() }
 ---
---- Observed here rather than claimed anywhere: this is what makes "a hunter
+--- Observed here rather than claimed anywhere: this is what makes "a hitman
 --- currently tracking you" (§6.1) a thing the server knows rather than a
---- synonym for "a hunter who accepted".
+--- synonym for "a hitman who accepted".
 local seenNear = {}
 
 --- Refresh baselines for every player who is the target of a live contract,
---- and note which of its hunters are near them.
+--- and note which of its hitmen are near them.
 --- Bounded by the number of live contracts, not the player count.
 function Death.watchTargets(contracts)
     local watched = 0
@@ -626,13 +626,13 @@ function Death.watchTargets(contracts)
 
     for i = 1, #contracts do
         local c = contracts[i]
-        if c.state == CB.STATE.ACTIVE or c.state == CB.STATE.ACCEPTED then
+        if c.state == CH.STATE.ACTIVE or c.state == CH.STATE.ACCEPTED then
             local target = Identity.byCitizenId(c.target_cid)
             if target then
                 Death.watch(target.cid, target.source, true)
                 watched = watched + 1
 
-                -- A target may die to something no hunter reported — a fall,
+                -- A target may die to something no hitman reported — a fall,
                 -- a car, another player. Noting it here is what lets them
                 -- claim the revive afterwards.
                 -- And the revive after it: the client's own report can come
@@ -676,17 +676,17 @@ function Death.watchTargets(contracts)
                 end
 
                 local targetCoords = GetEntityCoords(GetPlayerPed(target.source))
-                local hunters = Storage.readHunters(c.id)
-                for j = 1, #hunters do
-                    local hunter = hunters[j]
-                    if hunter.state == 'active' then
-                        local actor = Identity.byCitizenId(hunter.hunter_cid)
+                local hitmen = Storage.readHitmen(c.id)
+                for j = 1, #hitmen do
+                    local hitman = hitmen[j]
+                    if hitman.state == 'active' then
+                        local actor = Identity.byCitizenId(hitman.hitman_cid)
                         if actor then
                             local distance2 = Util.dist2(
                                 GetEntityCoords(GetPlayerPed(actor.source)), targetCoords)
                             if distance2 <= radius2 then
                                 seenNear[c.id] = seenNear[c.id] or {}
-                                seenNear[c.id][hunter.hunter_cid] = now
+                                seenNear[c.id][hitman.hitman_cid] = now
                             end
                         end
                     end
@@ -698,16 +698,16 @@ function Death.watchTargets(contracts)
     return watched
 end
 
---- Hunters the server has seen near this target recently.
+--- Hitmen the server has seen near this target recently.
 ---@param contractId string
----@return table set of hunter citizen ids
+---@return table set of hitman citizen ids
 function Death.seenNear(contractId)
     local out = {}
     local window = (Config.Informant.ProximityWindowMinutes or 10) * 60
     local now = os.time()
 
-    for hunterCid, at in pairs(seenNear[contractId] or {}) do
-        if (now - at) <= window then out[hunterCid] = true end
+    for hitmanCid, at in pairs(seenNear[contractId] or {}) do
+        if (now - at) <= window then out[hitmanCid] = true end
     end
     return out
 end
@@ -716,26 +716,26 @@ function Death.clearProximity(contractId)
     seenNear[contractId] = nil
 end
 
---- The last time the server saw this hunter work this contract: near its
+--- The last time the server saw this hitman work this contract: near its
 --- target, or landing a hit on them. nil when it never has.
 ---@param contractId string
----@param hunterCid string
+---@param hitmanCid string
 ---@param targetCid string
 ---@return integer|nil os.time()
-function Death.lastEngaged(contractId, hunterCid, targetCid)
-    local near = seenNear[contractId] and seenNear[contractId][hunterCid] or nil
-    local hit = targetCid and hitBy[targetCid] and hitBy[targetCid][hunterCid] or nil
+function Death.lastEngaged(contractId, hitmanCid, targetCid)
+    local near = seenNear[contractId] and seenNear[contractId][hitmanCid] or nil
+    local hit = targetCid and hitBy[targetCid] and hitBy[targetCid][hitmanCid] or nil
     if near and hit then return math.max(near, hit) end
     return near or hit
 end
 
---- The last time this hunter landed a hit on this target. nil when never.
+--- The last time this hitman landed a hit on this target. nil when never.
 --- An attempt, where lastEngaged also counts merely being near.
----@param hunterCid string
+---@param hitmanCid string
 ---@param targetCid string
 ---@return integer|nil os.time()
-function Death.lastHit(hunterCid, targetCid)
-    return targetCid and hitBy[targetCid] and hitBy[targetCid][hunterCid] or nil
+function Death.lastHit(hitmanCid, targetCid)
+    return targetCid and hitBy[targetCid] and hitBy[targetCid][hitmanCid] or nil
 end
 
 --- Seconds since this player was last revived, or nil if never seen.
@@ -922,7 +922,7 @@ function Death.takeDownHit(victimCid, attackerCid)
 end
 
 --- Open a pending kill on every live contract naming this victim, for the
---- hunter the death is credited to.
+--- hitman the death is credited to.
 ---@return integer opened
 function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoords)
     local opened = 0
@@ -930,11 +930,11 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
 
     for i = 1, #contracts do
         local contract = contracts[i]
-        if contract.target_cid == victim.cid and contract.state == CB.STATE.ACCEPTED then
-            local hunters = Storage.readHunters(contract.id)
+        if contract.target_cid == victim.cid and contract.state == CH.STATE.ACCEPTED then
+            local hitmen = Storage.readHitmen(contract.id)
             local active = {}
-            for j = 1, #hunters do
-                if hunters[j].state == 'active' then active[hunters[j].hunter_cid] = true end
+            for j = 1, #hitmen do
+                if hitmen[j].state == 'active' then active[hitmen[j].hitman_cid] = true end
             end
 
             -- Prefer the killer the victim named, when they are on this
@@ -943,7 +943,7 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
             if named and active[named] then
                 -- The victim's word plus the server's own observation. A
                 -- record was synthesised here when the damage log held
-                -- nothing for the named killer, which credits a hunter the
+                -- nothing for the named killer, which credits a hitman the
                 -- server never saw touch the target — the victim's client
                 -- is the one naming them, and it is a client.
                 hit = Death.recordFor(victim.cid, named)
@@ -975,7 +975,7 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
             if hit then
                 pending[contract.id .. ':' .. hit.attackerCid] = {
                     contractId = contract.id,
-                    hunterCid  = hit.attackerCid,
+                    hitmanCid  = hit.attackerCid,
                     victimCid  = victim.cid,
                     at         = reportedAt or Util.monotonicMs(),
                     coords     = hit.coords,
@@ -988,7 +988,7 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
                 })
                 opened = opened + 1
             else
-                -- Died on a live contract, but not to a hunter. No payout,
+                -- Died on a live contract, but not to a hitman. No payout,
                 -- and worth recording: a target dying repeatedly with no
                 -- attribution is a pattern staff may want to see.
                 Audit.action('death_unattributed', nil, contract.id, { victim = victim.cid })
@@ -1004,7 +1004,7 @@ end
 --- Whether a pending kill has aged out: past its own lifetime and past any
 --- photo token issued against it. A token is good for its whole lifetime
 --- from issue, and the kill it proves used to lapse lifetime-from-death,
---- so a hunter who took their photo late in that window was told the
+--- so a hitman who took their photo late in that window was told the
 --- target had been revived.
 local function aged(record, now)
     local lifetime = Config.Completion.PhotoTokenLifetimeSeconds * 1000
@@ -1012,11 +1012,11 @@ local function aged(record, now)
     return not (record.heldUntil and now <= record.heldUntil)
 end
 
-function Death.getPending(contractId, hunterCid)
-    local record = pending[contractId .. ':' .. hunterCid]
+function Death.getPending(contractId, hitmanCid)
+    local record = pending[contractId .. ':' .. hitmanCid]
     if not record then return nil end
     if aged(record, Util.monotonicMs()) then
-        pending[contractId .. ':' .. hunterCid] = nil
+        pending[contractId .. ':' .. hitmanCid] = nil
         return nil
     end
     return record
@@ -1031,8 +1031,8 @@ end
 --- a target revived out of sight of the watcher, or back after a restart
 --- the revive was lost in, could be claimed an hour later.
 ---@return integer|nil heldUntil how long this hold keeps it, for the token to match
-function Death.holdPending(contractId, hunterCid, untilMs)
-    local record = pending[contractId .. ':' .. hunterCid]
+function Death.holdPending(contractId, hitmanCid, untilMs)
+    local record = pending[contractId .. ':' .. hitmanCid]
     if not record then return nil end
     local cap = record.at + 2 * Config.Completion.PhotoTokenLifetimeSeconds * 1000
     local held = math.min(untilMs, cap)
@@ -1040,15 +1040,15 @@ function Death.holdPending(contractId, hunterCid, untilMs)
     return held
 end
 
-function Death.clearPending(contractId, hunterCid)
-    pending[contractId .. ':' .. hunterCid] = nil
+function Death.clearPending(contractId, hitmanCid)
+    pending[contractId .. ':' .. hitmanCid] = nil
 end
 
 --- A revive invalidates every pending completion for that player: a target
 --- who is back on their feet was not eliminated (§7.4).
 ---
 --- The claim is verified against the medical state before anything is
---- cleared. Taking it on trust would let a target's client void a hunter's
+--- cleared. Taking it on trust would let a target's client void a hitman's
 --- legitimate pending kill by asserting a revive that never happened.
 function Death.onRevivedVerified(source, cid)
     if Identity.isTrulyDead(source) then
@@ -1130,7 +1130,7 @@ function Death.onRevived(cid, since)
     downHits[cid] = nil
 
     -- A revive ends the fight. Damage recorded before it must not
-    -- corroborate a death that happens afterwards, or a hunter who shot
+    -- corroborate a death that happens afterwards, or a hitman who shot
     -- someone an hour ago inherits their next death. What came after it,
     -- the hits of a revive cut short, is the next fight's.
     local list = damage[cid]
@@ -1147,7 +1147,7 @@ function Death.onRevived(cid, since)
     for key, record in pairs(pending) do
         -- A pending completion inside the proof window survives: the kill
         -- happened, and a target respawning must not erase it from under the
-        -- hunter standing over the body. Nor does one made after the revive.
+        -- hitman standing over the body. Nor does one made after the revive.
         if record.victimCid == cid and record.at < since and (since - record.at) > window then
             pending[key] = nil
             cleared = cleared + 1
@@ -1221,9 +1221,9 @@ end
 
 --- Forget a player who disconnected.
 ---
---- A pending kill goes with its HUNTER, not with its victim. It used to go
+--- A pending kill goes with its HITMAN, not with its victim. It used to go
 --- with either, so a target who closed the game while lying dead destroyed a
---- kill the server itself had attributed: the hunter, standing over the body,
+--- kill the server itself had attributed: the hitman, standing over the body,
 --- was told there was no kill to verify. Nothing in the proof needs the victim
 --- online — the body's position is recorded with the death, and the revive
 --- check only applies to a victim who is still here to be revived. Quitting
@@ -1267,7 +1267,7 @@ function Death.clearPlayer(cid)
     downHits[cid] = nil
     polling[cid] = nil
     for key, record in pairs(pending) do
-        if record.hunterCid == cid then pending[key] = nil end
+        if record.hitmanCid == cid then pending[key] = nil end
     end
 end
 

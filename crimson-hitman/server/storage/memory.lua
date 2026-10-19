@@ -10,7 +10,7 @@ local db
 
 function Memory.open()
     db = {
-        contracts = {}, escrow = {}, hunters = {}, amendments = {},
+        contracts = {}, escrow = {}, hitmen = {}, amendments = {},
         messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, seq = 0,
     }
     return true
@@ -78,7 +78,7 @@ end
 --- End a contract as expired only if it is still due: past its lifetime,
 --- or past a deadline whose clock is running. The expiry pass decides on
 --- a read, and a deadline the client extended in the await after it was
---- expired all the same, forfeiting the stake of the hunter it was
+--- expired all the same, forfeiting the stake of the hitman it was
 --- extended for.
 function Memory.expireIfDue(id, expected, next_, now, byLifetime)
     local c = db.contracts[id]
@@ -181,7 +181,7 @@ function Memory.allContracts()
     return out
 end
 
---- Contracts this player is involved in, as creator, target or hunter.
+--- Contracts this player is involved in, as creator, target or hitman.
 --- Callers used to fetch every contract and filter in Lua, which on a real
 --- database is a full table scan per app request.
 function Memory.contractsInvolving(cid)
@@ -194,8 +194,8 @@ function Memory.contractsInvolving(cid)
         end
     end
 
-    for _, h in pairs(db.hunters) do
-        if h.hunter_cid == cid and not seen[h.contract_id] then
+    for _, h in pairs(db.hitmen) do
+        if h.hitman_cid == cid and not seen[h.contract_id] then
             local c = db.contracts[h.contract_id]
             if c then
                 seen[c.id] = true
@@ -340,49 +340,49 @@ end
 --- once.
 function Memory.settleEscrowLine(id, recipientCid)
     local line = db.escrow[id]
-    if not line or line.state ~= CB.ESCROW_STATE.RELEASING then return false end
-    line.state = CB.ESCROW_STATE.SETTLED
+    if not line or line.state ~= CH.ESCROW_STATE.RELEASING then return false end
+    line.state = CH.ESCROW_STATE.SETTLED
     line.settled_to = recipientCid
     line.settled_at = os.time()
     return true
 end
 
 --------------------------------------------------------------------------
--- Hunters
+-- Hitmen
 --------------------------------------------------------------------------
 
-function Memory.addHunter(record)
-    db.hunters[record.id] = record
+function Memory.addHitman(record)
+    db.hitmen[record.id] = record
     return true
 end
 
-function Memory.readHunters(contractId)
+function Memory.readHitmen(contractId)
     local out = {}
-    for _, h in pairs(db.hunters) do
+    for _, h in pairs(db.hitmen) do
         if h.contract_id == contractId then out[#out + 1] = h end
     end
     table.sort(out, function(a, b) return a.accepted_at == b.accepted_at and a.id < b.id or a.accepted_at < b.accepted_at end)
     return out
 end
 
-function Memory.readHunter(contractId, cid)
-    for _, h in pairs(db.hunters) do
-        if h.contract_id == contractId and h.hunter_cid == cid then return h end
+function Memory.readHitman(contractId, cid)
+    for _, h in pairs(db.hitmen) do
+        if h.contract_id == contractId and h.hitman_cid == cid then return h end
     end
     return nil
 end
 
---- One hunter row by its own id.
+--- One hitman row by its own id.
 ---
 --- Used to confirm an id is free before minting onto it: the stake is taken
 --- before the row is written, so an id already in use is a duplicate-key
 --- error with the money already gone and no record naming who staked it.
-function Memory.readHunterById(id)
-    return db.hunters[id]
+function Memory.readHitmanById(id)
+    return db.hitmen[id]
 end
 
-function Memory.updateHunter(id, fields)
-    local h = db.hunters[id]
+function Memory.updateHitman(id, fields)
+    local h = db.hitmen[id]
     if not h then return false end
     for k, v in pairs(fields) do h[k] = v end
     return true
@@ -391,8 +391,8 @@ end
 --- Confirm an acceptance: the row goes active only if it is still the
 --- acceptance that wrote it. Anything that moved it off joining since — boot
 --- recovery, a throw's unwind — is not reversed.
-function Memory.confirmHunter(id, anon, acceptedAt)
-    local h = db.hunters[id]
+function Memory.confirmHitman(id, anon, acceptedAt)
+    local h = db.hitmen[id]
     if not h or (h.state ~= 'joining' and h.state ~= 'rejoining') then return false end
     h.state, h.anon, h.accepted_at = 'active', anon == true, acceptedAt
     return true
@@ -400,10 +400,10 @@ end
 
 --- Contracts a player is on, mid-acceptance included: two acceptances in
 --- flight must each see the other against the cap.
-function Memory.countHunterContracts(cid, states)
+function Memory.countHitmanContracts(cid, states)
     local n = 0
-    for _, h in pairs(db.hunters) do
-        if h.hunter_cid == cid and (h.state == 'active' or h.state == 'joining' or h.state == 'rejoining') then
+    for _, h in pairs(db.hitmen) do
+        if h.hitman_cid == cid and (h.state == 'active' or h.state == 'joining' or h.state == 'rejoining') then
             local c = db.contracts[h.contract_id]
             if c and states[c.state] then n = n + 1 end
         end
@@ -601,8 +601,8 @@ function Memory.prune()
         for lineId, line in pairs(db.escrow) do
             if line.contract_id == id then db.escrow[lineId] = nil end
         end
-        for hunterId, hunter in pairs(db.hunters) do
-            if hunter.contract_id == id then db.hunters[hunterId] = nil end
+        for hitmanId, hitman in pairs(db.hitmen) do
+            if hitman.contract_id == id then db.hitmen[hitmanId] = nil end
         end
         for amendmentId, amendment in pairs(db.amendments) do
             if amendment.contract_id == id then db.amendments[amendmentId] = nil end

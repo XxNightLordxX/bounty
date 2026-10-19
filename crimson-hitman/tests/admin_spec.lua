@@ -17,11 +17,11 @@ local function seeded(opts)
     Env.players[3].PlayerData.money.bank = 50000
     local c = s.contracts.create(f.creator, {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
-        mode = opts.mode or CB.MODE.COMPETITIVE,
+        mode = opts.mode or CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 } },
         anonymous = opts.anonymous,
     })
-    if opts.accept then s.contracts.accept(f.hunter, c.id, opts.anonHunter) end
+    if opts.accept then s.contracts.accept(f.hitman, c.id, opts.anonHitman) end
     return s, f, c
 end
 
@@ -54,11 +54,11 @@ describe('staff permission', function()
         end
 
         truthy(said(3):find('Not authorised'), 'every command refuses: ' .. said(3))
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'and nothing happened')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'and nothing happened')
     end)
 
     it('separates reading a history from unmasking a person', function()
-        local s, f, c = seeded({ accept = true, anonHunter = true })
+        local s, f, c = seeded({ accept = true, anonHitman = true })
         local cmd = commands(s)
 
         -- A staff member with the ordinary ace, and not the identity one.
@@ -91,7 +91,7 @@ describe('contract timeline', function()
         eq(view.contract.id, c.id)
         eq(view.contract.target, 'Dana Reyes')
         truthy(#view.escrow > 0, 'the escrow lines')
-        eq(#view.hunters, 1, 'the hunter who accepted')
+        eq(#view.hitmen, 1, 'the hitman who accepted')
         truthy(#view.events > 0, 'and what happened')
     end)
 
@@ -119,7 +119,7 @@ describe('voiding a contract', function()
         local before = Env.players[1].PlayerData.money.cash + Env.players[1].PlayerData.money.bank
 
         truthy(s.admin.void(0, c.id, 'refunded a stuck handover'))
-        eq(s.storage.readContract(c.id).state, CB.STATE.VOIDED,
+        eq(s.storage.readContract(c.id).state, CH.STATE.VOIDED,
             'the state the machine declares for an admin close, not the one '
             .. 'that means the creator changed their mind')
 
@@ -127,7 +127,7 @@ describe('voiding a contract', function()
         eq(after - before, 5000, 'the escrow comes back')
     end)
 
-    it('returns a hunter their stake rather than forfeiting it', function()
+    it('returns a hitman their stake rather than forfeiting it', function()
         local s = newStack()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
@@ -135,28 +135,28 @@ describe('voiding a contract', function()
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 5000 } }, penaltyAmount = 10000,
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         eq(Env.players[3].PlayerData.money.bank, 40000, 'staked')
 
         truthy(s.admin.void(0, c.id, 'staff'))
         eq(Env.players[3].PlayerData.money.bank, 50000,
-            'a staff void is not the hunter failing')
+            'a staff void is not the hitman failing')
     end)
 
     it('leaves nothing held', function()
         local s, f, c = seeded({ accept = true })
         truthy(s.admin.void(0, c.id, 'staff'))
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            eq(line.state, CB.ESCROW_STATE.SETTLED, 'every line settles')
+            eq(line.state, CH.ESCROW_STATE.SETTLED, 'every line settles')
         end
     end)
 
     it('refuses a contract that has already ended', function()
         local s, f, c = seeded({ accept = true })
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
         local ok, err = s.admin.void(0, c.id, 'too late')
         falsy(ok)
-        eq(err, CB.ERR.ALREADY_SETTLED)
+        eq(err, CH.ERR.ALREADY_SETTLED)
     end)
 
     it('writes who did it and why', function()
@@ -182,10 +182,10 @@ describe('interrupted releases', function()
         local s, f, c = seeded()
         local line = s.storage.readEscrow(c.id)[1]
 
-        truthy(s.storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING))
+        truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
         -- Recovery's half: back to held, logged for review.
-        truthy(s.storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD))
-        s.audit.financial('release_interrupted', 'HUNTER01', c.id,
+        truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
+        s.audit.financial('release_interrupted', 'HITMAN01', c.id,
             { line = line.id, amount = line.amount, review = true })
         s.audit.flush()
 
@@ -198,7 +198,7 @@ describe('interrupted releases', function()
         eq(#rows, 1)
         eq(rows[1].line, line.id)
         eq(rows[1].contract, c.id)
-        eq(rows[1].intended, 'HUNTER01', 'who it was being paid to')
+        eq(rows[1].intended, 'HITMAN01', 'who it was being paid to')
     end)
 
     it('stops listing one that has since been settled', function()
@@ -207,26 +207,26 @@ describe('interrupted releases', function()
         eq(#s.admin.interrupted(), 0, 'a resolved question is not a question')
     end)
 
-    it('returns an interrupted stake to the hunter who put it up', function()
-        -- "Return" sent every line to the creator, including a hunter's own
+    it('returns an interrupted stake to the hitman who put it up', function()
+        -- "Return" sent every line to the creator, including a hitman's own
         -- stake, which was never the creator's.
         local s, f, c = seeded()
         s.storage.writeContract((function()
             local row = s.storage.readContract(c.id); row.penalty_amount = 2000; return row
         end)())
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         local stake
         for _, l in ipairs(s.storage.readEscrow(c.id)) do
-            if l.portion == CB.PORTION.STAKE then stake = l end
+            if l.portion == CH.PORTION.STAKE then stake = l end
         end
-        truthy(stake, 'the hunter staked')
-        truthy(s.storage.claimEscrowLine(stake.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING))
-        truthy(s.storage.claimEscrowLine(stake.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD))
-        s.audit.financial('release_interrupted', 'HUNTER01', c.id, { line = stake.id, review = true })
+        truthy(stake, 'the hitman staked')
+        truthy(s.storage.claimEscrowLine(stake.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+        truthy(s.storage.claimEscrowLine(stake.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
+        s.audit.financial('release_interrupted', 'HITMAN01', c.id, { line = stake.id, review = true })
         s.audit.flush()
-        local creatorBefore, hunterBefore = money(1), money(3)
+        local creatorBefore, hitmanBefore = money(1), money(3)
         truthy(s.admin.settleLine(0, stake.id, 'return'))
-        eq(money(3) - hunterBefore, 2000, 'back to the hunter who staked it')
+        eq(money(3) - hitmanBefore, 2000, 'back to the hitman who staked it')
         eq(money(1), creatorBefore, 'and not to the creator')
     end)
 
@@ -247,7 +247,7 @@ describe('interrupted releases', function()
         truthy(ok)
         local again, err = s.admin.settleLine(0, line.id, 'pay')
         falsy(again, 'queued for the creator already, so not paid again elsewhere')
-        eq(err, CB.ERR.LOCKED)
+        eq(err, CH.ERR.LOCKED)
     end)
 
     it('hides who it was paying from staff without the identity permission', function()
@@ -258,7 +258,7 @@ describe('interrupted releases', function()
         eq(#rows, 1)
         eq(rows[1].intended, 'an operative', 'a citizen id behind an anonymous party')
         Env.aces[7] = { command = true, ['crimson.identity'] = true }
-        eq(s.admin.interrupted(7)[1].intended, 'HUNTER01', 'shown to staff who may see it')
+        eq(s.admin.interrupted(7)[1].intended, 'HITMAN01', 'shown to staff who may see it')
     end)
 
     it('pays the intended recipient when staff say to', function()
@@ -266,7 +266,7 @@ describe('interrupted releases', function()
         local before = Env.players[3].PlayerData.money.cash
 
         -- The line records who the interrupted release was paying.
-        line.releasing_to = 'HUNTER01'
+        line.releasing_to = 'HITMAN01'
         s.storage.writeEscrow(c.id, { line })
 
         truthy(s.admin.settleLine(0, line.id, 'pay'))
@@ -281,25 +281,25 @@ describe('interrupted releases', function()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
-        -- The hunter cannot be paid, so the release stalls exactly where a
+        -- The hitman cannot be paid, so the release stalls exactly where a
         -- shutdown would leave it.
         Env.players[3]._inventoryFull = true
         Env.players[3].PlayerData.money._refuse = true
 
         local lineId = s.storage.readEscrow(c.id)[1].id
-        truthy(s.storage.claimEscrowLine(lineId, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING))
+        truthy(s.storage.claimEscrowLine(lineId, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
         -- Recovery's half.
-        truthy(s.storage.claimEscrowLine(lineId, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD))
+        truthy(s.storage.claimEscrowLine(lineId, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
         Env.players[3]._inventoryFull = false
 
         -- Now do it for real and check what the line remembers.
-        s.escrow.release(c.id, 'HUNTER01', { portion = CB.PORTION.BASELINE }, 'payout')
-        eq(s.storage.readEscrowLine(lineId).releasing_to, 'HUNTER01',
+        s.escrow.release(c.id, 'HITMAN01', { portion = CH.PORTION.BASELINE }, 'payout')
+        eq(s.storage.readEscrowLine(lineId).releasing_to, 'HITMAN01',
             'a line must name who it was going to, before the money moves')
     end)
 
@@ -320,10 +320,10 @@ describe('interrupted releases', function()
 
             store.writeEscrow('ct1', { {
                 id = 'ct1:1', contract_id = 'ct1', slot = 1, portion = 'baseline',
-                source = 'cash', amount = 5000, state = CB.ESCROW_STATE.HELD,
-                releasing_to = 'HUNTER01',
+                source = 'cash', amount = 5000, state = CH.ESCROW_STATE.HELD,
+                releasing_to = 'HITMAN01',
             } })
-            eq(store.readEscrowLine('ct1:1').releasing_to, 'HUNTER01',
+            eq(store.readEscrowLine('ct1:1').releasing_to, 'HITMAN01',
                 name .. ': without this, staff cannot pay the person it was for')
         end
     end)
@@ -350,8 +350,8 @@ describe('interrupted releases', function()
         eq(#lines, 2)
 
         truthy(s.admin.settleLine(0, lines[1].id, 'return'))
-        eq(s.storage.readEscrowLine(lines[1].id).state, CB.ESCROW_STATE.SETTLED)
-        eq(s.storage.readEscrowLine(lines[2].id).state, CB.ESCROW_STATE.HELD,
+        eq(s.storage.readEscrowLine(lines[1].id).state, CH.ESCROW_STATE.SETTLED)
+        eq(s.storage.readEscrowLine(lines[2].id).state, CH.ESCROW_STATE.HELD,
             'a named line must not release the whole contract')
     end)
 
@@ -360,9 +360,9 @@ describe('interrupted releases', function()
         for _, bad in ipairs({ 'refund', 'PAY', '', 'delete' }) do
             local ok, err = s.admin.settleLine(0, line.id, bad)
             falsy(ok, 'must refuse ' .. bad)
-            eq(err, CB.ERR.INVALID_INPUT)
+            eq(err, CH.ERR.INVALID_INPUT)
         end
-        eq(s.storage.readEscrowLine(line.id).state, CB.ESCROW_STATE.HELD, 'untouched')
+        eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.HELD, 'untouched')
     end)
 
     it('refuses to settle a line twice', function()
@@ -370,23 +370,23 @@ describe('interrupted releases', function()
         truthy(s.admin.settleLine(0, line.id, 'return'))
         local ok, err = s.admin.settleLine(0, line.id, 'return')
         falsy(ok)
-        eq(err, CB.ERR.ALREADY_SETTLED)
+        eq(err, CH.ERR.ALREADY_SETTLED)
     end)
 end)
 
 describe('identifying an anonymous party', function()
     it('names everyone behind a contract', function()
-        local s, f, c = seeded({ accept = true, anonymous = true, anonHunter = true })
+        local s, f, c = seeded({ accept = true, anonymous = true, anonHitman = true })
         local who, err = s.admin.identify(0, c.id)
         truthy(who, tostring(err))
 
         eq(who.creator.cid, 'CREATOR1')
         eq(who.creator.anonymous, true)
         eq(who.target.cid, 'TARGET01')
-        eq(#who.hunters, 1)
-        eq(who.hunters[1].cid, 'HUNTER01')
-        eq(who.hunters[1].anonymous, true)
-        truthy(who.hunters[1].alias, 'and the alias they were shown under')
+        eq(#who.hitmen, 1)
+        eq(who.hitmen[1].cid, 'HITMAN01')
+        eq(who.hitmen[1].anonymous, true)
+        truthy(who.hitmen[1].alias, 'and the alias they were shown under')
     end)
 
     it('records the lookup itself', function()
@@ -443,7 +443,7 @@ describe('what a staff command calls a line of escrow', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE,
+            mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000,
                 items = { { name = 'lockpick', count = 2 } } } },
         })
@@ -498,8 +498,8 @@ describe('refreshing every timer for testing', function()
         local s, f, c = seeded({ accept = true })
         local now = os.time()
 
-        local hunter = s.storage.readHunter(c.id, f.hunter.cid)
-        s.storage.updateHunter(hunter.id, { last_claim_at = now })
+        local hitman = s.storage.readHitman(c.id, f.hitman.cid)
+        s.storage.updateHitman(hitman.id, { last_claim_at = now })
         for _ = 1, 200 do s.ratelimit.check(f.creator, 'create') end
         eq(s.ratelimit.check(f.creator, 'create'), false, 'the bucket is spent')
 
@@ -508,7 +508,7 @@ describe('refreshing every timer for testing', function()
         cmd(s)(3, {})
 
         eq(s.ratelimit.check(f.creator, 'create'), true, 'the bucket was refilled')
-        local after = s.storage.readHunter(c.id, f.hunter.cid)
+        local after = s.storage.readHitman(c.id, f.hitman.cid)
         truthy(now - after.last_claim_at > Config.Limits.SlotCooldownSeconds,
             'the slot cooldown was aged past its window')
         truthy(said(3):find('Timers refreshed'), said(3))
@@ -516,12 +516,12 @@ describe('refreshing every timer for testing', function()
 
     it('ages a resolved contract past the re-list cooldown', function()
         local s, f, c = seeded()
-        s.contracts.resolve(c.id, CB.STATE.EXPIRED, f.creator.cid, nil, 'expired')
+        s.contracts.resolve(c.id, CH.STATE.EXPIRED, f.creator.cid, nil, 'expired')
 
         local relist = { targetCid = 'TARGET01', reason = 'Again',
                          reward = { baseline = { cash = 1000 } } }
         eq(select(2, s.contracts.create(f.creator, relist)),
-            CB.ERR.TARGET_RECENTLY_ON, 'the re-list cooldown is running')
+            CH.ERR.TARGET_RECENTLY_ON, 'the re-list cooldown is running')
 
         Env.aces[3] = { ['crimson.admin'] = true }
         cmd(s)(3, {})
@@ -547,13 +547,13 @@ describe('refreshing every timer for testing', function()
             'the point of the refresh is not having to wait out the deadline')
         truthy(after.deadline_at <= after.expires_at,
             'the deadline is still clamped to the lifetime')
-        eq(after.state, CB.STATE.ACTIVE,
+        eq(after.state, CH.STATE.ACTIVE,
             'refreshing must never resolve a contract, which would move money')
     end)
 
     it('leaves a deadline the client extended where it is', function()
         -- Set to now plus the default, a forty-hour deadline came back to
-        -- three hours, and the expiry after it forfeited the hunter's stake.
+        -- three hours, and the expiry after it forfeited the hitman's stake.
         local s, f, c = seeded()
         local contract = s.storage.readContract(c.id)
         contract.deadline_at = os.time() + 40 * 3600
@@ -601,7 +601,7 @@ describe('refreshing every timer for testing', function()
 
         -- The lock is gone, so this is a fresh roll — and the purchase count
         -- is not, so it is refused.
-        eq(select(2, s.informant.buy(f.creator, c.id)), CB.ERR.LIMIT_REACHED,
+        eq(select(2, s.informant.buy(f.creator, c.id)), CH.ERR.LIMIT_REACHED,
             'the refresh must not hand a buyer the whole roster')
     end)
 
@@ -634,7 +634,7 @@ describe('refreshing every timer for testing', function()
 
     it('does not reopen a proposal answered while it worked', function()
         local s, f, c = seeded({ accept = true })
-        local ok, err0 = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_REASON,
+        local ok, err0 = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_REASON,
             { reason = 'A better reason' })
         truthy(ok, 'a proposal to refresh: ' .. tostring(err0))
         local open = s.storage.readOpenAmendments(c.id)
@@ -729,7 +729,7 @@ describe('hitmanadmin from the console', function()
         Env.players[1].PlayerData.money.bank = 100000
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
             reason = 'x', reward = { baseline = { cash = 5000 } } })
-        s.contracts.accept(f.hunter, c.id)
+        s.contracts.accept(f.hitman, c.id)
 
         local before = {}
         for i = 1, 3 do
@@ -746,7 +746,7 @@ describe('hitmanadmin from the console', function()
                'player ' .. i .. ' balance moved')
         end
         eq(#s.storage.readEscrow(c.id), lines, 'escrow line count changed')
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
     end)
 
     it('is idempotent — running it ten times is running it once', function()
@@ -778,7 +778,7 @@ describe('the wait before a new character can be a target', function()
 
         eq(select(2, s.contracts.create(f.creator, { targetCid = 'TARGET01',
             reason = 'x', reward = { baseline = { cash = 5000 } } })),
-            CB.ERR.TARGET_JUST_ON, 'the new-player rule is running')
+            CH.ERR.TARGET_JUST_ON, 'the new-player rule is running')
 
         Env.commands = {}
         require('crimson-hitman.server.bridges').installCommands(s)
@@ -834,7 +834,7 @@ describe('what a staff command prints', function()
 
         truthy(pcall(cmd[Config.Admin.Commands.void], 3, { c.id, 'duplicate', 'listing' }))
         truthy(said(3):find('voided'), said(3))
-        eq(s.storage.readContract(c.id).state, CB.STATE.VOIDED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.VOIDED)
 
         Env.chat = {}
         truthy(pcall(cmd[Config.Admin.Commands.void], 3, { 'ct-nope' }),
@@ -849,11 +849,11 @@ describe('what a staff command prints', function()
         -- for release, and the audit row that records the interruption.
         -- The item line's amount is the MySQL column default, not nil.
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            s.storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD,
-                CB.ESCROW_STATE.RELEASING)
+            s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD,
+                CH.ESCROW_STATE.RELEASING)
             local stored = s.storage.readEscrowLine(line.id)
             if stored and stored.source == 'item' then stored.amount = 0 end
-            s.audit.financial('release_interrupted', f.hunter.cid, c.id,
+            s.audit.financial('release_interrupted', f.hitman.cid, c.id,
                 { line = line.id })
         end
         s.audit.flush()
@@ -878,16 +878,16 @@ describe('what a staff command prints', function()
     end)
 
     it('prints an unmasking whose parties the framework cannot name', function()
-        local s, f, c = seeded({ accept = true, anonymous = true, anonHunter = true })
+        local s, f, c = seeded({ accept = true, anonymous = true, anonHitman = true })
 
-        -- A hunter and a creator the server has no current name for: they
+        -- A hitman and a creator the server has no current name for: they
         -- disconnected, or the framework never described them. The row keeps
         -- the id, which is the whole point of the tool.
         local contract = s.storage.readContract(c.id)
         contract.creator_name, contract.target_name = nil, nil
         s.storage.writeContract(contract)
-        for _, h in ipairs(s.storage.readHunters(c.id)) do
-            s.storage.updateHunter(h.id, { hunter_name = nil, alias = nil })
+        for _, h in ipairs(s.storage.readHitmen(c.id)) do
+            s.storage.updateHitman(h.id, { hitman_name = nil, alias = nil })
         end
 
         local cmd = commands(s)
@@ -897,12 +897,12 @@ describe('what a staff command prints', function()
 
         local out = said(3)
         truthy(out:find('CREATOR1'), 'the creator id is the answer: ' .. out)
-        truthy(out:find('HUNTER01'), 'and the hunter id: ' .. out)
+        truthy(out:find('HITMAN01'), 'and the hitman id: ' .. out)
     end)
 
     it('prints a timeline for a contract with property, a resolution and events', function()
         local s, f, c = seeded({ accept = true })
-        s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'test')
+        s.contracts.resolve(c.id, CH.STATE.CANCELLED, f.creator.cid, nil, 'test')
         s.audit.flush()
 
         local cmd = commands(s)
@@ -951,7 +951,7 @@ describe('a contract staff voided', function()
 
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
             reason = 'x', reward = { baseline = { cash = 5000 } } })
-        s.contracts.accept(f.hunter, c.id)
+        s.contracts.accept(f.hitman, c.id)
         truthy(s.admin.void(0, c.id, 'staff'))
 
         eq(Env.players[1].PlayerData.money.cash
@@ -983,7 +983,7 @@ describe('the diagnosis and what the app itself reported', function()
         local s = newStack()
         local f = fixture(s)
 
-        s.app.handlers.pageError(f.hunter, {
+        s.app.handlers.pageError(f.hitman, {
             what = 'contract.reward is undefined', where = 'app.js:512:8',
             stack = 'at card', build = '2026.09.1',
         })
@@ -995,14 +995,14 @@ describe('the diagnosis and what the app itself reported', function()
         truthy(out:find('2026%.09%.1'),
             'and which copy of the page they are running, which is the first '
             .. 'thing to check: ' .. out)
-        truthy(out:find(f.hunter.cid), 'and who saw it: ' .. out)
+        truthy(out:find(f.hitman.cid), 'and who saw it: ' .. out)
     end)
 
     it('keeps the newest faults rather than the first twenty', function()
         local s = newStack()
         local f = fixture(s)
         for i = 1, 30 do
-            s.app.handlers.pageError(f.hunter, { what = 'fault number ' .. i })
+            s.app.handlers.pageError(f.hitman, { what = 'fault number ' .. i })
         end
 
         local kept = s.app.recentPageFaults()
@@ -1014,14 +1014,14 @@ end)
 
 describe('the extra ACEs open only the read-only staff commands', function()
     it('refuses void, settle and whois to a player with only `command`', function()
-        local s, _, c = seeded({ accept = true, anonHunter = true })
+        local s, _, c = seeded({ accept = true, anonHitman = true })
         local cmds = commands(s)
         Env.aces[3] = { command = true }
         Env.chat = {}
         cmds[Config.Admin.Commands.whois](3, { c.id })
-        falsy(said(3):find('HUNTER01', 1, true), 'unmasked on the generic command ACE: ' .. said(3))
+        falsy(said(3):find('HITMAN01', 1, true), 'unmasked on the generic command ACE: ' .. said(3))
         cmds[Config.Admin.Commands.void](3, { c.id })
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED, 'voided on the generic command ACE')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'voided on the generic command ACE')
         Env.chat = {}
         cmds[Config.Admin.Commands.diagnose](3, {})
         truthy(#said(3) > 0, 'the read-only diagnosis stays open to it')

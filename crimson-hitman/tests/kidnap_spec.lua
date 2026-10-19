@@ -10,7 +10,7 @@ local function seeded()
         targetCid = 'TARGET01', reason = 'Unpaid debt',
         reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
     })
-    s.contracts.accept(f.hunter, c.id, false)
+    s.contracts.accept(f.hitman, c.id, false)
 
     -- All three together, target cuffed.
     for _, src in ipairs({ 1, 2, 3 }) do
@@ -33,14 +33,14 @@ end
 describe('arming', function()
     it('arms when all three are together and the target is restrained', function()
         local s, f, c = seeded()
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
         eq(s.kidnap.activeCount(), 1)
     end)
 
     it('refuses to arm without the creator present', function()
         local s, f, c = seeded()
         Env.players[1]._coords = { x = 9000.0, y = 9000.0, z = 30.0 }
-        local ok, reason = s.kidnap.arm(c.id, 'HUNTER01')
+        local ok, reason = s.kidnap.arm(c.id, 'HITMAN01')
         falsy(ok)
         eq(reason, 'creator_too_far')
     end)
@@ -48,7 +48,7 @@ describe('arming', function()
     it('refuses to arm on a dead target', function()
         local s, f, c = seeded()
         Env.players[2].PlayerData.metadata.isdead = true
-        local ok, reason = s.kidnap.arm(c.id, 'HUNTER01')
+        local ok, reason = s.kidnap.arm(c.id, 'HITMAN01')
         falsy(ok, 'a corpse is not a live delivery')
         eq(reason, 'target_not_conscious')
     end)
@@ -56,7 +56,7 @@ describe('arming', function()
     it('refuses to arm on a downed target', function()
         local s, f, c = seeded()
         Env.players[2].PlayerData.metadata.inlaststand = true
-        local ok, reason = s.kidnap.arm(c.id, 'HUNTER01')
+        local ok, reason = s.kidnap.arm(c.id, 'HITMAN01')
         falsy(ok, 'bleeding out is not alive')
         eq(reason, 'target_not_conscious')
     end)
@@ -64,33 +64,33 @@ describe('arming', function()
     it('refuses to arm on an unrestrained target', function()
         local s, f, c = seeded()
         Env.players[2].PlayerData.metadata.ishandcuffed = false
-        local ok, reason = s.kidnap.arm(c.id, 'HUNTER01')
+        local ok, reason = s.kidnap.arm(c.id, 'HITMAN01')
         falsy(ok, 'walking beside a willing friend is not a kidnapping')
         eq(reason, 'not_coerced')
     end)
 
-    it('accepts a target riding in the hunters vehicle as coerced', function()
+    it('accepts a target riding in the hitmen vehicle as coerced', function()
         local s, f, c = seeded()
         Env.players[2].PlayerData.metadata.ishandcuffed = false
         Env.players[2]._vehicle, Env.players[3]._vehicle = 55, 55
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
     end)
 
-    it('refuses a hunter who never accepted', function()
+    it('refuses a hitman who never accepted', function()
         local s, f, c = seeded()
         Env.addPlayer({ source = 9, citizenid = 'RANDOM01', license = 'license:r', coords = AT })
         local ok, err = s.kidnap.arm(c.id, 'RANDOM01')
         falsy(ok)
-        eq(err, CB.ERR.NOT_PARTICIPANT)
+        eq(err, CH.ERR.NOT_PARTICIPANT)
     end)
 
     it('caps concurrent countdowns instead of shedding one in progress', function()
         local s, f, c = seeded()
         local saved = Config.Kidnap.MaxConcurrentCountdowns
         Config.Kidnap.MaxConcurrentCountdowns = 1
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
 
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd', coords = AT })
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd', coords = AT })
         local c2 = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'second', reward = { baseline = { cash = 1000 } },
         })
@@ -102,7 +102,7 @@ end)
 describe('countdown', function()
     it('pays baseline plus bonus after the full duration', function()
         local s, f, c = seeded()
-        s.kidnap.arm(c.id, 'HUNTER01')
+        s.kidnap.arm(c.id, 'HITMAN01')
         local done = runCountdown(s, Config.Kidnap.CountdownSeconds)
         eq(#done, 1, 'delivery completed')
         eq(Env.players[3].PlayerData.money.cash, 12500, 'baseline 5000 + bonus 2500')
@@ -110,7 +110,7 @@ describe('countdown', function()
 
     it('does not pay early', function()
         local s, f, c = seeded()
-        s.kidnap.arm(c.id, 'HUNTER01')
+        s.kidnap.arm(c.id, 'HITMAN01')
         local done = runCountdown(s, Config.Kidnap.CountdownSeconds - 2)
         eq(#done, 0, 'not yet')
         eq(Env.players[3].PlayerData.money.cash, 5000, 'unpaid')
@@ -118,7 +118,7 @@ describe('countdown', function()
 
     it('fails the delivery if the target dies mid-countdown', function()
         local s, f, c = seeded()
-        s.kidnap.arm(c.id, 'HUNTER01')
+        s.kidnap.arm(c.id, 'HITMAN01')
         runCountdown(s, 10)
         Env.players[2].PlayerData.metadata.isdead = true
         runCountdown(s, 10)
@@ -128,7 +128,7 @@ describe('countdown', function()
 
     it('fails the delivery if the target is downed mid-countdown', function()
         local s, f, c = seeded()
-        s.kidnap.arm(c.id, 'HUNTER01')
+        s.kidnap.arm(c.id, 'HITMAN01')
         runCountdown(s, 10)
         Env.players[2].PlayerData.metadata.inlaststand = true
         runCountdown(s, 10)
@@ -138,7 +138,7 @@ describe('countdown', function()
 
     it('tolerates a brief break within the grace budget', function()
         local s, f, c = seeded()
-        s.kidnap.arm(c.id, 'HUNTER01')
+        s.kidnap.arm(c.id, 'HITMAN01')
         runCountdown(s, 10)
 
         Env.players[1]._coords = { x = 9000.0, y = 0.0, z = 0.0 }  -- creator steps away
@@ -151,7 +151,7 @@ describe('countdown', function()
 
     it('fails once the grace budget is spent, not per break', function()
         local s, f, c = seeded()
-        s.kidnap.arm(c.id, 'HUNTER01')
+        s.kidnap.arm(c.id, 'HITMAN01')
         Env.players[1]._coords = { x = 9000.0, y = 0.0, z = 0.0 }
         runCountdown(s, (Config.Kidnap.MaxTotalGraceMs / 1000) + 2)
         eq(s.kidnap.activeCount(), 0, 'countdown abandoned')
@@ -160,9 +160,9 @@ describe('countdown', function()
 
     it('reports live progress for the app', function()
         local s, f, c = seeded()
-        s.kidnap.arm(c.id, 'HUNTER01')
+        s.kidnap.arm(c.id, 'HITMAN01')
         runCountdown(s, 5)
-        local p = s.kidnap.progress(c.id, 'HUNTER01')
+        local p = s.kidnap.progress(c.id, 'HITMAN01')
         truthy(p)
         eq(p.elapsed, 5)
         eq(p.required, Config.Kidnap.CountdownSeconds)
@@ -170,8 +170,8 @@ describe('countdown', function()
 
     it('drops the countdown if the contract resolves underneath it', function()
         local s, f, c = seeded()
-        s.kidnap.arm(c.id, 'HUNTER01')
-        s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        s.kidnap.arm(c.id, 'HITMAN01')
+        s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
         s.kidnap.tick(Config.Kidnap.TickMs)
         eq(s.kidnap.activeCount(), 0)
     end)
@@ -184,7 +184,7 @@ describe('a protected target is refused up front', function()
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 5000 } },
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
 
         for _, src in ipairs({ 1, 2, 3 }) do
             Env.players[src]._coords = { x = 5.0, y = 5.0, z = 30.0 }
@@ -195,8 +195,8 @@ describe('a protected target is refused up front', function()
 
     --- Taking somebody alive means restraining them, and restraining them
     --- all but always means putting them down first. The post-respawn rule
-    --- therefore fired on the hunter's own doing, on nearly every
-    --- kidnapping: a hunter with a cuffed target in the back of their car
+    --- therefore fired on the hitman's own doing, on nearly every
+    --- kidnapping: a hitman with a cuffed target in the back of their car
     --- was told to give them a moment because they had just got up.
     ---
     --- The rule is against re-killing someone who has just respawned. A
@@ -207,15 +207,15 @@ describe('a protected target is refused up front', function()
 
         s.death.onRevived('TARGET01')
 
-        local ok, reason = s.kidnap.arm(c.id, 'HUNTER01')
-        truthy(ok, 'a live delivery was refused because the hunter downed them '
+        local ok, reason = s.kidnap.arm(c.id, 'HITMAN01')
+        truthy(ok, 'a live delivery was refused because the hitman downed them '
             .. 'first, which is how a delivery starts: ' .. tostring(reason))
     end)
 
     --- The whole delivery, end to end, on a target who has just got up.
     ---
     --- Arming is only half of it: the payout re-checks immunity when the
-    --- countdown finishes, so exempting the arm alone would let a hunter
+    --- countdown finishes, so exempting the arm alone would let a hitman
     --- hold somebody for the full thirty seconds and be refused at the end,
     --- which is exactly what the check at arming exists to prevent.
     it('pays out a delivery of a target who had just got up', function()
@@ -223,7 +223,7 @@ describe('a protected target is refused up front', function()
         local f, c = held(s)
         s.death.onRevived('TARGET01')
 
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'), 'the countdown should start')
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'), 'the countdown should start')
 
         local completions = {}
         local ticks = math.floor((Config.Kidnap.CountdownSeconds * 1000) / Config.Kidnap.TickMs) + 2
@@ -234,10 +234,10 @@ describe('a protected target is refused up front', function()
         end
 
         truthy(#completions > 0, 'the countdown should have finished')
-        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED,
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED,
             'thirty seconds of holding someone must not end in a refusal')
         eq(Env.players[3].PlayerData.money.cash, 5000 + 5000,
-            'and the hunter must actually be paid')
+            'and the hitman must actually be paid')
     end)
 
     it('still refuses an elimination on somebody who just got up', function()
@@ -248,12 +248,12 @@ describe('a protected target is refused up front', function()
 
         -- Same target, same moment, the other fulfilment. Respawn camping is
         -- what the rule is for and it has to keep working.
-        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        local ok, err = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         falsy(ok, 'a kill claim on somebody who just respawned must still be refused')
-        eq(err, CB.ERR.TARGET_PROTECTED)
+        eq(err, CH.ERR.TARGET_PROTECTED)
     end)
 
-    --- The check at arming exists so a hunter does not hold somebody for
+    --- The check at arming exists so a hitman does not hold somebody for
     --- thirty seconds and only then be refused. The immunities that still
     --- apply to a delivery have to be caught there.
     it('will not arm a countdown the claim would refuse anyway', function()
@@ -268,7 +268,7 @@ describe('a protected target is refused up front', function()
             return realSession(cid)
         end
 
-        local ok, reason = s.kidnap.arm(c.id, 'HUNTER01')
+        local ok, reason = s.kidnap.arm(c.id, 'HITMAN01')
         s.identity.sessionMinutes = realSession
 
         falsy(ok, 'thirty seconds of holding someone should not end in a refusal')
@@ -278,9 +278,9 @@ end)
 
 --- Every way a server can decide somebody is restrained.
 ---
---- A live delivery only counts if the target is visibly under the hunter's
+--- A live delivery only counts if the target is visibly under the hitman's
 --- control, and Config.Kidnap.Coercion lets an operator choose which
---- detectors say so: handcuff metadata, riding in the hunter's vehicle, or
+--- detectors say so: handcuff metadata, riding in the hitman's vehicle, or
 --- an export from their own rope or ziptie script. The comment above them
 --- promises that "servers with different restraint scripts all have a
 --- working path".
@@ -298,10 +298,10 @@ describe('deciding whether a target is restrained', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.EXCLUSIVE,
+            mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         for _, src in ipairs({ 1, 2, 3 }) do
             Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z }
         end
@@ -337,15 +337,15 @@ describe('deciding whether a target is restrained', function()
         end)
     end)
 
-    it('takes a target riding in the hunters own vehicle', function()
+    it('takes a target riding in the hitmen own vehicle', function()
         local s = newStack()
         local f, c = together(s)
         withConfig({ { Config.Kidnap, 'Coercion', onlyDetector('passengerOfHitman') } }, function()
             Env.players[2]._vehicle = 77
             Env.players[3]._vehicle = 77
             local ok, how = s.kidnap.isCoerced(3, 2)
-            truthy(ok, 'in the boot of the hunters car is under their control')
-            eq(how, 'in_hunter_vehicle')
+            truthy(ok, 'in the boot of the hitmen car is under their control')
+            eq(how, 'in_hitman_vehicle')
         end)
     end)
 
@@ -500,9 +500,9 @@ end)
 --- Kidnap.cancel and Kidnap.clearContract both existed and neither had a
 --- caller anywhere in the resource. bridges.install wires informant, comms
 --- and death into contracts.onResolved and not kidnap, and abandon says
---- nothing about a countdown the leaving hunter had armed.
+--- nothing about a countdown the leaving hitman had armed.
 ---
---- No money is at risk: the countdown does not complete for a hunter who is
+--- No money is at risk: the countdown does not complete for a hitman who is
 --- no longer active, and a resolved contract cannot be paid out twice. What
 --- leaks is the entry itself. It holds one of
 --- Config.Kidnap.MaxConcurrentCountdowns for the life of the process and
@@ -517,10 +517,10 @@ describe('a handover left behind', function()
         s.bridges.install(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE,
+            mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         for _, src in ipairs({ 1, 2, 3 }) do
             Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z }
         end
@@ -530,42 +530,42 @@ describe('a handover left behind', function()
 
     it('is released when the contract resolves', function()
         local s, f, c = wired()
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
         eq(s.kidnap.activeCount(), 1)
 
-        s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled')
+        s.contracts.resolve(c.id, CH.STATE.CANCELLED, f.creator.cid, nil, 'cancelled')
 
         eq(s.kidnap.activeCount(), 0,
             'a contract nobody can deliver on must not hold a countdown slot '
             .. 'for the life of the process')
     end)
 
-    it('is released when the hunter holding it walks away', function()
+    it('is released when the hitman holding it walks away', function()
         local s, f, c = wired()
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
-        truthy(s.contracts.abandon(f.hunter, c.id))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+        truthy(s.contracts.abandon(f.hitman, c.id))
 
         eq(s.kidnap.activeCount(), 0)
-        falsy(s.kidnap.progress(c.id, 'HUNTER01'),
-            'and the hunter who left is not still counting down')
+        falsy(s.kidnap.progress(c.id, 'HITMAN01'),
+            'and the hitman who left is not still counting down')
     end)
 
-    it('leaves another hunter countdown on the same contract alone', function()
+    it('leaves another hitman countdown on the same contract alone', function()
         local s, f, c = wired()
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
             cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
         Env.players[4]._coords = { x = AT.x, y = AT.y, z = AT.z }
         truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
 
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
-        truthy(s.kidnap.arm(c.id, 'HUNTER02'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN02'))
         eq(s.kidnap.activeCount(), 2)
 
-        truthy(s.contracts.abandon(f.hunter, c.id))
+        truthy(s.contracts.abandon(f.hitman, c.id))
 
         eq(s.kidnap.activeCount(), 1, 'one left, and it is not both')
-        truthy(s.kidnap.progress(c.id, 'HUNTER02'),
-            'the hunter who stayed is still delivering')
+        truthy(s.kidnap.progress(c.id, 'HITMAN02'),
+            'the hitman who stayed is still delivering')
     end)
 
     it('gives the slot back, so the mechanic keeps working', function()
@@ -590,27 +590,27 @@ describe('a handover left behind', function()
                 Env.players[40 + i].PlayerData.metadata.ishandcuffed = true
 
                 local c = s.contracts.create(f.creator, {
-                    targetCid = targetCid, reason = 'x', mode = CB.MODE.COMPETITIVE,
+                    targetCid = targetCid, reason = 'x', mode = CH.MODE.COMPETITIVE,
                     reward = { baseline = { cash = 1000 } },
                 })
                 truthy(c, 'contract ' .. i)
-                truthy(s.contracts.accept(f.hunter, c.id, false), 'accept ' .. i)
-                truthy(s.kidnap.arm(c.id, 'HUNTER01'), 'arm ' .. i)
+                truthy(s.contracts.accept(f.hitman, c.id, false), 'accept ' .. i)
+                truthy(s.kidnap.arm(c.id, 'HITMAN01'), 'arm ' .. i)
                 placed[#placed + 1] = c
             end
         end)
         eq(s.kidnap.activeCount(), cap, 'the cap is full')
 
         for _, c in ipairs(placed) do
-            s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled')
+            s.contracts.resolve(c.id, CH.STATE.CANCELLED, f.creator.cid, nil, 'cancelled')
         end
         eq(s.kidnap.activeCount(), 0, 'and every one of them let go')
     end)
 
     it('records that a countdown was cancelled and why', function()
         local s, f, c = wired()
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
-        truthy(s.contracts.abandon(f.hunter, c.id))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+        truthy(s.contracts.abandon(f.hitman, c.id))
         s.audit.flush()
 
         local row

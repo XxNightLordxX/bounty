@@ -2,7 +2,7 @@
 ---
 --- Two things live here: the per-player record the app shows, and the hook
 --- that feeds a completed contract into the server's existing criminal
---- progression rather than making the bounty board a parallel economy.
+--- progression rather than making the contract board a parallel economy.
 
 local Progression = {}
 
@@ -16,7 +16,7 @@ end
 -- Reputation
 --------------------------------------------------------------------------
 
---- A hunter's record, as the app shows it.
+--- A hitman's record, as the app shows it.
 ---@param cid string
 ---@return table
 function Progression.record(cid)
@@ -38,7 +38,7 @@ function Progression.record(cid)
 end
 
 --- A short label for the record. Deliberately vague at the low end: a new
---- hunter should not be visibly marked as one.
+--- hitman should not be visibly marked as one.
 function Progression.standing(completed, failed)
     if completed >= 50 then return 'Notorious' end
     if completed >= 20 then return 'Established' end
@@ -54,7 +54,7 @@ function Progression.onContractPlaced(cid)
     Storage.bumpStat(cid, 'placed')
 end
 
---- A hunter finished a contract. This is where the bounty board pays into
+--- A hitman finished a contract. This is where the contract board pays into
 --- the server's wider criminal progression.
 ---@param cid string
 ---@param fulfilment string
@@ -63,7 +63,7 @@ function Progression.onCompleted(cid, fulfilment)
 
     if not Config.Progression.Enabled then return end
 
-    local amount = fulfilment == CB.FULFILMENT.KIDNAPPING
+    local amount = fulfilment == CH.FULFILMENT.KIDNAPPING
         and Config.Progression.TrustPerKidnapping
         or Config.Progression.TrustPerElimination
 

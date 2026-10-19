@@ -16,7 +16,7 @@
 <script>
   (function () {
     var build = (location.search.match(/[?&]v=([^&]+)/) || [])[1] || 'dev';
-    window.CB_BUILD = decodeURIComponent(build);
+    window.CH_BUILD = decodeURIComponent(build);
 
     var css = document.createElement('link');
     css.rel = 'stylesheet';

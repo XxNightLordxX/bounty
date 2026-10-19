@@ -62,16 +62,16 @@ local CONDITIONAL = {
     -- no key carrying their name exists on the payload at all.
     creatorAnonymous = 'present only when the creator chose anonymity',
     creatorName      = 'present only when they did not',
-    -- The creator learns how many operatives are on it and, where a hunter
+    -- The creator learns how many operatives are on it and, where a hitman
     -- chose to be seen, who. Nobody else gets the list.
-    hunters          = 'creator-only',
+    hitmen          = 'creator-only',
     -- A handle for a face that has been rendered. Nil until the target's own
     -- client has answered, which asking is what schedules.
     targetImageId    = 'present once a headshot exists to point at',
 }
 
 --- Which roles see a contract at all, and through which projection call.
-local ROLES = { 'creator', 'hunter', 'target', 'stranger' }
+local ROLES = { 'creator', 'hitman', 'target', 'stranger' }
 
 local function build(state)
     local s = newStack()
@@ -81,18 +81,18 @@ local function build(state)
 
     local c = s.contracts.create(f.creator, {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
-        mode = CB.MODE.COMPETITIVE,
+        mode = CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 } },
         bailoutAmount = 9000, penaltyAmount = 2500,
     })
     truthy(c, 'the fixture needs a contract')
 
-    if state ~= CB.STATE.ACTIVE then
-        truthy(s.contracts.accept(f.hunter, c.id), 'accept')
+    if state ~= CH.STATE.ACTIVE then
+        truthy(s.contracts.accept(f.hitman, c.id), 'accept')
     end
-    if state == CB.STATE.COMPLETING then
-        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED,
-            CB.STATE.COMPLETING, 'fixture'))
+    if state == CH.STATE.COMPLETING then
+        truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED,
+            CH.STATE.COMPLETING, 'fixture'))
     end
     return s, f, c
 end
@@ -140,15 +140,15 @@ describe('every field the page reads off a contract', function()
             .. 'being checked: ' .. table.concat(stale, ', '))
     end)
 
-    for _, state in ipairs({ CB.STATE.ACTIVE, CB.STATE.ACCEPTED,
-                             CB.STATE.COMPLETING }) do
+    for _, state in ipairs({ CH.STATE.ACTIVE, CH.STATE.ACCEPTED,
+                             CH.STATE.COMPLETING }) do
         for _, role in ipairs(ROLES) do
             it(('a %s contract, as seen by the %s'):format(state, role), function()
                 local s, f = build(state)
 
                 local actor
                 if role == 'creator' then actor = f.creator
-                elseif role == 'hunter' then actor = f.hunter
+                elseif role == 'hitman' then actor = f.hitman
                 elseif role == 'target' then actor = f.target
                 else
                     Env.addPlayer({ source = 11, citizenid = 'NOSY0001',
@@ -204,7 +204,7 @@ describe('the fields whose presence is a rule', function()
                 reason = 'x', anonymous = anonymous,
                 reward = { baseline = { cash = 5000 } } }))
 
-            local row = boardRow(s, f.hunter)
+            local row = boardRow(s, f.hitman)
             truthy(row, 'the board should carry it')
 
             local named = row.creatorName ~= nil
@@ -221,32 +221,32 @@ describe('the fields whose presence is a rule', function()
         end
     end)
 
-    it('gives the hunter list to the creator and to nobody else', function()
+    it('gives the hitman list to the creator and to nobody else', function()
         local s = newStack()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 400000
         Env.players[3].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
-            reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } } })
-        truthy(s.contracts.accept(f.hunter, c.id))
+        truthy(s.contracts.accept(f.hitman, c.id))
 
         local own = (s.projection.mine(f.creator.cid) or {})[1]
         truthy(own, 'the creator should see their own contract')
-        truthy(own.hunters, 'and how many operatives are on it')
+        truthy(own.hitmen, 'and how many operatives are on it')
 
-        falsy(boardRow(s, f.hunter) and boardRow(s, f.hunter).hunters,
-            'the board must not carry who is hunting')
+        falsy(boardRow(s, f.hitman) and boardRow(s, f.hitman).hitmen,
+            'the board must not carry who is working')
 
         local targetView = (s.projection.onMe(f.target.cid) or {})[1]
         truthy(targetView, 'the target should see the contract on them')
-        falsy(targetView.hunters,
-            'and the target must not be told who is hunting them')
+        falsy(targetView.hitmen,
+            'and the target must not be told who is after them')
 
-        local hunterView = (s.projection.accepted(f.hunter.cid) or {})[1]
-        truthy(hunterView, 'the hunter should see what they took')
-        falsy(hunterView.hunters,
-            'and a hunter must not be told who they are competing with')
+        local hitmanView = (s.projection.accepted(f.hitman.cid) or {})[1]
+        truthy(hitmanView, 'the hitman should see what they took')
+        falsy(hitmanView.hitmen,
+            'and a hitman must not be told who they are competing with')
     end)
 
     it('carries a face handle once there is a face to point at', function()
@@ -258,7 +258,7 @@ describe('the fields whose presence is a rule', function()
 
         -- Nothing rendered yet: asking is what schedules it, so the first
         -- look legitimately has no handle.
-        local first = boardRow(s, f.hunter)
+        local first = boardRow(s, f.hitman)
         truthy(first, 'the board row')
 
         -- The target's client answers. Only an image the server ASKED for is
@@ -267,7 +267,7 @@ describe('the fields whose presence is a rule', function()
         truthy(s.mugshot.store('TARGET01', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='),
             'store a face the server asked for')
 
-        local second = boardRow(s, f.hunter)
+        local second = boardRow(s, f.hitman)
         truthy(second.targetImageId,
             'once a headshot exists the board has to point at it, or no card '
             .. 'ever shows a face')

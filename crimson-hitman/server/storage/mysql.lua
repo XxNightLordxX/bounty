@@ -71,12 +71,12 @@ local SCHEMA = {
         INDEX idx_contract (contract_id),
         INDEX idx_state (state)
     )]],
-    [[CREATE TABLE IF NOT EXISTS crimson_hunters (
+    [[CREATE TABLE IF NOT EXISTS crimson_hitmen (
         id VARCHAR(32) PRIMARY KEY,
         contract_id VARCHAR(32) NOT NULL,
-        hunter_cid VARCHAR(32) NOT NULL,
-        hunter_account VARCHAR(64),
-        hunter_name VARCHAR(64),
+        hitman_cid VARCHAR(32) NOT NULL,
+        hitman_account VARCHAR(64),
+        hitman_name VARCHAR(64),
         alias VARCHAR(32),
         anon TINYINT(1) DEFAULT 0,
         accepted_at INT NOT NULL,
@@ -86,7 +86,7 @@ local SCHEMA = {
         stake_amount INT DEFAULT 0,
         state VARCHAR(16) NOT NULL,
         INDEX idx_contract (contract_id),
-        INDEX idx_hunter (hunter_cid)
+        INDEX idx_hitman (hitman_cid)
     )]],
     [[CREATE TABLE IF NOT EXISTS crimson_amendments (
         id VARCHAR(32) PRIMARY KEY,
@@ -160,7 +160,7 @@ local SCHEMA = {
         id VARCHAR(80) PRIMARY KEY,
         contract_id VARCHAR(32) NOT NULL,
         buyer_cid VARCHAR(32) NOT NULL,
-        hunter_cid VARCHAR(32),
+        hitman_cid VARCHAR(32),
         revealed_at INT NOT NULL,
         purchases INT DEFAULT 0,
         seed INT,
@@ -354,7 +354,7 @@ function MySQLStore.writeContract(c)
         --   creator's pocket a second time, and the guard that refuses a
         --   raise to a percentage already reached never fired, so it could be
         --   done again and again. The board also went on showing the old
-        --   percentage to every hunter.
+        --   percentage to every hitman.
         --
         --   expires_at — the absolute lifetime. Nothing extended one until
         --   the staff timer refresh did.
@@ -443,7 +443,7 @@ function MySQLStore.allContracts()
     return rows
 end
 
---- Contracts this player is involved in, as creator, target or hunter.
+--- Contracts this player is involved in, as creator, target or hitman.
 --- The indexes for all three columns already exist, so this is the query
 --- the schema was designed for — rather than a full scan filtered in Lua.
 function MySQLStore.contractsInvolving(cid)
@@ -452,8 +452,8 @@ function MySQLStore.contractsInvolving(cid)
         WHERE c.creator_cid = ? OR c.target_cid = ?
         UNION
         SELECT c.* FROM crimson_contracts c
-        JOIN crimson_hunters h ON h.contract_id = c.id
-        WHERE h.hunter_cid = ?
+        JOIN crimson_hitmen h ON h.contract_id = c.id
+        WHERE h.hitman_cid = ?
         ORDER BY id
     ]], { cid, cid, cid }) or {}
     for i = 1, #rows do hydrateContract(rows[i]) end
@@ -614,10 +614,10 @@ end
 
 --- Every line in one transaction: a reader sees all of a write or none of it.
 --- A statement a line let a reader land between two of them. A claim marks
---- each line of the collection it pays — the baseline for its hunter, an
+--- each line of the collection it pays — the baseline for its hitman, an
 --- elimination's bonus back to the client — and a top-up that found its
 --- baseline marked and its bonus not handed the bonus back and was told it
---- had failed, while the hunter was paid the baseline.
+--- had failed, while the hitman was paid the baseline.
 local ESCROW_UPSERT = [[
     INSERT INTO crimson_escrow
         (id, contract_id, slot, portion, source, amount, item, quantity, metadata,
@@ -740,95 +740,95 @@ function MySQLStore.settleEscrowLine(id, recipientCid)
     local affected = MySQL.update.await(
         'UPDATE crimson_escrow SET state = ?, settled_to = ?, settled_at = ? '
         .. 'WHERE id = ? AND state = ?',
-        { CB.ESCROW_STATE.SETTLED, recipientCid, os.time(), id, CB.ESCROW_STATE.RELEASING })
+        { CH.ESCROW_STATE.SETTLED, recipientCid, os.time(), id, CH.ESCROW_STATE.RELEASING })
     return (tonumber(affected) or 0) > 0
 end
 
 --------------------------------------------------------------------------
--- Hunters
+-- Hitmen
 --------------------------------------------------------------------------
 
-function MySQLStore.addHunter(h)
+function MySQLStore.addHitman(h)
     MySQL.query.await([[
-        INSERT INTO crimson_hunters
-            (id, contract_id, hunter_cid, hunter_account, hunter_name, alias, anon,
+        INSERT INTO crimson_hitmen
+            (id, contract_id, hitman_cid, hitman_account, hitman_name, alias, anon,
              accepted_at, state, claims)
         VALUES (?,?,?,?,?,?,?,?,?,?)
     ]], {
-        h.id, h.contract_id, h.hunter_cid, h.hunter_account, h.hunter_name, h.alias,
+        h.id, h.contract_id, h.hitman_cid, h.hitman_account, h.hitman_name, h.alias,
         h.anon and 1 or 0, h.accepted_at, h.state, h.claims or 0,
     })
     return true
 end
 
-local function hydrateHunter(row)
+local function hydrateHitman(row)
     if row then row.anon = row.anon == 1 end
     return row
 end
 
-function MySQLStore.readHunters(contractId)
+function MySQLStore.readHitmen(contractId)
     local rows = MySQL.query.await(
-        'SELECT * FROM crimson_hunters WHERE contract_id = ? ORDER BY accepted_at, id',
+        'SELECT * FROM crimson_hitmen WHERE contract_id = ? ORDER BY accepted_at, id',
         { contractId }) or {}
-    for i = 1, #rows do hydrateHunter(rows[i]) end
+    for i = 1, #rows do hydrateHitman(rows[i]) end
     return rows
 end
 
-function MySQLStore.readHunter(contractId, cid)
+function MySQLStore.readHitman(contractId, cid)
     local rows = MySQL.query.await(
-        'SELECT * FROM crimson_hunters WHERE contract_id = ? AND hunter_cid = ?',
+        'SELECT * FROM crimson_hitmen WHERE contract_id = ? AND hitman_cid = ?',
         { contractId, cid })
-    return hydrateHunter(rows and rows[1])
+    return hydrateHitman(rows and rows[1])
 end
 
---- One hunter row by its own id.
+--- One hitman row by its own id.
 ---
 --- Used to confirm an id is free before minting onto it: the stake is taken
 --- before the row is written, so an id already in use is a duplicate-key
 --- error with the money already gone and no record naming who staked it.
-function MySQLStore.readHunterById(id)
-    local rows = MySQL.query.await('SELECT * FROM crimson_hunters WHERE id = ?', { id })
-    return hydrateHunter(rows and rows[1])
+function MySQLStore.readHitmanById(id)
+    local rows = MySQL.query.await('SELECT * FROM crimson_hitmen WHERE id = ?', { id })
+    return hydrateHitman(rows and rows[1])
 end
 
-function MySQLStore.updateHunter(id, fields)
+function MySQLStore.updateHitman(id, fields)
     -- Column names are literals here, never interpolated from the caller.
     if fields.state ~= nil then
-        MySQL.update.await('UPDATE crimson_hunters SET state = ? WHERE id = ?', { fields.state, id })
+        MySQL.update.await('UPDATE crimson_hitmen SET state = ? WHERE id = ?', { fields.state, id })
     end
     if fields.left_at ~= nil then
-        MySQL.update.await('UPDATE crimson_hunters SET left_at = ? WHERE id = ?', { fields.left_at, id })
+        MySQL.update.await('UPDATE crimson_hitmen SET left_at = ? WHERE id = ?', { fields.left_at, id })
     end
     if fields.last_claim_at ~= nil then
-        MySQL.update.await('UPDATE crimson_hunters SET last_claim_at = ? WHERE id = ?', { fields.last_claim_at, id })
+        MySQL.update.await('UPDATE crimson_hitmen SET last_claim_at = ? WHERE id = ?', { fields.last_claim_at, id })
     end
     if fields.claims ~= nil then
-        MySQL.update.await('UPDATE crimson_hunters SET claims = ? WHERE id = ?', { fields.claims, id })
+        MySQL.update.await('UPDATE crimson_hitmen SET claims = ? WHERE id = ?', { fields.claims, id })
     end
-    -- A hunter who could not cover the anonymity fee is named instead. This
+    -- A hitman who could not cover the anonymity fee is named instead. This
     -- branch was missing, so on the backend that ships by default the write
-    -- was dropped: the hunter stayed listed as anonymous having paid nothing
+    -- was dropped: the hitman stayed listed as anonymous having paid nothing
     -- for it, and only on mysql.
     if fields.anon ~= nil then
-        MySQL.update.await('UPDATE crimson_hunters SET anon = ? WHERE id = ?',
+        MySQL.update.await('UPDATE crimson_hitmen SET anon = ? WHERE id = ?',
             { fields.anon and 1 or 0, id })
     end
     if fields.alias ~= nil then
-        MySQL.update.await('UPDATE crimson_hunters SET alias = ? WHERE id = ?',
+        MySQL.update.await('UPDATE crimson_hitmen SET alias = ? WHERE id = ?',
             { fields.alias, id })
     end
-    -- A stint's start, rewritten when a hunter takes a contract up again.
+    -- A stint's start, rewritten when a hitman takes a contract up again.
     if fields.accepted_at ~= nil then
-        MySQL.update.await('UPDATE crimson_hunters SET accepted_at = ? WHERE id = ?',
+        MySQL.update.await('UPDATE crimson_hitmen SET accepted_at = ? WHERE id = ?',
             { fields.accepted_at, id })
     end
     return true
 end
 
 --- The row goes active only if it is still the acceptance that wrote it.
-function MySQLStore.confirmHunter(id, anon, acceptedAt)
+function MySQLStore.confirmHitman(id, anon, acceptedAt)
     local affected = MySQL.update.await([[
-        UPDATE crimson_hunters SET state = 'active', anon = ?, accepted_at = ?
+        UPDATE crimson_hitmen SET state = 'active', anon = ?, accepted_at = ?
         WHERE id = ? AND state IN ('joining', 'rejoining')
     ]], { anon and 1 or 0, acceptedAt, id })
     return (tonumber(affected) or 0) > 0
@@ -836,11 +836,11 @@ end
 
 --- Mid-acceptance rows count: two acceptances in flight must each see the
 --- other against the cap.
-function MySQLStore.countHunterContracts(cid, states)
+function MySQLStore.countHitmanContracts(cid, states)
     local rows = MySQL.query.await([[
-        SELECT c.state AS state FROM crimson_hunters h
+        SELECT c.state AS state FROM crimson_hitmen h
         JOIN crimson_contracts c ON c.id = h.contract_id
-        WHERE h.hunter_cid = ? AND h.state IN ('active', 'joining', 'rejoining')
+        WHERE h.hitman_cid = ? AND h.state IN ('active', 'joining', 'rejoining')
     ]], { cid }) or {}
     local n = 0
     for i = 1, #rows do
@@ -1101,7 +1101,7 @@ function MySQLStore.pruneContracts(cutoff)
         local id = rows[i].id
         if id then
             MySQL.query.await('DELETE FROM crimson_escrow WHERE contract_id = ?', { id })
-            MySQL.query.await('DELETE FROM crimson_hunters WHERE contract_id = ?', { id })
+            MySQL.query.await('DELETE FROM crimson_hitmen WHERE contract_id = ?', { id })
             MySQL.query.await('DELETE FROM crimson_amendments WHERE contract_id = ?', { id })
             MySQL.query.await('DELETE FROM crimson_messages WHERE contract_id = ?', { id })
             MySQL.query.await('DELETE FROM crimson_reveals WHERE contract_id = ?', { id })
@@ -1123,13 +1123,13 @@ end
 function MySQLStore.writeReveal(contractId, buyerCid, record)
     MySQL.query.await([[
         INSERT INTO crimson_reveals
-            (id, contract_id, buyer_cid, hunter_cid, revealed_at, purchases, seed, answer)
+            (id, contract_id, buyer_cid, hitman_cid, revealed_at, purchases, seed, answer)
         VALUES (?,?,?,?,?,?,?,?)
-        ON DUPLICATE KEY UPDATE hunter_cid = VALUES(hunter_cid),
+        ON DUPLICATE KEY UPDATE hitman_cid = VALUES(hitman_cid),
             revealed_at = VALUES(revealed_at), purchases = VALUES(purchases),
             seed = VALUES(seed), answer = VALUES(answer)
     ]], {
-        contractId .. ':' .. buyerCid, contractId, buyerCid, record.hunter_cid,
+        contractId .. ':' .. buyerCid, contractId, buyerCid, record.hitman_cid,
         record.revealed_at, record.purchases or 0, record.seed, record.answer,
     })
     return true

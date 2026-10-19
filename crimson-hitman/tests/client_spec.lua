@@ -334,7 +334,7 @@ describe('the camera, on a phone that dies mid-upload', function()
         -- lb-phone calls the SECOND argument of SetCameraComponent and never
         -- reads options.cb. With the callback only in the options, the shot
         -- went nowhere: nothing was submitted, and two minutes later the
-        -- hunter was told the camera never came back.
+        -- hitman was told the camera never came back.
         Env.reset()
         Client.boot()
         Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
@@ -482,7 +482,7 @@ describe('the camera, on a phone that dies mid-upload', function()
         -- lb-phone's SetCameraComponent treats anything that is not a table
         -- as empty options and OPENS a camera with them. The "reset" this
         -- used to send after every ending was a second camera with the
-        -- phone's defaults, popped open over a hunter who had just taken
+        -- phone's defaults, popped open over a hitman who had just taken
         -- their photo — or who had been refused before any camera opened.
         Env.reset()
         Client.boot()
@@ -516,7 +516,7 @@ describe('the camera, on a phone that dies mid-upload', function()
         falsy(spec.saveToGallery,
             'a second upload of the same image, inside the operation that '
             .. 'already uploads it, and a photograph of a body left in the '
-            .. 'hunters gallery')
+            .. 'hitmen gallery')
     end)
 end)
 
@@ -524,7 +524,7 @@ describe('a job that is barred from the app', function()
     --- The gate already refuses every request from a barred job, but the app
     --- was still installed and opened for them: it answered nothing, which
     --- reads as broken rather than as not for them. An officer should not be
-    --- looking at a bounty board at all.
+    --- looking at a contract board at all.
 
     local function ready()
         Env.reset()
@@ -826,7 +826,7 @@ describe('the servers own access decision', function()
         -- And it grants nothing: the gate refuses them exactly as before.
         local blocked, err = s.identity.gate(21)
         falsy(blocked, 'the switch must not become a way past the gate')
-        eq(err, CB.ERR.BLACKLISTED_JOB)
+        eq(err, CH.ERR.BLACKLISTED_JOB)
     end)
 
     it('tells a barred job they may not', function()
@@ -988,10 +988,10 @@ describe('what happens to a player as they arrive and leave', function()
         s.escrow.take(f.creator, 'ct1', lines)
 
         Env.players[3]._inventoryFull = true
-        s.escrow.release('ct1', 'HUNTER01', CB.PORTION.BASELINE, 'test')
+        s.escrow.release('ct1', 'HITMAN01', CH.PORTION.BASELINE, 'test')
         Env.players[3]._inventoryFull = false
 
-        local owed = s.storage.readPending('HUNTER01') or {}
+        local owed = s.storage.readPending('HITMAN01') or {}
         truthy(#owed > 0, 'the fixture must actually leave something owed')
         return s, #owed
     end
@@ -1000,7 +1000,7 @@ describe('what happens to a player as they arrive and leave', function()
         local s, count = owing()
         local delivered = s.bridges.onPlayerReady(s, 3)
         eq(delivered, count, 'everything owed has to be handed over')
-        eq(#(s.storage.readPending('HUNTER01') or {}), 0, 'and the queue emptied')
+        eq(#(s.storage.readPending('HITMAN01') or {}), 0, 'and the queue emptied')
     end)
 
     it('tells them it happened, rather than doing it silently', function()
@@ -1047,7 +1047,7 @@ describe('what happens to a player as they arrive and leave', function()
             local before = Env.players[1].PlayerData.money.cash
             local c = s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'Unpaid debt',
-                mode = CB.MODE.EXCLUSIVE,
+                mode = CH.MODE.EXCLUSIVE,
                 reward = { baseline = { cash = 5000 } },
             })
             truthy(c)
@@ -1055,7 +1055,7 @@ describe('what happens to a player as they arrive and leave', function()
 
             s.bridges.onPlayerDropped(s, 'CREATOR1')
 
-            eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED,
+            eq(s.storage.readContract(c.id).state, CH.STATE.CANCELLED,
                 'a contract nobody can pay out is not left open')
             eq(Env.players[1].PlayerData.money.cash, before,
                 'and the creator has their money back, because memory mode '
@@ -1069,11 +1069,11 @@ describe('what happens to a player as they arrive and leave', function()
         withConfig({ { Config.Database, 'Mode', 'json' } }, function()
             local c = s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'Unpaid debt',
-                mode = CB.MODE.EXCLUSIVE,
+                mode = CH.MODE.EXCLUSIVE,
                 reward = { baseline = { cash = 5000 } },
             })
             s.bridges.onPlayerDropped(s, 'CREATOR1')
-            eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE,
+            eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE,
                 'a contract that survives a restart must survive its creator '
                 .. 'going to bed')
         end)
@@ -1219,7 +1219,7 @@ end)
 ---
 --- A `while true` watcher that had never been entered by a test — 25 lines
 --- of the client, including who gets named as the killer, with nothing
---- checking any of it. It is the report the server corroborates a bounty
+--- checking any of it. It is the report the server corroborates a contract
 --- payout against, so getting it wrong is getting paid wrong.
 ---
 --- The design worth holding: the VICTIM reports who killed them. A killer's
@@ -1232,7 +1232,7 @@ describe('reporting your own death', function()
         Natives.resetResourceStates()
         require('crimson-hitman.shared.util').resetMonotonic()
         -- Source 3 is the local player: PlayerPedId returns 1003.
-        Env.addPlayer({ source = 3, citizenid = 'HUNTER01', license = 'license:ccc',
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN01', license = 'license:ccc',
             firstname = 'Rook', lastname = 'Ash' })
         Client.boot()
         Client.ped = 1003
@@ -1291,7 +1291,7 @@ describe('reporting your own death', function()
     end)
 
     it('names nobody when the player killed themselves', function()
-        -- Their own ped is not somebody else, and crediting a bounty to the
+        -- Their own ped is not somebody else, and crediting a contract to the
         -- target for dying is the whole reason this check is here.
         watching()
         Client.dead = true
@@ -1308,7 +1308,7 @@ describe('reporting your own death', function()
         -- that is not a player does not answer "nobody" — it answers with a
         -- number, and that number is somebody's server id. Without the
         -- IsPedAPlayer guard a player killed by a pedestrian credits the
-        -- kill to whoever happens to hold that index, which on a bounty is
+        -- kill to whoever happens to hold that index, which on a contract is
         -- a payout to an uninvolved player.
         watching()
         Client.dead = true
@@ -1395,7 +1395,7 @@ describe('reporting your own death', function()
         Client.ticks(2)
 
         -- Bled out, minutes later. The ped has been resurrected again, and
-        -- its source of death is no longer the hunter's.
+        -- its source of death is no longer the hitman's.
         Env.gameTimer = Env.gameTimer + 300000
         Env.players[3]._killerPed = 0
         meta.inlaststand, meta.isdead = false, true
@@ -1533,7 +1533,7 @@ describe('reporting your own death', function()
 
     it('reports a second death after a defibrillator, and one revive', function()
         -- Shocked back to last stand, then finished on the ground. The one
-        -- death report stayed spent until they stood up, so the hunter who
+        -- death report stayed spent until they stood up, so the hitman who
         -- finished them was never credited.
         watching()
         local meta = underMedical()

@@ -26,8 +26,8 @@ local function heldEscrow(s)
     local out = { cash = 0, bank = 0, dirty = 0 }
     for _, c in ipairs(s.storage.allContracts()) do
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if CB.MONEY_SOURCES[line.source]
-                and line.state ~= CB.ESCROW_STATE.SETTLED then
+            if CH.MONEY_SOURCES[line.source]
+                and line.state ~= CH.ESCROW_STATE.SETTLED then
                 out[line.source] = out[line.source] + (line.amount or 0)
             end
         end
@@ -66,7 +66,7 @@ local ALL = { cash = 5000, bank = 3000, dirty = 1000 }
 local function place(s, f, reward, extra)
     local req = {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
-        mode = CB.MODE.COMPETITIVE, reward = reward,
+        mode = CH.MODE.COMPETITIVE, reward = reward,
     }
     for k, v in pairs(extra or {}) do req[k] = v end
     return s.contracts.create(f.creator, req)
@@ -93,24 +93,24 @@ describe('conservation across every settlement path', function()
         eq(back.dirty, start.dirty, 'dirty came back as dirty')
     end)
 
-    it('create -> accept -> claim pays the hunter in the same sources', function()
+    it('create -> accept -> claim pays the hitman in the same sources', function()
         local s = newStack()
         local f = fixture(s)
         local before = world(s)
 
         local c, err = place(s, f, { baseline = ALL, bonus = { cash = 500, bank = 400, dirty = 300 } })
         truthy(c, tostring(err))
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         conserved(s, before, 'accept')
 
-        local hunterBefore = purse(3)
-        truthy(s.contracts.claimSlot(c.id, f.hunter.cid, CB.FULFILMENT.KIDNAPPING))
+        local hitmanBefore = purse(3)
+        truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.KIDNAPPING))
         conserved(s, before, 'kidnap payout')
 
         local got = purse(3)
-        eq(got.cash - hunterBefore.cash, 5500, 'cash baseline + bonus')
-        eq(got.bank - hunterBefore.bank, 3400, 'bank baseline + bonus')
-        eq(got.dirty - hunterBefore.dirty, 1300, 'dirty baseline + bonus, as dirty')
+        eq(got.cash - hitmanBefore.cash, 5500, 'cash baseline + bonus')
+        eq(got.bank - hitmanBefore.bank, 3400, 'bank baseline + bonus')
+        eq(got.dirty - hitmanBefore.dirty, 1300, 'dirty baseline + bonus, as dirty')
     end)
 
     it('an elimination pays the baseline and returns the bonus in its own source', function()
@@ -120,14 +120,14 @@ describe('conservation across every settlement path', function()
 
         local c, err = place(s, f, { baseline = ALL, bonus = { cash = 500, bank = 400, dirty = 300 } })
         truthy(c, tostring(err))
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
-        local hunterBefore, creatorBefore = purse(3), purse(1)
-        truthy(s.contracts.claimSlot(c.id, f.hunter.cid, CB.FULFILMENT.ELIMINATION))
+        local hitmanBefore, creatorBefore = purse(3), purse(1)
+        truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION))
         conserved(s, before, 'elimination')
 
-        local hunterGot, creatorGot = purse(3), purse(1)
-        eq(hunterGot.dirty - hunterBefore.dirty, 1000, 'hunter gets the dirty baseline')
+        local hitmanGot, creatorGot = purse(3), purse(1)
+        eq(hitmanGot.dirty - hitmanBefore.dirty, 1000, 'hitman gets the dirty baseline')
         eq(creatorGot.dirty - creatorBefore.dirty, 300, 'unearned dirty bonus goes back as dirty')
         eq(creatorGot.cash - creatorBefore.cash, 500, 'unearned cash bonus goes back as cash')
         eq(creatorGot.bank - creatorBefore.bank, 400, 'unearned bank bonus goes back as bank')
@@ -141,7 +141,7 @@ describe('conservation across every settlement path', function()
 
         local c, err = place(s, f, { baseline = ALL })
         truthy(c, tostring(err))
-        truthy(s.contracts.resolve(c.id, CB.STATE.EXPIRED, f.creator.cid, nil, 'expired'))
+        truthy(s.contracts.resolve(c.id, CH.STATE.EXPIRED, f.creator.cid, nil, 'expired'))
         conserved(s, before, 'expiry')
 
         local back = purse(1)
@@ -162,7 +162,7 @@ describe('conservation across every settlement path', function()
         -- Take back every bonus line and nothing else.
         local ids, expect = {}, { cash = 0, bank = 0, dirty = 0 }
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.BONUS then
+            if line.portion == CH.PORTION.BONUS then
                 ids[#ids + 1] = line.id
                 expect[line.source] = expect[line.source] + line.amount
             end
@@ -182,27 +182,27 @@ describe('conservation across every settlement path', function()
         eq(held.cash, 5000); eq(held.bank, 3000); eq(held.dirty, 1000)
     end)
 
-    it('a hunter who cannot carry it is owed it, not paid it in something else', function()
+    it('a hitman who cannot carry it is owed it, not paid it in something else', function()
         local s = newStack()
         local f = fixture(s)
         local before = world(s)
 
         local c, err = place(s, f, { baseline = { dirty = 1000 } })
         truthy(c, tostring(err))
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         Env.players[3]._inventoryFull = true
-        local hunterBefore = purse(3)
-        truthy(s.contracts.claimSlot(c.id, f.hunter.cid, CB.FULFILMENT.KIDNAPPING))
+        local hitmanBefore = purse(3)
+        truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.KIDNAPPING))
         conserved(s, before, 'undeliverable dirty payout')
 
-        eq(purse(3).dirty, hunterBefore.dirty, 'nothing was delivered')
-        eq(purse(3).cash, hunterBefore.cash, 'and it was not quietly paid as cash')
+        eq(purse(3).dirty, hitmanBefore.dirty, 'nothing was delivered')
+        eq(purse(3).cash, hitmanBefore.cash, 'and it was not quietly paid as cash')
 
         Env.players[3]._inventoryFull = false
-        eq(s.escrow.retryPending(f.hunter.cid), 1, 'the queued line is delivered on retry')
+        eq(s.escrow.retryPending(f.hitman.cid), 1, 'the queued line is delivered on retry')
         conserved(s, before, 'retryPending')
-        eq(purse(3).dirty - hunterBefore.dirty, 1000, 'and it arrives as dirty money')
+        eq(purse(3).dirty - hitmanBefore.dirty, 1000, 'and it arrives as dirty money')
     end)
 
     it('a percentage bonus on a dirty baseline is escrowed and paid as dirty', function()
@@ -218,11 +218,11 @@ describe('conservation across every settlement path', function()
         eq(held.dirty, 1500, 'the derived bonus is real dirty escrow')
         eq(held.cash, 0, 'and it did not become cash')
 
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local hunterBefore = purse(3)
-        truthy(s.contracts.claimSlot(c.id, f.hunter.cid, CB.FULFILMENT.KIDNAPPING))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local hitmanBefore = purse(3)
+        truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.KIDNAPPING))
         conserved(s, before, 'derived bonus payout')
-        eq(purse(3).dirty - hunterBefore.dirty, 1500, 'baseline plus derived bonus, as dirty')
+        eq(purse(3).dirty - hitmanBefore.dirty, 1500, 'baseline plus derived bonus, as dirty')
     end)
 
     it('a stake is returned in the account it was taken from', function()
@@ -232,10 +232,10 @@ describe('conservation across every settlement path', function()
 
         local c, err = place(s, f, { baseline = ALL }, { penaltyAmount = 2500 })
         truthy(c, tostring(err))
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         conserved(s, before, 'stake taken')
 
-        truthy(s.contracts.claimSlot(c.id, f.hunter.cid, CB.FULFILMENT.KIDNAPPING))
+        truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.KIDNAPPING))
         conserved(s, before, 'stake settled with the contract')
     end)
 

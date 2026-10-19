@@ -69,10 +69,10 @@ local function interleaveAt(s, n, first, second)
     local calls, fired = 0, false
     local WATCH = {
         'compareSetContractState', 'claimEscrowLine', 'settleEscrowLine',
-        'writeContract', 'writeEscrow', 'addHunter', 'updateHunter',
+        'writeContract', 'writeEscrow', 'addHitman', 'updateHitman',
         'setEscrowAmount', 'advanceSlot', 'readContract', 'readEscrow',
-        'readHunters', 'readEscrowLine', 'readHunter', 'countHunterContracts',
-        'readHunterById',
+        'readHitmen', 'readEscrowLine', 'readHitman', 'countHitmanContracts',
+        'readHitmanById',
     }
     local real = {}
     for _, name in ipairs(WATCH) do
@@ -95,9 +95,9 @@ end
 local function stranded(s, contractId)
     local contract = s.storage.readContract(contractId)
     local out = {}
-    if not (contract and CB.TERMINAL[contract.state]) then return out end
+    if not (contract and CH.TERMINAL[contract.state]) then return out end
     for _, line in ipairs(s.storage.readEscrow(contractId)) do
-        if line.state ~= CB.ESCROW_STATE.SETTLED and not line.owed_to then
+        if line.state ~= CH.ESCROW_STATE.SETTLED and not line.owed_to then
             out[#out + 1] = ('%s %s %s'):format(line.id, line.portion, tostring(line.amount))
         end
     end
@@ -128,16 +128,16 @@ describe('a memory-mode shutdown with a buyout waiting out its delay', function(
         local _, m = boot()
         local f = fixture(m)
         local c = m.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } }, bailoutAmount = 10000,
         })
         truthy(c)
-        truthy(m.contracts.accept(f.hunter, c.id, false))
+        truthy(m.contracts.accept(f.hitman, c.id, false))
 
         local before = worth(2)
         truthy(m.bailout.buy(f.target, c.id))
         eq(before - worth(2), 10000, 'the premium is taken now and settled later')
-        truthy(m.storage.readContract(c.id).bailout_queued_at, 'queued, with a hunter on it')
+        truthy(m.storage.readContract(c.id).bailout_queued_at, 'queued, with a hitman on it')
 
         Env.handlers['onResourceStop'](GetCurrentResourceName())
 
@@ -150,10 +150,10 @@ describe('a memory-mode shutdown with a buyout waiting out its delay', function(
         local _, m = boot()
         local f = fixture(m)
         local c = m.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } }, bailoutAmount = 10000,
         })
-        truthy(m.contracts.accept(f.hunter, c.id, false))
+        truthy(m.contracts.accept(f.hitman, c.id, false))
         truthy(m.bailout.buy(f.target, c.id))
         Env.removePlayer(2)
 
@@ -169,12 +169,12 @@ describe('taking a stake on a contract that closes during the acceptance', funct
             local s = newStack()
             local f = fixture(s)
             local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
                 reward = { baseline = { cash = 5000 } }, penaltyAmount = 2000,
             })
             return s, f, c
         end, function(s, f, c)
-            s.contracts.accept(f.hunter, c.id, false)
+            s.contracts.accept(f.hitman, c.id, false)
         end, function(s, f, c)
             s.contracts.cancel(f.creator, c.id)
         end)
@@ -187,39 +187,39 @@ describe('taking a stake on a contract that closes during the acceptance', funct
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } }, penaltyAmount = 2000,
         })
         local before = worth(3)
         local ok, err
-        -- Store call 3 is before the hunter's row exists, so the cancel goes
+        -- Store call 3 is before the hitman's row exists, so the cancel goes
         -- through; the acceptance is then reserving a cancelled contract.
-        interleaveAt(s, 3, function() ok, err = s.contracts.accept(f.hunter, c.id, false) end,
+        interleaveAt(s, 3, function() ok, err = s.contracts.accept(f.hitman, c.id, false) end,
             function() s.contracts.cancel(f.creator, c.id) end)
-        eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.CANCELLED)
         falsy(ok, 'accepting a contract that closed underneath is not an acceptance')
-        eq(err, CB.ERR.ALREADY_SETTLED)
+        eq(err, CH.ERR.ALREADY_SETTLED)
         eq(worth(3), before, 'and the stake is back where it came from')
-        local hunter = s.storage.readHunter(c.id, 'HUNTER01')
-        truthy(not hunter or hunter.state ~= 'active', 'nobody is left holding it')
+        local hitman = s.storage.readHitman(c.id, 'HITMAN01')
+        truthy(not hitman or hitman.state ~= 'active', 'nobody is left holding it')
     end)
 
-    it('never leaves a second hunter\'s stake behind when the first collects the last payout', function()
+    it('never leaves a second hitman\'s stake behind when the first collects the last payout', function()
         local broken = everyInterleaving(function()
             local s = newStack()
             local f = fixture(s)
-            Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+            Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
                 cash = 5000, bank = 5000, firstname = 'Sol', lastname = 'Vane' })
             local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
                 reward = { baseline = { cash = 5000 } }, penaltyAmount = 2000,
             })
-            truthy(s.contracts.accept(f.hunter, c.id, false))
+            truthy(s.contracts.accept(f.hitman, c.id, false))
             return s, f, c
         end, function(s, _, c)
             s.contracts.accept(s.identity.resolve(4), c.id, false)
         end, function(s, _, c)
-            s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+            s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         end)
         eq(#broken, 0, 'a stake was stranded on a completed contract:\n  '
             .. table.concat(broken, '\n  '))
@@ -231,7 +231,7 @@ describe('adding to a reward on a contract that closes during the add', function
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } }, bailoutAmount = 6000,
         })
         return s, f, c
@@ -248,7 +248,7 @@ describe('adding to a reward on a contract that closes during the add', function
 
     it('never strands a raised bonus when the target buys out mid-raise', function()
         local broken = everyInterleaving(build, function(s, f, c)
-            s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 50 })
+            s.amendments.improve(f.creator, c.id, CH.AMENDMENT.RAISE_BONUS, { percent = 50 })
         end, function(s, f, c)
             s.bailout.buy(f.target, c.id)
         end)
@@ -263,23 +263,23 @@ describe('giving the last collection back on the backend that ships by default',
             local s = which == 'mysql' and newMysqlStack() or newStack()
             local f = fixture(s)
             local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
                 reward = { slots = { { baseline = { cash = 1000 } },
                                      { baseline = { cash = 2000 } } } },
             })
             truthy(c, which)
-            truthy(s.contracts.accept(f.hunter, c.id, false), which)
+            truthy(s.contracts.accept(f.hitman, c.id, false), which)
             local proposal = s.amendments.propose(f.creator, c.id,
-                CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+                CH.AMENDMENT.REDUCE_REWARD, { slot = 2 })
             truthy(proposal, which)
-            local _, _, outcome = s.amendments.respond(f.hunter, proposal.id, true)
+            local _, _, outcome = s.amendments.respond(f.hitman, proposal.id, true)
             eq(outcome, 'applied', which)
 
             eq(s.storage.readContract(c.id).payout_slots, 1,
                 which .. ': the count comes down with the escrow')
 
-            local _, _, result = s.contracts.claimSlot(c.id, 'HUNTER01',
-                CB.FULFILMENT.ELIMINATION)
+            local _, _, result = s.contracts.claimSlot(c.id, 'HITMAN01',
+                CH.FULFILMENT.ELIMINATION)
             truthy(result and result.exhausted,
                 which .. ': the one collection left is the last one, so the contract '
                 .. 'completes rather than asking for a kill that pays nothing')
@@ -287,21 +287,21 @@ describe('giving the last collection back on the backend that ships by default',
     end)
 end)
 
-describe('lowering the stake while a hunter is offline', function()
+describe('lowering the stake while a hitman is offline', function()
     local function lowered()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } }, penaltyAmount = 2000,
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         local saved = Env.players[3]
         Env.removePlayer(3)
-        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY,
+        truthy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.LOWER_PENALTY,
             { amount = 500 }))
-        Env.addPlayer({ source = 3, citizenid = 'HUNTER01', license = 'license:ccc',
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN01', license = 'license:ccc',
             cash = saved.PlayerData.money.cash, bank = saved.PlayerData.money.bank,
             firstname = 'Rook', lastname = 'Ash' })
         return s, f, c
@@ -315,23 +315,23 @@ describe('lowering the stake while a hunter is offline', function()
             'the creator lowered the penalty to 500 and was paid 2000 when they walked away')
     end)
 
-    it('hands the difference to the hunter when they are back', function()
+    it('hands the difference to the hitman when they are back', function()
         local s = lowered()
         local before = worth(3)
-        eq(s.escrow.retryPending('HUNTER01'), 1)
+        eq(s.escrow.retryPending('HITMAN01'), 1)
         eq(worth(3) - before, 1500, 'the difference every staker of the higher figure is owed')
     end)
 end)
 
 describe('the absolute lifetime', function()
-    it('returns the stake of a hunter whose target was out of the city', function()
+    it('returns the stake of a hitman whose target was out of the city', function()
         local main, m = boot()
         local f = fixture(m)
         local c = m.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } }, penaltyAmount = 2000,
         })
-        truthy(m.contracts.accept(f.hunter, c.id, false))
+        truthy(m.contracts.accept(f.hitman, c.id, false))
         main.expire()
 
         Env.advance(3600)
@@ -346,20 +346,20 @@ describe('the absolute lifetime', function()
             main.expire()
         end
         local row = m.storage.readContract(c.id)
-        eq(row.state, CB.STATE.EXPIRED)
+        eq(row.state, CH.STATE.EXPIRED)
         eq(row.resolution, 'lifetime_exceeded')
         eq(worth(3) - before, 2000,
-            'the deadline was paused the whole time: this hunter did not fail, the clock did')
+            'the deadline was paused the whole time: this hitman did not fail, the clock did')
     end)
 
-    it('still forfeits the stake of a hunter whose own deadline had run out', function()
+    it('still forfeits the stake of a hitman whose own deadline had run out', function()
         local main, m = boot()
         local f = fixture(m)
         local c = m.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } }, penaltyAmount = 2000,
         })
-        truthy(m.contracts.accept(f.hunter, c.id, false))
+        truthy(m.contracts.accept(f.hitman, c.id, false))
         local row = m.storage.readContract(c.id)
         row.deadline_at = Env.time + 60
         row.expires_at = Env.time + 60
@@ -369,8 +369,8 @@ describe('the absolute lifetime', function()
         Env.advance(61)
         main.markPresenceChanged()
         main.expire()
-        eq(m.storage.readContract(c.id).state, CB.STATE.EXPIRED)
-        eq(worth(1) - before, 7000, 'the escrow back and the stake of a hunter who ran out of time')
+        eq(m.storage.readContract(c.id).state, CH.STATE.EXPIRED)
+        eq(worth(1) - before, 7000, 'the escrow back and the stake of a hitman who ran out of time')
     end)
 end)
 
@@ -379,13 +379,13 @@ describe('a payout that would not fit, for a player who is still online', functi
         local main, m = boot()
         local f = fixture(m)
         local c = m.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 1000, items = { { name = 'lockpick', count = 5 } } } },
         })
-        truthy(m.contracts.accept(f.hunter, c.id, false))
+        truthy(m.contracts.accept(f.hitman, c.id, false))
 
         Env.players[3]._inventoryFull = true
-        local ok, _, result = m.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        local ok, _, result = m.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         truthy(ok)
         eq(result.pending, 1, 'the lockpicks did not fit')
 
@@ -396,6 +396,6 @@ describe('a payout that would not fit, for a player who is still online', functi
             main.tick()
         end
         eq(carried(3, 'lockpick'), 5, 'and it is')
-        eq(#m.storage.readPending('HUNTER01'), 0, 'and nothing is left queued')
+        eq(#m.storage.readPending('HITMAN01'), 0, 'and nothing is left queued')
     end)
 end)

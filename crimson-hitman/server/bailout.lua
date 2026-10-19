@@ -1,8 +1,8 @@
---- Bounty Cleanse — the target buys out their own contract (§5, §14.17).
+--- Contract Cleanse — the target buys out their own contract (§5, §14.17).
 ---
 --- The premium is charged before anything else happens, and the contract
 --- resolves through the normal path so the creator's escrow returns exactly
---- once. A bailout while a hunter is mid-delivery does not rug-pull them: it
+--- once. A bailout while a hitman is mid-delivery does not rug-pull them: it
 --- is queued for a short processing delay first.
 
 local Util = require_shared('util')
@@ -21,7 +21,7 @@ end
 --- The target has already been charged by the time one is queued, so a
 --- restart during the delay window must not lose their money.
 ---
---- Terminal contracts are deliberately included: a hunter completing during
+--- Terminal contracts are deliberately included: a hitman completing during
 --- the delay is precisely the case where the premium has to be refunded, and
 --- filtering those out would destroy the target's money.
 --- Asked of the store rather than found by reading every contract there
@@ -41,13 +41,13 @@ local function readQueue()
     return out
 end
 
---- True when any hunter has an armed countdown running on this contract.
+--- True when any hitman has an armed countdown running on this contract.
 function Bailout.kidnapInProgress(contractId)
     if not Bailout.kidnap then return false end
-    local hunters = Storage.readHunters(contractId)
-    for i = 1, #hunters do
-        if hunters[i].state == 'active'
-            and Bailout.kidnap.progress(contractId, hunters[i].hunter_cid) then
+    local hitmen = Storage.readHitmen(contractId)
+    for i = 1, #hitmen do
+        if hitmen[i].state == 'active'
+            and Bailout.kidnap.progress(contractId, hitmen[i].hitman_cid) then
             return true
         end
     end
@@ -67,7 +67,7 @@ function Bailout.available(actor)
     local contracts = Storage.contractsNaming(actor.cid)
     for i = 1, #contracts do
         local c = contracts[i]
-        if (c.state == CB.STATE.ACTIVE or c.state == CB.STATE.ACCEPTED)
+        if (c.state == CH.STATE.ACTIVE or c.state == CH.STATE.ACCEPTED)
             and (c.bailout_amount or 0) > 0 then
             out[#out + 1] = {
                 id = c.id, amount = c.bailout_amount,
@@ -85,28 +85,28 @@ local settleUnlocked, deliver
 
 function Bailout.buy(actor, contractId)
     contractId = Util.toId(contractId)
-    if not contractId then return false, CB.ERR.INVALID_INPUT end
-    if not Config.Bailout.Enabled then return false, CB.ERR.BAILOUT_OFF end
+    if not contractId then return false, CH.ERR.INVALID_INPUT end
+    if not Config.Bailout.Enabled then return false, CH.ERR.BAILOUT_OFF end
 
     local contract = Storage.readContract(contractId)
-    if not contract then return false, CB.ERR.NOT_FOUND end
-    if contract.target_cid ~= actor.cid then return false, CB.ERR.NOT_PARTICIPANT end
+    if not contract then return false, CH.ERR.NOT_FOUND end
+    if contract.target_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
     -- Each of these is a different thing to do about it, so each says which.
-    if contract.state ~= CB.STATE.ACTIVE and contract.state ~= CB.STATE.ACCEPTED then
-        return false, CB.ERR.ALREADY_SETTLED
+    if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then
+        return false, CH.ERR.ALREADY_SETTLED
     end
-    if (contract.bailout_amount or 0) <= 0 then return false, CB.ERR.NO_BUYOUT_PRICE end
-    if contract.bailout_queued_at then return false, CB.ERR.BUYOUT_PENDING end
+    if (contract.bailout_amount or 0) <= 0 then return false, CH.ERR.NO_BUYOUT_PRICE end
+    if contract.bailout_queued_at then return false, CH.ERR.BUYOUT_PENDING end
 
     -- A target cannot buy their way out from the floor mid-fight.
     if Config.Bailout.BlockWhileIncapacitated then
         local dead, lastStand = Identity.deathState(actor.source)
-        if dead or lastStand then return false, CB.ERR.INCAPACITATED end
+        if dead or lastStand then return false, CH.ERR.INCAPACITATED end
     end
 
-    -- Nor out from under a handover already in progress: the hunter has the
+    -- Nor out from under a handover already in progress: the hitman has the
     -- target in hand and is seconds from delivering.
-    if Bailout.kidnapInProgress(contractId) then return false, CB.ERR.HANDOVER_IN_PROGRESS end
+    if Bailout.kidnapInProgress(contractId) then return false, CH.ERR.HANDOVER_IN_PROGRESS end
 
     local amount = contract.bailout_amount
 
@@ -125,16 +125,16 @@ function Bailout.buy(actor, contractId)
         account = 'cash'
         paid = Util.charge(actor.player, 'cash', amount)
     end
-    if not paid then return false, CB.ERR.INSUFFICIENT end
+    if not paid then return false, CH.ERR.INSUFFICIENT end
 
     Audit.financial('bailout_paid', actor.cid, contractId, { amount = amount })
 
-    -- With a hunter already engaged, the buyout is queued rather than
-    -- instant, so a hunter cannot be rug-pulled mid-delivery (§14.17).
-    local hunters = Storage.readHunters(contractId)
+    -- With a hitman already engaged, the buyout is queued rather than
+    -- instant, so a hitman cannot be rug-pulled mid-delivery (§14.17).
+    local hitmen = Storage.readHitmen(contractId)
     local engaged = false
-    for i = 1, #hunters do
-        if hunters[i].state == 'active' then engaged = true end
+    for i = 1, #hitmen do
+        if hitmen[i].state == 'active' then engaged = true end
     end
 
     if engaged and Config.Bailout.ProcessingDelaySeconds > 0 then
@@ -177,7 +177,7 @@ function Bailout.buy(actor, contractId)
     end)
     -- Another settle of this contract was running: nothing of this buyout
     -- was recorded, so the charge goes back rather than vanish.
-    if not settled and why == CB.ERR.BUSY then
+    if not settled and why == CH.ERR.BUSY then
         if not deliver(actor.cid, contractId, amount, account, 'bailout_refund') then
             Audit.financial('bailout_refund_stranded', actor.cid, contractId,
                 { amount = amount, account = account, reason = why })
@@ -222,17 +222,17 @@ local function payPremium(contract, amount, account)
             id = id,
             contract_id = contract.id,
             slot = 0,
-            portion = CB.PORTION.OWED,
+            portion = CH.PORTION.OWED,
             owed_to = contract.creator_cid,
             source = account == 'cash' and 'cash' or 'bank',
             amount = amount,
-            state = CB.ESCROW_STATE.HELD,
+            state = CH.ESCROW_STATE.HELD,
         } })
         Storage.queuePending(contract.creator_cid, contract.id, id)
         if Escrow and Escrow.noteWaiting then Escrow.noteWaiting(contract.creator_cid, true) end
     end
     local line = Storage.readEscrowLine(id)
-    if line and line.id == id and line.state == CB.ESCROW_STATE.HELD and Escrow then
+    if line and line.id == id and line.state == CH.ESCROW_STATE.HELD and Escrow then
         Escrow.release(contract.id, contract.creator_cid, { line = id }, 'bailout_premium')
     end
 end
@@ -253,11 +253,11 @@ end
 
 settleUnlocked = function(contractId, amount, targetCid, account, opts)
     local contract = Storage.readContract(contractId)
-    if not contract then return false, CB.ERR.NOT_FOUND end
+    if not contract then return false, CH.ERR.NOT_FOUND end
     -- The queue read this record before another settle finished it and
     -- cleared the queue: nothing is left to settle or to refund.
     if opts and opts.retryable and not contract.bailout_queued_at then
-        return false, CB.ERR.ALREADY_SETTLED
+        return false, CH.ERR.ALREADY_SETTLED
     end
     account = account or contract.bailout_paid_account or 'bank'
 
@@ -269,10 +269,10 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
     -- target a buyout they had been given, and the creator never saw the
     -- premium.
     local ok, err
-    if contract.state == CB.STATE.BAILED_OUT and contract.bailout_queued_at then
+    if contract.state == CH.STATE.BAILED_OUT and contract.bailout_queued_at then
         ok = true
     else
-        ok, err = Contracts.resolve(contractId, CB.STATE.BAILED_OUT, contract.creator_cid, nil, 'bailed_out')
+        ok, err = Contracts.resolve(contractId, CH.STATE.BAILED_OUT, contract.creator_cid, nil, 'bailed_out')
     end
     if not ok then
         -- LOCKED is not a resolution: the contract is mid-claim and will be
@@ -283,7 +283,7 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
         -- Bounded, because a claim interrupted by a crash could leave a
         -- contract completing forever, and the target's money is already
         -- gone. Once the attempts run out it refunds like any other failure.
-        if err == CB.ERR.LOCKED and opts and opts.retryable then
+        if err == CH.ERR.LOCKED and opts and opts.retryable then
             local attempts = (contract.bailout_attempts or 0) + 1
             if attempts < (Config.Bailout.MaxSettleAttempts or 10) then
                 Storage.setBailoutQueue(contract.id, {
@@ -299,7 +299,7 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
                 { amount = amount, attempts = attempts })
         end
 
-        -- The contract resolved some other way first (a hunter completed it
+        -- The contract resolved some other way first (a hitman completed it
         -- during the delay). Refund the premium to the account it came from;
         -- if the target is offline, it is owed rather than lost.
         -- A refusal is the same situation as being offline: the money has
@@ -361,11 +361,11 @@ function Bailout.owe(cid, contractId, amount, account, reason)
         slot = 0,                       -- outside the payout slots: not claimable
         -- Its own portion and an explicit owner, so no general release can
         -- sweep money that is already promised to someone.
-        portion = CB.PORTION.OWED,
+        portion = CH.PORTION.OWED,
         owed_to = cid,
         source = account == 'cash' and 'cash' or 'bank',
         amount = amount,
-        state = CB.ESCROW_STATE.HELD,
+        state = CH.ESCROW_STATE.HELD,
     } })
     Storage.queuePending(cid, contractId, lineId)
     if Escrow and Escrow.noteWaiting then Escrow.noteWaiting(cid, true) end

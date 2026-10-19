@@ -308,12 +308,12 @@ const BOARD = {
   ok: true,
   data: {
     page: 1, pages: 1,
-    settings: { warnCreator: true, warnHunter: true, flagListing: true, minQueryLength: 4 },
+    settings: { warnCreator: true, warnHitman: true, flagListing: true, minQueryLength: 4 },
     contracts: [{
       id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
       reward: { baseline: 5000, bonus: 2500 },
       slots: 2, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 1, huntersMax: 5,
+      hitmenActive: 1, hitmenMax: 5,
       targetName: 'Dana Reyes', targetProtected: false,
       creatorName: 'Vic Marlowe', role: 'public'
     }]
@@ -400,9 +400,9 @@ async function main() {
     });
   })();
 
-  await (async function hunterCard() {
+  await (async function hitmanCard() {
     const accepted = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
-    accepted.role = 'hunter';
+    accepted.role = 'hitman';
     accepted.myAlias = 'Operative #1';
     accepted.kidnapProgress = { elapsed: 5, required: 30, graceLeft: 3000 };
 
@@ -416,7 +416,7 @@ async function main() {
     const tabs = app.document.querySelectorAll('.tab');
     tabs.filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
 
-    it('renders a hunter card with a live countdown without throwing', function () {
+    it('renders a hitman card with a live countdown without throwing', function () {
       truthy(app.view.textContent.indexOf('Dana Reyes') !== -1,
         'the card should render: ' + app.view.textContent);
     });
@@ -426,7 +426,7 @@ async function main() {
     const onMe = {
       id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive', state: 'active',
       reward: { baseline: 5000, bonus: 0 },
-      slots: 1, slotsClaimed: 0, currentSlot: 1, huntersActive: 1, huntersMax: 5,
+      slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 1, hitmenMax: 5,
       targetName: 'Dana Reyes', targetProtected: false, role: 'target',
       bailoutAmount: 15000, bailoutAvailable: true
     };
@@ -466,10 +466,10 @@ async function main() {
       eq(boughtOut.id, 'ct00000001');
     });
 
-    it('never shows the target who placed it or who is hunting them', function () {
+    it('never shows the target who placed it or who is after them', function () {
       const text = app.view.textContent;
       falsy(text.indexOf('Marlowe') !== -1, 'the creator must not be named');
-      falsy(text.indexOf('Operative') !== -1, 'the hunters must not be listed');
+      falsy(text.indexOf('Operative') !== -1, 'the hitmen must not be listed');
     });
   })();
 
@@ -538,7 +538,7 @@ async function main() {
 
     const board = { ok: true, data: {
       page: 1, pages: 1,
-      settings: { warnCreator: true, warnHunter: true, flagListing: true, minQueryLength: 4 },
+      settings: { warnCreator: true, warnHitman: true, flagListing: true, minQueryLength: 4 },
       contracts: [leo]
     } };
 
@@ -591,7 +591,7 @@ async function main() {
     const onMe = {
       id: 'ct00000001', reason: 'x', mode: 'exclusive', state: 'active',
       reward: { baseline: 5000, bonus: 0 },
-      slots: 1, slotsClaimed: 0, currentSlot: 1, huntersActive: 1, huntersMax: 5,
+      slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 1, hitmenMax: 5,
       targetName: 'Dana Reyes', targetProtected: false, role: 'target',
       bailoutAmount: 15000, bailoutAvailable: true
     };
@@ -626,9 +626,9 @@ async function main() {
     });
   })();
 
-  await (async function hunterCanWalkAway() {
+  await (async function hitmanCanWalkAway() {
     const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
-    held.role = 'hunter';
+    held.role = 'hitman';
     held.myAlias = 'Operative #1';
 
     let abandoned = null;
@@ -643,7 +643,7 @@ async function main() {
     const tabs = app.document.querySelectorAll('.tab');
     tabs.filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
 
-    it('offers the hunter a way off the contract', function () {
+    it('offers the hitman a way off the contract', function () {
       const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
         .map(function (n) { return n.textContent; });
       truthy(labels.indexOf('Abandon') !== -1, 'buttons: ' + labels.join(' | '));
@@ -761,7 +761,7 @@ async function main() {
   // broken before. It had no coverage at all.
   await (async function threadView() {
     const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
-    held.role = 'hunter';
+    held.role = 'hitman';
     held.myAlias = 'Operative #1';
 
     let sent = null;
@@ -782,7 +782,7 @@ async function main() {
     const talk = app.view.all().filter(function (n) {
       return n.tagName === 'BUTTON' && n.textContent === 'Message';
     })[0];
-    it('offers a thread from the hunter card', function () { truthy(talk, 'a Message button'); });
+    it('offers a thread from the hitman card', function () { truthy(talk, 'a Message button'); });
     if (talk) { talk.onclick(); await settle(); await settle(); }
 
     it('renders both sides of the conversation', function () {
@@ -853,7 +853,7 @@ async function main() {
 
   await (async function emptyThread() {
     const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
-    held.role = 'hunter';
+    held.role = 'hitman';
     held.myAlias = 'Operative #1';
 
     const app = boot({
@@ -880,7 +880,7 @@ async function main() {
   // the server since the first commit, and nothing rendered any of it.
   await (async function amendmentPanel() {
     const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
-    held.role = 'hunter';
+    held.role = 'hitman';
     held.myAlias = 'Operative #1';
 
     let answered = null;
@@ -942,7 +942,7 @@ async function main() {
      Decline for good and the words were the shared table's. */
   await (async function answeringAClosedProposal() {
     const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
-    held.role = 'hunter';
+    held.role = 'hitman';
     held.myAlias = 'Operative #1';
     let open = true;
     const app = boot({
@@ -974,7 +974,7 @@ async function main() {
 
   await (async function ownProposalIsNotAnswerable() {
     const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
-    held.role = 'hunter';
+    held.role = 'hitman';
     held.myAlias = 'Operative #1';
 
     const app = boot({
@@ -1003,7 +1003,7 @@ async function main() {
 
   await (async function unknownAmendmentKind() {
     const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
-    held.role = 'hunter';
+    held.role = 'hitman';
     held.myAlias = 'Operative #1';
 
     const app = boot({
@@ -1035,7 +1035,7 @@ async function main() {
   // button that reached it, so the whole feature was unreachable.
   await (async function threadCall() {
     const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
-    held.role = 'hunter';
+    held.role = 'hitman';
     held.myAlias = 'Operative #1';
 
     function open(settings, callReply) {
@@ -1054,7 +1054,7 @@ async function main() {
     app.document.querySelectorAll('.tab')
       .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();
 
-    // Open the thread the way a hunter does, from their card.
+    // Open the thread the way a hitman does, from their card.
     const talk = app.view.all().filter(function (n) {
       return n.tagName === 'BUTTON' && n.textContent === 'Message';
     });
@@ -1163,12 +1163,12 @@ async function main() {
     });
   })();
 
-  // A hunter whose hold is slipping had no way to know: the server has always
+  // A hitman whose hold is slipping had no way to know: the server has always
   // sent the reason and the grace budget, and the app rendered neither.
   await (async function countdownShowsItsGrace() {
     function withProgress(progress) {
       const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
-      held.role = 'hunter';
+      held.role = 'hitman';
       held.myAlias = 'Operative #1';
       held.kidnapProgress = progress;
       return boot({
@@ -2051,8 +2051,8 @@ async function main() {
       return {
         id: 'ct0000000' + i, reason: 'Debt ' + i, mode: 'competitive', state: 'active',
         reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
-        huntersActive: 0, huntersMax: 5, targetName: 'Dana ' + i,
-        targetProtected: false, creatorName: 'Vic', role: 'creator', hunters: []
+        hitmenActive: 0, hitmenMax: 5, targetName: 'Dana ' + i,
+        targetProtected: false, creatorName: 'Vic', role: 'creator', hitmen: []
       };
     }
     const own = [contract(1), contract(2), contract(3), contract(4)];
@@ -2425,7 +2425,7 @@ async function main() {
       id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
       reward: { baseline: 5000, bonus: 2500 },
       slots: 1, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 0, huntersMax: 5,
+      hitmenActive: 0, hitmenMax: 5,
       targetName: 'Dana Reyes', targetProtected: false, role: 'creator'
     }], accepted: [], onMe: [] } };
 
@@ -2447,7 +2447,7 @@ async function main() {
     /* A held contract: lines without ids, not editable. "Take back" was
        drawn anyway and only ever said "Nothing ticked". */
     const heldEditor = await openEditor({ rewardBreakdown: { ok: true, data: {
-      editable: false, reason: 'Somebody is hunting this, so it can only be added to.',
+      editable: false, reason: 'A hitman is working this, so it can only be added to.',
       slots: 1, currentSlot: 1,
       lines: [{ slot: 1, portion: 'baseline', source: 'cash', amount: 5000 }]
     } } });
@@ -2469,7 +2469,7 @@ async function main() {
       .filter(function (n) { return n.tagName === 'BUTTON' && n.textContent === 'Take back what I ticked'; })[0];
     if (takeBack) { takeBack.onclick(); }
     await settle(); await settle();
-    it('says a hunter took it, rather than "Not right now."', function () {
+    it('says a hitman took it, rather than "Not right now."', function () {
       truthy(tick && takeBack, 'the editor drew a line and the button');
       truthy(raced.notice().indexOf('Somebody has taken this contract') !== -1,
         'the notice: ' + raced.notice());
@@ -2566,13 +2566,13 @@ async function main() {
         'and the player should be told why nothing happened: ' + empty.notice());
     });
 
-    /* A contract somebody is hunting can be added to but not reduced. The
+    /* A contract somebody is working can be added to but not reduced. The
        server decides that; the page has to show the reason rather than an
        empty list with no explanation. */
     const held = await openEditor({
       rewardBreakdown: { ok: true, data: {
         editable: false,
-        reason: 'Somebody is hunting this. You can add to the reward, but not take from it.',
+        reason: 'A hitman is working this. You can add to the reward, but not take from it.',
         slots: 1, currentSlot: 1,
         lines: [
           { slot: 1, portion: 'baseline', source: 'cash', amount: 5000,
@@ -2582,7 +2582,7 @@ async function main() {
     });
 
     it('says why a reward cannot be reduced, rather than showing nothing', function () {
-      truthy(held.view.textContent.indexOf('Somebody is hunting this') !== -1,
+      truthy(held.view.textContent.indexOf('A hitman is working this') !== -1,
         'the reason should be on screen: ' + held.view.textContent);
     });
 
@@ -2602,7 +2602,7 @@ async function main() {
       const labels = held.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
         .map(function (n) { return n.textContent; });
       truthy(labels.indexOf('Add cash') !== -1,
-        'adding is allowed while somebody hunts it: ' + labels.join(' | '));
+        'adding is allowed while somebody works it: ' + labels.join(' | '));
     });
 
     /* A double tap on the confirm while the first request is in flight. The
@@ -2697,7 +2697,7 @@ async function main() {
       id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
       reward: { baseline: 5000, bonus: 2500 },
       slots: 1, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 1, huntersMax: 5, hunters: [{ alias: 'Grey' }],
+      hitmenActive: 1, hitmenMax: 5, hitmen: [{ alias: 'Grey' }],
       targetName: 'Dana Reyes', role: 'creator',
       deadline: Math.floor(Date.now() / 1000) + 7200
     }], accepted: [], onMe: [] } };
@@ -2757,7 +2757,7 @@ async function main() {
         mine: { ok: true, data: { created: [], accepted: [], onMe: [{
           id: 'ct00000002', target: 'You', reason: 'Unpaid debt',
           state: 'active', role: 'target', mode: 'exclusive',
-          reward: { total: 5000 }, bailoutAmount: 15000, hunters: []
+          reward: { total: 5000 }, bailoutAmount: 15000, hitmen: []
         }] } },
         ledger: LEDGER
       });
@@ -2773,7 +2773,7 @@ async function main() {
     it('does not offer it on the target card either', function () {
       falsy(targetNoInformants.view.all().some(function (n) {
         return n.tagName === 'BUTTON' && n.textContent === 'Buy informant data';
-      }), 'the person being hunted got the same dead button: '
+      }), 'the person being targeted got the same dead button: '
         + targetNoInformants.view.textContent);
     });
 
@@ -2919,18 +2919,18 @@ async function main() {
   })();
 
   /* ---- a creator looking at a contract nobody has taken yet ------------ */
-  await (async function creatorWithNoHunters() {
+  await (async function creatorWithNoHitmen() {
     // The server builds this list as a Lua table, and an empty Lua table
     // crosses to JS as {} rather than []. `{}` is truthy, so a guard of
-    // `contract.hunters && ...` passes and .forEach then throws. A freshly
+    // `contract.hitmen && ...` passes and .forEach then throws. A freshly
     // placed contract is exactly this state.
     const OWN = { ok: true, data: { created: [{
       id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
       reward: { baseline: 5000, bonus: 0 },
       slots: 1, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 0, huntersMax: 5,
+      hitmenActive: 0, hitmenMax: 5,
       targetName: 'Dana Reyes', role: 'creator',
-      hunters: acrossTheWire([]),
+      hitmen: acrossTheWire([]),
       deadline: Math.floor(Date.now() / 1000) + 7200
     }], accepted: [], onMe: [] } };
 
@@ -3056,7 +3056,7 @@ async function main() {
     const OWN = { ok: true, data: { created: [{
       id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
       reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 0, huntersMax: 5, targetName: 'Dana Reyes', role: 'creator',
+      hitmenActive: 0, hitmenMax: 5, targetName: 'Dana Reyes', role: 'creator',
       deadline: Math.floor(Date.now() / 1000) + 7200
     }], accepted: [], onMe: [] } };
 
@@ -3104,12 +3104,12 @@ async function main() {
 
   /* ---- proposing a change you can actually read ----------------------- */
   await (async function proposalsWithContext() {
-    const AS_HUNTER = { ok: true, data: { created: [], accepted: [{
+    const AS_HITMAN = { ok: true, data: { created: [], accepted: [{
       id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'accepted',
       reward: { baseline: 5000, bonus: 2500 },
       slots: 1, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 1, huntersMax: 5,
-      targetName: 'Dana Reyes', role: 'hunter',
+      hitmenActive: 1, hitmenMax: 5,
+      targetName: 'Dana Reyes', role: 'hitman',
       /* 2h05m, not exactly 2h.
        *
        * The assertion below looks for "2h" in what the page draws.
@@ -3127,7 +3127,7 @@ async function main() {
 
     const app = boot({
       list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
-      mine: AS_HUNTER, ledger: LEDGER,
+      mine: AS_HITMAN, ledger: LEDGER,
       amendments: { ok: true, data: [] }
     });
     await settle(); await settle();
@@ -3166,8 +3166,8 @@ async function main() {
       id: 'ct00000002', reason: 'Unpaid debt', mode: 'competitive', state: 'accepted',
       reward: { baseline: 5000, bonus: 2500 },
       slots: 3, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 1, huntersMax: 5,
-      targetName: 'Dana Reyes', role: 'hunter',
+      hitmenActive: 1, hitmenMax: 5,
+      targetName: 'Dana Reyes', role: 'hitman',
       deadline: Math.floor(Date.now() / 1000) + 7200
     }], onMe: [] } };
 
@@ -3413,7 +3413,7 @@ async function main() {
     });
 
     const feeFree = await place({});
-    const feeCharged = await place({ anonymityFees: { creator: 7500, hunter: 0 } });
+    const feeCharged = await place({ anonymityFees: { creator: 7500, hitman: 0 } });
     it('says what placing anonymously costs, where it costs anything', function () {
       truthy(feeCharged.view.textContent.indexOf('$7,500') !== -1,
         'charged 7,500 no screen had shown: ' + feeCharged.view.textContent);
@@ -3438,7 +3438,7 @@ async function main() {
       return { app: app, sent: function () { return accepted; } };
     }
 
-    const priced = await accepting({ anonymityFees: { creator: 0, hunter: 1000 } },
+    const priced = await accepting({ anonymityFees: { creator: 0, hitman: 1000 } },
       { ok: true, data: { myAnonymous: true } });
     it('says what taking one anonymously costs before it is chosen', function () {
       truthy(priced.app.view.textContent.indexOf('$1,000') !== -1,
@@ -3474,7 +3474,7 @@ async function main() {
     unadvised.view.all().filter(function (n) {
       return n.tagName === 'BUTTON' && n.textContent === 'Accept contract';
     })[0].onclick();
-    it('nor warns a hunter that they have been', function () {
+    it('nor warns a hitman that they have been', function () {
       truthy(/sworn officer/.test(unadvised.view.textContent), 'the officer is still flagged');
       falsy(/advised/.test(unadvised.view.textContent), unadvised.view.textContent);
     });
@@ -4005,7 +4005,7 @@ async function main() {
     const MINE_ONE = { ok: true, data: {
       created: [{ id: 'ct00000001', target: 'Dana Reyes', reason: 'Unpaid debt',
                   state: 'active', role: 'creator', mode: 'exclusive',
-                  reward: { total: 5000 }, hunters: [] }],
+                  reward: { total: 5000 }, hitmen: [] }],
       accepted: [], onMe: []
     } };
 
@@ -4196,10 +4196,10 @@ async function main() {
     const CONTRACTS = [
       { id: 'ct00000001', target: 'Dana Reyes', reason: 'Unpaid debt',
         state: 'active', role: 'public', mode: 'competitive',
-        reward: { total: 5000 }, hunters: [], slots: 2, currentSlot: 1 },
+        reward: { total: 5000 }, hitmen: [], slots: 2, currentSlot: 1 },
       { id: 'ct00000002', target: 'Ann Ryder', reason: 'Snitching',
         state: 'active', role: 'public', mode: 'exclusive',
-        reward: { total: 12000 }, hunters: [], targetProtected: true },
+        reward: { total: 12000 }, hitmen: [], targetProtected: true },
     ];
 
     function server() {
@@ -4209,8 +4209,8 @@ async function main() {
                       calls: true, reasonMode: 'freetext', reasonMaxLength: 140,
                       informant: { cost: 25000, account: 'bank', maxPerContract: 2 } } } },
         mine: { ok: true, data: {
-          created: [Object.assign({}, CONTRACTS[0], { role: 'creator', hunters: [] })],
-          accepted: [Object.assign({}, CONTRACTS[1], { role: 'hunter' })],
+          created: [Object.assign({}, CONTRACTS[0], { role: 'creator', hitmen: [] })],
+          accepted: [Object.assign({}, CONTRACTS[1], { role: 'hitman' })],
           onMe: [Object.assign({}, CONTRACTS[0], { role: 'target', id: 'ct00000003',
             bailoutAmount: 15000 })] } },
         ledger: LEDGER,
@@ -4359,7 +4359,7 @@ async function main() {
    * V8 coverage over the UI suite found twenty-four functions in app.js that
    * never execute, and the largest pair by some distance were armKidnap and
    * pollCountdown — the whole "Deliver alive" flow, about fifteen hundred
-   * bytes of it. That is the screen behind a live report: a hunter with a
+   * bytes of it. That is the screen behind a live report: a hitman with a
    * restrained target who cannot work out why the handover will not start.
    *
    * Each refusal the server can give has words written for it here, and
@@ -4367,8 +4367,8 @@ async function main() {
   await (async function liveDelivery() {
     const HELD = {
       id: 'ct00000001', target: 'Dana Reyes', reason: 'Unpaid debt',
-      state: 'accepted', role: 'hunter', mode: 'exclusive',
-      reward: { total: 5000 }, canDeliver: true, hunters: []
+      state: 'accepted', role: 'hitman', mode: 'exclusive',
+      reward: { total: 5000 }, canDeliver: true, hitmen: []
     };
 
     async function onMine(over) {
@@ -4387,13 +4387,13 @@ async function main() {
 
     const offered = await onMine({});
 
-    it('offers the handover on a contract the hunter holds', function () {
+    it('offers the handover on a contract the hitman holds', function () {
       truthy(offered.view.all().some(function (n) {
         return n.tagName === 'BUTTON' && n.textContent === 'Deliver alive';
       }), 'the button the whole flow hangs off: ' + offered.view.textContent);
     });
 
-    /* Every refusal the server can answer with, in the hunter's words. A
+    /* Every refusal the server can answer with, in the hitman's words. A
        code with no sentence here reaches them as "Cannot start the
        handover", which tells somebody standing over a cuffed target
        nothing about what to change. */
@@ -4412,9 +4412,9 @@ async function main() {
       click(app, 'Deliver alive');
       await settle();
       const shown = app.notice();
-      it('explains ' + code + ' in words a hunter can act on', function () {
+      it('explains ' + code + ' in words a hitman can act on', function () {
         truthy(shown.indexOf(words) !== -1,
-          'the refusal reached the hunter as ' + JSON.stringify(shown)
+          'the refusal reached the hitman as ' + JSON.stringify(shown)
           + ', which does not tell them to change anything');
       });
     }
@@ -4430,7 +4430,7 @@ async function main() {
     /* The countdown. The server is polled once a second while a delivery
        runs, and the bar has to move — rendering from the projection's
        snapshot draws the same frozen bar however often it is polled, which
-       is a hunter watching nothing happen for thirty seconds. */
+       is a hitman watching nothing happen for thirty seconds. */
     const running = await onMine({
       armKidnap: { ok: true, data: true },
       kidnapProgress: (function () {
@@ -4461,7 +4461,7 @@ async function main() {
     it('draws how far along the delivery is', function () {
       const shown = running.view.textContent;
       truthy(/1[0-9]?\s*\/\s*30|33%|10/.test(shown) || shown.indexOf('30') !== -1,
-        'the countdown drew nothing a hunter can read: ' + shown);
+        'the countdown drew nothing a hitman can read: ' + shown);
     });
 
     tick.fn(); await settle();
@@ -4529,7 +4529,7 @@ async function main() {
 
     /* How it ended. The countdown disappears the moment a handover ends,
        whichever way, and every ending used to reach the poller as the same
-       "no_handover" — so a hunter who had just been paid was told the
+       "no_handover" — so a hitman who had just been paid was told the
        handover ended and to try again. */
     async function endedWith(ended) {
       const page = await onMine({
@@ -4544,7 +4544,7 @@ async function main() {
     }
 
     const paidPage = await endedWith({ outcome: 'paid' });
-    it('tells a hunter who was paid that they were paid', function () {
+    it('tells a hitman who was paid that they were paid', function () {
       const said = paidPage.notice();
       truthy(said.indexOf('Payment released') !== -1, said);
       falsy(/try again/i.test(said), 'told to try again after being paid: ' + said);
@@ -4561,7 +4561,7 @@ async function main() {
     });
 
     const lostRace = await endedWith({ outcome: 'refused', reason: 'bad_state' });
-    it('tells a hunter refused at the end that it was not paid, and why', function () {
+    it('tells a hitman refused at the end that it was not paid, and why', function () {
       const said = lostRace.notice();
       truthy(said.indexOf('not paid') !== -1, said);
       truthy(said.indexOf('closed') !== -1, said);
@@ -4570,7 +4570,7 @@ async function main() {
 
     /* A full bar is not the ending. A countdown that has run its course
        waits to be paid while another payout on the contract is settled, and
-       stopping the poll there left the hunter with a full bar and no word
+       stopping the poll there left the hitman with a full bar and no word
        of how it ended. */
     const answers = [
       { ok: true, data: { elapsed: 30, required: 30 } },
@@ -4591,7 +4591,7 @@ async function main() {
     });
 
     /* Walking away mid-handover. The poller outlived the abandon, and the
-       server's answer for a delivery on a contract the hunter has left is
+       server's answer for a delivery on a contract the hitman has left is
        that there is none — which the page reads as a failed one. */
     let left = false;
     const leaving = await onMine({
@@ -4610,11 +4610,11 @@ async function main() {
     click(leaving, 'Yes');
     await settle(); await settle();
     if (!leaveTick.cleared) { leaveTick.fn(); await settle(); await settle(); }
-    it('stops watching a handover when the hunter walks away from the contract', function () {
+    it('stops watching a handover when the hitman walks away from the contract', function () {
       truthy(left, 'the abandon was never sent');
-      truthy(leaveTick.cleared, 'still polling a handover on a contract the hunter left');
+      truthy(leaveTick.cleared, 'still polling a handover on a contract the hitman left');
       falsy(/try again/i.test(leaving.notice()),
-        'told a hunter who had walked away to get the target back: ' + leaving.notice());
+        'told a hitman who had walked away to get the target back: ' + leaving.notice());
     });
 
     /* The same, with a poll already in flight when the abandon is sent:
@@ -4640,9 +4640,9 @@ async function main() {
     click(inFlight, 'Yes');
     flightTick.fn();
     await settle(); await settle(); await settle();
-    it('ignores a poll reply that lands after the hunter walked away', function () {
+    it('ignores a poll reply that lands after the hitman walked away', function () {
       falsy(/try again/i.test(inFlight.notice()),
-        'told a hunter who had just walked away to get the target back: ' + inFlight.notice());
+        'told a hitman who had just walked away to get the target back: ' + inFlight.notice());
     });
     void heldPoll;
 
@@ -4668,7 +4668,7 @@ async function main() {
     const cooling = await onMine({ armKidnap: { ok: false, err: 'handover_cooldown' } });
     click(cooling, 'Deliver alive');
     await settle();
-    it('tells a hunter to wait out a failed handover, not "not right now"', function () {
+    it('tells a hitman to wait out a failed handover, not "not right now"', function () {
       truthy(cooling.notice().indexOf('minute') !== -1, cooling.notice());
     });
   })();
@@ -4696,7 +4696,7 @@ async function main() {
         mine: { ok: true, data: { created: [{
           id: 'ct00000001', target: 'Dana Reyes', reason: 'Unpaid debt',
           state: 'accepted', role: 'creator', mode: 'exclusive',
-          reward: { total: 5000 }, hunters: [{ alias: 'Operative #4' }]
+          reward: { total: 5000 }, hitmen: [{ alias: 'Operative #4' }]
         }], accepted: [], onMe: [] } },
         ledger: LEDGER,
         // The handler returns openFor()'s list directly — not wrapped in
@@ -4730,7 +4730,7 @@ async function main() {
    * Every journey here is a reply the server should never send, and every
    * one of them used to take the render down inside the coalesced redraw —
    * where nothing could see it. The app drew a blank tab, or worse told a
-   * hunted player they were safe, and the suite read both as an empty
+   * targeted player they were safe, and the suite read both as an empty
    * section and passed. */
   await (async function hostileReplies() {
     // 1. An ok:true carrying no payload at all. This is also what the
@@ -4799,7 +4799,7 @@ async function main() {
       it('a string payload does not become an all-clear', function () {
         drewCleanly(app, 'the onme tab');
         falsy(shown.indexOf('Nobody is looking for you') !== -1,
-          'told a player nobody is hunting them off an unreadable reply: ' + shown);
+          'told a player nobody is after them off an unreadable reply: ' + shown);
       });
     }
 
@@ -4984,7 +4984,7 @@ async function main() {
     it('says what accepting costs, on the listing', function () {
       const shown = app.view.textContent;
       truthy(shown.indexOf('$4,000') !== -1,
-        'a hunter must not learn the stake from their bank balance: ' + shown);
+        'a hitman must not learn the stake from their bank balance: ' + shown);
       truthy(shown.toLowerCase().indexOf('stake') !== -1, shown);
     });
 
@@ -5106,8 +5106,8 @@ async function main() {
     function board(active, max, mode) {
       const b = JSON.parse(JSON.stringify(BOARD));
       b.data.contracts[0].mode = mode || 'competitive';
-      b.data.contracts[0].huntersActive = active;
-      b.data.contracts[0].huntersMax = max;
+      b.data.contracts[0].hitmenActive = active;
+      b.data.contracts[0].hitmenMax = max;
       return b;
     }
 
@@ -5117,7 +5117,7 @@ async function main() {
     it('says how many operatives are on it and how many it takes', function () {
       const shown = room.view.textContent;
       truthy(shown.indexOf('2 of 5 operatives') !== -1,
-        'a count with no cap beside it does not tell a hunter whether they '
+        'a count with no cap beside it does not tell a hitman whether they '
         + 'can join: ' + shown);
     });
 
@@ -5149,7 +5149,7 @@ async function main() {
     click(refused, 'Under my name');
     await settle(); await settle();
 
-    it('does not tell a hunter holding nothing that they hold too much', function () {
+    it('does not tell a hitman holding nothing that they hold too much', function () {
       const said = refused.notice();
       falsy(said.indexOf('holding too many') !== -1,
         'that is a rule about the caller, and this one is about the contract: '
@@ -5187,20 +5187,20 @@ async function main() {
       truthy(ownCard.view.textContent.indexOf('Yours') !== -1, ownCard.view.textContent);
     });
 
-    const heldCard = await boardWith({ role: 'hunter' });
-    it('does not offer a hunter a contract they already hold', function () {
+    const heldCard = await boardWith({ role: 'hitman' });
+    it('does not offer a hitman a contract they already hold', function () {
       falsy(offersAccept(heldCard));
       truthy(heldCard.view.textContent.indexOf('already on this one') !== -1,
         heldCard.view.textContent);
     });
 
-    const takenCard = await boardWith({ mode: 'exclusive', huntersActive: 1, huntersMax: 5 });
+    const takenCard = await boardWith({ mode: 'exclusive', hitmenActive: 1, hitmenMax: 5 });
     it('says an exclusive contract somebody holds is taken', function () {
       falsy(offersAccept(takenCard));
       truthy(takenCard.view.textContent.indexOf('Taken') !== -1, takenCard.view.textContent);
     });
 
-    const openCard = await boardWith({ role: 'public', mode: 'exclusive', huntersActive: 0 });
+    const openCard = await boardWith({ role: 'public', mode: 'exclusive', hitmenActive: 0 });
     it('still offers Accept on a contract that can be taken', function () {
       truthy(offersAccept(openCard), 'the fix closed the door it was meant to label');
     });
@@ -5308,9 +5308,9 @@ async function main() {
       id: 'ct00000001', targetName: 'Dana Reyes', reason: 'Unpaid debt',
       mode: 'competitive', state: 'accepted', role: 'creator',
       reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 1, huntersMax: 5, penaltyAmount: 0,
+      hitmenActive: 1, hitmenMax: 5, penaltyAmount: 0,
       // Anonymous: the only operative a client's informant can name.
-      hunters: acrossTheWire([{ alias: 'Operative #1', claims: 0,
+      hitmen: acrossTheWire([{ alias: 'Operative #1', claims: 0,
         record: { standing: 'Unproven' } }])
     }], accepted: [], onMe: [] } };
 
@@ -5330,7 +5330,7 @@ async function main() {
     /* Every operative on the card already named: the client's purchase
        can only draw an anonymous one, so it bought a certain "nobody". */
     const allNamed = JSON.parse(JSON.stringify(OWN));
-    allNamed.data.created[0].hunters = [{ alias: 'Operative #1', name: 'Rook Ash',
+    allNamed.data.created[0].hitmen = [{ alias: 'Operative #1', name: 'Rook Ash',
       claims: 0, record: { standing: 'Unproven' } }];
     const namedCard = boot({
       list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {
@@ -5361,15 +5361,15 @@ async function main() {
    * The one flow that goes out of the app, into lb-phone's camera and back.
    * Every step of it used to be silent. */
   await (async function verificationPhoto() {
-    /* A contract this player is hunting, shaped the way the projection
-       sends one: accepted, role hunter, on the Mine tab. */
-    function mineWithAHunt() {
+    /* A contract this player is working, shaped the way the projection
+       sends one: accepted, role hitman, on the Mine tab. */
+    function mineWithAJob() {
       return { ok: true, data: { created: [], accepted: [{
         id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive',
         state: 'accepted', reward: { baseline: 5000 },
         slots: 1, slotsClaimed: 0, currentSlot: 1,
-        huntersActive: 1, huntersMax: 1,
-        targetName: 'Dana Reyes', role: 'hunter',
+        hitmenActive: 1, hitmenMax: 1,
+        targetName: 'Dana Reyes', role: 'hitman',
         deadline: Math.floor(Date.now() / 1000) + 7200
       }], onMe: [] } };
     }
@@ -5380,7 +5380,7 @@ async function main() {
       let answer;
       const held = new Promise(function (resolve) { answer = resolve; });
       const app = boot({
-        mine: mineWithAHunt(),
+        mine: mineWithAJob(),
         takeVerificationPhoto: function () { return held; }
       });
       await settle(); await settle();
@@ -5429,8 +5429,8 @@ async function main() {
 
     await (async function tellsTheTruthAboutAQueuedPayout() {
       const app = boot({
-        mine: mineWithAHunt(),
-        // Verified, but the hunter's pockets were full: the server queued
+        mine: mineWithAJob(),
+        // Verified, but the hitman's pockets were full: the server queued
         // part of the reward instead of handing it over.
         takeVerificationPhoto: { ok: true, data: { settled: 1, pending: 2 } }
       });
@@ -5443,7 +5443,7 @@ async function main() {
       it('does not claim a payment that is still being held', function () {
         const said = app.notice();
         falsy(said.indexOf('Payment released') !== -1,
-          'the hunter stood there with nothing and no reason to think '
+          'the hitman stood there with nothing and no reason to think '
           + 'anything was owed: ' + said);
         truthy(said.indexOf('held for you') !== -1, said);
       });
@@ -5454,12 +5454,12 @@ async function main() {
         { err: 'camera_unavailable', expect: 'cannot open the camera' },
         // Said a full proof window after the camera opened, by which time
         // the server's claim on the kill has always run out: a "try again"
-        // here sends the hunter straight into "No kill ... waiting for proof".
+        // here sends the hitman straight into "No kill ... waiting for proof".
         { err: 'camera_no_answer', expect: 'never came back',
           forbid: ['try again', 'still yours'] }
       ]) {
         const app = boot({
-          mine: mineWithAHunt(),
+          mine: mineWithAJob(),
           takeVerificationPhoto: { ok: false, err: each.err }
         });
         await settle(); await settle();
@@ -5469,9 +5469,9 @@ async function main() {
         await settle(); await settle();
 
         const said = app.notice();
-        it('puts ' + each.err + ' into words a hunter can act on', function () {
+        it('puts ' + each.err + ' into words a hitman can act on', function () {
           truthy(said.indexOf(each.expect) !== -1,
-            'answered "' + said + '" — a hunter with a confirmed kill and a '
+            'answered "' + said + '" — a hitman with a confirmed kill and a '
             + 'live contract needs to know which of the two happened');
           falsy(said.indexOf('Something went wrong') !== -1, said);
           (each.forbid || []).forEach(function (words) {
@@ -5490,7 +5490,7 @@ async function main() {
         id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive',
         state: 'active', reward: { baseline: 5000 },
         slots: 1, slotsClaimed: 0, currentSlot: 1,
-        huntersActive: 0, huntersMax: 1, hunters: [],
+        hitmenActive: 0, hitmenMax: 1, hitmen: [],
         targetName: 'Dana Reyes', role: 'creator',
         deadline: Math.floor(Date.now() / 1000) + 7200
       }], accepted: [], onMe: [] } },
@@ -5538,18 +5538,18 @@ async function main() {
 
   /* ---------- a handover that ends ---------- */
   await (async function handoverThatEnds() {
-    const hunt = { ok: true, data: { created: [], accepted: [{
+    const job = { ok: true, data: { created: [], accepted: [{
       id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive',
       state: 'accepted', reward: { baseline: 5000 },
       slots: 1, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 1, huntersMax: 1,
-      targetName: 'Dana Reyes', role: 'hunter',
+      hitmenActive: 1, hitmenMax: 1,
+      targetName: 'Dana Reyes', role: 'hitman',
       deadline: Math.floor(Date.now() / 1000) + 7200
     }], onMe: [] } };
 
     let progress = { ok: true, data: { elapsed: 4, required: 30 } };
     const app = boot({
-      mine: hunt,
+      mine: job,
       armKidnap: { ok: true, data: { armed: true } },
       kidnapProgress: function () { return progress; }
     });
@@ -5592,7 +5592,7 @@ async function main() {
     it('says the handover ended rather than freezing the bar', function () {
       const said = app.notice();
       truthy(said.indexOf('handover ended') !== -1,
-        'a delivery that simply stops moving is the one thing a hunter '
+        'a delivery that simply stops moving is the one thing a hitman '
         + 'holding a target cannot interpret: "' + said + '"');
     });
     it('takes the dead countdown off the screen', function () {
@@ -5606,7 +5606,7 @@ async function main() {
       id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive',
       state: 'active', reward: { baseline: 5000 },
       slots: 1, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 1, huntersMax: 5, hunters: [{ alias: 'Grey' }],
+      hitmenActive: 1, hitmenMax: 5, hitmen: [{ alias: 'Grey' }],
       targetName: 'Dana Reyes', role: 'creator',
       /* 90m30s, not exactly 90m — the same trap as the fixture above.
        *
@@ -5702,9 +5702,9 @@ async function main() {
     /* A second proposal on one contract was refused as "You are holding too
        many contracts", the shared words for a different rule. */
     await (async function proposalLimitInItsOwnWords() {
-      const hunted = Object.assign({}, own, { role: 'hunter', hunters: undefined });
+      const taken = Object.assign({}, own, { role: 'hitman', hitmen: undefined });
       const app = boot({
-        mine: { ok: true, data: { created: [], accepted: [hunted], onMe: [] } },
+        mine: { ok: true, data: { created: [], accepted: [taken], onMe: [] } },
         amendments: { ok: true, data: [] },
         propose: { ok: false, err: 'limit_reached' }
       });
@@ -5724,8 +5724,8 @@ async function main() {
     /* A creator could only ever reach the first operative's thread: the
        page opened threads[0] and dropped the rest. */
     await (async function everyOperativeIsReachable() {
-      const two = Object.assign({}, own, { hunters: [{ alias: 'Operative #1' }, { alias: 'Operative #2' }],
-        huntersActive: 2 });
+      const two = Object.assign({}, own, { hitmen: [{ alias: 'Operative #1' }, { alias: 'Operative #2' }],
+        hitmenActive: 2 });
       const app = boot({
         mine: { ok: true, data: { created: [two], accepted: [], onMe: [] } },
         threads: { ok: true, data: [
@@ -5786,8 +5786,8 @@ async function main() {
        message written to one was waiting in the next one opened, a tap away
        from reaching the wrong person. */
     await (async function aDraftStaysWithItsOperative() {
-      const two = Object.assign({}, own, { hunters: [{ alias: 'Operative #1' }, { alias: 'Operative #2' }],
-        huntersActive: 2 });
+      const two = Object.assign({}, own, { hitmen: [{ alias: 'Operative #1' }, { alias: 'Operative #2' }],
+        hitmenActive: 2 });
       const app = boot({
         mine: { ok: true, data: { created: [two], accepted: [], onMe: [] } },
         threads: { ok: true, data: [
@@ -5835,9 +5835,9 @@ async function main() {
     await (async function noMessagingWhereThereIsNone() {
       const list = JSON.parse(JSON.stringify(BOARD));
       list.data.settings.relay = false;
-      const hunted = Object.assign({}, own, { role: 'hunter', hunters: undefined });
+      const taken = Object.assign({}, own, { role: 'hitman', hitmen: undefined });
       const app = boot({ list: list,
-        mine: { ok: true, data: { created: [own], accepted: [hunted], onMe: [] } } });
+        mine: { ok: true, data: { created: [own], accepted: [taken], onMe: [] } } });
       await settle(); await settle();
       tab(app, 'mine');
       await settle();
@@ -5853,7 +5853,7 @@ async function main() {
     /* With no deadline, "runs out in no set deadline" — and an option to
        shorten a deadline that does not exist. */
     await (async function noDeadlineReadsRight() {
-      const open = Object.assign({}, own, { role: 'hunter', hunters: undefined, deadline: undefined });
+      const open = Object.assign({}, own, { role: 'hitman', hitmen: undefined, deadline: undefined });
       const app = boot({
         mine: { ok: true, data: { created: [], accepted: [open], onMe: [] } },
         amendments: { ok: true, data: [] }
@@ -5880,7 +5880,7 @@ async function main() {
        figure that can only be refused. */
     await (async function shortenStopsShortOfTheFloor() {
       function heldWith(seconds) {
-        return Object.assign({}, own, { role: 'hunter', hunters: undefined,
+        return Object.assign({}, own, { role: 'hitman', hitmen: undefined,
           deadline: Math.floor(Date.now() / 1000) + seconds });
       }
       const app = boot({
@@ -5918,7 +5918,7 @@ async function main() {
 
     /* A row that names no client drew an empty pill. */
     await (async function noEmptyChips() {
-      const nameless = Object.assign({}, own, { role: 'target', hunters: undefined,
+      const nameless = Object.assign({}, own, { role: 'target', hitmen: undefined,
         creatorName: undefined, creatorAnonymous: undefined });
       const app = boot({ mine: { ok: true, data: { created: [], accepted: [], onMe: [nameless] } } });
       await settle(); await settle();
@@ -5961,18 +5961,18 @@ async function main() {
 
   /* ---------- refusals that mean something else here ---------- */
   await (async function refusalsWordedForThisPath() {
-    const hunt = { ok: true, data: { created: [], accepted: [{
+    const job = { ok: true, data: { created: [], accepted: [{
       id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive',
       state: 'accepted', reward: { baseline: 5000 },
       slots: 1, slotsClaimed: 0, currentSlot: 1,
-      huntersActive: 1, huntersMax: 1,
-      targetName: 'Dana Reyes', role: 'hunter',
+      hitmenActive: 1, hitmenMax: 1,
+      targetName: 'Dana Reyes', role: 'hitman',
       deadline: Math.floor(Date.now() / 1000) + 7500
     }], onMe: [] } };
 
     await (async function protectedOnTheKillPath() {
       const app = boot({
-        mine: hunt,
+        mine: job,
         takeVerificationPhoto: { ok: false, err: 'target_protected' }
       });
       await settle(); await settle();
@@ -5981,13 +5981,13 @@ async function main() {
       click(app, 'Verify kill');
       await settle(); await settle();
 
-      it('tells a hunter over a body why the kill did not count', function () {
+      it('tells a hitman over a body why the kill did not count', function () {
         const said = app.notice();
         // The shared table words this code for the CREATION path, which is a
-        // rule about placing contracts on people — not something a hunter
+        // rule about placing contracts on people — not something a hitman
         // standing over a body they just photographed has done.
         falsy(said.indexOf('cannot be listed') !== -1,
-          'a hunter was told about a rule for listing contracts: ' + said);
+          'a hitman was told about a rule for listing contracts: ' + said);
         truthy(said.indexOf('just got up') !== -1, said);
         truthy(said.indexOf('try again') !== -1,
           'and that the kill is not lost: ' + said);
@@ -5999,7 +5999,7 @@ async function main() {
         id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive',
         state: 'active', reward: { baseline: 5000 },
         slots: 1, slotsClaimed: 0, currentSlot: 1,
-        huntersActive: 0, huntersMax: 5, hunters: [],
+        hitmenActive: 0, hitmenMax: 5, hitmen: [],
         targetName: 'Dana Reyes', role: 'creator',
         deadline: Math.floor(Date.now() / 1000) + 7500
       }], accepted: [], onMe: [] } };
@@ -6057,8 +6057,8 @@ async function main() {
           id: 'ct00000001', reason: 'Unpaid debt', mode: 'exclusive',
           state: 'accepted', reward: { baseline: 5000 },
           slots: 1, slotsClaimed: 0, currentSlot: 1,
-          huntersActive: 1, huntersMax: 1,
-          targetName: 'Dana Reyes', role: 'hunter',
+          hitmenActive: 1, hitmenMax: 1,
+          targetName: 'Dana Reyes', role: 'hitman',
           deadline: Math.floor(Date.now() / 1000) + 7200
         }], onMe: [] } },
         readThread: { ok: true, data: [] },
@@ -6351,7 +6351,7 @@ async function main() {
 
   /* ---------- the page walked as each role ----------------------------
 
-     Found by walking every tab as creator, hunter, target and a player with
+     Found by walking every tab as creator, hitman, target and a player with
      nothing, against the shapes the server really sends. Each is something
      the page did that a player would act on, and each fails on the page as
      it was. */
@@ -6361,10 +6361,10 @@ async function main() {
       return Object.assign({
         id: 'ct00000009', reason: 'Owes money', mode: 'competitive', state: 'accepted',
         reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
-        huntersActive: 1, huntersMax: 5, targetName: 'Dana Reyes', targetProtected: false,
+        hitmenActive: 1, hitmenMax: 5, targetName: 'Dana Reyes', targetProtected: false,
         creatorName: 'Vic Marlowe', role: 'creator', deadline: nowSeconds() + 3 * 3600,
         penaltyAmount: 0,
-        hunters: [{ alias: 'Operative #1', claims: 0, record: { standing: 'Unproven' } }]
+        hitmen: [{ alias: 'Operative #1', claims: 0, record: { standing: 'Unproven' } }]
       }, extra || {});
     }
     function boardWith(settings) {
@@ -6429,7 +6429,7 @@ async function main() {
       const sent = [];
       const app = boot({
         list: boardWith(), ledger: LEDGER,
-        mine: { ok: true, data: { created: [placedCard({ huntersActive: 2, hunters: [
+        mine: { ok: true, data: { created: [placedCard({ hitmenActive: 2, hitmen: [
           { alias: 'Operative #1', claims: 0, record: { standing: 'Unproven' } },
           { alias: 'Operative #2', claims: 0, record: { standing: 'Unproven' } }] })],
           accepted: [], onMe: [] } },
@@ -6493,8 +6493,8 @@ async function main() {
     await (async function messageBoxFollowsTheServer() {
       const app = boot({
         list: boardWith({ messageMaxLength: 90 }), ledger: LEDGER,
-        mine: { ok: true, data: { created: [], accepted: [placedCard({ role: 'hunter',
-          hunters: undefined, myAlias: 'Operative #1' })], onMe: [] } },
+        mine: { ok: true, data: { created: [], accepted: [placedCard({ role: 'hitman',
+          hitmen: undefined, myAlias: 'Operative #1' })], onMe: [] } },
         amendments: { ok: true, data: [] },
         readThread: { ok: true, data: [] }
       });
@@ -6514,8 +6514,8 @@ async function main() {
       let open = true;
       const app = boot({
         list: boardWith(), ledger: LEDGER,
-        mine: { ok: true, data: { created: [], accepted: [placedCard({ role: 'hunter',
-          hunters: undefined, myAlias: 'Operative #1' })], onMe: [] } },
+        mine: { ok: true, data: { created: [], accepted: [placedCard({ role: 'hitman',
+          hitmen: undefined, myAlias: 'Operative #1' })], onMe: [] } },
         amendments: { ok: true, data: [] },
         readThread: function () {
           return open ? { ok: true, data: [] } : { ok: false, err: 'already_settled' };
@@ -6544,7 +6544,7 @@ async function main() {
        contract with most of a day left down to three hours. */
     await (async function editLeavesTheDeadlineAlone() {
       let revised = null;
-      const card = placedCard({ state: 'active', huntersActive: 0, hunters: [],
+      const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [],
         deadline: nowSeconds() + 20 * 3600 });
       const app = boot({
         list: boardWith({ reasonMode: 'freetext' }), ledger: LEDGER,
@@ -6578,7 +6578,7 @@ async function main() {
        and the deadline stayed at ten minutes. */
     await (async function editSetsTheRoundedFigure() {
       let revised = null;
-      const card = placedCard({ state: 'active', huntersActive: 0, hunters: [],
+      const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [],
         deadline: nowSeconds() + 10 * 60 });
       const app = boot({
         list: boardWith({ reasonMode: 'freetext' }), ledger: LEDGER,
@@ -6606,7 +6606,7 @@ async function main() {
     // reason with the first preset, because the picker opened on nothing.
     await (async function editKeepsThePresetReason() {
       let revised = null;
-      const card = placedCard({ state: 'active', huntersActive: 0, hunters: [],
+      const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [],
         reason: 'Snitching', deadline: nowSeconds() + 2 * 3600 });
       const app = boot({
         list: boardWith({ reasonMode: 'preset',
@@ -6633,10 +6633,10 @@ async function main() {
     /* A proposal on a contract nobody holds. The creator's own answer is
        the one that applies it, and the page drew it as "Waiting to be
        applied." with nothing to press — so it lapsed, held the one open
-       slot, and was then put to the next hunter to accept. */
+       slot, and was then put to the next hitman to accept. */
     await (async function untakenProposalApplies() {
       const calls = [];
-      const card = placedCard({ state: 'active', huntersActive: 0, hunters: [], slots: 2 });
+      const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [], slots: 2 });
       const app = boot({
         list: boardWith(), ledger: LEDGER,
         mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
@@ -6677,7 +6677,7 @@ async function main() {
     // walked away — offers the answer that applies it.
     await (async function strandedProposalCanBeApplied() {
       let answered = null;
-      const card = placedCard({ state: 'active', huntersActive: 0, hunters: [] });
+      const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [] });
       const app = boot({
         list: boardWith(), ledger: LEDGER,
         mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
@@ -6706,7 +6706,7 @@ async function main() {
       const app = boot({
         list: boardWith({ amendments: false }), ledger: LEDGER,
         mine: { ok: true, data: { created: [placedCard()], accepted: [placedCard({
-          id: 'ct00000010', role: 'hunter', hunters: undefined })], onMe: [] } },
+          id: 'ct00000010', role: 'hitman', hitmen: undefined })], onMe: [] } },
         amendments: { ok: true, data: [] }
       });
       await settle(); await settle(); await settle();
@@ -6785,7 +6785,7 @@ async function main() {
 
     // Withdrawing a contract whose refund would not all fit.
     await (async function withdrawSaysWhatIsWaiting() {
-      const card = placedCard({ state: 'active', huntersActive: 0, hunters: [] });
+      const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [] });
       const app = boot({
         list: boardWith(), ledger: LEDGER,
         mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
@@ -6804,7 +6804,7 @@ async function main() {
 
     /* The poll that lands while a finished handover is being paid. It used
        to stop the poller at a full bar — the one place the outcome is read
-       — so a hunter who had been paid was never told. */
+       — so a hitman who had been paid was never told. */
     await (async function paidHandoverIsReported() {
       const replies = [
         { ok: true, data: { elapsed: 29, required: 30, graceLeft: 3000, graceTotal: 3000 } },
@@ -6813,8 +6813,8 @@ async function main() {
       ];
       const app = boot({
         list: boardWith(), ledger: LEDGER,
-        mine: { ok: true, data: { created: [], accepted: [placedCard({ role: 'hunter',
-          hunters: undefined })], onMe: [] } },
+        mine: { ok: true, data: { created: [], accepted: [placedCard({ role: 'hitman',
+          hitmen: undefined })], onMe: [] } },
         amendments: { ok: true, data: [] },
         armKidnap: { ok: true, data: { armed: true } },
         kidnapProgress: function () { return replies.shift() || { ok: false, err: 'no_handover' }; }
@@ -6831,7 +6831,7 @@ async function main() {
         await settle(); await settle();
       }
 
-      it('tells a hunter who was paid that they were paid', function () {
+      it('tells a hitman who was paid that they were paid', function () {
         truthy(app.notice().indexOf('Delivered') !== -1,
           'the poller stopped at a full bar and never heard how it ended: '
           + app.notice());
@@ -6861,7 +6861,7 @@ async function main() {
   /* A notice's timer clears that notice and nothing newer. */
   await (async function aNoticeOutlivesAnOlderTimer() {
     const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
-    held.role = 'hunter';
+    held.role = 'hitman';
     let calls = 0;
     const app = boot({
       list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
@@ -6893,7 +6893,7 @@ async function main() {
      push cost a full refresh; a re-read took the keyboard out of the box. */
   await (async function threadsAndLateReplies() {
     const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
-    held.role = 'hunter';
+    held.role = 'hitman';
     held.myAlias = 'Operative #1';
 
     // On screen, not merely registered: the shim keeps a detached node

@@ -257,7 +257,7 @@ describe('what a player doing ordinary things spends', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE,
+            mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         return s, f, c
@@ -280,7 +280,7 @@ describe('what a player doing ordinary things spends', function()
 
         local answer = call('cancel', 1, { id = c.id })
         truthy(answer, 'cancelling produced no reply at all')
-        truthy(answer.err ~= CB.ERR.RATE_LIMITED,
+        truthy(answer.err ~= CH.ERR.RATE_LIMITED,
             'cancelling a contract right after opening the app was rate limited')
         truthy(answer.ok, 'cancelling a own contract failed: ' .. tostring(answer.err))
     end)
@@ -302,7 +302,7 @@ describe('what a player doing ordinary things spends', function()
 
         local second = call('informant', 1, { id = c.id })
         truthy(second, 'and answer again')
-        eq(second.err, CB.ERR.RATE_LIMITED,
+        eq(second.err, CH.ERR.RATE_LIMITED,
             'a second purchase inside the five-minute window has to be refused')
         truthy(second.data and second.data.retryAfter and second.data.retryAfter > 0,
             'a refusal a player will hit within seconds has to carry the '

@@ -61,14 +61,14 @@ local function audit(store)
 
         -- 1. Every contract is in a state the enum names.
         local legal = false
-        for _, state in pairs(CB.STATE) do if c.state == state then legal = true end end
+        for _, state in pairs(CH.STATE) do if c.state == state then legal = true end end
         if not legal then note('unknown contract state', tostring(c.state)) end
 
         -- 2. A contract always names a creator and a target.
         if not c.creator_cid or c.creator_cid == '' then note('contract with no creator', c.id) end
         if not c.target_cid or c.target_cid == '' then note('contract with no target', c.id) end
 
-        -- 3. Nobody hunts themselves, and nobody is their own target.
+        -- 3. Nobody takes a contract on themselves, and nobody is their own target.
         if c.creator_cid == c.target_cid then note('creator is the target', c.id) end
     end
 
@@ -77,7 +77,7 @@ local function audit(store)
         for _, l in ipairs(lines) do
             -- 4. Every escrow line is in a state the enum names.
             local legal = false
-            for _, state in pairs(CB.ESCROW_STATE) do if l.state == state then legal = true end end
+            for _, state in pairs(CH.ESCROW_STATE) do if l.state == state then legal = true end end
             if not legal then note('unknown escrow state', tostring(l.state)) end
 
             -- 5. Amounts are never negative.
@@ -85,7 +85,7 @@ local function audit(store)
             if (l.quantity or 0) < 0 then note('negative escrow quantity', tostring(l.id)) end
 
             -- 6. A settled line names who it settled to.
-            if l.state == CB.ESCROW_STATE.SETTLED and not l.settled_to then
+            if l.state == CH.ESCROW_STATE.SETTLED and not l.settled_to then
                 note('settled to nobody', tostring(l.id))
             end
 
@@ -96,11 +96,11 @@ local function audit(store)
 
         end
 
-        -- 9. A hunter row always points at a contract that exists.
-        local hunters = pcall(store.readHunters, c.id) and store.readHunters(c.id) or {}
-        for _, h in ipairs(hunters) do
-            if h.contract_id ~= c.id then note('hunter row on the wrong contract', tostring(h.id)) end
-            if h.hunter_cid == c.target_cid then note('the target is hunting themselves', c.id) end
+        -- 9. A hitman row always points at a contract that exists.
+        local hitmen = pcall(store.readHitmen, c.id) and store.readHitmen(c.id) or {}
+        for _, h in ipairs(hitmen) do
+            if h.contract_id ~= c.id then note('hitman row on the wrong contract', tostring(h.id)) end
+            if h.hitman_cid == c.target_cid then note('the target is on their own contract', c.id) end
         end
     end
 end
@@ -116,7 +116,7 @@ local function auditAtRest(store)
     local ok, contracts = pcall(store.allContracts)
     if not ok or type(contracts) ~= 'table' then return end
     for _, c in ipairs(contracts) do
-        if CB.TERMINAL[c.state] then
+        if CH.TERMINAL[c.state] then
             local lines = pcall(store.readEscrow, c.id) and store.readEscrow(c.id) or {}
             for _, l in ipairs(lines) do
                 -- Held is legitimate when the line is owed to somebody
@@ -125,12 +125,12 @@ local function auditAtRest(store)
                 -- for them to come back. What must never happen is a held
                 -- line on a closed contract that is owed to nobody — that
                 -- is money with no claimant and no way out.
-                if l.state == CB.ESCROW_STATE.HELD and not l.owed_to then
+                if l.state == CH.ESCROW_STATE.HELD and not l.owed_to then
                     note('escrow stranded on a closed contract',
                         c.state .. ' ' .. tostring(l.id))
                 end
                 -- Mid-release at rest is a settle that never finished.
-                if l.state == CB.ESCROW_STATE.RELEASING then
+                if l.state == CH.ESCROW_STATE.RELEASING then
                     note('escrow left mid-release on a closed contract',
                         c.state .. ' ' .. tostring(l.id))
                 end
@@ -145,8 +145,8 @@ local watched = {}
 --- suite happens to be pointed.
 local WRITES = {
     'writeContract', 'writeEscrow', 'claimEscrowLine', 'settleEscrowLine',
-    'setEscrowAmount', 'compareSetContractState', 'advanceSlot', 'addHunter',
-    'updateHunter',
+    'setEscrowAmount', 'compareSetContractState', 'advanceSlot', 'addHitman',
+    'updateHitman',
 }
 
 local function monitor(store, name)

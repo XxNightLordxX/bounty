@@ -13,7 +13,7 @@ local db, dirty, lastFlush, seq = nil, false, 0, 0
 local resource = GetCurrentResourceName and GetCurrentResourceName() or 'crimson-hitman'
 
 local EMPTY = {
-    contracts = {}, escrow = {}, hunters = {}, amendments = {},
+    contracts = {}, escrow = {}, hitmen = {}, amendments = {},
     messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, reveals = {}, seq = 0,
 }
 
@@ -22,7 +22,7 @@ local EMPTY = {
 --- The store used to be re-serialised and rewritten whole on every financial
 --- write. With a few thousand contracts that is a multi-megabyte write every
 --- time a coin moves. Everything a contract owns — its row, its escrow, its
---- hunters, its amendments, its messages — lives in one file per contract,
+--- hitmen, its amendments, its messages — lives in one file per contract,
 --- and only the contracts that actually changed are written.
 local dirtyShards = {}
 local indexDirty = false
@@ -69,14 +69,14 @@ end
 local function shardOf(contractId)
     local shard = {
         contract = db.contracts[contractId],
-        escrow = {}, hunters = {}, amendments = {}, messages = {},
+        escrow = {}, hitmen = {}, amendments = {}, messages = {},
     }
 
     for id, line in pairs(db.escrow) do
         if line.contract_id == contractId then shard.escrow[id] = line end
     end
-    for id, hunter in pairs(db.hunters) do
-        if hunter.contract_id == contractId then shard.hunters[id] = hunter end
+    for id, hitman in pairs(db.hitmen) do
+        if hitman.contract_id == contractId then shard.hitmen[id] = hitman end
     end
     for id, amendment in pairs(db.amendments) do
         if amendment.contract_id == contractId then shard.amendments[id] = amendment end
@@ -97,7 +97,7 @@ local function absorb(shard)
         db.contracts[shard.contract.id] = shard.contract
     end
     for id, line in pairs(shard.escrow or {}) do db.escrow[id] = line end
-    for id, hunter in pairs(shard.hunters or {}) do db.hunters[id] = hunter end
+    for id, hitman in pairs(shard.hitmen or {}) do db.hitmen[id] = hitman end
     for id, amendment in pairs(shard.amendments or {}) do db.amendments[id] = amendment end
     for i = 1, #(shard.messages or {}) do
         db.messages[#db.messages + 1] = shard.messages[i]
@@ -533,8 +533,8 @@ function JsonStore.prune()
         for lineId, line in pairs(db.escrow) do
             if line.contract_id == id then db.escrow[lineId] = nil end
         end
-        for hunterId, hunter in pairs(db.hunters) do
-            if hunter.contract_id == id then db.hunters[hunterId] = nil end
+        for hitmanId, hitman in pairs(db.hitmen) do
+            if hitman.contract_id == id then db.hitmen[hitmanId] = nil end
         end
         for amendmentId, amendment in pairs(db.amendments) do
             if amendment.contract_id == id then db.amendments[amendmentId] = nil end
@@ -641,7 +641,7 @@ end
 -- Contracts
 --------------------------------------------------------------------------
 
---- Contracts this player is involved in, as creator, target or hunter.
+--- Contracts this player is involved in, as creator, target or hitman.
 function JsonStore.contractsInvolving(cid)
     local seen, out = {}, {}
 
@@ -652,8 +652,8 @@ function JsonStore.contractsInvolving(cid)
         end
     end
 
-    for _, h in pairs(db.hunters) do
-        if h.hunter_cid == cid and not seen[h.contract_id] then
+    for _, h in pairs(db.hitmen) do
+        if h.hitman_cid == cid and not seen[h.contract_id] then
             local c = db.contracts[h.contract_id]
             if c then
                 seen[c.id] = true
@@ -754,7 +754,7 @@ end
 --- End a contract as expired only if it is still due: past its lifetime,
 --- or past a deadline whose clock is running. The expiry pass decides on
 --- a read, and a deadline the client extended in the await after it was
---- expired all the same, forfeiting the stake of the hunter it was
+--- expired all the same, forfeiting the stake of the hitman it was
 --- extended for.
 function JsonStore.expireIfDue(id, expected, next_, now, byLifetime)
     local c = db.contracts[id]
@@ -938,8 +938,8 @@ end
 --- once.
 function JsonStore.settleEscrowLine(id, recipientCid)
     local line = db.escrow[id]
-    if not line or line.state ~= CB.ESCROW_STATE.RELEASING then return false end
-    line.state = CB.ESCROW_STATE.SETTLED
+    if not line or line.state ~= CH.ESCROW_STATE.RELEASING then return false end
+    line.state = CH.ESCROW_STATE.SETTLED
     line.settled_to = recipientCid
     line.settled_at = os.time()
     touch(true, line.contract_id)
@@ -947,24 +947,24 @@ function JsonStore.settleEscrowLine(id, recipientCid)
 end
 
 --------------------------------------------------------------------------
--- Hunters
+-- Hitmen
 --------------------------------------------------------------------------
 
 --- Financial, like the stake it records. The stake is taken, and flushed,
 --- before this row is written; with the row riding the debounce, a process
 --- that died inside the flush interval came back with the stake on disk and
---- no hunter it belonged to. Nothing returns a stake without its hunter row,
+--- no hitman it belonged to. Nothing returns a stake without its hitman row,
 --- and an exclusive contract left `accepted` with nobody on it refused every
 --- later acceptance as locked.
-function JsonStore.addHunter(record)
-    db.hunters[record.id] = record
+function JsonStore.addHitman(record)
+    db.hitmen[record.id] = record
     touch(true, record.contract_id)
     return true
 end
 
-function JsonStore.readHunters(contractId)
+function JsonStore.readHitmen(contractId)
     local out = {}
-    for _, h in pairs(db.hunters) do
+    for _, h in pairs(db.hitmen) do
         if h.contract_id == contractId then out[#out + 1] = h end
     end
     table.sort(out, function(a, b)
@@ -974,27 +974,27 @@ function JsonStore.readHunters(contractId)
     return out
 end
 
-function JsonStore.readHunter(contractId, cid)
-    for _, h in pairs(db.hunters) do
-        if h.contract_id == contractId and h.hunter_cid == cid then return h end
+function JsonStore.readHitman(contractId, cid)
+    for _, h in pairs(db.hitmen) do
+        if h.contract_id == contractId and h.hitman_cid == cid then return h end
     end
     return nil
 end
 
---- One hunter row by its own id.
+--- One hitman row by its own id.
 ---
 --- Used to confirm an id is free before minting onto it: the stake is taken
 --- before the row is written, so an id already in use is a duplicate-key
 --- error with the money already gone and no record naming who staked it.
-function JsonStore.readHunterById(id)
-    return db.hunters[id]
+function JsonStore.readHitmanById(id)
+    return db.hitmen[id]
 end
 
---- Financial for the same reason as addHunter: a hunter taking a contract up
+--- Financial for the same reason as addHitman: a hitman taking a contract up
 --- again is `active` here after a fresh stake was already flushed, and which
---- hunters are active decides where every stake goes when the contract ends.
-function JsonStore.updateHunter(id, fields)
-    local h = db.hunters[id]
+--- hitmen are active decides where every stake goes when the contract ends.
+function JsonStore.updateHitman(id, fields)
+    local h = db.hitmen[id]
     if not h then return false end
     for k, v in pairs(fields) do h[k] = v end
     touch(true, h.contract_id)
@@ -1004,8 +1004,8 @@ end
 --- Confirm an acceptance: the row goes active only if it is still the
 --- acceptance that wrote it. Anything that moved it off joining since — boot
 --- recovery, a throw's unwind — is not reversed.
-function JsonStore.confirmHunter(id, anon, acceptedAt)
-    local h = db.hunters[id]
+function JsonStore.confirmHitman(id, anon, acceptedAt)
+    local h = db.hitmen[id]
     if not h or (h.state ~= 'joining' and h.state ~= 'rejoining') then return false end
     h.state, h.anon, h.accepted_at = 'active', anon == true, acceptedAt
     touch(true, h.contract_id)
@@ -1014,10 +1014,10 @@ end
 
 --- Contracts a player is on, mid-acceptance included: two acceptances in
 --- flight must each see the other against the cap.
-function JsonStore.countHunterContracts(cid, states)
+function JsonStore.countHitmanContracts(cid, states)
     local n = 0
-    for _, h in pairs(db.hunters) do
-        if h.hunter_cid == cid and (h.state == 'active' or h.state == 'joining' or h.state == 'rejoining') then
+    for _, h in pairs(db.hitmen) do
+        if h.hitman_cid == cid and (h.state == 'active' or h.state == 'joining' or h.state == 'rejoining') then
             local c = db.contracts[h.contract_id]
             if c and states[c.state] then n = n + 1 end
         end

@@ -151,10 +151,10 @@ describe('proof tokens across a timer wrap', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE,
+            mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         Config.Completion.ExtraPhotoHosts = { 'cdn.fivemanage.com' }
         s.photo.loadAllowedHosts()
 
@@ -172,29 +172,29 @@ describe('proof tokens across a timer wrap', function()
         -- timer, `now - issuedAt` is negative after a wrap, so the lifetime
         -- test never passes and the token is good forever.
         local s, f, c = ready()
-        local token = s.photo.issue(f.hunter, c.id)
+        local token = s.photo.issue(f.hitman, c.id)
         truthy(token, 'a token to expire')
 
         -- Well past PhotoTokenLifetimeSeconds, on the far side of the wrap.
         rawTimer(250 + (Config.Completion.PhotoTokenLifetimeSeconds * 1000) + 1000)
-        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        local ok, err = s.photo.submit(f.hitman, token, 'https://cdn.fivemanage.com/p.png')
         falsy(ok, 'a stale token must not be accepted because the clock wrapped')
-        eq(err, CB.ERR.TOKEN_INVALID)
+        eq(err, CH.ERR.TOKEN_INVALID)
     end)
 
     it('still accepts a token submitted within its lifetime after a wrap', function()
         local s, f, c = ready()
-        local token = s.photo.issue(f.hunter, c.id)
+        local token = s.photo.issue(f.hitman, c.id)
         truthy(token)
 
         rawTimer(250)
-        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        local ok, err = s.photo.submit(f.hitman, token, 'https://cdn.fivemanage.com/p.png')
         truthy(ok, 'a fresh token must survive the wrap too: ' .. tostring(err))
     end)
 
     it('sweeps expired tokens after a wrap', function()
         local s, f, c = ready()
-        truthy(s.photo.issue(f.hunter, c.id))
+        truthy(s.photo.issue(f.hitman, c.id))
         eq(s.photo.tokenCount(), 1)
 
         rawTimer(250 + (Config.Completion.PhotoTokenLifetimeSeconds * 1000) + 1000)
@@ -405,8 +405,8 @@ describe('a photo token after the kill was undone', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
-            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } } })
-        s.contracts.accept(f.hunter, c.id, false)
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } } })
+        s.contracts.accept(f.hitman, c.id, false)
         Config.Completion.ExtraPhotoHosts = { 'cdn.fivemanage.com' }
         s.photo.loadAllowedHosts()
         Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
@@ -415,7 +415,7 @@ describe('a photo token after the kill was undone', function()
         s.death.recordDamage(3, 2, 123456)
         Env.players[2].PlayerData.metadata.isdead = true
         s.death.onVictimReport(2)
-        local token = s.photo.issue(f.hunter, c.id)
+        local token = s.photo.issue(f.hitman, c.id)
         truthy(token)
         -- Revived after the proof window, then gone.
         Env.gameTimer = Env.gameTimer + (Config.Completion.ProofWindowSeconds + 5) * 1000
@@ -424,9 +424,9 @@ describe('a photo token after the kill was undone', function()
         Env.dropPlayer = Env.dropPlayer
         Env.players[2] = nil
         local before = Env.players[3].PlayerData.money.cash
-        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        local ok, err = s.photo.submit(f.hitman, token, 'https://cdn.fivemanage.com/p.png')
         falsy(ok, 'paid for a kill the revive had undone')
-        eq(err, CB.ERR.PHOTO_REVIVED)
+        eq(err, CH.ERR.PHOTO_REVIVED)
         eq(Env.players[3].PlayerData.money.cash, before)
     end)
 end)

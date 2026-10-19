@@ -36,7 +36,7 @@ end
 local function contractFixture(id)
     return {
         id = id, creator_cid = 'CREATOR1', target_cid = 'TARGET01',
-        mode = CB.MODE.EXCLUSIVE, state = CB.STATE.ACTIVE,
+        mode = CH.MODE.EXCLUSIVE, state = CH.STATE.ACTIVE,
         created_at = os.time(), payout_slots = 1, next_slot = 1,
     }
 end
@@ -54,7 +54,7 @@ describe('storage conformance', function()
             id = 'ctfull01', creator_cid = 'CREATOR1', creator_account = 'license:aaa',
             creator_name = 'Vic Marlowe', target_cid = 'TARGET01', target_name = 'Dana Reyes',
             target_protected = true, target_job = 'trooper', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE, state = CB.STATE.ACTIVE, anon_creator = true,
+            mode = CH.MODE.COMPETITIVE, state = CH.STATE.ACTIVE, anon_creator = true,
             bonus_percent = 50, bailout_amount = 15000, penalty_amount = 10000,
             payout_slots = 3, slots_claimed = 1, next_slot = 2,
             created_at = 1700000001, deadline_at = 1700000002, expires_at = 1700000003,
@@ -90,7 +90,7 @@ describe('storage conformance', function()
             b.store.writeContract(contractFixture('ct1'))
             local read = b.store.readContract('ct1')
             truthy(read, b.name .. ': contract not found')
-            eq(read.state, CB.STATE.ACTIVE, b.name)
+            eq(read.state, CH.STATE.ACTIVE, b.name)
             eq(#b.store.allContracts(), 1, b.name)
         end
     end)
@@ -109,11 +109,11 @@ describe('storage conformance', function()
     it('round-trips the derived flag on an escrow line in every backend', function()
         for _, b in ipairs(backends()) do
             b.store.writeEscrow('ct1', {
-                { id = 'ct1:1', contract_id = 'ct1', slot = 1, portion = CB.PORTION.BONUS,
-                  source = 'cash', amount = 500, state = CB.ESCROW_STATE.HELD,
+                { id = 'ct1:1', contract_id = 'ct1', slot = 1, portion = CH.PORTION.BONUS,
+                  source = 'cash', amount = 500, state = CH.ESCROW_STATE.HELD,
                   derived = true },
-                { id = 'ct1:2', contract_id = 'ct1', slot = 2, portion = CB.PORTION.BONUS,
-                  source = 'cash', amount = 500, state = CB.ESCROW_STATE.HELD },
+                { id = 'ct1:2', contract_id = 'ct1', slot = 2, portion = CH.PORTION.BONUS,
+                  source = 'cash', amount = 500, state = CH.ESCROW_STATE.HELD },
             })
 
             local derived = b.store.readEscrowLine('ct1:1')
@@ -139,7 +139,7 @@ describe('storage conformance', function()
         for _, b in ipairs(backends()) do
             b.store.writeContract(contractFixture('ct1'))
             b.store.writeAudit({
-                action = 'release_interrupted', actor_cid = 'HUNTER01',
+                action = 'release_interrupted', actor_cid = 'HITMAN01',
                 contract_id = 'ct1', ts = os.time(),
                 detail = { line = 'ct1:1', reason = 'inventory full' },
             })
@@ -161,7 +161,7 @@ describe('storage conformance', function()
     it('round-trips an audit detail through the general read too', function()
         for _, b in ipairs(backends()) do
             b.store.writeAudit({
-                action = 'release_interrupted', actor_cid = 'HUNTER01',
+                action = 'release_interrupted', actor_cid = 'HITMAN01',
                 contract_id = 'ct2', ts = os.time(),
                 detail = { line = 'ct2:1' },
             })
@@ -178,10 +178,10 @@ describe('storage conformance', function()
     it('honours the conditional state write in every backend', function()
         for _, b in ipairs(backends()) do
             b.store.writeContract(contractFixture('ct1'))
-            truthy(b.store.compareSetContractState('ct1', CB.STATE.ACTIVE, CB.STATE.ACCEPTED), b.name)
-            falsy(b.store.compareSetContractState('ct1', CB.STATE.ACTIVE, CB.STATE.ACCEPTED),
+            truthy(b.store.compareSetContractState('ct1', CH.STATE.ACTIVE, CH.STATE.ACCEPTED), b.name)
+            falsy(b.store.compareSetContractState('ct1', CH.STATE.ACTIVE, CH.STATE.ACCEPTED),
                 b.name .. ': a stale expectation must not win')
-            eq(b.store.readContract('ct1').state, CB.STATE.ACCEPTED, b.name)
+            eq(b.store.readContract('ct1').state, CH.STATE.ACCEPTED, b.name)
         end
     end)
 
@@ -189,13 +189,13 @@ describe('storage conformance', function()
         for _, b in ipairs(backends()) do
             b.store.writeEscrow('ct1', { {
                 id = 'ct1:1', contract_id = 'ct1', slot = 1, portion = 'baseline',
-                source = 'cash', amount = 500, state = CB.ESCROW_STATE.HELD,
+                source = 'cash', amount = 500, state = CH.ESCROW_STATE.HELD,
             } })
-            truthy(b.store.claimEscrowLine('ct1:1', CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING), b.name)
-            falsy(b.store.claimEscrowLine('ct1:1', CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING),
+            truthy(b.store.claimEscrowLine('ct1:1', CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING), b.name)
+            falsy(b.store.claimEscrowLine('ct1:1', CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING),
                 b.name .. ': a second claim must fail')
-            b.store.settleEscrowLine('ct1:1', 'HUNTER01')
-            eq(b.store.readEscrowLine('ct1:1').state, CB.ESCROW_STATE.SETTLED, b.name)
+            b.store.settleEscrowLine('ct1:1', 'HITMAN01')
+            eq(b.store.readEscrowLine('ct1:1').state, CH.ESCROW_STATE.SETTLED, b.name)
         end
     end)
 
@@ -211,39 +211,39 @@ describe('storage conformance', function()
         for _, b in ipairs(backends()) do
             b.store.writeEscrow('ct1', { {
                 id = 'ct1:9', contract_id = 'ct1', slot = 1, portion = 'baseline',
-                source = 'cash', amount = 500, state = CB.ESCROW_STATE.HELD,
+                source = 'cash', amount = 500, state = CH.ESCROW_STATE.HELD,
             } })
 
-            falsy(b.store.settleEscrowLine('ct1:9', 'HUNTER01'),
+            falsy(b.store.settleEscrowLine('ct1:9', 'HITMAN01'),
                 b.name .. ': a held line was never claimed by this caller')
-            eq(b.store.readEscrowLine('ct1:9').state, CB.ESCROW_STATE.HELD,
+            eq(b.store.readEscrowLine('ct1:9').state, CH.ESCROW_STATE.HELD,
                 b.name .. ': and must be left alone')
 
-            truthy(b.store.claimEscrowLine('ct1:9', CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING),
+            truthy(b.store.claimEscrowLine('ct1:9', CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING),
                 b.name)
-            truthy(b.store.settleEscrowLine('ct1:9', 'HUNTER01'),
+            truthy(b.store.settleEscrowLine('ct1:9', 'HITMAN01'),
                 b.name .. ': the holder settles')
-            eq(b.store.readEscrowLine('ct1:9').settled_to, 'HUNTER01', b.name)
+            eq(b.store.readEscrowLine('ct1:9').settled_to, 'HITMAN01', b.name)
 
             falsy(b.store.settleEscrowLine('ct1:9', 'SOMEONE1'),
                 b.name .. ': and a settled line cannot be settled again to someone else')
-            eq(b.store.readEscrowLine('ct1:9').settled_to, 'HUNTER01',
+            eq(b.store.readEscrowLine('ct1:9').settled_to, 'HITMAN01',
                 b.name .. ': the first recipient stands')
         end
     end)
 
-    it('reads a hunter by its own id in every backend', function()
+    it('reads a hitman by its own id in every backend', function()
         for _, b in ipairs(backends()) do
-            b.store.addHunter({
-                id = 'hn0001', contract_id = 'ct1', hunter_cid = 'HUNTER01',
-                hunter_account = 'license:ccc', hunter_name = 'Rook Ash',
+            b.store.addHitman({
+                id = 'hn0001', contract_id = 'ct1', hitman_cid = 'HITMAN01',
+                hitman_account = 'license:ccc', hitman_name = 'Rook Ash',
                 alias = 'Operative #1', anon = false, accepted_at = 1700000000,
                 state = 'active', claims = 0,
             })
-            local read = b.store.readHunterById('hn0001')
-            truthy(read, b.name .. ': hunter not found by id')
-            eq(read.hunter_cid, 'HUNTER01', b.name)
-            falsy(b.store.readHunterById('hn9999'), b.name .. ': an unused id must read as free')
+            local read = b.store.readHitmanById('hn0001')
+            truthy(read, b.name .. ': hitman not found by id')
+            eq(read.hitman_cid, 'HITMAN01', b.name)
+            falsy(b.store.readHitmanById('hn9999'), b.name .. ': an unused id must read as free')
         end
     end)
 
@@ -260,11 +260,11 @@ describe('storage conformance', function()
 
     it('keeps pending escrow queryable in every backend', function()
         for _, b in ipairs(backends()) do
-            b.store.queuePending('HUNTER01', 'ct1', 'ct1:1')
-            eq(#b.store.readPending('HUNTER01'), 1, b.name)
-            local entry = b.store.readPending('HUNTER01')[1]
+            b.store.queuePending('HITMAN01', 'ct1', 'ct1:1')
+            eq(#b.store.readPending('HITMAN01'), 1, b.name)
+            local entry = b.store.readPending('HITMAN01')[1]
             b.store.clearPending(entry.id)
-            eq(#b.store.readPending('HUNTER01'), 0, b.name)
+            eq(#b.store.readPending('HITMAN01'), 0, b.name)
         end
     end)
 end)
@@ -284,7 +284,7 @@ describe('finished contracts do not accumulate forever', function()
     local function settled(store, id, resolvedAt)
         store.writeContract({
             id = id, creator_cid = 'CREATOR1', target_cid = 'TARGET01',
-            mode = CB.MODE.EXCLUSIVE, state = CB.STATE.COMPLETED,
+            mode = CH.MODE.EXCLUSIVE, state = CH.STATE.COMPLETED,
             created_at = resolvedAt - DAY, resolved_at = resolvedAt,
             payout_slots = 1, next_slot = 1,
         })
@@ -296,11 +296,11 @@ describe('finished contracts do not accumulate forever', function()
         -- "settled to nobody", which is exactly what it was.
         store.writeEscrow(id, { {
             id = id .. ':1', contract_id = id, slot = 1,
-            portion = CB.PORTION.BASELINE, source = 'cash', amount = 5000,
-            state = CB.ESCROW_STATE.HELD,
+            portion = CH.PORTION.BASELINE, source = 'cash', amount = 5000,
+            state = CH.ESCROW_STATE.HELD,
         } })
-        store.claimEscrowLine(id .. ':1', CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING)
-        store.settleEscrowLine(id .. ':1', 'HUNTER01')
+        store.claimEscrowLine(id .. ':1', CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING)
+        store.settleEscrowLine(id .. ':1', 'HITMAN01')
         return id
     end
 
@@ -424,9 +424,9 @@ describe('finished contracts do not accumulate forever', function()
             settled(backend.store, 'ct00000004', old)
             backend.store.writeEscrow('ct00000004', { {
                 id = 'owe00000001', contract_id = 'ct00000004', slot = 0,
-                portion = CB.PORTION.OWED, owed_to = 'CREATOR1',
+                portion = CH.PORTION.OWED, owed_to = 'CREATOR1',
                 source = 'bank', amount = 20000,
-                state = CB.ESCROW_STATE.HELD,
+                state = CH.ESCROW_STATE.HELD,
             } })
 
             backend.store.prune()
@@ -460,7 +460,7 @@ describe('finished contracts do not accumulate forever', function()
         for _, backend in ipairs(backends()) do
             settled(backend.store, 'ct00000006', old)
             backend.store.writeLedger({
-                cid = 'HUNTER01', contract_id = 'ct00000006', role = 'hunter',
+                cid = 'HITMAN01', contract_id = 'ct00000006', role = 'hitman',
                 target_name = 'Dana Reyes', reason = 'Unpaid debt',
                 fulfilment = 'elimination', slot = 1, resolved_at = old,
             })
@@ -468,7 +468,7 @@ describe('finished contracts do not accumulate forever', function()
             backend.store.prune()
 
             falsy(backend.store.readContract('ct00000006'))
-            eq(#backend.store.readLedger('HUNTER01', 10), 1,
+            eq(#backend.store.readLedger('HITMAN01', 10), 1,
                 backend.name .. ': history is the player\'s, not the contract\'s')
         end
     end)
@@ -571,7 +571,7 @@ describe('json durability', function()
         store.writeContract(contractFixture('ct1'))
         store.writeEscrow('ct1', { {
             id = 'ct1:1', contract_id = 'ct1', slot = 1, portion = 'baseline',
-            source = 'cash', amount = 5000, state = CB.ESCROW_STATE.HELD,
+            source = 'cash', amount = 5000, state = CH.ESCROW_STATE.HELD,
         } })
         store.close()
 
@@ -582,7 +582,7 @@ describe('json durability', function()
 
         truthy(reopened.readContract('ct1'), 'contract survived the restart')
         eq(reopened.readEscrowLine('ct1:1').amount, 5000, 'escrow survived the restart')
-        eq(reopened.readEscrowLine('ct1:1').state, CB.ESCROW_STATE.HELD, 'still held, not lost')
+        eq(reopened.readEscrowLine('ct1:1').state, CH.ESCROW_STATE.HELD, 'still held, not lost')
     end)
 
     it('refuses to start on a corrupt store rather than discarding escrow', function()
@@ -639,11 +639,11 @@ describe('copy-on-read semantics', function()
         -- A copy read before the transition, written after it, must not
         -- carry the old state back into storage.
         local stale = s.storage.readContract(c.id)
-        s.storage.compareSetContractState(c.id, CB.STATE.ACTIVE, CB.STATE.ACCEPTED)
+        s.storage.compareSetContractState(c.id, CH.STATE.ACTIVE, CH.STATE.ACCEPTED)
         stale.resolution = 'something'
         s.storage.writeContract(stale)
 
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED,
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED,
             'a stale write must not revert the transition')
     end)
 
@@ -655,12 +655,12 @@ describe('copy-on-read semantics', function()
         })
         eq(Env.players[1].PlayerData.money.cash, 95000)
 
-        local ok = s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        local ok = s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
         truthy(ok)
-        eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED, 'stays cancelled')
+        eq(s.storage.readContract(c.id).state, CH.STATE.CANCELLED, 'stays cancelled')
         eq(Env.players[1].PlayerData.money.cash, 100000, 'refunded once')
 
-        local again = s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'again')
+        local again = s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'again')
         falsy(again, 'and cannot be resolved twice')
         eq(Env.players[1].PlayerData.money.cash, 100000)
     end)
@@ -669,27 +669,27 @@ describe('copy-on-read semantics', function()
         local s = copyingStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 { baseline = { cash = 1000 } },
                 { baseline = { cash = 2000 } },
             } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
-        local ok, err, result = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        local ok, err, result = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         truthy(ok, tostring(err))
         eq(result.slot, 1)
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED,
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED,
             'back to accepted with a slot remaining, not stuck completing')
         eq(s.storage.readContract(c.id).next_slot, 2, 'slot counter advanced')
         eq(Env.players[3].PlayerData.money.cash, 6000)
 
         Env.advance(Config.Limits.SlotCooldownSeconds + 1)
-        local ok2, err2, result2 = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        local ok2, err2, result2 = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         truthy(ok2, tostring(err2))
         truthy(result2.exhausted)
-        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
     end)
 end)
 
@@ -747,26 +747,26 @@ describe('the mysql schema holds every field the code writes', function()
         local line = {
             id = 'ct1:1', contract_id = 'ct1', slot = 1, portion = 'stake',
             source = 'bank', amount = 100, item = 'x', quantity = 1,
-            metadata = {}, staker = 'HUNTER01', inv_slot = 3,
-            state = 'held', settled_to = 'HUNTER01', settled_at = 1,
+            metadata = {}, staker = 'HITMAN01', inv_slot = 3,
+            state = 'held', settled_to = 'HITMAN01', settled_at = 1,
         }
 
         local missing = sim.missingColumns('crimson_escrow', line)
         eq(#missing, 0, 'crimson_escrow cannot store: ' .. table.concat(missing, ', '))
     end)
 
-    it('can hold every field a hunter record carries', function()
+    it('can hold every field a hitman record carries', function()
         local sim = schemaFor()
 
-        local hunter = {
-            id = 'hn1', contract_id = 'ct1', hunter_cid = 'H',
-            hunter_account = 'license:h', hunter_name = 'H', alias = 'Operative #1',
+        local hitman = {
+            id = 'hn1', contract_id = 'ct1', hitman_cid = 'H',
+            hitman_account = 'license:h', hitman_name = 'H', alias = 'Operative #1',
             anon = false, accepted_at = 1, left_at = 2, last_claim_at = 3,
             claims = 1, stake_amount = 100, state = 'active',
         }
 
-        local missing = sim.missingColumns('crimson_hunters', hunter)
-        eq(#missing, 0, 'crimson_hunters cannot store: ' .. table.concat(missing, ', '))
+        local missing = sim.missingColumns('crimson_hitmen', hitman)
+        eq(#missing, 0, 'crimson_hitmen cannot store: ' .. table.concat(missing, ', '))
     end)
 end)
 
@@ -776,9 +776,9 @@ describe('owed escrow survives in every backend', function()
 
     local function line(id)
         return {
-            id = id, contract_id = 'ct1', slot = 0, portion = CB.PORTION.OWED,
+            id = id, contract_id = 'ct1', slot = 0, portion = CH.PORTION.OWED,
             source = 'bank', amount = 5000, owed_to = 'CREATOR1',
-            state = CB.ESCROW_STATE.HELD,
+            state = CH.ESCROW_STATE.HELD,
         }
     end
 
@@ -795,7 +795,7 @@ describe('owed escrow survives in every backend', function()
             local read = store.readEscrowLine('ct1:owed1')
             truthy(read, name .. ': line not found')
             eq(read.owed_to, 'CREATOR1', name .. ': the owner must survive the round trip')
-            eq(read.portion, CB.PORTION.OWED, name)
+            eq(read.portion, CH.PORTION.OWED, name)
             eq(read.amount, 5000, name)
         end
     end)
@@ -839,7 +839,7 @@ describe('indexed contract lookups agree across backends', function()
             mode = 'exclusive', state = 'active', created_at = 2 })
         store.writeContract({ id = 'ct3', creator_cid = 'C', target_cid = 'D',
             mode = 'exclusive', state = 'active', created_at = 3 })
-        store.addHunter({ id = 'hn1', contract_id = 'ct3', hunter_cid = 'A',
+        store.addHitman({ id = 'hn1', contract_id = 'ct3', hitman_cid = 'A',
             accepted_at = 4, state = 'active' })
     end
 
@@ -860,7 +860,7 @@ describe('indexed contract lookups agree across backends', function()
             store.open()
             seeded(store)
 
-            -- A as creator on ct1, target on ct2, hunter on ct3.
+            -- A as creator on ct1, target on ct2, hitman on ct3.
             eq(ids(store.contractsInvolving('A')), 'ct1,ct2,ct3', name .. ': involving')
             eq(ids(store.contractsBy('C')), 'ct2,ct3', name .. ': created by')
             eq(ids(store.contractsNaming('A')), 'ct2', name .. ': naming as target')
@@ -874,16 +874,16 @@ describe('indexed contract lookups agree across backends', function()
         store.open()
         store.writeContract({ id = 'ct9', creator_cid = 'A', target_cid = 'B',
             mode = 'exclusive', state = 'active', created_at = 1 })
-        store.addHunter({ id = 'hn9', contract_id = 'ct9', hunter_cid = 'A',
+        store.addHitman({ id = 'hn9', contract_id = 'ct9', hitman_cid = 'A',
             accepted_at = 2, state = 'active' })
-        eq(#store.contractsInvolving('A'), 1, 'creator and hunter on one contract is one row')
+        eq(#store.contractsInvolving('A'), 1, 'creator and hitman on one contract is one row')
     end)
 
     it('has the indexes the mysql queries rely on', function()
         local schema = read_file('crimson-hitman/server/storage/mysql.lua')
         truthy(schema:find('INDEX idx_creator', 1, true), 'creator index')
         truthy(schema:find('INDEX idx_target', 1, true), 'target index')
-        truthy(schema:find('INDEX idx_hunter', 1, true), 'hunter index')
+        truthy(schema:find('INDEX idx_hitman', 1, true), 'hitman index')
     end)
 end)
 
@@ -1078,7 +1078,7 @@ describe('json sharding', function()
         store.writeContract(contract('ct1'))
         store.writeEscrow('ct1', { { id = 'ct1:1', contract_id = 'ct1', portion = 'baseline',
                                      source = 'cash', amount = 5000, state = 'held', slot = 1 } })
-        store.addHunter({ id = 'h1', contract_id = 'ct1', hunter_cid = 'HUNTER01',
+        store.addHitman({ id = 'h1', contract_id = 'ct1', hitman_cid = 'HITMAN01',
                           state = 'active', accepted_at = 1, alias = 'Operative #1' })
         store.writeMessage({ contract_id = 'ct1', thread_id = 't1', body = 'hello' })
         store.close()
@@ -1086,7 +1086,7 @@ describe('json sharding', function()
         local shard = json.decode(Natives.files['data/contracts/ct1.json'])
         truthy(shard.contract, 'the row')
         truthy(shard.escrow['ct1:1'], 'its escrow')
-        truthy(shard.hunters.h1, 'its hunters')
+        truthy(shard.hitmen.h1, 'its hitmen')
         eq(#shard.messages, 1, 'and its messages')
 
         -- The index holds what is not per-contract, and no contract bodies.
@@ -1100,7 +1100,7 @@ describe('json sharding', function()
         store.writeContract(contract('ct1'))
         store.writeEscrow('ct1', { { id = 'ct1:1', contract_id = 'ct1', portion = 'baseline',
                                      source = 'cash', amount = 5000, state = 'held', slot = 1 } })
-        store.addHunter({ id = 'h1', contract_id = 'ct1', hunter_cid = 'HUNTER01',
+        store.addHitman({ id = 'h1', contract_id = 'ct1', hitman_cid = 'HITMAN01',
                           state = 'active', accepted_at = 1, alias = 'Operative #1' })
         store.close()
 
@@ -1111,7 +1111,7 @@ describe('json sharding', function()
         truthy(reopened.readContract('ct1'), 'the contract')
         eq(#reopened.readEscrow('ct1'), 1, 'its escrow')
         eq(reopened.readEscrowLine('ct1:1').amount, 5000)
-        eq(#reopened.readHunters('ct1'), 1, 'and its hunters')
+        eq(#reopened.readHitmen('ct1'), 1, 'and its hitmen')
     end)
 
     --- A shard the index names but that will not load.
@@ -1223,7 +1223,7 @@ describe('json sharding', function()
             local store = fresh()
             store.writeContract(contract('ct1'))
             store.writeEscrow('ct1', { { id = 'ct1:1', contract_id = 'ct1',
-                slot = 1, source = 'cash', amount = 50000, state = CB.ESCROW_STATE.HELD } })
+                slot = 1, source = 'cash', amount = 50000, state = CH.ESCROW_STATE.HELD } })
             store.writeContract(contract('ct2'))
             store.close()
 
@@ -1317,7 +1317,7 @@ describe('json sharding', function()
                 escrow = { ['ct1:1'] = { id = 'ct1:1', contract_id = 'ct1',
                                          portion = 'baseline', source = 'cash',
                                          amount = 5000, state = 'held', slot = 1 } },
-                hunters = {}, amendments = {}, messages = {},
+                hitmen = {}, amendments = {}, messages = {},
                 ledger = {}, pending = {}, audit = {}, stats = {},
             }),
         }
@@ -1422,11 +1422,11 @@ describe('every mysql statement is executable', function()
             function() m.claimEscrowLine('c1:1','held','releasing') end,
             function() m.setEscrowAmount('c1:1','releasing',50,100) end,
             function() m.settleEscrowLine('c1:1','A') end,
-            function() m.addHunter({ id='h1', contract_id='c1', hunter_cid='H', state='active', accepted_at=1, alias='Op' }) end,
-            function() m.readHunters('c1') end,
-            function() m.readHunter('c1','H') end,
-            function() m.updateHunter('h1', { claims = 1 }) end,
-            function() m.countHunterContracts('H', { accepted = true }) end,
+            function() m.addHitman({ id='h1', contract_id='c1', hitman_cid='H', state='active', accepted_at=1, alias='Op' }) end,
+            function() m.readHitmen('c1') end,
+            function() m.readHitman('c1','H') end,
+            function() m.updateHitman('h1', { claims = 1 }) end,
+            function() m.countHitmanContracts('H', { accepted = true }) end,
             function() m.writeAmendment({ id='am1', contract_id='c1', proposer='A', kind='cancel', payload={}, approvals={}, expires_at=1, outcome='open' }) end,
             function() m.readAmendment('am1') end,
             function() m.readOpenAmendments('c1') end,
@@ -1556,7 +1556,7 @@ describe('rewriting a contract', function()
     --- silence, and memory and json mode — where the rest of this suite runs
     --- — have no such list, so nothing anywhere failed. Two were missing.
     local MUTABLE = {
-        reason = 'renegotiated', mode = CB.MODE.EXCLUSIVE,
+        reason = 'renegotiated', mode = CH.MODE.EXCLUSIVE,
         bonus_percent = 35, bailout_amount = 12345, penalty_amount = 6789,
         -- next_slot, slots_claimed and payout_slots are NOT here: they move
         -- only through advanceSlot and reduceSlots, and the tests below hold
@@ -1644,7 +1644,7 @@ describe('the payout counters', function()
     ---
     --- Every other writer reads the row, awaits, and writes it back. On mysql
     --- a claim lands in those awaits, and writing next_slot back undid it:
-    --- the collection just paid went back on sale, and the next hunter to
+    --- the collection just paid went back on sale, and the next hitman to
     --- kill the target for it was paid out of an empty slot.
     it('survive a writeContract of a copy read before a claim, in every backend', function()
         for _, b in ipairs(backends()) do
@@ -1731,30 +1731,30 @@ describe('the narrow writes added for the second review', function()
     it('confirms an acceptance only while it is still joining, in every backend', function()
         for _, b in ipairs(backends()) do
             b.store.writeContract(contractFixture('ctconfirm'))
-            b.store.addHunter({ id = 'hnconfirm1', contract_id = 'ctconfirm', hunter_cid = 'HUNTER01',
+            b.store.addHitman({ id = 'hnconfirm1', contract_id = 'ctconfirm', hitman_cid = 'HITMAN01',
                 alias = 'Operative #1', anon = false, accepted_at = 10, state = 'joining' })
-            truthy(b.store.confirmHunter('hnconfirm1', true, 20), b.name .. ': a joining row')
-            local h = b.store.readHunter('ctconfirm', 'HUNTER01')
+            truthy(b.store.confirmHitman('hnconfirm1', true, 20), b.name .. ': a joining row')
+            local h = b.store.readHitman('ctconfirm', 'HITMAN01')
             eq(h.state, 'active', b.name)
             eq(h.anon == true or h.anon == 1, true, b.name .. ': anonymity written with it')
             eq(h.accepted_at, 20, b.name)
 
-            b.store.updateHunter('hnconfirm1', { state = 'refused' })
-            falsy(b.store.confirmHunter('hnconfirm1', false, 30),
+            b.store.updateHitman('hnconfirm1', { state = 'refused' })
+            falsy(b.store.confirmHitman('hnconfirm1', false, 30),
                 b.name .. ': reversed a row something else had taken back')
-            eq(b.store.readHunter('ctconfirm', 'HUNTER01').state, 'refused', b.name)
+            eq(b.store.readHitman('ctconfirm', 'HITMAN01').state, 'refused', b.name)
 
-            b.store.updateHunter('hnconfirm1', { state = 'rejoining' })
-            truthy(b.store.confirmHunter('hnconfirm1', false, 40), b.name .. ': a rejoining row')
+            b.store.updateHitman('hnconfirm1', { state = 'rejoining' })
+            truthy(b.store.confirmHitman('hnconfirm1', false, 40), b.name .. ': a rejoining row')
         end
     end)
 
-    it('counts a hunter mid-acceptance against their cap, in every backend', function()
+    it('counts a hitman mid-acceptance against their cap, in every backend', function()
         for _, b in ipairs(backends()) do
             b.store.writeContract(contractFixture('ctcount1'))
-            b.store.addHunter({ id = 'hncount1', contract_id = 'ctcount1', hunter_cid = 'HUNTER01',
+            b.store.addHitman({ id = 'hncount1', contract_id = 'ctcount1', hitman_cid = 'HITMAN01',
                 alias = 'Operative #1', anon = false, accepted_at = 10, state = 'joining' })
-            eq(b.store.countHunterContracts('HUNTER01', { active = true }), 1,
+            eq(b.store.countHitmanContracts('HITMAN01', { active = true }), 1,
                 b.name .. ': a second acceptance counted this one as not there')
         end
     end)
@@ -1770,9 +1770,9 @@ describe('the narrow writes added for the second review', function()
             local held = contractFixture('ctslots8')
             held.payout_slots, held.next_slot = 2, 1
             b.store.writeContract(held)
-            b.store.compareSetContractState('ctslots8', CB.STATE.ACTIVE, CB.STATE.COMPLETING)
+            b.store.compareSetContractState('ctslots8', CH.STATE.ACTIVE, CH.STATE.COMPLETING)
             falsy(b.store.reduceSlots('ctslots8', 2), b.name .. ': removed it mid-claim')
-            b.store.compareSetContractState('ctslots8', CB.STATE.COMPLETING, CB.STATE.ACCEPTED)
+            b.store.compareSetContractState('ctslots8', CH.STATE.COMPLETING, CH.STATE.ACCEPTED)
             truthy(b.store.reduceSlots('ctslots8', 2), b.name .. ': and gives it back otherwise')
             eq(b.store.readContract('ctslots8').payout_slots, 1, b.name)
         end

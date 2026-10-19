@@ -22,28 +22,6 @@ The config ships in `json` mode: everything lives in files under
 `crimson-hitman/data/`, which is what to back up. In `mysql` mode the tables
 are created automatically on first start. Nothing to import either way.
 
-### Upgrading from `crimson-bounty`
-
-The resource used to be called `crimson-bounty`. To move an existing server
-over:
-
-1. Stop it.
-2. Rename the folder to `crimson-hitman`; the `data/` folder inside it, which
-   is everything `json` mode keeps, goes with it.
-3. Change `ensure crimson-bounty` to `ensure crimson-hitman` in `server.cfg`.
-
-In `mysql` mode nothing changes: the tables were always named `crimson_*`.
-The phone app's identifier is now `crimson-hitman`, so players install
-Crimson-Hitman from the phone's app store once; the old icon goes away.
-
-The staff commands are now `/hitmanadmin` (was `/bountyadmin`) and `/ch-*`
-(was `/cb-*`). If your `config.lua` has a `Commands` section, it still names
-the old ones, and those keep working until you change them there. Five
-settings were renamed: `Anonymity.HitmanFee`, `Limits.MaxAcceptedPerHitman`,
-`Limits.MaxHitmenPerContract`, `Advisory.WarnHitman` and
-`Kidnap.Coercion.passengerOfHitman`. A `config.lua` that still uses the
-`Hunter` names is read as the new ones, and the console says so at start.
-
 ### Configuration worth reading before you start
 
 | Setting | Why it matters |
@@ -221,7 +199,7 @@ can be run anywhere Lua is installed:
 
 ```bash
 sh crimson-hitman/tests/all.sh    # everything
-CB_SUITES=journeys_spec lua crimson-hitman/tests/run.lua   # one area, in seconds
+CH_SUITES=journeys_spec lua crimson-hitman/tests/run.lua   # one area, in seconds
 ```
 
 Five kinds of check, because each catches what the others cannot:

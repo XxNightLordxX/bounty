@@ -7,11 +7,11 @@ local function seeded(opts)
     local f = fixture(s)
     local c = s.contracts.create(f.creator, {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
-        mode = CB.MODE.COMPETITIVE,
+        mode = CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
         bailoutAmount = opts.bailout, anonymous = opts.anonCreator,
     })
-    if opts.accept then s.contracts.accept(f.hunter, c.id, opts.anonHunter or false) end
+    if opts.accept then s.contracts.accept(f.hitman, c.id, opts.anonHitman or false) end
     return s, f, c
 end
 
@@ -42,7 +42,7 @@ describe('projection', function()
 
     it('omits the creator identity entirely when anonymous', function()
         local s, f, c = seeded({ anonCreator = true })
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         falsy(row.creatorName, 'no name key at all')
         falsy(row.creator_cid, 'no citizen id')
         truthy(row.creatorAnonymous)
@@ -52,38 +52,38 @@ describe('projection', function()
 
     it('shows the creator name when they chose to be seen', function()
         local s, f, c = seeded()
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(row.creatorName, 'Vic Marlowe')
     end)
 
-    it('never sends the hunter roster to a public viewer', function()
+    it('never sends the hitman roster to a public viewer', function()
         local s, f, c = seeded({ accept = true })
         Env.addPlayer({ source = 9, citizenid = 'PUBLIC01', license = 'license:p' })
         local row = s.projection.contract(s.storage.readContract(c.id), 'PUBLIC01')
-        falsy(row.hunters, 'roster is for the creator only')
-        eq(row.huntersActive, 1, 'a count is enough for everyone else')
+        falsy(row.hitmen, 'roster is for the creator only')
+        eq(row.hitmenActive, 1, 'a count is enough for everyone else')
     end)
 
-    it('gives the creator aliases but not names for anonymous hunters', function()
-        local s, f, c = seeded({ accept = true, anonHunter = true })
+    it('gives the creator aliases but not names for anonymous hitmen', function()
+        local s, f, c = seeded({ accept = true, anonHitman = true })
         local row = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1')
-        eq(#row.hunters, 1)
-        eq(row.hunters[1].alias, 'Operative #1')
-        falsy(row.hunters[1].name, 'anonymity paid for is anonymity kept')
+        eq(#row.hitmen, 1)
+        eq(row.hitmen[1].alias, 'Operative #1')
+        falsy(row.hitmen[1].name, 'anonymity paid for is anonymity kept')
     end)
 
-    it('gives the creator names for hunters who chose to be seen', function()
-        local s, f, c = seeded({ accept = true, anonHunter = false })
+    it('gives the creator names for hitmen who chose to be seen', function()
+        local s, f, c = seeded({ accept = true, anonHitman = false })
         local row = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1')
-        eq(row.hunters[1].name, 'Rook Ash')
+        eq(row.hitmen[1].name, 'Rook Ash')
     end)
 
-    it('never shows a target the creator or the hunters', function()
+    it('never shows a target the creator or the hitmen', function()
         local s, f, c = seeded({ accept = true, bailout = 15000 })
         local rows = s.projection.onMe('TARGET01')
         eq(#rows, 1)
         falsy(rows[1].creatorName, 'the target does not learn who wants them dead')
-        falsy(rows[1].hunters, 'nor who is coming')
+        falsy(rows[1].hitmen, 'nor who is coming')
         eq(rows[1].bailoutAmount, 15000, 'but does learn the price of freedom')
     end)
 
@@ -96,7 +96,7 @@ describe('projection', function()
         eq(#s.projection.listing('PUBLIC01').contracts, 0, 'hidden')
 
         -- Hidden is a display state only: escrow and contract are untouched.
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE)
         eq(s.escrow.moneyValue(c.id), 7500)
     end)
 
@@ -109,18 +109,18 @@ describe('projection', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 { baseline = { cash = 5000 } },
                 { baseline = { cash = 1000 } },
             } },
         })
-        s.contracts.accept(f.hunter, c.id, false)
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        s.contracts.accept(f.hitman, c.id, false)
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(row.reward.baseline, 5000, 'slot 1 first')
 
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
-        row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
+        row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(row.reward.baseline, 1000, 'now slot 2')
         eq(row.currentSlot, 2)
     end)
@@ -131,8 +131,8 @@ describe('projection', function()
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
-        truthy(row.targetProtected, 'no hunter accepts a police contract by accident')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
+        truthy(row.targetProtected, 'no hitman accepts a police contract by accident')
     end)
 end)
 
@@ -157,7 +157,7 @@ describe('target mugshots', function()
 
     it('asks the target to render their own headshot', function()
         local s, f, c = seededMug()
-        s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
 
         local asked = false
         for _, event in ipairs(Env.clientEvents) do
@@ -169,7 +169,7 @@ describe('target mugshots', function()
     it('serves the cached image to every viewer once rendered', function()
         local s, f, c = seededMug()
         truthy(render(s, 'TARGET01'))
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
 
         -- The row carries a reference, not the image: inlining forty
         -- kilobytes of base64 into every row of every page was the whole
@@ -183,7 +183,7 @@ describe('target mugshots', function()
     it('does not put a citizen id in the reference', function()
         local s, f, c = seededMug()
         truthy(render(s, 'TARGET01'))
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         falsy(row.targetImageId:find('TARGET01', 1, true),
             'the handle goes to every viewer; a citizen id in it is a leak')
     end)
@@ -191,12 +191,12 @@ describe('target mugshots', function()
     it('mints a new reference for a new render, and retires the old one', function()
         local s, f, c = seededMug()
         truthy(render(s, 'TARGET01'))
-        local first = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01').targetImageId
+        local first = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01').targetImageId
 
         -- A second render, past the refresh floor.
         s.mugshot.clearPlayer('TARGET01')
         truthy(render(s, 'TARGET01'))
-        local second = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01').targetImageId
+        local second = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01').targetImageId
 
         truthy(second and second ~= first, 'a new image is a new reference')
         falsy(s.mugshot.byHandle(first),
@@ -259,7 +259,7 @@ describe('target mugshots', function()
         render(s, 'TARGET01')
         Env.clientEvents = {}
 
-        s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         for _, event in ipairs(Env.clientEvents) do
             falsy(event.name == 'crimson-hitman:renderMugshot',
                 'a fresh image must not trigger another render')
@@ -281,13 +281,13 @@ end)
 --- A contract paying goods is not a contract paying nothing.
 ---
 --- Items and weapons are deliberately unpriced, so a payout funded with a
---- rifle and nothing else was advertised to every hunter as $0.
+--- rifle and nothing else was advertised to every hitman as $0.
 describe('goods on a listing', function()
     local function paying(reward)
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = reward,
         })
         truthy(c, 'the contract should be created')
@@ -300,7 +300,7 @@ describe('goods on a listing', function()
             weapons = { { name = 'WEAPON_PISTOL', slot = 3 } },
         } })
 
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(row.reward.baseline, 0, 'there is genuinely no money in it')
         eq(row.reward.goods.items, 3, 'but three items')
         eq(row.reward.goods.weapons, 1, 'and a weapon')
@@ -311,7 +311,7 @@ describe('goods on a listing', function()
         local s, f, c = paying({ baseline = {
             weapons = { { name = 'WEAPON_PISTOL', slot = 3 } },
         } })
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         local shown = table.concat(row.reward.goods.labels, ' ')
         falsy(shown:find('ABC123', 1, true),
             'a serial is an identifier and never crosses: ' .. shown)
@@ -319,7 +319,7 @@ describe('goods on a listing', function()
 
     it('reports no goods on a money-only payout', function()
         local s, f, c = paying({ baseline = { cash = 5000 } })
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(row.reward.baseline, 5000)
         eq(row.reward.goods.items, 0)
         eq(row.reward.goods.weapons, 0)
@@ -330,7 +330,7 @@ describe('goods on a listing', function()
             baseline = { cash = 5000 },
             bonus = { items = { { name = 'lockpick', count = 2 } } },
         })
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(row.reward.goods.items, 0, 'none on the baseline')
         eq(row.reward.bonusGoods.items, 2, 'two on the live-delivery bonus')
     end)
@@ -339,14 +339,14 @@ describe('goods on a listing', function()
         local s, f, c = paying({ baseline = {
             items = { { name = 'lockpick', count = 3 } },
         } })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
 
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(row.reward.goods.items, 0, 'a settled line is not still on offer')
     end)
 
-    it('never counts a hunter stake as reward goods', function()
+    it('never counts a hitman stake as reward goods', function()
         local s = newStack()
         local f = fixture(s, { creatorInventory = {
             { name = 'lockpick', count = 5, slot = 1, label = 'Lockpick' },
@@ -358,9 +358,9 @@ describe('goods on a listing', function()
             penaltyAmount = 10000,
         })
         truthy(c)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(row.reward.goods.items, 1, 'the creator put up one item, and only that')
     end)
 end)
@@ -381,7 +381,7 @@ describe('the headshot cache', function()
         fixture(s)
         eq(s.mugshot.count(), 0, 'nothing cached before anyone is rendered')
 
-        for _, cid in ipairs({ 'CREATOR1', 'TARGET01', 'HUNTER01' }) do
+        for _, cid in ipairs({ 'CREATOR1', 'TARGET01', 'HITMAN01' }) do
             s.mugshot.request(cid)
             s.mugshot.store(cid, PNG)
         end
@@ -392,13 +392,13 @@ describe('the headshot cache', function()
         local s = newStack()
         fixture(s)
         s.bridges.install(s)
-        for _, cid in ipairs({ 'CREATOR1', 'TARGET01', 'HUNTER01' }) do
+        for _, cid in ipairs({ 'CREATOR1', 'TARGET01', 'HITMAN01' }) do
             s.mugshot.request(cid)
             s.mugshot.store(cid, PNG)
         end
         eq(s.mugshot.count(), 3)
 
-        s.bridges.onPlayerDropped(s, 'HUNTER01')
+        s.bridges.onPlayerDropped(s, 'HITMAN01')
         eq(s.mugshot.count(), 2, 'the player who left is not still cached')
         truthy(s.mugshot.handleFor('CREATOR1'), 'and nobody else was dropped')
     end)
@@ -416,26 +416,26 @@ end)
 
 describe('a contract the viewer can never take', function()
     --- The board drew Accept on these and acceptance refused every time.
-    it('says so to a hunter whose hold was released for sitting on it', function()
+    it('says so to a hitman whose hold was released for sitting on it', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(c)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local row = s.storage.readHunter(c.id, 'HUNTER01')
-        s.storage.updateHunter(row.id, { state = 'released' })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local row = s.storage.readHitman(c.id, 'HITMAN01')
+        s.storage.updateHitman(row.id, { state = 'released' })
         local listed
-        for _, entry in ipairs(s.projection.listing('HUNTER01', 1).contracts) do
+        for _, entry in ipairs(s.projection.listing('HITMAN01', 1).contracts) do
             if entry.id == c.id then listed = entry end
         end
         truthy(listed, 'still on the board for everyone')
         eq(listed.barred, 'hold_released')
-        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        local ok, err = s.contracts.accept(f.hitman, c.id, false)
         falsy(ok)
-        eq(err, CB.ERR.HOLD_RELEASED, 'and it is the refusal acceptance gives')
+        eq(err, CH.ERR.HOLD_RELEASED, 'and it is the refusal acceptance gives')
     end)
 
     it('says so to another character on the creator account', function()
@@ -461,7 +461,7 @@ describe('a contract the viewer can never take', function()
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } },
         })
         local listed
-        for _, entry in ipairs(s.projection.listing('HUNTER01', 1).contracts) do
+        for _, entry in ipairs(s.projection.listing('HITMAN01', 1).contracts) do
             if entry.id == c.id then listed = entry end
         end
         truthy(listed)

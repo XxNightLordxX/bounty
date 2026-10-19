@@ -1,4 +1,4 @@
---- Why the app felt slow, and why placing a bounty said "Slow down."
+--- Why the app felt slow, and why placing a contract said "Slow down."
 ---
 --- Three separate things, all of which look like lag to a player.
 
@@ -43,7 +43,7 @@ describe('a request the flood guard drops', function()
             local reply = call('list', 1, { page = 1 })
             if reply and not reply.ok then told = reply.err end
         end
-        eq(told, CB.ERR.RATE_LIMITED, 'the player has to be told to wait')
+        eq(told, CH.ERR.RATE_LIMITED, 'the player has to be told to wait')
     end)
 
     it('still stops an actual flood', function()
@@ -52,7 +52,7 @@ describe('a request the flood guard drops', function()
         local refused = 0
         for _ = 1, 500 do
             local reply = call('list', 1, { page = 1 })
-            if reply and reply.err == CB.ERR.RATE_LIMITED then refused = refused + 1 end
+            if reply and reply.err == CH.ERR.RATE_LIMITED then refused = refused + 1 end
         end
         truthy(refused > 0, 'the guard has to keep guarding')
     end)
@@ -65,7 +65,7 @@ describe('a request the flood guard drops', function()
         local f = fixture(s)
         for i = 1, 8 do
             s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x ' .. i, mode = CB.MODE.COMPETITIVE,
+                targetCid = 'TARGET01', reason = 'x ' .. i, mode = CH.MODE.COMPETITIVE,
                 reward = { baseline = { cash = 100 } },
             })
         end
@@ -77,7 +77,7 @@ describe('a request the flood guard drops', function()
         local throttled = 0
         local function ask(name, payload)
             local reply = call(name, 3, payload)
-            if reply and reply.err == CB.ERR.RATE_LIMITED then
+            if reply and reply.err == CH.ERR.RATE_LIMITED then
                 throttled = throttled + 1
             end
         end
@@ -104,7 +104,7 @@ describe('a request the flood guard drops', function()
     end)
 end)
 
-describe('placing a bounty that the server refuses', function()
+describe('placing a contract that the server refuses', function()
     it('does not cost the attempt', function()
         -- The limit is checked before the handler runs, so a create refused
         -- for insufficient funds, a bad target, or a typo'd reward spent the
@@ -117,7 +117,7 @@ describe('placing a bounty that the server refuses', function()
         for _ = 1, 6 do
             local reply = call('create', 1, { reason = 'x' })
             falsy(reply.ok, 'these are all meant to fail')
-            falsy(reply.err == CB.ERR.RATE_LIMITED,
+            falsy(reply.err == CH.ERR.RATE_LIMITED,
                 'a refused attempt must not use up the allowance')
         end
 
@@ -130,7 +130,7 @@ describe('placing a bounty that the server refuses', function()
         truthy(handle, 'a target to place on')
 
         local made = call('create', 1, {
-            target = handle, reason = 'Owes me', mode = CB.MODE.COMPETITIVE,
+            target = handle, reason = 'Owes me', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(made and made.ok,
@@ -150,11 +150,11 @@ describe('placing a bounty that the server refuses', function()
         local placed, throttled = 0, 0
         for i = 1, 15 do
             local reply = call('create', 1, {
-                target = handle, reason = 'Number ' .. i, mode = CB.MODE.COMPETITIVE,
+                target = handle, reason = 'Number ' .. i, mode = CH.MODE.COMPETITIVE,
                 reward = { baseline = { cash = 100 } },
             })
             if reply and reply.ok then placed = placed + 1
-            elseif reply and reply.err == CB.ERR.RATE_LIMITED then throttled = throttled + 1 end
+            elseif reply and reply.err == CH.ERR.RATE_LIMITED then throttled = throttled + 1 end
         end
         truthy(throttled > 0,
             'the limit on real creations has to hold: ' .. placed .. ' placed')
@@ -167,7 +167,7 @@ describe('placing a bounty that the server refuses', function()
         local refusals = 0
         for _ = 1, 40 do
             local reply = call('accept', 1, { id = 'ct00000001' })
-            if reply and reply.err == CB.ERR.RATE_LIMITED then refusals = refusals + 1 end
+            if reply and reply.err == CH.ERR.RATE_LIMITED then refusals = refusals + 1 end
         end
         truthy(refusals >= 0)
     end)
@@ -192,7 +192,7 @@ describe('being told why a target is off limits', function()
 
     local function tryPlace(s, handle)
         return call('create', 1, {
-            target = handle, reason = 'Owes me', mode = CB.MODE.COMPETITIVE,
+            target = handle, reason = 'Owes me', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
     end
@@ -205,7 +205,7 @@ describe('being told why a target is off limits', function()
 
         withConfig({ { Config.Targeting, 'AllowProtectedJobTargets', false } }, function()
             local reply = tryPlace(s, handle)
-            eq(reply.err, CB.ERR.TARGET_IS_LEO,
+            eq(reply.err, CH.ERR.TARGET_IS_LEO,
                 'not the same answer as "they just logged in"')
         end)
     end)
@@ -226,7 +226,7 @@ describe('being told why a target is off limits', function()
         local f = fixture(s)
         for i = 1, Config.Limits.MaxActiveContractsPerTarget do
             truthy(s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x ' .. i, mode = CB.MODE.COMPETITIVE,
+                targetCid = 'TARGET01', reason = 'x ' .. i, mode = CH.MODE.COMPETITIVE,
                 reward = { baseline = { cash = 100 } },
             }), 'seeding contract ' .. i)
         end
@@ -235,11 +235,11 @@ describe('being told why a target is off limits', function()
             cash = 100000, bank = 100000, firstname = 'Ann', lastname = 'Poe' })
         local other = s.identity.resolve(12)
         local ok, err = s.contracts.create(other, {
-            targetCid = 'TARGET01', reason = 'one more', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'one more', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 100 } },
         })
         falsy(ok)
-        eq(err, CB.ERR.TARGET_HAS_ENOUGH,
+        eq(err, CH.ERR.TARGET_HAS_ENOUGH,
             'and not the same answer as "they are law enforcement"')
     end)
 
@@ -248,8 +248,8 @@ describe('being told why a target is off limits', function()
         -- a message that cannot be acted on.
         local seen = {}
         for _, code in ipairs({
-            CB.ERR.TARGET_IS_LEO, CB.ERR.TARGET_HAS_ENOUGH, CB.ERR.TARGET_JUST_ON,
-            CB.ERR.TARGET_TOO_NEW, CB.ERR.TARGET_JUST_UP, CB.ERR.TARGET_RECENTLY_ON,
+            CH.ERR.TARGET_IS_LEO, CH.ERR.TARGET_HAS_ENOUGH, CH.ERR.TARGET_JUST_ON,
+            CH.ERR.TARGET_TOO_NEW, CH.ERR.TARGET_JUST_UP, CH.ERR.TARGET_RECENTLY_ON,
         }) do
             truthy(code, 'every reason needs a code')
             falsy(seen[code], 'two reasons share the code ' .. tostring(code))

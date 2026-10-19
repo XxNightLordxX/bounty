@@ -557,7 +557,7 @@ local upFor = 0
 -- Dead once more after a defibrillator. The shock takes a player from dead
 -- to last stand, not to their feet, and the one death report stayed spent
 -- until they stood up: finished again on the ground, their second death was
--- never reported and the hunter who finished them was never credited. Not
+-- never reported and the hitman who finished them was never credited. Not
 -- dead for as long as a revive has to be up re-arms the report; whether a
 -- revive is reported still waits on standing up, after any death at all.
 local notDeadFor = 0
@@ -601,7 +601,7 @@ CreateThread(function()
             -- Down but not dead after a reported death is last stand, and
             -- only a defibrillator takes a player there from dead: finished
             -- seconds after the shock, the new death went unreported and the
-            -- hunter who finished them was never credited. A bare blink of
+            -- hitman who finished them was never credited. A bare blink of
             -- the death flag, with no last stand in it, still waits.
             if down or notDeadFor >= UP_CONFIRM_TICKS then reportedDead = false end
         end
@@ -714,7 +714,7 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
             -- must not fire. Without this, a photo taken at 119 seconds is
             -- still uploading when the timer expires at 120: the page is
             -- told the camera never came back, the real answer is dropped as
-            -- a second reply, and the hunter is told their kill went unsent
+            -- a second reply, and the hitman is told their kill went unsent
             -- while the server was in the middle of accepting it.
             shutterPressed = true
 
@@ -768,7 +768,7 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
         -- with no second argument it ignores options.cb entirely, waits for
         -- the shot and returns the URL instead. The photo went nowhere: the
         -- URL was discarded, nothing was submitted, and two minutes later the
-        -- hunter was told the camera never came back. options.cb is kept for
+        -- hitman was told the camera never came back. options.cb is kept for
         -- a build that reads it there, and a URL handed back as the return
         -- value is used too; `delivered` makes the first of them the only one.
         local opened, returned = phone('SetCameraComponent', function()
@@ -782,7 +782,7 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
                 -- upload of a photograph of a body, done inside the same
                 -- operation, and it is the step this crashes in on some
                 -- builds. It is also evidence of a crime sitting in the
-                -- hunter's phone. Off unless an operator asks for it.
+                -- hitman's phone. Off unless an operator asks for it.
                 saveToGallery = Config.Completion.SavePhotoToGallery == true,
                 cb = onShot,
             }, onShot)

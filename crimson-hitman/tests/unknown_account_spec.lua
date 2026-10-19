@@ -94,15 +94,15 @@ describe('players whose account cannot be identified', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(c)
 
         withoutIdentifiers(function()
-            local hunter = s.identity.resolve(3)
-            local ok, err = s.contracts.accept(hunter, c.id, false)
-            truthy(ok, 'a hunter with no readable account is not the creator: '
+            local hitman = s.identity.resolve(3)
+            local ok, err = s.contracts.accept(hitman, c.id, false)
+            truthy(ok, 'a hitman with no readable account is not the creator: '
                 .. tostring(err))
         end)
     end)

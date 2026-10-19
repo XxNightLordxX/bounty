@@ -116,7 +116,7 @@ end
 --- The limit is checked before a handler runs, so a request refused by the
 --- handler itself — a bad target, a reward the creator cannot afford, a
 --- typo — cost exactly as much allowance as one that worked. Two mistakes
---- placing a bounty and the player was told to slow down for half a minute.
+--- placing a contract and the player was told to slow down for half a minute.
 ---
 --- The limit is there to bound work actually done. A refused request did
 --- none, so it is given back. The flood guard, which counts raw requests

@@ -8,10 +8,10 @@ local Storage
 
 function Ledger.init(storage) Storage = storage end
 
---- Record a completed fulfilment for both the creator and the hunter.
+--- Record a completed fulfilment for both the creator and the hitman.
 --- The target gets an entry too — surviving a contract is worth remembering —
 --- but never the photo of their own corpse.
-function Ledger.record(contract, hunterCid, photoRef, fulfilment, result)
+function Ledger.record(contract, hitmanCid, photoRef, fulfilment, result)
     if not contract then return end
 
     local depth = math.min(Config.Ledger.Depth, Config.Ledger.MaxDepthHardCap)
@@ -37,13 +37,13 @@ function Ledger.record(contract, hunterCid, photoRef, fulfilment, result)
     -- Depth is enforced by the storage backends on write, so there is no
     -- separate trim step to forget to call.
     entry(contract.creator_cid, 'creator', true)
-    entry(hunterCid, 'hunter', true)
+    entry(hitmanCid, 'hitman', true)
     entry(contract.target_cid, 'target', Config.Ledger.ShowPhotoToTarget)
 end
 
 --- Drop the photo from ledger rows past the retention window (§14.43).
 ---
---- The row stays — a hunter's record of what they finished is the point of
+--- The row stays — a hitman's record of what they finished is the point of
 --- the ledger — but the image reference does not. A photo of somebody's
 --- corpse is the most sensitive thing this resource stores and it was kept
 --- for the life of the row, which on a depth-ten ledger can be months.

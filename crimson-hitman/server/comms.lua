@@ -1,4 +1,4 @@
---- Masked relay between creator and hunters (§11).
+--- Masked relay between creator and hitmen (§11).
 ---
 --- Messages are relayed server-side and rendered under a per-contract alias.
 --- No phone number, character name, citizen id or source ever crosses to the
@@ -34,7 +34,7 @@ end
 local Storage, Identity, Audit, Notify, RateLimit
 
 --- Opaque thread handles issued to clients, so a citizen id never leaves the
---- server. [handle] = { contractId, hunterCid, ownerCid }
+--- server. [handle] = { contractId, hitmanCid, ownerCid }
 local handles = {}
 local handleSeq = 0
 
@@ -44,31 +44,31 @@ function Comms.init(deps)
     handles = {}
 end
 
---- Mint (or reuse) a handle that stands in for a hunter on one contract, for
---- one viewer. Handing the creator a hunter's citizen id would defeat
+--- Mint (or reuse) a handle that stands in for a hitman on one contract, for
+--- one viewer. Handing the creator a hitman's citizen id would defeat
 --- Anonymous Mode outright, and a citizen id is an internal key in any case.
-local function handleFor(ownerCid, contractId, hunterCid)
+local function handleFor(ownerCid, contractId, hitmanCid)
     for handle, entry in pairs(handles) do
         if entry.ownerCid == ownerCid and entry.contractId == contractId
-            and entry.hunterCid == hunterCid then
+            and entry.hitmanCid == hitmanCid then
             return handle
         end
     end
 
     handleSeq = handleSeq + 1
     local handle = ('th%s%06d'):format(contractId:gsub('[^%w]', ''), handleSeq)
-    handles[handle] = { contractId = contractId, hunterCid = hunterCid, ownerCid = ownerCid }
+    handles[handle] = { contractId = contractId, hitmanCid = hitmanCid, ownerCid = ownerCid }
     return handle
 end
 
---- Resolve a handle back to a hunter, for one viewer only. A handle minted
+--- Resolve a handle back to a hitman, for one viewer only. A handle minted
 --- for someone else is not accepted.
 local function resolveHandle(ownerCid, contractId, handle)
     if type(handle) ~= 'string' then return nil end
     local entry = handles[handle]
     if not entry then return nil end
     if entry.ownerCid ~= ownerCid or entry.contractId ~= contractId then return nil end
-    return entry.hunterCid
+    return entry.hitmanCid
 end
 
 function Comms.clearContract(contractId)
@@ -83,90 +83,90 @@ end
 --- anonymous operative logged off, the client's handle for their thread
 --- stopped working and the next `threads` minted a new one — a message,
 --- a call or a re-read told the client the moment their anonymous operative
---- left the city and came back. A handle naming a hunter lasts while that
---- hunter is on the contract (Comms.clearHunter) and the contract lives.
+--- left the city and came back. A handle naming a hitman lasts while that
+--- hitman is on the contract (Comms.clearHitman) and the contract lives.
 function Comms.clearPlayer(cid)
     for handle, entry in pairs(handles) do
         if entry.ownerCid == cid then handles[handle] = nil end
     end
 end
 
---- A hunter has left a contract: nobody's handle for their thread on it
+--- A hitman has left a contract: nobody's handle for their thread on it
 --- means anything now.
-function Comms.clearHunter(contractId, hunterCid)
+function Comms.clearHitman(contractId, hitmanCid)
     for handle, entry in pairs(handles) do
-        if entry.contractId == contractId and entry.hunterCid == hunterCid then
+        if entry.contractId == contractId and entry.hitmanCid == hitmanCid then
             handles[handle] = nil
         end
     end
 end
 
---- A thread is one creator-hunter pair. In competitive mode the creator has
---- a separate thread per hunter, and hunters never see each other.
-local function threadId(contractId, hunterCid)
-    return contractId .. '|' .. hunterCid
+--- A thread is one creator-hitman pair. In competitive mode the creator has
+--- a separate thread per hitman, and hitmen never see each other.
+local function threadId(contractId, hitmanCid)
+    return contractId .. '|' .. hitmanCid
 end
 
 --- Resolve the caller's role and thread, or refuse.
----@return table|nil ctx { contract, role, hunterCid, threadId, alias }
+---@return table|nil ctx { contract, role, hitmanCid, threadId, alias }
 ---@return string|nil err
 --- @param threadHandle string|nil an opaque handle from Comms.threads
 function Comms.context(actor, contractId, threadHandle)
     contractId = Util.toId(contractId)
-    if not contractId then return nil, CB.ERR.INVALID_INPUT end
+    if not contractId then return nil, CH.ERR.INVALID_INPUT end
 
     local contract = Storage.readContract(contractId)
-    if not contract then return nil, CB.ERR.NOT_FOUND end
+    if not contract then return nil, CH.ERR.NOT_FOUND end
 
     -- A thread lives as long as its contract (§11.2). Nothing here asked,
-    -- and a hunter's row stays 'active' when a contract ends — only the
-    -- creator's handles are dropped — so a hunter could go on writing to
+    -- and a hitman's row stays 'active' when a contract ends — only the
+    -- creator's handles are dropped — so a hitman could go on writing to
     -- the client of a finished contract indefinitely, every message a
     -- notification on their phone, while the client could no longer answer
     -- and was told "That is not yours" about the conversation instead.
-    if CB.TERMINAL[contract.state] then return nil, CB.ERR.ALREADY_SETTLED end
+    if CH.TERMINAL[contract.state] then return nil, CH.ERR.ALREADY_SETTLED end
 
     if contract.creator_cid == actor.cid then
         -- The creator names a thread by its handle, never by a citizen id.
-        local hunterCid = resolveHandle(actor.cid, contractId, threadHandle)
-        local hunter = hunterCid and Storage.readHunter(contractId, hunterCid)
-        if not hunter or hunter.state ~= 'active' then return nil, CB.ERR.NOT_PARTICIPANT end
+        local hitmanCid = resolveHandle(actor.cid, contractId, threadHandle)
+        local hitman = hitmanCid and Storage.readHitman(contractId, hitmanCid)
+        if not hitman or hitman.state ~= 'active' then return nil, CH.ERR.NOT_PARTICIPANT end
         return {
-            contract = contract, role = 'creator', hunterCid = hunter.hunter_cid,
-            threadId = threadId(contractId, hunter.hunter_cid), alias = 'Client',
+            contract = contract, role = 'creator', hitmanCid = hitman.hitman_cid,
+            threadId = threadId(contractId, hitman.hitman_cid), alias = 'Client',
         }
     end
 
-    local hunter = Storage.readHunter(contractId, actor.cid)
-    if hunter and hunter.state == 'active' then
+    local hitman = Storage.readHitman(contractId, actor.cid)
+    if hitman and hitman.state == 'active' then
         return {
-            contract = contract, role = 'hunter', hunterCid = actor.cid,
-            threadId = threadId(contractId, actor.cid), alias = hunter.alias,
+            contract = contract, role = 'hitman', hitmanCid = actor.cid,
+            threadId = threadId(contractId, actor.cid), alias = hitman.alias,
         }
     end
 
-    return nil, CB.ERR.NOT_PARTICIPANT
+    return nil, CH.ERR.NOT_PARTICIPANT
 end
 
 --- Send a message into a contract thread.
 ---@return boolean ok
 ---@return string|nil err
 function Comms.send(actor, contractId, threadHandle, rawBody)
-    if not Config.Relay.Enabled then return false, CB.ERR.RELAY_OFF end
+    if not Config.Relay.Enabled then return false, CH.ERR.RELAY_OFF end
 
     local ctx, err = Comms.context(actor, contractId, threadHandle)
     if not ctx then return false, err end
 
     -- This module owns the message bucket, so every caller is throttled and
     -- a message never costs two tokens.
-    if not RateLimit.check(actor, 'message') then return false, CB.ERR.RATE_LIMITED end
+    if not RateLimit.check(actor, 'message') then return false, CH.ERR.RATE_LIMITED end
 
     local body = Util.sanitizeText(rawBody, Config.Relay.MaxLength)
-    if not body then return false, CB.ERR.INVALID_INPUT end
+    if not body then return false, CH.ERR.INVALID_INPUT end
 
     if phoneRefuses(actor.source, body) then
         Audit.rejected('relay_blacklisted_word', actor.cid, contractId, {})
-        return false, CB.ERR.INVALID_INPUT
+        return false, CH.ERR.INVALID_INPUT
     end
 
     Storage.writeMessage({
@@ -178,7 +178,7 @@ function Comms.send(actor, contractId, threadHandle, rawBody)
         sent_at     = os.time(),
     })
 
-    local recipient = ctx.role == 'creator' and ctx.hunterCid or ctx.contract.creator_cid
+    local recipient = ctx.role == 'creator' and ctx.hitmanCid or ctx.contract.creator_cid
     Notify.toCitizen(recipient, 'Contract message', ('%s: %s'):format(ctx.alias, body))
     -- And the thread, if they have it open: a buzz does not change a page,
     -- so two people in the same conversation never saw each other's replies.
@@ -196,7 +196,7 @@ function Comms.read(actor, contractId, threadHandle)
     -- The switch applies to the whole relay, not only to sending. It was
     -- read by send() alone, so with it off the thread still opened, with a
     -- compose box whose every message was refused.
-    if not Config.Relay.Enabled then return nil, CB.ERR.RELAY_OFF end
+    if not Config.Relay.Enabled then return nil, CH.ERR.RELAY_OFF end
 
     local ctx, err = Comms.context(actor, contractId, threadHandle)
     if not ctx then return nil, err end
@@ -216,33 +216,33 @@ end
 
 --- Threads visible to the caller, for the app's inbox.
 function Comms.threads(actor, contractId)
-    if not Config.Relay.Enabled then return nil, CB.ERR.RELAY_OFF end
+    if not Config.Relay.Enabled then return nil, CH.ERR.RELAY_OFF end
 
     local contract = Storage.readContract(Util.toId(contractId) or '')
     if not contract then return {} end
     -- Closed with its contract, like the threads themselves.
-    if CB.TERMINAL[contract.state] then return {} end
+    if CH.TERMINAL[contract.state] then return {} end
 
     if contract.creator_cid == actor.cid then
-        local hunters = Storage.readHunters(contract.id)
+        local hitmen = Storage.readHitmen(contract.id)
         local out = {}
-        for i = 1, #hunters do
-            local h = hunters[i]
+        for i = 1, #hitmen do
+            local h = hitmen[i]
             if h.state == 'active' then
                 out[#out + 1] = {
-                    handle = handleFor(actor.cid, contract.id, h.hunter_cid),
+                    handle = handleFor(actor.cid, contract.id, h.hitman_cid),
                     alias  = h.alias,
-                    -- A hunter's real name appears only when they chose to
+                    -- A hitman's real name appears only when they chose to
                     -- be seen; their citizen id never appears at all.
-                    name   = (not h.anon) and h.hunter_name or nil,
+                    name   = (not h.anon) and h.hitman_name or nil,
                 }
             end
         end
         return out
     end
 
-    local hunter = Storage.readHunter(contract.id, actor.cid)
-    if hunter and hunter.state == 'active' then
+    local hitman = Storage.readHitman(contract.id, actor.cid)
+    if hitman and hitman.state == 'active' then
         return { { handle = handleFor(actor.cid, contract.id, actor.cid), alias = 'Client' } }
     end
 
@@ -258,8 +258,8 @@ function Comms.requestCall(actor, contractId, threadHandle)
     -- Calls are part of the relay. With the relay switched off they used to
     -- be placed anyway: only AllowMaskedCalls was read here, so a server
     -- owner who turned messaging off still had players' phones ringing.
-    if not Config.Relay.Enabled then return false, CB.ERR.RELAY_OFF end
-    if not Config.Relay.AllowMaskedCalls then return false, CB.ERR.CALLS_OFF end
+    if not Config.Relay.Enabled then return false, CH.ERR.RELAY_OFF end
+    if not Config.Relay.AllowMaskedCalls then return false, CH.ERR.CALLS_OFF end
 
     local ctx, err = Comms.context(actor, contractId, threadHandle)
     if not ctx then return false, err end
@@ -270,21 +270,21 @@ function Comms.requestCall(actor, contractId, threadHandle)
     -- anonymous creator ringing a named operative did so with caller id on,
     -- handing over the number they had paid to hide.
     local otherAnon, selfAnon
-    local hunter = Storage.readHunter(ctx.contract.id, ctx.hunterCid)
+    local hitman = Storage.readHitman(ctx.contract.id, ctx.hitmanCid)
     if ctx.role == 'creator' then
-        otherAnon = hunter and hunter.anon
+        otherAnon = hitman and hitman.anon
         selfAnon = ctx.contract.anon_creator
     else
         otherAnon = ctx.contract.anon_creator
-        selfAnon = hunter and hunter.anon
+        selfAnon = hitman and hitman.anon
     end
     otherAnon, selfAnon = otherAnon == true, selfAnon == true
 
     if otherAnon and not Comms.maskingAvailable() then
-        return false, CB.ERR.CALL_UNMASKED
+        return false, CH.ERR.CALL_UNMASKED
     end
 
-    local recipient = ctx.role == 'creator' and ctx.hunterCid or ctx.contract.creator_cid
+    local recipient = ctx.role == 'creator' and ctx.hitmanCid or ctx.contract.creator_cid
 
     -- Place the call for real when this phone build can, rather than only
     -- telling the other party somebody wants to talk. Whether it can is

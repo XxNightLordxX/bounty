@@ -1,5 +1,5 @@
 --- Contract lifecycle: creation gates, acceptance, the state machine and the
---- conflict rules that keep creator, target and hunter three distinct people.
+--- conflict rules that keep creator, target and hitman three distinct people.
 
 local function baseReward()
     return { baseline = { cash = 5000 }, bonus = { cash = 2500 } }
@@ -11,24 +11,24 @@ describe('contract creation', function()
         local f = fixture(s)
         local contract, err = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.EXCLUSIVE, reward = baseReward(),
+            mode = CH.MODE.EXCLUSIVE, reward = baseReward(),
         })
         truthy(contract, 'expected a contract, got ' .. tostring(err))
-        eq(contract.state, CB.STATE.ACTIVE)
+        eq(contract.state, CH.STATE.ACTIVE)
         eq(Env.players[1].PlayerData.money.cash, 92500, 'baseline and bonus both escrowed')
     end)
 
-    it('refuses a bounty on yourself', function()
+    it('refuses a contract on yourself', function()
         local s = newStack()
         local f = fixture(s)
         local contract, err = s.contracts.create(f.creator, {
             targetCid = 'CREATOR1', reason = 'x', reward = baseReward(),
         })
         falsy(contract)
-        eq(err, CB.ERR.SELF_TARGET)
+        eq(err, CH.ERR.SELF_TARGET)
     end)
 
-    it('refuses a bounty on another character of the same account', function()
+    it('refuses a contract on another character of the same account', function()
         local s = newStack()
         local f = fixture(s)
         Env.players[2].PlayerData.license = 'license:aaa' -- same account as creator
@@ -36,7 +36,7 @@ describe('contract creation', function()
             targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
         })
         falsy(contract, 'alt-account targeting must be blocked')
-        eq(err, CB.ERR.SAME_ACCOUNT)
+        eq(err, CH.ERR.SAME_ACCOUNT)
     end)
 
     it('refuses a target who has barely played', function()
@@ -48,7 +48,7 @@ describe('contract creation', function()
             targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
         })
         falsy(contract)
-        eq(err, CB.ERR.TARGET_TOO_NEW)
+        eq(err, CH.ERR.TARGET_TOO_NEW)
     end)
 
     it('refuses a target who only just connected', function()
@@ -62,7 +62,7 @@ describe('contract creation', function()
             targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
         })
         falsy(contract, 'someone who walked in a moment ago is not fair game')
-        eq(err, CB.ERR.TARGET_JUST_ON)
+        eq(err, CH.ERR.TARGET_JUST_ON)
 
         Env.advance((Config.Immunity.MinTargetSessionMinutes * 60) + 60)
         truthy(s.contracts.create(f.creator, {
@@ -126,7 +126,7 @@ describe('contract creation', function()
             targetCid = 'TGT00009', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
         falsy(extra, 'cap must hold')
-        eq(err, CB.ERR.LIMIT_REACHED)
+        eq(err, CH.ERR.LIMIT_REACHED)
     end)
 end)
 
@@ -136,64 +136,64 @@ describe('acceptance', function()
         local f = fixture(s)
         local contract = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = mode or CB.MODE.EXCLUSIVE, reward = baseReward(),
+            mode = mode or CH.MODE.EXCLUSIVE, reward = baseReward(),
         })
         return s, f, contract
     end
 
-    it('records the hunter and moves the contract to accepted', function()
+    it('records the hitman and moves the contract to accepted', function()
         local s, f, c = seeded()
-        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        local ok, err = s.contracts.accept(f.hitman, c.id, false)
         truthy(ok, tostring(err))
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
     end)
 
     it('refuses the creator accepting their own contract', function()
         local s, f, c = seeded()
         local ok, err = s.contracts.accept(f.creator, c.id, false)
         falsy(ok)
-        eq(err, CB.ERR.SELF_ACCEPT)
+        eq(err, CH.ERR.SELF_ACCEPT)
     end)
 
     it('refuses the target accepting a contract on themselves', function()
         local s, f, c = seeded()
         local ok, err = s.contracts.accept(f.target, c.id, false)
         falsy(ok)
-        eq(err, CB.ERR.SELF_TARGET)
+        eq(err, CH.ERR.SELF_TARGET)
     end)
 
-    it('refuses a hunter on the creators account', function()
+    it('refuses a hitman on the creators account', function()
         local s, f, c = seeded()
         Env.players[3].PlayerData.license = 'license:aaa'
-        local hunter = s.identity.resolve(3)
-        local ok, err = s.contracts.accept(hunter, c.id, false)
+        local hitman = s.identity.resolve(3)
+        local ok, err = s.contracts.accept(hitman, c.id, false)
         falsy(ok)
-        eq(err, CB.ERR.SAME_ACCOUNT)
+        eq(err, CH.ERR.SAME_ACCOUNT)
     end)
 
-    it('allows exactly one hunter on an exclusive contract', function()
-        local s, f, c = seeded(CB.MODE.EXCLUSIVE)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+    it('allows exactly one hitman on an exclusive contract', function()
+        local s, f, c = seeded(CH.MODE.EXCLUSIVE)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
         local ok, err = s.contracts.accept(s.identity.resolve(4), c.id, false)
         falsy(ok, 'exclusive means one')
         -- The same fact as a full competitive contract, so the same code the
         -- page has words for; BAD_STATE was "Not right now."
-        eq(err, CB.ERR.CONTRACT_FULL)
+        eq(err, CH.ERR.CONTRACT_FULL)
     end)
 
-    it('allows several hunters on a competitive contract', function()
-        local s, f, c = seeded(CB.MODE.COMPETITIVE)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+    it('allows several hitmen on a competitive contract', function()
+        local s, f, c = seeded(CH.MODE.COMPETITIVE)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
         truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
-        eq(#s.storage.readHunters(c.id), 2)
+        eq(#s.storage.readHitmen(c.id), 2)
     end)
 
-    it('refuses the same hunter twice', function()
-        local s, f, c = seeded(CB.MODE.COMPETITIVE)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local ok = s.contracts.accept(f.hunter, c.id, false)
+    it('refuses the same hitman twice', function()
+        local s, f, c = seeded(CH.MODE.COMPETITIVE)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local ok = s.contracts.accept(f.hitman, c.id, false)
         falsy(ok)
     end)
 end)
@@ -205,9 +205,9 @@ describe('state machine', function()
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
         })
-        falsy(s.contracts.transition(c.id, CB.STATE.ACTIVE, CB.STATE.COMPLETED, 'illegal'),
+        falsy(s.contracts.transition(c.id, CH.STATE.ACTIVE, CH.STATE.COMPLETED, 'illegal'),
             'active cannot jump straight to completed')
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'state unchanged')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'state unchanged')
     end)
 
     it('never transitions out of a terminal state', function()
@@ -216,8 +216,8 @@ describe('state machine', function()
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
         })
-        s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
-        falsy(s.contracts.transition(c.id, CB.STATE.CANCELLED, CB.STATE.ACTIVE, 'revive'))
+        s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        falsy(s.contracts.transition(c.id, CH.STATE.CANCELLED, CH.STATE.ACTIVE, 'revive'))
     end)
 
     it('releases escrow exactly once across repeated resolutions', function()
@@ -227,11 +227,11 @@ describe('state machine', function()
             targetCid = 'TARGET01', reason = 'x', reward = baseReward(),
         })
         eq(Env.players[1].PlayerData.money.cash, 92500)
-        s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
         eq(Env.players[1].PlayerData.money.cash, 100000, 'refunded in full')
-        local ok, err = s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled again')
+        local ok, err = s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled again')
         falsy(ok)
-        eq(err, CB.ERR.ALREADY_SETTLED)
+        eq(err, CH.ERR.ALREADY_SETTLED)
         eq(Env.players[1].PlayerData.money.cash, 100000, 'no second refund')
     end)
 end)
@@ -249,70 +249,70 @@ describe('failure penalty', function()
         return s, f, c
     end
 
-    it('stakes the penalty from the hunter at acceptance', function()
+    it('stakes the penalty from the hitman at acceptance', function()
         local s, f, c = withPenalty(10000)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         eq(Env.players[3].PlayerData.money.bank, 40000, 'staked up front, not merely promised')
     end)
 
-    it('refuses acceptance from a hunter who cannot cover the stake', function()
+    it('refuses acceptance from a hitman who cannot cover the stake', function()
         local s, f, c = withPenalty(10000)
         Env.players[3].PlayerData.money.bank = 100
         Env.players[3].PlayerData.money.cash = 100
-        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        local ok, err = s.contracts.accept(f.hitman, c.id, false)
         falsy(ok)
-        eq(err, CB.ERR.INSUFFICIENT)
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'and the contract stays open')
+        eq(err, CH.ERR.INSUFFICIENT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'and the contract stays open')
     end)
 
-    it('forfeits the stake to the creator when the hunter walks away', function()
+    it('forfeits the stake to the creator when the hitman walks away', function()
         local s, f, c = withPenalty(10000)
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         local creatorBefore = Env.players[1].PlayerData.money.bank
 
-        truthy(s.contracts.abandon(f.hunter, c.id))
+        truthy(s.contracts.abandon(f.hitman, c.id))
         eq(Env.players[1].PlayerData.money.bank, creatorBefore + 10000, 'creator keeps the penalty')
-        eq(Env.players[3].PlayerData.money.bank, 40000, 'hunter does not get it back')
+        eq(Env.players[3].PlayerData.money.bank, 40000, 'hitman does not get it back')
     end)
 
-    it('returns the stake when the hunter delivers', function()
+    it('returns the stake when the hitman delivers', function()
         local s, f, c = withPenalty(10000)
-        s.contracts.accept(f.hunter, c.id, false)
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.accept(f.hitman, c.id, false)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         eq(Env.players[3].PlayerData.money.bank, 50000, 'stake returned in full')
         eq(Env.players[3].PlayerData.money.cash, 10000, 'and the reward paid')
     end)
 
     it('forfeits the stake when the contract expires under them', function()
         local s, f, c = withPenalty(10000)
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         local creatorBefore = Env.players[1].PlayerData.money.bank
 
-        s.contracts.resolve(c.id, CB.STATE.EXPIRED, 'CREATOR1', nil, 'expired')
+        s.contracts.resolve(c.id, CH.STATE.EXPIRED, 'CREATOR1', nil, 'expired')
         eq(Env.players[1].PlayerData.money.bank, creatorBefore + 10000, 'the penalty is the point')
     end)
 
     it('returns the stake when the creator cancels instead', function()
         local s, f, c = withPenalty(10000)
-        s.contracts.accept(f.hunter, c.id, false)
-        s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
-        eq(Env.players[3].PlayerData.money.bank, 50000, 'not the hunter\'s fault, not their loss')
+        s.contracts.accept(f.hitman, c.id, false)
+        s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        eq(Env.players[3].PlayerData.money.bank, 50000, 'not the hitman\'s fault, not their loss')
     end)
 
     it('never counts a stake as part of the contract reward', function()
         local s, f, c = withPenalty(10000)
-        s.contracts.accept(f.hunter, c.id, false)
-        eq(s.escrow.moneyValue(c.id), 5000, 'the board shows the reward, not the hunter\'s stake')
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        s.contracts.accept(f.hitman, c.id, false)
+        eq(s.escrow.moneyValue(c.id), 5000, 'the board shows the reward, not the hitman\'s stake')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(row.reward.baseline, 5000)
     end)
 
     it('does not sweep a stake into a general refund', function()
         local s, f, c = withPenalty(10000)
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         local creatorBefore = Env.players[1].PlayerData.money.cash
 
-        s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
         eq(Env.players[1].PlayerData.money.cash, creatorBefore + 5000,
             'the creator gets their escrow back and nothing of the stake')
         eq(Env.players[3].PlayerData.money.bank, 50000)
@@ -327,7 +327,7 @@ describe('spam and rollback', function()
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
         truthy(first)
-        s.contracts.resolve(first.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        s.contracts.resolve(first.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
 
         -- A different target, so the cancel throttle is what is being
         -- measured rather than the per-target cooldown.
@@ -336,7 +336,7 @@ describe('spam and rollback', function()
             targetCid = 'TARGET02', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
         falsy(second, 'cancelling should not be a free way back onto the board')
-        eq(err, CB.ERR.CANCELLED_TOO_SOON,
+        eq(err, CH.ERR.CANCELLED_TOO_SOON,
             'its own code, not the token bucket\'s. This is a policy wait of '
             .. 'minutes and the page words rate_limited as "Slow down." — and '
             .. 'reads it as a transient condition worth retrying, which this '
@@ -358,7 +358,7 @@ describe('spam and rollback', function()
             reward = { baseline = { cash = 5000, items = { { name = 'lockpick', count = 99 } } } },
         })
         falsy(c)
-        eq(err, CB.ERR.INSUFFICIENT)
+        eq(err, CH.ERR.INSUFFICIENT)
         eq(#s.storage.allContracts(), before, 'no shell row was written')
         eq(Env.players[1].PlayerData.money.cash, 100000, 'and nothing was charged')
     end)
@@ -369,47 +369,47 @@ describe('stakes survive every ending', function()
         local s = newStack()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd', bank = 50000 })
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd', bank = 50000 })
         local second = s.identity.resolve(4)
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } }, penaltyAmount = 10000,
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         s.contracts.accept(second, c.id, false)
         return s, f, c, second
     end
 
-    it('returns the losing hunters stake when the contract completes', function()
+    it('returns the losing hitmen stake when the contract completes', function()
         local s, f, c, second = competitiveWithStakes()
-        eq(Env.players[4].PlayerData.money.bank, 40000, 'hunter two staked')
+        eq(Env.players[4].PlayerData.money.bank, 40000, 'hitman two staked')
 
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
-        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
 
         eq(Env.players[3].PlayerData.money.bank, 50000, 'the winner gets their stake back')
         eq(Env.players[4].PlayerData.money.bank, 50000,
-            'and so does the hunter who simply lost the race')
+            'and so does the hitman who simply lost the race')
     end)
 
     it('leaves nothing held on a completed contract', function()
         local s, f, c = competitiveWithStakes()
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            eq(line.state, CB.ESCROW_STATE.SETTLED,
+            eq(line.state, CH.ESCROW_STATE.SETTLED,
                 ('line %s (%s) stranded on a completed contract'):format(line.id, line.portion))
         end
     end)
 
     it('refuses an abandon on a contract that has already finished', function()
         local s, f, c, second = competitiveWithStakes()
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         local before = Env.players[1].PlayerData.money.bank
 
         local ok, err = s.contracts.abandon(second, c.id)
         falsy(ok, 'nothing to abandon once it is over')
-        eq(err, CB.ERR.BAD_STATE)
+        eq(err, CH.ERR.BAD_STATE)
         eq(Env.players[1].PlayerData.money.bank, before,
             'and the creator cannot be handed a stake that was already returned')
     end)
@@ -422,7 +422,7 @@ describe('stakes survive every ending', function()
                 money = money + p.PlayerData.money.cash + p.PlayerData.money.bank
             end
             for _, line in ipairs(s.storage.readEscrow(c.id)) do
-                if line.state ~= CB.ESCROW_STATE.SETTLED and CB.MONEY_SOURCES[line.source] then
+                if line.state ~= CH.ESCROW_STATE.SETTLED and CH.MONEY_SOURCES[line.source] then
                     money = money + (line.amount or 0)
                 end
             end
@@ -430,7 +430,7 @@ describe('stakes survive every ending', function()
         end
 
         local opening = total()
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         eq(total(), opening, 'completion must neither create nor destroy value')
     end)
 end)
@@ -441,35 +441,35 @@ describe('a stake stays at risk until the contract ends', function()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 -- Funded well enough to carry the stake below: §14.18 clamps
                 -- the stake to a multiple of the money escrow, so a $2,000
-                -- contract cannot ask a hunter for $10,000.
+                -- contract cannot ask a hitman for $10,000.
                 { baseline = { cash = 5000 } },
                 { baseline = { cash = 5000 } },
             } },
             penaltyAmount = 10000,
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         return s, f, c
     end
 
     it('does not hand the stake back after the first of several payouts', function()
         local s, f, c = multiSlotWithPenalty()
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
 
         eq(Env.players[3].PlayerData.money.bank, 40000,
-            'the hunter is still on the hook for the remaining payout')
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED)
+            'the hitman is still on the hook for the remaining payout')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
     end)
 
     it('still forfeits the stake if they walk away after collecting once', function()
         local s, f, c = multiSlotWithPenalty()
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         local creatorBefore = Env.players[1].PlayerData.money.bank
 
-        s.contracts.abandon(f.hunter, c.id)
+        s.contracts.abandon(f.hitman, c.id)
         eq(Env.players[1].PlayerData.money.bank, creatorBefore + 10000,
             'collect-then-abandon must not be free')
         eq(Env.players[3].PlayerData.money.bank, 40000)
@@ -477,38 +477,38 @@ describe('a stake stays at risk until the contract ends', function()
 
     it('returns the stake once the last payout is collected', function()
         local s, f, c = multiSlotWithPenalty()
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         Env.advance(Config.Limits.SlotCooldownSeconds + 1)
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
 
-        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
         eq(Env.players[3].PlayerData.money.bank, 50000, 'stake returned when the job is done')
         eq(Env.players[3].PlayerData.money.cash, 15000, 'plus both payouts')
     end)
 end)
 
 describe('money already promised to someone is not swept away', function()
-    it('does not refund a forfeited stake to the hunter who forfeited it', function()
+    it('does not refund a forfeited stake to the hitman who forfeited it', function()
         local s = newStack()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 2500 } }, penaltyAmount = 5000,
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
 
         -- The creator is offline, so the forfeited stake is owed to them
         -- rather than paid immediately.
         Env.removePlayer(1)
-        s.contracts.abandon(f.hunter, c.id)
-        eq(Env.players[3].PlayerData.money.bank, 45000, 'the hunter forfeited it')
+        s.contracts.abandon(f.hitman, c.id)
+        eq(Env.players[3].PlayerData.money.bank, 45000, 'the hitman forfeited it')
 
         -- The creator returns and lowers the penalty for whoever comes next.
         Env.addPlayer({ source = 1, citizenid = 'CREATOR1', license = 'license:aaa',
             cash = 0, bank = 0 })
-        s.amendments.improve(s.identity.resolve(1), c.id, CB.AMENDMENT.LOWER_PENALTY,
+        s.amendments.improve(s.identity.resolve(1), c.id, CH.AMENDMENT.LOWER_PENALTY,
             { amount = 1 })
 
         eq(Env.players[3].PlayerData.money.bank, 45000,
@@ -530,7 +530,7 @@ describe('money already promised to someone is not swept away', function()
         truthy(#owed > 0, 'the premium is owed to the creator')
 
         -- Any later general release must not carry it off to someone else.
-        s.escrow.release(c.id, 'HUNTER01', nil, 'a general sweep')
+        s.escrow.release(c.id, 'HITMAN01', nil, 'a general sweep')
 
         local stillOwed = s.storage.readPending('CREATOR1')
         eq(#stillOwed, #owed, 'the premium is still the creator\'s')
@@ -541,10 +541,10 @@ end)
 describe('anonymity fees', function()
     -- Set after the stack is built, not before: newStack restores the
     -- configuration as it ships, so an override applied first is wiped.
-    local function withFees(creatorFee, hunterFee)
+    local function withFees(creatorFee, hitmanFee)
         local s = newStack()
         Config.Anonymity.CreatorFee = creatorFee
-        Config.Anonymity.HitmanFee = hunterFee
+        Config.Anonymity.HitmanFee = hitmanFee
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
         return s, f
@@ -589,12 +589,12 @@ describe('anonymity fees', function()
         eq(Env.players[1].PlayerData.money.bank, 100000, 'no half-charged creators')
     end)
 
-    it('charges a hunter who accepts anonymously', function()
+    it('charges a hitman who accepts anonymously', function()
         local s, f = withFees(0, 2500)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
-        s.contracts.accept(f.hunter, c.id, true)
+        s.contracts.accept(f.hitman, c.id, true)
         eq(Env.players[3].PlayerData.money.bank, 47500)
     end)
 
@@ -606,32 +606,32 @@ describe('anonymity fees', function()
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
 
-        local ok, err = s.contracts.accept(f.hunter, c.id, true)
+        local ok, err = s.contracts.accept(f.hitman, c.id, true)
 
         -- They used to be accepted under their own name. The page only sees
         -- that the acceptance went through, so it told them "accepted,
         -- anonymously" while the creator was told who they were — and a
         -- name, once handed over, cannot be taken back.
         falsy(ok, 'asked to be anonymous and could not pay for it')
-        eq(err, CB.ERR.INSUFFICIENT)
-        falsy(s.storage.readHunter(c.id, 'HUNTER01'), 'no acceptance was recorded')
+        eq(err, CH.ERR.INSUFFICIENT)
+        falsy(s.storage.readHitman(c.id, 'HITMAN01'), 'no acceptance was recorded')
         eq(Env.players[3].PlayerData.money.bank, 100, 'charged nothing')
 
         -- Under their own name is still there for the asking.
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
     end)
 
-    it('never charges a hunter for an acceptance that fails', function()
+    it('never charges a hitman for an acceptance that fails', function()
         local s, f = withFees(0, 2500)
         Env.players[3].PlayerData.money.bank = 50000
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 50000 } }, penaltyAmount = 99999,
         })
-        local ok, err = s.contracts.accept(f.hunter, c.id, true)
+        local ok, err = s.contracts.accept(f.hitman, c.id, true)
 
         falsy(ok, 'the stake is unaffordable')
-        eq(err, CB.ERR.INSUFFICIENT)
+        eq(err, CH.ERR.INSUFFICIENT)
         eq(Env.players[3].PlayerData.money.bank, 50000,
             'and no anonymity fee was taken for it')
     end)
@@ -642,31 +642,31 @@ describe('post-respawn immunity', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } },
             } },
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
 
-        -- A second hunter, so the per-hunter slot cooldown is not what is
+        -- A second hitman, so the per-hitman slot cooldown is not what is
         -- being measured here.
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
         local second = s.identity.resolve(4)
         s.contracts.accept(second, c.id, false)
 
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
 
-        -- The target goes down, respawns, and the next hunter tries again
+        -- The target goes down, respawns, and the next hitman tries again
         -- straight away.
         s.death.onRevived('TARGET01')
 
-        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER02', CB.FULFILMENT.ELIMINATION)
+        local ok, err = s.contracts.claimSlot(c.id, 'HITMAN02', CH.FULFILMENT.ELIMINATION)
         falsy(ok, 'a multi-slot contract must not become respawn camping')
-        eq(err, CB.ERR.TARGET_PROTECTED)
+        eq(err, CH.ERR.TARGET_PROTECTED)
 
         Env.advance(Config.Immunity.PostRespawnSeconds + 10)
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER02', CB.FULFILMENT.ELIMINATION),
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN02', CH.FULFILMENT.ELIMINATION),
             'and claimable again once they have had a moment on their feet')
     end)
 
@@ -680,14 +680,14 @@ describe('post-respawn immunity', function()
             reward = { baseline = { cash = 5000 } }, bailoutAmount = 10000,
         })
         truthy(s.bailout.buy(f.target, c.id))
-        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
 
         Env.advance(Config.Limits.TargetCooldownAfterResolveSeconds + 10)
         local again, err = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } },
         })
         falsy(again, 'paying to be left alone should buy more than the usual cooldown')
-        eq(err, CB.ERR.TARGET_RECENTLY_ON)
+        eq(err, CH.ERR.TARGET_RECENTLY_ON)
     end)
 end)
 
@@ -721,7 +721,7 @@ end)
 
 
 --- One place that knows a contract is over. A path that flipped a contract to
---- a terminal state without settling stranded a hunter's stake once already;
+--- a terminal state without settling stranded a hitman's stake once already;
 --- ending one now requires a capability only resolve and claimSlot hold.
 describe('terminal transitions', function()
     it('refuses to end a contract from outside the settling paths', function()
@@ -733,17 +733,17 @@ describe('terminal transitions', function()
         })
 
         for _, terminal in ipairs({
-            CB.STATE.COMPLETED, CB.STATE.BAILED_OUT,
-            CB.STATE.EXPIRED, CB.STATE.CANCELLED,
+            CH.STATE.COMPLETED, CH.STATE.BAILED_OUT,
+            CH.STATE.EXPIRED, CH.STATE.CANCELLED,
         }) do
-            falsy(s.contracts.transition(c.id, CB.STATE.ACTIVE, terminal, 'sneaky'),
+            falsy(s.contracts.transition(c.id, CH.STATE.ACTIVE, terminal, 'sneaky'),
                 'a caller without the token must not reach ' .. terminal)
             -- Passing something that looks like the token does not help.
-            falsy(s.contracts.transition(c.id, CB.STATE.ACTIVE, terminal, 'sneaky', true))
-            falsy(s.contracts.transition(c.id, CB.STATE.ACTIVE, terminal, 'sneaky', {}))
+            falsy(s.contracts.transition(c.id, CH.STATE.ACTIVE, terminal, 'sneaky', true))
+            falsy(s.contracts.transition(c.id, CH.STATE.ACTIVE, terminal, 'sneaky', {}))
         end
 
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'still live')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'still live')
     end)
 
     it('still allows the live transitions every path needs', function()
@@ -754,8 +754,8 @@ describe('terminal transitions', function()
             reward = { baseline = { cash = 5000 } },
         })
 
-        truthy(s.contracts.transition(c.id, CB.STATE.ACTIVE, CB.STATE.ACCEPTED, 'accepted'))
-        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.ACTIVE, 'abandoned'))
+        truthy(s.contracts.transition(c.id, CH.STATE.ACTIVE, CH.STATE.ACCEPTED, 'accepted'))
+        truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED, CH.STATE.ACTIVE, 'abandoned'))
     end)
 
     it('settles through the paths that do hold it', function()
@@ -766,8 +766,8 @@ describe('terminal transitions', function()
             reward = { baseline = { cash = 5000 } },
         })
 
-        truthy(s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
-        eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED)
+        truthy(s.contracts.resolve(c.id, CH.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
+        eq(s.storage.readContract(c.id).state, CH.STATE.CANCELLED)
     end)
 
     it('leaves nothing held whichever path ends the contract', function()
@@ -782,21 +782,21 @@ describe('terminal transitions', function()
 
             if ending == 'complete' then
                 Env.players[3].PlayerData.money.bank = 50000
-                truthy(s.contracts.accept(f.hunter, c.id, false))
-                truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+                truthy(s.contracts.accept(f.hitman, c.id, false))
+                truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
             elseif ending == 'expire' then
                 Env.players[3].PlayerData.money.bank = 50000
-                truthy(s.contracts.accept(f.hunter, c.id, false))
-                truthy(s.contracts.resolve(c.id, CB.STATE.EXPIRED, f.creator.cid, nil, 'expired'))
+                truthy(s.contracts.accept(f.hitman, c.id, false))
+                truthy(s.contracts.resolve(c.id, CH.STATE.EXPIRED, f.creator.cid, nil, 'expired'))
             else
-                truthy(s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
+                truthy(s.contracts.resolve(c.id, CH.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
             end
 
             -- Both terminal paths run the same finalise, so neither can
             -- leave escrow sitting on a contract nobody can act on.
             local held = 0
             for _, line in ipairs(s.storage.readEscrow(c.id)) do
-                if line.state ~= CB.ESCROW_STATE.SETTLED then held = held + 1 end
+                if line.state ~= CH.ESCROW_STATE.SETTLED then held = held + 1 end
             end
             eq(held, 0, 'escrow left held after ' .. ending)
         end
@@ -819,7 +819,7 @@ describe('minting an id that is already taken', function()
         local f = fixture(s)
 
         local first = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'The original', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'The original', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(first)
@@ -836,7 +836,7 @@ describe('minting an id that is already taken', function()
         Env.addPlayer({ source = 7, citizenid = 'CREATOR9', license = 'license:zzz',
                         cash = 100000, bank = 100000, firstname = 'Ann', lastname = 'Poe' })
         local second, err = s.contracts.create(s.identity.resolve(7), {
-            targetCid = 'TARGET01', reason = 'The impostor', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'The impostor', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         Util.randomId = real
@@ -853,7 +853,7 @@ describe('minting an id that is already taken', function()
         local s = newStack()
         local f = fixture(s)
         local first = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(first)
@@ -870,7 +870,7 @@ describe('minting an id that is already taken', function()
                         cash = 100000, bank = 100000, firstname = 'Ann', lastname = 'Poe' })
         local before = Env.players[7].PlayerData.money.cash
         s.contracts.create(s.identity.resolve(7), {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         Util.randomId = real
@@ -883,7 +883,7 @@ describe('minting an id that is already taken', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } }, bailoutAmount = 10000,
         })
         truthy(c)
@@ -909,38 +909,38 @@ describe('minting an id that is already taken', function()
 end)
 
 
-describe('minting a hunter id that is already taken', function()
+describe('minting a hitman id that is already taken', function()
     local function seeded()
         local s = newStack()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } }, penaltyAmount = 10000,
         })
         return s, f, c
     end
 
-    it('lets a second hunter in when the id is free', function()
+    it('lets a second hitman in when the id is free', function()
         -- The control: without this the refusals below could be the
-        -- contract refusing a second hunter at all, which is what the
+        -- contract refusing a second hitman at all, which is what the
         -- first draft of these tests was actually measuring.
         local s, f, c = seeded()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        Env.addPlayer({ source = 8, citizenid = 'HUNTER08', license = 'license:h8',
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.addPlayer({ source = 8, citizenid = 'HITMAN08', license = 'license:h8',
                         cash = 50000, bank = 50000, firstname = 'Kit', lastname = 'Vale' })
         local ok, err = s.contracts.accept(s.identity.resolve(8), c.id, false)
-        truthy(ok, 'a competitive contract takes more than one hunter: ' .. tostring(err))
-        eq(#s.storage.readHunters(c.id), 2)
+        truthy(ok, 'a competitive contract takes more than one hitman: ' .. tostring(err))
+        eq(#s.storage.readHitmen(c.id), 2)
     end)
 
     it('refuses the acceptance rather than throwing on a duplicate row', function()
         local s, f, c = seeded()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local existing = s.storage.readHunters(c.id)[1]
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local existing = s.storage.readHitmen(c.id)[1]
         truthy(existing)
 
-        Env.addPlayer({ source = 8, citizenid = 'HUNTER08', license = 'license:h8',
+        Env.addPlayer({ source = 8, citizenid = 'HITMAN08', license = 'license:h8',
                         cash = 50000, bank = 50000, firstname = 'Kit', lastname = 'Vale' })
         local real = s.storage.nextId
         s.storage.nextId = function(prefix)
@@ -950,18 +950,18 @@ describe('minting a hunter id that is already taken', function()
         local ok, err = s.contracts.accept(s.identity.resolve(8), c.id, false)
         s.storage.nextId = real
 
-        falsy(ok, 'an acceptance must not be written onto another hunter row')
+        falsy(ok, 'an acceptance must not be written onto another hitman row')
         truthy(err)
-        eq(#s.storage.readHunters(c.id), 1, 'and the first hunter still stands alone')
-        eq(s.storage.readHunterById(existing.id).hunter_cid, 'HUNTER01')
+        eq(#s.storage.readHitmen(c.id), 1, 'and the first hitman still stands alone')
+        eq(s.storage.readHitmanById(existing.id).hitman_cid, 'HITMAN01')
     end)
 
     it('gives the stake back when it refuses', function()
         local s, f, c = seeded()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local existing = s.storage.readHunters(c.id)[1]
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local existing = s.storage.readHitmen(c.id)[1]
 
-        Env.addPlayer({ source = 8, citizenid = 'HUNTER08', license = 'license:h8',
+        Env.addPlayer({ source = 8, citizenid = 'HITMAN08', license = 'license:h8',
                         cash = 50000, bank = 50000, firstname = 'Kit', lastname = 'Vale' })
         local before = Env.players[8].PlayerData.money.bank
             + Env.players[8].PlayerData.money.cash
@@ -977,7 +977,7 @@ describe('minting a hunter id that is already taken', function()
         eq(Env.players[8].PlayerData.money.bank + Env.players[8].PlayerData.money.cash,
             before,
             'the stake is taken before the row is written, so a refusal must return it — '
-            .. 'nothing else ever would, with no hunter row naming who staked it')
+            .. 'nothing else ever would, with no hitman row naming who staked it')
     end)
 end)
 
@@ -993,7 +993,7 @@ describe('a reason over the length limit', function()
             reward = { baseline = { cash = 1000 } },
         })
         falsy(c, 'placed with its reason cut short')
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
     end)
 
     it('is taken at exactly the limit, counted in characters', function()

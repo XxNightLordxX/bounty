@@ -25,7 +25,7 @@ local function placed(s, reward)
     local f = fixture(s)
     local c = s.contracts.create(f.creator, {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
-        mode = CB.MODE.COMPETITIVE,
+        mode = CH.MODE.COMPETITIVE,
         reward = reward or { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
     })
     return f, c
@@ -35,7 +35,7 @@ end
 local function linesOf(s, contractId, portion)
     local out = {}
     for _, line in ipairs(s.storage.readEscrow(contractId)) do
-        if line.portion == portion and line.state == CB.ESCROW_STATE.HELD then
+        if line.portion == portion and line.state == CH.ESCROW_STATE.HELD then
             out[#out + 1] = line
         end
     end
@@ -48,7 +48,7 @@ describe('reducing a reward nobody has taken', function()
         local f, c = placed(s)
         eq(Env.players[1].PlayerData.money.cash, 92500, 'escrow is out of pocket')
 
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
         eq(#bonus, 1, 'one bonus line to take back')
 
         local ok, err = s.contracts.withdrawReward(f.creator, c.id, { bonus[1].id })
@@ -56,20 +56,20 @@ describe('reducing a reward nobody has taken', function()
 
         eq(Env.players[1].PlayerData.money.cash, 95000,
             'the bonus came back and the baseline did not')
-        eq(#linesOf(s, c.id, CB.PORTION.BONUS), 0, 'the bonus line is gone from escrow')
-        eq(#linesOf(s, c.id, CB.PORTION.BASELINE), 1, 'the baseline is untouched')
+        eq(#linesOf(s, c.id, CH.PORTION.BONUS), 0, 'the bonus line is gone from escrow')
+        eq(#linesOf(s, c.id, CH.PORTION.BASELINE), 1, 'the baseline is untouched')
     end)
 
     it('leaves the contract on the board, worth less', function()
         local s = newStack()
         local f, c = placed(s)
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
         s.contracts.withdrawReward(f.creator, c.id, { bonus[1].id })
 
         local contract = s.storage.readContract(c.id)
-        eq(contract.state, CB.STATE.ACTIVE, 'reducing a reward does not close a contract')
-        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 0)
-        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BASELINE }), 5000)
+        eq(contract.state, CH.STATE.ACTIVE, 'reducing a reward does not close a contract')
+        eq(s.escrow.moneyValue(c.id, { portion = CH.PORTION.BONUS }), 0)
+        eq(s.escrow.moneyValue(c.id, { portion = CH.PORTION.BASELINE }), 5000)
     end)
 
     it('gives goods back as the same goods, not a fresh copy', function()
@@ -79,7 +79,7 @@ describe('reducing a reward nobody has taken', function()
             bonus = { weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } },
         })
 
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
         eq(#bonus, 1, 'the weapon is in escrow')
 
         local ok, err = s.contracts.withdrawReward(f.creator, c.id, { bonus[1].id })
@@ -110,10 +110,10 @@ describe('reducing a reward nobody has taken', function()
         -- stays, so the slot is still funded.
         local ids, kept = {}, 0
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.BONUS
-                or (line.portion == CB.PORTION.BASELINE and line.source == 'bank') then
+            if line.portion == CH.PORTION.BONUS
+                or (line.portion == CH.PORTION.BASELINE and line.source == 'bank') then
                 ids[#ids + 1] = line.id
-            elseif line.portion == CB.PORTION.BASELINE then
+            elseif line.portion == CH.PORTION.BASELINE then
                 kept = kept + 1
             end
         end
@@ -134,8 +134,8 @@ describe('reducing a reward nobody has taken', function()
         })
         local ids = {}
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.BONUS
-                or (line.portion == CB.PORTION.BASELINE and line.source == 'bank') then
+            if line.portion == CH.PORTION.BONUS
+                or (line.portion == CH.PORTION.BASELINE and line.source == 'bank') then
                 ids[#ids + 1] = line.id
             end
         end
@@ -178,7 +178,7 @@ describe('a withdrawal that could not be handed over', function()
             baseline = { cash = 5000 },
             bonus = { items = { { name = 'lockpick', count = 2 } } },
         })
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)[1]
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)[1]
 
         local ok, err, result
         fullPockets(s, function()
@@ -193,7 +193,7 @@ describe('a withdrawal that could not be handed over', function()
             if line.id == bonus.id then after = line end
         end
         truthy(after, 'the line was destroyed rather than owed')
-        eq(after.state, CB.ESCROW_STATE.HELD)
+        eq(after.state, CH.ESCROW_STATE.HELD)
         eq(after.owed_to, f.creator.cid, 'and marked for the person it is going to')
     end)
 
@@ -207,8 +207,8 @@ describe('a withdrawal that could not be handed over', function()
             baseline = { cash = 5000 },
             bonus = { dirty = 2500 },
         })
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)[1]
-        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 2500)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)[1]
+        eq(s.escrow.moneyValue(c.id, { portion = CH.PORTION.BONUS }), 2500)
 
         fullPockets(s, function()
             s.contracts.withdrawReward(f.creator, c.id, { bonus.id })
@@ -221,8 +221,8 @@ describe('a withdrawal that could not be handed over', function()
         truthy(after and after.owed_to,
             'this measures nothing unless the delivery actually failed')
 
-        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 0,
-            'a hunter was shown a reward including money owed to somebody else')
+        eq(s.escrow.moneyValue(c.id, { portion = CH.PORTION.BONUS }), 0,
+            'a hitman was shown a reward including money owed to somebody else')
     end)
 
     it('does not count owed goods in what a contract advertises', function()
@@ -231,132 +231,132 @@ describe('a withdrawal that could not be handed over', function()
             baseline = { cash = 5000 },
             bonus = { items = { { name = 'lockpick', count = 2 } } },
         })
-        eq(s.escrow.goodsIn(c.id, { portion = CB.PORTION.BONUS }).items, 2)
+        eq(s.escrow.goodsIn(c.id, { portion = CH.PORTION.BONUS }).items, 2)
 
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)[1]
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)[1]
         fullPockets(s, function()
             s.contracts.withdrawReward(f.creator, c.id, { bonus.id })
         end)
 
-        eq(s.escrow.goodsIn(c.id, { portion = CB.PORTION.BONUS }).items, 0,
+        eq(s.escrow.goodsIn(c.id, { portion = CH.PORTION.BONUS }).items, 0,
             'goods owed to the creator were still advertised as the reward')
     end)
 
-    it('and a hunter who collects is not paid what is owed to somebody else', function()
+    it('and a hitman who collects is not paid what is owed to somebody else', function()
         local s = newStack()
         local f, c = placed(s, {
             baseline = { cash = 5000 },
             bonus = { items = { { name = 'lockpick', count = 2 } } },
         })
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)[1]
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)[1]
         fullPockets(s, function()
             s.contracts.withdrawReward(f.creator, c.id, { bonus.id })
         end)
 
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        truthy(s.contracts.claimSlot(c.id, f.hunter.cid, CB.FULFILMENT.KIDNAPPING))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.KIDNAPPING))
 
         local got = 0
         for _, entry in ipairs(Env.players[3]._inventory or {}) do
             if entry.name == 'lockpick' then got = got + (entry.count or 0) end
         end
-        eq(got, 0, 'a hunter was paid goods already owed back to the creator')
+        eq(got, 0, 'a hitman was paid goods already owed back to the creator')
     end)
 end)
 
 describe('what a reward reduction must refuse', function()
-    it('refuses once somebody is actually hunting it', function()
+    it('refuses once somebody is actually working it', function()
         local s = newStack()
         local f, c = placed(s)
-        truthy(s.contracts.accept(f.hunter, c.id, false), 'the hunter takes it')
+        truthy(s.contracts.accept(f.hitman, c.id, false), 'the hitman takes it')
 
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
         local ok, err = s.contracts.withdrawReward(f.creator, c.id, { bonus[1].id })
-        falsy(ok, 'a reward was pulled out from under a working hunter')
-        eq(err, CB.ERR.CONTRACT_TAKEN, 'and the refusal says a hunter has it')
-        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 2500,
+        falsy(ok, 'a reward was pulled out from under a working hitman')
+        eq(err, CH.ERR.CONTRACT_TAKEN, 'and the refusal says a hitman has it')
+        eq(s.escrow.moneyValue(c.id, { portion = CH.PORTION.BONUS }), 2500,
             'and nothing moved')
     end)
 
     it('refuses somebody who is not the creator', function()
         local s = newStack()
         local f, c = placed(s)
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
 
-        local ok, err = s.contracts.withdrawReward(f.hunter, c.id, { bonus[1].id })
+        local ok, err = s.contracts.withdrawReward(f.hitman, c.id, { bonus[1].id })
         falsy(ok, 'a stranger emptied somebody elses escrow')
-        eq(err, CB.ERR.NOT_PARTICIPANT)
+        eq(err, CH.ERR.NOT_PARTICIPANT)
         eq(Env.players[3].PlayerData.money.cash, 5000, 'and was not paid')
     end)
 
     it('refuses to empty the baseline of a slot', function()
         local s = newStack()
         local f, c = placed(s)
-        local baseline = linesOf(s, c.id, CB.PORTION.BASELINE)
+        local baseline = linesOf(s, c.id, CH.PORTION.BASELINE)
 
         local ok, err = s.contracts.withdrawReward(f.creator, c.id, { baseline[1].id })
         falsy(ok, 'a contract was left advertising a collection that pays nothing')
-        eq(err, CB.ERR.INVALID_REWARD)
-        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BASELINE }), 5000)
+        eq(err, CH.ERR.INVALID_REWARD)
+        eq(s.escrow.moneyValue(c.id, { portion = CH.PORTION.BASELINE }), 5000)
     end)
 
-    it('refuses a hunters stake while they hold the contract', function()
+    it("refuses a hitman's stake while they hold the contract", function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.EXCLUSIVE,
+            mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
             penaltyAmount = 1000,
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false), 'the hunter stakes a penalty')
+        truthy(s.contracts.accept(f.hitman, c.id, false), 'the hitman stakes a penalty')
 
         local stake
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.STAKE then stake = line end
+            if line.portion == CH.PORTION.STAKE then stake = line end
         end
         truthy(stake, 'the stake should be in escrow')
         eq(stake.amount, 1000)
 
         local ok = s.contracts.withdrawReward(f.creator, c.id, { stake.id })
-        falsy(ok, 'a creator withdrew a hunters stake into their own pocket')
+        falsy(ok, "a creator withdrew a hitman's stake into their own pocket")
 
         local after
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
             if line.id == stake.id then after = line end
         end
-        eq(after.state, CB.ESCROW_STATE.HELD, 'and the stake is still held')
+        eq(after.state, CH.ESCROW_STATE.HELD, 'and the stake is still held')
     end)
 
     --- The rule above is enforced twice over: nobody may reduce a reward
-    --- while a hunter holds the contract, and a stake is not a portion the
+    --- while a hitman holds the contract, and a stake is not a portion the
     --- creator may name even if they could. The first refuses the ordinary
     --- path before the second is ever reached, so the second is tested
     --- against a state built here rather than played into: a stake line left
-    --- held on a contract with no active hunter.
+    --- held on a contract with no active hitman.
     ---
     --- Whether that state is reachable in a live server is not the point. It
     --- is the guard that makes it not matter, and a guard nothing exercises
     --- is a guard the next refactor deletes.
-    it('refuses a stake portion even with nobody hunting', function()
+    it('refuses a stake portion even with nobody working', function()
         local s = newStack()
         local f, c = placed(s)
 
         s.storage.writeEscrow(c.id, { {
             id = c.id .. ':900', contract_id = c.id, slot = 1,
-            portion = CB.PORTION.STAKE, source = 'cash', amount = 1000,
-            staker = 'HUNTER01', state = CB.ESCROW_STATE.HELD,
+            portion = CH.PORTION.STAKE, source = 'cash', amount = 1000,
+            staker = 'HITMAN01', state = CH.ESCROW_STATE.HELD,
         } })
 
         local before = Env.players[1].PlayerData.money.cash
         local ok, err = s.contracts.withdrawReward(f.creator, c.id, { c.id .. ':900' })
-        falsy(ok, 'a stake was withdrawn by the creator on an unhunted contract')
-        eq(err, CB.ERR.NOT_PARTICIPANT)
+        falsy(ok, 'a stake was withdrawn by the creator on an untargeted contract')
+        eq(err, CH.ERR.NOT_PARTICIPANT)
         eq(Env.players[1].PlayerData.money.cash, before, 'and no money moved')
 
         -- The same request, naming a line that IS theirs, still works: the
         -- refusal above is about the stake, not about the injected state.
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)[1]
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)[1]
         truthy(s.contracts.withdrawReward(f.creator, c.id, { bonus.id }),
             'the guard refused a legitimate withdrawal too')
     end)
@@ -370,14 +370,14 @@ describe('what a reward reduction must refuse', function()
 
         s.storage.writeEscrow(c.id, { {
             id = c.id .. ':901', contract_id = c.id, slot = 1,
-            portion = CB.PORTION.BONUS, source = 'cash', amount = 750,
-            owed_to = 'HUNTER01', state = CB.ESCROW_STATE.HELD,
+            portion = CH.PORTION.BONUS, source = 'cash', amount = 750,
+            owed_to = 'HITMAN01', state = CH.ESCROW_STATE.HELD,
         } })
 
         local before = Env.players[1].PlayerData.money.cash
         local ok, err = s.contracts.withdrawReward(f.creator, c.id, { c.id .. ':901' })
         falsy(ok, 'a creator took money already promised to somebody else')
-        eq(err, CB.ERR.NOT_PARTICIPANT)
+        eq(err, CH.ERR.NOT_PARTICIPANT)
         eq(Env.players[1].PlayerData.money.cash, before, 'and no money moved')
     end)
 
@@ -390,14 +390,14 @@ describe('what a reward reduction must refuse', function()
 
         s.storage.writeEscrow(c.id, { {
             id = c.id .. ':902', contract_id = c.id, slot = 1,
-            portion = CB.PORTION.BONUS, source = 'cash', amount = 750,
-            state = CB.ESCROW_STATE.RELEASING, releasing_to = 'HUNTER01',
+            portion = CH.PORTION.BONUS, source = 'cash', amount = 750,
+            state = CH.ESCROW_STATE.RELEASING, releasing_to = 'HITMAN01',
         } })
 
         local before = Env.players[1].PlayerData.money.cash
         local ok, err = s.contracts.withdrawReward(f.creator, c.id, { c.id .. ':902' })
         falsy(ok, 'a line already on its way to somebody was withdrawn')
-        eq(err, CB.ERR.BAD_STATE)
+        eq(err, CH.ERR.BAD_STATE)
         eq(Env.players[1].PlayerData.money.cash, before, 'and no money moved')
     end)
 
@@ -405,16 +405,16 @@ describe('what a reward reduction must refuse', function()
         local s = newStack()
         local f, first = placed(s)
         local second = s.contracts.create(f.creator, {
-            targetCid = 'HUNTER01', reason = 'Another debt',
-            mode = CB.MODE.COMPETITIVE,
+            targetCid = 'HITMAN01', reason = 'Another debt',
+            mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 4000 }, bonus = { cash = 1000 } },
         })
 
-        local theirs = linesOf(s, second.id, CB.PORTION.BONUS)
+        local theirs = linesOf(s, second.id, CH.PORTION.BONUS)
         local ok, err = s.contracts.withdrawReward(f.creator, first.id, { theirs[1].id })
         falsy(ok, 'a line was withdrawn through a contract that does not hold it')
-        eq(err, CB.ERR.NOT_FOUND)
-        eq(s.escrow.moneyValue(second.id, { portion = CB.PORTION.BONUS }), 1000,
+        eq(err, CH.ERR.NOT_FOUND)
+        eq(s.escrow.moneyValue(second.id, { portion = CH.PORTION.BONUS }), 1000,
             'and the other contract still holds it')
     end)
 
@@ -424,7 +424,7 @@ describe('what a reward reduction must refuse', function()
             baseline = { cash = 5000, bank = 3000 },
             bonus = { cash = 2500 },
         })
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
         local cashBefore = Env.players[1].PlayerData.money.cash
 
         -- One real line and one that does not exist. Withdrawing the half it
@@ -432,20 +432,20 @@ describe('what a reward reduction must refuse', function()
         local ok, err = s.contracts.withdrawReward(f.creator, c.id,
             { bonus[1].id, 'esdeadbeef' })
         falsy(ok, 'a partly-unknown request must not partly succeed')
-        eq(err, CB.ERR.NOT_FOUND)
+        eq(err, CH.ERR.NOT_FOUND)
         eq(Env.players[1].PlayerData.money.cash, cashBefore, 'and nothing moved')
-        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 2500)
+        eq(s.escrow.moneyValue(c.id, { portion = CH.PORTION.BONUS }), 2500)
     end)
 
     it('refuses a closed contract', function()
         local s = newStack()
         local f, c = placed(s)
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
         truthy(s.contracts.cancel(f.creator, c.id))
 
         local ok, err = s.contracts.withdrawReward(f.creator, c.id, { bonus[1].id })
         falsy(ok, 'escrow was withdrawn from a contract that had already paid out')
-        eq(err, CB.ERR.ALREADY_SETTLED)
+        eq(err, CH.ERR.ALREADY_SETTLED)
     end)
 
     it('refuses malformed input rather than using it', function()
@@ -458,14 +458,14 @@ describe('what a reward reduction must refuse', function()
         end
         falsy(s.contracts.withdrawReward(f.creator, c.id, 'not a table'))
         falsy(s.contracts.withdrawReward(f.creator, c.id, nil))
-        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 2500,
+        eq(s.escrow.moneyValue(c.id, { portion = CH.PORTION.BONUS }), 2500,
             'and nothing moved through any of them')
     end)
 
     it('counts a line named twice once', function()
         local s = newStack()
         local f, c = placed(s)
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
         local before = Env.players[1].PlayerData.money.cash
 
         local ok, err = s.contracts.withdrawReward(f.creator, c.id,
@@ -476,8 +476,8 @@ describe('what a reward reduction must refuse', function()
     end)
 end)
 
-describe('a hunter accepting while the reward is being reduced', function()
-    --- The check for "is anybody hunting this" happens before the money
+describe('a hitman accepting while the reward is being reduced', function()
+    --- The check for "is anybody working this" happens before the money
     --- moves, and every storage read in between is a yield on a real
     --- database. An acceptance landing in one of those windows would take a
     --- contract whose reward then shrank underneath them.
@@ -494,11 +494,11 @@ describe('a hunter accepting while the reward is being reduced', function()
             local out = realClaim(id, expected, next_)
             -- Once, on the way out of `held`: the instant the withdrawal has
             -- taken a line and is about to hand it over.
-            if out and not appeared and expected == CB.ESCROW_STATE.HELD then
+            if out and not appeared and expected == CH.ESCROW_STATE.HELD then
                 appeared = true
-                s.storage.addHunter({ id = 'hn_backstop', contract_id = c.id,
-                    hunter_cid = f.hunter.cid, hunter_name = f.hunter.name,
-                    hunter_account = f.hunter.account, state = 'active',
+                s.storage.addHitman({ id = 'hn_backstop', contract_id = c.id,
+                    hitman_cid = f.hitman.cid, hitman_name = f.hitman.name,
+                    hitman_account = f.hitman.account, state = 'active',
                     accepted_at = os.time() })
             end
             return out
@@ -509,13 +509,13 @@ describe('a hunter accepting while the reward is being reduced', function()
     it('tells an acceptance landing mid-withdrawal to try again', function()
         local s = newStack()
         local f, c = placed(s)
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
         local realClaim = s.storage.claimEscrowLine
         local answer
         s.storage.claimEscrowLine = function(id, expected, next_)
             local out = realClaim(id, expected, next_)
-            if out and not answer and expected == CB.ESCROW_STATE.HELD then
-                answer = table.pack(s.contracts.accept(f.hunter, c.id, false))
+            if out and not answer and expected == CH.ESCROW_STATE.HELD then
+                answer = table.pack(s.contracts.accept(f.hitman, c.id, false))
             end
             return out
         end
@@ -524,16 +524,16 @@ describe('a hunter accepting while the reward is being reduced', function()
         truthy(ok, tostring(err))
         truthy(answer)
         falsy(answer[1], 'the acceptance landed inside the withdrawal')
-        eq(answer[2], CB.ERR.BUSY)
+        eq(answer[2], CH.ERR.BUSY)
         -- And a moment later it goes through, on the contract as it now is.
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 0)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        eq(s.escrow.moneyValue(c.id, { portion = CH.PORTION.BONUS }), 0)
     end)
 
     it('does not shrink the reward under a holder who appears mid-release', function()
         local s = newStack()
         local f, c = placed(s)
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
         local before = Env.players[1].PlayerData.money.cash
 
         local restore = holderDuringRelease(s, f, c)
@@ -541,13 +541,13 @@ describe('a hunter accepting while the reward is being reduced', function()
         restore()
 
         falsy(ok, 'the withdrawal went through on a contract somebody had just taken')
-        eq(err, CB.ERR.CONTRACT_TAKEN)
+        eq(err, CH.ERR.CONTRACT_TAKEN)
         eq(Env.players[1].PlayerData.money.cash, before, 'and no money moved')
-        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 2500,
-            'the hunter still has the reward they accepted')
+        eq(s.escrow.moneyValue(c.id, { portion = CH.PORTION.BONUS }), 2500,
+            'the hitman still has the reward they accepted')
     end)
 
-    it('tells the hunter when part of it got out before the guard bit', function()
+    it('tells the hitman when part of it got out before the guard bit', function()
         local s = newStack()
         local f, c = placed(s, {
             baseline = { cash = 5000 },
@@ -556,7 +556,7 @@ describe('a hunter accepting while the reward is being reduced', function()
 
         local ids = {}
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.BONUS then ids[#ids + 1] = line.id end
+            if line.portion == CH.PORTION.BONUS then ids[#ids + 1] = line.id end
         end
         eq(#ids, 2, 'two bonus lines, so the guard can bite between them')
 
@@ -566,12 +566,12 @@ describe('a hunter accepting while the reward is being reduced', function()
         local seen = 0
         s.storage.claimEscrowLine = function(id, expected, next_)
             local out = realClaim(id, expected, next_)
-            if out and expected == CB.ESCROW_STATE.HELD then
+            if out and expected == CH.ESCROW_STATE.HELD then
                 seen = seen + 1
                 if seen == 2 then
-                    s.storage.addHunter({ id = 'hn_backstop', contract_id = c.id,
-                        hunter_cid = f.hunter.cid, hunter_name = f.hunter.name,
-                        hunter_account = f.hunter.account, state = 'active',
+                    s.storage.addHitman({ id = 'hn_backstop', contract_id = c.id,
+                        hitman_cid = f.hitman.cid, hitman_name = f.hitman.name,
+                        hitman_account = f.hitman.account, state = 'active',
                         accepted_at = os.time() })
                 end
             end
@@ -589,13 +589,13 @@ describe('a hunter accepting while the reward is being reduced', function()
             if text:find('Reward changed', 1, true) then told = true end
         end
         truthy(told,
-            'a hunter whose contract shrank as they accepted it was told nothing')
+            'a hitman whose contract shrank as they accepted it was told nothing')
     end)
 
     it('puts the line back rather than leaving it stranded mid-release', function()
         local s = newStack()
         local f, c = placed(s)
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
 
         local restore = holderDuringRelease(s, f, c)
         s.contracts.withdrawReward(f.creator, c.id, { bonus[1].id })
@@ -606,7 +606,7 @@ describe('a hunter accepting while the reward is being reduced', function()
             if line.id == bonus[1].id then after = line end
         end
         truthy(after, 'the line vanished')
-        eq(after.state, CB.ESCROW_STATE.HELD,
+        eq(after.state, CH.ESCROW_STATE.HELD,
             'a refused line must go back to held, not sit in releasing forever')
 
         -- And the contract still pays what it says it pays.
@@ -624,7 +624,7 @@ describe('the breakdown a creator edits from', function()
         })
         local view = s.projection.rewardLines(c.id, f.creator.cid)
         truthy(view, 'the creator must be able to see their own reward')
-        truthy(view.editable, 'nobody is hunting it, so it is editable')
+        truthy(view.editable, 'nobody is working it, so it is editable')
 
         local ids, kinds = 0, {}
         for _, row in ipairs(view.lines) do
@@ -639,8 +639,8 @@ describe('the breakdown a creator edits from', function()
     it('shows nothing to anybody else', function()
         local s = newStack()
         local f, c = placed(s)
-        falsy(s.projection.rewardLines(c.id, f.hunter.cid),
-            'a hunter could read the creators escrow line ids')
+        falsy(s.projection.rewardLines(c.id, f.hitman.cid),
+            'a hitman could read the creators escrow line ids')
         falsy(s.projection.rewardLines(c.id, f.target.cid),
             'a target could read the creators escrow line ids')
         falsy(s.projection.rewardLines('esdeadbeef', f.creator.cid),
@@ -652,11 +652,11 @@ describe('the breakdown a creator edits from', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.EXCLUSIVE,
+            mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } },
             penaltyAmount = 1000,
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         local view = s.projection.rewardLines(c.id, f.creator.cid)
         truthy(view, 'the creator still sees their own reward')
@@ -664,7 +664,7 @@ describe('the breakdown a creator edits from', function()
         truthy(view.reason and #view.reason > 0, 'and is told why')
 
         for _, row in ipairs(view.lines) do
-            falsy(row.portion == CB.PORTION.STAKE, 'a stake was listed as the creators')
+            falsy(row.portion == CH.PORTION.STAKE, 'a stake was listed as the creators')
             falsy(row.id, 'a line was named as withdrawable on a held contract')
         end
     end)
@@ -707,14 +707,14 @@ describe('the reward-edit handlers', function()
 
         local theirs = call('rewardBreakdown', 3, { id = c.id })
         truthy(theirs, 'the handler must answer')
-        falsy(theirs.ok, 'a hunter read the creators escrow ids through the handler')
-        eq(theirs.err, CB.ERR.NOT_FOUND)
+        falsy(theirs.ok, 'a hitman read the creators escrow ids through the handler')
+        eq(theirs.err, CH.ERR.NOT_FOUND)
     end)
 
     it('withdraw through the handler and report what moved', function()
         local s = newStack()
         local f, c = placed(s)
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
 
         local answer = call('withdrawReward', 1, { id = c.id, lines = { bonus[1].id } })
         truthy(answer and answer.ok, 'the withdrawal should be accepted: '
@@ -732,7 +732,7 @@ describe('the reward-edit handlers', function()
             truthy(answer, 'the handler must answer')
             falsy(answer.ok, 'accepted a malformed payload: ' .. type(bad))
         end
-        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 2500)
+        eq(s.escrow.moneyValue(c.id, { portion = CH.PORTION.BONUS }), 2500)
     end)
 
     it('refuse a list far longer than any contract can hold', function()
@@ -750,15 +750,15 @@ describe('the reward-edit handlers', function()
         local answer = call('withdrawReward', 1, { id = c.id, lines = huge })
         truthy(answer, 'the handler must answer')
         falsy(answer.ok, 'a five thousand line request was accepted')
-        eq(answer.err, CB.ERR.INVALID_INPUT)
-        eq(s.escrow.moneyValue(c.id, { portion = CB.PORTION.BONUS }), 2500,
+        eq(answer.err, CH.ERR.INVALID_INPUT)
+        eq(s.escrow.moneyValue(c.id, { portion = CH.PORTION.BONUS }), 2500,
             'and nothing moved')
     end)
 
     it('accept a map, which is what an array crosses as when it has holes', function()
         local s = newStack()
         local f, c = placed(s)
-        local bonus = linesOf(s, c.id, CB.PORTION.BONUS)
+        local bonus = linesOf(s, c.id, CH.PORTION.BONUS)
 
         -- msgpack turns a sparse client array into a map, and #map is 0.
         local answer = call('withdrawReward', 1,

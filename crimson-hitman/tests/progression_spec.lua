@@ -4,11 +4,11 @@ local function seeded()
     local s = newStack()
     local f = fixture(s)
     local c = s.contracts.create(f.creator, {
-        targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+        targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
         bailoutAmount = 10000,
     })
-    s.contracts.accept(f.hunter, c.id, false)
+    s.contracts.accept(f.hitman, c.id, false)
     return s, f, c
 end
 
@@ -16,7 +16,7 @@ describe('reputation', function()
     it('starts everyone at nothing', function()
         local s = newStack()
         fixture(s)
-        local record = s.progression.record('HUNTER01')
+        local record = s.progression.record('HITMAN01')
         eq(record.completed, 0)
         eq(record.standing, 'Unproven')
         falsy(record.rate, 'a rate with no history would be meaningless')
@@ -24,8 +24,8 @@ describe('reputation', function()
 
     it('counts a completed contract', function()
         local s, f, c = seeded()
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
-        eq(s.progression.record('HUNTER01').completed, 1)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
+        eq(s.progression.record('HITMAN01').completed, 1)
     end)
 
     it('counts a contract placed', function()
@@ -35,8 +35,8 @@ describe('reputation', function()
 
     it('counts abandoning as a failure', function()
         local s, f, c = seeded()
-        s.contracts.abandon(f.hunter, c.id)
-        eq(s.progression.record('HUNTER01').failed, 1)
+        s.contracts.abandon(f.hitman, c.id)
+        eq(s.progression.record('HITMAN01').failed, 1)
     end)
 
     it('credits a target who buys their way out', function()
@@ -51,11 +51,11 @@ describe('reputation', function()
     it('withholds a success rate until there is enough history', function()
         local s = newStack()
         fixture(s)
-        s.storage.bumpStat('HUNTER01', 'completed', 2)
-        falsy(s.progression.record('HUNTER01').rate, 'two contracts is not a record')
+        s.storage.bumpStat('HITMAN01', 'completed', 2)
+        falsy(s.progression.record('HITMAN01').rate, 'two contracts is not a record')
 
-        s.storage.bumpStat('HUNTER01', 'failed', 1)
-        eq(s.progression.record('HUNTER01').rate, 66)
+        s.storage.bumpStat('HITMAN01', 'failed', 1)
+        eq(s.progression.record('HITMAN01').rate, 66)
     end)
 
     it('moves through standings as the record grows', function()
@@ -70,9 +70,9 @@ describe('reputation', function()
     it('shows the creator a record without an identity', function()
         local s, f, c = seeded()
         local row = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1')
-        truthy(row.hunters[1].record, 'the creator can judge who took it')
-        falsy(row.hunters[1].cid, 'without learning who they are')
-        falsy(row.hunters[1].citizenid)
+        truthy(row.hitmen[1].record, 'the creator can judge who took it')
+        falsy(row.hitmen[1].cid, 'without learning who they are')
+        falsy(row.hitmen[1].citizenid)
     end)
 end)
 
@@ -90,11 +90,11 @@ describe('criminal progression hook', function()
             end,
         })
 
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.KIDNAPPING)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.KIDNAPPING)
         _G.exports = realExports
 
         eq(#awarded, 1)
-        eq(awarded[1].cid, 'HUNTER01')
+        eq(awarded[1].cid, 'HITMAN01')
         eq(awarded[1].amount, Config.Progression.TrustPerKidnapping,
             'a live delivery is worth more than a kill')
     end)
@@ -109,10 +109,10 @@ describe('criminal progression hook', function()
             end,
         })
 
-        local ok = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        local ok = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         _G.exports = realExports
 
-        truthy(ok, 'a progression failure must never cost the hunter their payout')
+        truthy(ok, 'a progression failure must never cost the hitman their payout')
         eq(Env.players[3].PlayerData.money.cash, 10000, 'and the money still moved')
     end)
 
@@ -128,7 +128,7 @@ describe('criminal progression hook', function()
             end,
         })
 
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         _G.exports = realExports
         Config.Progression.Enabled = true
 
@@ -152,8 +152,8 @@ describe('staff webhook', function()
         Config.Audit.Webhook = 'https://discord.example/hook'
         Natives.calls.http = {}
 
-        s.audit.financial('payout', 'HUNTER01', 'ct1', { amount = 5000 })
-        s.audit.rejected('photo_forged', 'HUNTER01', 'ct1', {})
+        s.audit.financial('payout', 'HITMAN01', 'ct1', { amount = 5000 })
+        s.audit.rejected('photo_forged', 'HITMAN01', 'ct1', {})
         s.audit.action('contract_created', 'CREATOR1', 'ct1', {})
         s.audit.flush()
 
@@ -174,7 +174,7 @@ describe('staff webhook', function()
         Config.Audit.Webhook = 'https://discord.example/hook'
         Natives.calls.http = {}
         for i = 1, 80 do s.audit.financial('escrow_taken', 'CREATOR1', 'ct' .. i, {}) end
-        for _ = 1, 50 do s.audit.rejected('ratelimit_list', 'HUNTER01', nil, {}) end
+        for _ = 1, 50 do s.audit.rejected('ratelimit_list', 'HITMAN01', nil, {}) end
         s.audit.flush()
         Config.Audit.Webhook = false
         eq(#Natives.calls.http, 1)
@@ -190,50 +190,50 @@ describe('staff webhook', function()
         Config.Audit.Webhook = 'https://discord.example/hook'
         Natives.calls.http = {}
 
-        s.audit.financial('payout', 'HUNTER01', 'ct1', { amount = 5000 })
+        s.audit.financial('payout', 'HITMAN01', 'ct1', { amount = 5000 })
         s.audit.flush()
         Config.Audit.Webhook = false
 
         truthy(#Natives.calls.http > 0)
-        falsy(tostring(Natives.calls.http[1].body):find('HUNTER01'),
+        falsy(tostring(Natives.calls.http[1].body):find('HITMAN01'),
             'identity must not leave the server')
     end)
 end)
 
 describe('anonymity survives reputation', function()
-    it('shows an anonymous hunter only a coarse standing', function()
+    it('shows an anonymous hitman only a coarse standing', function()
         local s = newStack()
         local f = fixture(s)
-        s.storage.bumpStat('HUNTER01', 'completed', 7)
-        s.storage.bumpStat('HUNTER01', 'failed', 2)
+        s.storage.bumpStat('HITMAN01', 'completed', 7)
+        s.storage.bumpStat('HITMAN01', 'failed', 2)
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 1000 } },
         })
-        s.contracts.accept(f.hunter, c.id, true)   -- anonymous
+        s.contracts.accept(f.hitman, c.id, true)   -- anonymous
 
         local row = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1')
-        local record = row.hunters[1].record
+        local record = row.hitmen[1].record
         truthy(record.standing, 'a client still learns roughly who they hired')
         falsy(record.completed, 'exact counters are a fingerprint across contracts')
         falsy(record.failed)
         falsy(record.rate)
     end)
 
-    it('shows full counters for a hunter who chose to be seen', function()
+    it('shows full counters for a hitman who chose to be seen', function()
         local s = newStack()
         local f = fixture(s)
-        s.storage.bumpStat('HUNTER01', 'completed', 7)
+        s.storage.bumpStat('HITMAN01', 'completed', 7)
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 1000 } },
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
 
         local row = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1')
-        eq(row.hunters[1].record.completed, 7)
+        eq(row.hitmen[1].record.completed, 7)
     end)
 end)
 
@@ -246,12 +246,12 @@ describe('informant selection is not steerable', function()
             local f = fixture(s)
             Env.players[1].PlayerData.money.bank = 500000
             local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
                 reward = { baseline = { cash = 1000 } },
             })
-            s.contracts.accept(f.hunter, c.id, false)
+            s.contracts.accept(f.hitman, c.id, false)
             for i = 2, 3 do
-                Env.addPlayer({ source = 3 + i, citizenid = 'HUNTER0' .. i,
+                Env.addPlayer({ source = 3 + i, citizenid = 'HITMAN0' .. i,
                     license = 'license:h' .. i })
                 s.contracts.accept(s.identity.resolve(3 + i), c.id, false)
             end
@@ -263,7 +263,7 @@ describe('informant selection is not steerable', function()
 
         for i = 2, #results do
             eq(results[i], results[1],
-                'waiting a second must not let a buyer choose which hunter is unmasked')
+                'waiting a second must not let a buyer choose which hitman is unmasked')
         end
     end)
 end)
@@ -276,7 +276,7 @@ describe('the audit queue, set to nothing', function()
         local s = newStack()
         fixture(s)
         Config.Audit.MaxQueueSize = 0
-        for i = 1, 5 do s.audit.financial('payout', 'HUNTER01', 'ct' .. i, {}) end
+        for i = 1, 5 do s.audit.financial('payout', 'HITMAN01', 'ct' .. i, {}) end
         local written = s.audit.flush()
         truthy(written >= 1, 'the log went silent')
         local overflow = false

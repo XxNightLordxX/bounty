@@ -2,7 +2,7 @@
 ---
 --- Every handler registered in server/app.lua, crossed with every role a
 --- caller can hold on the contract it names: the creator who placed it, the
---- target it names, a hunter who accepted it, a hunter accepted on a
+--- target it names, a hitman who accepted it, a hitman accepted on a
 --- DIFFERENT contract, a complete stranger, and a server admin with no
 --- relation to it at all. Each cell says permit or refuse, and the grid is
 --- driven through the real net events rather than the modules underneath,
@@ -16,8 +16,8 @@
 --- not party to the contract, so a handler could gain a second entry point,
 --- or a participant test could be widened by one line, and the suite would
 --- report full marks. Three defects planted to check that came back green
---- across the whole shipped suite: a hunter allowed to buy informant data
---- on the contract they are hunting, the masked relay naming a hunter who
+--- across the whole shipped suite: a hitman allowed to buy informant data
+--- on the contract they are working, the masked relay naming a hitman who
 --- paid to be anonymous, and a death report opening a claim for anyone
 --- party to the contract rather than only its target.
 ---
@@ -37,7 +37,7 @@
 ---     enforces it for the payload it builds; this walks every reply the
 ---     grid produces and asks it once.
 ---   * Anonymity is not an authorisation. The whole grid runs twice — once
----     on a named contract, once with the creator and the hunter both
+---     on a named contract, once with the creator and the hitman both
 ---     anonymous — with the same verdicts expected either way, and every
 ---     reply from the second pass scanned for the real names underneath.
 ---
@@ -53,16 +53,16 @@ local APP_SOURCE = read_file('crimson-hitman/server/app.lua')
 --------------------------------------------------------------------------
 
 --- Everyone the grid needs, and what each is for. Ten players rather than
---- six: three contracts have to exist at once for "a hunter on somebody
+--- six: three contracts have to exist at once for "a hitman on somebody
 --- else's contract" to be a role somebody can actually hold, and the
 --- contract nobody has accepted needs a target of its own because a creator
 --- may not place two on the same person inside the cooldown.
 local CAST = {
     creator     = { source = 1,  cid = 'CREATOR1', name = { 'Vic', 'Marlowe' } },
     target      = { source = 2,  cid = 'TARGET01', name = { 'Dana', 'Reyes' } },
-    hunter      = { source = 3,  cid = 'HUNTER01', name = { 'Rook', 'Ash' } },
+    hitman      = { source = 3,  cid = 'HITMAN01', name = { 'Rook', 'Ash' } },
     stranger    = { source = 4,  cid = 'STRANGE1', name = { 'Nils', 'Odd' } },
-    otherHunter = { source = 5,  cid = 'TAILER01', name = { 'Kade', 'Wolfe' } },
+    otherHitman = { source = 5,  cid = 'TAILER01', name = { 'Kade', 'Wolfe' } },
     admin       = { source = 6,  cid = 'ADMIN001', name = { 'Sam', 'Steward' } },
     -- Supporting cast: never a caller, only somebody for a contract to name.
     spare       = { source = 7,  cid = 'TARGET02', name = { 'Pia', 'Nolan' } },
@@ -72,7 +72,7 @@ local CAST = {
 }
 
 --- The six roles every row must answer for, in the order they are reported.
-local ROLES = { 'creator', 'target', 'hunter', 'otherHunter', 'stranger', 'admin' }
+local ROLES = { 'creator', 'target', 'hitman', 'otherHitman', 'stranger', 'admin' }
 
 --- Citizen ids that must never appear in a payload sent to somebody else.
 local FOREIGN_CIDS = {}
@@ -124,10 +124,10 @@ end
 --- other than what it says.
 ---
 --- Three contracts:
----   held    the contract under test for most rows. Hunter has accepted it.
+---   held    the contract under test for most rows. Hitman has accepted it.
 ---   unheld  the creator's, nobody accepted, for the rows that are refused
----           outright once somebody is hunting (cancel, revise, withdraw).
----   far     somebody else's entirely, so `otherHunter` is a real hunter
+---           outright once somebody is working (cancel, revise, withdraw).
+---   far     somebody else's entirely, so `otherHitman` is a real hitman
 ---           rather than a stranger wearing the label.
 ---@param opts table|nil { anonymous = boolean }
 local function world(opts)
@@ -153,14 +153,14 @@ local function world(opts)
 
     local held = s.contracts.create(who.creator, {
         targetCid = CAST.target.cid, reason = 'Unpaid debt',
-        mode = CB.MODE.COMPETITIVE,
+        mode = CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
         bailoutAmount = 15000,
         anonymous = opts.anonymous or nil,
     })
-    truthy(held, 'the world needs a contract somebody is hunting')
-    truthy(s.contracts.accept(who.hunter, held.id, opts.anonymous == true),
-        'the hunter has to be on it')
+    truthy(held, 'the world needs a contract somebody is working')
+    truthy(s.contracts.accept(who.hitman, held.id, opts.anonymous == true),
+        'the hitman has to be on it')
 
     -- Anonymous on the anonymous pass as well: the creator is the same
     -- person, and one named contract of theirs on the board would put their
@@ -168,20 +168,20 @@ local function world(opts)
     -- with the contract under test.
     local unheld = s.contracts.create(who.creator, {
         targetCid = CAST.spare.cid, reason = 'Unpaid debt',
-        mode = CB.MODE.EXCLUSIVE,
+        mode = CH.MODE.EXCLUSIVE,
         reward = { baseline = { cash = 5000, bank = 3000 } },
         anonymous = opts.anonymous or nil,
     })
-    truthy(unheld, 'the world needs a contract nobody is hunting')
+    truthy(unheld, 'the world needs a contract nobody is working')
 
     local far = s.contracts.create(who.farCreator, {
         targetCid = CAST.farTarget.cid, reason = 'Unpaid debt',
-        mode = CB.MODE.COMPETITIVE,
+        mode = CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 } },
     })
     truthy(far, 'the world needs a contract belonging to somebody else')
-    truthy(s.contracts.accept(who.otherHunter, far.id, false),
-        'the other hunter has to be a hunter, or the column proves nothing')
+    truthy(s.contracts.accept(who.otherHitman, far.id, false),
+        'the other hitman has to be a hitman, or the column proves nothing')
 
     return { s = s, who = who, held = held, unheld = unheld, far = far }
 end
@@ -189,15 +189,15 @@ end
 --- Which player plays each role for a given contract.
 ---
 --- Only the target moves: the contract nobody holds names a different
---- person, so `target` there is that person. `hunter` against the unheld
+--- person, so `target` there is that person. `hitman` against the unheld
 --- contract is somebody who really did accept a contract — just not this
 --- one — which is exactly the role the column is for.
 local function castFor(w, which)
     local contract = which == 'unheld' and w.unheld or w.held
     local target = which == 'unheld' and CAST.spare or CAST.target
     return contract, {
-        creator = CAST.creator, target = target, hunter = CAST.hunter,
-        otherHunter = CAST.otherHunter, stranger = CAST.stranger, admin = CAST.admin,
+        creator = CAST.creator, target = target, hitman = CAST.hitman,
+        otherHitman = CAST.otherHitman, stranger = CAST.stranger, admin = CAST.admin,
     }
 end
 
@@ -220,28 +220,28 @@ local function assembleForHandover(w)
 end
 
 --- A real, server-observed elimination of the held contract's target by its
---- hunter, leaving a pending claim. Nothing here is taken from a client's
+--- hitman, leaving a pending claim. Nothing here is taken from a client's
 --- word: the damage is recorded, the health loss is real, and the victim
 --- reports their own death.
 local function eliminate(w)
-    Env.players[CAST.hunter.source]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+    Env.players[CAST.hitman.source]._coords = { x = 100.0, y = 100.0, z = 30.0 }
     Env.players[CAST.target.source]._coords = { x = 101.0, y = 100.0, z = 30.0 }
     Env.players[CAST.target.source]._health = 140
-    w.s.death.recordDamage(CAST.hunter.source, CAST.target.source, 123456)
+    w.s.death.recordDamage(CAST.hitman.source, CAST.target.source, 123456)
     Env.players[CAST.target.source].PlayerData.metadata.isdead = true
     w.s.death.onVictimReport(CAST.target.source)
-    truthy(w.s.death.getPending(w.held.id, CAST.hunter.cid),
-        'the arrangement has to leave a claim the hunter could prove')
+    truthy(w.s.death.getPending(w.held.id, CAST.hitman.cid),
+        'the arrangement has to leave a claim the hitman could prove')
 end
 
---- The handle a creator is given for their thread with the hunter. Minted
+--- The handle a creator is given for their thread with the hitman. Minted
 --- through Comms so it is the real one, and deliberately handed to every
 --- role: the question this file asks is whether a handle somebody else was
 --- given is any use to you.
 local function creatorThreadHandle(w)
     local threads = w.s.comms.threads(w.who.creator, w.held.id)
     truthy(threads and threads[1] and threads[1].handle,
-        'the creator has to have a thread with the hunter to hand around')
+        'the creator has to have a thread with the hitman to hand around')
     return threads[1].handle
 end
 
@@ -275,13 +275,13 @@ end
 --- left every outsider still refused — for standing in the wrong place —
 --- and a bare "refused" read that as the rule holding.
 local ALLOW, EMPTY, SILENT = 'allow', 'empty', 'none'
-local NOT_PARTY = CB.ERR.NOT_PARTICIPANT
+local NOT_PARTY = CH.ERR.NOT_PARTICIPANT
 
 --- Handlers that name no contract at all: they answer about the caller and
 --- about nobody else, so every role may call them and the grid's job is the
 --- leak scan rather than the verdict.
-local ANYONE = { creator = ALLOW, target = ALLOW, hunter = ALLOW,
-                 otherHunter = ALLOW, stranger = ALLOW, admin = ALLOW }
+local ANYONE = { creator = ALLOW, target = ALLOW, hitman = ALLOW,
+                 otherHitman = ALLOW, stranger = ALLOW, admin = ALLOW }
 
 --- Everyone but one role is refused, with the same code.
 local function only(role, code)
@@ -294,17 +294,17 @@ end
 --- Only the creator of the contract.
 local CREATOR_ONLY = only('creator', NOT_PARTY)
 
---- Only the hunter who accepted this contract.
-local HUNTER_ONLY = only('hunter', NOT_PARTY)
+--- Only the hitman who accepted this contract.
+local HITMAN_ONLY = only('hitman', NOT_PARTY)
 
 --- Only the person the contract names.
 local TARGET_ONLY = only('target', NOT_PARTY)
 
---- The two sides of the deal: creator and the hunters working for them.
+--- The two sides of the deal: creator and the hitmen working for them.
 --- The target is not one of them — a contract is amended between the people
 --- who agreed it, and the person it names is not a party to that (§12).
-local BOTH_SIDES = { creator = ALLOW, target = NOT_PARTY, hunter = ALLOW,
-                     otherHunter = NOT_PARTY, stranger = NOT_PARTY, admin = NOT_PARTY }
+local BOTH_SIDES = { creator = ALLOW, target = NOT_PARTY, hitman = ALLOW,
+                     otherHitman = NOT_PARTY, stranger = NOT_PARTY, admin = NOT_PARTY }
 
 local MATRIX = {}
 
@@ -362,17 +362,17 @@ MATRIX.mugshotImage = {
 MATRIX.accept = {
     payload = function(w, role, contract) return { id = contract.id, anonymous = false } end,
     -- The three refusals are three different rules, and each is named where
-    -- it is enforced: a creator may not hunt their own contract, a target may
-    -- not hunt themselves, and a hunter already on it cannot accept twice.
-    expect = { creator = CB.ERR.SELF_ACCEPT, target = CB.ERR.SELF_TARGET,
-               hunter = CB.ERR.ALREADY_HOLDING,
-               otherHunter = ALLOW, stranger = ALLOW, admin = ALLOW },
+    -- it is enforced: a creator may not take their own contract, a target may
+    -- not take one on themselves, and a hitman already on it cannot accept twice.
+    expect = { creator = CH.ERR.SELF_ACCEPT, target = CH.ERR.SELF_TARGET,
+               hitman = CH.ERR.ALREADY_HOLDING,
+               otherHitman = ALLOW, stranger = ALLOW, admin = ALLOW },
     why = 'open to anyone not already party to it',
 }
 
 MATRIX.abandon = {
     payload = function(w, role, contract) return { id = contract.id } end,
-    expect = HUNTER_ONLY,
+    expect = HITMAN_ONLY,
     why = 'only somebody actually holding it can put it down',
 }
 
@@ -398,7 +398,7 @@ MATRIX.rewardBreakdown = {
     payload = function(w, role, contract) return { id = contract.id } end,
     -- not_found, not not_participant, and deliberately: telling the two
     -- apart would turn this into a way to ask whether a contract id exists.
-    expect = only('creator', CB.ERR.NOT_FOUND),
+    expect = only('creator', CH.ERR.NOT_FOUND),
     why = 'the itemised reward, with the ids that name each line, is the '
        .. 'creator own property list and nobody else business',
 }
@@ -411,7 +411,7 @@ MATRIX.withdrawReward = {
     payload = function(w, role, contract)
         local pick
         for _, line in ipairs(w.s.storage.readEscrow(contract.id)) do
-            if line.source == 'bank' and line.portion == CB.PORTION.BASELINE then pick = line.id end
+            if line.source == 'bank' and line.portion == CH.PORTION.BASELINE then pick = line.id end
         end
         truthy(pick, 'the arrangement has to find a real line to aim at')
         return { id = contract.id, lines = { pick } }
@@ -445,23 +445,23 @@ MATRIX.requestPhotoToken = {
     -- which is the same sentence as "you did not do this". It shared
     -- bad_state with every other refusal in the resource until the page
     -- needed to word the commonest one; the rule here is unchanged.
-    expect = only('hunter', CB.ERR.NO_KILL_TO_VERIFY),
-    why = 'the proof token belongs to the hunter the server saw make the kill',
+    expect = only('hitman', CH.ERR.NO_KILL_TO_VERIFY),
+    why = 'the proof token belongs to the hitman the server saw make the kill',
 }
 
 MATRIX.submitPhoto = {
-    -- One token, issued to the hunter, offered to everybody. This is the
+    -- One token, issued to the hitman, offered to everybody. This is the
     -- cell that matters: a token is a bearer credential unless the server
     -- checks who is bearing it.
     arrange = function(w)
         eliminate(w)
         Config.Completion.ExtraPhotoHosts = { 'cdn.fivemanage.com' }
         w.s.photo.loadAllowedHosts()
-        local token = w.s.photo.issue(w.who.hunter, w.held.id)
+        local token = w.s.photo.issue(w.who.hitman, w.held.id)
         truthy(token, 'the arrangement has to produce a token to pass around')
         w.token = token
 
-        -- Every role standing over the body, not just the hunter. Ownership
+        -- Every role standing over the body, not just the hitman. Ownership
         -- of the token has to be the ONLY thing refusing them: with everyone
         -- left where they spawned, deleting the ownership check outright
         -- still refused them all — for being too far from the scene — and
@@ -471,24 +471,24 @@ MATRIX.submitPhoto = {
         end
     end,
     payload = function(w) return { token = w.token, url = 'https://cdn.fivemanage.com/p.png' } end,
-    expect = only('hunter', CB.ERR.TOKEN_INVALID),
-    why = 'a photo token is bound to the hunter it was issued to',
+    expect = only('hitman', CH.ERR.TOKEN_INVALID),
+    why = 'a photo token is bound to the hitman it was issued to',
 }
 
 MATRIX.armKidnap = {
     arrange = assembleForHandover,
     payload = function(w, role, contract) return { id = contract.id } end,
-    expect = HUNTER_ONLY,
+    expect = HITMAN_ONLY,
     why = 'a handover is started by the operative holding the target',
 }
 
 MATRIX.kidnapProgress = {
     arrange = function(w)
         assembleForHandover(w)
-        truthy(w.s.kidnap.arm(w.held.id, CAST.hunter.cid), 'the countdown has to be running')
+        truthy(w.s.kidnap.arm(w.held.id, CAST.hitman.cid), 'the countdown has to be running')
     end,
     payload = function(w, role, contract) return { id = contract.id } end,
-    -- no_handover: the countdown is looked up by (contract, hunter) and
+    -- no_handover: the countdown is looked up by (contract, hitman) and
     -- simply is not there for anyone else, which the app draws as "no
     -- delivery running" rather than as an error.
     --
@@ -498,8 +498,8 @@ MATRIX.kidnapProgress = {
     -- absent code, so a countdown that was simply not running reached the
     -- player as "Lost track of the handover", which sounds like a fault and
     -- is not one. The rule this cell is about is unchanged.
-    expect = only('hunter', CB.ERR.NO_HANDOVER),
-    why = 'the countdown is the hunter own; where a delivery has got to is '
+    expect = only('hitman', CH.ERR.NO_HANDOVER),
+    why = 'the countdown is the hitman own; where a delivery has got to is '
        .. 'not something the target gets to poll',
 }
 
@@ -515,8 +515,8 @@ MATRIX.informant = {
     payload = function(w, role, contract) return { id = contract.id } end,
     -- Both ends of the deal may buy, and nobody else: the creator to see who
     -- is working for them, the target to see who is coming (§6.1).
-    expect = { creator = ALLOW, target = ALLOW, hunter = NOT_PARTY,
-               otherHunter = NOT_PARTY, stranger = NOT_PARTY, admin = NOT_PARTY },
+    expect = { creator = ALLOW, target = ALLOW, hitman = NOT_PARTY,
+               otherHitman = NOT_PARTY, stranger = NOT_PARTY, admin = NOT_PARTY },
     why = 'unmasking an operative is sold to the two parties, not to onlookers',
 }
 
@@ -524,7 +524,7 @@ MATRIX.informant = {
 
 MATRIX.amendments = {
     arrange = function(w)
-        local proposal = w.s.amendments.propose(w.who.hunter, w.held.id,
+        local proposal = w.s.amendments.propose(w.who.hitman, w.held.id,
             'shorten_deadline', { seconds = 600 })
         truthy(proposal, 'the arrangement has to leave something on the table')
         w.proposal = proposal
@@ -544,7 +544,7 @@ MATRIX.propose = {
 
 MATRIX.respondAmendment = {
     arrange = function(w)
-        local proposal = w.s.amendments.propose(w.who.hunter, w.held.id,
+        local proposal = w.s.amendments.propose(w.who.hitman, w.held.id,
             'shorten_deadline', { seconds = 600 })
         truthy(proposal, 'the arrangement has to leave something to answer')
         w.proposal = proposal
@@ -563,8 +563,8 @@ MATRIX.threads = {
     -- empty list is the refusal, so it is asserted as empty rather than as
     -- ok — an ok that quietly carried the creator's thread handles would be
     -- the whole relay unlocked.
-    expect = { creator = ALLOW, target = EMPTY, hunter = ALLOW,
-               otherHunter = EMPTY, stranger = EMPTY, admin = EMPTY },
+    expect = { creator = ALLOW, target = EMPTY, hitman = ALLOW,
+               otherHitman = EMPTY, stranger = EMPTY, admin = EMPTY },
     why = 'an inbox lists your own threads and nobody else',
 }
 
@@ -574,7 +574,7 @@ MATRIX.readThread = {
             'the arrangement has to put something in the thread worth stealing')
         w.handle = creatorThreadHandle(w)
     end,
-    -- The creator's handle, given to everyone. A hunter reading with it gets
+    -- The creator's handle, given to everyone. A hitman reading with it gets
     -- their own thread — they have exactly one and the handle is not what
     -- selects it — which is why both sides are permitted here.
     payload = function(w, role, contract) return { id = contract.id, thread = w.handle } end,
@@ -670,7 +670,7 @@ describe('a page reporting its own fault', function()
         local s = newStack()
         local f = fixture(s)
 
-        truthy(report(s, f.hunter, { what = 'x is not a function',
+        truthy(report(s, f.hitman, { what = 'x is not a function',
             where = 'app.js:120:9', stack = 'at card', build = '1.2.3' }))
         s.audit.flush()
 
@@ -679,7 +679,7 @@ describe('a page reporting its own fault', function()
             if row.action == 'page_error' then found = row end
         end
         truthy(found, 'the fault has to reach somewhere an owner can read it')
-        eq(found.actor_cid, f.hunter.cid,
+        eq(found.actor_cid, f.hitman.cid,
             'recorded against whoever reported it, never a cid from the payload')
         eq(found.detail.what, 'x is not a function')
     end)
@@ -690,7 +690,7 @@ describe('a page reporting its own fault', function()
 
         -- Everything here came over an NUI endpoint that any frame the phone
         -- draws can post to.
-        truthy(report(s, f.hunter, {
+        truthy(report(s, f.hitman, {
             what = string.rep('A', 5000),
             where = string.rep('B', 5000),
             stack = string.rep('C', 20000),
@@ -707,7 +707,7 @@ describe('a page reporting its own fault', function()
         truthy(#found.detail.what <= 300, 'what: ' .. #found.detail.what)
         truthy(#found.detail.where <= 200, 'where: ' .. #found.detail.where)
         truthy(#found.detail.stack <= 900, 'stack: ' .. #found.detail.stack)
-        eq(found.actor_cid, f.hunter.cid,
+        eq(found.actor_cid, f.hitman.cid,
             'a cid in the payload must not become the cid on the row')
     end)
 
@@ -716,7 +716,7 @@ describe('a page reporting its own fault', function()
         local f = fixture(s)
         -- A page broken badly enough to report may be broken badly enough to
         -- report badly.
-        truthy(report(s, f.hunter, {}),
+        truthy(report(s, f.hitman, {}),
             'the one path that exists for saying the app is broken must not '
             .. 'itself be a way to break the server')
     end)
@@ -729,7 +729,7 @@ describe('a page reporting its own fault', function()
 
         local allowed = 0
         for _ = 1, rule.burst + 5 do
-            if s.ratelimit.check(f.hunter, 'diagnostic') then allowed = allowed + 1 end
+            if s.ratelimit.check(f.hitman, 'diagnostic') then allowed = allowed + 1 end
         end
         eq(allowed, rule.burst,
             'a page throwing every frame would otherwise write a row every frame')
@@ -791,7 +791,7 @@ end
 ---
 --- Twice because anonymity is a paid choice and must not be an
 --- authorisation one. The second pass is the same contract with the creator
---- and the hunter both anonymous, which changes who may be NAMED and must
+--- and the hitman both anonymous, which changes who may be NAMED and must
 --- change nothing about who may ACT. A check that reads a name where it
 --- should read a role passes the first pass and fails the second.
 local PASSES = {
@@ -850,10 +850,10 @@ end)
 --------------------------------------------------------------------------
 
 describe('a death report acts on its caller and on nobody else', function()
-    --- Fire iDied as somebody who really has just been killed by the hunter.
+    --- Fire iDied as somebody who really has just been killed by the hitman.
     ---
     --- The reporter is the victim in every respect the server can check:
-    --- they are at the scene, the hunter's damage on them is in the log,
+    --- they are at the scene, the hitman's damage on them is in the log,
     --- their condition really dropped and the medical resource really says
     --- they are dead. Everything is true except that the contract does not
     --- name them — which is the one thing that is supposed to decide it.
@@ -861,14 +861,14 @@ describe('a death report acts on its caller and on nobody else', function()
     --- Killing the reporter for real matters. With only the contract's
     --- target laid out, every other role was refused for not being dead,
     --- and the refusal would have held with the target check deleted: a
-    --- creator and a hunter arranging a death between them would have
+    --- creator and a hitman arranging a death between them would have
     --- collected on a target nobody touched.
     local function reportAs(source, cid)
         local w = world()
-        Env.players[CAST.hunter.source]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[CAST.hitman.source]._coords = { x = 100.0, y = 100.0, z = 30.0 }
         Env.players[source]._coords = { x = 101.0, y = 100.0, z = 30.0 }
 
-        -- Watched, so the hunter's damage on them is corroborated and lands
+        -- Watched, so the hitman's damage on them is corroborated and lands
         -- in the log. Being watched is not special: the server watches
         -- anyone an accepted contract names, so a creator who is also
         -- somebody else's target is watched exactly like this. Without it
@@ -876,29 +876,29 @@ describe('a death report acts on its caller and on nobody else', function()
         -- refusal below holds for that reason instead of the right one.
         w.s.death.watch(cid, source, true)
         Env.players[source]._health = 140
-        w.s.death.recordDamage(CAST.hunter.source, source, 123456)
+        w.s.death.recordDamage(CAST.hitman.source, source, 123456)
         Env.players[source].PlayerData.metadata.isdead = true
 
         Env.clientEvents = {}
         _G.source = source
-        pcall(Env.events['crimson-hitman:iDied'], CAST.hunter.source)
+        pcall(Env.events['crimson-hitman:iDied'], CAST.hitman.source)
         _G.source = nil
         return w
     end
 
     it('opens a claim when the person who died reports it', function()
         local w = reportAs(CAST.target.source, CAST.target.cid)
-        truthy(w.s.death.getPending(w.held.id, CAST.hunter.cid),
+        truthy(w.s.death.getPending(w.held.id, CAST.hitman.cid),
             'the victim own report is the one the server acts on — without '
             .. 'this passing, every refusal below is vacuous')
     end)
 
-    for _, role in ipairs({ 'creator', 'hunter', 'otherHunter', 'stranger', 'admin' }) do
+    for _, role in ipairs({ 'creator', 'hitman', 'otherHitman', 'stranger', 'admin' }) do
         it('opens nothing when ' .. role .. ' reports somebody else death', function()
             local w = reportAs(CAST[role].source, CAST[role].cid)
-            falsy(w.s.death.getPending(w.held.id, CAST.hunter.cid),
+            falsy(w.s.death.getPending(w.held.id, CAST.hitman.cid),
                 role .. ' reported a death that was not theirs and a claim opened '
-                .. 'on it. A hunter who can fire this is a hunter who can '
+                .. 'on it. A hitman who can fire this is a hitman who can '
                 .. 'collect on a target they never touched.')
         end)
     end
@@ -974,14 +974,14 @@ describe('what the grid sent back', function()
     --- payload, so there is nothing for a client-side inspector to find.
     --- Each module asserts that for the payload it builds. This asserts it
     --- across the whole net surface at once, on the pass where the creator
-    --- and the hunter both paid to be hidden.
+    --- and the hitman both paid to be hidden.
     ---
     --- Your own name is not a leak — a creator sees their own name on the
     --- contract they just placed — so only somebody else's is counted.
     it('never named an anonymous participant to anybody else', function()
         local hidden = {
             [CAST.creator.cid] = 'Vic Marlowe',
-            [CAST.hunter.cid]  = 'Rook Ash',
+            [CAST.hitman.cid]  = 'Rook Ash',
         }
         local leaks = {}
         for _, row in ipairs(seen) do
@@ -1020,7 +1020,7 @@ describe('what the grid sent back', function()
         local second = call('bailout', target, { id = w.held.id })
         truthy(second, 'a throttled request is answered, never dropped')
         eq(second.ok, false, 'the second press inside the window is refused')
-        eq(second.err, CB.ERR.RATE_LIMITED)
+        eq(second.err, CH.ERR.RATE_LIMITED)
 
         local keys = {}
         for key in pairs(second.data or {}) do keys[#keys + 1] = key end
@@ -1082,10 +1082,10 @@ describe('the events registered outside the app gate', function()
         -- Solicited: an unsolicited image is refused outright, which is a
         -- rule of its own and already covered. This is about WHOSE face it
         -- becomes.
-        s.mugshot.request('HUNTER01')
+        s.mugshot.request('HITMAN01')
         truthy(fire('mugshot', 3, PNG), 'the handler must not throw')
 
-        truthy(s.mugshot.handleFor('HUNTER01'),
+        truthy(s.mugshot.handleFor('HITMAN01'),
             'the sender got a face')
         falsy(s.mugshot.handleFor('CREATOR1'),
             'and nobody else did')
@@ -1098,7 +1098,7 @@ describe('the events registered outside the app gate', function()
         -- later is how it stops being true.
         local s = wired()
         s.mugshot.request('CREATOR1')
-        s.mugshot.request('HUNTER01')
+        s.mugshot.request('HITMAN01')
 
         -- Player 3 sends, naming player 1 every way an argument could.
         truthy(fire('mugshot', 3, PNG, 'CREATOR1'))
@@ -1110,38 +1110,38 @@ describe('the events registered outside the app gate', function()
 
     it('refuses a headshot from a source with no character', function()
         local s = wired()
-        s.mugshot.request('HUNTER01')
+        s.mugshot.request('HITMAN01')
         truthy(fire('mugshot', 999, PNG), 'an unknown source must not throw')
-        falsy(s.mugshot.handleFor('HUNTER01'),
+        falsy(s.mugshot.handleFor('HITMAN01'),
             'and must not have stored anything')
     end)
 
     it('does not throw on a headshot that is not a string', function()
         local s = wired()
-        s.mugshot.request('HUNTER01')
+        s.mugshot.request('HITMAN01')
         for _, odd in ipairs({ 42, true, {} }) do
             truthy(fire('mugshot', 3, odd),
                 ('a %s payload must not throw out of a net event'):format(type(odd)))
         end
         truthy(fire('mugshot', 3), 'nor must an absent one')
-        falsy(s.mugshot.handleFor('HUNTER01'), 'and none of it is a face')
+        falsy(s.mugshot.handleFor('HITMAN01'), 'and none of it is a face')
     end)
 
     it('invalidates only the face of whoever asked', function()
         local s = wired()
-        for _, who in ipairs({ 'CREATOR1', 'HUNTER01' }) do
+        for _, who in ipairs({ 'CREATOR1', 'HITMAN01' }) do
             s.mugshot.request(who)
         end
         s.mugshot.store('CREATOR1', PNG)
-        s.mugshot.store('HUNTER01', PNG)
+        s.mugshot.store('HITMAN01', PNG)
         truthy(s.mugshot.handleFor('CREATOR1'))
-        truthy(s.mugshot.handleFor('HUNTER01'))
+        truthy(s.mugshot.handleFor('HITMAN01'))
 
         -- Past the refresh floor, so an invalidation is allowed at all.
         Env.advance((Config.Mugshot.MinRefreshMinutes * 60) + 1)
         truthy(fire('appearanceChanged', 3))
 
-        falsy(s.mugshot.handleFor('HUNTER01'), 'the sender face is dropped')
+        falsy(s.mugshot.handleFor('HITMAN01'), 'the sender face is dropped')
         truthy(s.mugshot.handleFor('CREATOR1'),
             'and a player cannot drop somebody else face')
     end)
@@ -1247,7 +1247,7 @@ describe('the framework events this resource listens for', function()
 
     it('delivers what a player was owed once they are ready', function()
         local s = wired()
-        owed(s, 'HUNTER01')
+        owed(s, 'HITMAN01')
         local before = Env.players[3].PlayerData.money.bank
 
         truthy(fire('local:qbx_core:server:playerLoaded', 3,
@@ -1289,14 +1289,14 @@ describe('the framework events this resource listens for', function()
         -- The latch must not eat a real second login. It is released when
         -- the pass runs, and when the player drops.
         local s = wired()
-        owed(s, 'HUNTER01')
+        owed(s, 'HITMAN01')
         local before = Env.players[3].PlayerData.money.bank
 
         fire('QBCore:Server:OnPlayerLoaded', 3)
         Env.advance(10)
         eq(Env.players[3].PlayerData.money.bank, before + 4000)
 
-        owed(s, 'HUNTER01')
+        owed(s, 'HITMAN01')
         fire('QBCore:Server:OnPlayerLoaded', 3)
         Env.advance(10)
         eq(Env.players[3].PlayerData.money.bank, before + 8000,
@@ -1308,7 +1308,7 @@ describe('the framework events this resource listens for', function()
         -- because the release is a compare-and-set on the escrow line, not
         -- because the event is hard to reach.
         local s = wired()
-        owed(s, 'HUNTER01')
+        owed(s, 'HITMAN01')
         local before = Env.players[3].PlayerData.money.bank
 
         for _ = 1, 5 do

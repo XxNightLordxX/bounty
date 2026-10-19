@@ -41,7 +41,7 @@ local function worldValue(s, cids)
         local lines = s.storage.readEscrow(contracts[i].id)
         for j = 1, #lines do
             local line = lines[j]
-            if line.state ~= CB.ESCROW_STATE.SETTLED and CB.MONEY_SOURCES[line.source] then
+            if line.state ~= CH.ESCROW_STATE.SETTLED and CH.MONEY_SOURCES[line.source] then
                 total = total + (line.amount or 0)
             end
         end
@@ -58,10 +58,10 @@ local function escrowSane(s)
         local lines = s.storage.readEscrow(contracts[i].id)
         for j = 1, #lines do
             local line = lines[j]
-            if line.state == CB.ESCROW_STATE.SETTLED then
+            if line.state == CH.ESCROW_STATE.SETTLED then
                 truthy(line.settled_to, 'a settled line must record who received it')
             end
-            if line.state == CB.ESCROW_STATE.RELEASING then
+            if line.state == CH.ESCROW_STATE.RELEASING then
                 error('escrow line left mid-release: ' .. line.id)
             end
         end
@@ -75,10 +75,10 @@ local function terminalContractsDrained(s)
     local contracts = s.storage.allContracts()
     for i = 1, #contracts do
         local c = contracts[i]
-        if CB.TERMINAL[c.state] then
+        if CH.TERMINAL[c.state] then
             local lines = s.storage.readEscrow(c.id)
             for j = 1, #lines do
-                if lines[j].state == CB.ESCROW_STATE.HELD then
+                if lines[j].state == CH.ESCROW_STATE.HELD then
                     -- Held on a closed contract is only acceptable when it is
                     -- queued for a player who could not receive it.
                     local queued = false
@@ -145,7 +145,7 @@ describe('value conservation under random operation orders', function()
                         end
                         local c = s.contracts.create(actor, {
                             targetCid = target.cid, reason = 'sim run',
-                            mode = rand(2) == 1 and CB.MODE.EXCLUSIVE or CB.MODE.COMPETITIVE,
+                            mode = rand(2) == 1 and CH.MODE.EXCLUSIVE or CH.MODE.COMPETITIVE,
                             reward = { slots = slots },
                             bailoutAmount = rand(2) == 1 and (rand(50) * 100) or nil,
                             -- Stakes are money too, and the path that moves
@@ -164,13 +164,13 @@ describe('value conservation under random operation orders', function()
                     end
 
                 elseif op == 3 then
-                    -- A hunter claims on a contract they actually hold, the
+                    -- A hitman claims on a contract they actually hold, the
                     -- way a real payout happens.
                     local held = s.projection.accepted(actor.cid)
                     if #held > 0 then
                         local id = held[rand(#held)].id
                         if s.contracts.claimSlot(id, actor.cid,
-                            rand(2) == 1 and CB.FULFILMENT.ELIMINATION or CB.FULFILMENT.KIDNAPPING) then
+                            rand(2) == 1 and CH.FULFILMENT.ELIMINATION or CH.FULFILMENT.KIDNAPPING) then
                             counts.claimed = counts.claimed + 1
                         end
                     end
@@ -189,8 +189,8 @@ describe('value conservation under random operation orders', function()
                 elseif op == 6 and #ids > 0 then
                     local id = ids[rand(#ids)]
                     local c = s.storage.readContract(id)
-                    if c and not CB.TERMINAL[c.state] then
-                        s.contracts.resolve(id, CB.STATE.CANCELLED, c.creator_cid, nil, 'sim cancel')
+                    if c and not CH.TERMINAL[c.state] then
+                        s.contracts.resolve(id, CH.STATE.CANCELLED, c.creator_cid, nil, 'sim cancel')
                     end
 
                 elseif op == 7 and #ids > 0 then
@@ -203,13 +203,13 @@ describe('value conservation under random operation orders', function()
                     s.bailout.processQueue()
 
                 elseif op == 9 and #ids > 0 then
-                    -- Improvements move money between a hunter's stake and
+                    -- Improvements move money between a hitman's stake and
                     -- their pocket, so the loop has to try them.
                     local id = ids[rand(#ids)]
                     local kinds = {
-                        { CB.AMENDMENT.EXTEND_DEADLINE, { seconds = rand(20) * 60 } },
-                        { CB.AMENDMENT.RAISE_BONUS, { percent = rand(150) } },
-                        { CB.AMENDMENT.LOWER_PENALTY, { amount = rand(15) * 100 } },
+                        { CH.AMENDMENT.EXTEND_DEADLINE, { seconds = rand(20) * 60 } },
+                        { CH.AMENDMENT.RAISE_BONUS, { percent = rand(150) } },
+                        { CH.AMENDMENT.LOWER_PENALTY, { amount = rand(15) * 100 } },
                     }
                     local pick = kinds[rand(#kinds)]
                     if s.amendments.improve(actor, id, pick[1], pick[2]) then
@@ -227,8 +227,8 @@ describe('value conservation under random operation orders', function()
             -- Settle everything still open so nothing is left in flight.
             for _, id in ipairs(ids) do
                 local c = s.storage.readContract(id)
-                if c and not CB.TERMINAL[c.state] then
-                    s.contracts.resolve(id, CB.STATE.CANCELLED, c.creator_cid, nil, 'sim teardown')
+                if c and not CH.TERMINAL[c.state] then
+                    s.contracts.resolve(id, CH.STATE.CANCELLED, c.creator_cid, nil, 'sim teardown')
                 end
             end
             for _, cid in ipairs(cids) do s.escrow.retryPending(cid) end
@@ -275,7 +275,7 @@ describe('no contract can be paid twice under any order', function()
                 local target = s.identity.resolve(targetSrc)
                 if target.cid ~= actor.cid then
                     local c = s.contracts.create(actor, {
-                        targetCid = target.cid, reason = 'sim', mode = CB.MODE.COMPETITIVE,
+                        targetCid = target.cid, reason = 'sim', mode = CH.MODE.COMPETITIVE,
                         reward = { baseline = { cash = 1000 }, bonus = { cash = 500 } },
                     })
                     if c then ids[#ids + 1] = c.id end
@@ -286,12 +286,12 @@ describe('no contract can be paid twice under any order', function()
                 elseif op == 3 then
                     local held = s.projection.accepted(actor.cid)
                     if #held > 0 then
-                        s.contracts.claimSlot(held[rand(#held)].id, actor.cid, CB.FULFILMENT.ELIMINATION)
+                        s.contracts.claimSlot(held[rand(#held)].id, actor.cid, CH.FULFILMENT.ELIMINATION)
                     end
                 elseif op == 4 then s.escrow.release(id, actor.cid, nil, 'sim direct release')
                 elseif op == 5 then
                     local c = s.storage.readContract(id)
-                    if c then s.contracts.resolve(id, CB.STATE.CANCELLED, c.creator_cid, nil, 'sim') end
+                    if c then s.contracts.resolve(id, CH.STATE.CANCELLED, c.creator_cid, nil, 'sim') end
                 end
             end
         end
@@ -303,7 +303,7 @@ describe('no contract can be paid twice under any order', function()
         for i = 1, #contracts do
             local lines = s.storage.readEscrow(contracts[i].id)
             for j = 1, #lines do
-                if lines[j].state == CB.ESCROW_STATE.SETTLED then
+                if lines[j].state == CH.ESCROW_STATE.SETTLED then
                     settled = settled + 1
                     truthy(lines[j].settled_to, 'settled without a recipient')
                     truthy(lines[j].settled_at, 'settled without a timestamp')
@@ -388,7 +388,7 @@ describe('value survives a restart', function()
                             local target = modules.identity.resolve(targetSrc)
                             local c = modules.contracts.create(actor, {
                                 targetCid = target.cid, reason = 'sim',
-                                mode = CB.MODE.COMPETITIVE,
+                                mode = CH.MODE.COMPETITIVE,
                                 reward = { baseline = { cash = rand(20) * 100 } },
                                 penaltyAmount = rand(2) == 1 and (rand(10) * 100) or nil,
                             })
@@ -402,12 +402,12 @@ describe('value survives a restart', function()
                     elseif op == 4 and #ids > 0 then
                         local id = ids[rand(#ids)]
                         local c = modules.storage.readContract(id)
-                        if c and c.state == CB.STATE.ACCEPTED then
-                            local hunters = modules.storage.readHunters(id)
-                            for _, h in ipairs(hunters) do
+                        if c and c.state == CH.STATE.ACCEPTED then
+                            local hitmen = modules.storage.readHitmen(id)
+                            for _, h in ipairs(hitmen) do
                                 if h.state == 'active'
-                                    and modules.contracts.claimSlot(id, h.hunter_cid,
-                                                                   CB.FULFILMENT.ELIMINATION) then
+                                    and modules.contracts.claimSlot(id, h.hitman_cid,
+                                                                   CH.FULFILMENT.ELIMINATION) then
                                     claimed = claimed + 1
                                     break
                                 end
@@ -435,8 +435,8 @@ describe('value survives a restart', function()
             -- Settle everything still open, then check the books.
             for _, id in ipairs(ids) do
                 local c = modules.storage.readContract(id)
-                if c and not CB.TERMINAL[c.state] then
-                    modules.contracts.resolve(id, CB.STATE.CANCELLED, c.creator_cid,
+                if c and not CH.TERMINAL[c.state] then
+                    modules.contracts.resolve(id, CH.STATE.CANCELLED, c.creator_cid,
                                               nil, 'sim teardown')
                 end
             end
@@ -464,34 +464,34 @@ describe('value survives a restart', function()
         populate(modules)
 
         local creator = modules.identity.resolve(1)
-        local hunter = modules.identity.resolve(3)
+        local hitman = modules.identity.resolve(3)
         local target = modules.identity.resolve(2)
 
         local c = modules.contracts.create(creator, {
-            targetCid = target.cid, reason = 'sim', mode = CB.MODE.COMPETITIVE,
+            targetCid = target.cid, reason = 'sim', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(c)
-        truthy(modules.contracts.accept(hunter, c.id, false))
+        truthy(modules.contracts.accept(hitman, c.id, false))
 
         -- Exactly what a crash mid-settlement leaves: a contract stuck in
         -- COMPLETING and a line claimed but never settled.
-        truthy(modules.storage.compareSetContractState(c.id, CB.STATE.ACCEPTED,
-                                                       CB.STATE.COMPLETING))
+        truthy(modules.storage.compareSetContractState(c.id, CH.STATE.ACCEPTED,
+                                                       CH.STATE.COMPLETING))
         local line = modules.storage.readEscrow(c.id)[1]
-        truthy(modules.storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD,
-                                               CB.ESCROW_STATE.RELEASING))
+        truthy(modules.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD,
+                                               CH.ESCROW_STATE.RELEASING))
         modules.storage.close()
 
         main, modules = bootJson()
 
-        eq(modules.storage.readContract(c.id).state, CB.STATE.ACCEPTED,
+        eq(modules.storage.readContract(c.id).state, CH.STATE.ACCEPTED,
             'a contract stuck mid-claim is put back so the normal path can run again')
-        eq(modules.storage.readEscrowLine(line.id).state, CB.ESCROW_STATE.HELD,
+        eq(modules.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.HELD,
             'and a line stuck mid-release is owed rather than unreachable')
 
         -- And it can still be finished afterwards.
-        truthy(modules.contracts.claimSlot(c.id, hunter.cid, CB.FULFILMENT.ELIMINATION),
+        truthy(modules.contracts.claimSlot(c.id, hitman.cid, CH.FULFILMENT.ELIMINATION),
             'the recovered contract is still completable')
     end)
 end)

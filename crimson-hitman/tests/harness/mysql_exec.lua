@@ -518,9 +518,9 @@ local function contractsInvolving(params)
             out[#out + 1] = copy(row)
         end
     end
-    for _, hunter in pairs(Exec.tables.crimson_hunters or {}) do
-        if hunter.hunter_cid == cid and not seen[hunter.contract_id] then
-            local contract = Exec.tables.crimson_contracts[hunter.contract_id]
+    for _, hitman in pairs(Exec.tables.crimson_hitmen or {}) do
+        if hitman.hitman_cid == cid and not seen[hitman.contract_id] then
+            local contract = Exec.tables.crimson_contracts[hitman.contract_id]
             if contract then
                 seen[contract.id] = true
                 out[#out + 1] = copy(contract)
@@ -532,8 +532,8 @@ local function contractsInvolving(params)
     return out
 end
 
-local function hunterContractStates(sql, params)
-    -- The hunter states the statement asks for, read from it rather than
+local function hitmanContractStates(sql, params)
+    -- The hitman states the statement asks for, read from it rather than
     -- assumed, so a change to which rows count is exercised here too.
     local wanted = {}
     local list = sql:match("h%.state IN %(([^)]*)%)")
@@ -541,13 +541,13 @@ local function hunterContractStates(sql, params)
         for state in list:gmatch("'([^']*)'") do wanted[state] = true end
     else
         local one = sql:match("h%.state = '([^']*)'")
-        if not one then error('mysql_exec: cannot read the hunter states in: ' .. sql) end
+        if not one then error('mysql_exec: cannot read the hitman states in: ' .. sql) end
         wanted[one] = true
     end
     local out = {}
-    for _, hunter in pairs(Exec.tables.crimson_hunters or {}) do
-        if hunter.hunter_cid == params[1] and wanted[hunter.state] then
-            local contract = Exec.tables.crimson_contracts[hunter.contract_id]
+    for _, hitman in pairs(Exec.tables.crimson_hitmen or {}) do
+        if hitman.hitman_cid == params[1] and wanted[hitman.state] then
+            local contract = Exec.tables.crimson_contracts[hitman.contract_id]
             if contract then out[#out + 1] = { state = contract.state } end
         end
     end
@@ -592,7 +592,7 @@ function Exec.run(sql, params)
     if flat:find('^SELECT c%.%* FROM crimson_contracts') then
         return contractsInvolving(params)
     end
-    if flat:find('^SELECT c%.state AS state') then return hunterContractStates(flat, params) end
+    if flat:find('^SELECT c%.state AS state') then return hitmanContractStates(flat, params) end
     if flat:find('^SELECT COUNT%(%*%)') then
         return #rowsOf(flat:match('FROM ([%w_]+)') or '')
     end

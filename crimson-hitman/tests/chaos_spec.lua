@@ -28,8 +28,8 @@ local function world(s)
     local total = { cash = 0, bank = 0, dirty = 0 }
     for _, c in ipairs(s.storage.allContracts()) do
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if CB.MONEY_SOURCES[line.source]
-                and line.state ~= CB.ESCROW_STATE.SETTLED then
+            if CH.MONEY_SOURCES[line.source]
+                and line.state ~= CH.ESCROW_STATE.SETTLED then
                 total[line.source] = total[line.source] + (line.amount or 0)
             end
         end
@@ -123,7 +123,7 @@ local function journeys()
             run = function(s, f)
                 return s.contracts.create(f.creator, {
                     targetCid = 'TARGET01', reason = 'Unpaid debt',
-                    mode = CB.MODE.EXCLUSIVE,
+                    mode = CH.MODE.EXCLUSIVE,
                     reward = { baseline = { cash = 5000, bank = 2500 } },
                 })
             end,
@@ -132,21 +132,21 @@ local function journeys()
             what = 'accepting one',
             setup = function(s, f) return s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'Unpaid debt',
-                mode = CB.MODE.COMPETITIVE,
+                mode = CH.MODE.COMPETITIVE,
                 reward = { baseline = { cash = 5000 } },
                 penaltyAmount = 1000,
             }) end,
-            run = function(s, f, c) return s.contracts.accept(f.hunter, c.id, false) end,
+            run = function(s, f, c) return s.contracts.accept(f.hitman, c.id, false) end,
         },
         {
             what = 'paying one out',
             setup = function(s, f)
                 local c = s.contracts.create(f.creator, {
                     targetCid = 'TARGET01', reason = 'Unpaid debt',
-                    mode = CB.MODE.COMPETITIVE,
+                    mode = CH.MODE.COMPETITIVE,
                     reward = { baseline = { cash = 5000, bank = 1000 } },
                 })
-                s.contracts.accept(f.hunter, c.id, false)
+                s.contracts.accept(f.hitman, c.id, false)
                 return c
             end,
             -- Through claimSlot. Contracts.resolve cannot take a contract
@@ -154,14 +154,14 @@ local function journeys()
             -- it through completing — so calling it here was refused as
             -- locked and this journey broke nothing.
             run = function(s, f, c)
-                return s.contracts.claimSlot(c.id, 'HUNTER01', 'elimination')
+                return s.contracts.claimSlot(c.id, 'HITMAN01', 'elimination')
             end,
         },
         {
             what = 'cancelling one',
             setup = function(s, f) return s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'Unpaid debt',
-                mode = CB.MODE.EXCLUSIVE,
+                mode = CH.MODE.EXCLUSIVE,
                 reward = { baseline = { cash = 5000 } },
             }) end,
             run = function(s, f, c) return s.contracts.cancel(f.creator, c.id) end,
@@ -170,7 +170,7 @@ local function journeys()
             what = 'buying out',
             setup = function(s, f) return s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'Unpaid debt',
-                mode = CB.MODE.EXCLUSIVE,
+                mode = CH.MODE.EXCLUSIVE,
                 reward = { baseline = { cash = 5000 } },
                 bailoutAmount = 10000,
             }) end,
@@ -180,7 +180,7 @@ local function journeys()
             what = 'taking part of a reward back',
             setup = function(s, f) return s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'Unpaid debt',
-                mode = CB.MODE.EXCLUSIVE,
+                mode = CH.MODE.EXCLUSIVE,
                 reward = { slots = { { baseline = { cash = 5000, bank = 500 } } } },
             }) end,
             run = function(s, f, c)

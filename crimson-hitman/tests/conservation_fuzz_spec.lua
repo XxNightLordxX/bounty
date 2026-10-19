@@ -17,7 +17,7 @@ local function world(s)
     local total = { cash = 0, bank = 0, dirty = 0 }
     for _, c in ipairs(s.storage.allContracts()) do
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if CB.MONEY_SOURCES[line.source] and line.state ~= CB.ESCROW_STATE.SETTLED then
+            if CH.MONEY_SOURCES[line.source] and line.state ~= CH.ESCROW_STATE.SETTLED then
                 total[line.source] = total[line.source] + (line.amount or 0)
             end
         end
@@ -59,7 +59,7 @@ describe('randomised conservation', function()
                     if not any then reward.baseline.cash = 500 end
                     local c = s.contracts.create(f.creator, {
                         targetCid = 'TARGET01', reason = 'Unpaid debt',
-                        mode = CB.MODE.COMPETITIVE, reward = reward,
+                        mode = CH.MODE.COMPETITIVE, reward = reward,
                         penaltyAmount = math.random(2) == 1 and math.random(1, 900) or 0,
                         bonusPercent = math.random(3) == 1 and math.random(1, 80) or nil,
                     })
@@ -67,14 +67,14 @@ describe('randomised conservation', function()
 
                 elseif action == 4 then
                     local id = pick(live)
-                    if id then s.contracts.accept(f.hunter, id, false) end
+                    if id then s.contracts.accept(f.hitman, id, false) end
 
                 elseif action == 5 then
                     local id = pick(live)
                     if id then
-                        s.contracts.claimSlot(id, f.hunter.cid,
-                            math.random(2) == 1 and CB.FULFILMENT.KIDNAPPING
-                                or CB.FULFILMENT.ELIMINATION)
+                        s.contracts.claimSlot(id, f.hitman.cid,
+                            math.random(2) == 1 and CH.FULFILMENT.KIDNAPPING
+                                or CH.FULFILMENT.ELIMINATION)
                     end
 
                 elseif action == 6 then
@@ -83,12 +83,12 @@ describe('randomised conservation', function()
 
                 elseif action == 7 then
                     local id = pick(live)
-                    if id then s.contracts.abandon(f.hunter, id) end
+                    if id then s.contracts.abandon(f.hitman, id) end
 
                 elseif action == 8 then
                     local id = pick(live)
                     if id then
-                        s.contracts.resolve(id, CB.STATE.EXPIRED, f.creator.cid, nil, 'expired')
+                        s.contracts.resolve(id, CH.STATE.EXPIRED, f.creator.cid, nil, 'expired')
                     end
 
                 else
@@ -96,8 +96,8 @@ describe('randomised conservation', function()
                     if id then
                         local ids = {}
                         for _, line in ipairs(s.storage.readEscrow(id)) do
-                            if line.state == CB.ESCROW_STATE.HELD
-                                and line.portion == CB.PORTION.BONUS then
+                            if line.state == CH.ESCROW_STATE.HELD
+                                and line.portion == CH.PORTION.BONUS then
                                 ids[#ids + 1] = line.id
                             end
                         end
@@ -107,7 +107,7 @@ describe('randomised conservation', function()
             end
 
             -- Everyone comes back online and collects anything owed.
-            for _, cid in ipairs({ 'CREATOR1', 'TARGET01', 'HUNTER01' }) do
+            for _, cid in ipairs({ 'CREATOR1', 'TARGET01', 'HITMAN01' }) do
                 s.escrow.retryPending(cid)
             end
 

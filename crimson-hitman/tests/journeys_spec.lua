@@ -10,7 +10,7 @@ describe('giving a later collection back by agreement', function()
     --- reduce_reward releases the named slot's escrow and left
     --- contract.payout_slots where it was. So the emptied collection was still
     --- one the contract sold: next_slot walks onto it, the board shows the
-    --- contract at nothing for the current collection, and a hunter who
+    --- contract at nothing for the current collection, and a hitman who
     --- eliminates the target for it is paid out of an empty slot.
     ---
     --- The app's own dialog already promised otherwise: "Collection N of M
@@ -22,13 +22,13 @@ describe('giving a later collection back by agreement', function()
         Env.players[3].PlayerData.money.bank = 400000
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 1000 } },
                                  { baseline = { cash = 40000 } } } },
         })
         truthy(c, 'a contract with two collections')
         eq(s.storage.readContract(c.id).payout_slots, 2)
-        truthy(s.contracts.accept(f.hunter, c.id), 'a hunter')
+        truthy(s.contracts.accept(f.hitman, c.id), 'a hitman')
         return s, f, c
     end
 
@@ -36,35 +36,35 @@ describe('giving a later collection back by agreement', function()
         local s, f, c = twoCollections()
 
         local proposal = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+            CH.AMENDMENT.REDUCE_REWARD, { slot = 2 })
         truthy(proposal, 'propose giving collection 2 back')
-        truthy(s.amendments.respond(f.hunter, proposal.id, true), 'agreed')
+        truthy(s.amendments.respond(f.hitman, proposal.id, true), 'agreed')
 
         eq(s.storage.readContract(c.id).payout_slots, 1,
             'the collection was emptied and left on sale: next_slot walks onto '
-            .. 'it, the board shows the contract at nothing, and a hunter who '
+            .. 'it, the board shows the contract at nothing, and a hitman who '
             .. 'kills the target for it is paid out of an empty slot')
     end)
 
-    it('does not pay a hunter nothing for a real elimination', function()
+    it('does not pay a hitman nothing for a real elimination', function()
         local s, f, c = twoCollections()
         local proposal = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+            CH.AMENDMENT.REDUCE_REWARD, { slot = 2 })
         truthy(proposal)
-        truthy(s.amendments.respond(f.hunter, proposal.id, true))
+        truthy(s.amendments.respond(f.hitman, proposal.id, true))
 
         -- Collection 1 pays out and the contract should close, because there
         -- is no second collection any more.
         local before = Env.players[3].PlayerData.money.cash
                      + Env.players[3].PlayerData.money.bank
-        local ok = s.contracts.claimSlot(c.id, f.hunter.cid,
-            CB.FULFILMENT.ELIMINATION, {})
+        local ok = s.contracts.claimSlot(c.id, f.hitman.cid,
+            CH.FULFILMENT.ELIMINATION, {})
         truthy(ok, 'the first collection is real and should pay')
         local after = Env.players[3].PlayerData.money.cash
                     + Env.players[3].PlayerData.money.bank
         truthy(after > before, 'and it paid something')
 
-        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED,
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED,
             'with the given-back collection gone, one elimination finishes the '
             .. 'contract rather than leaving an empty slot to be worked for')
     end)
@@ -77,9 +77,9 @@ describe('giving a later collection back by agreement', function()
         -- applied.
         local s, f, c = twoCollections()
         local proposal, err = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.REDUCE_REWARD, { slot = 1 })
+            CH.AMENDMENT.REDUCE_REWARD, { slot = 1 })
         falsy(proposal, 'the live collection is not the creator\'s to take back')
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
         eq(s.storage.readContract(c.id).payout_slots, 2,
             'and the count is untouched by a refused reduction')
     end)
@@ -93,25 +93,25 @@ describe('giving a later collection back by agreement', function()
         Env.players[1].PlayerData.money.bank = 400000
         Env.players[3].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 1000 } },
                                  { baseline = { cash = 2000 } },
                                  { baseline = { cash = 3000 } } } },
         })
         truthy(c, 'three collections')
-        truthy(s.contracts.accept(f.hunter, c.id))
+        truthy(s.contracts.accept(f.hitman, c.id))
 
         local proposal, err = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+            CH.AMENDMENT.REDUCE_REWARD, { slot = 2 })
         falsy(proposal, 'the middle one is not removable')
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
         eq(s.storage.readContract(c.id).payout_slots, 3)
 
         -- The last one is.
         local last = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.REDUCE_REWARD, { slot = 3 })
+            CH.AMENDMENT.REDUCE_REWARD, { slot = 3 })
         truthy(last)
-        truthy(s.amendments.respond(f.hunter, last.id, true))
+        truthy(s.amendments.respond(f.hitman, last.id, true))
         eq(s.storage.readContract(c.id).payout_slots, 2)
     end)
 end)
@@ -120,7 +120,7 @@ describe('buying informant data on a contract that has closed', function()
     --- The one purchase in this resource that is deliberately never refunded.
     ---
     --- An empty result costs the premium on purpose (§14.29): a refund would
-    --- turn the fee into a free oracle for "is anyone hunting me?". That makes
+    --- turn the fee into a free oracle for "is anyone after me?". That makes
     --- it the one purchase that MUST refuse before it charges — and there was
     --- no state check anywhere in Informant.buy, so a tap on a card that had
     --- not been redrawn yet took the money for information about a contract
@@ -132,7 +132,7 @@ describe('buying informant data on a contract that has closed', function()
         Env.players[2].PlayerData.money.bank = 400000
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(c)
@@ -140,8 +140,8 @@ describe('buying informant data on a contract that has closed', function()
         return s, f, c
     end
 
-    for _, state in ipairs({ CB.STATE.CANCELLED, CB.STATE.EXPIRED,
-                             CB.STATE.BAILED_OUT, CB.STATE.VOIDED }) do
+    for _, state in ipairs({ CH.STATE.CANCELLED, CH.STATE.EXPIRED,
+                             CH.STATE.BAILED_OUT, CH.STATE.VOIDED }) do
         it('takes nothing once the contract is ' .. state, function()
             local s, f, c = closedContract(state)
             local before = Env.players[2].PlayerData.money.cash
@@ -150,7 +150,7 @@ describe('buying informant data on a contract that has closed', function()
             local ok, err = s.informant.buy(f.target, c.id)
 
             falsy(ok, 'a closed contract has nobody tracking anybody')
-            eq(err, CB.ERR.ALREADY_SETTLED)
+            eq(err, CH.ERR.ALREADY_SETTLED)
             eq(Env.players[2].PlayerData.money.cash
                + Env.players[2].PlayerData.money.bank, before,
                'and this is the one purchase that is never refunded, so it has '
@@ -165,10 +165,10 @@ describe('buying informant data on a contract that has closed', function()
         Env.players[1].PlayerData.money.bank = 400000
         Env.players[2].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id))
+        truthy(s.contracts.accept(f.hitman, c.id))
         truthy(s.informant.buy(f.target, c.id),
             'the ordinary case has to keep working')
     end)
@@ -177,7 +177,7 @@ end)
 describe('a target who has already paid to get out', function()
     --- The card was identical before and after their money left.
     ---
-    --- With a hunter engaged a buyout is queued rather than instant, so there
+    --- With a hitman engaged a buyout is queued rather than instant, so there
     --- is a window in which the premium has gone and the contract has not
     --- closed. The projection carried no sign of it, so the app could not draw
     --- one: same "Buy out" button, same price, to a player whose money was
@@ -192,11 +192,11 @@ describe('a target who has already paid to get out', function()
         Config.Bailout.ProcessingDelaySeconds = 120
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } }, bailoutAmount = 20000,
         })
         truthy(c)
-        truthy(s.contracts.accept(f.hunter, c.id), 'a hunter, so it queues')
+        truthy(s.contracts.accept(f.hitman, c.id), 'a hitman, so it queues')
 
         local before = Env.players[2].PlayerData.money.cash
                      + Env.players[2].PlayerData.money.bank
@@ -238,7 +238,7 @@ describe('a target who has already paid to get out', function()
                   + Env.players[2].PlayerData.money.bank
         local ok, err = s.bailout.buy(f.target, c.id)
         falsy(ok, 'paying twice')
-        eq(err, CB.ERR.BUYOUT_PENDING)
+        eq(err, CH.ERR.BUYOUT_PENDING)
         eq(Env.players[2].PlayerData.money.cash
            + Env.players[2].PlayerData.money.bank, mid,
            'and nothing was taken for the second attempt')
@@ -248,7 +248,7 @@ end)
 describe('money already promised to one named person', function()
     --- Escrow.moneyValue states the rule and its reason in its own comment:
     --- "a line marked for one named person is already spoken for: the release
-    --- a hunter's claim runs skips it, so counting it here advertises a reward
+    --- a hitman's claim runs skips it, so counting it here advertises a reward
     --- bigger than anything that will ever be paid."
     ---
     --- Escrow.goodsIn, Escrow.release and Projection.rewardLines all apply it.
@@ -265,7 +265,7 @@ describe('money already promised to one named person', function()
         Env.players[1].PlayerData.money.bank = 400000
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000, dirty = 4000 } },
             -- At the ceiling for 9,000 of funding (3x). Once 4,000 of it is
             -- promised to the creator the ceiling is 15,000, so a reclamp
@@ -310,13 +310,13 @@ describe('money already promised to one named person', function()
         local ok, err = s.contracts.withdrawReward(f.creator, c.id, { cash.id })
         falsy(ok, 'a collection has to keep something in it, and the queued '
             .. 'line is not something: every other reader already skips it, so '
-            .. 'this would leave a live contract paying a hunter nothing')
-        eq(err, CB.ERR.INVALID_REWARD)
+            .. 'this would leave a live contract paying a hitman nothing')
+        eq(err, CH.ERR.INVALID_REWARD)
     end)
 
     it('is not counted when a buyout price is re-priced against the escrow', function()
         -- Clean money this time. The bailout is a multiple of CLEAN funding
-        -- only (CB.MONEY_ACCOUNTS), so a queued black-money line never moved
+        -- only (CH.MONEY_ACCOUNTS), so a queued black-money line never moved
         -- it — which is why the first version of this test passed with the
         -- fault in place. Clean money is credited rather than carried, so a
         -- full inventory cannot queue it; a creator who has logged off can.
@@ -326,7 +326,7 @@ describe('money already promised to one named person', function()
         Env.players[3].PlayerData.money.bank = 400000
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 1000 } },
                                  { baseline = { cash = 40000 } } } },
             -- The ceiling for 41,000 of clean funding.
@@ -334,16 +334,16 @@ describe('money already promised to one named person', function()
         })
         truthy(c)
         eq(s.storage.readContract(c.id).bailout_amount, 123000)
-        truthy(s.contracts.accept(f.hunter, c.id))
+        truthy(s.contracts.accept(f.hitman, c.id))
 
         local proposal = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+            CH.AMENDMENT.REDUCE_REWARD, { slot = 2 })
         truthy(proposal)
 
-        -- The creator closes the game; the hunter agrees, which is the
+        -- The creator closes the game; the hitman agrees, which is the
         -- ordinary way a proposal gets answered.
         Env.removePlayer(1)
-        truthy(s.amendments.respond(f.hunter, proposal.id, true))
+        truthy(s.amendments.respond(f.hitman, proposal.id, true))
 
         local queued = false
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
@@ -363,7 +363,7 @@ describe('money already promised to one named person', function()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000, bank = 3000 } },
         })
         truthy(c)
@@ -392,7 +392,7 @@ describe('a payout owed to a player who is offline', function()
         Env.players[2].PlayerData.money.bank = 400000
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000, bank = 3000 } },
             bailoutAmount = 15000,
         })
@@ -402,7 +402,7 @@ describe('a payout owed to a player who is offline', function()
         Env.removePlayer(1)
 
         truthy(s.bailout.buy(f.target, c.id), 'the target buys out, instantly')
-        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
         return s, f, c, creator
     end
 
@@ -462,10 +462,10 @@ describe('informant data across a crash', function()
         Config.Informant.MaxPurchasesPerContract = 2
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id))
+        truthy(s.contracts.accept(f.hitman, c.id))
         truthy(s.informant.buy(f.target, c.id), 'the first purchase')
         return s, f, c
     end
@@ -501,12 +501,12 @@ describe('informant data across a crash', function()
         Env.advance(Config.Informant.RerollLockMinutes * 60 + 10)
         truthy(s.informant.buy(f.target, c.id), 'the second purchase')
         Env.advance(Config.Informant.RerollLockMinutes * 60 + 10)
-        eq(select(2, s.informant.buy(f.target, c.id)), CB.ERR.LIMIT_REACHED)
+        eq(select(2, s.informant.buy(f.target, c.id)), CH.ERR.LIMIT_REACHED)
 
         local target = relog(s, f)
         local ok, err = s.informant.buy(target, c.id)
         falsy(ok, 'rejoining must not be a way past the ceiling')
-        eq(err, CB.ERR.LIMIT_REACHED)
+        eq(err, CH.ERR.LIMIT_REACHED)
     end)
 end)
 
@@ -521,7 +521,7 @@ describe('a withdrawal that queued a line', function()
         Env.players[3].PlayerData.money.bank = 400000
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 { baseline = { cash = 5000 }, bonus = { dirty = 1000 } },
                 { baseline = { cash = 3000 }, bonus = { cash = 500 } },
@@ -531,7 +531,7 @@ describe('a withdrawal that queued a line', function()
 
         local wanted = {}
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.BONUS then wanted[#wanted + 1] = line.id end
+            if line.portion == CH.PORTION.BONUS then wanted[#wanted + 1] = line.id end
         end
         eq(#wanted, 2, 'two bonus lines, so the acceptance can land between them')
 
@@ -547,12 +547,12 @@ describe('a withdrawal that queued a line', function()
         local seen = 0
         s.storage.claimEscrowLine = function(id, expected, next_)
             local out = realClaim(id, expected, next_)
-            if out and expected == CB.ESCROW_STATE.HELD then
+            if out and expected == CH.ESCROW_STATE.HELD then
                 seen = seen + 1
                 if seen == 2 then
-                    s.storage.addHunter({ id = 'hn_backstop', contract_id = c.id,
-                        hunter_cid = f.hunter.cid, hunter_name = f.hunter.name,
-                        hunter_account = f.hunter.account, state = 'active',
+                    s.storage.addHitman({ id = 'hn_backstop', contract_id = c.id,
+                        hitman_cid = f.hitman.cid, hitman_name = f.hitman.name,
+                        hitman_account = f.hitman.account, state = 'active',
                         accepted_at = os.time() })
                 end
             end
@@ -579,7 +579,7 @@ describe('a withdrawal that queued a line', function()
             .. ') about a withdrawal that had already taken money out of the pot')
     end)
 
-    it('tells the hunter the contract shrank as they took it', function()
+    it('tells the hitman the contract shrank as they took it', function()
         race()
         local told = false
         for _, note in ipairs(Natives.calls.notifications or {}) do
@@ -587,8 +587,8 @@ describe('a withdrawal that queued a line', function()
                 .. tostring(note.content or note.message or '')
             if text:find('Reward changed', 1, true) then told = true end
         end
-        truthy(told, 'part of the reward left as the hunter accepted and the '
-            .. 'hunter was told nothing')
+        truthy(told, 'part of the reward left as the hitman accepted and the '
+            .. 'hitman was told nothing')
     end)
 
     it('leaves a financial row for the escrow that moved', function()
@@ -613,7 +613,7 @@ describe('a withdrawal where every line queued', function()
         Env.players[1].PlayerData.money.bank = 400000
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 1000 }, bonus = { cash = 40000 } } } },
             -- The ceiling for 41,000 of clean funding.
             bailoutAmount = 123000,
@@ -623,7 +623,7 @@ describe('a withdrawal where every line queued', function()
 
         local bonus
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.BONUS then bonus = line end
+            if line.portion == CH.PORTION.BONUS then bonus = line end
         end
         truthy(bonus)
 
@@ -674,52 +674,52 @@ describe('taking a contract up again after walking away', function()
         local slots = {}
         for i = 1, (opts.slots or 1) do slots[i] = { baseline = { cash = 1000 * i } } end
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = opts.mode or CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = opts.mode or CH.MODE.COMPETITIVE,
             reward = { slots = slots }, penaltyAmount = opts.stake,
         })
         truthy(c)
-        truthy(s.contracts.accept(f.hunter, c.id, false), 'the first stint')
+        truthy(s.contracts.accept(f.hitman, c.id, false), 'the first stint')
         if opts.before then opts.before(s, f, c) end
-        truthy(s.contracts.abandon(f.hunter, c.id), 'walks away')
+        truthy(s.contracts.abandon(f.hitman, c.id), 'walks away')
         return s, f, c
     end
 
-    it('lets the hunter accept again', function()
+    it('lets the hitman accept again', function()
         local s, f, c = walkedAway()
-        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        local ok, err = s.contracts.accept(f.hitman, c.id, false)
         truthy(ok, 'the contract is listed to them with an Accept button and '
             .. 'was refused "Not right now." forever: ' .. tostring(err))
-        eq(s.projection.contract(s.storage.readContract(c.id), 'HUNTER01').role, 'hunter')
+        eq(s.projection.contract(s.storage.readContract(c.id), 'HITMAN01').role, 'hitman')
     end)
 
     it('takes the old row up again rather than writing a second one', function()
         local s, f, c = walkedAway()
-        local alias = s.storage.readHunter(c.id, 'HUNTER01').alias
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local alias = s.storage.readHitman(c.id, 'HITMAN01').alias
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         local rows = 0
-        for _, row in ipairs(s.storage.readHunters(c.id)) do
-            if row.hunter_cid == 'HUNTER01' then rows = rows + 1 end
+        for _, row in ipairs(s.storage.readHitmen(c.id)) do
+            if row.hitman_cid == 'HITMAN01' then rows = rows + 1 end
         end
-        eq(rows, 1, 'two rows for one person: which one readHunter returns is '
+        eq(rows, 1, 'two rows for one person: which one readHitman returns is '
             .. 'up to the store')
-        eq(s.storage.readHunter(c.id, 'HUNTER01').alias, alias,
+        eq(s.storage.readHitman(c.id, 'HITMAN01').alias, alias,
             'the creator would see a second name for the same person')
     end)
 
     it('does not make walking away a way round the wait between payouts', function()
         local s, f, c = walkedAway({ slots = 2, before = function(s, f, c)
-            truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+            truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
         end })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local ok, err = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         falsy(ok, 'collected twice in a row by walking away in between')
-        eq(err, CB.ERR.SLOT_COOLDOWN)
+        eq(err, CH.ERR.SLOT_COOLDOWN)
     end)
 
     it('takes the stake again, because it was forfeited the first time', function()
         local s, f, c = walkedAway({ stake = 2000 })
         local before = Env.players[3].PlayerData.money.bank
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         eq(Env.players[3].PlayerData.money.bank, before - 2000)
     end)
 
@@ -731,32 +731,32 @@ describe('taking a contract up again after walking away', function()
             s.death.recordDamage(3, 2, 123456)
             Env.players[2].PlayerData.metadata.isdead = true
             s.death.onVictimReport(2)
-            truthy(s.death.getPending(c.id, 'HUNTER01'), 'a kill in the first stint')
-            truthy(s.photo.issue(f.hunter, c.id), 'and a token for it')
+            truthy(s.death.getPending(c.id, 'HITMAN01'), 'a kill in the first stint')
+            truthy(s.photo.issue(f.hitman, c.id), 'and a token for it')
         end })
-        falsy(s.death.getPending(c.id, 'HUNTER01'),
+        falsy(s.death.getPending(c.id, 'HITMAN01'),
             'the proof outlived the stint it was made in')
         eq(s.photo.tokenCount(), 0, 'and so did the token')
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local _, err = s.photo.issue(f.hunter, c.id)
-        eq(err, CB.ERR.NO_KILL_TO_VERIFY)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local _, err = s.photo.issue(f.hitman, c.id)
+        eq(err, CH.ERR.NO_KILL_TO_VERIFY)
     end)
 
     it('needs no new id to come back, so running out of them cannot refuse it', function()
         local s, f, c = walkedAway()
-        local real = s.storage.readHunterById
-        s.storage.readHunterById = function() return { id = 'taken' } end
-        local ok, err = s.contracts.accept(f.hunter, c.id, false)
-        s.storage.readHunterById = real
+        local real = s.storage.readHitmanById
+        s.storage.readHitmanById = function() return { id = 'taken' } end
+        local ok, err = s.contracts.accept(f.hitman, c.id, false)
+        s.storage.readHitmanById = real
         truthy(ok, 'refused for want of an id the re-accept never uses: ' .. tostring(err))
     end)
 
     it('still refuses somebody already on it, in words that say so', function()
         local s, f, c = walkedAway()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local ok, err = s.contracts.accept(f.hitman, c.id, false)
         falsy(ok)
-        eq(err, CB.ERR.ALREADY_HOLDING)
+        eq(err, CH.ERR.ALREADY_HOLDING)
     end)
 end)
 
@@ -768,9 +768,9 @@ describe('accepting a contract that is no longer there to take', function()
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
         truthy(s.contracts.cancel(f.creator, c.id))
-        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        local ok, err = s.contracts.accept(f.hitman, c.id, false)
         falsy(ok)
-        eq(err, CB.ERR.ALREADY_SETTLED, '"Not right now." on a contract that '
+        eq(err, CH.ERR.ALREADY_SETTLED, '"Not right now." on a contract that '
             .. 'will never be acceptable again')
     end)
 
@@ -780,13 +780,13 @@ describe('accepting a contract that is no longer there to take', function()
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
             cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
         truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
-        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'x'),
+        truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED, CH.STATE.COMPLETING, 'x'),
             'somebody else is being paid')
-        local _, err = s.contracts.accept(f.hunter, c.id, false)
-        eq(err, CB.ERR.BAD_STATE)
+        local _, err = s.contracts.accept(f.hitman, c.id, false)
+        eq(err, CH.ERR.BAD_STATE)
     end)
 end)
 
@@ -797,7 +797,7 @@ describe('moving a deadline by agreement', function()
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         return s, f, c
     end
 
@@ -805,10 +805,10 @@ describe('moving a deadline by agreement', function()
         local s, f, c = held()
         local before = s.storage.readContract(c.id).deadline_at
         truthy(before and before - os.time() > 3600, 'a deadline hours away')
-        local p = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+        local p = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE,
             { seconds = 1800 })
         truthy(p)
-        truthy(s.amendments.respond(f.hunter, p.id, true))
+        truthy(s.amendments.respond(f.hitman, p.id, true))
         eq(s.storage.readContract(c.id).deadline_at, before - 1800,
             '"Shorten the deadline by 30 minutes" left thirty minutes in total')
     end)
@@ -818,13 +818,13 @@ describe('moving a deadline by agreement', function()
         -- time left is measured when it is agreed, not when it was asked.
         local s, f, c = held()
         local deadline = s.storage.readContract(c.id).deadline_at
-        local p = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+        local p = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE,
             { seconds = (deadline - os.time()) - 400 })
         truthy(p, 'a cut that fits when it is proposed')
         Env.advance(150)  -- answered when it would leave only 250 seconds
-        local ok, err = s.amendments.respond(f.hunter, p.id, true)
+        local ok, err = s.amendments.respond(f.hitman, p.id, true)
         falsy(ok, 'agreed into a deadline that had already passed')
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
         eq(s.storage.readContract(c.id).deadline_at, deadline, 'and it did not move')
     end)
 
@@ -834,11 +834,11 @@ describe('moving a deadline by agreement', function()
         -- seconds could end the contract before it was put back.
         local s, f, c = held()
         local left = s.storage.readContract(c.id).deadline_at - os.time()
-        local p, err = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+        local p, err = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE,
             { seconds = left - 299 })
         falsy(p, 'a cut leaving 299 seconds')
-        eq(err, CB.ERR.INVALID_INPUT)
-        truthy(s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+        eq(err, CH.ERR.INVALID_INPUT)
+        truthy(s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE,
             { seconds = left - 300 }), 'five minutes is enough')
     end)
 
@@ -847,18 +847,18 @@ describe('moving a deadline by agreement', function()
         local deadline = s.storage.readContract(c.id).deadline_at
         truthy(s.storage.startPause(c.id, os.time()))
         Env.advance(deadline - os.time() + 600)  -- the wall clock is past it
-        truthy(s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+        truthy(s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE,
             { seconds = 600 }), 'hours are left on the stopped clock')
     end)
 
     it('refuses, when proposed, a cut longer than the time that is left', function()
         local s, f, c = held()
         local left = s.storage.readContract(c.id).deadline_at - os.time()
-        local p, err = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+        local p, err = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE,
             { seconds = left + 60 })
         falsy(p, 'the other party would be asked to agree to something that '
             .. 'cannot be applied')
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
     end)
 end)
 
@@ -869,8 +869,8 @@ describe('a proposal whose time is up', function()
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        truthy(s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE,
             { seconds = 600 }))
         -- Past its time (rounded up to five minutes), and the sweep has
         -- not run yet.
@@ -880,13 +880,13 @@ describe('a proposal whose time is up', function()
 
     it('does not hold the open slot until the sweep gets round to it', function()
         local s, f, c = lapsed()
-        local p, err = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CANCEL, {})
+        local p, err = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CANCEL, {})
         truthy(p, 'refused by a proposal nobody can answer any more: ' .. tostring(err))
     end)
 
     it('is not listed with Agree and Decline', function()
         local s, f, c = lapsed()
-        local listed = s.amendments.openFor(f.hunter, c.id)
+        local listed = s.amendments.openFor(f.hitman, c.id)
         eq(#listed, 0, 'drawn with two buttons that can only be refused')
     end)
 end)
@@ -897,19 +897,19 @@ describe('an agreed change the contract has moved past', function()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local p = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local p = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.REDUCE_REWARD, { slot = 2 })
         truthy(p, 'the last collection, while nobody is competing for it')
 
         -- Collection 1 is paid, so collection 2 is now the live one.
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
         Natives.calls.notifications = {}
-        local ok, err = s.amendments.respond(f.hunter, p.id, true)
+        local ok, err = s.amendments.respond(f.hitman, p.id, true)
         falsy(ok, 'the live collection cannot be given back')
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
 
         local told = false
         for _, note in ipairs(Natives.calls.notifications) do

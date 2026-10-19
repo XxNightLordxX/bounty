@@ -60,13 +60,13 @@ local function rng(seed)
 end
 
 local SOURCES = { 'cash', 'bank', 'dirty' }
-local STATES = { CB.STATE.ACTIVE, CB.STATE.ACCEPTED, CB.STATE.COMPLETED,
-                 CB.STATE.CANCELLED, CB.STATE.EXPIRED }
+local STATES = { CH.STATE.ACTIVE, CH.STATE.ACCEPTED, CH.STATE.COMPLETED,
+                 CH.STATE.CANCELLED, CH.STATE.EXPIRED }
 
 --- One history: a list of operations, each a closure taking a store.
 local function history(seed, length)
     local pick = rng(seed)
-    local ops, contracts, lines, hunters = {}, {}, {}, {}
+    local ops, contracts, lines, hitmen = {}, {}, {}, {}
 
     for step = 1, length do
         local choice = pick(9)
@@ -84,7 +84,7 @@ local function history(seed, length)
             local row = {
                 id = id, creator_cid = 'CREATOR' .. pick(3),
                 target_cid = 'TARGET' .. pick(3),
-                mode = pick(2) == 1 and CB.MODE.EXCLUSIVE or CB.MODE.COMPETITIVE,
+                mode = pick(2) == 1 and CH.MODE.EXCLUSIVE or CH.MODE.COMPETITIVE,
                 state = STATES[pick(#STATES)], created_at = 1000 + step,
                 payout_slots = pick(3), next_slot = 1,
             }
@@ -107,10 +107,10 @@ local function history(seed, length)
                 lines[#lines + 1] = id
                 batch[i] = {
                     id = id, contract_id = contractId, slot = pick(3),
-                    portion = pick(2) == 1 and CB.PORTION.BASELINE or CB.PORTION.BONUS,
+                    portion = pick(2) == 1 and CH.PORTION.BASELINE or CH.PORTION.BONUS,
                     source = SOURCES[pick(#SOURCES)],
                     amount = pick(5000), quantity = 0,
-                    state = CB.ESCROW_STATE.HELD,
+                    state = CH.ESCROW_STATE.HELD,
                     derived = pick(2) == 1 or nil,
                 }
             end
@@ -129,13 +129,13 @@ local function history(seed, length)
             local id = lines[pick(#lines)]
             ops[#ops + 1] = { what = 'claim ' .. id,
                 run = function(store)
-                    return store.claimEscrowLine(id, CB.ESCROW_STATE.HELD,
-                        CB.ESCROW_STATE.RELEASING)
+                    return store.claimEscrowLine(id, CH.ESCROW_STATE.HELD,
+                        CH.ESCROW_STATE.RELEASING)
                 end }
 
         elseif choice == 6 and #lines > 0 then
             local id = lines[pick(#lines)]
-            local who = 'HUNTER' .. pick(3)
+            local who = 'HITMAN' .. pick(3)
             ops[#ops + 1] = { what = 'settle ' .. id .. ' -> ' .. who,
                 run = function(store) return store.settleEscrowLine(id, who) end }
 
@@ -147,18 +147,18 @@ local function history(seed, length)
 
         elseif choice == 8 and #contracts > 0 then
             local contractId = contracts[pick(#contracts)]
-            local id = 'hn' .. ('%06d'):format(#hunters + 1)
-            hunters[#hunters + 1] = id
+            local id = 'hn' .. ('%06d'):format(#hitmen + 1)
+            hitmen[#hitmen + 1] = id
             local record = {
-                id = id, contract_id = contractId, hunter_cid = 'HUNTER' .. pick(3),
+                id = id, contract_id = contractId, hitman_cid = 'HITMAN' .. pick(3),
                 alias = 'Operative #' .. pick(9), anon = pick(2) == 1,
                 accepted_at = 2000 + step, state = 'active',
             }
-            ops[#ops + 1] = { what = 'addHunter ' .. id,
+            ops[#ops + 1] = { what = 'addHitman ' .. id,
                 run = function(store)
                     local copy = {}
                     for k, v in pairs(record) do copy[k] = v end
-                    return store.addHunter(copy)
+                    return store.addHitman(copy)
                 end }
 
         else
@@ -203,15 +203,15 @@ local function snapshot(store, contracts, lines)
         table.sort(rows)
         out[#out + 1] = '  escrow ' .. table.concat(rows, ' ')
 
-        local hunters = store.readHunters(id) or {}
+        local hitmen = store.readHitmen(id) or {}
         local hs = {}
-        for _, h in ipairs(hunters) do
+        for _, h in ipairs(hitmen) do
             hs[#hs + 1] = ('%s/%s/%s/%s'):format(tostring(h.id),
-                tostring(h.hunter_cid), tostring(h.anon and true or false),
+                tostring(h.hitman_cid), tostring(h.anon and true or false),
                 tostring(h.state))
         end
         table.sort(hs)
-        out[#out + 1] = '  hunters ' .. table.concat(hs, ' ')
+        out[#out + 1] = '  hitmen ' .. table.concat(hs, ' ')
     end
 
     for _, id in ipairs(lines) do

@@ -3,7 +3,7 @@
 --- The authorisation matrix is (handler x role): who may act. This is
 --- (state x action): whether the action makes sense AT ALL right now. They
 --- are different questions and a contract can pass one while failing the
---- other — a hunter is the right role to submit a photo, and submitting one
+--- other — a hitman is the right role to submit a photo, and submitting one
 --- against a contract that has already closed is still nonsense.
 ---
 --- What this is looking for, specifically:
@@ -47,7 +47,7 @@ end
 --- A contract in each state, with the parties still present.
 ---
 --- Built through the resource rather than written into the store, so the
---- escrow, the hunter rows and the audit trail are all genuinely what that
+--- escrow, the hitman rows and the audit trail are all genuinely what that
 --- state looks like. A hand-written row would let a cell pass against a
 --- shape the resource cannot actually produce.
 local function inState(state)
@@ -59,38 +59,38 @@ local function inState(state)
 
     local c = s.contracts.create(f.creator, {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
-        mode = CB.MODE.COMPETITIVE,
+        mode = CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 } },
         bailoutAmount = 9000,
     })
     truthy(c, 'the fixture has to produce a contract')
 
-    if state == CB.STATE.ACTIVE then
+    if state == CH.STATE.ACTIVE then
         -- As created.
-    elseif state == CB.STATE.ACCEPTED then
-        truthy(s.contracts.accept(f.hunter, c.id), 'accept for the ACCEPTED fixture')
-    elseif state == CB.STATE.COMPLETING then
-        truthy(s.contracts.accept(f.hunter, c.id), 'accept first')
-        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING,
+    elseif state == CH.STATE.ACCEPTED then
+        truthy(s.contracts.accept(f.hitman, c.id), 'accept for the ACCEPTED fixture')
+    elseif state == CH.STATE.COMPLETING then
+        truthy(s.contracts.accept(f.hitman, c.id), 'accept first')
+        truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED, CH.STATE.COMPLETING,
             'fixture'), 'the fixture has to reach COMPLETING')
-    elseif state == CB.STATE.CANCELLED then
-        truthy(s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil,
+    elseif state == CH.STATE.CANCELLED then
+        truthy(s.contracts.resolve(c.id, CH.STATE.CANCELLED, f.creator.cid, nil,
             'fixture'), 'cancel for the CANCELLED fixture')
-    elseif state == CB.STATE.EXPIRED then
-        truthy(s.contracts.resolve(c.id, CB.STATE.EXPIRED, f.creator.cid, nil,
+    elseif state == CH.STATE.EXPIRED then
+        truthy(s.contracts.resolve(c.id, CH.STATE.EXPIRED, f.creator.cid, nil,
             'expired'), 'expire for the EXPIRED fixture')
-    elseif state == CB.STATE.BAILED_OUT then
-        truthy(s.contracts.resolve(c.id, CB.STATE.BAILED_OUT, f.creator.cid, nil,
+    elseif state == CH.STATE.BAILED_OUT then
+        truthy(s.contracts.resolve(c.id, CH.STATE.BAILED_OUT, f.creator.cid, nil,
             'bailed_out'), 'bail out for the BAILED_OUT fixture')
-    elseif state == CB.STATE.VOIDED then
+    elseif state == CH.STATE.VOIDED then
         truthy(s.admin.void(0, c.id, 'fixture'), 'void for the VOIDED fixture')
-    elseif state == CB.STATE.COMPLETED then
+    elseif state == CH.STATE.COMPLETED then
         -- Through COMPLETING, which is the only route the transition table
         -- allows. Resolving straight from ACCEPTED is refused, correctly.
-        truthy(s.contracts.accept(f.hunter, c.id), 'accept first')
-        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED,
-            CB.STATE.COMPLETING, 'fixture'), 'reach COMPLETING first')
-        truthy(s.contracts.resolve(c.id, CB.STATE.COMPLETED, f.hunter.cid, nil,
+        truthy(s.contracts.accept(f.hitman, c.id), 'accept first')
+        truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED,
+            CH.STATE.COMPLETING, 'fixture'), 'reach COMPLETING first')
+        truthy(s.contracts.resolve(c.id, CH.STATE.COMPLETED, f.hitman.cid, nil,
             'completed'), 'complete for the COMPLETED fixture')
     else
         error('no fixture for state ' .. tostring(state))
@@ -103,9 +103,9 @@ end
 
 --- Every state a contract can be in, and whether it is finished.
 local STATES = {
-    CB.STATE.ACTIVE, CB.STATE.ACCEPTED, CB.STATE.COMPLETING,
-    CB.STATE.COMPLETED, CB.STATE.CANCELLED, CB.STATE.EXPIRED,
-    CB.STATE.BAILED_OUT, CB.STATE.VOIDED,
+    CH.STATE.ACTIVE, CH.STATE.ACCEPTED, CH.STATE.COMPLETING,
+    CH.STATE.COMPLETED, CH.STATE.CANCELLED, CH.STATE.EXPIRED,
+    CH.STATE.BAILED_OUT, CH.STATE.VOIDED,
 }
 
 --- What a player's money and the contract's escrow look like right now.
@@ -119,7 +119,7 @@ local function snapshot(s, c)
     end
     local held = 0
     for _, line in ipairs(s.storage.readEscrow(c.id)) do
-        if line.state ~= CB.ESCROW_STATE.SETTLED then held = held + (line.amount or 0) end
+        if line.state ~= CH.ESCROW_STATE.SETTLED then held = held + (line.amount or 0) end
     end
     return { money = total, held = held, state = s.storage.readContract(c.id).state }
 end
@@ -138,29 +138,29 @@ end
 local ACTIONS = {
     { name = 'accept', source = 3,
       payload = function(c) return { id = c.id } end,
-      allowed = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true },
+      allowed = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true },
       refusals = { bad_state = true, already_settled = true, not_found = true,
                    contract_full = true, limit_reached = true,
-                   -- The grid's hunter already holds every accepted contract.
+                   -- The grid's hitman already holds every accepted contract.
                    already_holding = true },
       why = 'a contract that has ended cannot be taken' },
 
     { name = 'abandon', source = 3,
       payload = function(c) return { id = c.id } end,
-      allowed = { [CB.STATE.ACCEPTED] = true, [CB.STATE.COMPLETING] = true },
+      allowed = { [CH.STATE.ACCEPTED] = true, [CH.STATE.COMPLETING] = true },
       refusals = { bad_state = true, not_participant = true, already_settled = true },
       why = 'you can only walk away from something you are holding' },
 
     { name = 'cancel', source = 1,
       payload = function(c) return { id = c.id } end,
-      allowed = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true },
+      allowed = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true },
       refusals = { already_settled = true, bad_state = true, locked = true,
                    contract_taken = true },
       why = 'a finished contract cannot be cancelled again' },
 
     { name = 'bailout', source = 2,
       payload = function(c) return { id = c.id } end,
-      allowed = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true },
+      allowed = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true },
       refusals = { already_settled = true, bad_state = true, bailout_off = true,
                    no_buyout_price = true, buyout_pending = true,
                    insufficient_funds = true, incapacitated = true,
@@ -169,7 +169,7 @@ local ACTIONS = {
 
     { name = 'armKidnap', source = 3,
       payload = function(c) return { id = c.id } end,
-      allowed = { [CB.STATE.ACCEPTED] = true },
+      allowed = { [CH.STATE.ACCEPTED] = true },
       refusals = { bad_state = true, not_participant = true, already_settled = true,
                    invalid_input = true, not_coerced = true, limit_reached = true,
                    target_not_conscious = true, party_offline = true,
@@ -186,7 +186,7 @@ local ACTIONS = {
 
     { name = 'addEscrow', source = 1,
       payload = function(c) return { id = c.id, reward = { baseline = { cash = 1000 } } } end,
-      allowed = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true },
+      allowed = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true },
       refusals = { already_settled = true, bad_state = true, invalid_reward = true,
                    not_participant = true },
       why = 'money must not be added to a contract that can never pay out' },
@@ -195,29 +195,29 @@ local ACTIONS = {
       payload = function(c) return { id = c.id, kind = 'extend_deadline',
                                       payload = { seconds = 600 } } end,
       -- COMPLETING included: a settlement that fails rolls back to ACCEPTED,
-      -- and a longer deadline is then a plain benefit to the hunter. Raising
+      -- and a longer deadline is then a plain benefit to the hitman. Raising
       -- the BONUS is a different matter and has its own test below, because
       -- that one takes escrow.
-      allowed = { [CB.STATE.ACTIVE] = true, [CB.STATE.ACCEPTED] = true,
-                  [CB.STATE.COMPLETING] = true },
+      allowed = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true,
+                  [CH.STATE.COMPLETING] = true },
       refusals = { already_settled = true, bad_state = true, invalid_input = true,
                    not_participant = true },
       why = 'improving the terms of a closed contract improves nothing' },
 
     { name = 'propose', source = 1,
-      payload = function(c) return { id = c.id, kind = CB.AMENDMENT.LOWER_PENALTY,
+      payload = function(c) return { id = c.id, kind = CH.AMENDMENT.LOWER_PENALTY,
                                       payload = { amount = 1 } } end,
-      allowed = { [CB.STATE.ACCEPTED] = true },
+      allowed = { [CH.STATE.ACCEPTED] = true },
       refusals = { bad_state = true, already_settled = true, invalid_input = true,
                    not_participant = true, limit_reached = true },
-      why = 'there is nothing to renegotiate on a contract nobody is hunting' },
+      why = 'there is nothing to renegotiate on a contract nobody is working' },
 
     { name = 'withdrawReward', source = 1,
       payload = function(c) return { id = c.id, slot = 1 } end,
-      allowed = { [CB.STATE.ACTIVE] = true },
+      allowed = { [CH.STATE.ACTIVE] = true },
       refusals = { already_settled = true, bad_state = true, invalid_input = true,
                    not_participant = true, locked = true, contract_taken = true },
-      why = 'taking a reward back out once a hunter is on it is not the creator\'s call' },
+      why = 'taking a reward back out once a hitman is on it is not the creator\'s call' },
 
     -- Reads. These may answer on a finished contract — a party is allowed to
     -- look at what happened — so every state is permitted and the point of
@@ -349,7 +349,7 @@ describe('raising the bonus answers to the same state rule as adding escrow', fu
     --- its lines right now: a line appended into that walk may or may not be
     --- paid depending on where the loop had got to.
     ---
-    --- Amendments.improve guarded only CB.TERMINAL, and raise_bonus under
+    --- Amendments.improve guarded only CH.TERMINAL, and raise_bonus under
     --- improve TAKES ESCROW — so the creator could do through one door
     --- exactly what the other refused.
     local function completing()
@@ -359,19 +359,19 @@ describe('raising the bonus answers to the same state rule as adding escrow', fu
         Env.players[3].PlayerData.money.bank = 400000
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 10000 } }, bonusPercent = 10,
         })
-        truthy(s.contracts.accept(f.hunter, c.id))
-        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED,
-            CB.STATE.COMPLETING, 'fixture'))
+        truthy(s.contracts.accept(f.hitman, c.id))
+        truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED,
+            CH.STATE.COMPLETING, 'fixture'))
         return s, f, c
     end
 
     local function heldLines(s, id)
         local n = 0
         for _, line in ipairs(s.storage.readEscrow(id)) do
-            if line.state ~= CB.ESCROW_STATE.SETTLED then n = n + 1 end
+            if line.state ~= CH.ESCROW_STATE.SETTLED then n = n + 1 end
         end
         return n
     end
@@ -383,11 +383,11 @@ describe('raising the bonus answers to the same state rule as adding escrow', fu
                      + Env.players[1].PlayerData.money.bank
 
         local ok, err = s.amendments.improve(f.creator, c.id,
-            CB.AMENDMENT.RAISE_BONUS, { percent = 50 })
+            CH.AMENDMENT.RAISE_BONUS, { percent = 50 })
 
         falsy(ok, 'a bonus raise mid-settlement appends escrow lines into a '
             .. 'release that is already walking them')
-        eq(err, CB.ERR.BAD_STATE)
+        eq(err, CH.ERR.BAD_STATE)
         eq(heldLines(s, c.id), before, 'no line was added')
         eq(Env.players[1].PlayerData.money.cash
            + Env.players[1].PlayerData.money.bank, wallet,
@@ -396,16 +396,16 @@ describe('raising the bonus answers to the same state rule as adding escrow', fu
 
     it('refuses it in exactly the states adding escrow refuses', function()
         -- The rule, not two rules that happen to agree today.
-        for _, state in ipairs({ CB.STATE.COMPLETING, CB.STATE.COMPLETED,
-                                 CB.STATE.CANCELLED, CB.STATE.EXPIRED,
-                                 CB.STATE.BAILED_OUT, CB.STATE.VOIDED }) do
+        for _, state in ipairs({ CH.STATE.COMPLETING, CH.STATE.COMPLETED,
+                                 CH.STATE.CANCELLED, CH.STATE.EXPIRED,
+                                 CH.STATE.BAILED_OUT, CH.STATE.VOIDED }) do
             local s, f, c = inState(state)
             Env.players[1].PlayerData.money.bank = 400000
 
             local addOk, addErr = s.amendments.addEscrow(f.creator, c.id,
                 { baseline = { cash = 1000 } })
             local bonusOk, bonusErr = s.amendments.improve(f.creator, c.id,
-                CB.AMENDMENT.RAISE_BONUS, { percent = 80 })
+                CH.AMENDMENT.RAISE_BONUS, { percent = 80 })
 
             falsy(addOk, state .. ': addEscrow should refuse')
             falsy(bonusOk, state .. ': raising the bonus should refuse too')
@@ -424,25 +424,25 @@ describe('raising the bonus answers to the same state rule as adding escrow', fu
         Env.players[3].PlayerData.money.bank = 400000
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 10000 } }, bonusPercent = 10,
         })
-        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS,
+        truthy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.RAISE_BONUS,
             { percent = 40 }), 'on an ACTIVE contract this is the whole point')
 
-        truthy(s.contracts.accept(f.hunter, c.id))
-        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS,
+        truthy(s.contracts.accept(f.hitman, c.id))
+        truthy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.RAISE_BONUS,
             { percent = 60 }), 'and on an ACCEPTED one')
     end)
 
     it('still allows extending the deadline while a contract settles', function()
         -- COMPLETING can roll back to ACCEPTED when a settlement fails, and a
-        -- longer deadline is then a plain benefit to the hunter. This is the
+        -- longer deadline is then a plain benefit to the hitman. This is the
         -- case the guard deliberately leaves open.
         local s, f, c = completing()
         truthy(s.amendments.improve(f.creator, c.id,
-            CB.AMENDMENT.EXTEND_DEADLINE, { seconds = 600 }),
-            'extending a deadline takes no money and helps the hunter')
+            CH.AMENDMENT.EXTEND_DEADLINE, { seconds = 600 }),
+            'extending a deadline takes no money and helps the hitman')
     end)
 end)
 
@@ -466,12 +466,12 @@ describe('an amendment answered after the contract has ended', function()
         Env.players[3].PlayerData.money.bank = 400000
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 5000 } },
                                  { baseline = { cash = 7000 } } } },
         })
         truthy(c, 'the fixture needs a contract with a spare payout slot')
-        truthy(s.contracts.accept(f.hunter, c.id), 'and a hunter to agree with')
+        truthy(s.contracts.accept(f.hitman, c.id), 'and a hitman to agree with')
 
         local proposal, err = s.amendments.propose(f.creator, c.id, kind, payload)
         truthy(proposal, 'propose ' .. kind .. ': ' .. tostring(err))
@@ -484,40 +484,40 @@ describe('an amendment answered after the contract has ended', function()
     end
 
     local function endIt(s, f, c, state)
-        if state == CB.STATE.COMPLETED then
-            truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED,
-                CB.STATE.COMPLETING, 'fixture'))
-            truthy(s.contracts.resolve(c.id, state, f.hunter.cid, nil, 'fixture'))
+        if state == CH.STATE.COMPLETED then
+            truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED,
+                CH.STATE.COMPLETING, 'fixture'))
+            truthy(s.contracts.resolve(c.id, state, f.hitman.cid, nil, 'fixture'))
         else
             truthy(s.contracts.resolve(c.id, state, f.creator.cid, nil, 'fixture'))
         end
     end
 
-    for _, state in ipairs({ CB.STATE.COMPLETED, CB.STATE.CANCELLED,
-                             CB.STATE.EXPIRED, CB.STATE.BAILED_OUT,
-                             CB.STATE.VOIDED }) do
+    for _, state in ipairs({ CH.STATE.COMPLETED, CH.STATE.CANCELLED,
+                             CH.STATE.EXPIRED, CH.STATE.BAILED_OUT,
+                             CH.STATE.VOIDED }) do
         it('is refused once the contract is ' .. state, function()
-            local s, f, c, proposal = proposalOn(CB.AMENDMENT.REDUCE_REWARD,
+            local s, f, c, proposal = proposalOn(CH.AMENDMENT.REDUCE_REWARD,
                 { slot = 2 })
             endIt(s, f, c, state)
 
             local before = purse(1)
-            local ok, err, outcome = s.amendments.respond(f.hunter, proposal.id, true)
+            local ok, err, outcome = s.amendments.respond(f.hitman, proposal.id, true)
 
             falsy(ok, 'agreeing a change to a contract that has ended applied it')
-            eq(err, CB.ERR.ALREADY_SETTLED)
+            eq(err, CH.ERR.ALREADY_SETTLED)
             eq(outcome, 'stale')
             eq(purse(1), before, 'and nothing moved')
         end)
     end
 
     it('does not write the change onto the finished contract', function()
-        local s, f, c, proposal = proposalOn(CB.AMENDMENT.SHORTEN_DEADLINE,
+        local s, f, c, proposal = proposalOn(CH.AMENDMENT.SHORTEN_DEADLINE,
             { seconds = 60 })
-        endIt(s, f, c, CB.STATE.CANCELLED)
+        endIt(s, f, c, CH.STATE.CANCELLED)
         local was = s.storage.readContract(c.id).deadline_at
 
-        s.amendments.respond(f.hunter, proposal.id, true)
+        s.amendments.respond(f.hitman, proposal.id, true)
 
         eq(s.storage.readContract(c.id).deadline_at, was,
             'a shortened deadline landed on a cancelled contract, and both '
@@ -525,10 +525,10 @@ describe('an amendment answered after the contract has ended', function()
     end)
 
     it('closes the proposal out rather than leaving a button that can only fail', function()
-        local s, f, c, proposal = proposalOn(CB.AMENDMENT.REDUCE_REWARD,
+        local s, f, c, proposal = proposalOn(CH.AMENDMENT.REDUCE_REWARD,
             { slot = 2 })
-        endIt(s, f, c, CB.STATE.CANCELLED)
-        s.amendments.respond(f.hunter, proposal.id, true)
+        endIt(s, f, c, CH.STATE.CANCELLED)
+        s.amendments.respond(f.hitman, proposal.id, true)
 
         eq(s.storage.readAmendment(proposal.id).outcome, 'stale',
             'the contract will never be live again, so an open proposal on it '
@@ -539,10 +539,10 @@ describe('an amendment answered after the contract has ended', function()
 
     it('still applies to a contract that is still live', function()
         -- The guard must not have closed the door it was not about.
-        local s, f, c, proposal = proposalOn(CB.AMENDMENT.REDUCE_REWARD,
+        local s, f, c, proposal = proposalOn(CH.AMENDMENT.REDUCE_REWARD,
             { slot = 2 })
         local before = purse(1)
-        local ok, err, outcome = s.amendments.respond(f.hunter, proposal.id, true)
+        local ok, err, outcome = s.amendments.respond(f.hitman, proposal.id, true)
         truthy(ok, 'the ordinary case: ' .. tostring(err))
         eq(outcome, 'applied')
         truthy(purse(1) > before,
@@ -570,10 +570,10 @@ describe('the three rules that stop a creator re-listing', function()
         truthy(c, 'the first contract')
 
         if kind == 'expired' then
-            truthy(s.contracts.resolve(c.id, CB.STATE.EXPIRED, f.creator.cid,
+            truthy(s.contracts.resolve(c.id, CH.STATE.EXPIRED, f.creator.cid,
                 nil, 'expired'))
         else
-            truthy(s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid,
+            truthy(s.contracts.resolve(c.id, CH.STATE.CANCELLED, f.creator.cid,
                 nil, 'cancelled'))
         end
         return s, f
@@ -585,7 +585,7 @@ describe('the three rules that stop a creator re-listing', function()
         local s, f = creatorWith('expired')
         local _, err = s.contracts.create(f.creator, { targetCid = 'TARGET01',
             reason = 'again', reward = { baseline = { cash = 1000 } } })
-        eq(err, CB.ERR.TARGET_RECENTLY_ON,
+        eq(err, CH.ERR.TARGET_RECENTLY_ON,
             'this one already had its own code')
     end)
 
@@ -597,7 +597,7 @@ describe('the three rules that stop a creator re-listing', function()
         local made, err = s.contracts.create(f.creator, { targetCid = 'TARGET01',
             reason = 'again', reward = { baseline = { cash = 1000 } } })
         falsy(made, 'the same creator has a longer wait on the same target')
-        eq(err, CB.ERR.SAME_TARGET_TOO_SOON,
+        eq(err, CH.ERR.SAME_TARGET_TOO_SOON,
             'a wait of hours must not be reported as throttling')
 
         Env.advance(Config.Limits.SameCreatorSameTargetCooldownSeconds + 10)
@@ -612,17 +612,17 @@ describe('the three rules that stop a creator re-listing', function()
         local made, err = s.contracts.create(f.creator, { targetCid = 'TARGET55',
             reason = 'someone else', reward = { baseline = { cash = 1000 } } })
         falsy(made, 'cancelling is not a free way back onto the board')
-        eq(err, CB.ERR.CANCELLED_TOO_SOON)
+        eq(err, CH.ERR.CANCELLED_TOO_SOON)
     end)
 
     it('gives each of the three a different code', function()
         -- The point of the whole block: three rules, three answers. Two of
         -- them used to be the same answer as being throttled.
         local codes = {
-            CB.ERR.TARGET_RECENTLY_ON,
-            CB.ERR.SAME_TARGET_TOO_SOON,
-            CB.ERR.CANCELLED_TOO_SOON,
-            CB.ERR.RATE_LIMITED,
+            CH.ERR.TARGET_RECENTLY_ON,
+            CH.ERR.SAME_TARGET_TOO_SOON,
+            CH.ERR.CANCELLED_TOO_SOON,
+            CH.ERR.RATE_LIMITED,
         }
         local seen = {}
         for _, code in ipairs(codes) do

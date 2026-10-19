@@ -1,11 +1,11 @@
 --- Crimson Hitman System — shared constants.
 --- Loaded on both sides. Contains no state.
 
-CB = CB or {}
+CH = CH or {}
 
-CB.STATE = {
-    ACTIVE     = 'active',     -- listed, no hunter yet
-    ACCEPTED   = 'accepted',   -- at least one hunter holds it
+CH.STATE = {
+    ACTIVE     = 'active',     -- listed, no hitman yet
+    ACCEPTED   = 'accepted',   -- at least one hitman holds it
     COMPLETING = 'completing', -- a fulfilment is settling; persisted before funds move
     COMPLETED  = 'completed',
     BAILED_OUT = 'bailed_out',
@@ -15,40 +15,40 @@ CB.STATE = {
 }
 
 --- Terminal states release escrow exactly once and never transition again.
-CB.TERMINAL = {
-    [CB.STATE.COMPLETED]  = true,
-    [CB.STATE.BAILED_OUT] = true,
-    [CB.STATE.EXPIRED]    = true,
-    [CB.STATE.CANCELLED]  = true,
-    [CB.STATE.VOIDED]     = true,
+CH.TERMINAL = {
+    [CH.STATE.COMPLETED]  = true,
+    [CH.STATE.BAILED_OUT] = true,
+    [CH.STATE.EXPIRED]    = true,
+    [CH.STATE.CANCELLED]  = true,
+    [CH.STATE.VOIDED]     = true,
 }
 
 --- Legal transitions. Anything absent here is rejected by contracts.transition().
-CB.TRANSITIONS = {
-    [CB.STATE.ACTIVE] = {
-        [CB.STATE.ACCEPTED]   = true,
-        [CB.STATE.CANCELLED]  = true,
-        [CB.STATE.EXPIRED]    = true,
-        [CB.STATE.BAILED_OUT] = true,
-        [CB.STATE.VOIDED]     = true,
+CH.TRANSITIONS = {
+    [CH.STATE.ACTIVE] = {
+        [CH.STATE.ACCEPTED]   = true,
+        [CH.STATE.CANCELLED]  = true,
+        [CH.STATE.EXPIRED]    = true,
+        [CH.STATE.BAILED_OUT] = true,
+        [CH.STATE.VOIDED]     = true,
     },
-    [CB.STATE.ACCEPTED] = {
-        [CB.STATE.ACTIVE]     = true, -- last hunter abandoned an exclusive contract
-        [CB.STATE.COMPLETING] = true,
-        [CB.STATE.CANCELLED]  = true,
-        [CB.STATE.EXPIRED]    = true,
-        [CB.STATE.BAILED_OUT] = true,
-        [CB.STATE.VOIDED]     = true,
+    [CH.STATE.ACCEPTED] = {
+        [CH.STATE.ACTIVE]     = true, -- last hitman abandoned an exclusive contract
+        [CH.STATE.COMPLETING] = true,
+        [CH.STATE.CANCELLED]  = true,
+        [CH.STATE.EXPIRED]    = true,
+        [CH.STATE.BAILED_OUT] = true,
+        [CH.STATE.VOIDED]     = true,
     },
-    [CB.STATE.COMPLETING] = {
-        [CB.STATE.COMPLETED] = true,
-        [CB.STATE.ACCEPTED]  = true, -- settlement failed and was rolled back
+    [CH.STATE.COMPLETING] = {
+        [CH.STATE.COMPLETED] = true,
+        [CH.STATE.ACCEPTED]  = true, -- settlement failed and was rolled back
     },
 }
 
-CB.ESCROW_STATE = { HELD = 'held', RELEASING = 'releasing', SETTLED = 'settled' }
+CH.ESCROW_STATE = { HELD = 'held', RELEASING = 'releasing', SETTLED = 'settled' }
 
-CB.SOURCE = {
+CH.SOURCE = {
     CASH   = 'cash',
     BANK   = 'bank',
     DIRTY  = 'dirty',
@@ -56,7 +56,7 @@ CB.SOURCE = {
     WEAPON = 'weapon',
 }
 
-CB.MONEY_SOURCES = { cash = true, bank = true, dirty = true }
+CH.MONEY_SOURCES = { cash = true, bank = true, dirty = true }
 
 --- The subset of those that are qbx_core accounts.
 ---
@@ -65,23 +65,23 @@ CB.MONEY_SOURCES = { cash = true, bank = true, dirty = true }
 --- straight to AddMoney or RemoveMoney — a fee, a purchase price — naming
 --- 'dirty' there does not charge black money, it charges nothing and reports
 --- failure, which reads as the feature being broken.
-CB.MONEY_ACCOUNTS = { cash = true, bank = true }
+CH.MONEY_ACCOUNTS = { cash = true, bank = true }
 
---- A stake is escrow held from the *hunter*, not the creator: the failure
+--- A stake is escrow held from the *hitman*, not the creator: the failure
 --- penalty they agreed to when accepting an exclusive contract (§3.6).
 ---
 --- An owed line is money already promised to one named person — a premium
 --- for an offline creator, a refund for an offline target. It is its own
 --- portion so that no general release can sweep it up by accident.
-CB.PORTION = {
+CH.PORTION = {
     BASELINE = 'baseline', BONUS = 'bonus', STAKE = 'stake', OWED = 'owed',
 }
 
-CB.MODE = { EXCLUSIVE = 'exclusive', COMPETITIVE = 'competitive' }
+CH.MODE = { EXCLUSIVE = 'exclusive', COMPETITIVE = 'competitive' }
 
-CB.FULFILMENT = { ELIMINATION = 'elimination', KIDNAPPING = 'kidnapping' }
+CH.FULFILMENT = { ELIMINATION = 'elimination', KIDNAPPING = 'kidnapping' }
 
-CB.AMENDMENT = {
+CH.AMENDMENT = {
     ADD_ESCROW       = 'add_escrow',
     RAISE_BONUS      = 'raise_bonus',
     EXTEND_DEADLINE  = 'extend_deadline',
@@ -96,21 +96,21 @@ CB.AMENDMENT = {
     CANCEL           = 'cancel',
 }
 
---- Additive amendments apply immediately: they can only benefit the hunter (§12.1).
-CB.ADDITIVE = {
-    [CB.AMENDMENT.ADD_ESCROW]      = true,
-    [CB.AMENDMENT.RAISE_BONUS]     = true,
-    [CB.AMENDMENT.EXTEND_DEADLINE] = true,
-    [CB.AMENDMENT.LOWER_PENALTY]   = true,
+--- Additive amendments apply immediately: they can only benefit the hitman (§12.1).
+CH.ADDITIVE = {
+    [CH.AMENDMENT.ADD_ESCROW]      = true,
+    [CH.AMENDMENT.RAISE_BONUS]     = true,
+    [CH.AMENDMENT.EXTEND_DEADLINE] = true,
+    [CH.AMENDMENT.LOWER_PENALTY]   = true,
 }
 
-CB.ERR = {
+CH.ERR = {
     NO_PLAYER        = 'no_player',
     BLACKLISTED_JOB  = 'blacklisted_job',
     RATE_LIMITED     = 'rate_limited',
     NOT_FOUND        = 'not_found',
     BAD_STATE        = 'bad_state',
-    --- The server has no kill by this hunter on this contract to verify.
+    --- The server has no kill by this hitman on this contract to verify.
     ---
     --- Shared bad_state until now, which the page words as "Not right now."
     --- That is the answer to the MOST COMMON tap of Verify kill: the button
@@ -119,7 +119,7 @@ CB.ERR = {
     --- one the server did not attribute — was four words that explain
     --- nothing about a mechanic with a distance rule and a time limit.
     NO_KILL_TO_VERIFY = 'no_kill_to_verify',
-    --- No handover is running on this contract for this hunter. Either it
+    --- No handover is running on this contract for this hitman. Either it
     --- ended or it was never armed, and both are ordinary answers to an
     --- ordinary question rather than faults.
     NO_HANDOVER       = 'no_handover',
@@ -134,10 +134,10 @@ CB.ERR = {
     --- The creator cancelled a contract recently. Same story: minutes of
     --- policy wait, reported as throttling.
     CANCELLED_TOO_SOON   = 'cancelled_too_soon',
-    --- This hunter collected on this contract too recently to collect again.
+    --- This hitman collected on this contract too recently to collect again.
     ---
     --- It was RATE_LIMITED, which the page words as "Slow down." and tells a
-    --- hunter photographing a body to wait a few seconds and try again. The
+    --- hitman photographing a body to wait a few seconds and try again. The
     --- rule is a policy wait between payouts on one contract
     --- (Config.Limits.SlotCooldownSeconds, ten minutes as shipped), enforced
     --- at the moment the player has already done all the work — a few seconds
@@ -145,7 +145,7 @@ CB.ERR = {
     SLOT_COOLDOWN        = 'slot_cooldown',
     --- A handover on this contract failed a moment ago and cannot be
     --- restarted yet. It was BAD_STATE — "Not right now." — which reads the
-    --- same as the contract having been cancelled underneath the hunter,
+    --- same as the contract having been cancelled underneath the hitman,
     --- when this is the one refusal on the delivery path that waiting fixes.
     HANDOVER_COOLDOWN    = 'handover_cooldown',
     --- The caller is already an operative on this contract. It shared
@@ -175,7 +175,7 @@ CB.ERR = {
     ---
     --- Its own code because LIMIT_REACHED is worded as "you are holding too
     --- many contracts", and for this rule that is not vague, it is false:
-    --- the hunter may hold none. It sent them off to cancel their own work
+    --- the hitman may hold none. It sent them off to cancel their own work
     --- to fix somebody else's contract being popular.
     CONTRACT_FULL    = 'contract_full',
 
@@ -206,10 +206,10 @@ CB.ERR = {
     TARGET_TOO_NEW     = 'target_too_new',
     TARGET_JUST_UP     = 'target_just_up',
     TARGET_RECENTLY_ON = 'target_recently_on',
-    --- The stake on the contract is not the one the hunter was shown.
+    --- The stake on the contract is not the one the hitman was shown.
     ---
     --- Refused rather than charged. A stake is taken the moment Accept is
-    --- tapped and forfeits to the creator if the hunter later walks away or
+    --- tapped and forfeits to the creator if the hitman later walks away or
     --- runs out of clock, so charging a figure the player did not agree to
     --- is the one repricing that cannot be undone by refreshing (§14.18).
     TERMS_CHANGED    = 'terms_changed',
@@ -232,7 +232,7 @@ CB.ERR = {
     --- Why a photo was rejected. One code covered four unrelated causes —
     --- a host that is not allowed, standing too far from the body, a target
     --- who was revived, and a shot the server could not attribute — and
-    --- "The photo was not accepted" told a hunter nothing about which, so
+    --- "The photo was not accepted" told a hitman nothing about which, so
     --- they had no way to do anything differently. Each is something they
     --- can act on, but only if they are told.
     PHOTO_TOO_FAR    = 'photo_too_far',
@@ -245,7 +245,7 @@ CB.ERR = {
     -- player, in this instant; or the resource is still starting. Nothing
     -- was changed, and the same request a moment later goes through.
     BUSY             = 'busy',
-    -- A hunter holds the contract, so its creator can no longer withdraw it,
+    -- A hitman holds the contract, so its creator can no longer withdraw it,
     -- edit it or take reward back; only add to it or propose a change.
     CONTRACT_TAKEN   = 'contract_taken',
     -- The deadline is already as late as the contract's lifetime allows.
@@ -254,4 +254,4 @@ CB.ERR = {
     BUYOUT_NEEDS_CLEAN = 'buyout_needs_clean',
 }
 
-return CB
+return CH

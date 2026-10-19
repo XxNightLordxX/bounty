@@ -63,7 +63,7 @@ describe('the real boot path', function()
         -- photo sweep, death sweep, rate-limit sweep, handle sweeps, expiry.
         local ok, err = pcall(main.tick)
         truthy(ok, 'the tick must not throw: ' .. tostring(err))
-        eq(modules.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'and not eat a live contract')
+        eq(modules.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'and not eat a live contract')
     end)
 
     it('recovers without throwing on an empty store', function()
@@ -95,7 +95,7 @@ describe('contract expiry', function()
         local before = Env.players[1].PlayerData.money.cash + Env.players[1].PlayerData.money.bank
 
         eq(main.expire(), 1, 'the overdue contract closes')
-        eq(modules.storage.readContract(c.id).state, CB.STATE.EXPIRED)
+        eq(modules.storage.readContract(c.id).state, CH.STATE.EXPIRED)
 
         local after = Env.players[1].PlayerData.money.cash + Env.players[1].PlayerData.money.bank
         eq(after - before, 5000, 'and the creator has their escrow back')
@@ -104,7 +104,7 @@ describe('contract expiry', function()
     it('leaves a contract that is not due', function()
         local main, modules, f, c = bootWithContract({ deadline_at = Env.time + 3600 })
         eq(main.expire(), 0)
-        eq(modules.storage.readContract(c.id).state, CB.STATE.ACTIVE)
+        eq(modules.storage.readContract(c.id).state, CH.STATE.ACTIVE)
     end)
 
     it('enforces the absolute lifetime even while the clock is paused', function()
@@ -118,7 +118,7 @@ describe('contract expiry', function()
         Env.players[2] = nil
 
         eq(main.expire(), 1, 'the lifetime ceiling does not pause')
-        eq(modules.storage.readContract(c.id).state, CB.STATE.EXPIRED)
+        eq(modules.storage.readContract(c.id).state, CH.STATE.EXPIRED)
     end)
 
     it('skips the pass when nothing could have changed', function()
@@ -145,7 +145,7 @@ describe('contract expiry', function()
         -- must find the contract however quiet the server has been.
         Env.time = Env.time + 31
         eq(main.expire(), 1, 'the deadline is honoured, not skipped over')
-        eq(modules.storage.readContract(c.id).state, CB.STATE.EXPIRED)
+        eq(modules.storage.readContract(c.id).state, CH.STATE.EXPIRED)
     end)
 
     it('re-reads within the ceiling even with nothing to expire', function()
@@ -182,7 +182,7 @@ describe('contract expiry', function()
         modules.storage.writeContract(row)
 
         eq(main.expire(), 1, 'creating a contract reopens the pass')
-        eq(modules.storage.readContract(c2.id).state, CB.STATE.EXPIRED)
+        eq(modules.storage.readContract(c2.id).state, CH.STATE.EXPIRED)
     end)
 end)
 
@@ -231,7 +231,7 @@ describe('a maintenance job that throws', function()
 
         truthy(ok, 'the tick itself must survive: ' .. tostring(err))
         truthy(flushed, 'the storage flush must still run after an audit write fails')
-        eq(modules.storage.readContract(c.id).state, CB.STATE.EXPIRED,
+        eq(modules.storage.readContract(c.id).state, CH.STATE.EXPIRED,
             'and the contract past its deadline must still be closed')
     end)
 
@@ -270,7 +270,7 @@ describe('a maintenance job that throws', function()
 
         truthy(ok, 'the tick must survive: ' .. tostring(err))
         truthy(flushed, 'the storage flush must still run')
-        eq(modules.storage.readContract(c.id).state, CB.STATE.EXPIRED,
+        eq(modules.storage.readContract(c.id).state, CH.STATE.EXPIRED,
             'and contract expiry must still have run')
     end)
 
@@ -609,7 +609,7 @@ describe('a config that has drifted a key the handlers read', function()
                     for _, event in ipairs(Env.clientEvents) do
                         local reply = event.args and event.args[1]
                         if event.name == 'crimson-hitman:result' and reply then
-                            if reply.err == CB.ERR.SERVER_ERROR then
+                            if reply.err == CH.ERR.SERVER_ERROR then
                                 broke[#broke + 1] = call[1] .. ' answered server_error'
                             end
                             -- Remember a real target handle for the create
@@ -707,8 +707,8 @@ describe('telling somebody a contract could not be loaded', function()
         local store = require('crimson-hitman.server.storage.json')
         store.open()
         store.writeContract({ id = 'ct00000009', creator_cid = 'CREATOR1',
-            target_cid = 'TARGET01', mode = CB.MODE.EXCLUSIVE,
-            state = CB.STATE.ACTIVE, created_at = os.time() })
+            target_cid = 'TARGET01', mode = CH.MODE.EXCLUSIVE,
+            state = CH.STATE.ACTIVE, created_at = os.time() })
         store.close()
         Natives.files['data/contracts/ct00000009.json'] = nil
 
@@ -1109,7 +1109,7 @@ describe('stopping the resource in memory mode', function()
         Env.players[1].PlayerData.money.bank = 400000
 
         local c = modules.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(c)
@@ -1118,7 +1118,7 @@ describe('stopping the resource in memory mode', function()
         -- cannot be handed over, so it is owed.
         local creator = Env.players[1]
         Env.removePlayer(1)
-        truthy(modules.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1',
+        truthy(modules.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1',
             nil, 'test'))
 
         local owed = false

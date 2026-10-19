@@ -6,11 +6,11 @@ local function seeded(opts)
     local f = fixture(s)
     local c = s.contracts.create(f.creator, {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
-        mode = opts.mode or CB.MODE.COMPETITIVE,
+        mode = opts.mode or CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
         bailoutAmount = opts.bailout,
     })
-    if opts.accept ~= false then s.contracts.accept(f.hunter, c.id, opts.anonHunter == true) end
+    if opts.accept ~= false then s.contracts.accept(f.hitman, c.id, opts.anonHitman == true) end
     return s, f, c
 end
 
@@ -19,7 +19,7 @@ describe('bailout', function()
         local s, f, c = seeded({ bailout = 15000, accept = false })
         local before = Env.players[1].PlayerData.money.cash + Env.players[1].PlayerData.money.bank
         truthy(s.bailout.buy(f.target, c.id))
-        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
         local after = Env.players[1].PlayerData.money.cash + Env.players[1].PlayerData.money.bank
         eq(after - before, 7500 + 15000, 'escrow returned plus the premium')
     end)
@@ -36,15 +36,15 @@ describe('bailout', function()
         Env.players[2].PlayerData.money.cash = 100
         local ok, err = s.bailout.buy(f.target, c.id)
         falsy(ok)
-        eq(err, CB.ERR.INSUFFICIENT)
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'untouched')
+        eq(err, CH.ERR.INSUFFICIENT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'untouched')
     end)
 
     it('refuses a buyout of someone elses contract', function()
         local s, f, c = seeded({ bailout = 15000, accept = false })
-        local ok, err = s.bailout.buy(f.hunter, c.id)
+        local ok, err = s.bailout.buy(f.hitman, c.id)
         falsy(ok)
-        eq(err, CB.ERR.NOT_PARTICIPANT)
+        eq(err, CH.ERR.NOT_PARTICIPANT)
     end)
 
     it('refuses a buyout from the floor', function()
@@ -54,23 +54,23 @@ describe('bailout', function()
         falsy(ok, 'cannot buy your way out while bleeding out')
     end)
 
-    it('delays the buyout while a hunter is engaged, then settles', function()
+    it('delays the buyout while a hitman is engaged, then settles', function()
         local s, f, c = seeded({ bailout = 15000 })
         truthy(s.bailout.buy(f.target, c.id))
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED, 'not instant — the hunter gets a window')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'not instant — the hitman gets a window')
         eq(s.bailout.queuedCount(), 1)
 
         Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
         eq(s.bailout.processQueue(), 1)
-        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
     end)
 
-    it('refunds the premium if a hunter completes during the delay', function()
+    it('refunds the premium if a hitman completes during the delay', function()
         local s, f, c = seeded({ bailout = 15000 })
         s.bailout.buy(f.target, c.id)
         local afterPaying = Env.players[2].PlayerData.money.bank
 
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
         s.bailout.processQueue()
 
@@ -88,19 +88,19 @@ describe('bailout', function()
 end)
 
 describe('informant data', function()
-    --- Put the hunter on the target's shoulder and let the sampler see it.
-    --- A hunter who pressed accept and went to bed is not tracking anybody,
+    --- Put the hitman on the target's shoulder and let the sampler see it.
+    --- A hitman who pressed accept and went to bed is not tracking anybody,
     --- and naming them would make the purchase a roster dump (§6.1).
-    local function tailing(s, hunterSource)
+    local function tailing(s, hitmanSource)
         Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
-        Env.players[hunterSource or 3]._coords = { x = 505.0, y = 500.0, z = 30.0 }
+        Env.players[hitmanSource or 3]._coords = { x = 505.0, y = 500.0, z = 30.0 }
         s.death.watchTargets(s.storage.allContracts())
     end
 
-    it('names a hunter for the creator', function()
+    it('names a hitman for the creator', function()
         -- Anonymous: the creator already sees every operative who chose to
         -- be named, so those are not what a purchase is spent on.
-        local s, f, c = seeded({ anonHunter = true })
+        local s, f, c = seeded({ anonHitman = true })
         tailing(s)
         local ok, err, data = s.informant.buy(f.creator, c.id)
         truthy(ok, tostring(err))
@@ -117,7 +117,7 @@ describe('informant data', function()
         eq(data.name, 'Rook Ash')
     end)
 
-    it('names nobody when no hunter has come near', function()
+    it('names nobody when no hitman has come near', function()
         local s, f, c = seeded()
         -- Accepted, and a mile away. There is nobody on you to name.
         Env.players[2]._coords = { x = 0.0, y = 0.0, z = 30.0 }
@@ -142,7 +142,7 @@ describe('informant data', function()
     end)
 
     it('names everyone active when proximity is not required', function()
-        local s, f, c = seeded({ anonHunter = true })
+        local s, f, c = seeded({ anonHitman = true })
         withConfig({ { Config.Informant, 'RequireProximity', false } }, function()
             local ok, _, data = s.informant.buy(f.creator, c.id)
             truthy(ok)
@@ -155,7 +155,7 @@ describe('informant data', function()
         Env.addPlayer({ source = 9, citizenid = 'NOSEY001', license = 'license:n', bank = 99999 })
         local ok, err = s.informant.buy(s.identity.resolve(9), c.id)
         falsy(ok)
-        eq(err, CB.ERR.NOT_PARTICIPANT)
+        eq(err, CH.ERR.NOT_PARTICIPANT)
     end)
 
     it('charges the premium', function()
@@ -165,16 +165,16 @@ describe('informant data', function()
         eq(Env.players[1].PlayerData.money.bank, 100000 - Config.Informant.Cost)
     end)
 
-    it('returns the same hunter on a repeat purchase inside the lock', function()
+    it('returns the same hitman on a repeat purchase inside the lock', function()
         local s, f, c = seeded()
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
         s.contracts.accept(s.identity.resolve(4), c.id, false)
         local _, _, first = s.informant.buy(f.creator, c.id)
         local _, _, again = s.informant.buy(f.creator, c.id)
         eq(again.name, first.name, 'sticky, so repeat buys cannot enumerate the roster')
     end)
 
-    it('charges even when nobody is hunting, so it is not a free oracle', function()
+    it('charges even when nobody is working, so it is not a free oracle', function()
         local s, f, c = seeded({ accept = false })
         Env.players[1].PlayerData.money.bank = 100000
         local ok, _, data = s.informant.buy(f.creator, c.id)
@@ -231,17 +231,17 @@ describe('informant data', function()
             local s = newStack()
             local f = fixture(s)
             local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
                 reward = { baseline = { cash = 1000 } },
             })
             truthy(c)
-            -- Three anonymous hunters, so a clock-driven index would land
+            -- Three anonymous hitmen, so a clock-driven index would land
             -- on a different one as the clock moves.
-            Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+            Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
                 cash = 5000, bank = 5000, firstname = 'Nel', lastname = 'Vey' })
-            Env.addPlayer({ source = 5, citizenid = 'HUNTER03', license = 'license:eee',
+            Env.addPlayer({ source = 5, citizenid = 'HITMAN03', license = 'license:eee',
                 cash = 5000, bank = 5000, firstname = 'Sam', lastname = 'Orr' })
-            truthy(s.contracts.accept(f.hunter, c.id, true))
+            truthy(s.contracts.accept(f.hitman, c.id, true))
             truthy(s.contracts.accept(s.identity.resolve(4), c.id, true))
             truthy(s.contracts.accept(s.identity.resolve(5), c.id, true))
 
@@ -257,7 +257,7 @@ describe('informant data', function()
             s.death.watchTargets(s.storage.allContracts())
 
             local pool = 0
-            for _, h in ipairs(s.storage.readHunters(c.id)) do
+            for _, h in ipairs(s.storage.readHitmen(c.id)) do
                 if h.state == 'active' then pool = pool + 1 end
             end
             eq(pool, 3, 'three operatives to choose between, or there is no choice')
@@ -295,8 +295,8 @@ describe('informant data', function()
     --- the whole config, so opening one inside it puts the mode back and the
     --- test measures the default it thought it had changed.
     describe('in each mode an operator can choose', function()
-        it('names the hunter on a server set to names', function()
-            local s, f, c = seeded({ anonHunter = true })
+        it('names the hitman on a server set to names', function()
+            local s, f, c = seeded({ anonHitman = true })
             tailing(s)
             local data
             withConfig({ { Config.Informant, 'RevealMode', 'name' } }, function()
@@ -308,8 +308,8 @@ describe('informant data', function()
             falsy(data.description, 'one mode or the other, not both')
         end)
 
-        it('describes the hunter on a server set to descriptions', function()
-            local s, f, c = seeded({ anonHunter = true })
+        it('describes the hitman on a server set to descriptions', function()
+            local s, f, c = seeded({ anonHitman = true })
             tailing(s)
             local data
             withConfig({ { Config.Informant, 'RevealMode', 'description' } }, function()
@@ -348,18 +348,18 @@ describe('amendments', function()
 
     it('refuses an increase from anyone but the creator', function()
         local s, f, c = seeded()
-        local ok, err = s.amendments.addEscrow(f.hunter, c.id, { baseline = { cash = 1000 } })
+        local ok, err = s.amendments.addEscrow(f.hitman, c.id, { baseline = { cash = 1000 } })
         falsy(ok)
-        eq(err, CB.ERR.NOT_PARTICIPANT)
+        eq(err, CH.ERR.NOT_PARTICIPANT)
     end)
 
     it('needs both sides to approve a material change', function()
         local s, f, c = seeded()
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
         truthy(proposal)
         eq(s.storage.readContract(c.id).deadline_at > os.time() + 3000, true, 'not applied yet')
 
-        local ok, _, outcome = s.amendments.respond(f.hunter, proposal.id, true)
+        local ok, _, outcome = s.amendments.respond(f.hitman, proposal.id, true)
         truthy(ok)
         eq(outcome, 'applied')
     end)
@@ -367,56 +367,56 @@ describe('amendments', function()
     it('lets a single decline stop it, leaving the original terms', function()
         local s, f, c = seeded()
         local before = s.storage.readContract(c.id).deadline_at
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 60 })
-        s.amendments.respond(f.hunter, proposal.id, false)
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE, { seconds = 60 })
+        s.amendments.respond(f.hitman, proposal.id, false)
         eq(s.storage.readContract(c.id).deadline_at, before, 'unchanged')
     end)
 
     it('expires an unanswered proposal', function()
         local s, f, c = seeded()
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 60 })
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE, { seconds = 60 })
         Env.advance(Config.Amendments.ProposalExpirySeconds + 300 + 10)  -- rounded up to 5 min
-        local ok, err, outcome = s.amendments.respond(f.hunter, proposal.id, true)
+        local ok, err, outcome = s.amendments.respond(f.hitman, proposal.id, true)
         falsy(ok)
         eq(outcome, 'expired')
     end)
 
     it('never allows the target to be changed', function()
         local s, f, c = seeded()
-        local proposal, err = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_REASON,
-            { reason = 'new', targetCid = 'HUNTER01' })
+        local proposal, err = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_REASON,
+            { reason = 'new', targetCid = 'HITMAN01' })
         falsy(proposal, 'retargeting is a new contract, never an amendment')
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
     end)
 
     it('refuses a proposal from an outsider', function()
         local s, f, c = seeded()
         Env.addPlayer({ source = 9, citizenid = 'OUTSIDR1', license = 'license:o' })
         local proposal, err = s.amendments.propose(s.identity.resolve(9), c.id,
-            CB.AMENDMENT.CANCEL, {})
+            CH.AMENDMENT.CANCEL, {})
         falsy(proposal)
-        eq(err, CB.ERR.NOT_PARTICIPANT)
+        eq(err, CH.ERR.NOT_PARTICIPANT)
     end)
 
     it('returns escrow to the creator on an agreed cancellation', function()
         local s, f, c = seeded()
         local before = Env.players[1].PlayerData.money.cash
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CANCEL, {})
-        s.amendments.respond(f.hunter, proposal.id, true)
-        eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED)
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CANCEL, {})
+        s.amendments.respond(f.hitman, proposal.id, true)
+        eq(s.storage.readContract(c.id).state, CH.STATE.CANCELLED)
         eq(Env.players[1].PlayerData.money.cash, before + 7500, 'full refund')
     end)
 end)
 
 describe('masked relay', function()
-    it('lets creator and hunter talk under aliases', function()
+    it('lets creator and hitman talk under aliases', function()
         local s, f, c = seeded()
         local threads = s.comms.threads(f.creator, c.id)
         eq(#threads, 1)
         truthy(s.comms.send(f.creator, c.id, threads[1].handle, 'Take him alive if you can.'))
-        truthy(s.comms.send(f.hunter, c.id, nil, 'Understood.'))
+        truthy(s.comms.send(f.hitman, c.id, nil, 'Understood.'))
 
-        local thread = s.comms.read(f.hunter, c.id, nil)
+        local thread = s.comms.read(f.hitman, c.id, nil)
         eq(#thread, 2)
         eq(thread[1].alias, 'Client')
         eq(thread[2].alias, 'Operative #1')
@@ -426,7 +426,7 @@ describe('masked relay', function()
         local s, f, c = seeded()
         local threads = s.comms.threads(f.creator, c.id)
         s.comms.send(f.creator, c.id, threads[1].handle, 'hello')
-        local thread = s.comms.read(f.hunter, c.id, nil)
+        local thread = s.comms.read(f.hitman, c.id, nil)
         for _, message in ipairs(thread) do
             falsy(message.from_cid, 'citizen id must not cross')
             falsy(message.name, 'name must not cross')
@@ -442,16 +442,16 @@ describe('masked relay', function()
         falsy(s.comms.read(outsider, c.id, 'anything'))
     end)
 
-    it('keeps competitive hunters in separate threads', function()
+    it('keeps competitive hitmen in separate threads', function()
         local s, f, c = seeded()
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
         local second = s.identity.resolve(4)
         s.contracts.accept(second, c.id, false)
 
         local threads = s.comms.threads(f.creator, c.id)
-        s.comms.send(f.creator, c.id, threads[1].handle, 'for hunter one only')
-        eq(#s.comms.read(second, c.id, nil), 0, 'hunter two sees nothing of it')
-        eq(#s.comms.read(f.hunter, c.id, nil), 1)
+        s.comms.send(f.creator, c.id, threads[1].handle, 'for hitman one only')
+        eq(#s.comms.read(second, c.id, nil), 0, 'hitman two sees nothing of it')
+        eq(#s.comms.read(f.hitman, c.id, nil), 1)
     end)
 
     it('filters blacklisted words', function()
@@ -459,7 +459,7 @@ describe('masked relay', function()
         local threads = s.comms.threads(f.creator, c.id)
         local ok, err = s.comms.send(f.creator, c.id, threads[1].handle, 'you slur person')
         falsy(ok)
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
     end)
 
     it('rate limits message spam', function()
@@ -478,16 +478,16 @@ describe('amendment payloads are bounded', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         return s, f, c
     end
 
     it('stores only the fields the amendment kind actually uses', function()
         local s, f, c = seededPair()
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE, {
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE, {
             seconds = 600,
             junk = string.rep('a', 100000),
             nested = { deep = { deeper = 'noise' } },
@@ -503,21 +503,21 @@ describe('amendment payloads are bounded', function()
     it('rejects a proposal whose parameters are missing or malformed', function()
         local s, f, c = seededPair()
         for _, bad in ipairs({
-            { kind = CB.AMENDMENT.SHORTEN_DEADLINE, payload = { seconds = 'soon' } },
-            { kind = CB.AMENDMENT.SHORTEN_DEADLINE, payload = {} },
-            { kind = CB.AMENDMENT.CHANGE_MODE, payload = { mode = 'whatever' } },
-            { kind = CB.AMENDMENT.CHANGE_REASON, payload = { reason = '' } },
-            { kind = CB.AMENDMENT.REDUCE_REWARD, payload = { slot = -1 } },
+            { kind = CH.AMENDMENT.SHORTEN_DEADLINE, payload = { seconds = 'soon' } },
+            { kind = CH.AMENDMENT.SHORTEN_DEADLINE, payload = {} },
+            { kind = CH.AMENDMENT.CHANGE_MODE, payload = { mode = 'whatever' } },
+            { kind = CH.AMENDMENT.CHANGE_REASON, payload = { reason = '' } },
+            { kind = CH.AMENDMENT.REDUCE_REWARD, payload = { slot = -1 } },
         }) do
             local proposal, err = s.amendments.propose(f.creator, c.id, bad.kind, bad.payload)
             falsy(proposal, 'accepted a malformed payload for ' .. bad.kind)
-            eq(err, CB.ERR.INVALID_INPUT)
+            eq(err, CH.ERR.INVALID_INPUT)
         end
     end)
 
     it('expires proposals without walking every contract ever created', function()
         local s, f, c = seededPair()
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
         truthy(proposal)
 
         Env.advance(Config.Amendments.ProposalExpirySeconds + 300 + 10)  -- rounded up to 5 min
@@ -535,7 +535,7 @@ describe('bailout money survives everything', function()
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 5000 } }, bailoutAmount = 10000,
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         truthy(s.bailout.buy(f.target, c.id))
         return s, f, c
     end
@@ -556,7 +556,7 @@ describe('bailout money survives everything', function()
 
         Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
         eq(s.bailout.processQueue(), 1, 'the queued buyout survives a restart')
-        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
     end)
 
     it('owes the premium to an offline creator instead of dropping it', function()
@@ -605,36 +605,36 @@ describe('additive improvements apply without approval', function()
             reward = { baseline = { cash = 5000 } },
             bonusPercent = 50, penaltyAmount = 10000,
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         return s, f, c
     end
 
     it('extends the deadline immediately', function()
         local s, f, c = seededImprove()
         local before = s.storage.readContract(c.id).deadline_at
-        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE, { seconds = 600 }))
+        truthy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.EXTEND_DEADLINE, { seconds = 600 }))
         eq(s.storage.readContract(c.id).deadline_at, before + 600)
     end)
 
     it('never extends past the absolute lifetime', function()
         local s, f, c = seededImprove()
-        s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE,
+        s.amendments.improve(f.creator, c.id, CH.AMENDMENT.EXTEND_DEADLINE,
             { seconds = Config.Limits.ContractLifetimeSeconds })
         local stored = s.storage.readContract(c.id)
         truthy(stored.deadline_at <= stored.expires_at, 'the lifetime ceiling holds')
     end)
 
     it('says so when the deadline is already as late as it can go', function()
-        -- It answered ok, told the hunter the terms had improved, and moved
+        -- It answered ok, told the hitman the terms had improved, and moved
         -- nothing, every time it was asked.
         local s, f, c = seededImprove()
-        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE,
+        truthy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.EXTEND_DEADLINE,
             { seconds = Config.Limits.ContractLifetimeSeconds }))
         Natives.calls.notifications = {}
-        local ok, err = s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE,
+        local ok, err = s.amendments.improve(f.creator, c.id, CH.AMENDMENT.EXTEND_DEADLINE,
             { seconds = 1800 })
         falsy(ok, 'an extension that moved nothing')
-        eq(err, CB.ERR.DEADLINE_AT_LIMIT)
+        eq(err, CH.ERR.DEADLINE_AT_LIMIT)
         eq(#Natives.calls.notifications, 0, 'and nobody was told the terms improved')
     end)
 
@@ -643,34 +643,34 @@ describe('additive improvements apply without approval', function()
         local stored = s.storage.readContract(c.id)
         local past = stored.expires_at + 3600
         truthy(s.storage.setDeadline(c.id, stored.deadline_at, past))
-        local ok, err = s.amendments.improve(f.creator, c.id, CB.AMENDMENT.EXTEND_DEADLINE,
+        local ok, err = s.amendments.improve(f.creator, c.id, CH.AMENDMENT.EXTEND_DEADLINE,
             { seconds = 1800 })
         falsy(ok)
-        eq(err, CB.ERR.DEADLINE_AT_LIMIT)
+        eq(err, CH.ERR.DEADLINE_AT_LIMIT)
         eq(s.storage.readContract(c.id).deadline_at, past,
             'an extension moved the deadline earlier')
     end)
 
     it('raises the bonus but never lowers it', function()
         local s, f, c = seededImprove()
-        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 80 }))
+        truthy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.RAISE_BONUS, { percent = 80 }))
         eq(s.storage.readContract(c.id).bonus_percent, 80)
-        falsy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 20 }),
+        falsy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.RAISE_BONUS, { percent = 20 }),
             'lowering a bonus is not an improvement')
     end)
 
-    it('returns the difference to the hunter out of the stake, not out of nothing', function()
+    it('returns the difference to the hitman out of the stake, not out of nothing', function()
         local s, f, c = seededImprove()
         eq(Env.players[3].PlayerData.money.bank, 40000, 'staked 10000')
 
-        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 4000 }))
+        truthy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.LOWER_PENALTY, { amount = 4000 }))
         eq(Env.players[3].PlayerData.money.bank, 46000, 'the 6000 difference comes back')
 
         -- And the escrowed stake shrank to match: the difference came out of
         -- the stake rather than being minted alongside it.
         local staked = 0
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.STAKE then staked = staked + line.amount end
+            if line.portion == CH.PORTION.STAKE then staked = staked + line.amount end
         end
         eq(staked, 4000, 'the escrow line must shrink with the penalty')
     end)
@@ -683,15 +683,15 @@ describe('additive improvements apply without approval', function()
 
         -- Raise and lower repeatedly: each cycle used to mint the difference.
         for _ = 1, 5 do
-            local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.RAISE_PENALTY,
+            local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.RAISE_PENALTY,
                 { amount = 10000 })
-            if proposal then s.amendments.respond(f.hunter, proposal.id, true) end
-            s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 1 })
+            if proposal then s.amendments.respond(f.hitman, proposal.id, true) end
+            s.amendments.improve(f.creator, c.id, CH.AMENDMENT.LOWER_PENALTY, { amount = 1 })
         end
 
         local staked = 0
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.STAKE then staked = staked + line.amount end
+            if line.portion == CH.PORTION.STAKE then staked = staked + line.amount end
         end
 
         local closing = Env.players[3].PlayerData.money.bank
@@ -706,15 +706,15 @@ describe('additive improvements apply without approval', function()
 
     it('refuses to lower a penalty to or above its current figure', function()
         local s, f, c = seededImprove()
-        falsy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 10000 }))
-        falsy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY, { amount = 99999 }))
+        falsy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.LOWER_PENALTY, { amount = 10000 }))
+        falsy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.LOWER_PENALTY, { amount = 99999 }))
     end)
 
     it('refuses improvements from anyone but the creator', function()
         local s, f, c = seededImprove()
-        local ok, err = s.amendments.improve(f.hunter, c.id, CB.AMENDMENT.EXTEND_DEADLINE, { seconds = 60 })
+        local ok, err = s.amendments.improve(f.hitman, c.id, CH.AMENDMENT.EXTEND_DEADLINE, { seconds = 60 })
         falsy(ok)
-        eq(err, CB.ERR.NOT_PARTICIPANT)
+        eq(err, CH.ERR.NOT_PARTICIPANT)
     end)
 end)
 
@@ -723,74 +723,74 @@ describe('amendment guards', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } },
                 { baseline = { cash = 1000 } },
             } },
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         return s, f, c
     end
 
-    it('refuses to switch to exclusive while several hunters hold it', function()
+    it('refuses to switch to exclusive while several hitmen hold it', function()
         local s, f, c = competitive()
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
         local second = s.identity.resolve(4)
         s.contracts.accept(second, c.id, false)
 
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_MODE,
-            { mode = CB.MODE.EXCLUSIVE })
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_MODE,
+            { mode = CH.MODE.EXCLUSIVE })
         truthy(proposal)
-        s.amendments.respond(f.hunter, proposal.id, true)
+        s.amendments.respond(f.hitman, proposal.id, true)
         local ok = s.amendments.respond(second, proposal.id, true)
-        falsy(ok, 'exclusive means one hunter; the contract cannot land in a state it forbids')
-        eq(s.storage.readContract(c.id).mode, CB.MODE.COMPETITIVE)
+        falsy(ok, 'exclusive means one hitman; the contract cannot land in a state it forbids')
+        eq(s.storage.readContract(c.id).mode, CH.MODE.COMPETITIVE)
     end)
 
-    it('refuses to empty the slot hunters are competing for', function()
+    it('refuses to empty the slot hitmen are competing for', function()
         local s, f, c = competitive()
         -- Refused when it is proposed, not when the other party agrees to it.
-        local proposal, err = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.REDUCE_REWARD, { slot = 1 })
+        local proposal, err = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.REDUCE_REWARD, { slot = 1 })
         falsy(proposal, 'the live slot must stay funded')
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
         eq(s.escrow.moneyValue(c.id, { slot = 1 }), 1000, 'still funded')
     end)
 
     it('allows withdrawing a later slot nobody is competing for', function()
         local s, f, c = competitive()
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.REDUCE_REWARD, { slot = 3 })
-        truthy(s.amendments.respond(f.hunter, proposal.id, true))
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.REDUCE_REWARD, { slot = 3 })
+        truthy(s.amendments.respond(f.hitman, proposal.id, true))
         eq(s.escrow.moneyValue(c.id, { slot = 3 }), 0, 'returned to the creator')
         eq(s.escrow.moneyValue(c.id, { slot = 1 }), 1000, 'the live slot is untouched')
     end)
 
-    it('binds a hunter who joins after a proposal, only once they respond', function()
+    it('binds a hitman who joins after a proposal, only once they respond', function()
         local s, f, c = competitive()
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_REASON,
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_REASON,
             { reason = 'new reason' })
 
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
         local second = s.identity.resolve(4)
         s.contracts.accept(second, c.id, false)
 
-        local _, _, outcome = s.amendments.respond(f.hunter, proposal.id, true)
+        local _, _, outcome = s.amendments.respond(f.hitman, proposal.id, true)
         eq(outcome, 'pending', 'the newcomer has not agreed yet')
         local _, _, final = s.amendments.respond(second, proposal.id, true)
         eq(final, 'applied')
     end)
 
-    it('does not let a hunter who left keep a veto', function()
+    it('does not let a hitman who left keep a veto', function()
         local s, f, c = competitive()
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
         local second = s.identity.resolve(4)
         s.contracts.accept(second, c.id, false)
 
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_REASON,
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_REASON,
             { reason = 'new reason' })
         s.contracts.abandon(second, c.id)
 
-        local _, _, outcome = s.amendments.respond(f.hunter, proposal.id, true)
+        local _, _, outcome = s.amendments.respond(f.hitman, proposal.id, true)
         eq(outcome, 'applied', 'the remaining participants are enough')
     end)
 end)
@@ -803,17 +803,17 @@ describe('bailout timing', function()
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 5000 } }, bailoutAmount = 10000,
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
 
         for _, src in ipairs({ 1, 2, 3 }) do
             Env.players[src]._coords = { x = 10.0, y = 10.0, z = 30.0 }
         end
         Env.players[2].PlayerData.metadata.ishandcuffed = true
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
 
         local ok, err = s.bailout.buy(f.target, c.id)
-        falsy(ok, 'the hunter has them in hand; no buying out from there')
-        eq(err, CB.ERR.HANDOVER_IN_PROGRESS,
+        falsy(ok, 'the hitman has them in hand; no buying out from there')
+        eq(err, CH.ERR.HANDOVER_IN_PROGRESS,
             'and says which of the six reasons it was, because "not right '
             .. 'now" reads as "try again" on a refusal that means "too late"')
         eq(Env.players[2].PlayerData.money.bank, 20000, 'and nothing was charged')
@@ -951,20 +951,20 @@ describe('app pushes', function()
         return out
     end
 
-    it('nudges the creator and the hunter when a contract is accepted', function()
+    it('nudges the creator and the hitman when a contract is accepted', function()
         local s, f, c = seeded({ accept = false })
         Env.clientEvents = {}
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         eq(#pushesTo(1), 1, 'the creator card now shows one more operative')
         eq(pushesTo(1)[1], 'accepted')
-        eq(#pushesTo(3), 1, 'the hunter has a contract in Mine that was not there')
+        eq(#pushesTo(3), 1, 'the hitman has a contract in Mine that was not there')
     end)
 
     it('does not nudge the target on acceptance', function()
         local s, f, c = seeded({ accept = false })
         Env.clientEvents = {}
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         -- A target is not told a contract exists except through the paranoid
         -- alert or an advisory. A push would be a side channel saying one
         -- was just accepted.
@@ -978,27 +978,27 @@ describe('app pushes', function()
 
         eq(#pushesTo(1), 1, 'the creator')
         eq(#pushesTo(2), 1, 'the target, who paid for this one')
-        eq(pushesTo(1)[1], CB.STATE.BAILED_OUT, 'the reason is the state it reached')
+        eq(pushesTo(1)[1], CH.STATE.BAILED_OUT, 'the reason is the state it reached')
     end)
 
-    it('nudges a hunter whose contract ended under them', function()
+    it('nudges a hitman whose contract ended under them', function()
         local s, f, c = seeded()
         -- Accepting already nudged both of them a moment ago, and the floor
         -- is deliberately wider than a test. Clearing it is what a second of
         -- wall clock would do; the floor has its own test below.
         s.notify.clearPush('CREATOR1')
-        s.notify.clearPush('HUNTER01')
+        s.notify.clearPush('HITMAN01')
         Env.clientEvents = {}
 
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
-        eq(#pushesTo(3), 1, 'the hunter who collected')
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        eq(#pushesTo(3), 1, 'the hitman who collected')
         eq(#pushesTo(1), 1, 'and the client who paid')
     end)
 
     it('carries no contract data at all', function()
         local s, f, c = seeded({ accept = false })
         Env.clientEvents = {}
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         for _, event in ipairs(Env.clientEvents) do
             if event.name == 'crimson-hitman:push' then
@@ -1015,8 +1015,8 @@ describe('app pushes', function()
         local s, f, c = seeded({ accept = false })
         Env.clientEvents = {}
         -- Two state changes on one contract inside the same second.
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
         eq(#pushesTo(1), 1, 'the floor collapses a burst into one refresh')
     end)
 
@@ -1024,7 +1024,7 @@ describe('app pushes', function()
         local s, f, c = seeded({ accept = false })
         withConfig({ { Config.Notifications, 'PushEnabled', false } }, function()
             Env.clientEvents = {}
-            truthy(s.contracts.accept(f.hunter, c.id, false))
+            truthy(s.contracts.accept(f.hitman, c.id, false))
             eq(#pushesTo(1), 0, 'an operator who turns this off gets no pushes')
         end)
     end)
@@ -1114,11 +1114,11 @@ describe('bailout races', function()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000,
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        -- A hunter is engaged, so the buyout queues rather than settling.
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        -- A hitman is engaged, so the buyout queues rather than settling.
         truthy(s.bailout.buy(f.target, c.id))
         eq(s.storage.readContract(c.id).bailout_queued_at ~= nil, true)
         Env.time = Env.time + Config.Bailout.ProcessingDelaySeconds + 1
@@ -1131,7 +1131,7 @@ describe('bailout races', function()
 
         -- Mid-claim: the contract sits in COMPLETING, so resolve returns
         -- LOCKED rather than a terminal state.
-        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming'))
+        truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED, CH.STATE.COMPLETING, 'claiming'))
         eq(s.bailout.processQueue(), 0, 'nothing settles this tick')
 
         eq(Env.players[2].PlayerData.money.bank, paid, 'and the premium is not handed back')
@@ -1142,21 +1142,21 @@ describe('bailout races', function()
 
     it('settles once the claim clears without completing', function()
         local s, f, c = queued()
-        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming'))
+        truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED, CH.STATE.COMPLETING, 'claiming'))
         eq(s.bailout.processQueue(), 0)
 
-        -- The claim fell through — the hunter's proof was rejected — and the
+        -- The claim fell through — the hitman's proof was rejected — and the
         -- contract went back to accepted.
-        truthy(s.contracts.transition(c.id, CB.STATE.COMPLETING, CB.STATE.ACCEPTED, 'claim_failed'))
+        truthy(s.contracts.transition(c.id, CH.STATE.COMPLETING, CH.STATE.ACCEPTED, 'claim_failed'))
         eq(s.bailout.processQueue(), 1, 'the buyout the target paid for goes through')
-        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
     end)
 
-    it('refunds when the hunter actually completes first', function()
+    it('refunds when the hitman actually completes first', function()
         local s, f, c = queued()
         local before = Env.players[2].PlayerData.money.bank
 
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
         eq(s.bailout.processQueue(), 0, 'the contract is genuinely over')
 
         eq(Env.players[2].PlayerData.money.bank, before + 15000,
@@ -1167,7 +1167,7 @@ describe('bailout races', function()
     it('gives up and refunds if the claim never clears', function()
         local s, f, c = queued()
         local before = Env.players[2].PlayerData.money.bank
-        truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming'))
+        truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED, CH.STATE.COMPLETING, 'claiming'))
 
         -- A claim interrupted by a crash leaves the contract completing for
         -- good. The target's money is already spent, so it cannot wait
@@ -1176,7 +1176,7 @@ describe('bailout races', function()
 
         eq(Env.players[2].PlayerData.money.bank, before + 15000, 'refunded in the end')
         falsy(s.storage.readContract(c.id).bailout_queued_at, 'and no longer queued')
-        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETING, 'the stuck contract is untouched')
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETING, 'the stuck contract is untouched')
     end)
 
     it('does not count attempts against an unqueued buyout', function()
@@ -1202,11 +1202,11 @@ describe('masked calls', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
             anonymous = opts.anonCreator,
         })
-        truthy(s.contracts.accept(f.hunter, c.id, opts.anonHunter))
+        truthy(s.contracts.accept(f.hitman, c.id, opts.anonHitman))
         s.comms.resetCallCache()
         return s, f, c
     end
@@ -1215,7 +1215,7 @@ describe('masked calls', function()
         local s, f, c = threaded()
         Natives.calls.notifications = {}
 
-        local ok, err, result = s.comms.requestCall(f.hunter, c.id, nil)
+        local ok, err, result = s.comms.requestCall(f.hitman, c.id, nil)
         truthy(ok, tostring(err))
         eq(result.placed, false, 'nothing was dialled')
 
@@ -1237,7 +1237,7 @@ describe('masked calls', function()
             s.comms.resetCallCache()
             Natives.calls.notifications = {}
 
-            local ok, err, result = s.comms.requestCall(f.hunter, c.id, nil)
+            local ok, err, result = s.comms.requestCall(f.hitman, c.id, nil)
             truthy(ok, tostring(err))
             eq(result.placed, true, 'the call was placed')
 
@@ -1272,7 +1272,7 @@ describe('masked calls', function()
 
     --- A call rings only if the other party is in the city, so ringing an
     --- anonymous client answered the question their contract is built never
-    --- to answer. The README promised nothing a hunter can press would.
+    --- to answer. The README promised nothing a hitman can press would.
     it('asks an anonymous party to call back, the same whether or not they are here', function()
         local s, f, c = threaded({ anonCreator = true })
         local dialled = 0
@@ -1281,11 +1281,11 @@ describe('masked calls', function()
         withConfig({ { Config.Relay, 'CallExport',
                        { resource = 'lb-phone', export = 'StartCall' } } }, function()
             s.comms.resetCallCache()
-            local okHere, _, here = s.comms.requestCall(f.hunter, c.id, nil)
+            local okHere, _, here = s.comms.requestCall(f.hitman, c.id, nil)
 
             Env.removePlayer(1)
             Env.advance(60)
-            local okAway, errAway, away = s.comms.requestCall(f.hunter, c.id, nil)
+            local okAway, errAway, away = s.comms.requestCall(f.hitman, c.id, nil)
 
             truthy(okHere)
             eq(okAway, okHere, 'refused only when the client was away: ' .. tostring(errAway))
@@ -1308,11 +1308,11 @@ describe('masked calls', function()
         }, function()
             s.comms.resetCallCache()
             s.comms.resetMaskingCache()
-            local ok, err = s.comms.requestCall(f.hunter, c.id, nil)
+            local ok, err = s.comms.requestCall(f.hitman, c.id, nil)
             -- The whole request is refused, not degraded to an unmasked call.
             falsy(ok, 'a call that reveals a hidden number is not placed')
             -- Its own code, so the page can say why and what to do instead.
-            eq(err, CB.ERR.CALL_UNMASKED)
+            eq(err, CH.ERR.CALL_UNMASKED)
             falsy(dialled, 'and nothing was dialled')
         end)
 
@@ -1327,7 +1327,7 @@ describe('masked calls', function()
             s.comms.resetCallCache()
             Natives.calls.notifications = {}
 
-            local ok, err, result = s.comms.requestCall(f.hunter, c.id, nil)
+            local ok, err, result = s.comms.requestCall(f.hitman, c.id, nil)
             truthy(ok, tostring(err))
             eq(result.placed, false, 'an export this build lacks is not a call')
             truthy(Natives.calls.notifications[1], 'the other party is still told')
@@ -1362,12 +1362,12 @@ describe('masked calls', function()
             -- placeCall directly, past the request-level check, because it
             -- is a public function and the guard has to hold on its own —
             -- not only because something upstream happened to refuse first.
-            falsy(s.comms.placeCall(f.hunter, 'CREATOR1', true),
+            falsy(s.comms.placeCall(f.hitman, 'CREATOR1', true),
                 'a number somebody paid to hide is not dialled')
             falsy(dialled)
 
             -- The same call for a party who is not anonymous goes through.
-            truthy(s.comms.placeCall(f.hunter, 'CREATOR1', false))
+            truthy(s.comms.placeCall(f.hitman, 'CREATOR1', false))
         end)
 
         Natives.callExport = nil
@@ -1377,18 +1377,18 @@ describe('masked calls', function()
     it('is refused entirely when calls are switched off', function()
         local s, f, c = threaded()
         withConfig({ { Config.Relay, 'AllowMaskedCalls', false } }, function()
-            local ok, err = s.comms.requestCall(f.hunter, c.id, nil)
+            local ok, err = s.comms.requestCall(f.hitman, c.id, nil)
             falsy(ok)
-            eq(err, CB.ERR.CALLS_OFF)
+            eq(err, CH.ERR.CALLS_OFF)
         end)
     end)
 
     it('is refused when the whole relay is switched off', function()
         local s, f, c = threaded()
         withConfig({ { Config.Relay, 'Enabled', false } }, function()
-            local ok, err = s.comms.requestCall(f.hunter, c.id, nil)
+            local ok, err = s.comms.requestCall(f.hitman, c.id, nil)
             falsy(ok, 'placed a call on a feature the owner switched off')
-            eq(err, CB.ERR.RELAY_OFF)
+            eq(err, CH.ERR.RELAY_OFF)
         end)
     end)
 
@@ -1397,13 +1397,13 @@ describe('masked calls', function()
         withConfig({ { Config.Relay, 'Enabled', false } }, function()
             local list, listErr = s.comms.threads(f.creator, c.id)
             falsy(list)
-            eq(listErr, CB.ERR.RELAY_OFF)
-            local read, readErr = s.comms.read(f.hunter, c.id, nil)
+            eq(listErr, CH.ERR.RELAY_OFF)
+            local read, readErr = s.comms.read(f.hitman, c.id, nil)
             falsy(read)
-            eq(readErr, CB.ERR.RELAY_OFF)
-            local sent, sendErr = s.comms.send(f.hunter, c.id, nil, 'hello')
+            eq(readErr, CH.ERR.RELAY_OFF)
+            local sent, sendErr = s.comms.send(f.hitman, c.id, nil, 'hello')
             falsy(sent)
-            eq(sendErr, CB.ERR.RELAY_OFF, '"Not right now." on something that '
+            eq(sendErr, CH.ERR.RELAY_OFF, '"Not right now." on something that '
                 .. 'will never work on this server')
         end)
     end)
@@ -1411,9 +1411,9 @@ describe('masked calls', function()
     it('tells the page whether messaging exists', function()
         local s, f = threaded()
         withConfig({ { Config.Relay, 'Enabled', false } }, function()
-            eq(s.projection.listing(f.hunter.cid, 1).settings.relay, false)
+            eq(s.projection.listing(f.hitman.cid, 1).settings.relay, false)
         end)
-        eq(s.projection.listing(f.hunter.cid, 1).settings.relay, true)
+        eq(s.projection.listing(f.hitman.cid, 1).settings.relay, true)
     end)
 end)
 
@@ -1428,24 +1428,24 @@ describe('open amendments', function()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
             anonymous = opts.anonCreator,
         })
-        truthy(s.contracts.accept(f.hunter, c.id, opts.anonHunter))
+        truthy(s.contracts.accept(f.hitman, c.id, opts.anonHitman))
         local p = s.amendments.propose(
-            opts.by == 'hunter' and f.hunter or f.creator, c.id,
-            CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+            opts.by == 'hitman' and f.hitman or f.creator, c.id,
+            CH.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
         truthy(p, 'the proposal should be made')
         return s, f, c, p
     end
 
     it('shows the other party what has been proposed', function()
         local s, f, c = proposed()
-        local open, err = s.amendments.openFor(f.hunter, c.id)
+        local open, err = s.amendments.openFor(f.hitman, c.id)
         truthy(open, tostring(err))
         eq(#open, 1)
-        eq(open[1].kind, CB.AMENDMENT.SHORTEN_DEADLINE)
+        eq(open[1].kind, CH.AMENDMENT.SHORTEN_DEADLINE)
         eq(open[1].payload.seconds, 600, 'and what it actually changes')
         eq(open[1].mine, false, 'it is not theirs')
         eq(open[1].answered, false, 'and they have not answered')
@@ -1461,19 +1461,19 @@ describe('open amendments', function()
 
     it('does not name an anonymous creator who proposed it', function()
         local s, f, c = proposed({ anonCreator = true })
-        local open = s.amendments.openFor(f.hunter, c.id)
+        local open = s.amendments.openFor(f.hitman, c.id)
         eq(open[1].proposer, 'The client',
             'a proposal is not a hole in anonymity')
         falsy(tostring(open[1].proposer):find('Vic'))
     end)
 
-    it('names an anonymous hunter by their alias, never their name', function()
-        local s, f, c = proposed({ anonHunter = true, by = 'hunter' })
+    it('names an anonymous hitman by their alias, never their name', function()
+        local s, f, c = proposed({ anonHitman = true, by = 'hitman' })
         local open = s.amendments.openFor(f.creator, c.id)
         truthy(tostring(open[1].proposer):find('Operative'),
             'the alias they are known by: ' .. tostring(open[1].proposer))
         falsy(tostring(open[1].proposer):find('Rook'))
-        falsy(tostring(open[1].proposer):find('HUNTER01'))
+        falsy(tostring(open[1].proposer):find('HITMAN01'))
     end)
 
     it('shows nobody outside the contract anything', function()
@@ -1482,12 +1482,12 @@ describe('open amendments', function()
             license = 'license:n', firstname = 'Nos', lastname = 'Ey' })
         local open, err = s.amendments.openFor(s.identity.resolve(5), c.id)
         falsy(open, 'an outsider learns nothing')
-        eq(err, CB.ERR.NOT_PARTICIPANT)
+        eq(err, CH.ERR.NOT_PARTICIPANT)
     end)
 
     it('stops showing one that has been answered', function()
         local s, f, c, p = proposed()
-        truthy(s.amendments.respond(f.hunter, p.id, true))
+        truthy(s.amendments.respond(f.hitman, p.id, true))
         eq(#s.amendments.openFor(f.creator, c.id), 0, 'a settled question is closed')
     end)
 
@@ -1521,10 +1521,10 @@ describe('a handover cannot be retried in a loop', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         for _, src in ipairs({ 1, 2, 3 }) do Env.players[src]._coords = AT end
         Env.players[2].PlayerData.metadata.ishandcuffed = true
         return s, f, c
@@ -1533,7 +1533,7 @@ describe('a handover cannot be retried in a loop', function()
     it('tells the client to come when a handover starts', function()
         local s, f, c = armed()
         Natives.calls.notifications = {}
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
 
         local told = false
         for _, note in ipairs(Natives.calls.notifications) do
@@ -1544,7 +1544,7 @@ describe('a handover cannot be retried in a loop', function()
 
     it('refuses to re-arm straight after a failure', function()
         local s, f, c = armed()
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
 
         -- The client walks off and the grace budget runs out.
         Env.players[1]._coords = { x = 3000.0, y = 3000.0, z = 30.0 }
@@ -1552,27 +1552,27 @@ describe('a handover cannot be retried in a loop', function()
         eq(s.kidnap.activeCount(), 0, 'the handover failed')
 
         Env.players[1]._coords = AT
-        local ok, err = s.kidnap.arm(c.id, 'HUNTER01')
+        local ok, err = s.kidnap.arm(c.id, 'HITMAN01')
         falsy(ok, 'a failed handover cannot be restarted immediately')
         -- Its own code: the one refusal on this path that waiting fixes, which
         -- BAD_STATE's "Not right now." could not say.
-        eq(err, CB.ERR.HANDOVER_COOLDOWN)
+        eq(err, CH.ERR.HANDOVER_COOLDOWN)
     end)
 
     it('lets them try again once the cooldown has passed', function()
         local s, f, c = armed()
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
         Env.players[1]._coords = { x = 3000.0, y = 3000.0, z = 30.0 }
         for _ = 1, 10 do s.kidnap.tick(Config.Kidnap.MaxTotalGraceMs) end
 
         Env.players[1]._coords = AT
         Env.time = Env.time + Config.Kidnap.RearmCooldownSeconds + 1
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'), 'the target is still fair game afterwards')
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'), 'the target is still fair game afterwards')
     end)
 
-    it('tells the hunter why it failed', function()
+    it('tells the hitman why it failed', function()
         local s, f, c = armed()
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
         Env.players[1]._coords = { x = 3000.0, y = 3000.0, z = 30.0 }
         Natives.calls.notifications = {}
         for _ = 1, 10 do s.kidnap.tick(Config.Kidnap.MaxTotalGraceMs) end
@@ -1588,8 +1588,8 @@ end)
 
 describe('a photo is not kept forever', function()
     local function recorded(s, f, c)
-        s.ledger.record(s.storage.readContract(c.id), 'HUNTER01',
-                        'https://cdn.fivemanage.com/proof.png', CB.FULFILMENT.ELIMINATION, {})
+        s.ledger.record(s.storage.readContract(c.id), 'HITMAN01',
+                        'https://cdn.fivemanage.com/proof.png', CH.FULFILMENT.ELIMINATION, {})
     end
 
     it('drops the reference once the window has passed', function()
@@ -1601,12 +1601,12 @@ describe('a photo is not kept forever', function()
         })
         recorded(s, f, c)
 
-        truthy(s.storage.readLedger('HUNTER01', 10)[1].photo_ref, 'kept at first')
+        truthy(s.storage.readLedger('HITMAN01', 10)[1].photo_ref, 'kept at first')
 
         Env.time = Env.time + (Config.Ledger.PhotoRetentionDays * 86400) + 1
         truthy(s.ledger.forgetOldPhotos() > 0, 'something was forgotten')
 
-        local row = s.storage.readLedger('HUNTER01', 10)[1]
+        local row = s.storage.readLedger('HITMAN01', 10)[1]
         truthy(row, 'the row itself stays — the record is the point of the ledger')
         falsy(row.photo_ref, 'but the photo of somebody\'s corpse does not')
     end)
@@ -1622,7 +1622,7 @@ describe('a photo is not kept forever', function()
 
         Env.time = Env.time + 60
         eq(s.ledger.forgetOldPhotos(), 0)
-        truthy(s.storage.readLedger('HUNTER01', 10)[1].photo_ref)
+        truthy(s.storage.readLedger('HITMAN01', 10)[1].photo_ref)
     end)
 
     it('keeps them forever when the window is zero', function()
@@ -1637,7 +1637,7 @@ describe('a photo is not kept forever', function()
         withConfig({ { Config.Ledger, 'PhotoRetentionDays', 0 } }, function()
             Env.time = Env.time + (365 * 86400)
             eq(s.ledger.forgetOldPhotos(), 0, 'an operator who asks for that gets it')
-            truthy(s.storage.readLedger('HUNTER01', 10)[1].photo_ref)
+            truthy(s.storage.readLedger('HITMAN01', 10)[1].photo_ref)
         end)
     end)
 
@@ -1659,7 +1659,7 @@ describe('a photo is not kept forever', function()
                     return m
                 end)()
 
-            store.writeLedger({ cid = 'A', contract_id = 'c1', role = 'hunter',
+            store.writeLedger({ cid = 'A', contract_id = 'c1', role = 'hitman',
                                 resolved_at = 100, photo_ref = 'https://x/y.png' })
             eq(store.forgetLedgerPhotos(1000), 1, name .. ': one row forgotten')
             falsy(store.readLedger('A', 10)[1].photo_ref, name .. ': and it is gone')
@@ -1704,7 +1704,7 @@ describe('a player the app is closed to can still buy out', function()
         Env.commands[Config.Bailout.Command](2, { c.id })
 
         eq(Env.players[2].PlayerData.money.bank, 85000, 'charged the premium')
-        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
     end)
 
     it('will not buy out somebody else contract', function()
@@ -1714,7 +1714,7 @@ describe('a player the app is closed to can still buy out', function()
         -- its target, so there is nothing here for them.
         Env.commands[Config.Bailout.Command](1, { c.id })
 
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'untouched')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'untouched')
         local said = ''
         for _, line in ipairs(Env.chat) do said = said .. line.text end
         truthy(said:find('Nothing is out on you'), said)
@@ -1726,7 +1726,7 @@ describe('a player the app is closed to can still buy out', function()
             Env.commands[Config.Bailout.Command](2, { bogus })
         end
         eq(Env.players[2].PlayerData.money.bank, 100000, 'nothing was charged')
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE)
     end)
 
     it('lets them read the list and then act on it', function()
@@ -1739,7 +1739,7 @@ describe('a player the app is closed to can still buy out', function()
         local said = ''
         for _, line in ipairs(Env.chat) do said = said .. line.text end
         falsy(said:find('Slow down', 1, true), said)
-        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
     end)
 
     it('does not spend the allowance on a purchase that was refused', function()
@@ -1747,11 +1747,11 @@ describe('a player the app is closed to can still buy out', function()
         Env.players[2].PlayerData.money.bank = 0
         Env.players[2].PlayerData.money.cash = 0
         Env.commands[Config.Bailout.Command](2, { c.id })
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'could not afford it')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'could not afford it')
         Env.players[2].PlayerData.money.bank = 100000
         Env.chat = {}
         Env.commands[Config.Bailout.Command](2, { c.id })
-        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT,
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT,
             'refused for want of an allowance the refusal had spent')
     end)
 
@@ -1787,13 +1787,13 @@ describe('a player the app is closed to can still buy out', function()
         })
         truthy(c2, 'a second contract on the same officer')
         Env.commands[Config.Bailout.Command](2, { c.id })
-        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
         Env.chat = {}
         Env.commands[Config.Bailout.Command](2, { c2.id })
         local said = ''
         for _, line in ipairs(Env.chat) do said = said .. line.text end
         truthy(said:find('Slow down', 1, true), 'a purchase is what the allowance is for: ' .. said)
-        eq(s.storage.readContract(c2.id).state, CB.STATE.ACTIVE)
+        eq(s.storage.readContract(c2.id).state, CH.STATE.ACTIVE)
     end)
 end)
 
@@ -1884,7 +1884,7 @@ describe('the rewardOptions handler', function()
 
         local reply = call('rewardOptions', 1)
         falsy(reply.ok, 'the job gate applies to this handler like every other')
-        eq(reply.err, CB.ERR.BLACKLISTED_JOB)
+        eq(reply.err, CH.ERR.BLACKLISTED_JOB)
         falsy(reply.data)
     end)
 
@@ -1895,7 +1895,7 @@ describe('the rewardOptions handler', function()
         local refused = false
         for _ = 1, 40 do
             local reply = call('rewardOptions', 1)
-            if reply and not reply.ok and reply.err == CB.ERR.RATE_LIMITED then refused = true end
+            if reply and not reply.ok and reply.err == CH.ERR.RATE_LIMITED then refused = true end
         end
         truthy(refused, 'an unbounded inventory read is a free way to load the server')
     end)
@@ -1910,7 +1910,7 @@ end)
 
 
 --- The escrow-line ceiling bounds what a contract still holds, not what it
---- has ever held. Counting settled lines and hunters' stakes refused a
+--- has ever held. Counting settled lines and hitmen' stakes refused a
 --- legitimate top-up on any contract that had already paid out.
 describe('topping up a contract that has paid out', function()
     local function carrying()
@@ -1934,7 +1934,7 @@ describe('topping up a contract that has paid out', function()
 
         -- Fifty lines across five payouts: at the ceiling minus ten.
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 { baseline = { items = itemList(10) } }, { baseline = { items = itemList(10) } },
                 { baseline = { items = itemList(10) } }, { baseline = { items = itemList(10) } },
@@ -1943,11 +1943,11 @@ describe('topping up a contract that has paid out', function()
             penaltyAmount = 5000,
         })
         truthy(c)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         -- One payout collected: ten of those lines are settled now, and the
-        -- hunter's stake is a line the creator never put up.
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        -- hitman's stake is a line the creator never put up.
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
 
         local ok, err = s.amendments.addEscrow(f.creator,
             c.id, { baseline = { items = itemList(10) } })
@@ -1973,7 +1973,7 @@ describe('topping up a contract that has paid out', function()
         local ok, err = s.amendments.addEscrow(f.creator,
             c.id, { baseline = { items = { { name = 'part_11', count = 1 } } } })
         falsy(ok, 'the ceiling still holds')
-        eq(err, CB.ERR.INVALID_REWARD)
+        eq(err, CH.ERR.INVALID_REWARD)
     end)
 end)
 
@@ -2022,15 +2022,15 @@ describe('a character switch', function()
         Env.players[2].PlayerData.metadata.ishandcuffed = true
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(c)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
         eq(s.kidnap.activeCount(), 1)
 
-        -- The hunter switches characters mid-handover.
+        -- The hitman switches characters mid-handover.
         switched(s, 3)
         eq(s.kidnap.activeCount(), 0,
             'the countdown slot is global, so a leaked one is taken from everybody')
@@ -2088,11 +2088,11 @@ describe('a character switch', function()
         s.death.watch('TARGET01', 2, true)
         Env.players[2]._health = 60
         s.death.recordDamage(3, 2, 123456)
-        truthy(s.death.recordFor('TARGET01', 'HUNTER01'))
+        truthy(s.death.recordFor('TARGET01', 'HITMAN01'))
 
         switched(s, 2)
-        falsy(s.death.recordFor('TARGET01', 'HUNTER01'),
-            'a hunter must not inherit the next character to hold that id')
+        falsy(s.death.recordFor('TARGET01', 'HITMAN01'),
+            'a hitman must not inherit the next character to hold that id')
     end)
 
     it('retires the target handles the character was given', function()
@@ -2151,7 +2151,7 @@ describe('a credit the framework refuses', function()
 
         local owed = 0
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.OWED and line.owed_to == 'CREATOR1' then
+            if line.portion == CH.PORTION.OWED and line.owed_to == 'CREATOR1' then
                 owed = owed + (line.amount or 0)
             end
         end
@@ -2180,11 +2180,11 @@ describe('a credit the framework refuses', function()
             bonusPercent = 50, penaltyAmount = 10000,
         })
         truthy(c)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         eq(Env.players[3].PlayerData.money.bank, 40000, 'staked 10000')
 
         Env.players[3]._refuseMoney = true
-        truthy(s.amendments.improve(f.creator, c.id, CB.AMENDMENT.LOWER_PENALTY,
+        truthy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.LOWER_PENALTY,
             { amount = 4000 }))
         Env.players[3]._refuseMoney = false
 
@@ -2192,15 +2192,15 @@ describe('a credit the framework refuses', function()
 
         local staked, owed = 0, 0
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.STAKE then staked = staked + (line.amount or 0) end
-            if line.portion == CB.PORTION.OWED and line.owed_to == 'HUNTER01' then
+            if line.portion == CH.PORTION.STAKE then staked = staked + (line.amount or 0) end
+            if line.portion == CH.PORTION.OWED and line.owed_to == 'HITMAN01' then
                 owed = owed + (line.amount or 0)
             end
         end
         eq(staked, 4000, 'the stake is the figure the contract now names')
         eq(owed, 6000, 'and the difference is owed to the staker, not left at risk')
 
-        eq(s.escrow.retryPending('HUNTER01'), 1, 'handed over once they can take it')
+        eq(s.escrow.retryPending('HITMAN01'), 1, 'handed over once they can take it')
         eq(Env.players[3].PlayerData.money.bank, 46000)
     end)
 
@@ -2219,7 +2219,7 @@ describe('a credit the framework refuses', function()
             Env.players[1]._refuseMoney = true
 
             local c, err = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
                 reward = { baseline = { cash = 5000 } }, anonymous = true,
             })
 
@@ -2517,7 +2517,7 @@ describe('browsing for a target', function()
         truthy(pick)
 
         local reply = call('create', 1, {
-            target = pick.handle, reason = 'Owes me', mode = CB.MODE.COMPETITIVE,
+            target = pick.handle, reason = 'Owes me', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(reply and reply.ok,
@@ -2545,32 +2545,32 @@ describe('two amendments open on the same contract', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE,
+            mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 5000 } },
                                  { baseline = { cash = 3000 } } } },
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         return s, f, c
     end
 
     it('refuses a second where the operator allows only one', function()
         local s, f, c = negotiating()
-        truthy(s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+        truthy(s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE,
             { seconds = 600 }))
         local second, err = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.CHANGE_REASON, { reason = 'Actually, theft' })
+            CH.AMENDMENT.CHANGE_REASON, { reason = 'Actually, theft' })
         falsy(second, 'the shipped limit is one')
-        eq(err, CB.ERR.LIMIT_REACHED)
+        eq(err, CH.ERR.LIMIT_REACHED)
     end)
 
     it('allows a second where the operator allows two', function()
         local s, f, c = negotiating()
         withConfig({ { Config.Amendments, 'MaxOpenPerContract', 2 } }, function()
             local first = s.amendments.propose(f.creator, c.id,
-                CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+                CH.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
             truthy(first, 'the first has to be accepted')
             local second, err = s.amendments.propose(f.creator, c.id,
-                CB.AMENDMENT.CHANGE_REASON, { reason = 'Actually, theft' })
+                CH.AMENDMENT.CHANGE_REASON, { reason = 'Actually, theft' })
             truthy(second, 'raising the limit has to actually raise it: '
                 .. tostring(err))
             eq(#s.storage.readOpenAmendments(c.id), 2)
@@ -2582,12 +2582,12 @@ describe('two amendments open on the same contract', function()
         local s, f, c = negotiating()
         withConfig({ { Config.Amendments, 'MaxOpenPerContract', 2 } }, function()
             local first = s.amendments.propose(f.creator, c.id,
-                CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+                CH.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
             local second = s.amendments.propose(f.creator, c.id,
-                CB.AMENDMENT.CHANGE_REASON, { reason = 'Actually, theft' })
+                CH.AMENDMENT.CHANGE_REASON, { reason = 'Actually, theft' })
             truthy(first and second, 'the fixture needs two on the table')
 
-            truthy(s.amendments.respond(f.hunter, first.id, true),
+            truthy(s.amendments.respond(f.hitman, first.id, true),
                 'the first has to be answerable')
 
             local stillOpen = s.storage.readOpenAmendments(c.id)
@@ -2604,13 +2604,13 @@ describe('two amendments open on the same contract', function()
         local s, f, c = negotiating()
         withConfig({ { Config.Amendments, 'MaxOpenPerContract', 2 } }, function()
             local first = s.amendments.propose(f.creator, c.id,
-                CB.AMENDMENT.CHANGE_REASON, { reason = 'Actually, theft' })
+                CH.AMENDMENT.CHANGE_REASON, { reason = 'Actually, theft' })
             local second = s.amendments.propose(f.creator, c.id,
-                CB.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
+                CH.AMENDMENT.SHORTEN_DEADLINE, { seconds = 600 })
             truthy(first and second)
 
-            s.amendments.respond(f.hunter, first.id, true)
-            s.amendments.respond(f.hunter, second.id, false)
+            s.amendments.respond(f.hitman, first.id, true)
+            s.amendments.respond(f.hitman, second.id, false)
 
             eq(s.storage.readContract(c.id).reason, 'Actually, theft',
                 'the approved one has to take effect')
@@ -2622,14 +2622,14 @@ describe('two amendments open on the same contract', function()
     it('shows both to the other party', function()
         local s, f, c = negotiating()
         withConfig({ { Config.Amendments, 'MaxOpenPerContract', 2 } }, function()
-            s.amendments.propose(f.creator, c.id, CB.AMENDMENT.SHORTEN_DEADLINE,
+            s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE,
                 { seconds = 600 })
-            s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_REASON,
+            s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_REASON,
                 { reason = 'Actually, theft' })
 
-            local open = s.amendments.openFor(f.hunter, c.id)
+            local open = s.amendments.openFor(f.hitman, c.id)
             eq(#open, 2,
-                'the hunter can only answer what they are shown, and the page '
+                'the hitman can only answer what they are shown, and the page '
                 .. 'renders whatever list it is given')
         end)
     end)
@@ -2641,11 +2641,11 @@ describe('a second informant purchase', function()
             for seedShift = 0, 3 do
                 local s = newStack()
                 local f = fixture(s)
-                Env.addPlayer({ source = 4, citizenid = 'HUNTER0' .. (2 + seedShift), license = 'license:x' .. seedShift,
+                Env.addPlayer({ source = 4, citizenid = 'HITMAN0' .. (2 + seedShift), license = 'license:x' .. seedShift,
                     cash = 5000, bank = 5000, firstname = 'Nel', lastname = 'Vey' .. seedShift })
                 local c = s.contracts.create(f.creator, { targetCid = target, reason = 'x',
-                    mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
-                truthy(s.contracts.accept(f.hunter, c.id, true))
+                    mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+                truthy(s.contracts.accept(f.hitman, c.id, true))
                 Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
                 Env.players[3]._coords = { x = 505.0, y = 500.0, z = 30.0 }
                 Env.players[4]._coords = { x = 5000.0, y = 500.0, z = 30.0 }
@@ -2689,8 +2689,8 @@ describe('a revive the client reported too early', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
-            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         Env.players[2]._coords = { x = 100.0, y = 100.0, z = 30.0 }
         Env.players[3]._coords = { x = 101.0, y = 100.0, z = 30.0 }
         Env.players[2]._health = 140
@@ -2704,9 +2704,9 @@ describe('a revive the client reported too early', function()
         Env.advance((Config.Completion.ProofWindowSeconds or 0) + 5)
         s.death.watchTargets(s.storage.allContracts())
         truthy(s.death.wasSeenDead('TARGET01'), 'last stand is still down')
-        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the kill still stands')
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'the kill still stands')
         eq(s.death.onRevivedVerified(2, 'TARGET01'), 0, 'nor may they claim it')
-        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the claim voided the kill')
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'the claim voided the kill')
         truthy(s.death.wasSeenDead('TARGET01'), 'the claim was taken as a revive')
 
         meta.inlaststand = false
@@ -2725,8 +2725,8 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
-            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         Env.players[2]._coords = { x = 100.0, y = 100.0, z = 30.0 }
         Env.players[3]._coords = { x = 101.0, y = 100.0, z = 30.0 }
         Env.players[2]._health = 140
@@ -2746,7 +2746,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         s.death.watchTargets(s.storage.allContracts())
         Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)
         s.death.watchTargets(s.storage.allContracts())
-        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the kill was voided in the gap')
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'the kill was voided in the gap')
         falsy(s.death.sinceRespawn('TARGET01'), 'and immunity handed out')
     end)
 
@@ -2764,7 +2764,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         end
         meta.inlaststand = false
         s.death.watchTargets(s.storage.allContracts())
-        truthy(s.death.getPending(c.id, 'HUNTER01'), 'one reading up was a revive')
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'one reading up was a revive')
     end)
 
     it('is not a revive to a claim fired inside it', function()
@@ -2774,7 +2774,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         Env.advance(1)
         meta.inlaststand = true
         Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)
-        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the timed claim voided the kill')
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'the timed claim voided the kill')
         falsy(s.death.sinceRespawn('TARGET01'), 'and immunity handed out')
     end)
 
@@ -2789,15 +2789,15 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         end
         meta.inlaststand = true
         s.death.watchTargets(s.storage.allContracts())
-        truthy(s.death.getPending(c.id, 'HUNTER01'), 'a slow gap voided the kill')
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'a slow gap voided the kill')
         falsy(s.death.sinceRespawn('TARGET01'))
     end)
 
     it('counts a revive a hit cut short, from when they stood up', function()
-        -- Up for two readings, then put down and finished by another hunter.
+        -- Up for two readings, then put down and finished by another hitman.
         -- Dropped, the kill the revive undid and the re-kill both paid.
         local s, f, c, meta = downed()
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:h2',
             cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
         truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
         Env.players[4]._coords = { x = 102.0, y = 100.0, z = 30.0 }
@@ -2813,22 +2813,22 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         s.death.recordDamage(4, 2, 123456)
         meta.inlaststand = true
         s.death.watchTargets(s.storage.allContracts())
-        falsy(s.death.getPending(c.id, 'HUNTER01'), 'the kill the revive undid still stands')
+        falsy(s.death.getPending(c.id, 'HITMAN01'), 'the kill the revive undid still stands')
         truthy(s.death.sinceRespawn('TARGET01'), 'the revive was never recorded')
 
         meta.inlaststand, meta.isdead = false, true
         truthy(s.death.onVictimReport(2, 4) >= 1, 'the re-kill is attributed')
-        local rekill = s.death.getPending(c.id, 'HUNTER02')
+        local rekill = s.death.getPending(c.id, 'HITMAN02')
         truthy(rekill)
-        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER02', CB.FULFILMENT.ELIMINATION,
+        local ok, err = s.contracts.claimSlot(c.id, 'HITMAN02', CH.FULFILMENT.ELIMINATION,
             { deathAt = rekill.at })
         falsy(ok, 'a target killed again seconds after getting up paid out')
-        eq(err, CB.ERR.TARGET_PROTECTED)
+        eq(err, CH.ERR.TARGET_PROTECTED)
     end)
 
     it('settles a revive cut short when the re-kill is reported before the watch looks', function()
         local s, f, c, meta = downed()
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:h2',
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:h2',
             cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
         truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
         Env.players[4]._coords = { x = 102.0, y = 100.0, z = 30.0 }
@@ -2843,13 +2843,13 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         s.death.recordDamage(4, 2, 123456)
         meta.isdead = true
         truthy(s.death.onVictimReport(2, 4) >= 1)
-        falsy(s.death.getPending(c.id, 'HUNTER01'), 'the kill the revive undid still stands')
-        local rekill = s.death.getPending(c.id, 'HUNTER02')
+        falsy(s.death.getPending(c.id, 'HITMAN01'), 'the kill the revive undid still stands')
+        local rekill = s.death.getPending(c.id, 'HITMAN02')
         truthy(rekill, 'the re-kill was swept away with the revive')
-        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER02', CB.FULFILMENT.ELIMINATION,
+        local ok, err = s.contracts.claimSlot(c.id, 'HITMAN02', CH.FULFILMENT.ELIMINATION,
             { deathAt = rekill.at })
         falsy(ok, 'paid before the watch had looked')
-        eq(err, CB.ERR.TARGET_PROTECTED)
+        eq(err, CH.ERR.TARGET_PROTECTED)
     end)
 
     local function medic(opts)
@@ -2862,7 +2862,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
     end
 
     it('does not read a shot into a defibrillator\'s gap as a revive', function()
-        -- The hunter shooting the body while the shock takes effect, or a
+        -- The hitman shooting the body while the shock takes effect, or a
         -- friend punching it, read as a revive cut short: the kill void and
         -- the target, still on the ground, protected.
         local s, f, c, meta = downed()
@@ -2875,7 +2875,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         Env.advance(0.6)
         meta.inlaststand = true
         s.death.watchTargets(s.storage.allContracts())
-        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the kill was voided')
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'the kill was voided')
         falsy(s.death.sinceRespawn('TARGET01'), 'and the target protected')
 
         -- Finishing them is a kill that pays.
@@ -2883,8 +2883,8 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         s.death.recordDamage(3, 2, 123456)
         meta.inlaststand, meta.isdead = false, true
         truthy(s.death.onVictimReport(2, 3) >= 1)
-        local kill = s.death.getPending(c.id, 'HUNTER01')
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION,
+        local kill = s.death.getPending(c.id, 'HITMAN01')
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION,
             { deathAt = kill.at }), 'the finishing kill was refused')
     end)
 
@@ -2901,15 +2901,15 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         meta.inlaststand, meta.isdead = false, true
         truthy(s.death.onVictimReport(2, 3) >= 1)
         falsy(s.death.sinceRespawn('TARGET01'), 'a hit on the downed body was a revive')
-        local kill = s.death.getPending(c.id, 'HUNTER01')
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION,
+        local kill = s.death.getPending(c.id, 'HITMAN01')
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION,
             { deathAt = kill.at }), 'the finishing kill was refused')
     end)
 
     it('only hears a defibrillator from an on-duty medic over a dead patient', function()
         local s, f, c, meta = downed()
         local m = medic()
-        falsy(s.death.noteDefib(3, 2), 'a hunter is no medic')
+        falsy(s.death.noteDefib(3, 2), 'a hitman is no medic')
         Env.players[m].PlayerData.job.onduty = false
         falsy(s.death.noteDefib(m, 2), 'nor one off duty')
         Env.players[m].PlayerData.job.onduty = nil
@@ -2938,7 +2938,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         meta.inlaststand = true
         s.death.watchTargets(s.storage.allContracts())
         Env.advance(0.3)                              -- now the check sees it
-        falsy(s.death.getPending(c.id, 'HUNTER01'), 'the kill the revive undid still pays')
+        falsy(s.death.getPending(c.id, 'HITMAN01'), 'the kill the revive undid still pays')
         truthy(s.death.sinceRespawn('TARGET01'), 'the revive went unrecorded')
     end)
 
@@ -2951,7 +2951,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         s.death.watchTargets(s.storage.allContracts())
         Env.advance(1)
         s.death.watchTargets(s.storage.allContracts())
-        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the gap voided the kill')
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'the gap voided the kill')
         falsy(s.death.sinceRespawn('TARGET01'))
     end)
 
@@ -2974,7 +2974,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
 
     it('does not let a defibrillator mark hide a revive from last stand after it', function()
         -- Shocked to last stand, then revived properly by EMS a few seconds
-        -- later and put down again by a hunter: the mark had done its work.
+        -- later and put down again by a hitman: the mark had done its work.
         local s, f, c, meta = downed()
         truthy(s.death.noteDefib(medic(), 2))
         meta.isdead, meta.inlaststand = false, true      -- the gap, too short to see
@@ -2993,7 +2993,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
 
     it('does not take a revive seconds after a defibrillator for its gap', function()
         -- The gap is first seen within a sample of the shock. A revive that
-        -- begins later, cut short by a hunter, is a revive.
+        -- begins later, cut short by a hitman, is a revive.
         local s, f, c, meta = downed()
         truthy(s.death.noteDefib(medic(), 2))
         for _ = 1, 4 do
@@ -3021,7 +3021,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         Env.advance(2)
         Env.players[2]._health = 0
         s.death.watchTargets(s.storage.allContracts())
-        falsy(s.death.getPending(c.id, 'HUNTER01'), 'the kill the revive undid still pays')
+        falsy(s.death.getPending(c.id, 'HITMAN01'), 'the kill the revive undid still pays')
         truthy(s.death.sinceRespawn('TARGET01'), 'the revive went unrecorded')
     end)
 
@@ -3029,16 +3029,16 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         local s, f, c, meta = downed()
         Config.Completion.ExtraPhotoHosts = { 'cdn.fivemanage.com' }
         s.photo.loadAllowedHosts()
-        local token = s.photo.issue(f.hunter, c.id)
+        local token = s.photo.issue(f.hitman, c.id)
         truthy(token)
         meta.isdead = false
-        local ok, err = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
+        local ok, err = s.photo.submit(f.hitman, token, 'https://cdn.fivemanage.com/p.png')
         falsy(ok)
-        eq(err, CB.ERR.PHOTO_NOT_DEAD)
-        truthy(s.death.getPending(c.id, 'HUNTER01'), 'the kill went on one reading')
+        eq(err, CH.ERR.PHOTO_NOT_DEAD)
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'the kill went on one reading')
         meta.inlaststand = true
-        local _, still = s.photo.submit(f.hunter, token, 'https://cdn.fivemanage.com/p.png')
-        eq(still, CB.ERR.PHOTO_STILL_DOWN, 'and the token with it')
+        local _, still = s.photo.submit(f.hitman, token, 'https://cdn.fivemanage.com/p.png')
+        eq(still, CH.ERR.PHOTO_STILL_DOWN, 'and the token with it')
     end)
 
     it('still counts a revive that lasts', function()
@@ -3047,7 +3047,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         s.death.onRevivedVerified(2, 'TARGET01')
         Env.advance(s.death.REVIVE_CONFIRM_MS / 1000 + 1)
         truthy(s.death.sinceRespawn('TARGET01'), 'a real revive was lost')
-        falsy(s.death.getPending(c.id, 'HUNTER01'), 'and it voids the kill it ends')
+        falsy(s.death.getPending(c.id, 'HITMAN01'), 'and it voids the kill it ends')
     end)
 
     it('takes a claim at once from a target the watch has seen up', function()
@@ -3061,21 +3061,21 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
 end)
 
 describe('asking the informant again inside the lock', function()
-    it('gives the answer it gave, not whether the hunter is online now', function()
+    it('gives the answer it gave, not whether the hitman is online now', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
-            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
-        truthy(s.contracts.accept(f.hunter, c.id, true))
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        truthy(s.contracts.accept(f.hitman, c.id, true))
         Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
         Env.players[3]._coords = { x = 505.0, y = 500.0, z = 30.0 }
         s.death.watchTargets(s.storage.allContracts())
         Env.players[1].PlayerData.money.bank = 999999
         local _, _, first = s.informant.buy(f.creator, c.id)
-        local hunter = Env.players[3]
-        Env.players[3] = nil   -- the hunter logs off
+        local hitman = Env.players[3]
+        Env.players[3] = nil   -- the hitman logs off
         local _, _, again = s.informant.buy(f.creator, c.id)
-        Env.players[3] = hunter
-        eq(again.name, first.name, 'the repeat said the hunter had gone offline')
+        Env.players[3] = hitman
+        eq(again.name, first.name, 'the repeat said the hitman had gone offline')
     end)
 end)

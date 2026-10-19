@@ -8,12 +8,12 @@
 --------------------------------------------------------------------------
 -- §14.23 — "Armed countdowns are capped server-wide by
 -- Config.Kidnap.MaxConcurrentCountdowns; over the cap the server refuses to
--- arm new ones and tells the hunter, and never sheds an in-progress
+-- arm new ones and tells the hitman, and never sheds an in-progress
 -- countdown, because §7.4 promises a reset is never silent."
 --
 -- kidnap_spec has a test with this name. It sets the cap to 1, arms one
 -- countdown, creates a second contract — and never arms anything on it,
--- never accepts it with a second hunter, and then asserts activeCount() is
+-- never accepts it with a second hitman, and then asserts activeCount() is
 -- still 1. That assertion holds with the cap ripped out, because nothing
 -- ever asked for a second countdown. The cap's refusal branch has never
 -- executed in this suite.
@@ -21,7 +21,7 @@
 
 local AT = { x = 200.0, y = 200.0, z = 30.0 }
 
---- Two contracts on one target, one hunter each, everyone standing together
+--- Two contracts on one target, one hitman each, everyone standing together
 --- and the target cuffed: two deliveries that both satisfy every arming
 --- condition except the cap.
 local function twoDeliveries()
@@ -37,8 +37,8 @@ local function twoDeliveries()
         reward = { baseline = { cash = 4000 } },
     })
 
-    Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
-    s.contracts.accept(f.hunter, first.id, false)
+    Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
+    s.contracts.accept(f.hitman, first.id, false)
     s.contracts.accept(s.identity.resolve(4), second.id, false)
 
     for _, src in ipairs({ 1, 2, 3, 4 }) do
@@ -54,8 +54,8 @@ describe('the countdown cap (§14.23)', function()
         -- The control. Without it a refusal below proves only that the
         -- second delivery was unarmable for some other reason.
         local s, _, first, second = twoDeliveries()
-        truthy(s.kidnap.arm(first.id, 'HUNTER01'), 'first handover')
-        truthy(s.kidnap.arm(second.id, 'HUNTER02'), 'second handover')
+        truthy(s.kidnap.arm(first.id, 'HITMAN01'), 'first handover')
+        truthy(s.kidnap.arm(second.id, 'HITMAN02'), 'second handover')
         eq(s.kidnap.activeCount(), 2, 'both countdowns running')
     end)
 
@@ -64,24 +64,24 @@ describe('the countdown cap (§14.23)', function()
         -- The stack is opened first: newStack() resets the whole config, so
         -- opening one inside withConfig would discard the cap set here.
         withConfig({ { Config.Kidnap, 'MaxConcurrentCountdowns', 1 } }, function()
-            truthy(s.kidnap.arm(first.id, 'HUNTER01'), 'the first one arms')
+            truthy(s.kidnap.arm(first.id, 'HITMAN01'), 'the first one arms')
 
-            local armed, err = s.kidnap.arm(second.id, 'HUNTER02')
+            local armed, err = s.kidnap.arm(second.id, 'HITMAN02')
             falsy(armed, 'the cap must refuse the second countdown')
-            eq(err, CB.ERR.LIMIT_REACHED, 'and the hunter is told which wall they hit')
+            eq(err, CH.ERR.LIMIT_REACHED, 'and the hitman is told which wall they hit')
         end)
     end)
 
     it('never sheds the delivery already in progress to make room', function()
         local s, _, first, second = twoDeliveries()
         withConfig({ { Config.Kidnap, 'MaxConcurrentCountdowns', 1 } }, function()
-            s.kidnap.arm(first.id, 'HUNTER01')
+            s.kidnap.arm(first.id, 'HITMAN01')
             s.kidnap.tick(Config.Kidnap.TickMs)
-            s.kidnap.arm(second.id, 'HUNTER02')
+            s.kidnap.arm(second.id, 'HITMAN02')
 
             eq(s.kidnap.activeCount(), 1, 'exactly the one that was already running')
-            truthy(s.kidnap.progress(first.id, 'HUNTER01'),
-                'the hunter halfway through a handover keeps it')
+            truthy(s.kidnap.progress(first.id, 'HITMAN01'),
+                'the hitman halfway through a handover keeps it')
         end)
 
         -- And it really was the first one: it still pays out.
@@ -101,7 +101,7 @@ end)
 -- The sticky reveal and the seeded selection are both tested. The ceiling
 -- on how many times one buyer may go back to the well is not, and the
 -- branch that enforces it has never run. It is the one that decides whether
--- an unbounded 25,000 a head walks the whole hunter roster.
+-- an unbounded 25,000 a head walks the whole hitman roster.
 --------------------------------------------------------------------------
 
 describe('the informant purchase ceiling (§14.29)', function()
@@ -110,10 +110,10 @@ describe('the informant purchase ceiling (§14.29)', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } },
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } },
         })
-        s.contracts.accept(f.hunter, c.id, true)
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+        s.contracts.accept(f.hitman, c.id, true)
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
         s.contracts.accept(s.identity.resolve(4), c.id, true)
         return s, f, c
     end
@@ -141,7 +141,7 @@ describe('the informant purchase ceiling (§14.29)', function()
             local bank = Env.players[1].PlayerData.money.bank
             local ok, err, data = s.informant.buy(f.creator, c.id)
             falsy(ok, 'one purchase past the ceiling must be refused')
-            eq(err, CB.ERR.LIMIT_REACHED)
+            eq(err, CH.ERR.LIMIT_REACHED)
             falsy(data, 'and reveals nobody')
             eq(Env.players[1].PlayerData.money.bank, bank,
                 'refused before payment: a wall you are charged for is a sale')
@@ -173,41 +173,41 @@ describe('a retry that still cannot deliver (§9.3)', function()
 
         -- Full bag: the cash settles, the item cannot be handed over.
         Env.players[3]._inventoryFull = true
-        s.escrow.release('ct1', 'HUNTER01', CB.PORTION.BASELINE, 'payout_baseline')
+        s.escrow.release('ct1', 'HITMAN01', CH.PORTION.BASELINE, 'payout_baseline')
         return s, f
     end
 
     local function itemLine(s)
         for _, line in ipairs(s.storage.readEscrow('ct1')) do
-            if line.source == CB.SOURCE.ITEM then return line end
+            if line.source == CH.SOURCE.ITEM then return line end
         end
     end
 
     it('leaves the line held and queued when the bag is still full', function()
         local s = owedAnItem()
-        eq(s.escrow.retryPending('HUNTER01'), 0, 'nothing could be delivered')
+        eq(s.escrow.retryPending('HITMAN01'), 0, 'nothing could be delivered')
 
         local line = itemLine(s)
-        eq(line.state, CB.ESCROW_STATE.HELD,
+        eq(line.state, CH.ESCROW_STATE.HELD,
             'a line that could not be given must not sit in releasing forever')
-        eq(line.owed_to, 'HUNTER01', 'still owed to the hunter who earned it')
-        eq(#s.storage.readPending('HUNTER01'), 1, 'and still queued for the next login')
+        eq(line.owed_to, 'HITMAN01', 'still owed to the hitman who earned it')
+        eq(#s.storage.readPending('HITMAN01'), 1, 'and still queued for the next login')
     end)
 
     it('delivers it on a later login, once there is room', function()
         -- The consequence of the line above, and what makes it worth
         -- asserting: a stranded line is not delivered by any later attempt.
         local s = owedAnItem()
-        s.escrow.retryPending('HUNTER01')
+        s.escrow.retryPending('HITMAN01')
 
         Env.players[3]._inventoryFull = false
-        eq(s.escrow.retryPending('HUNTER01'), 1, 'the second login gets it')
+        eq(s.escrow.retryPending('HITMAN01'), 1, 'the second login gets it')
 
         local carried = 0
         for _, slot in ipairs(Env.players[3]._inventory) do
             if slot.name == 'lockpick' then carried = carried + slot.count end
         end
         eq(carried, 2, 'the whole line, once')
-        eq(itemLine(s).state, CB.ESCROW_STATE.SETTLED, 'and it is settled')
+        eq(itemLine(s).state, CH.ESCROW_STATE.SETTLED, 'and it is settled')
     end)
 end)

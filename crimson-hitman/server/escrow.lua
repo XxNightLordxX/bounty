@@ -191,14 +191,14 @@ Escrow.blacklisted = blacklisted
 Escrow.isDirtyItem = isDirtyItem
 
 function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue)
-    if type(spec) ~= 'table' then return nil, CB.ERR.INVALID_REWARD end
+    if type(spec) ~= 'table' then return nil, CH.ERR.INVALID_REWARD end
 
     local slots = spec.slots
     if slots == nil then
         slots = { { baseline = spec.baseline, bonus = spec.bonus } }
     end
     if type(slots) ~= 'table' or #slots < 1 or #slots > Config.Limits.MaxPayoutSlots then
-        return nil, CB.ERR.INVALID_REWARD
+        return nil, CH.ERR.INVALID_REWARD
     end
 
     local lines = {}
@@ -207,9 +207,9 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
 
     local function addMoney(portion, source, rawAmount)
         local rule = Config.Sources[source]
-        if not rule or not rule.enabled then return CB.ERR.INVALID_REWARD end
+        if not rule or not rule.enabled then return CH.ERR.INVALID_REWARD end
         local amount = Util.toPositive(rawAmount, rule.max)
-        if not amount then return CB.ERR.INVALID_REWARD end
+        if not amount then return CH.ERR.INVALID_REWARD end
 
         local held
         if source == 'cash' or source == 'bank' then
@@ -217,7 +217,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
         else
             held = exports.ox_inventory:GetItem(actor.source, rule.item, nil, true) or 0
         end
-        if held < amount then return CB.ERR.INSUFFICIENT end
+        if held < amount then return CH.ERR.INSUFFICIENT end
 
         local line = { slot = slotIndex, portion = portion, source = source, amount = amount }
 
@@ -229,7 +229,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
         -- and handed a different one back — destroying the first and minting
         -- the second. Items and weapons have recorded their own identity
         -- since §9.4; this is the same rule for the third money source.
-        if source == CB.SOURCE.DIRTY then line.item = rule.item end
+        if source == CH.SOURCE.DIRTY then line.item = rule.item end
 
         lines[#lines + 1] = line
         moneyTotal = moneyTotal + amount
@@ -243,7 +243,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
     -- ten of an item both draw them from the first stack the search returns:
     -- the aggregate check passes (the creator really does hold twenty), the
     -- escrow records one stack twice with one stack's metadata, and the take
-    -- then fails hunting for a second copy of it and rolls the whole
+    -- then fails searching for a second copy of it and rolls the whole
     -- contract back — a fully-funded contract refused as insufficient.
     --
     -- Weapons share the counter for the opposite reason: a weapon is one
@@ -253,21 +253,21 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
 
     local function addItems(portion, list)
         if list == nil then return nil end
-        if type(list) ~= 'table' then return CB.ERR.INVALID_REWARD end
+        if type(list) ~= 'table' then return CH.ERR.INVALID_REWARD end
         -- The kill switch was read only where the picker is built, so an
         -- operator who turned item escrow off still had it work for anyone
         -- sending the payload by hand. A config switch that only the UI
         -- honours is not a switch.
-        if not sourceEnabled('item') then return CB.ERR.INVALID_REWARD end
-        if #list > Config.Sources.item.maxStacks then return CB.ERR.INVALID_REWARD end
+        if not sourceEnabled('item') then return CH.ERR.INVALID_REWARD end
+        if #list > Config.Sources.item.maxStacks then return CH.ERR.INVALID_REWARD end
 
         for i = 1, #list do
             local entry = list[i]
-            if type(entry) ~= 'table' then return CB.ERR.INVALID_REWARD end
+            if type(entry) ~= 'table' then return CH.ERR.INVALID_REWARD end
             local name = canonicalItem(Util.sanitizeText(entry.name, 64))
             local count = Util.toPositive(entry.count, Config.Sources.item.maxPerStack)
-            if not name or not count then return CB.ERR.INVALID_REWARD end
-            if blacklisted(name) then return CB.ERR.INVALID_REWARD end
+            if not name or not count then return CH.ERR.INVALID_REWARD end
+            if blacklisted(name) then return CH.ERR.INVALID_REWARD end
 
             -- Dirty money is an inventory item, so without this it can be
             -- escrowed twice over: once as `dirty`, which is capped by
@@ -280,17 +280,17 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
             --
             -- Compared against the configured item name rather than a
             -- literal, because that name is the operator's to choose.
-            if isDirtyItem(name) then return CB.ERR.INVALID_REWARD end
+            if isDirtyItem(name) then return CH.ERR.INVALID_REWARD end
 
             -- A weapon is one physical object with a serial, attachments and
             -- wear. Through this path it would be stored as a bare name and
             -- handed back as a fresh clean one: attachments destroyed, wear
             -- refunded, serial laundered. Weapons go through addWeapons,
             -- which snapshots the metadata, or they do not go at all.
-            if isWeaponName(name) then return CB.ERR.INVALID_REWARD end
+            if isWeaponName(name) then return CH.ERR.INVALID_REWARD end
 
             local held = exports.ox_inventory:GetItem(actor.source, name, nil, true) or 0
-            if held < count then return CB.ERR.INSUFFICIENT end
+            if held < count then return CH.ERR.INSUFFICIENT end
 
             -- Items are not interchangeable just because they share a name.
             -- A repair kit at 11% durability is not a fresh one; a backpack
@@ -319,7 +319,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
                         slot     = slotIndex,
                         inv_slot = found.slot,
                         portion  = portion,
-                        source   = CB.SOURCE.ITEM,
+                        source   = CH.SOURCE.ITEM,
                         item     = name,
                         quantity = take,
                         metadata = Util.copy(found.metadata) or {},
@@ -330,33 +330,33 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
             -- GetItem said the creator holds enough and the slot walk did
             -- not find it. Refuse rather than escrow a quantity from
             -- nowhere.
-            if remaining > 0 then return CB.ERR.INSUFFICIENT end
+            if remaining > 0 then return CH.ERR.INSUFFICIENT end
         end
         return nil
     end
 
     local function addWeapons(portion, list)
         if list == nil then return nil end
-        if type(list) ~= 'table' then return CB.ERR.INVALID_REWARD end
-        if not sourceEnabled('weapon') then return CB.ERR.INVALID_REWARD end
-        if #list > Config.Sources.weapon.max then return CB.ERR.INVALID_REWARD end
+        if type(list) ~= 'table' then return CH.ERR.INVALID_REWARD end
+        if not sourceEnabled('weapon') then return CH.ERR.INVALID_REWARD end
+        if #list > Config.Sources.weapon.max then return CH.ERR.INVALID_REWARD end
 
         for i = 1, #list do
             local entry = list[i]
-            if type(entry) ~= 'table' then return CB.ERR.INVALID_REWARD end
+            if type(entry) ~= 'table' then return CH.ERR.INVALID_REWARD end
             local name = canonicalItem(Util.sanitizeText(entry.name, 64))
             -- The inventory slot the weapon is being taken FROM. Named
             -- distinctly from the payout slot (`slotIndex`, set by the
             -- enclosing loop): they are different numbers with different
             -- meanings, and conflating them orphans the escrow line.
             local invSlot = Util.toPositive(entry.slot, 200)
-            if not name or not invSlot then return CB.ERR.INVALID_REWARD end
-            if blacklisted(name) then return CB.ERR.INVALID_REWARD end
+            if not name or not invSlot then return CH.ERR.INVALID_REWARD end
+            if blacklisted(name) then return CH.ERR.INVALID_REWARD end
             -- The weapons list takes weapons. Anything else sent here was
             -- escrowed as a "weapon": past the item switch an operator had
             -- turned off, past the item stack limits, and on the board as a
             -- weapon. The items list refuses weapons the same way round.
-            if not isWeaponName(name) then return CB.ERR.INVALID_REWARD end
+            if not isWeaponName(name) then return CH.ERR.INVALID_REWARD end
 
             -- Dirty money is an inventory item, so without this it can be
             -- escrowed twice over: once as `dirty`, which is capped by
@@ -369,7 +369,7 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
             --
             -- Compared against the configured item name rather than a
             -- literal, because that name is the operator's to choose.
-            if isDirtyItem(name) then return CB.ERR.INVALID_REWARD end
+            if isDirtyItem(name) then return CH.ERR.INVALID_REWARD end
 
             -- Read the weapon's real metadata from the server-side inventory
             -- and snapshot it (§9.4). The client's copy is never stored.
@@ -382,17 +382,17 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
             -- a specific object out of a list the server itself built, and
             -- staking a different one — a kitted rifle instead of a bare
             -- one — is not a near-enough answer.
-            if not found then return CB.ERR.INSUFFICIENT end
+            if not found then return CH.ERR.INSUFFICIENT end
             -- Naming the same slot in two payouts would snapshot one weapon
-            -- twice, take it once, then fail hunting for its twin.
-            if (stagedFromSlot[found.slot] or 0) > 0 then return CB.ERR.INVALID_REWARD end
+            -- twice, take it once, then fail searching for its twin.
+            if (stagedFromSlot[found.slot] or 0) > 0 then return CH.ERR.INVALID_REWARD end
             stagedFromSlot[found.slot] = 1
 
             lines[#lines + 1] = {
                 slot     = slotIndex,          -- payout slot this reward belongs to
                 inv_slot = found.slot,         -- where it came from, for the audit trail
                 portion  = portion,
-                source   = CB.SOURCE.WEAPON,
+                source   = CH.SOURCE.WEAPON,
                 item     = name,
                 quantity = 1,
                 metadata = Util.copy(found.metadata) or {},
@@ -404,13 +404,13 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
     for index = 1, #slots do
         slotIndex = index
         local set = slots[index]
-        if type(set) ~= 'table' then return nil, CB.ERR.INVALID_REWARD end
+        if type(set) ~= 'table' then return nil, CH.ERR.INVALID_REWARD end
 
         local before = #lines
-        for _, portion in ipairs({ CB.PORTION.BASELINE, CB.PORTION.BONUS }) do
+        for _, portion in ipairs({ CH.PORTION.BASELINE, CH.PORTION.BONUS }) do
             local part = set[portion]
             if part ~= nil then
-                if type(part) ~= 'table' then return nil, CB.ERR.INVALID_REWARD end
+                if type(part) ~= 'table' then return nil, CH.ERR.INVALID_REWARD end
                 for _, source in ipairs({ 'cash', 'bank', 'dirty' }) do
                     -- A zero means the creator did not pick this source, not
                     -- that the whole contract is invalid. Treating it as a
@@ -432,8 +432,8 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
         -- collection that pays nothing.
         local slotLines = {}
         for i = before + 1, #lines do slotLines[#slotLines + 1] = lines[i] end
-        if Util.escrowIsEmpty(slotLines, CB.PORTION.BASELINE) then
-            return nil, CB.ERR.INVALID_REWARD
+        if Util.escrowIsEmpty(slotLines, CH.PORTION.BASELINE) then
+            return nil, CH.ERR.INVALID_REWARD
         end
     end
 
@@ -448,23 +448,23 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
         -- would charge them twice for one promise.
         local explicit = {}
         for i = 1, #lines do
-            if lines[i].portion == CB.PORTION.BONUS then explicit[lines[i].slot] = true end
+            if lines[i].portion == CH.PORTION.BONUS then explicit[lines[i].slot] = true end
         end
 
         local derived = {}
         for i = 1, #lines do
             local line = lines[i]
-            if line.portion == CB.PORTION.BASELINE
+            if line.portion == CH.PORTION.BASELINE
                 and not explicit[line.slot]
-                and CB.MONEY_SOURCES[line.source] then
+                and CH.MONEY_SOURCES[line.source] then
                 -- Multiply before dividing. `amount * (percent / 100)`
                 -- computes a binary fraction first, and 29/100 is not one:
                 -- 29% of 50,000 came out as 14,499, a unit short of what the
-                -- creator promised and the hunter was shown.
+                -- creator promised and the hitman was shown.
                 local extra = math.floor(line.amount * bonusPercent / 100)
                 if extra > 0 then
                     derived[#derived + 1] = {
-                        slot = line.slot, portion = CB.PORTION.BONUS,
+                        slot = line.slot, portion = CH.PORTION.BONUS,
                         source = line.source, amount = extra,
                         -- Denominated in whatever the baseline it derives
                         -- from is, so a rename cannot turn a bonus and the
@@ -495,14 +495,14 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
     -- liked — and the setting exists to bound what one contract can be
     -- worth, which is a property of the contract, not of a request.
     if moneyTotal + (existingValue or 0) > Config.MaxContractValue then
-        return nil, CB.ERR.INVALID_REWARD
+        return nil, CH.ERR.INVALID_REWARD
     end
 
     -- The per-payout limits multiply, so the total needs its own ceiling.
     -- Callers adding to a contract that already holds escrow pass the count
     -- it holds, so a top-up cannot walk past the limit one line at a time.
     if #lines + (existingLines or 0) > Config.Limits.MaxEscrowLines then
-        return nil, CB.ERR.INVALID_REWARD
+        return nil, CH.ERR.INVALID_REWARD
     end
 
     return lines, nil, #slots
@@ -517,7 +517,7 @@ function Escrow.checkAggregate(actor, lines)
 
     for i = 1, #lines do
         local line = lines[i]
-        if CB.MONEY_SOURCES[line.source] then
+        if CH.MONEY_SOURCES[line.source] then
             money[line.source] = (money[line.source] or 0) + line.amount
         else
             local key = line.item
@@ -532,12 +532,12 @@ function Escrow.checkAggregate(actor, lines)
         else
             held = exports.ox_inventory:GetItem(actor.source, Config.Sources.dirty.item, nil, true) or 0
         end
-        if held < total then return CB.ERR.INSUFFICIENT end
+        if held < total then return CH.ERR.INSUFFICIENT end
     end
 
     for name, total in pairs(items) do
         local held = exports.ox_inventory:GetItem(actor.source, name, nil, true) or 0
-        if held < total then return CB.ERR.INSUFFICIENT end
+        if held < total then return CH.ERR.INSUFFICIENT end
     end
 
     return nil
@@ -553,7 +553,7 @@ local takeUnlocked
 ---
 --- Line ids are allocated from the lines a contract already holds, and on
 --- mysql reading those is an await. Two takes on one contract in the same
---- instant — two hunters staking a competitive contract, a top-up sent
+--- instant — two hitmen staking a competitive contract, a top-up sent
 --- twice — allocated the same id, and the second write merged into the
 --- first row instead of adding one: two people charged, one line held. The
 --- read-back below compared source, portion and amount, which two stakes
@@ -572,7 +572,7 @@ local taking = {}
 ---@return string|nil err
 ---@return table<string, boolean>|nil ids the stored line ids, on success
 function Escrow.take(actor, contractId, lines)
-    if taking[contractId] then return false, CB.ERR.LOCKED end
+    if taking[contractId] then return false, CH.ERR.LOCKED end
     taking[contractId] = true
     local ok, result, err, ids = pcall(takeUnlocked, actor, contractId, lines)
     taking[contractId] = nil
@@ -600,9 +600,9 @@ takeUnlocked = function(actor, contractId, lines)
                 back = Util.credit(actor.player, line.source, line.amount)
             elseif line.source == 'dirty' then
                 back = exports.ox_inventory:AddItem(actor.source, dirtyItemOf(line), line.amount)
-            elseif line.source == CB.SOURCE.ITEM then
+            elseif line.source == CH.SOURCE.ITEM then
                 back = exports.ox_inventory:AddItem(actor.source, line.item, line.quantity, line.metadata)
-            elseif line.source == CB.SOURCE.WEAPON then
+            elseif line.source == CH.SOURCE.WEAPON then
                 back = exports.ox_inventory:AddItem(actor.source, line.item, 1, line.metadata)
             end
 
@@ -640,17 +640,17 @@ takeUnlocked = function(actor, contractId, lines)
             ok = Util.charge(actor.player, line.source, line.amount)
         elseif line.source == 'dirty' then
             ok = exports.ox_inventory:RemoveItem(actor.source, dirtyItemOf(line), line.amount) and true or false
-        elseif line.source == CB.SOURCE.ITEM then
+        elseif line.source == CH.SOURCE.ITEM then
             -- Names the metadata, so the slot that was staged is the slot
             -- that is taken rather than any stack of the same name.
             ok = exports.ox_inventory:RemoveItem(actor.source, line.item, line.quantity, line.metadata) and true or false
-        elseif line.source == CB.SOURCE.WEAPON then
+        elseif line.source == CH.SOURCE.WEAPON then
             ok = exports.ox_inventory:RemoveItem(actor.source, line.item, 1, line.metadata) and true or false
         end
 
         if not ok then
             rollback()
-            return false, CB.ERR.INSUFFICIENT
+            return false, CH.ERR.INSUFFICIENT
         end
         taken[#taken + 1] = line
     end
@@ -667,7 +667,7 @@ takeUnlocked = function(actor, contractId, lines)
     for i = 1, #lines do
         local line = Util.copy(lines[i])
         line.contract_id = contractId
-        line.state = CB.ESCROW_STATE.HELD
+        line.state = CH.ESCROW_STATE.HELD
         line.slot = line.slot or 1
 
         if not line.id or used[line.id] then
@@ -699,7 +699,7 @@ takeUnlocked = function(actor, contractId, lines)
         end
         if not any then
             rollback()
-            return false, CB.ERR.BAD_STATE
+            return false, CH.ERR.BAD_STATE
         end
     end
 
@@ -730,7 +730,7 @@ takeUnlocked = function(actor, contractId, lines)
             or (found.quantity or 0) ~= (mine.quantity or 0) then
             Audit.rejected('escrow_id_collision', actor.cid, contractId, { line = mine.id })
             rollback()
-            return false, CB.ERR.LOCKED
+            return false, CH.ERR.LOCKED
         end
     end
 
@@ -818,13 +818,13 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
                 if not named and filter.lines then named = filter.lines[line.id] == true end
                 if not named then matches = false end
             elseif not filter.portion
-                and (line.portion == CB.PORTION.STAKE or line.portion == CB.PORTION.OWED) then
+                and (line.portion == CH.PORTION.STAKE or line.portion == CH.PORTION.OWED) then
                 -- A release that names no portion is a general refund. It
-                -- must not sweep up a hunter's stake, nor money already
+                -- must not sweep up a hitman's stake, nor money already
                 -- promised to a named person.
                 matches = false
             end
-        elseif line.portion == CB.PORTION.STAKE or line.portion == CB.PORTION.OWED then
+        elseif line.portion == CH.PORTION.STAKE or line.portion == CH.PORTION.OWED then
             matches = false
         end
 
@@ -839,7 +839,7 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
         if matches then
             -- Compare-and-set: only a line still `held` may be claimed, and
             -- the claim is what authorises moving the funds.
-            local claimed = Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING)
+            local claimed = Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING)
             if not claimed then
                 result.skipped = result.skipped + 1
             elseif guard and not guard(line) then
@@ -847,7 +847,7 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
                 -- something it could only check once the line was already
                 -- out of `held`.
                 --
-                -- A creator reducing a reward may not do it to a hunter who
+                -- A creator reducing a reward may not do it to a hitman who
                 -- has accepted, and checking that before calling here is not
                 -- enough: every storage read between the check and the money
                 -- moving is a yield, and an acceptance can land in any of
@@ -855,7 +855,7 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
                 -- the answer binding — nothing else can pay this line while
                 -- it sits in `releasing`, so a refusal can put it straight
                 -- back with nothing moved.
-                Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
+                Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD)
                 result.refused = result.refused + 1
             else
                 -- Who this release is for, written before the money moves.
@@ -887,14 +887,14 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
                     -- is queued for retry on next login.
                     --
                     -- The mark matters: without it a later unfiltered refund
-                    -- would sweep a hunter's undelivered payout to the
+                    -- would sweep a hitman's undelivered payout to the
                     -- creator, quietly paying the wrong person.
                     local alreadyQueued = line.owed_to == recipientCid
                         and isQueued(line.id)
 
                     line.owed_to = recipientCid
                     Storage.writeEscrow(contractId, { line })
-                    Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
+                    Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD)
                     if not alreadyQueued then
                         Storage.queuePending(recipientCid, contractId, line.id)
                         -- Kept current if it has been read, so a second line
@@ -948,7 +948,7 @@ function Escrow.deliver(recipientCid, line)
         if not exports.ox_inventory:CanCarryItem(src, name, line.amount) then return false end
         return exports.ox_inventory:AddItem(src, name, line.amount) and true or false
 
-    elseif line.source == CB.SOURCE.ITEM then
+    elseif line.source == CH.SOURCE.ITEM then
         if not exports.ox_inventory:CanCarryItem(src, line.item, line.quantity) then return false end
         -- The snapshot goes back exactly as it was taken. Without it a worn
         -- item returns pristine and a container returns as a fresh empty
@@ -956,7 +956,7 @@ function Escrow.deliver(recipientCid, line)
         -- second (§9.4).
         return exports.ox_inventory:AddItem(src, line.item, line.quantity, line.metadata) and true or false
 
-    elseif line.source == CB.SOURCE.WEAPON then
+    elseif line.source == CH.SOURCE.WEAPON then
         if not exports.ox_inventory:CanCarryItem(src, line.item, 1) then return false end
         -- The snapshot goes back exactly as it was taken: serial, attachments
         -- and durability all restored (§9.4).
@@ -971,7 +971,7 @@ end
 --- moneyValue adds the three together, which is what the board showed: one
 --- dollar figure covering cash, bank and black money alike. Those are not
 --- the same thing — black money sells for a fraction of its face value —
---- so a hunter deciding on "$250,000" could be looking at a quarter of a
+--- so a hitman deciding on "$250,000" could be looking at a quarter of a
 --- million black_money items and have no way to tell.
 ---@param contractId string
 ---@param filter table|string|nil
@@ -991,11 +991,11 @@ function Escrow.moneyBySource(contractId, filter)
         end
 
         -- The same exclusions moneyValue applies, so the parts add up to it.
-        if matches and line.portion ~= CB.PORTION.STAKE
-            and line.portion ~= CB.PORTION.OWED
+        if matches and line.portion ~= CH.PORTION.STAKE
+            and line.portion ~= CH.PORTION.OWED
             and not line.owed_to
-            and CB.MONEY_SOURCES[line.source]
-            and line.state ~= CB.ESCROW_STATE.SETTLED then
+            and CH.MONEY_SOURCES[line.source]
+            and line.state ~= CH.ESCROW_STATE.SETTLED then
             out[line.source] = (out[line.source] or 0) + (line.amount or 0)
         end
     end
@@ -1008,7 +1008,7 @@ end
 ---
 --- The bonus is real escrow, taken at creation, not a number on the
 --- contract: the payout releases bonus lines, so a raise that only stored a
---- bigger percentage told every hunter the terms had improved and paid them
+--- bigger percentage told every hitman the terms had improved and paid them
 --- exactly what it did before.
 ---
 --- Only slots whose bonus this resource derived are topped up. A slot where
@@ -1026,13 +1026,13 @@ function Escrow.bonusTopUp(contractId, fromPercent, toPercent, nextSlot)
     local explicit, settled = {}, {}
     for i = 1, #held do
         local line = held[i]
-        if line.portion == CB.PORTION.BONUS and not line.derived then
+        if line.portion == CH.PORTION.BONUS and not line.derived then
             explicit[line.slot] = true
         end
         -- A collection is paid when its baseline is. Any settled line used
         -- to count, so a top-up handed back to the client marked the
         -- collection paid and refused every later raise on it.
-        if line.state == CB.ESCROW_STATE.SETTLED and line.portion == CB.PORTION.BASELINE then
+        if line.state == CH.ESCROW_STATE.SETTLED and line.portion == CH.PORTION.BASELINE then
             settled[line.slot] = true
         end
     end
@@ -1041,15 +1041,15 @@ function Escrow.bonusTopUp(contractId, fromPercent, toPercent, nextSlot)
     for i = 1, #held do
         local line = held[i]
         -- Only a collection still to be paid. One the payout has reached is
-        -- paid even while its baseline is held: queued for a hunter whose
+        -- paid even while its baseline is held: queued for a hitman whose
         -- pockets were full, it is owed to them and no later claim reaches
         -- a bonus added beside it. A baseline owed back to the client is not
         -- the contract's to pay either. Topping up either locked the new
         -- money away until the contract ended and counted it against the
         -- value ceiling meanwhile.
-        if line.portion == CB.PORTION.BASELINE
-            and CB.MONEY_SOURCES[line.source]
-            and line.state ~= CB.ESCROW_STATE.SETTLED
+        if line.portion == CH.PORTION.BASELINE
+            and CH.MONEY_SOURCES[line.source]
+            and line.state ~= CH.ESCROW_STATE.SETTLED
             and not line.owed_to
             and (line.slot or 1) >= nextSlot
             and not explicit[line.slot]
@@ -1062,7 +1062,7 @@ function Escrow.bonusTopUp(contractId, fromPercent, toPercent, nextSlot)
             local now = math.floor(line.amount * toPercent / 100)
             if now > was then
                 extra[#extra + 1] = {
-                    slot = line.slot, portion = CB.PORTION.BONUS,
+                    slot = line.slot, portion = CH.PORTION.BONUS,
                     source = line.source, amount = now - was, derived = true,
                     -- Denominated in whatever the baseline it derives from
                     -- is, so a rename cannot make the top-up and the line it
@@ -1095,17 +1095,17 @@ function Escrow.moneyValue(contractId, filter)
             if filter.slot and line.slot ~= filter.slot then matches = false end
         end
         -- `owed_to` as well as the OWED portion. A line marked for one named
-        -- person is already spoken for: the release a hunter's claim runs
+        -- person is already spoken for: the release a hitman's claim runs
         -- skips it, so counting it here advertises a reward bigger than
         -- anything that will ever be paid — and prices a bailout off money
         -- the target could never have won back. A withdrawal that could not
         -- be handed over, because the creator's pockets were full, leaves a
         -- line in exactly that state on a live contract.
-        if matches and line.portion ~= CB.PORTION.STAKE
-            and line.portion ~= CB.PORTION.OWED
+        if matches and line.portion ~= CH.PORTION.STAKE
+            and line.portion ~= CH.PORTION.OWED
             and not line.owed_to
-            and CB.MONEY_SOURCES[line.source] then
-            if line.state ~= CB.ESCROW_STATE.SETTLED then
+            and CH.MONEY_SOURCES[line.source] then
+            if line.state ~= CH.ESCROW_STATE.SETTLED then
                 total = total + (line.amount or 0)
             end
         end
@@ -1119,7 +1119,7 @@ end
 --- Items and weapons are deliberately not priced — an unpriceable item
 --- would let a creator set any headline figure they liked — but leaving
 --- them out of the projection entirely advertised a contract paying a
---- kitted rifle as $0. A hunter needs to know the goods are there to
+--- kitted rifle as $0. A hitman needs to know the goods are there to
 --- decide, without being told a number nobody can defend.
 ---@return table { items = n, weapons = n, labels = { name, ... } }
 function Escrow.goodsIn(contractId, filter)
@@ -1139,19 +1139,19 @@ function Escrow.goodsIn(contractId, filter)
 
         -- Same rule as moneyValue: goods promised to one named person are
         -- not part of what this contract pays anybody else.
-        if matches and line.state ~= CB.ESCROW_STATE.SETTLED
+        if matches and line.state ~= CH.ESCROW_STATE.SETTLED
             and not line.owed_to
-            and line.portion ~= CB.PORTION.STAKE and line.portion ~= CB.PORTION.OWED then
+            and line.portion ~= CH.PORTION.STAKE and line.portion ~= CH.PORTION.OWED then
 
-            if line.source == CB.SOURCE.ITEM then
+            if line.source == CH.SOURCE.ITEM then
                 out.items = out.items + (line.quantity or 0)
-            elseif line.source == CB.SOURCE.WEAPON then
+            elseif line.source == CH.SOURCE.WEAPON then
                 out.weapons = out.weapons + 1
             end
 
             -- Names only. A serial is an identifier and never crosses, and
             -- metadata is nobody's business but the parties'.
-            if (line.source == CB.SOURCE.ITEM or line.source == CB.SOURCE.WEAPON)
+            if (line.source == CH.SOURCE.ITEM or line.source == CH.SOURCE.WEAPON)
                 and line.item and not seen[line.item] then
                 seen[line.item] = true
                 out.labels[#out.labels + 1] = line.item
@@ -1167,17 +1167,17 @@ end
 --- owed, so it is emptied and closed against its would-be recipient.
 local function voidSplit(line)
     if (line.amount or 0) > 0 then
-        if not Storage.setEscrowAmount(line.id, CB.ESCROW_STATE.HELD, 0, line.amount) then
+        if not Storage.setEscrowAmount(line.id, CH.ESCROW_STATE.HELD, 0, line.amount) then
             return false
         end
     end
-    if Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING) then
+    if Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING) then
         Storage.settleEscrowLine(line.id, line.owed_to)
     end
     return true
 end
 
---- Lower a held stake and owe the difference to the hunter who staked it.
+--- Lower a held stake and owe the difference to the hitman who staked it.
 ---
 --- Two writes, and a process can die between any two. Lowering the stake
 --- first and then minting and writing the owed line lost the difference
@@ -1205,17 +1205,17 @@ function Escrow.reduceStake(contractId, line, amount, reason)
         id = lineId,
         contract_id = contractId,
         slot = 0,
-        portion = CB.PORTION.OWED,
+        portion = CH.PORTION.OWED,
         owed_to = line.staker,
         source = line.source == 'cash' and 'cash' or 'bank',
         amount = returned,
-        state = CB.ESCROW_STATE.HELD,
+        state = CH.ESCROW_STATE.HELD,
         metadata = { splitFrom = line.id, stakeWas = original, stakeNow = amount },
     }
     Storage.writeEscrow(contractId, { owed })
 
     -- Guarded: the stake must still be exactly as it was read.
-    if not Storage.setEscrowAmount(line.id, CB.ESCROW_STATE.HELD, amount, original) then
+    if not Storage.setEscrowAmount(line.id, CH.ESCROW_STATE.HELD, amount, original) then
         voidSplit(owed)
         return nil, false
     end
@@ -1225,8 +1225,8 @@ function Escrow.reduceStake(contractId, line, amount, reason)
     -- whole as a split that never happened — would leave the difference in
     -- neither line: put the stake back rather than lose it.
     local check = Storage.readEscrowLine(lineId)
-    if not check or check.state ~= CB.ESCROW_STATE.HELD or (check.amount or 0) ~= returned then
-        Storage.setEscrowAmount(line.id, CB.ESCROW_STATE.HELD, original, amount)
+    if not check or check.state ~= CH.ESCROW_STATE.HELD or (check.amount or 0) ~= returned then
+        Storage.setEscrowAmount(line.id, CH.ESCROW_STATE.HELD, original, amount)
         return nil, false
     end
 
@@ -1260,10 +1260,10 @@ function Escrow.recoverOwed(lines)
     end
 
     for _, l in ipairs(lines or {}) do
-        if l.state == CB.ESCROW_STATE.HELD and l.owed_to and not isQueuedFor(l.owed_to, l.id) then
+        if l.state == CH.ESCROW_STATE.HELD and l.owed_to and not isQueuedFor(l.owed_to, l.id) then
             local mark = type(l.metadata) == 'table' and l.metadata or nil
             local voided, doubtful = false, false
-            if l.portion == CB.PORTION.OWED and mark and mark.splitFrom then
+            if l.portion == CH.PORTION.OWED and mark and mark.splitFrom then
                 -- Owed only if the stake stands exactly where this split
                 -- left it, void only if it stands where the split found it.
                 -- "Moved at all" was the old test, and a split whose guard
@@ -1320,7 +1320,7 @@ function Escrow.retryPending(cid)
         local entry = queued[order[k]]
         local line = Storage.readEscrowLine(entry.line_id)
         local theirs = line ~= nil and (line.owed_to == nil or line.owed_to == cid)
-        if theirs and line.state == CB.ESCROW_STATE.RELEASING then
+        if theirs and line.state == CH.ESCROW_STATE.RELEASING then
             -- Another pass has it — the tick's and a login's run side by
             -- side for one player, and a release sweep can be mid-delivery.
             -- The entry is that pass's to settle or keep. Cleared here, a
@@ -1328,8 +1328,8 @@ function Escrow.retryPending(cid)
             -- queued for it, and no retry, login or recovery ever read it
             -- again.
             if tried[entry.id] ~= nil then stillTried[entry.id] = tried[entry.id] end
-        elseif theirs and line.state == CB.ESCROW_STATE.HELD then
-            local claimed = Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING)
+        elseif theirs and line.state == CH.ESCROW_STATE.HELD then
+            local claimed = Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING)
             local handed = false
             if claimed then
                 if Escrow.deliver(cid, line) then
@@ -1342,7 +1342,7 @@ function Escrow.retryPending(cid)
                     handed = true
                     gone[entry.id] = true
                 else
-                    Storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
+                    Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD)
                 end
             end
             if not handed then

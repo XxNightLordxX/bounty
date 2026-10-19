@@ -25,7 +25,7 @@ end
 --- paid but not yet settled.
 ---
 --- That last one is the reason this is written out again rather than
---- borrowed. A buyout charges the target immediately and, where a hunter is
+--- borrowed. A buyout charges the target immediately and, where a hitman is
 --- already engaged, queues the settlement on the contract rather than in
 --- escrow — so for the length of that window the money is in neither a
 --- pocket nor an escrow line. It is not lost: the settlement pays it out
@@ -37,12 +37,12 @@ local function world(s)
     local total = 0
     for _, c in ipairs(s.storage.allContracts()) do
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if CB.MONEY_SOURCES[line.source]
-                and line.state ~= CB.ESCROW_STATE.SETTLED then
+            if CH.MONEY_SOURCES[line.source]
+                and line.state ~= CH.ESCROW_STATE.SETTLED then
                 total = total + (line.amount or 0)
             end
         end
-        if c.bailout_paid_amount and not CB.TERMINAL[c.state] then
+        if c.bailout_paid_amount and not CH.TERMINAL[c.state] then
             total = total + c.bailout_paid_amount
         end
     end
@@ -67,9 +67,9 @@ local function interleaveAt(s, n, first, second)
     --- alone gave one switch point for an accept, which is no race at all.
     local WATCH = {
         'compareSetContractState', 'claimEscrowLine', 'settleEscrowLine',
-        'writeContract', 'writeEscrow', 'addHunter', 'updateHunter',
+        'writeContract', 'writeEscrow', 'addHitman', 'updateHitman',
         'setEscrowAmount', 'advanceSlot',
-        'readContract', 'readEscrow', 'readHunters', 'readEscrowLine',
+        'readContract', 'readEscrow', 'readHitmen', 'readEscrowLine',
     }
     local real = {}
 
@@ -99,7 +99,7 @@ local function seeded(opts)
     local f = fixture(s)
     local c = s.contracts.create(f.creator, {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
-        mode = opts.mode or CB.MODE.EXCLUSIVE,
+        mode = opts.mode or CH.MODE.EXCLUSIVE,
         reward = { baseline = { cash = 5000 } },
         bailoutAmount = opts.bailout,
     })
@@ -110,41 +110,41 @@ end
 local function pairings()
     return {
         {
-            what = 'cancelling while a hunter accepts',
+            what = 'cancelling while a hitman accepts',
             build = function() return seeded() end,
             first = function(s, f, c) return s.contracts.cancel(f.creator, c.id) end,
-            second = function(s, f, c) return s.contracts.accept(f.hunter, c.id, false) end,
+            second = function(s, f, c) return s.contracts.accept(f.hitman, c.id, false) end,
         },
         {
-            what = 'two hunters accepting an exclusive contract',
+            what = 'two hitmen accepting an exclusive contract',
             build = function()
                 local s, f, c = seeded()
-                Env.addPlayer({ source = 4, citizenid = 'HUNTER02',
+                Env.addPlayer({ source = 4, citizenid = 'HITMAN02',
                     license = 'license:ddd', cash = 5000, bank = 5000,
                     firstname = 'Sol', lastname = 'Vane' })
                 return s, f, c
             end,
-            first = function(s, f, c) return s.contracts.accept(f.hunter, c.id, false) end,
+            first = function(s, f, c) return s.contracts.accept(f.hitman, c.id, false) end,
             second = function(s, f, c)
                 return s.contracts.accept(s.identity.resolve(4), c.id, false)
             end,
         },
         {
-            what = 'buying out while a hunter accepts',
+            what = 'buying out while a hitman accepts',
             build = function() return seeded({ bailout = 12000 }) end,
             first = function(s, f, c) return s.bailout.buy(f.target, c.id) end,
-            second = function(s, f, c) return s.contracts.accept(f.hunter, c.id, false) end,
+            second = function(s, f, c) return s.contracts.accept(f.hitman, c.id, false) end,
         },
         {
             -- One of two lines, not both: emptying a funded slot is refused
             -- outright, so withdrawing everything raced nothing.
-            what = 'withdrawing part of a reward while a hunter accepts',
+            what = 'withdrawing part of a reward while a hitman accepts',
             build = function()
                 local s = newStack()
                 local f = fixture(s)
                 local c = s.contracts.create(f.creator, {
                     targetCid = 'TARGET01', reason = 'Unpaid debt',
-                    mode = CB.MODE.EXCLUSIVE,
+                    mode = CH.MODE.EXCLUSIVE,
                     reward = { slots = { { baseline = { cash = 5000, bank = 2000 } } } },
                 })
                 return s, f, c
@@ -156,7 +156,7 @@ local function pairings()
                     end
                 end
             end,
-            second = function(s, f, c) return s.contracts.accept(f.hunter, c.id, false) end,
+            second = function(s, f, c) return s.contracts.accept(f.hitman, c.id, false) end,
         },
         {
             -- Through claimSlot, which is how a payout actually happens.
@@ -166,27 +166,27 @@ local function pairings()
             -- after a single store read, and raced nothing at all.
             what = 'paying out while the contract is cancelled',
             build = function()
-                local s, f, c = seeded({ mode = CB.MODE.COMPETITIVE })
-                s.contracts.accept(f.hunter, c.id, false)
+                local s, f, c = seeded({ mode = CH.MODE.COMPETITIVE })
+                s.contracts.accept(f.hitman, c.id, false)
                 return s, f, c
             end,
             first = function(s, f, c)
-                return s.contracts.claimSlot(c.id, 'HUNTER01', 'elimination')
+                return s.contracts.claimSlot(c.id, 'HITMAN01', 'elimination')
             end,
             second = function(s, f, c) return s.contracts.cancel(f.creator, c.id) end,
         },
         {
             what = 'the same payout claimed twice',
             build = function()
-                local s, f, c = seeded({ mode = CB.MODE.COMPETITIVE })
-                s.contracts.accept(f.hunter, c.id, false)
+                local s, f, c = seeded({ mode = CH.MODE.COMPETITIVE })
+                s.contracts.accept(f.hitman, c.id, false)
                 return s, f, c
             end,
             first = function(s, f, c)
-                return s.contracts.claimSlot(c.id, 'HUNTER01', 'elimination')
+                return s.contracts.claimSlot(c.id, 'HITMAN01', 'elimination')
             end,
             second = function(s, f, c)
-                return s.contracts.claimSlot(c.id, 'HUNTER01', 'elimination')
+                return s.contracts.claimSlot(c.id, 'HITMAN01', 'elimination')
             end,
         },
     }
@@ -264,7 +264,7 @@ describe('two actions landing on the same contract at once', function()
                     local contract = s.storage.readContract(c.id)
                     if contract then
                         local legal = false
-                        for _, state in pairs(CB.STATE) do
+                        for _, state in pairs(CH.STATE) do
                             if contract.state == state then legal = true end
                         end
                         if not legal then
@@ -276,7 +276,7 @@ describe('two actions landing on the same contract at once', function()
                         -- actions have finished: that is a settle that
                         -- stopped halfway.
                         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-                            if line.state == CB.ESCROW_STATE.RELEASING then
+                            if line.state == CH.ESCROW_STATE.RELEASING then
                                 broken[#broken + 1] = ('%s at %d left %s mid-release')
                                     :format(pair.what, n, tostring(line.id))
                             end
@@ -291,9 +291,9 @@ describe('two actions landing on the same contract at once', function()
                 #broken, tried, table.concat(broken, '\n  ', 1, math.min(#broken, 6))))
     end)
 
-    --- An exclusive contract has one hunter however many people press
+    --- An exclusive contract has one hitman however many people press
     --- accept at the same instant.
-    it('never gives an exclusive contract two hunters', function()
+    it('never gives an exclusive contract two hitmen', function()
         local broken = {}
         local pair = pairings()[2]
 
@@ -305,18 +305,18 @@ describe('two actions landing on the same contract at once', function()
                     function() pair.second(s, f, c) end)
 
                 local active = 0
-                for _, h in ipairs(s.storage.readHunters(c.id) or {}) do
+                for _, h in ipairs(s.storage.readHitmen(c.id) or {}) do
                     if h.state == 'active' then active = active + 1 end
                 end
                 if active > 1 then
-                    broken[#broken + 1] = ('switching at store call %d left %d hunters')
+                    broken[#broken + 1] = ('switching at store call %d left %d hitmen')
                         :format(n, active)
                 end
             end
         end
 
         eq(#broken, 0,
-            'an exclusive contract took more than one hunter:\n  '
+            'an exclusive contract took more than one hitman:\n  '
             .. table.concat(broken, '\n  '))
     end)
 end)

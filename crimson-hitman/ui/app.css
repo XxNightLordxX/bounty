@@ -76,7 +76,7 @@
   --t-sm: 0.82rem;   /* secondary text, hints, chips */
   --t-md: 0.95rem;   /* body, button labels, form values */
   --t-lg: 1.2rem;    /* the target's name */
-  --t-xl: 1.45rem;   /* the money, which is what a bounty board is for */
+  --t-xl: 1.45rem;   /* the money, which is what a contract board is for */
 
   --shadow: 0 1px 0 rgba(237, 228, 211, 0.04) inset, 0 1px 2px rgba(0, 0, 0, 0.55),
             0 8px 24px rgba(0, 0, 0, 0.35);
@@ -353,8 +353,8 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
 
    Measured at 390px wide with a reward of money plus three item labels and
    two weapons: the block's right edge landed at 466px on a card whose right
-   edge is 376px. The headline number on a bounty board — the entire reason
-   a hunter is reading the card — rendered ninety pixels outside it, behind
+   edge is 376px. The headline number on a contract board — the entire reason
+   a hitman is reading the card — rendered ninety pixels outside it, behind
    `overflow: hidden`. It was not small or badly placed. It was not there.
 
    It may now shrink, it may not grow past half the card, and the goods line
@@ -485,7 +485,7 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
 .chip.ico::before { width: 0.95rem; height: 0.95rem; opacity: 0.75; }
 /* What is live right now — somebody is on it — in the crimson that says
    so. In bone it read as one more label, and the one cue on a card that a
-   hunt is under way was gone. */
+   job is under way was gone. */
 .chip.hot { color: var(--crimson-bright); }
 .chip.hot.ico::before { opacity: 1; }
 .chip.slots { color: var(--ink-dim); }
@@ -496,7 +496,7 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
   padding: 0.16rem 0.5rem; border-radius: 0.35rem;
 }
 .chip.warn.ico::before { opacity: 1; }
-/* A role arrives as the raw word ("hunter"); the page shows it as a label. */
+/* A role arrives as the raw word ("hitman"); the page shows it as a label. */
 .chip.role { text-transform: capitalize; }
 
 /* ---------- buttons ---------- */
@@ -643,9 +643,9 @@ button.chip:hover { color: var(--ink); border-color: var(--rose); background: rg
    two ways to finish and the tools below them, each across the full width. */
 .actions > .countdown,
 .actions > .proposals { flex-basis: 100%; margin: 0; }
-/* A hunter has two ways to finish, and they sit side by side. */
-.actions.is-hunting > .primary,
-.actions.is-hunting > button:not(.primary) { flex: 1 1 0; }
+/* A hitman has two ways to finish, and they sit side by side. */
+.actions.is-working > .primary,
+.actions.is-working > button:not(.primary) { flex: 1 1 0; }
 
 .actions > .hint {
   display: flex; gap: 0.5rem; align-items: flex-start;
@@ -669,12 +669,12 @@ button.chip:hover { color: var(--ink); border-color: var(--rose); background: rg
 }
 /* An odd one out takes the whole last row rather than leaving a hole. */
 .more > :last-child:nth-child(odd) { grid-column: 1 / -1; }
-/* A hunter's Abandon goes last, on a line of its own, where a thumb reaching
+/* A hitman's Abandon goes last, on a line of its own, where a thumb reaching
    for Message or Propose change does not land on it by accident. Moved by
    `order` rather than in the page, so the buttons are still built in the
    order they always were. */
-.is-hunting .more > .is-destructive:not(:first-child) { order: 1; grid-column: 1 / -1; }
-.is-hunting .more > :last-child:nth-child(odd) { grid-column: auto; }
+.is-working .more > .is-destructive:not(:first-child) { order: 1; grid-column: 1 / -1; }
+.is-working .more > :last-child:nth-child(odd) { grid-column: auto; }
 
 /* ---------- forms ---------- */
 
@@ -1107,7 +1107,7 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
 }
 
 /* The grace allowance: one budget for the whole countdown, so what is left
-   of it is what a hunter needs to see. Brass while it holds, crimson while
+   of it is what a hitman needs to see. Brass while it holds, crimson while
    it is being spent. */
 .bar.grace { margin-top: 0.4rem; height: 0.22rem; }
 .bar.grace > i { background: var(--gold); }
@@ -1445,10 +1445,10 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
     font-size: var(--t-xs); line-height: 1.25;
   }
   .more > :last-child:nth-child(odd) { flex-direction: row; gap: 0.5rem; }
-  .is-hunting .more > :last-child:nth-child(odd) { flex-direction: column; gap: 0.3rem; }
-  .is-hunting .more > .is-destructive:not(:first-child) { flex-direction: row; gap: 0.5rem; }
+  .is-working .more > :last-child:nth-child(odd) { flex-direction: column; gap: 0.3rem; }
+  .is-working .more > .is-destructive:not(:first-child) { flex-direction: row; gap: 0.5rem; }
 
-  .actions.is-hunting > button { font-size: var(--t-sm); padding-left: 0.5rem; padding-right: 0.5rem; }
+  .actions.is-working > button { font-size: var(--t-sm); padding-left: 0.5rem; padding-right: 0.5rem; }
 
   /* Back and More share the line; which page this is goes under them. */
   .row.pager { flex-wrap: wrap; row-gap: 0.3rem; }

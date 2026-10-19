@@ -137,7 +137,7 @@ describe('a phone build with no word filter', function()
         withoutFilter(function()
             local c, err = s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'Unpaid debt',
-                mode = CB.MODE.EXCLUSIVE,
+                mode = CH.MODE.EXCLUSIVE,
                 reward = { baseline = { cash = 5000 } },
             })
             truthy(c, 'an export this build does not have took the whole '
@@ -151,12 +151,12 @@ describe('a phone build with no word filter', function()
         withoutFilter(function()
             local c, err = s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'come to discord.gg/whatever',
-                mode = CB.MODE.EXCLUSIVE,
+                mode = CH.MODE.EXCLUSIVE,
                 reward = { baseline = { cash = 5000 } },
             })
             falsy(c, 'the pattern denylist is this resource\'s own and does '
                 .. 'not depend on the phone')
-            eq(err, CB.ERR.INVALID_INPUT)
+            eq(err, CH.ERR.INVALID_INPUT)
         end)
     end)
 
@@ -165,11 +165,11 @@ describe('a phone build with no word filter', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE,
+            mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        s.contracts.accept(f.hunter, c.id, false)
-        -- The creator addresses a thread; only the hunter's side may leave
+        s.contracts.accept(f.hitman, c.id, false)
+        -- The creator addresses a thread; only the hitman's side may leave
         -- it implicit, because they have exactly one.
         local threads = s.comms.threads(f.creator, c.id)
         truthy(#threads > 0, 'there has to be somebody to write to')
@@ -186,10 +186,10 @@ describe('a phone build with no word filter', function()
         local f = fixture(s)
         local c, err = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'you absolute slur',
-            mode = CB.MODE.EXCLUSIVE,
+            mode = CH.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } },
         })
         falsy(c, 'a build that has the filter must still use it')
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
     end)
 end)

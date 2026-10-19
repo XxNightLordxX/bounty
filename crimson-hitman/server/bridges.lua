@@ -86,8 +86,8 @@ function Bridges.onPlayerDropped(modules, cid)
         local contracts = modules.storage.allContracts()
         for i = 1, #contracts do
             local c = contracts[i]
-            if c.creator_cid == cid and c.state == CB.STATE.ACTIVE then
-                modules.contracts.resolve(c.id, CB.STATE.CANCELLED, cid, nil,
+            if c.creator_cid == cid and c.state == CH.STATE.ACTIVE then
+                modules.contracts.resolve(c.id, CH.STATE.CANCELLED, cid, nil,
                     'creator_disconnected_memory_mode')
             end
         end
@@ -127,22 +127,22 @@ function Bridges.install(modules)
         modules.kidnap.clearContract(contractId)
     end
 
-    --- A hunter who is no longer on a contract has no handover on it either.
+    --- A hitman who is no longer on a contract has no handover on it either.
     ---
     --- Through a hook rather than a direct call, like onResolved above:
     --- contracts.lua does not know about the kidnap module and should not
     --- start to. Kidnap.cancel existed for this and had no caller.
-    modules.contracts.onHunterLeft = function(contractId, hunterCid, reason)
-        modules.kidnap.cancel(contractId, hunterCid, reason)
+    modules.contracts.onHitmanLeft = function(contractId, hitmanCid, reason)
+        modules.kidnap.cancel(contractId, hitmanCid, reason)
         -- And the proof of a kill made during the stint that just ended. A
-        -- hunter may now take the contract up again, and a kill or a photo
+        -- hitman may now take the contract up again, and a kill or a photo
         -- token from before they walked away is not something the new stint
         -- earned.
-        modules.death.clearPending(contractId, hunterCid)
-        modules.photo.forget(contractId, hunterCid)
+        modules.death.clearPending(contractId, hitmanCid)
+        modules.photo.forget(contractId, hitmanCid)
         -- And the handles that stood for their thread on it.
-        if modules.comms and modules.comms.clearHunter then
-            modules.comms.clearHunter(contractId, hunterCid)
+        if modules.comms and modules.comms.clearHitman then
+            modules.comms.clearHitman(contractId, hitmanCid)
         end
     end
 
@@ -265,7 +265,7 @@ function Bridges.install(modules)
     -- The gate already refuses every request from a barred job, but a player
     -- whose job is barred was still shown the app: it installed, opened, and
     -- answered nothing, which reads as broken rather than as not-for-them.
-    -- An officer looking at a bounty board they cannot use is also a design
+    -- An officer looking at a contract board they cannot use is also a design
     -- problem, not only a cosmetic one.
     --
     -- The decision is the server's, because the client cannot be trusted
@@ -455,7 +455,7 @@ end
 ---@param line table
 ---@return string
 local function describeLine(line)
-    if CB.MONEY_SOURCES[line.source] then
+    if CH.MONEY_SOURCES[line.source] then
         return ('$%s%s'):format(tostring(line.amount or 0),
             line.source ~= 'cash' and (' ' .. tostring(line.source)) or '')
     end
@@ -579,16 +579,16 @@ function Bridges.installCommands(modules)
     --- What /cleanse says for each refusal, where the app's words do not
     --- reach because the app is closed to the player running it.
     local CLEANSE_REFUSALS = {
-        [CB.ERR.BAILOUT_OFF] = 'this server does not offer buyouts.',
-        [CB.ERR.NO_BUYOUT_PRICE] = 'the client did not put a price on closing that one.',
-        [CB.ERR.BUYOUT_PENDING] = 'you have already paid; it closes shortly.',
-        [CB.ERR.INCAPACITATED] = 'not from the floor. Get up first.',
-        [CB.ERR.HANDOVER_IN_PROGRESS] = 'somebody has hold of you.',
-        [CB.ERR.INSUFFICIENT] = 'you do not have that much.',
-        [CB.ERR.ALREADY_SETTLED] = 'that contract has already closed.',
-        [CB.ERR.NOT_FOUND] = 'no contract on you has that id.',
-        [CB.ERR.NOT_PARTICIPANT] = 'that contract is not on you.',
-        [CB.ERR.INVALID_INPUT] = 'that is not a contract id.',
+        [CH.ERR.BAILOUT_OFF] = 'this server does not offer buyouts.',
+        [CH.ERR.NO_BUYOUT_PRICE] = 'the client did not put a price on closing that one.',
+        [CH.ERR.BUYOUT_PENDING] = 'you have already paid; it closes shortly.',
+        [CH.ERR.INCAPACITATED] = 'not from the floor. Get up first.',
+        [CH.ERR.HANDOVER_IN_PROGRESS] = 'somebody has hold of you.',
+        [CH.ERR.INSUFFICIENT] = 'you do not have that much.',
+        [CH.ERR.ALREADY_SETTLED] = 'that contract has already closed.',
+        [CH.ERR.NOT_FOUND] = 'no contract on you has that id.',
+        [CH.ERR.NOT_PARTICIPANT] = 'that contract is not on you.',
+        [CH.ERR.INVALID_INPUT] = 'that is not a contract id.',
     }
 
     -- Buying out a contract on yourself, for players the app is closed to.
@@ -668,8 +668,8 @@ function Bridges.installCommands(modules)
         reply(src, ('creator  %s  %s%s'):format(who.creator.cid, who.creator.name,
             who.creator.anonymous and '  (listed anonymously)' or ''))
         reply(src, ('target   %s  %s'):format(who.target.cid, who.target.name))
-        for i = 1, #who.hunters do
-            local h = who.hunters[i]
+        for i = 1, #who.hitmen do
+            local h = who.hitmen[i]
             reply(src, ('%-8s %s  %s%s'):format(
                 h.alias or 'operative', h.cid, h.name,
                 h.anonymous and '  (listed anonymously)' or ''))

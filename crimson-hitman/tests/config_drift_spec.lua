@@ -663,7 +663,7 @@ describe('diagnosing an app that shows nothing', function()
             firstname = 'Vic', lastname = 'Alt' })
         local out = said(s.admin.diagnose(1))
         truthy(out:find('targetable by you: 2', 1, true),
-            'the target and the hunter are targetable; the alt is not: ' .. out)
+            'the target and the hitman are targetable; the alt is not: ' .. out)
     end)
 
     it('explains an empty list rather than only reporting it', function()
@@ -1009,30 +1009,6 @@ describe('a config that predates settings the code now reads', function()
             .. 'read and write of it goes through that name — a nil there moves '
             .. 'nothing and reports success')
         truthy(filled.max and filled.max > 0, 'and it needs a ceiling like the others')
-    end)
-
-    it('reads a setting named as it was before the rename as its new name', function()
-        -- A config.lua written when this was crimson-bounty still says
-        -- MaxAcceptedPerHunter and the rest; nothing reads those any more,
-        -- so each would fall back to its default without a word.
-        local main = require('server.main')
-        local savedLimits, savedAnon, savedCoercion =
-            Config.Limits.MaxAcceptedPerHitman, Config.Anonymity.HitmanFee, Config.Kidnap.Coercion
-        Config.Limits.MaxAcceptedPerHitman = nil
-        Config.Limits.MaxAcceptedPerHunter = 7
-        Config.Anonymity.HitmanFee = nil
-        Config.Anonymity.HunterFee = 1234
-        Config.Kidnap.Coercion = { handcuffed = true, passengerOfHunter = false }
-        main.applyConfigDefaults()
-        local accepted, fee, passenger = Config.Limits.MaxAcceptedPerHitman,
-            Config.Anonymity.HitmanFee, Config.Kidnap.Coercion.passengerOfHitman
-        local leftover = Config.Limits.MaxAcceptedPerHunter
-        Config.Limits.MaxAcceptedPerHitman, Config.Anonymity.HitmanFee, Config.Kidnap.Coercion =
-            savedLimits, savedAnon, savedCoercion
-        eq(accepted, 7, 'the operator\'s limit under its old name was dropped')
-        eq(fee, 1234, 'the operator\'s fee under its old name was dropped')
-        eq(passenger, false, 'a detector the operator switched off came back on')
-        eq(leftover, nil, 'the old name was left behind')
     end)
 
     it('leaves a setting the operator did set alone', function()

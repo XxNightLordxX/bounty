@@ -180,7 +180,7 @@ local function handler(name, action, fn)
         local src = source
 
         if not App.ready then
-            return App.reply(src, name, false, CB.ERR.BUSY, nil,
+            return App.reply(src, name, false, CH.ERR.BUSY, nil,
                 type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
 
@@ -193,7 +193,7 @@ local function handler(name, action, fn)
             -- sends and gives up after fifteen seconds, so a silent drop is
             -- not a refusal anybody sees — it is the app sitting there
             -- doing nothing for a quarter of a minute, once per click.
-            return App.reply(src, name, false, CB.ERR.RATE_LIMITED, nil,
+            return App.reply(src, name, false, CH.ERR.RATE_LIMITED, nil,
                 type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
 
@@ -203,7 +203,7 @@ local function handler(name, action, fn)
         -- fifteen seconds on every request it sends.
         local gateOk, actor, err = pcall(deps.identity.gate, src)
         if not gateOk then
-            actor, err = nil, CB.ERR.NO_PLAYER
+            actor, err = nil, CH.ERR.NO_PLAYER
         end
 
         if not actor then
@@ -227,7 +227,7 @@ local function handler(name, action, fn)
             -- minutes, so they tap again, read the same words, and decide
             -- the button is broken.
             local wait = deps.ratelimit.retryAfter and deps.ratelimit.retryAfter(actor, action) or 0
-            return App.reply(src, name, false, CB.ERR.RATE_LIMITED,
+            return App.reply(src, name, false, CH.ERR.RATE_LIMITED,
                 wait > 0 and { retryAfter = wait } or nil,
                 type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
@@ -255,9 +255,9 @@ local function handler(name, action, fn)
 
             if action then deps.ratelimit.refund(actor, action) end
             -- Not INVALID_INPUT. Nothing the player typed is wrong, and
-            -- telling them to check it sends them hunting for a fault they
+            -- telling them to check it sends them searching for a fault they
             -- cannot reach.
-            return App.reply(src, name, false, CB.ERR.SERVER_ERROR, nil, rid)
+            return App.reply(src, name, false, CH.ERR.SERVER_ERROR, nil, rid)
         end
 
         local succeeded = result ~= false and result ~= nil
@@ -353,7 +353,7 @@ function App.register()
     handler('searchTargets', 'search', function(actor, payload)
         local query = Util.sanitizeText(payload.query, 32)
         if not query or #query < Config.Targeting.MinQueryLength then
-            return false, CB.ERR.INVALID_INPUT
+            return false, CH.ERR.INVALID_INPUT
         end
 
         local needle = query:lower()
@@ -487,7 +487,7 @@ function App.register()
     -- replaces it, so this serves no more than the listing already showed.
     handler('mugshotImage', 'image', function(actor, payload)
         local image = deps.mugshot.byHandle(payload and payload.id)
-        if not image then return false, CB.ERR.NOT_FOUND end
+        if not image then return false, CH.ERR.NOT_FOUND end
         return { id = payload.id, image = image }
     end)
 
@@ -518,7 +518,7 @@ function App.register()
                 maxPerStack = Config.Sources.item.maxPerStack,
                 maxWeapons = Config.Sources.weapon.max,
                 -- Whether the server takes goods at all. A form that simply
-                -- omits the section leaves the player hunting for an option
+                -- omits the section leaves the player searching for an option
                 -- that was switched off.
                 itemsEnabled = sourceEnabled('item'),
                 weaponsEnabled = sourceEnabled('weapon'),
@@ -557,9 +557,9 @@ function App.register()
         local targetCid = App.resolveTargetHandle(actor.cid, payload.target)
         if not targetCid then
             if type(payload.target) ~= 'string' or payload.target == '' then
-                return false, CB.ERR.INVALID_INPUT
+                return false, CH.ERR.INVALID_INPUT
             end
-            return false, CB.ERR.NOT_FOUND
+            return false, CH.ERR.NOT_FOUND
         end
 
         local contract, err = deps.contracts.create(actor, {
@@ -583,7 +583,7 @@ function App.register()
         -- refused rather than charged (§14.18).
         local standing = deps.storage.readContract(Util.toId(payload.id))
         if not deps.contracts.stakeWasDisclosed(standing, payload.penaltyAmount) then
-            return false, CB.ERR.TERMS_CHANGED
+            return false, CH.ERR.TERMS_CHANGED
         end
 
         local ok, err = deps.contracts.accept(actor, payload.id, payload.anonymous,
@@ -596,7 +596,7 @@ function App.register()
 
     -- Taking a contract back down, and changing one nobody has taken.
     -- Both are creator-only and both are refused the moment somebody is
-    -- actually hunting it.
+    -- actually working it.
     handler('cancel', 'accept', function(actor, payload)
         local ok, err, result = deps.contracts.cancel(actor, payload.id)
         if not ok then return false, err end
@@ -622,14 +622,14 @@ function App.register()
     -- What the reward is made of, for the creator who is changing it.
     --
     -- A separate request from the listing on purpose: the listing is a money
-    -- total and a count of goods, which is what a hunter decides on, and it
+    -- total and a count of goods, which is what a hitman decides on, and it
     -- is sent to everyone. This is the individual property, with the ids
     -- that name it, and only ever to the person who put it up.
     handler('rewardBreakdown', 'load', function(actor, payload)
         local breakdown = deps.projection.rewardLines(Util.toId(payload.id) or '', actor.cid)
         -- Not found and not yours are the same answer. Telling them apart
         -- would turn this into a way to ask whether a contract id exists.
-        if not breakdown then return false, CB.ERR.NOT_FOUND end
+        if not breakdown then return false, CH.ERR.NOT_FOUND end
         return breakdown
     end)
 
@@ -637,7 +637,7 @@ function App.register()
     -- only ever adds.
     handler('withdrawReward', 'amend', function(actor, payload)
         local ids = payload.lines
-        if type(ids) ~= 'table' then return false, CB.ERR.INVALID_INPUT end
+        if type(ids) ~= 'table' then return false, CH.ERR.INVALID_INPUT end
 
         -- msgpack hands a client-sent array over as a map when its keys are
         -- not a clean 1..n sequence, and a hand-built payload need not be an
@@ -659,7 +659,7 @@ function App.register()
         for _, id in pairs(ids) do
             list[#list + 1] = id
             if #list > Config.Limits.MaxEscrowLines then
-                return false, CB.ERR.INVALID_INPUT
+                return false, CH.ERR.INVALID_INPUT
             end
         end
 
@@ -692,7 +692,7 @@ function App.register()
     -- Its own bucket, not the one requestPhotoToken bills.
     --
     -- Both used to charge `photo`, so one verification spent two of three
-    -- allowed attempts — and the second charge lands AFTER the hunter has
+    -- allowed attempts — and the second charge lands AFTER the hitman has
     -- lined up and taken the shot. Whether a retry sequence can actually
     -- exhaust it depends on how long the camera is open, because the bucket
     -- refills while it is; the reachability is marginal. What is not
@@ -724,7 +724,7 @@ function App.register()
         if not progress then
             -- How it ended, if it ended a moment ago. The poller is what is
             -- watching when a countdown finishes, and every ending looked the
-            -- same to it — so a hunter who had just been paid for a handover
+            -- same to it — so a hitman who had just been paid for a handover
             -- was told it had ended and to try again. Keyed by this actor's
             -- own citizen id, so it only ever describes their own handover.
             local ended = deps.kidnap.outcome and deps.kidnap.outcome(id, actor.cid)
@@ -749,7 +749,7 @@ function App.register()
             -- reached the player as "Lost track of the handover", which
             -- sounds like a fault and is not one. Asking about a handover
             -- that has ended, or was never armed, is an ordinary question.
-            return false, CB.ERR.NO_HANDOVER
+            return false, CH.ERR.NO_HANDOVER
         end
         return progress
     end)

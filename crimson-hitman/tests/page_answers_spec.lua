@@ -36,7 +36,7 @@ describe('a change proposed on a contract nobody holds', function()
     --- the contract, that answer is the creator's own — raise_penalty is
     --- only allowed there, and relies on it. The page drew such a proposal
     --- as "Waiting to be applied." with nothing to press, so it lapsed, held
-    --- the one open slot, and was put to the next hunter to accept. The page
+    --- the one open slot, and was put to the next hitman to accept. The page
     --- now gives that answer; these pin what it relies on.
     --- Applied in the propose itself now: the page's own answer was a
     --- second request from the same rate-limit bucket, and two proposals a
@@ -46,7 +46,7 @@ describe('a change proposed on a contract nobody holds', function()
         local f = fixture(s)
         local c = placed(s, f, { reward = { slots = {
             { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
-            mode = CB.MODE.COMPETITIVE })
+            mode = CH.MODE.COMPETITIVE })
         local reply = call('propose', 1, { id = c.id, kind = 'reduce_reward', payload = { slot = 2 } })
         truthy(reply.ok, tostring(reply.err))
         eq(reply.data.outcome, 'applied')
@@ -60,7 +60,7 @@ describe('a change proposed on a contract nobody holds', function()
         local f = fixture(s)
         local c = placed(s, f, { reward = { slots = {
             { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } },
-            { baseline = { cash = 3000 } } } }, mode = CB.MODE.COMPETITIVE })
+            { baseline = { cash = 3000 } } } }, mode = CH.MODE.COMPETITIVE })
         local first = call('propose', 1, { id = c.id, kind = 'reduce_reward', payload = { slot = 3 } })
         Env.advance(5)
         local second = call('propose', 1, { id = c.id, kind = 'reduce_reward', payload = { slot = 2 } })
@@ -72,9 +72,9 @@ describe('a change proposed on a contract nobody holds', function()
     it('tells the page whether proposals exist on this server at all', function()
         local s = newStack()
         local f = fixture(s)
-        eq(s.projection.listing('HUNTER01').settings.amendments, true)
+        eq(s.projection.listing('HITMAN01').settings.amendments, true)
         Config.Amendments.Enabled = false
-        eq(s.projection.listing('HUNTER01').settings.amendments, false,
+        eq(s.projection.listing('HITMAN01').settings.amendments, false,
             'the page drew Propose change on every card of a server that '
             .. 'refuses every proposal')
         local _ = f
@@ -101,7 +101,7 @@ describe('placing a contract on somebody who can no longer be named', function()
         Env.advance(601)
         local ok, err = attempt(s, f, handle)
         falsy(ok)
-        eq(err, CB.ERR.NOT_FOUND)
+        eq(err, CH.ERR.NOT_FOUND)
     end)
 
     it('answers not_found once the target has relogged', function()
@@ -111,7 +111,7 @@ describe('placing a contract on somebody who can no longer be named', function()
         s.app.clearPlayerHandles('TARGET01')
         local ok, err = attempt(s, f, handle)
         falsy(ok)
-        eq(err, CB.ERR.NOT_FOUND)
+        eq(err, CH.ERR.NOT_FOUND)
     end)
 
     it('still answers invalid_input when no target was sent at all', function()
@@ -119,7 +119,7 @@ describe('placing a contract on somebody who can no longer be named', function()
         local f = fixture(s)
         local ok, err = attempt(s, f, nil)
         falsy(ok)
-        eq(err, CB.ERR.INVALID_INPUT)
+        eq(err, CH.ERR.INVALID_INPUT)
     end)
 
     it('takes nothing from the creator either way', function()
@@ -140,7 +140,7 @@ describe('what the withdraw reply says came back', function()
         local s = newStack()
         local f = fixture(s)
         local c = placed(s, f, {
-            mode = CB.MODE.COMPETITIVE,
+            mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 }, bonus = { dirty = 1000 } },
         })
         Env.players[1]._inventoryFull = true
@@ -162,8 +162,8 @@ describe('what the withdraw reply says came back', function()
 end)
 
 describe('a thread once its contract has closed', function()
-    --- A hunter's row stays active when a contract ends and only the
-    --- creator's thread handles are dropped. So a hunter could go on writing
+    --- A hitman's row stays active when a contract ends and only the
+    --- creator's thread handles are dropped. So a hitman could go on writing
     --- to the client of a finished contract — each message a notification
     --- on their phone — while the client, who could no longer answer, was
     --- told "That is not yours" about the conversation.
@@ -172,19 +172,19 @@ describe('a thread once its contract has closed', function()
         s.bridges.install(s)
         local f = fixture(s)
         local c = placed(s, f)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         local handle = s.comms.threads(f.creator, c.id)[1].handle
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION, {}))
-        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {}))
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
         return s, f, c, handle
     end
 
-    it('refuses the hunter a message, and rings nobody', function()
+    it('refuses the hitman a message, and rings nobody', function()
         local s, f, c = closed()
         Natives.calls.notifications = {}
-        local ok, err = s.comms.send(f.hunter, c.id, nil, 'still here')
+        local ok, err = s.comms.send(f.hitman, c.id, nil, 'still here')
         falsy(ok, 'a finished contract was still a way to reach its client')
-        eq(err, CB.ERR.ALREADY_SETTLED)
+        eq(err, CH.ERR.ALREADY_SETTLED)
         for _, note in ipairs(Natives.calls.notifications) do
             falsy(note.title == 'Contract message', 'the client was notified anyway')
         end
@@ -193,14 +193,14 @@ describe('a thread once its contract has closed', function()
     it('tells both parties the contract closed, not that it is not theirs', function()
         local s, f, c, handle = closed()
         local _, creatorErr = s.comms.read(f.creator, c.id, handle)
-        eq(creatorErr, CB.ERR.ALREADY_SETTLED)
-        local _, hunterErr = s.comms.read(f.hunter, c.id, nil)
-        eq(hunterErr, CB.ERR.ALREADY_SETTLED)
+        eq(creatorErr, CH.ERR.ALREADY_SETTLED)
+        local _, hitmanErr = s.comms.read(f.hitman, c.id, nil)
+        eq(hitmanErr, CH.ERR.ALREADY_SETTLED)
     end)
 
     it('lists no threads for it', function()
         local s, f, c = closed()
-        eq(#s.comms.threads(f.hunter, c.id), 0)
+        eq(#s.comms.threads(f.hitman, c.id), 0)
         eq(#s.comms.threads(f.creator, c.id), 0)
     end)
 
@@ -208,8 +208,8 @@ describe('a thread once its contract has closed', function()
         local s = newStack()
         local f = fixture(s)
         local c = placed(s, f)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        truthy(s.comms.send(f.hunter, c.id, nil, 'on my way'))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.comms.send(f.hitman, c.id, nil, 'on my way'))
         local handle = s.comms.threads(f.creator, c.id)[1].handle
         eq(#s.comms.read(f.creator, c.id, handle), 1)
     end)
@@ -220,23 +220,23 @@ describe('asking about a handover while it is being paid', function()
     --- written after it — on mysql every step between waits on the database.
     --- A poll landing there found neither and answered no_handover, which
     --- the page reads out as "The handover ended. Get them back to the
-    --- client and try again." to a hunter who was being paid.
+    --- client and try again." to a hitman who was being paid.
     it('answers settling rather than no_handover, then how it ended', function()
         local s = newStack()
         local f = fixture(s)
         local c = placed(s, f)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         for _, src in ipairs({ 1, 2, 3 }) do
             Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z }
         end
         Env.players[2].PlayerData.metadata.ishandcuffed = true
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
 
         local during, duringErr
         local real = s.storage.claimEscrowLine
         s.storage.claimEscrowLine = function(...)
             if during == nil and duringErr == nil then
-                during, duringErr = s.app.handlers.kidnapProgress(f.hunter, { id = c.id })
+                during, duringErr = s.app.handlers.kidnapProgress(f.hitman, { id = c.id })
             end
             return real(...)
         end
@@ -249,7 +249,7 @@ describe('asking about a handover while it is being paid', function()
         eq(during.elapsed, during.required, 'drawn as a full bar')
         falsy(during.done, 'and not as an ending')
 
-        local after = s.app.handlers.kidnapProgress(f.hunter, { id = c.id })
+        local after = s.app.handlers.kidnapProgress(f.hitman, { id = c.id })
         truthy(after and after.done)
         eq(after.outcome, 'paid')
     end)

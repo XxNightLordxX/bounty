@@ -89,7 +89,7 @@ function Notify.push(cid, reason)
     if last and (now - last) < floor then
         -- Held back, not dropped. The app refreshes on the push it already
         -- got, and that refresh can read the contract before this change
-        -- lands — two hunters accepting in the same second left the
+        -- lands — two hitmen accepting in the same second left the
         -- creator's open card showing one operative until something else
         -- happened to change. One push goes once the floor has passed, so a
         -- burst still costs one refresh after the first, and the last word
@@ -123,9 +123,9 @@ end
 --- Nudge every party to a contract. Used on the four transitions that change
 --- what a card should say: accepted, settled, bought out, expired.
 ---@param contract table
----@param hunterCids string[]|nil
+---@param hitmanCids string[]|nil
 ---@param reason string
-function Notify.pushParties(contract, hunterCids, reason)
+function Notify.pushParties(contract, hitmanCids, reason)
     if not contract then return 0 end
 
     local seen, sent = {}, 0
@@ -137,7 +137,7 @@ function Notify.pushParties(contract, hunterCids, reason)
 
     nudge(contract.creator_cid)
     nudge(contract.target_cid)
-    for i = 1, #(hunterCids or {}) do nudge(hunterCids[i]) end
+    for i = 1, #(hitmanCids or {}) do nudge(hitmanCids[i]) end
 
     return sent
 end
@@ -166,25 +166,25 @@ function Notify.contractCreated(contract, targetActor)
     end
 end
 
-function Notify.contractAccepted(contract, hunterRecord, activeHunters)
-    local who = hunterRecord.anon and 'an operative' or hunterRecord.hunter_name
+function Notify.contractAccepted(contract, hitmanRecord, activeHitmen)
+    local who = hitmanRecord.anon and 'an operative' or hitmanRecord.hitman_name
     Notify.toCitizen(contract.creator_cid, 'Contract accepted',
         ('Your contract on %s has been accepted by %s. %d operative%s now active.')
-            :format(contract.target_name, who, activeHunters, activeHunters == 1 and ' is' or 's are'))
+            :format(contract.target_name, who, activeHitmen, activeHitmen == 1 and ' is' or 's are'))
 
     -- Every acceptance raises an advisory carrying the running count, so law
     -- enforcement can judge the scale of the threat and not just its
-    -- existence. The per-contract hunter cap bounds the total (§7.5).
+    -- existence. The per-contract hitman cap bounds the total (§7.5).
     if contract.target_protected then
-        Notify.advisory(contract, 'accepted', activeHunters)
+        Notify.advisory(contract, 'accepted', activeHitmen)
     end
 
-    -- The creator's own card now shows one more operative, and the hunter's
+    -- The creator's own card now shows one more operative, and the hitman's
     -- Mine tab has a contract in it that was not there a moment ago. The
     -- target is deliberately not pushed: they are not told a contract exists
     -- unless the paranoid alert or an advisory tells them.
     Notify.push(contract.creator_cid, 'accepted')
-    Notify.push(hunterRecord.hunter_cid, 'accepted')
+    Notify.push(hitmanRecord.hitman_cid, 'accepted')
 end
 
 --- Tell the creator their contract was fulfilled.
@@ -196,12 +196,12 @@ end
 --- sent to an archive row with nothing attached — which reads as the archive
 --- having lost the picture rather than as there never having been one.
 ---@param contract table
----@param hunterRecord table|nil
+---@param hitmanRecord table|nil
 ---@param photoRef string|nil the proof image, where the route produced one
-function Notify.contractCompleted(contract, hunterRecord, photoRef)
+function Notify.contractCompleted(contract, hitmanRecord, photoRef)
     local hasPhoto = type(photoRef) == 'string' and photoRef ~= ''
     -- A receipt, so outside the budget (§14.40). Relay messages spend the
-    -- same budget, so five from the hunter in the minute before the kill
+    -- same budget, so five from the hitman in the minute before the kill
     -- used to mean the creator never heard it had been done.
     Notify.toCitizen(contract.creator_cid, 'Contract fulfilled',
         hasPhoto
@@ -210,7 +210,7 @@ function Notify.contractCompleted(contract, hunterRecord, photoRef)
             or  'Your contract was fulfilled by live delivery. There is no '
                 .. 'photograph — the target was handed over in person.',
         { bypassBudget = true })
-    local _ = hunterRecord
+    local _ = hitmanRecord
 end
 
 --------------------------------------------------------------------------
@@ -239,16 +239,16 @@ end
 --- police work.
 ---@param contract table
 ---@param stage string 'posted' | 'accepted'
----@param activeHunters integer|nil count of hunters now on the contract
+---@param activeHitmen integer|nil count of hitmen now on the contract
 --- Whether officers are told at this stage; see Util.advises.
 Notify.advises = Util.advises
 
-function Notify.advisory(contract, stage, activeHunters)
+function Notify.advisory(contract, stage, activeHitmen)
     if not Notify.advises(stage) then return end
 
     -- One advisory per contract per stage; acceptances are keyed by count so
     -- each new operative raises exactly one bulletin.
-    local key = contract.id .. ':' .. stage .. ':' .. tostring(activeHunters or 0)
+    local key = contract.id .. ':' .. stage .. ':' .. tostring(activeHitmen or 0)
     if advisorySent[key] then return end
     advisorySent[key] = true
 
@@ -260,7 +260,7 @@ function Notify.advisory(contract, stage, activeHunters)
         content = ('A contract has been placed on %s%s.'):format(rank, contract.target_name)
     else
         title = 'THREAT ADVISORY — ACTIVE'
-        local n = activeHunters or 1
+        local n = activeHitmen or 1
         content = ('The contract on %s%s has been accepted. %d operative%s active.')
             :format(rank, contract.target_name, n, n == 1 and ' is' or 's are')
     end
@@ -285,7 +285,7 @@ function Notify.advisory(contract, stage, activeHunters)
             stage == 'posted'
                 and 'A contract has been placed on you. Your department has been advised.'
                 or  ('The contract on you has been accepted. %d operative%s active.')
-                        :format(activeHunters or 1, (activeHunters or 1) == 1 and ' is' or 's are'),
+                        :format(activeHitmen or 1, (activeHitmen or 1) == 1 and ' is' or 's are'),
             { bypassBudget = true })
     end
 
@@ -299,7 +299,7 @@ function Notify.advisory(contract, stage, activeHunters)
                 priority = Config.Advisory.DispatchPriority,
                 caller = 'Criminal Intelligence',
                 job_table = dispatchJobs(),
-                unique_id = 'cb-' .. contract.id .. '-' .. stage,
+                unique_id = 'ch-' .. contract.id .. '-' .. stage,
             })
         end)
     end
@@ -331,7 +331,7 @@ function Notify.clearContract(contractId, contract)
         local jobs = dispatchJobs()
         for _, stage in ipairs({ 'posted', 'accepted' }) do
             if Notify.advises(stage) then
-                local uid = 'cb-' .. contractId .. '-' .. stage
+                local uid = 'ch-' .. contractId .. '-' .. stage
                 CreateThread(function()
                     pcall(function() exports['sc-dispatch']:ClearNotification(uid, jobs) end)
                 end)

@@ -176,11 +176,11 @@ describe('every handler survives a hostile payload', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(c)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         for _, name in ipairs(HANDLERS) do
             for _, payload in ipairs(payloads()) do
@@ -191,7 +191,7 @@ describe('every handler survives a hostile payload', function()
         end
 
         local state = s.storage.readContract(c.id).state
-        truthy(state == CB.STATE.ACTIVE or state == CB.STATE.ACCEPTED,
+        truthy(state == CH.STATE.ACTIVE or state == CH.STATE.ACCEPTED,
             'the contract was left in ' .. tostring(state))
     end)
 end)

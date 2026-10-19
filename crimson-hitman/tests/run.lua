@@ -19,7 +19,7 @@ _G.require_shared = function(name) return require('crimson-hitman.shared.' .. na
 -- app.init came to be missing from newStack for the life of the build.
 package.path = './crimson-hitman/?.lua;' .. package.path
 
-_G.CB = require('crimson-hitman.shared.constants')
+_G.CH = require('crimson-hitman.shared.constants')
 -- The shipped defaults load first on a live server, so they do here too:
 -- boot fills a missing section from them, and a harness without them would
 -- be testing a program that cannot.
@@ -335,7 +335,7 @@ function _G.newStack()
     }
 end
 
---- Common fixture: a criminal creator, a criminal target, a criminal hunter.
+--- Common fixture: a criminal creator, a criminal target, a criminal hitman.
 function _G.fixture(stack, overrides)
     overrides = overrides or {}
     local creator = Env.addPlayer({
@@ -353,15 +353,15 @@ function _G.fixture(stack, overrides)
         cash = 20000, bank = 20000, firstname = 'Dana', lastname = 'Reyes',
         job = overrides.targetJob or { name = 'unemployed', type = 'none' },
     })
-    local hunter = Env.addPlayer({
-        source = 3, citizenid = 'HUNTER01', license = 'license:ccc',
+    local hitman = Env.addPlayer({
+        source = 3, citizenid = 'HITMAN01', license = 'license:ccc',
         cash = 5000, bank = 5000, firstname = 'Rook', lastname = 'Ash',
     })
     return {
         creator = stack.identity.resolve(1),
         target  = stack.identity.resolve(2),
-        hunter  = stack.identity.resolve(3),
-        creatorPlayer = creator, targetPlayer = target, hunterPlayer = hunter,
+        hitman  = stack.identity.resolve(3),
+        creatorPlayer = creator, targetPlayer = target, hitmanPlayer = hitman,
     }
 end
 
@@ -384,12 +384,12 @@ local RAW_STORE_SPECS = { differential_spec = true }
 --- exercise is exercised by the operations it is counting.
 local MEASUREMENT_SPECS = { complexity_spec = true }
 
---- CB_SUITES=a_spec,b_spec runs only those, for a quick loop while working
+--- CH_SUITES=a_spec,b_spec runs only those, for a quick loop while working
 --- on one area. Unset — as all.sh leaves it — everything runs.
 local only
-if os.getenv('CB_SUITES') and os.getenv('CB_SUITES') ~= '' then
+if os.getenv('CH_SUITES') and os.getenv('CH_SUITES') ~= '' then
     only = {}
-    for name in os.getenv('CB_SUITES'):gmatch('[^,%s]+') do only[name] = true end
+    for name in os.getenv('CH_SUITES'):gmatch('[^,%s]+') do only[name] = true end
 end
 
 for _, name in ipairs(suites) do

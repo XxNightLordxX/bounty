@@ -59,7 +59,7 @@ local function seeded(opts)
     local f = fixture(s)
     local c = s.contracts.create(f.creator, {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
-        mode = opts.mode or CB.MODE.COMPETITIVE,
+        mode = opts.mode or CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
         bailoutAmount = opts.bailout,
     })
@@ -76,34 +76,34 @@ local function faceHandle(s, cid)
     return s.mugshot.handleFor(cid)
 end
 
-describe('a hunter taking a contract and putting it back', function()
+describe('a hitman taking a contract and putting it back', function()
     it('accepts through the event the button actually sends', function()
         local s, f, c = seeded()
         -- ui/app.js:737 — post('accept', { id, anonymous })
         ok('accept', 3, { id = c.id, anonymous = false })
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
     end)
 
     --- The anonymity flag has to survive the crossing, not just be sent.
     --- A handler that read the wrong key would still answer ok, and the
-    --- hunter would be named to their target having paid a fee not to be.
-    it('accepts anonymously when the hunter asks to', function()
+    --- hitman would be named to their target having paid a fee not to be.
+    it('accepts anonymously when the hitman asks to', function()
         local s, f, c = seeded()
         ok('accept', 3, { id = c.id, anonymous = true })
 
-        local hunters = s.storage.readHunters(c.id) or {}
-        truthy(#hunters > 0, 'the accept has to have recorded a hunter')
-        eq(hunters[1].anon, true,
-            'a hunter who asked to be anonymous, and paid for it, has to be')
+        local hitmen = s.storage.readHitmen(c.id) or {}
+        truthy(#hitmen > 0, 'the accept has to have recorded a hitman')
+        eq(hitmen[1].anon, true,
+            'a hitman who asked to be anonymous, and paid for it, has to be')
     end)
 
-    it('names a hunter who did not ask to be anonymous', function()
+    it('names a hitman who did not ask to be anonymous', function()
         local s, f, c = seeded()
         ok('accept', 3, { id = c.id, anonymous = false })
 
-        local hunters = s.storage.readHunters(c.id) or {}
-        truthy(#hunters > 0, 'the accept has to have recorded a hunter')
-        eq(hunters[1].anon, false,
+        local hitmen = s.storage.readHitmen(c.id) or {}
+        truthy(#hitmen > 0, 'the accept has to have recorded a hitman')
+        eq(hitmen[1].anon, false,
             'anonymity must not be the default: it is a paid choice')
     end)
 
@@ -121,7 +121,7 @@ describe('a target buying their way out', function()
         -- ui/app.js:815 — post('bailout', { id })
         ok('bailout', 2, { id = c.id },
             'the target holds 20000 in the bank against a 15000 buyout')
-        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
     end)
 end)
 
@@ -207,7 +207,7 @@ describe('changing a contract after it is placed', function()
     it('reduces a reward by the slot the page names, not an amount', function()
         local s, f = seeded()
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'Two collections', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'Two collections', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
         })
         truthy(c, 'a contract with a later collection to give back')
@@ -436,7 +436,7 @@ describe('the reason a contract gives, in every mode the operator can pick', fun
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.EXCLUSIVE, reward = { baseline = { cash = 5000 } },
+            mode = CH.MODE.EXCLUSIVE, reward = { baseline = { cash = 5000 } },
         })
         withConfig({ { Config.Reason, 'Mode', 'preset' } }, function()
             -- ui/app.js editContract — post('revise', { id, reasonPreset, ... })
@@ -494,7 +494,7 @@ describe('how many separate rewards one contract may hold', function()
         local f = fixture(s)
         local c, err = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.EXCLUSIVE,
+            mode = CH.MODE.EXCLUSIVE,
             reward = build(2, { cash = true, bank = true }),
         })
         truthy(c, 'four lines is well inside sixty: ' .. tostring(err))
@@ -506,11 +506,11 @@ describe('how many separate rewards one contract may hold', function()
         withConfig({ { Config.Limits, 'MaxEscrowLines', 3 } }, function()
             local c, err = s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'Unpaid debt',
-                mode = CB.MODE.EXCLUSIVE,
+                mode = CH.MODE.EXCLUSIVE,
                 reward = build(2, { cash = true, bank = true }),
             })
             falsy(c, 'four lines against a ceiling of three has to be refused')
-            eq(err, CB.ERR.INVALID_REWARD)
+            eq(err, CH.ERR.INVALID_REWARD)
         end)
     end)
 
@@ -550,7 +550,7 @@ describe('accepting a contract that carries a stake', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE,
+            mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 10000 } },
             penaltyAmount = amount,
         })
@@ -571,17 +571,17 @@ describe('accepting a contract that carries a stake', function()
         local s, f, c = staked(2000)
 
         local proposal = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.RAISE_PENALTY, { amount = 15000 })
+            CH.AMENDMENT.RAISE_PENALTY, { amount = 15000 })
         truthy(proposal)
         eq(proposal.outcome, 'applied', 'nobody else holds it, so it is in effect')
 
         local reply = call('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 2000 })
         truthy(reply, 'the handler must answer')
         falsy(reply.ok, 'a stale figure must not be charged')
-        eq(reply.err, CB.ERR.TERMS_CHANGED)
+        eq(reply.err, CH.ERR.TERMS_CHANGED)
         eq(Env.players[3].PlayerData.money.bank, 50000, 'and nothing was taken')
-        eq(#s.storage.readHunters(c.id), 0, 'and nobody is on the contract')
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE,
+        eq(#s.storage.readHitmen(c.id), 0, 'and nobody is on the contract')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE,
             'nor did the refusal move the contract')
     end)
 
@@ -589,7 +589,7 @@ describe('accepting a contract that carries a stake', function()
         local s, _, c = staked(2000)
         local reply = call('accept', 3, { id = c.id, anonymous = false })
         falsy(reply.ok, 'silence is not disclosure')
-        eq(reply.err, CB.ERR.TERMS_CHANGED)
+        eq(reply.err, CH.ERR.TERMS_CHANGED)
         eq(Env.players[3].PlayerData.money.bank, 50000)
     end)
 
@@ -598,7 +598,7 @@ describe('accepting a contract that carries a stake', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE,
+            mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 10000 } },
         })
         ok('accept', 3, { id = c.id, anonymous = false },
@@ -611,7 +611,7 @@ end)
 --- A stake on a contract about to run out (§14.18).
 ---
 --- A client can set a contract nobody holds to run out in minutes, and a
---- stake forfeits to the client at the deadline. So a hunter could stake,
+--- stake forfeits to the client at the deadline. So a hitman could stake,
 --- have no time at all to work the target, and hand the stake over. And
 --- the deadline, like the stake, could be brought forward between the card
 --- being read and Accept being tapped, with nothing to say so.
@@ -621,7 +621,7 @@ describe('a stake on a contract about to run out', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE,
+            mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 10000 } },
             penaltyAmount = stake,
         })
@@ -632,8 +632,8 @@ describe('a stake on a contract about to run out', function()
 
     local function nobodyOn(s, c)
         eq(Env.players[3].PlayerData.money.bank, 50000, 'nothing was taken')
-        eq(#s.storage.readHunters(c.id), 0, 'and nobody is on the contract')
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE,
+        eq(#s.storage.readHitmen(c.id), 0, 'and nobody is on the contract')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE,
             'nor did the refusal move the contract')
     end
 
@@ -646,8 +646,8 @@ describe('a stake on a contract about to run out', function()
 
         local reply = call('accept', 3, { id = c.id, anonymous = false,
             penaltyAmount = 2000, deadline = deadline })
-        falsy(reply.ok, 'a stake the hunter cannot work for is a gift to the client')
-        eq(reply.err, CB.ERR.TOO_LITTLE_TIME)
+        falsy(reply.ok, 'a stake the hitman cannot work for is a gift to the client')
+        eq(reply.err, CH.ERR.TOO_LITTLE_TIME)
         nobodyOn(s, c)
     end)
 
@@ -666,7 +666,7 @@ describe('a stake on a contract about to run out', function()
         s.storage.setDeadline(c.id, nil, os.time() + window - 1)
         local reply = call('accept', 3, { id = c.id, anonymous = false,
             penaltyAmount = 2000, deadline = os.time() + window - 1 })
-        eq(reply.err, CB.ERR.TOO_LITTLE_TIME, 'a second short is short')
+        eq(reply.err, CH.ERR.TOO_LITTLE_TIME, 'a second short is short')
 
         s.storage.setDeadline(c.id, nil, os.time() + window)
         ok('accept', 3, { id = c.id, anonymous = false,
@@ -699,8 +699,8 @@ describe('a stake on a contract about to run out', function()
 
         local reply = call('accept', 3, { id = c.id, anonymous = false,
             penaltyAmount = 2000, deadline = shown })
-        falsy(reply.ok, 'the stake forfeits to a deadline the hunter was not shown')
-        eq(reply.err, CB.ERR.TERMS_CHANGED)
+        falsy(reply.ok, 'the stake forfeits to a deadline the hitman was not shown')
+        eq(reply.err, CH.ERR.TERMS_CHANGED)
         nobodyOn(s, c)
 
         ok('accept', 3, { id = c.id, anonymous = false,
@@ -714,7 +714,7 @@ describe('a stake on a contract about to run out', function()
         s.storage.setDeadline(c.id, nil, shown + 3600)
         ok('accept', 3, { id = c.id, anonymous = false,
             penaltyAmount = 2000, deadline = shown },
-            'more time than the hunter was shown takes nothing from them')
+            'more time than the hitman was shown takes nothing from them')
     end)
 
     it('gives the clock a minute of slack', function()
@@ -781,7 +781,7 @@ describe('the deadline of an anonymous contract', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE, anonymous = true,
+            mode = CH.MODE.COMPETITIVE, anonymous = true,
             reward = { baseline = { cash = 10000 } },
         })
         truthy(c)
@@ -796,7 +796,7 @@ describe('the deadline of an anonymous contract', function()
         eq(stored.deadline_at % 300, 0, 'the deadline dates the placement')
         eq(stored.expires_at % 300, 0, 'the lifetime dates the placement')
         truthy(stored.deadline_at >= before + Config.Limits.DefaultDeadlineSeconds,
-            'rounded down, the hunter is given less time than promised')
+            'rounded down, the hitman is given less time than promised')
         truthy(stored.deadline_at < before + Config.Limits.DefaultDeadlineSeconds + 300)
         truthy(stored.expires_at >= before + Config.Limits.ContractLifetimeSeconds)
     end)
@@ -860,10 +860,10 @@ describe('a handler that throws', function()
 
     it('does not tell the player to check what they typed', function()
         -- Nothing they entered is wrong, and INVALID_INPUT sends them
-        -- hunting for a fault they cannot reach.
+        -- working for a fault they cannot reach.
         local s = broken()
         local reply = call('list', 3, { page = 1 })
-        eq(reply.err, CB.ERR.SERVER_ERROR)
+        eq(reply.err, CH.ERR.SERVER_ERROR)
     end)
 
     it('tells the operator, in the console', function()
@@ -899,14 +899,14 @@ describe('a handler that throws', function()
         -- fault is then told to slow down about it.
         local s, f = broken()
         local before = 0
-        while s.ratelimit.check(f.hunter, 'load') do before = before + 1 end
+        while s.ratelimit.check(f.hitman, 'load') do before = before + 1 end
         truthy(before > 0, 'there is an allowance to spend')
 
         local s2, f2 = broken()
         said(function()
             for _ = 1, before do call('list', 3, { page = 1 }) end
         end)
-        truthy(s2.ratelimit.check(f2.hunter, 'load'),
+        truthy(s2.ratelimit.check(f2.hitman, 'load'),
             'every one of those threw, so none of them should have cost '
             .. 'anything')
     end)

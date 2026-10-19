@@ -19,7 +19,7 @@ start to annoy you, and not before.
 and `Contracts.canCreate` does it again on every creation.
 
 On the `mysql` backend that is a `SELECT *` over the whole table per call,
-plus a `readHunter` query per contract. It is fine at a hundred contracts and
+plus a `readHitman` query per contract. It is fine at a hundred contracts and
 unpleasant at ten thousand.
 
 **Do:** add `Storage.contractsInvolving(cid)` and
@@ -280,7 +280,7 @@ were not, which is the argument for checking each one yourself.
 **Authority:**
 - `Config.Sources.item.enabled` and `weapon.enabled` were honoured only
   where the picker is built, not in validation.
-- MySQL's `updateHunter` had no branch for `anon`, so a hitman who could
+- MySQL's `updateHitman` had no branch for `anon`, so a hitman who could
   not afford the anonymity fee stayed listed as anonymous — on the backend
   that ships by default.
 - MySQL could mint a contract id one character shorter than `Util.toId`

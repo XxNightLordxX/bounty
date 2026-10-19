@@ -23,7 +23,7 @@ describe('writing the json store', function()
     it('writes the file it means to write', function()
         local store = freshStore()
         store.writeContract({ id = 'ct1', creator_cid = 'CREATOR1', target_cid = 'T',
-            state = CB.STATE.ACTIVE, created_at = os.time() })
+            state = CH.STATE.ACTIVE, created_at = os.time() })
         truthy(store.save(true), 'the flush must report success')
         truthy(Natives.files['data/store.json'], 'and the index has to be on disk')
         truthy(Natives.files['data/contracts/ct1.json'], 'along with the contract')
@@ -38,7 +38,7 @@ describe('writing the json store', function()
         local written = {}
         Natives.saveFile = function(file) written[#written + 1] = file end
         store.writeContract({ id = 'ct2', creator_cid = 'C', target_cid = 'T',
-            state = CB.STATE.ACTIVE, created_at = os.time() })
+            state = CH.STATE.ACTIVE, created_at = os.time() })
         store.save(true)
         Natives.saveFile = nil
 
@@ -57,7 +57,7 @@ describe('writing the json store', function()
         -- that basis turns "probably fine" into "certainly lost".
         local store = freshStore()
         store.writeContract({ id = 'ct3', creator_cid = 'C', target_cid = 'T',
-            state = CB.STATE.ACTIVE, created_at = os.time() })
+            state = CH.STATE.ACTIVE, created_at = os.time() })
 
         -- A read that does not agree with what was just written.
         local realLoad = _G.LoadResourceFile
@@ -91,7 +91,7 @@ describe('writing the json store', function()
         -- not the same as a read-back that disagreed.
         local store = freshStore()
         store.writeContract({ id = 'ct4', creator_cid = 'C', target_cid = 'T',
-            state = CB.STATE.ACTIVE, created_at = os.time() })
+            state = CH.STATE.ACTIVE, created_at = os.time() })
         Natives.blocked = { ['data/store.json'] = true }
         local ok = store.save(true)
         Natives.blocked = {}
@@ -112,7 +112,7 @@ describe('writing the json store', function()
         Env.console = {}
         for i = 1, 20 do
             store.writeContract({ id = 'ctm' .. i, creator_cid = 'C', target_cid = 'T',
-                state = CB.STATE.ACTIVE, created_at = os.time() })
+                state = CH.STATE.ACTIVE, created_at = os.time() })
             store.save(true)
         end
         _G.LoadResourceFile = realLoad

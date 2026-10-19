@@ -80,9 +80,9 @@ describe('threat advisory', function()
         for i = before + 1, #Env.threads do Env.threads[i]() end
         local cleared = {}
         for _, call in ipairs(Natives.calls.dispatchCleared) do cleared[call.uid] = call.jobs end
-        truthy(cleared['cb-' .. c.id .. '-posted'], 'the posting bulletin is closed')
-        truthy(cleared['cb-' .. c.id .. '-accepted'], 'and any acceptance bulletin')
-        truthy(#cleared['cb-' .. c.id .. '-posted'] > 0, 'for the departments it went to')
+        truthy(cleared['ch-' .. c.id .. '-posted'], 'the posting bulletin is closed')
+        truthy(cleared['ch-' .. c.id .. '-accepted'], 'and any acceptance bulletin')
+        truthy(#cleared['ch-' .. c.id .. '-posted'] > 0, 'for the departments it went to')
     end)
 
     it('clears nothing for a contract that never reached the MDT', function()
@@ -110,20 +110,20 @@ describe('threat advisory', function()
         end
     end)
 
-    it('fires again on acceptance, carrying the hunter count', function()
+    it('fires again on acceptance, carrying the hitman count', function()
         local s, f = seeded(leoJob('trooper'))
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 1000 } },
         })
         Natives.calls.notifications = {}
         Natives.calls.dispatch = {}
 
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         eq(countNotifications('THREAT ADVISORY — ACTIVE'), 3, 'two officers plus the target')
         truthy(tostring(Natives.calls.dispatch[1].message):find('1 operative is active'))
 
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
         s.contracts.accept(s.identity.resolve(4), c.id, false)
         truthy(tostring(Natives.calls.dispatch[2].message):find('2 operatives are active'),
             'count escalates with each acceptance')
@@ -149,7 +149,7 @@ describe('threat advisory', function()
         })
         Config.Targeting.AllowProtectedJobTargets = true
         falsy(c)
-        eq(err, CB.ERR.TARGET_IS_LEO)
+        eq(err, CH.ERR.TARGET_IS_LEO)
     end)
 end)
 
@@ -172,7 +172,7 @@ describe('an officer working a second job', function()
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
         falsy(c, 'switching job for the evening does not take an officer off the list')
-        eq(err, CB.ERR.TARGET_IS_LEO)
+        eq(err, CH.ERR.TARGET_IS_LEO)
     end)
 
     it('is marked as an officer where contracts on them are allowed', function()
@@ -211,7 +211,7 @@ describe('with the advisory switched off', function()
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
         falsy(c, 'placed on a sworn officer on a server that forbids it')
-        eq(err, CB.ERR.TARGET_IS_LEO)
+        eq(err, CH.ERR.TARGET_IS_LEO)
     end)
 
     it('still marks a contract on an officer, so both sides are warned', function()
@@ -228,11 +228,11 @@ describe('with the advisory switched off', function()
     it('tells the page officers are not being advised', function()
         local s = seeded(leoJob('trooper'))
         Config.Advisory.Enabled = false
-        local settings = s.projection.listing('HUNTER01', 1).settings
+        local settings = s.projection.listing('HITMAN01', 1).settings
         eq(settings.advisory.posted, false)
         eq(settings.advisory.accepted, false)
         Config.Advisory.Enabled = true
-        eq(s.projection.listing('HUNTER01', 1).settings.advisory.posted, true)
+        eq(s.projection.listing('HITMAN01', 1).settings.advisory.posted, true)
     end)
 
     it('gives the officer the paranoid alert in place of the advisory', function()
@@ -263,7 +263,7 @@ describe('app access', function()
             Env.addPlayer({ source = 50, citizenid = 'BLOCKED1', license = 'license:b', job = job })
             local actor, err = s.identity.gate(50)
             falsy(actor, job.name .. ' must be blocked')
-            eq(err, CB.ERR.BLACKLISTED_JOB, job.name)
+            eq(err, CH.ERR.BLACKLISTED_JOB, job.name)
             Env.removePlayer(50)
         end
     end)
@@ -293,7 +293,7 @@ describe('app access', function()
             jobs = { mechanic = 0, police = 2 } })
         local actor, err = s.identity.gate(54)
         falsy(actor, 'still an officer, working a different job tonight')
-        eq(err, CB.ERR.BLACKLISTED_JOB)
+        eq(err, CH.ERR.BLACKLISTED_JOB)
     end)
 
     it('reads a held job as off duty, so it bars only when off duty does', function()
@@ -402,7 +402,7 @@ describe('an advisory switched off at one stage', function()
         truthy(s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         }))
-        local settings = s.projection.listing('HUNTER01', 1).settings
+        local settings = s.projection.listing('HITMAN01', 1).settings
         return settings, countNotifications('THREAT ADVISORY')
     end
 

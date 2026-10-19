@@ -21,7 +21,7 @@ describe('escrow validation', function()
         local f = fixture(s)
         local lines, err = s.escrow.validate(f.creator, { baseline = {} })
         falsy(lines, 'must not validate')
-        eq(err, CB.ERR.INVALID_REWARD)
+        eq(err, CH.ERR.INVALID_REWARD)
     end)
 
     it('rejects more than the creator holds', function()
@@ -29,11 +29,11 @@ describe('escrow validation', function()
         local f = fixture(s)
         local lines, err = s.escrow.validate(f.creator, { baseline = { cash = 999999999 } })
         falsy(lines)
-        eq(err, CB.ERR.INVALID_REWARD, 'over the per-source cap')
+        eq(err, CH.ERR.INVALID_REWARD, 'over the per-source cap')
 
         lines, err = s.escrow.validate(f.creator, { baseline = { cash = 150000 } })
         falsy(lines)
-        eq(err, CB.ERR.INSUFFICIENT, 'within cap but more than held')
+        eq(err, CH.ERR.INSUFFICIENT, 'within cap but more than held')
     end)
 
     it('rejects negative, fractional and non-numeric amounts', function()
@@ -97,7 +97,7 @@ describe('escrow validation', function()
         end
         lines, err = s.escrow.validate(f.creator, { slots = doubled })
         falsy(lines, 'a hundred lines in one contract must be refused')
-        eq(err, CB.ERR.INVALID_REWARD)
+        eq(err, CH.ERR.INVALID_REWARD)
     end)
 
     it('counts a top-up against the lines the contract already holds', function()
@@ -127,7 +127,7 @@ describe('escrow validation', function()
         local ok, err = s.amendments.addEscrow(f.creator, c.id,
             { baseline = { items = { { name = 'part_11', count = 1 } } } })
         falsy(ok, 'a top-up must not walk past the ceiling one line at a time')
-        eq(err, CB.ERR.INVALID_REWARD)
+        eq(err, CH.ERR.INVALID_REWARD)
     end)
 
     it('refuses to stage the same physical weapon in two payouts', function()
@@ -144,7 +144,7 @@ describe('escrow validation', function()
             },
         })
         falsy(lines, 'one weapon cannot fund two payouts')
-        eq(err, CB.ERR.INVALID_REWARD)
+        eq(err, CH.ERR.INVALID_REWARD)
     end)
 
     it('still allows two different weapons across two payouts', function()
@@ -176,7 +176,7 @@ describe('escrow validation', function()
             },
         })
         falsy(lines, 'aggregate check must catch this')
-        eq(err, CB.ERR.INSUFFICIENT)
+        eq(err, CH.ERR.INSUFFICIENT)
     end)
 end)
 
@@ -203,7 +203,7 @@ describe('escrow take', function()
         }
         local ok, err = s.escrow.take(f.creator, 'ct2', lines)
         falsy(ok, 'must fail')
-        eq(err, CB.ERR.INSUFFICIENT)
+        eq(err, CH.ERR.INSUFFICIENT)
         eq(Env.players[1].PlayerData.money.cash, 100000, 'cash restored exactly')
         eq(#s.storage.readEscrow('ct2'), 0, 'no partial record')
     end)
@@ -223,16 +223,16 @@ describe('escrow release', function()
 
     it('pays the recipient in the sources escrow holds', function()
         local s, f = seed()
-        local moved, result = s.escrow.release('ct1', 'HUNTER01', CB.PORTION.BASELINE, 'test')
+        local moved, result = s.escrow.release('ct1', 'HITMAN01', CH.PORTION.BASELINE, 'test')
         truthy(moved)
         eq(result.settled, 2, 'cash line and item line')
-        eq(Env.players[3].PlayerData.money.cash, 10000, 'hunter received cash')
+        eq(Env.players[3].PlayerData.money.cash, 10000, 'hitman received cash')
     end)
 
     it('never pays the same line twice', function()
         local s, f = seed()
-        s.escrow.release('ct1', 'HUNTER01', CB.PORTION.BASELINE, 'first')
-        local moved, result = s.escrow.release('ct1', 'HUNTER01', CB.PORTION.BASELINE, 'second')
+        s.escrow.release('ct1', 'HITMAN01', CH.PORTION.BASELINE, 'first')
+        local moved, result = s.escrow.release('ct1', 'HITMAN01', CH.PORTION.BASELINE, 'second')
         falsy(moved, 'second release must move nothing')
         eq(result.settled, 0)
         eq(Env.players[3].PlayerData.money.cash, 10000, 'balance unchanged by the replay')
@@ -241,7 +241,7 @@ describe('escrow release', function()
     it('keeps the line owed when delivery fails, rather than destroying it', function()
         local s, f = seed()
         Env.players[3]._inventoryFull = true
-        local _, result = s.escrow.release('ct1', 'HUNTER01', CB.PORTION.BASELINE, 'test')
+        local _, result = s.escrow.release('ct1', 'HITMAN01', CH.PORTION.BASELINE, 'test')
         eq(result.pending, 1, 'the item line could not be delivered')
         eq(result.settled, 1, 'the cash line still settled')
 
@@ -249,19 +249,19 @@ describe('escrow release', function()
         for _, l in ipairs(s.storage.readEscrow('ct1')) do
             if l.source == 'item' then line = l end
         end
-        eq(line.state, CB.ESCROW_STATE.HELD, 'undelivered line returns to held')
-        eq(#s.storage.readPending('HUNTER01'), 1, 'queued for retry')
+        eq(line.state, CH.ESCROW_STATE.HELD, 'undelivered line returns to held')
+        eq(#s.storage.readPending('HITMAN01'), 1, 'queued for retry')
     end)
 
     it('delivers queued escrow on the next login', function()
         local s, f = seed()
         Env.players[3]._inventoryFull = true
-        s.escrow.release('ct1', 'HUNTER01', CB.PORTION.BASELINE, 'test')
+        s.escrow.release('ct1', 'HITMAN01', CH.PORTION.BASELINE, 'test')
         Env.players[3]._inventoryFull = false
 
-        local delivered = s.escrow.retryPending('HUNTER01')
+        local delivered = s.escrow.retryPending('HITMAN01')
         eq(delivered, 1, 'the owed item is delivered')
-        eq(s.escrow.retryPending('HUNTER01'), 0, 'and not delivered twice')
+        eq(s.escrow.retryPending('HITMAN01'), 0, 'and not delivered twice')
     end)
 
     it('restores a weapon with its original metadata', function()
@@ -331,14 +331,14 @@ describe('a form that sends every field still works', function()
             slots = { { baseline = { cash = 0, bank = 0, dirty = 0 } } },
         })
         falsy(lines, 'a contract offering nothing is not a contract')
-        eq(err, CB.ERR.INVALID_REWARD)
+        eq(err, CH.ERR.INVALID_REWARD)
     end)
 
     it('creates a contract end to end from a form-shaped payload', function()
         local s = newStack()
         local f = fixture(s)
         local c, err = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CB.MODE.EXCLUSIVE,
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.EXCLUSIVE,
             reward = { slots = {
                 { baseline = { cash = 5000, bank = 0, dirty = 0 } },
                 { baseline = { cash = 0, bank = 2500, dirty = 0 } },
@@ -349,39 +349,39 @@ describe('a form that sends every field still works', function()
         eq(c.payout_slots, 2)
         -- 7500 baseline plus the 50% live-delivery bonus, escrowed up front.
         eq(s.escrow.moneyValue(c.id), 11250)
-        eq(s.escrow.moneyValue(c.id, CB.PORTION.BONUS), 3750)
+        eq(s.escrow.moneyValue(c.id, CH.PORTION.BONUS), 3750)
     end)
 end)
 
 describe('money owed to a player is reachable only by them', function()
-    local function owedToHunter()
+    local function owedToHitman()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { items = { { name = 'lockpick', count = 2 } } } },
         })
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
 
-        -- The hunter earns it but cannot carry it.
+        -- The hitman earns it but cannot carry it.
         Env.players[3]._inventoryFull = true
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         return s, f, c
     end
 
-    it('marks an undeliverable payout as the hunters', function()
-        local s, f, c = owedToHunter()
+    it('marks an undeliverable payout as the hitmen', function()
+        local s, f, c = owedToHitman()
         local owed
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
             if line.owed_to then owed = line end
         end
         truthy(owed, 'the payout should be recorded as owed')
-        eq(owed.owed_to, 'HUNTER01')
+        eq(owed.owed_to, 'HITMAN01')
     end)
 
     it('does not hand it to the creator when the contract closes', function()
-        local s, f, c = owedToHunter()
-        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED,
+        local s, f, c = owedToHitman()
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED,
             'a single-slot contract is finished')
 
         local creatorHas = 0
@@ -391,16 +391,16 @@ describe('money owed to a player is reachable only by them', function()
         eq(creatorHas, 3, 'the creator keeps only the 3 they started with')
     end)
 
-    it('delivers it to the hunter when they can carry it', function()
-        local s, f, c = owedToHunter()
+    it('delivers it to the hitman when they can carry it', function()
+        local s, f, c = owedToHitman()
         Env.players[3]._inventoryFull = false
-        eq(s.escrow.retryPending('HUNTER01'), 1)
+        eq(s.escrow.retryPending('HITMAN01'), 1)
 
-        local hunterHas = 0
+        local hitmanHas = 0
         for _, slot in ipairs(Env.players[3]._inventory) do
-            if slot.name == 'lockpick' then hunterHas = hunterHas + slot.count end
+            if slot.name == 'lockpick' then hitmanHas = hitmanHas + slot.count end
         end
-        eq(hunterHas, 2, 'what they earned arrives when there is room for it')
+        eq(hitmanHas, 2, 'what they earned arrives when there is room for it')
     end)
 
     --- A queue that begins with more goods than one pass tries, none of
@@ -420,11 +420,11 @@ describe('money owed to a player is reachable only by them', function()
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { items = items } },
         })
         truthy(c, 'placed')
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         Env.players[3]._inventoryFull = true
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
-        eq(#s.storage.readPending('HUNTER01'), #names, 'every stack owed')
-        truthy(s.bailout.owe('HUNTER01', c.id, 4000, 'bank', 'test'))
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
+        eq(#s.storage.readPending('HITMAN01'), #names, 'every stack owed')
+        truthy(s.bailout.owe('HITMAN01', c.id, 4000, 'bank', 'test'))
         return s, f, c
     end
 
@@ -432,7 +432,7 @@ describe('money owed to a player is reachable only by them', function()
         local s = queuedBehindGoods()
         -- A fresh process: nothing it queued, so nothing it is waiting on.
         s.escrow.init(s.storage, s.audit)
-        s.escrow.retryPending('HUNTER01')
+        s.escrow.retryPending('HITMAN01')
         Env.players[3]._inventoryFull = false
         local total = 0
         for _ = 1, 4 do
@@ -441,17 +441,17 @@ describe('money owed to a player is reachable only by them', function()
                 total = total + n
             end
         end
-        eq(#s.storage.readPending('HUNTER01'), 0,
+        eq(#s.storage.readPending('HITMAN01'), 0,
             'made room, stayed online, and nothing arrived until a relog')
         truthy(total > 0)
     end)
 
     it('refuses to deliver it to anyone else', function()
-        local s, f, c = owedToHunter()
+        local s, f, c = owedToHitman()
         Env.players[1]._inventoryFull = false
         s.escrow.release(c.id, 'CREATOR1', nil, 'a general sweep')
         eq(s.escrow.retryPending('CREATOR1'), 0, 'not the creator\'s to collect')
-        eq(#s.storage.readPending('HUNTER01'), 1, 'still owed to the hunter')
+        eq(#s.storage.readPending('HITMAN01'), 1, 'still owed to the hitman')
     end)
 end)
 
@@ -498,7 +498,7 @@ describe('item instances', function()
         -- Gone from the creator while it is escrowed.
         eq(exports.ox_inventory:GetItem(1, 'repairkit', nil, true), 0)
 
-        truthy(s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
+        truthy(s.contracts.resolve(c.id, CH.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
 
         local returned
         for _, slot in ipairs(Env.players[1]._inventory) do
@@ -519,7 +519,7 @@ describe('item instances', function()
             reward = { baseline = { items = { { name = 'backpack', count = 1 } } } },
         })
         truthy(c)
-        truthy(s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
+        truthy(s.contracts.resolve(c.id, CH.STATE.CANCELLED, f.creator.cid, nil, 'cancelled'))
 
         local returned
         for _, slot in ipairs(Env.players[1]._inventory) do
@@ -579,7 +579,7 @@ describe('item instances', function()
                 baseline = { items = { { name = name, count = 1 } } },
             })
             falsy(lines, name .. ' must not escrow as an item')
-            eq(err, CB.ERR.INVALID_REWARD)
+            eq(err, CH.ERR.INVALID_REWARD)
         end
     end)
 
@@ -610,8 +610,8 @@ describe('item instances', function()
 
             store.writeEscrow('ct1', { {
                 id = 'ct1:1', contract_id = 'ct1', slot = 1, portion = 'baseline',
-                source = CB.SOURCE.ITEM, item = 'repairkit', quantity = 1,
-                state = CB.ESCROW_STATE.HELD, inv_slot = 1,
+                source = CH.SOURCE.ITEM, item = 'repairkit', quantity = 1,
+                state = CH.ESCROW_STATE.HELD, inv_slot = 1,
                 metadata = { durability = 11 },
             } })
 
@@ -635,7 +635,7 @@ describe('the authority is the server, not the picker', function()
                 baseline = { items = { { name = 'lockpick', count = 1 } } },
             })
             falsy(lines, 'and a payload sent by hand is refused too')
-            eq(err, CB.ERR.INVALID_REWARD)
+            eq(err, CH.ERR.INVALID_REWARD)
         end)
     end)
 
@@ -648,7 +648,7 @@ describe('the authority is the server, not the picker', function()
                 baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } },
             })
             falsy(lines, 'a switch only the UI honours is not a switch')
-            eq(err, CB.ERR.INVALID_REWARD)
+            eq(err, CH.ERR.INVALID_REWARD)
         end)
     end)
 
@@ -678,7 +678,7 @@ describe('the authority is the server, not the picker', function()
             baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 9 } } },
         })
         falsy(lines, 'a slot they do not hold is not a near-enough answer')
-        eq(err, CB.ERR.INSUFFICIENT)
+        eq(err, CH.ERR.INSUFFICIENT)
     end)
 end)
 
@@ -717,7 +717,7 @@ describe('ids the rest of the resource will accept', function()
     end)
 end)
 
-describe('a hunter who cannot afford anonymity', function()
+describe('a hitman who cannot afford anonymity', function()
     it('is recorded as named in every backend', function()
         local Exec = require('crimson-hitman.tests.harness.mysql_exec')
         for _, name in ipairs({ 'memory', 'json', 'mysql' }) do
@@ -733,14 +733,14 @@ describe('a hunter who cannot afford anonymity', function()
             end
             store.open()
 
-            store.addHunter({ id = 'h1', contract_id = 'ct1', hunter_cid = 'HUNTER01',
-                              hunter_name = 'Rook Ash', alias = 'Operative #1',
+            store.addHitman({ id = 'h1', contract_id = 'ct1', hitman_cid = 'HITMAN01',
+                              hitman_name = 'Rook Ash', alias = 'Operative #1',
                               anon = true, state = 'active', accepted_at = 1, claims = 0 })
 
             -- They could not cover the fee, so they are simply named.
-            truthy(store.updateHunter('h1', { anon = false }), name)
-            eq(store.readHunter('ct1', 'HUNTER01').anon, false,
-                name .. ': a hunter who paid nothing must not stay anonymous')
+            truthy(store.updateHitman('h1', { anon = false }), name)
+            eq(store.readHitman('ct1', 'HITMAN01').anon, false,
+                name .. ': a hitman who paid nothing must not stay anonymous')
         end
     end)
 end)
@@ -782,7 +782,7 @@ describe('concurrent escrow takes', function()
         s.storage.readEscrow = realRead
 
         falsy(ok, 'a take whose lines did not store must not report success')
-        eq(err, CB.ERR.LOCKED)
+        eq(err, CH.ERR.LOCKED)
 
         local after = Env.players[1].PlayerData.money.cash
             + Env.players[1].PlayerData.money.bank
@@ -848,7 +848,7 @@ describe('a weapon slot that has moved', function()
             baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 4 } } },
         })
         falsy(lines, 'a slot nothing sits in is not an invitation to substitute')
-        eq(err, CB.ERR.INSUFFICIENT)
+        eq(err, CH.ERR.INSUFFICIENT)
 
         -- And the modded one is still theirs.
         local held = 0
@@ -937,7 +937,7 @@ describe('staging the same item stack twice', function()
         })
         truthy(lines)
 
-        local ok, err = s.escrow.take(f.creator, 'CB-STACKS', lines)
+        local ok, err = s.escrow.take(f.creator, 'CH-STACKS', lines)
         truthy(ok, 'a fully-funded contract must not be refused: ' .. tostring(err))
 
         local left = 0
@@ -981,7 +981,7 @@ describe('staging the same item stack twice', function()
             },
         })
         falsy(lines, 'thirty asked for against twenty held')
-        eq(err, CB.ERR.INSUFFICIENT)
+        eq(err, CH.ERR.INSUFFICIENT)
     end)
 end)
 
@@ -997,7 +997,7 @@ describe('a bonus derived from a percentage', function()
         }, percent)
         truthy(lines, 'lines for ' .. percent .. '% of ' .. baseline)
         for i = 1, #lines do
-            if lines[i].portion == CB.PORTION.BONUS then return lines[i].amount end
+            if lines[i].portion == CH.PORTION.BONUS then return lines[i].amount end
         end
         return nil
     end
@@ -1032,7 +1032,7 @@ end)
 describe('a payout the framework refuses', function()
     local function owedLine(s, f)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(c)
@@ -1051,9 +1051,9 @@ describe('a payout the framework refuses', function()
 
         Env.players[3]._refuseMoney = true
         local before = Env.players[3].PlayerData.money.cash
-        eq(before, 5000, 'the hunter starts with their own money and nothing else')
+        eq(before, 5000, 'the hitman starts with their own money and nothing else')
 
-        local ok, result = s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'test')
+        local ok, result = s.escrow.release(c.id, 'HITMAN01', CH.PORTION.BASELINE, 'test')
 
         eq(Env.players[3].PlayerData.money.cash, before, 'nothing was actually paid')
         falsy(ok, 'so the release did not settle anything')
@@ -1067,14 +1067,14 @@ describe('a payout the framework refuses', function()
         local c = owedLine(s, f)
 
         Env.players[3]._refuseMoney = true
-        s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'test')
+        s.escrow.release(c.id, 'HITMAN01', CH.PORTION.BASELINE, 'test')
 
         Env.players[3]._refuseMoney = false
-        local ok, result = s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'retry')
+        local ok, result = s.escrow.release(c.id, 'HITMAN01', CH.PORTION.BASELINE, 'retry')
         truthy(ok, 'the retry must pay')
         eq(result.settled, 1)
         eq(Env.players[3].PlayerData.money.cash, 10000,
-            'and the hunter is paid the 5000 baseline exactly once, on top of their own 5000')
+            'and the hitman is paid the 5000 baseline exactly once, on top of their own 5000')
     end)
 
     it('does not let anyone else collect the line in the meantime', function()
@@ -1083,18 +1083,18 @@ describe('a payout the framework refuses', function()
         local c = owedLine(s, f)
 
         Env.players[3]._refuseMoney = true
-        s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'test')
+        s.escrow.release(c.id, 'HITMAN01', CH.PORTION.BASELINE, 'test')
         Env.players[3]._refuseMoney = false
 
         -- An unfiltered refund to the creator must not sweep up a payout
-        -- that is owed to the hunter.
+        -- that is owed to the hitman.
         local before = Env.players[1].PlayerData.money.cash
         s.escrow.release(c.id, 'CREATOR1', nil, 'refund')
         eq(Env.players[1].PlayerData.money.cash, before,
-            'the creator must not be handed the hunter money')
+            'the creator must not be handed the hitman money')
 
-        -- And it is still there for the hunter afterwards.
-        local ok, result = s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'retry')
+        -- And it is still there for the hitman afterwards.
+        local ok, result = s.escrow.release(c.id, 'HITMAN01', CH.PORTION.BASELINE, 'retry')
         truthy(ok)
         eq(result.settled, 1)
         eq(Env.players[3].PlayerData.money.cash, 10000)
@@ -1115,8 +1115,8 @@ describe('a rollback that cannot return what it took', function()
         s.storage.writeEscrow = function() return false end
         Env.players[1]._refuseMoney = true
 
-        local ok, err = s.escrow.take(f.creator, 'CB-ROLLBACK', {
-            { slot = 1, portion = CB.PORTION.BASELINE, source = 'cash', amount = 5000 },
+        local ok, err = s.escrow.take(f.creator, 'CH-ROLLBACK', {
+            { slot = 1, portion = CH.PORTION.BASELINE, source = 'cash', amount = 5000 },
         })
 
         s.storage.writeEscrow = realWrite
@@ -1140,8 +1140,8 @@ describe('a rollback that cannot return what it took', function()
         s.storage.writeEscrow = function() return false end
         local before = Env.players[1].PlayerData.money.cash
 
-        local ok = s.escrow.take(f.creator, 'CB-ROLLBACK2', {
-            { slot = 1, portion = CB.PORTION.BASELINE, source = 'cash', amount = 5000 },
+        local ok = s.escrow.take(f.creator, 'CH-ROLLBACK2', {
+            { slot = 1, portion = CH.PORTION.BASELINE, source = 'cash', amount = 5000 },
         })
         s.storage.writeEscrow = realWrite
 
@@ -1167,17 +1167,17 @@ describe('a settle the store will not take', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(c)
 
         local real = s.storage.settleEscrowLine
         s.storage.settleEscrowLine = function() return false end
-        local ok, result = s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'test')
+        local ok, result = s.escrow.release(c.id, 'HITMAN01', CH.PORTION.BASELINE, 'test')
         s.storage.settleEscrowLine = real
 
-        truthy(ok, 'the hunter was paid')
+        truthy(ok, 'the hitman was paid')
         eq(result.settled, 1)
         eq(Env.players[3].PlayerData.money.cash, 10000, 'and really has the money')
 
@@ -1193,10 +1193,10 @@ describe('a settle the store will not take', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        truthy(s.escrow.release(c.id, 'HUNTER01', CB.PORTION.BASELINE, 'test'))
+        truthy(s.escrow.release(c.id, 'HITMAN01', CH.PORTION.BASELINE, 'test'))
 
         s.audit.flush()
         for _, row in ipairs(s.storage.readAudit(200)) do
@@ -1223,7 +1223,7 @@ describe('the weapons list', function()
             reward = { baseline = { cash = 1000, weapons = { { name = 'lockpick', slot = slot } } } },
         })
         falsy(c, 'a lockpick is not a weapon')
-        eq(err, CB.ERR.INVALID_REWARD)
+        eq(err, CH.ERR.INVALID_REWARD)
 
         local ok = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x',
@@ -1260,7 +1260,7 @@ describe('item names, as the inventory reads them', function()
         })
         restore()
         falsy(c, 'handcuffs went into escrow under a capital H')
-        eq(err, CB.ERR.INVALID_REWARD)
+        eq(err, CH.ERR.INVALID_REWARD)
     end)
 
     it('keeps black money out of the item list however it is capitalised', function()
@@ -1289,7 +1289,7 @@ describe('an item name written in odd case', function()
         truthy(c, tostring(err))
         local stored
         for _, l in ipairs(s.storage.readEscrow(c.id)) do
-            if l.source == CB.SOURCE.ITEM then stored = l.item end
+            if l.source == CH.SOURCE.ITEM then stored = l.item end
         end
         eq(stored, 'lockpick')
     end)

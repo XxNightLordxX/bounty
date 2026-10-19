@@ -126,7 +126,7 @@
         suppressed += 1;
         if (suppressed === 1) {
           send({ what: 'further page errors suppressed', where: 'diagnostics',
-                 stack: '', build: window.CB_BUILD || 'dev' });
+                 stack: '', build: window.CH_BUILD || 'dev' });
         }
         return false;
       }
@@ -134,7 +134,7 @@
       send({ what: String(what).slice(0, 300),
              where: String(where || '').slice(0, 200),
              stack: String(stack || '').slice(0, 900),
-             tab: state && state.tab, build: window.CB_BUILD || 'dev' });
+             tab: state && state.tab, build: window.CH_BUILD || 'dev' });
       return true;
     }
 
@@ -148,7 +148,7 @@
       var flat = String(text || '').split('\n').join(' || ');
       send({ what: 'page diagnostics', where: 'requested',
              stack: flat.slice(-900), tab: state && state.tab,
-             build: window.CB_BUILD || 'dev' });
+             build: window.CH_BUILD || 'dev' });
     }
 
     // Deliberately not post(): post() is instrumented by this module and a
@@ -195,7 +195,7 @@
         report(message, 'unhandled rejection', reason && reason.stack);
       });
 
-      note('boot', 'build ' + (window.CB_BUILD || 'dev'));
+      note('boot', 'build ' + (window.CH_BUILD || 'dev'));
     }
 
     /* ---- the in-game panel ----
@@ -250,7 +250,7 @@
       head.className = 'diag-head';
 
       var title = document.createElement('strong');
-      title.textContent = 'Diagnostics · ' + (window.CB_BUILD || 'dev');
+      title.textContent = 'Diagnostics · ' + (window.CH_BUILD || 'dev');
       head.appendChild(title);
 
       var close = document.createElement('button');
@@ -279,7 +279,7 @@
       copy.textContent = 'Send this to the server log';
       copy.onclick = function () {
         send({ what: 'diagnostics requested by the player', where: 'panel',
-               stack: asText(), build: window.CB_BUILD || 'dev' });
+               stack: asText(), build: window.CH_BUILD || 'dev' });
         note('sent', 'diagnostics sent to the server log');
       };
       panel.appendChild(copy);
@@ -390,7 +390,7 @@
     cancelled_too_soon: 'You cancelled a contract recently. Placing another '
       + 'has to wait a few minutes: cancelling and re-listing would otherwise '
       + 'be free.',
-    // Also policy waits. slot_cooldown shared rate_limited, so a hunter
+    // Also policy waits. slot_cooldown shared rate_limited, so a hitman
     // photographing a body was told to wait a few seconds and try again on
     // a wait of ten minutes; handover_cooldown shared bad_state.
     slot_cooldown: 'You collected on this contract very recently. The next '
@@ -410,14 +410,14 @@
       + 'would show their number. Send a message instead.',
     limit_reached: 'You are holding too many contracts.',
     /* A different rule entirely, and it used to share the message above —
-       which told a hunter holding nothing that they were holding too much,
+       which told a hitman holding nothing that they were holding too much,
        and sent them to cancel their own work over somebody else's contract
        being popular. */
     contract_full: 'This contract already has as many operatives on it as it '
       + 'allows. Try another, or come back if one drops out.',
     /* The stake moved between reading the board and tapping Accept. Refused
        rather than charged, because a stake is taken on the tap and forfeits
-       to the client if the hunter later walks away — the one repricing a
+       to the client if the hitman later walks away — the one repricing a
        player cannot undo by looking again. */
     terms_changed: 'The stake or the deadline on this contract changed while you '
       + 'were looking at it. Refreshing now — check the new terms before you take it.',
@@ -478,7 +478,7 @@
        that instant, or the server had only just started. Asking again
        works, so it says so rather than calling it a failure. */
     busy: 'That was busy for a moment. Try again.',
-    /* A hunter took the contract while the creator was looking at it. It
+    /* A hitman took the contract while the creator was looking at it. It
        was "Not right now." for Withdraw, Edit and Take back, and the retry
        got the same words, with nothing saying why or what still works. */
     contract_taken: 'Somebody has taken this contract. From now on it can '
@@ -491,7 +491,7 @@
     // The player closed the camera themselves. They know; saying so is
     // telling them what they just did.
     cancelled: null,
-    // The phone has no camera this resource can drive. Nothing the hunter
+    // The phone has no camera this resource can drive. Nothing the hitman
     // can do about it, so it says who can.
     camera_unavailable: 'This phone cannot open the camera for the app. Tell '
       + 'an admin — the server\u2019s phone resource is missing the camera '
@@ -503,7 +503,7 @@
     /* Not "try again". The client gives up on the camera a full proof
        window after it opened, and the server's claim on the kill runs out
        that long after the death, which was earlier — so by the time this is
-       said there is never a kill left to claim. "Try again" sent the hunter
+       said there is never a kill left to claim. "Try again" sent the hitman
        straight into "No kill on this contract is waiting for proof". */
     camera_no_answer: 'The camera never came back, and the time to verify '
       + 'this kill has run out. Nothing was sent.',
@@ -671,7 +671,7 @@
          arriving. The fields dialog was fixed for exactly this; this one was
          not, and once it started opening on a figure rather than empty, a
          redraw put that figure back under the player: 90 minutes typed, a
-         hunter accepts somewhere, the box reads 30 again and Extend sends
+         hitman accepts somewhere, the box reads 30 again and Extend sends
          30. */
       if (d.value !== undefined) {
         input.value = d.value;
@@ -870,7 +870,7 @@
      What that cost, by action: a second contract placed and a second escrow
      charged; a second photo token minted, invalidating the one the photo
      already in flight was taken against; two of three photo attempts spent
-     before the hunter had seen a single answer; an amendment answered twice,
+     before the hitman had seen a single answer; an amendment answered twice,
      the second reply reporting the change that actually applied as "Gone."
 
      Keyed rather than held on the element, because render() rebuilds the
@@ -1082,7 +1082,7 @@
     //
     // The headline is one figure covering all three money sources, and they
     // are not worth the same: black money sells for a fraction of its face
-    // value. A hunter looking at "$250,000" could be looking at a quarter of
+    // value. A hitman looking at "$250,000" could be looking at a quarter of
     // a million black_money items with no way to tell.
     var dirtyPart = (paid.sources && paid.sources.dirty || 0)
       + (paid.bonusSources && paid.bonusSources.dirty || 0);
@@ -1109,27 +1109,27 @@
       meta.appendChild(chip(
         'Slot ' + contract.currentSlot + ' of ' + contract.slots, 'slots', 'i-layers'));
     }
-    if (contract.huntersActive > 0) {
-      // Against the cap on a competitive contract, so a hunter can see
+    if (contract.hitmenActive > 0) {
+      // Against the cap on a competitive contract, so a hitman can see
       // whether there is room before they tap Accept and are refused. The
-      // server has always sent huntersMax and the page never read it.
-      var crowd = contract.mode === 'competitive' && contract.huntersMax
-        ? contract.huntersActive + ' of ' + contract.huntersMax + ' operatives'
-        : contract.huntersActive
-          + (contract.huntersActive === 1 ? ' operative' : ' operatives');
+      // server has always sent hitmenMax and the page never read it.
+      var crowd = contract.mode === 'competitive' && contract.hitmenMax
+        ? contract.hitmenActive + ' of ' + contract.hitmenMax + ' operatives'
+        : contract.hitmenActive
+          + (contract.hitmenActive === 1 ? ' operative' : ' operatives');
       var full = contract.mode === 'competitive'
-        && contract.huntersMax
-        && contract.huntersActive >= contract.huntersMax;
+        && contract.hitmenMax
+        && contract.hitmenActive >= contract.hitmenMax;
       meta.appendChild(chip(full ? crowd + ' — full' : crowd, full ? 'warn' : 'hot', 'i-users'));
     }
     if (contract.role === 'creator') {
       // Through asList, like every other list from the server. The projection
       // builds this as a Lua table, and an empty Lua table crosses as {} —
-      // which is truthy, so a plain `&& contract.hunters` guard passed and
+      // which is truthy, so a plain `&& contract.hitmen` guard passed and
       // .forEach then threw. That is a contract nobody has taken yet: the
       // state every contract is in the moment it is placed, and it took the
       // whole Mine tab down with it.
-      asList(contract.hunters).forEach(function (h) {
+      asList(contract.hitmen).forEach(function (h) {
         if (h.record) {
           meta.appendChild(chip(h.alias + ' · ' + h.record.standing, null, 'i-user'));
         }
@@ -1137,7 +1137,7 @@
     }
     // What accepting costs, on the listing, before the accept button —
     // §14.18. The server used to send this to the creator alone while
-    // acceptance debited it anyway, so the first a hunter knew of a stake
+    // acceptance debited it anyway, so the first a hitman knew of a stake
     // was the money leaving their bank.
     if (contract.penaltyAmount > 0) {
       meta.appendChild(chip(money(contract.penaltyAmount) + ' stake', 'warn', 'i-coin'));
@@ -1191,15 +1191,15 @@
     if (contract.barred === 'same_account') {
       return 'This one involves another of your own characters.';
     }
-    if (contract.role === 'hunter') {
+    if (contract.role === 'hitman') {
       return 'You are already on this one \u2014 it is under Mine.';
     }
-    var active = Number(contract.huntersActive) || 0;
+    var active = Number(contract.hitmenActive) || 0;
     if (contract.mode === 'exclusive' && active > 0) {
       return 'Taken. Somebody has this one to themselves \u2014 it comes back '
         + 'on the board if they walk away.';
     }
-    var cap = Number(contract.huntersMax) || 0;
+    var cap = Number(contract.hitmenMax) || 0;
     if (contract.mode !== 'exclusive' && cap > 0 && active >= cap) {
       return 'Full. It comes back open if an operative drops out.';
     }
@@ -1225,7 +1225,7 @@
     if (context === 'board') {
       /* An Accept button on a card the server can only refuse is a button
          that reads as broken. The board lists every contract but the
-         viewer's own bounty, so it includes the ones they placed, the ones
+         viewer's own contract, so it includes the ones they placed, the ones
          they already hold, and ones somebody else has filled — and every
          one of them drew Accept. Said instead, with where to look. */
       var why = boardHint(contract);
@@ -1239,15 +1239,15 @@
       return row;
     }
 
-    if (contract.role === 'hunter') {
+    if (contract.role === 'hitman') {
       // Two ways to finish, and they share the top line.
-      row.className = 'row actions is-hunting';
+      row.className = 'row actions is-working';
 
-      // Both through `once`. The camera takes as long as the hunter takes
+      // Both through `once`. The camera takes as long as the hitman takes
       // to line up a shot, and until now the button stayed live throughout:
       // a second tap minted a second photo token, which invalidates the one
       // the photo already being uploaded was taken against, and spent a
-      // second of the three attempts the rate limit allows — so a hunter
+      // second of the three attempts the rate limit allows — so a hitman
       // could burn their whole allowance before seeing a single answer.
       row.appendChild(actionButton('primary', 'Verify kill',
         'photo:' + contract.id, 'Camera open\u2026',
@@ -1279,7 +1279,7 @@
                 if (!r.ok) return fail(r);
                 // A handover being watched on it ends with it. Left running,
                 // the poller read that ending as a failed delivery and told
-                // a hunter who had just walked away to get the target back
+                // a hitman who had just walked away to get the target back
                 // to the client and try again.
                 if (countdownFor === contract.id) { stopCountdown(); }
                 delete state.progress[contract.id];
@@ -1302,7 +1302,7 @@
       // that came with the projection.
       //
       // Directly under the two ways to finish, above the other tools. The
-      // countdown is the one thing on this card that is urgent — a hunter
+      // countdown is the one thing on this card that is urgent — a hitman
       // holding somebody is watching it — and it was drawn last, below
       // Message, Propose change and Abandon, a scroll away from the button
       // that started it. A proposal waiting on an answer goes with it.
@@ -1342,7 +1342,7 @@
       // Nor where every operative on this card is already named. The
       // client's purchase only ever draws an anonymous one, so with none it
       // bought a certain "nobody" on the one purchase never refunded.
-      var anyAnonymous = asList(contract.hunters).some(function (h) { return !h.name; });
+      var anyAnonymous = asList(contract.hitmen).some(function (h) { return !h.name; });
       if (settings().informant && anyAnonymous) {
         var buy = el('button', 'ghost ico i-search', 'Buy informant data');
         buy.onclick = function () { buyInformant(contract); };
@@ -1350,8 +1350,8 @@
       }
 
       // Same shape, same reason: {} has no .length, so this read as "no
-      // hunters" whether or not there were any.
-      if (asList(contract.hunters).length && settings().relay !== false) {
+      // hitmen" whether or not there were any.
+      if (asList(contract.hitmen).length && settings().relay !== false) {
         more.appendChild(actionButton('ghost ico i-message', 'Threads',
           'threads:' + contract.id, 'Opening\u2026',
           function () { return openThreads(contract); }));
@@ -1369,10 +1369,10 @@
         more.appendChild(change);
       }
 
-      // Only while nobody is holding it. Once a hunter has accepted they
+      // Only while nobody is holding it. Once a hitman has accepted they
       // accepted it as written, and the server refuses both of these — so
       // offering them would be offering a guaranteed refusal.
-      if (!contract.huntersActive) {
+      if (!contract.hitmenActive) {
         var edit = el('button', 'ghost ico i-pencil', 'Edit');
         edit.onclick = function () { editContract(contract); };
         more.appendChild(edit);
@@ -1424,7 +1424,7 @@
   }
 
   // Why a hold is slipping, in words a player can act on. The server sends
-  // the reason and always has; the app used to render none of it, so a hunter
+  // the reason and always has; the app used to render none of it, so a hitman
   // whose delivery was failing had no idea until it did.
   // Every reason Kidnap.conditionsMet can return, and nothing it cannot.
   var BREAKING = {
@@ -1478,8 +1478,8 @@
   }
 
   /* Take a contract back down. Everything staked comes home, and the
-     server refuses it outright the moment somebody is hunting it. */
-  /* A refusal because a hunter took the contract meanwhile: said so, the
+     server refuses it outright the moment somebody is working it. */
+  /* A refusal because a hitman took the contract meanwhile: said so, the
      reward editor closed (its take-backs no longer apply), and the cards
      re-read so Withdraw and Edit go away. Anything else is the usual fail. */
   function takenOr(r) {
@@ -1624,7 +1624,7 @@
           return fail(r);
         }
         // Worded from what the server recorded, not from the button. A
-        // hunter the client already knows by name on this contract comes
+        // hitman the client already knows by name on this contract comes
         // back under it, and was told "accepted, anonymously".
         var recorded = r.data && typeof r.data.myAnonymous === 'boolean'
           ? r.data.myAnonymous : anonymous;
@@ -1640,8 +1640,8 @@
         kind: 'choice',
         question: 'Take this one anonymously?',
         detail: 'The client will see an operative, not a name.'
-          + (anonymityFee('hunter') > 0
-            ? ' Anonymity costs ' + money(anonymityFee('hunter')) + '.'
+          + (anonymityFee('hitman') > 0
+            ? ' Anonymity costs ' + money(anonymityFee('hitman')) + '.'
             : '')
           + (contract.penaltyAmount > 0
             ? ' Accepting stakes ' + money(contract.penaltyAmount)
@@ -1661,7 +1661,7 @@
       render();
     }
 
-    if (contract.targetProtected && settings().warnHunter !== false) {
+    if (contract.targetProtected && settings().warnHitman !== false) {
       // Each stage said only where it happens: the posting bulletin has
       // already gone, the acceptance one goes when they tap. The dialog
       // said "already advised" on the strength of the acceptance bulletin,
@@ -1683,7 +1683,7 @@
     return post('takeVerificationPhoto', { id: contract.id }).then(function (r) {
       if (!r.ok) {
         /* Two codes mean something different on this path than in the shared
-           table, and both reach a hunter standing over a body they have just
+           table, and both reach a hitman standing over a body they have just
            photographed.
 
            target_protected is worded there for the CREATION path — "That
@@ -1704,10 +1704,10 @@
       }
 
       // Not "Payment released" unconditionally. A reward that includes items
-      // or a weapon can be verified and then fail to reach a hunter whose
+      // or a weapon can be verified and then fail to reach a hitman whose
       // pockets are full: the server queues it and hands it over later,
       // which is right — but the app said the money had been released, so
-      // the hunter stood there with nothing and no reason to think anything
+      // the hitman stood there with nothing and no reason to think anything
       // was owed. The server says which happened; this now reads it.
       var owed = r.data && r.data.pending;
       say(owed
@@ -1740,13 +1740,13 @@
   /* The one timer in this app, and it had three faults.
   
      It called render() directly, once a second, on whatever view happened to
-     be open — so a hunter who armed a handover and then went to the Place
+     be open — so a hitman who armed a handover and then went to the Place
      tab had the whole form torn down and rebuilt under them every second for
      two minutes, losing scroll position each time.
   
      It stopped on any unsuccessful reply and left state.progress alone, so
      the bar froze at its last value and stayed there. The handover ENDING —
-     the target broke loose, the hunter wandered off, the grace ran out — is
+     the target broke loose, the hitman wandered off, the grace ran out — is
      an unsuccessful reply, so the most important outcome of a delivery was
      indistinguishable from a dropped packet and neither was ever mentioned.
   
@@ -1785,15 +1785,15 @@
       }
 
       post('kidnapProgress', { id: id }).then(function (r) {
-        /* A reply to a poll this page has since stopped — the hunter walked
+        /* A reply to a poll this page has since stopped — the hitman walked
            away while it was in flight, or a newer handover replaced it. It
-           answered "no handover" to a hunter who had just left and told
+           answered "no handover" to a hitman who had just left and told
            them to get the target back and try again, and a stale reply
            could stop the poller that replaced it. */
         if (countdownTimer !== timer) { return; }
         if (r.ok && r.data && r.data.done) {
           // Over, and the server says how. Every ending used to reach this
-          // poller the same way — the countdown gone — so a hunter who had
+          // poller the same way — the countdown gone — so a hitman who had
           // just been PAID for a handover was told it had ended and to try
           // again, and one refused at the end was told to try again on a
           // refusal no retry fixes.
@@ -1806,7 +1806,7 @@
         if (!r.ok || !r.data || r.data.elapsed === undefined) {
           // Over, one way or another. The bar goes rather than freezing,
           // and the player is told — a delivery that simply stops moving is
-          // the one thing a hunter holding a target cannot interpret.
+          // the one thing a hitman holding a target cannot interpret.
           stopCountdown();
           delete state.progress[id];
           say(r.err === 'no_handover' || r.err === 'not_found'
@@ -1829,7 +1829,7 @@
 
         // A full bar is not the end. A countdown that has run its course is
         // still reported while its payout waits behind another one being
-        // settled, and stopping here left the hunter with a full bar and no
+        // settled, and stopping here left the hitman with a full bar and no
         // word of how it ended. The poll that finds it over carries that
         // (`done` above), and the deadline bounds the rest.
       });
@@ -1838,7 +1838,7 @@
 
   /* What a finished handover means, in words. The server keeps how each
      one ended for a couple of minutes; the phone notification says the same
-     thing to a hunter who has closed the app. */
+     thing to a hitman who has closed the app. */
   function handoverEnded(ended) {
     if (ended.outcome === 'paid') {
       return say(ended.pending
@@ -1952,7 +1952,7 @@
     });
   }
 
-  // Improvements apply at once: they can only benefit the hunter.
+  // Improvements apply at once: they can only benefit the hitman.
   /* ---------- contract amendments ----------
      The server has implemented proposals, approvals, declines and expiry
      since the first commit, and nothing rendered any of it: a change could
@@ -2071,7 +2071,7 @@
            needs, and with nobody else on the contract that answer is theirs.
            It was drawn as "Waiting to be applied." with nothing to press, so
            it sat until it lapsed, held the contract's one open slot
-           meanwhile, and was then put to the next hunter to accept. */
+           meanwhile, and was then put to the next hitman to accept. */
         item.appendChild(el('div', 'hint',
           'Nobody else is on this contract to agree, so it is yours to apply.'));
         var applyRow = el('div', 'row');
@@ -2154,14 +2154,14 @@
      being proposed. This used to be three bare labels and, behind two of
      them, an empty number box asking "By how much?" — with no statement of
      what the reward was, what the deadline was, or whether the figure meant
-     "by" or "to". A creator and a hunter were each being asked to commit to
+     "by" or "to". A creator and a hitman were each being asked to commit to
      a change neither could see the shape of. */
   function proposeChange(contract) {
-    var hunter = contract.role === 'hunter';
+    var hitman = contract.role === 'hitman';
     // Nobody holds it: there is nobody to agree, and the creator's own
     // confirmation applies it (sendProposal). Said so, rather than "if the
     // operative agrees" about an operative who does not exist.
-    var untaken = !hunter && !(Number(contract.huntersActive) > 0);
+    var untaken = !hitman && !(Number(contract.hitmenActive) > 0);
     var pot = rewardTotal(contract);
     var left = minutesLeft(contract);
 
@@ -2187,7 +2187,7 @@
             return say('There is no deadline left to shorten.');
           }
           askNumber('Shorten the deadline',
-            hunter
+            hitman
               ? 'You are asking the client for less time than you have.'
               : (untaken ? 'Nobody has taken it, so this applies at once.'
                          : 'You are asking the operative to finish sooner.'),
@@ -2217,7 +2217,7 @@
 
            It is offered only when there is actually a later payout to give
            back, rather than opening a box that always fails. A creator with
-           nobody hunting has the direct route instead: Change reward. */
+           nobody working has the direct route instead: Change reward. */
         /* The last one only. The collections are a sequence the contract
            walks through, so one out of the middle would renumber everything
            after it — the server refuses that, and this used to offer any
@@ -2231,7 +2231,7 @@
         skip: spare <= 0,
         run: function () {
           ask('Give back collection ' + total + ' of ' + total + '?',
-            (hunter
+            (hitman
               ? 'You are offering to give up the last collection still to '
                 + 'come. What is on the table now is untouched.'
               : 'This returns the last collection to you. The one being '
@@ -2243,11 +2243,11 @@
         }
       },
       {
-        label: hunter ? 'Call it off' : 'Cancel the contract',
+        label: hitman ? 'Call it off' : 'Cancel the contract',
         // Not "hand it back": agreed, this closes the whole contract for
         // everyone on it, the same as the client cancelling it. Walking away
         // alone is Abandon.
-        note: hunter
+        note: hitman
           ? 'Ask for the whole contract to be cancelled. If everyone agrees it '
             + 'closes for all of you, the client gets back what they put up, '
             + 'and your stake comes back to you. To leave on your own, use '
@@ -2256,7 +2256,7 @@
             ? 'Nobody has taken it, so it closes now and what you put up comes back.'
             : 'Close it and take back what you put up, if the operative agrees.'),
         run: function () {
-          sendProposal(contract, hunter ? 'withdraw' : 'cancel', {});
+          sendProposal(contract, hitman ? 'withdraw' : 'cancel', {});
         }
       }
     ];
@@ -2270,11 +2270,11 @@
       // that happened to carry it does not apply here.
       detail: 'Pays ' + money(pot) + ', ' + runsOut(left)
         + (total > 1 ? ', ' + total + ' collections' : '')
-        + (!hunter && !(Number(contract.huntersActive) > 0)
+        + (!hitman && !(Number(contract.hitmenActive) > 0)
           // Nobody holds it, so there is nobody to wait for.
           ? '. Nobody has taken it, so this applies as soon as you confirm.'
           : '. Nothing happens until '
-            + (hunter ? 'the client' : 'the operative') + ' agrees.'),
+            + (hitman ? 'the client' : 'the operative') + ' agrees.'),
       // An option the server would refuse whatever the player enters is not
       // an option; it is a button that wastes their time and reads as a
       // fault. Dropped rather than drawn.
@@ -2548,7 +2548,7 @@
     }
 
     // Adding is offered from the same screen whether or not taking back is
-    // allowed: a contract somebody is hunting can still be sweetened, and
+    // allowed: a contract somebody is working can still be sweetened, and
     // that is exactly when a creator wants to.
     var add = el('button', 'ghost ico i-plus', 'Add cash');
     add.onclick = function () {
@@ -2796,7 +2796,7 @@
       });
   }
 
-  /* A creator picks which operative to talk to; a hunter has only one
+  /* A creator picks which operative to talk to; a hitman has only one
      thread.
 
      The picking is the part that was missing. A competitive contract has a
@@ -3074,7 +3074,7 @@
   }
 
   // The icon beside the part a player played in a closed contract.
-  var ROLE_ICONS = { hunter: 'i-user', creator: 'i-briefcase', target: 'i-eye' };
+  var ROLE_ICONS = { hitman: 'i-user', creator: 'i-briefcase', target: 'i-eye' };
 
   /* Which copy of this page the player is actually running.
 
@@ -3089,7 +3089,7 @@
      and a player reading out a build number is already the first question
      anyone asks them. */
   function buildStamp() {
-    var build = (typeof window !== 'undefined' && window.CB_BUILD) || 'unknown';
+    var build = (typeof window !== 'undefined' && window.CH_BUILD) || 'unknown';
     var stamp = el('div', 'hint build-stamp', 'Crimson-Hitman build ' + build);
     stamp.onclick = function () { Diag.tapped(); };
     return stamp;
@@ -3110,7 +3110,7 @@
        operatives could not tell which of them they were writing to. */
     var withWhom = t.thread && t.thread.alias
       ? t.thread.alias + (t.thread.name ? ' (' + t.thread.name + ')' : '')
-      : (t.contract.role === 'hunter' ? 'The client' : null);
+      : (t.contract.role === 'hitman' ? 'The client' : null);
     if (withWhom) {
       row.appendChild(el('div', 'hint', 'With ' + withWhom));
     }
@@ -4634,7 +4634,7 @@
       }
 
       // Debounced: a contract settling pushes the creator, the target and
-      // every hunter, and several of those can land in the same tick. One
+      // every hitman, and several of those can land in the same tick. One
       // refresh is three requests, so a push per party would be a burst per
       // event.
       if (pushTimer) { clearTimeout(pushTimer); }

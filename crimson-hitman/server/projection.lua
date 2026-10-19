@@ -22,8 +22,8 @@ end
 local function roleOf(contract, viewerCid)
     if contract.creator_cid == viewerCid then return 'creator' end
     if contract.target_cid == viewerCid then return 'target' end
-    local hunter = Storage.readHunter(contract.id, viewerCid)
-    if hunter and hunter.state == 'active' then return 'hunter' end
+    local hitman = Storage.readHitman(contract.id, viewerCid)
+    if hitman and hitman.state == 'active' then return 'hitman' end
     return 'public'
 end
 
@@ -31,7 +31,7 @@ end
 --- Both parties must be online (§7.1), and a viewer never sees a contract
 --- they are barred from.
 local function listedFor(contract, viewerCid)
-    if contract.state ~= CB.STATE.ACTIVE and contract.state ~= CB.STATE.ACCEPTED then return false end
+    if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then return false end
 
     -- Except that an anonymous creator's presence is not asked at all
     -- (§14.32). Hiding their contract whenever they logged off made the
@@ -52,23 +52,23 @@ local function listedFor(contract, viewerCid)
 end
 
 --- Money-equivalent of the slot currently being competed for, which is what
---- a hunter is deciding on.
+--- a hitman is deciding on.
 local function currentReward(contract)
     local slot = contract.next_slot or 1
     return {
-        baseline = Escrow.moneyValue(contract.id, { slot = slot, portion = CB.PORTION.BASELINE }),
-        bonus    = Escrow.moneyValue(contract.id, { slot = slot, portion = CB.PORTION.BONUS }),
+        baseline = Escrow.moneyValue(contract.id, { slot = slot, portion = CH.PORTION.BASELINE }),
+        bonus    = Escrow.moneyValue(contract.id, { slot = slot, portion = CH.PORTION.BONUS }),
         -- Items and weapons are not priced, so a contract paying a kitted
         -- rifle and nothing else showed as $0. The counts and the item names
         -- cross; serials and metadata do not.
-        goods    = Escrow.goodsIn(contract.id, { slot = slot, portion = CB.PORTION.BASELINE }),
-        bonusGoods = Escrow.goodsIn(contract.id, { slot = slot, portion = CB.PORTION.BONUS }),
+        goods    = Escrow.goodsIn(contract.id, { slot = slot, portion = CH.PORTION.BASELINE }),
+        bonusGoods = Escrow.goodsIn(contract.id, { slot = slot, portion = CH.PORTION.BONUS }),
         -- Split by source, because the three are not worth the same. Black
         -- money sells for a fraction of its face value, and adding it into
-        -- the headline figure told a hunter a contract paid a quarter of a
+        -- the headline figure told a hitman a contract paid a quarter of a
         -- million when a quarter of a million of it was black_money items.
-        sources  = Escrow.moneyBySource(contract.id, { slot = slot, portion = CB.PORTION.BASELINE }),
-        bonusSources = Escrow.moneyBySource(contract.id, { slot = slot, portion = CB.PORTION.BONUS }),
+        sources  = Escrow.moneyBySource(contract.id, { slot = slot, portion = CH.PORTION.BASELINE }),
+        bonusSources = Escrow.moneyBySource(contract.id, { slot = slot, portion = CH.PORTION.BONUS }),
     }
 end
 
@@ -78,11 +78,11 @@ end
 ---@return table|nil
 function Projection.contract(contract, viewerCid)
     local role = roleOf(contract, viewerCid)
-    local hunters = Storage.readHunters(contract.id)
+    local hitmen = Storage.readHitmen(contract.id)
 
-    local activeHunters = 0
-    for i = 1, #hunters do
-        if hunters[i].state == 'active' then activeHunters = activeHunters + 1 end
+    local activeHitmen = 0
+    for i = 1, #hitmen do
+        if hitmen[i].state == 'active' then activeHitmen = activeHitmen + 1 end
     end
 
     local reward = currentReward(contract)
@@ -97,8 +97,8 @@ function Projection.contract(contract, viewerCid)
         slots         = contract.payout_slots or 1,
         slotsClaimed  = contract.slots_claimed or 0,
         currentSlot   = contract.next_slot or 1,
-        huntersActive = activeHunters,
-        huntersMax    = Config.Limits.MaxHitmenPerContract,
+        hitmenActive = activeHitmen,
+        hitmenMax    = Config.Limits.MaxHitmenPerContract,
         targetName    = contract.target_name,
         -- The listing carries a *reference* to the target's live headshot
         -- (§7.2), not the image. Inlining the base64 put a whole image in
@@ -119,13 +119,13 @@ function Projection.contract(contract, viewerCid)
         -- What accepting costs, to everyone who can see the contract.
         --
         -- This was emitted for the creator alone, and acceptance debits it
-        -- anyway — so a hunter tapped Accept on a board listing and watched
+        -- anyway — so a hitman tapped Accept on a board listing and watched
         -- a stake they had never been shown leave their bank, forfeit to
         -- the creator if they later abandoned or ran out of clock. §3.6
-        -- says a hunter who cannot cover it "is told so", and §14.18 that
+        -- says a hitman who cannot cover it "is told so", and §14.18 that
         -- "the required stake is shown prominently on the listing before
         -- the accept button"; the comment above the debit in contracts.lua
-        -- claims "the hunter is told the amount before this point", which
+        -- claims "the hitman is told the amount before this point", which
         -- was a description of a rule rather than of the code. The app can
         -- only word its own warning vaguely for the same reason.
         --
@@ -142,10 +142,10 @@ function Projection.contract(contract, viewerCid)
     if role == 'public' then
         local viewer = Identity.byCitizenId(viewerCid)
         local account = viewer and viewer.account
-        for i = 1, #hunters do
-            local h = hunters[i]
-            if h.state == 'released' and (h.hunter_cid == viewerCid
-                or Identity.sameAccount(h.hunter_account, account)) then
+        for i = 1, #hitmen do
+            local h = hitmen[i]
+            if h.state == 'released' and (h.hitman_cid == viewerCid
+                or Identity.sameAccount(h.hitman_account, account)) then
                 out.barred = 'hold_released'
                 break
             end
@@ -174,27 +174,27 @@ function Projection.contract(contract, viewerCid)
         -- server could only refuse, as a reward that did not add up.
         out.valueHeld = Escrow.moneyValue(contract.id)
         -- The creator learns how many operatives are on it, never who they
-        -- are, unless a hunter chose to be seen.
-        out.hunters = {}
-        for i = 1, #hunters do
-            local h = hunters[i]
+        -- are, unless a hitman chose to be seen.
+        out.hitmen = {}
+        for i = 1, #hitmen do
+            local h = hitmen[i]
             if h.state == 'active' then
-                out.hunters[#out.hunters + 1] = {
+                out.hitmen[#out.hitmen + 1] = {
                     alias = h.alias,
-                    name  = (not h.anon) and h.hunter_name or nil,
+                    name  = (not h.anon) and h.hitman_name or nil,
                     claims = h.claims or 0,
-                    -- A record, not an identity. For an anonymous hunter
+                    -- A record, not an identity. For an anonymous hitman
                     -- only the coarse standing crosses: exact counters are a
                     -- stable fingerprint that links the same person across
                     -- contracts, which is the thing anonymity is for.
                     record = Progression and (h.anon
-                        and { standing = Progression.record(h.hunter_cid).standing }
-                        or Progression.record(h.hunter_cid)) or nil,
+                        and { standing = Progression.record(h.hitman_cid).standing }
+                        or Progression.record(h.hitman_cid)) or nil,
                 }
             end
         end
-    elseif role == 'hunter' then
-        local mine = Storage.readHunter(contract.id, viewerCid)
+    elseif role == 'hitman' then
+        local mine = Storage.readHitman(contract.id, viewerCid)
         out.myAlias = mine and mine.alias or nil
         -- Their own, so nothing is disclosed. The page worded "accepted,
         -- anonymously" from the button pressed, not from what was recorded.
@@ -226,7 +226,7 @@ function Projection.contract(contract, viewerCid)
     return out
 end
 
---- The public bounty list for one viewer.
+--- The public contract list for one viewer.
 ---@param viewerCid string
 ---@param page integer|nil
 ---@return table
@@ -273,7 +273,7 @@ local function buildListing(viewerCid, page)
         -- targets, rather than deciding for itself (§7.5).
         settings = {
             warnCreator = Config.Advisory.WarnCreator ~= false,
-            warnHunter  = Config.Advisory.WarnHitman ~= false,
+            warnHitman  = Config.Advisory.WarnHitman ~= false,
             flagListing = Config.Advisory.FlagListing ~= false,
             minQueryLength = Config.Targeting.MinQueryLength,
             -- Which ways of browsing the app should offer, rather than
@@ -303,7 +303,7 @@ local function buildListing(viewerCid, page)
             -- Charged, but never shown anywhere, on a server that set one.
             anonymityFees = {
                 creator = Config.Anonymity.CreatorFee or 0,
-                hunter = Config.Anonymity.HitmanFee or 0,
+                hitman = Config.Anonymity.HitmanFee or 0,
                 account = Config.Anonymity.FeeAccount or 'bank',
             },
             -- Whether this server runs buyouts at all, so the page can tell
@@ -359,7 +359,7 @@ local function buildMine(viewerCid)
     local out = {}
     for i = 1, #involved do
         local c = involved[i]
-        if not CB.TERMINAL[c.state] then
+        if not CH.TERMINAL[c.state] then
             out[#out + 1] = Projection.contract(c, viewerCid)
         end
     end
@@ -370,11 +370,11 @@ end
 --- creator who put it there.
 ---
 --- The listing carries a money total and a count of goods, which is what a
---- hunter needs to decide. A creator changing their own reward needs the
+--- hitman needs to decide. A creator changing their own reward needs the
 --- opposite: the individual things, each with the id that names it, so they
 --- can hand one back without touching the rest.
 ---
---- Only the creator, and only their own property. A hunter's stake and a
+--- Only the creator, and only their own property. A hitman's stake and a
 --- line already owed to somebody are neither shown nor named — a client
 --- that cannot see an id cannot ask to withdraw it, and Contracts.withdraw
 --- refuses those ids regardless.
@@ -394,12 +394,12 @@ function Projection.rewardLines(contractId, viewerCid)
     -- A creator looking at a reward they cannot change should be told which
     -- rule is holding it, not left to guess.
     local editable, why = true, nil
-    if CB.TERMINAL[contract.state] then
+    if CH.TERMINAL[contract.state] then
         editable, why = false, 'This contract is closed.'
     else
-        local hunters = Storage.readHunters(contractId)
-        for i = 1, #hunters do
-            if hunters[i].state == 'active' then
+        local hitmen = Storage.readHitmen(contractId)
+        for i = 1, #hitmen do
+            if hitmen[i].state == 'active' then
                 editable = false
                 why = 'A hitman is working this. You can add to the reward, '
                     .. 'but not take from it.'
@@ -413,10 +413,10 @@ function Projection.rewardLines(contractId, viewerCid)
 
     for i = 1, #lines do
         local line = lines[i]
-        local mine = (line.portion == CB.PORTION.BASELINE
-                      or line.portion == CB.PORTION.BONUS)
+        local mine = (line.portion == CH.PORTION.BASELINE
+                      or line.portion == CH.PORTION.BONUS)
             and not line.owed_to
-            and line.state ~= CB.ESCROW_STATE.SETTLED
+            and line.state ~= CH.ESCROW_STATE.SETTLED
 
         if mine then
             local row = {
@@ -427,11 +427,11 @@ function Projection.rewardLines(contractId, viewerCid)
                 -- mid-release is on its way to somebody already, and is
                 -- shown so the totals add up rather than hidden so they
                 -- do not.
-                withdrawable = editable and line.state == CB.ESCROW_STATE.HELD,
+                withdrawable = editable and line.state == CH.ESCROW_STATE.HELD,
             }
             if row.withdrawable then row.id = line.id end
 
-            if CB.MONEY_SOURCES[line.source] then
+            if CH.MONEY_SOURCES[line.source] then
                 row.amount = line.amount or 0
             else
                 -- The name of an item crosses, as it already does in the
@@ -457,15 +457,15 @@ function Projection.rewardLines(contractId, viewerCid)
              currentSlot = contract.next_slot or 1 }
 end
 
---- Contracts the viewer holds as hunter.
+--- Contracts the viewer holds as hitman.
 local function buildAccepted(viewerCid)
     local involved = Storage.contractsInvolving(viewerCid)
     local out = {}
     for i = 1, #involved do
         local c = involved[i]
-        if not CB.TERMINAL[c.state] then
-            local hunter = Storage.readHunter(c.id, viewerCid)
-            if hunter and hunter.state == 'active' then
+        if not CH.TERMINAL[c.state] then
+            local hitman = Storage.readHitman(c.id, viewerCid)
+            if hitman and hitman.state == 'active' then
                 out[#out + 1] = Projection.contract(c, viewerCid)
             end
         end
@@ -479,14 +479,14 @@ local function buildOnMe(viewerCid)
     local out = {}
     for i = 1, #naming do
         local c = naming[i]
-        if not CB.TERMINAL[c.state] then
+        if not CH.TERMINAL[c.state] then
             local row = Projection.contract(c, viewerCid)
             -- A target learns a price exists on them and what freedom costs.
-            -- They do not learn who placed it, and never the hunter roster.
+            -- They do not learn who placed it, and never the hitman roster.
             -- The target learns there is a client, never which one.
             row.creatorName = nil
             row.creatorAnonymous = true
-            row.hunters = nil
+            row.hitmen = nil
             out[#out + 1] = row
         end
     end
@@ -525,13 +525,13 @@ Projection.ALLOWED_KEYS = {
     common = {
         id = true, reason = true, mode = true, state = true, reward = true,
         bonusPercent = true, slots = true, slotsClaimed = true, currentSlot = true,
-        huntersActive = true, huntersMax = true, targetName = true,
+        hitmenActive = true, hitmenMax = true, targetName = true,
         targetProtected = true, deadline = true, role = true,
         targetImageId = true, penaltyAmount = true,
         creatorName = true, creatorAnonymous = true,
     },
-    creator = { bailoutAmount = true, hunters = true, valueHeld = true },
-    hunter  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true },
+    creator = { bailoutAmount = true, hitmen = true, valueHeld = true },
+    hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
                 bailoutPaid = true },
     public  = { barred = true },

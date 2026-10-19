@@ -14,7 +14,7 @@ local function seeded()
     local f = fixture(s)
     local contract = s.contracts.create(f.creator, {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
-        mode = CB.MODE.COMPETITIVE, reward = multiSlot(),
+        mode = CH.MODE.COMPETITIVE, reward = multiSlot(),
     })
     return s, f, contract
 end
@@ -36,7 +36,7 @@ describe('payout slots', function()
             reward = { slots = { { baseline = { cash = 1000 } }, { bonus = { cash = 500 } } } },
         })
         falsy(c, 'an unfunded slot is not a collection')
-        eq(err, CB.ERR.INVALID_REWARD)
+        eq(err, CH.ERR.INVALID_REWARD)
     end)
 
     it('rejects more slots than the configured maximum', function()
@@ -54,48 +54,48 @@ describe('payout slots', function()
 
     it('claims slots lowest-first and pays that slots reward only', function()
         local s, f, c = seeded()
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
 
-        local ok, err, result = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        local ok, err, result = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         truthy(ok, tostring(err))
         eq(result.slot, 1)
         eq(result.remaining, 2)
-        eq(Env.players[3].PlayerData.money.cash, 10000, 'hunter got slot 1 baseline (5000) only')
+        eq(Env.players[3].PlayerData.money.cash, 10000, 'hitman got slot 1 baseline (5000) only')
     end)
 
     it('returns the unearned bonus to the creator on an elimination', function()
         local s, f, c = seeded()
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         local before = Env.players[1].PlayerData.money.cash
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         eq(Env.players[1].PlayerData.money.cash, before + 1000, 'slot 1 bonus refunded')
     end)
 
     it('pays baseline plus bonus on a kidnapping', function()
         local s, f, c = seeded()
-        s.contracts.accept(f.hunter, c.id, false)
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.KIDNAPPING)
+        s.contracts.accept(f.hitman, c.id, false)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.KIDNAPPING)
         eq(Env.players[3].PlayerData.money.cash, 11000, 'baseline 5000 + bonus 1000')
     end)
 
     it('keeps the contract live until the last slot is claimed', function()
         local s, f, c = seeded()
-        s.contracts.accept(f.hunter, c.id, false)
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd' })
-        Env.addPlayer({ source = 5, citizenid = 'HUNTER03', license = 'license:eee' })
+        s.contracts.accept(f.hitman, c.id, false)
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
+        Env.addPlayer({ source = 5, citizenid = 'HITMAN03', license = 'license:eee' })
         s.contracts.accept(s.identity.resolve(4), c.id, false)
         s.contracts.accept(s.identity.resolve(5), c.id, false)
 
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED, 'still live after slot 1')
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'still live after slot 1')
 
-        s.contracts.claimSlot(c.id, 'HUNTER02', CB.FULFILMENT.ELIMINATION)
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED, 'still live after slot 2')
+        s.contracts.claimSlot(c.id, 'HITMAN02', CH.FULFILMENT.ELIMINATION)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'still live after slot 2')
 
-        local ok, _, result = s.contracts.claimSlot(c.id, 'HUNTER03', CB.FULFILMENT.ELIMINATION)
+        local ok, _, result = s.contracts.claimSlot(c.id, 'HITMAN03', CH.FULFILMENT.ELIMINATION)
         truthy(ok)
         truthy(result.exhausted, 'last slot exhausts the contract')
-        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
     end)
 
     it('refuses a claim once every slot is gone', function()
@@ -104,48 +104,48 @@ describe('payout slots', function()
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
-        s.contracts.accept(f.hunter, c.id, false)
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
-        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.accept(f.hitman, c.id, false)
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        local ok, err = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         falsy(ok, 'no slots left')
-        eq(err, CB.ERR.BAD_STATE, 'contract is completed, not claimable')
+        eq(err, CH.ERR.BAD_STATE, 'contract is completed, not claimable')
     end)
 
-    it('stops one hunter farming consecutive slots', function()
+    it('stops one hitman farming consecutive slots', function()
         local s, f, c = seeded()
-        s.contracts.accept(f.hunter, c.id, false)
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        s.contracts.accept(f.hitman, c.id, false)
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
 
-        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        local ok, err = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         falsy(ok, 'cooldown must block a back-to-back claim')
         -- Its own code: this is a ten-minute policy wait, and RATE_LIMITED is
         -- the flood guard, which the page words as "Slow down."
-        eq(err, CB.ERR.SLOT_COOLDOWN)
+        eq(err, CH.ERR.SLOT_COOLDOWN)
 
         Env.advance(Config.Limits.SlotCooldownSeconds + 1)
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION),
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION),
             'allowed once the cooldown has passed')
     end)
 
     it('returns unclaimed slots to the creator when the contract is cancelled', function()
         local s, f, c = seeded()
-        s.contracts.accept(f.hunter, c.id, false)
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.accept(f.hitman, c.id, false)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         local afterClaim = Env.players[1].PlayerData.money.cash
 
-        s.contracts.resolve(c.id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
+        s.contracts.resolve(c.id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'cancelled')
         -- slots 2 and 3 remain: 3000 + 500 + 2000
         eq(Env.players[1].PlayerData.money.cash, afterClaim + 5500, 'unclaimed slots refunded in full')
     end)
 end)
 
-describe('more hunters than slots', function()
-    it('lets more hunters accept than there are slots, and pays the first to fulfil', function()
+describe('more hitmen than slots', function()
+    it('lets more hitmen accept than there are slots, and pays the first to fulfil', function()
         local s = newStack()
         local f = fixture(s)
-        -- Three slots, four hunters.
+        -- Three slots, four hitmen.
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 { baseline = { cash = 1000 } },
                 { baseline = { cash = 1000 } },
@@ -155,33 +155,33 @@ describe('more hunters than slots', function()
         truthy(c)
         eq(c.payout_slots, 3)
 
-        local hunters = { 'HUNTER01' }
-        s.contracts.accept(f.hunter, c.id, false)
+        local hitmen = { 'HITMAN01' }
+        s.contracts.accept(f.hitman, c.id, false)
         for i = 2, 4 do
             local src = 3 + i
-            local cid = 'HUNTER0' .. i
+            local cid = 'HITMAN0' .. i
             Env.addPlayer({ source = src, citizenid = cid, license = 'license:h' .. i })
             local ok, err = s.contracts.accept(s.identity.resolve(src), c.id, false)
-            truthy(ok, ('hunter %d should be able to accept a 3-slot contract: %s'):format(i, tostring(err)))
-            hunters[#hunters + 1] = cid
+            truthy(ok, ('hitman %d should be able to accept a 3-slot contract: %s'):format(i, tostring(err)))
+            hitmen[#hitmen + 1] = cid
         end
-        eq(#s.storage.readHunters(c.id), 4, 'four hunters on a three-slot contract')
+        eq(#s.storage.readHitmen(c.id), 4, 'four hitmen on a three-slot contract')
 
         -- First three to fulfil take the three slots.
         for i = 1, 3 do
-            local ok, err = s.contracts.claimSlot(c.id, hunters[i], CB.FULFILMENT.ELIMINATION)
-            truthy(ok, ('hunter %d should collect slot %d: %s'):format(i, i, tostring(err)))
+            local ok, err = s.contracts.claimSlot(c.id, hitmen[i], CH.FULFILMENT.ELIMINATION)
+            truthy(ok, ('hitman %d should collect slot %d: %s'):format(i, i, tostring(err)))
         end
 
         -- The fourth arrives too late: the contract is finished.
-        local ok, err = s.contracts.claimSlot(c.id, hunters[4], CB.FULFILMENT.ELIMINATION)
-        falsy(ok, 'the fourth hunter gets nothing')
-        eq(err, CB.ERR.BAD_STATE)
-        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+        local ok, err = s.contracts.claimSlot(c.id, hitmen[4], CH.FULFILMENT.ELIMINATION)
+        falsy(ok, 'the fourth hitman gets nothing')
+        eq(err, CH.ERR.BAD_STATE)
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
 
         -- And the money went to exactly the first three.
-        eq(Env.players[3].PlayerData.money.cash, 6000, 'hunter 1 paid')
-        eq(Env.players[7].PlayerData.money.cash, 0, 'hunter 4 unpaid — balance untouched')
+        eq(Env.players[3].PlayerData.money.cash, 6000, 'hitman 1 paid')
+        eq(Env.players[7].PlayerData.money.cash, 0, 'hitman 4 unpaid — balance untouched')
     end)
 end)
 
@@ -221,7 +221,7 @@ describe('escrow lines always carry a valid payout slot', function()
         eq(weaponLine.inv_slot, 3, 'the inventory slot is kept separately')
     end)
 
-    it('delivers an escrowed weapon to the hunter on completion', function()
+    it('delivers an escrowed weapon to the hitman on completion', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
@@ -229,19 +229,19 @@ describe('escrow lines always carry a valid payout slot', function()
             reward = { baseline = { cash = 1000, weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } },
         })
         truthy(c)
-        s.contracts.accept(f.hunter, c.id, false)
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        s.contracts.accept(f.hitman, c.id, false)
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
 
         local got
         for _, slot in ipairs(Env.players[3]._inventory) do
             if slot.name == 'WEAPON_PISTOL' then got = slot end
         end
-        truthy(got, 'the hunter must actually receive the escrowed weapon')
+        truthy(got, 'the hitman must actually receive the escrowed weapon')
         eq(got.metadata.serial, 'ABC123', 'with its serial intact')
 
         -- And nothing may be left held on a finished contract.
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            eq(line.state, CB.ESCROW_STATE.SETTLED,
+            eq(line.state, CH.ESCROW_STATE.SETTLED,
                 ('line %s left %s on a completed contract'):format(line.id, line.state))
         end
     end)
@@ -253,7 +253,7 @@ describe('escrow lines always carry a valid payout slot', function()
             { name = 'WEAPON_PISTOL', count = 1, slot = 7, metadata = { serial = 'XYZ789' } }
 
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 { baseline = { cash = 500, weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } },
                 { baseline = { cash = 500, items = { { name = 'lockpick', count = 1 } } } },
@@ -262,14 +262,14 @@ describe('escrow lines always carry a valid payout slot', function()
         truthy(c)
         assertSlotsValid(s, c)
 
-        s.contracts.accept(f.hunter, c.id, false)
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.accept(f.hitman, c.id, false)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         Env.advance(Config.Limits.SlotCooldownSeconds + 1)
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
 
-        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            eq(line.state, CB.ESCROW_STATE.SETTLED,
+            eq(line.state, CH.ESCROW_STATE.SETTLED,
                 ('line %s (%s) stranded on a completed contract'):format(line.id, line.source))
         end
     end)
@@ -290,23 +290,23 @@ describe('the kidnapping bonus is real money', function()
     it('escrows the bonus at creation rather than merely promising it', function()
         local s, f, c = withBonus(50)
         truthy(c)
-        eq(s.escrow.moneyValue(c.id, CB.PORTION.BONUS), 5000)
+        eq(s.escrow.moneyValue(c.id, CH.PORTION.BONUS), 5000)
         eq(Env.players[1].PlayerData.money.cash, 85000,
             'the creator surrendered the bonus too')
     end)
 
     it('pays a live delivery more than a kill', function()
         local s, f, c = withBonus(50)
-        s.contracts.accept(f.hunter, c.id, false)
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.KIDNAPPING)
+        s.contracts.accept(f.hitman, c.id, false)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.KIDNAPPING)
         eq(Env.players[3].PlayerData.money.cash, 20000, '10000 baseline + 5000 bonus + 5000 start')
     end)
 
     it('returns the unearned bonus to the creator on a kill', function()
         local s, f, c = withBonus(50)
-        s.contracts.accept(f.hunter, c.id, false)
+        s.contracts.accept(f.hitman, c.id, false)
         local before = Env.players[1].PlayerData.money.cash
-        s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         eq(Env.players[3].PlayerData.money.cash, 15000, 'baseline only')
         eq(Env.players[1].PlayerData.money.cash, before + 5000, 'bonus comes home')
     end)
@@ -319,13 +319,13 @@ describe('the kidnapping bonus is real money', function()
             reward = { baseline = { cash = 10000 } }, bonusPercent = 100,
         })
         falsy(c, 'a bonus that cannot be funded is not a bonus')
-        eq(err, CB.ERR.INSUFFICIENT)
+        eq(err, CH.ERR.INSUFFICIENT)
         eq(Env.players[1].PlayerData.money.cash, 10000, 'and nothing was taken')
     end)
 
-    it('is shown on the board as what the hunter would actually get', function()
+    it('is shown on the board as what the hitman would actually get', function()
         local s, f, c = withBonus(50)
-        local row = s.projection.contract(s.storage.readContract(c.id), 'HUNTER01')
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(row.reward.baseline, 10000)
         eq(row.reward.bonus, 5000, 'the +alive figure must be the real one')
     end)
@@ -341,7 +341,7 @@ describe('an explicit bonus is not doubled by a percentage', function()
             bonusPercent = 50,
         })
         truthy(c)
-        eq(s.escrow.moneyValue(c.id, CB.PORTION.BONUS), 1000,
+        eq(s.escrow.moneyValue(c.id, CH.PORTION.BONUS), 1000,
             'the creator said 1000; they must not be charged 6000')
     end)
 
@@ -357,8 +357,8 @@ describe('an explicit bonus is not doubled by a percentage', function()
             bonusPercent = 50,
         })
         truthy(c)
-        eq(s.escrow.moneyValue(c.id, { slot = 1, portion = CB.PORTION.BONUS }), 1000)
-        eq(s.escrow.moneyValue(c.id, { slot = 2, portion = CB.PORTION.BONUS }), 5000)
+        eq(s.escrow.moneyValue(c.id, { slot = 1, portion = CH.PORTION.BONUS }), 1000)
+        eq(s.escrow.moneyValue(c.id, { slot = 2, portion = CH.PORTION.BONUS }), 5000)
     end)
 end)
 
@@ -378,12 +378,12 @@ describe('a claim does not erase what happened while it ran', function()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 5000 } },
                                  { baseline = { cash = 5000 } } } },
             bailoutAmount = 15000,
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         -- Something else writes the contract in the window between the read
         -- at the top of claimSlot and the write at the end. On a live server
@@ -406,7 +406,7 @@ describe('a claim does not erase what happened while it ran', function()
             return realReadEscrow(...)
         end
 
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
         s.storage.readEscrow = realReadEscrow
         truthy(fired, 'the write must have landed mid-claim')
 
@@ -422,13 +422,13 @@ describe('a claim does not erase what happened while it ran', function()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 1000 } },
                                  { baseline = { cash = 1000 } },
                                  { baseline = { cash = 1000 } } } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
 
         local row = s.storage.readContract(c.id)
         eq(row.slots_claimed, 1, 'one claim, one slot')

@@ -118,8 +118,8 @@ local DEFAULTS = {
     --- The safety switches. Each was added to a section operators already
     --- had, and each is read as a plain truth test, so on a config taken
     --- before it the protection was simply off: a victim's client naming any
-    --- hunter as the killer with no damage observed, a stake repriced
-    --- between the board and Accept, an informant naming hunters never near
+    --- hitman as the killer with no damage observed, a stake repriced
+    --- between the board and Accept, an informant naming hitmen never near
     --- the target. A switch the operator never had is not one they turned
     --- off; one they set to false stays false.
     Completion = {
@@ -273,46 +273,8 @@ local function isRecord(value)
     return false
 end
 
---- Settings renamed when the resource became Crimson-Hitman. A config.lua
---- written before then still says the old names, and nothing reads those
---- any more: the setting would fall back to its default without a word.
---- { path to the table holding it, old name, new name }
-local RENAMED_SETTINGS = {
-    { 'Anonymity',        'HunterFee',             'HitmanFee' },
-    { 'Limits',           'MaxAcceptedPerHunter',  'MaxAcceptedPerHitman' },
-    { 'Limits',           'MaxHuntersPerContract', 'MaxHitmenPerContract' },
-    { 'Advisory',         'WarnHunter',            'WarnHitman' },
-    { 'Kidnap.Coercion',  'passengerOfHunter',     'passengerOfHitman' },
-}
-
---- Read an old name as its new one, where only the old one is set.
----@return string[] what was carried across, as "old -> new"
-local function applyRenamedSettings()
-    local carried = {}
-    for _, rename in ipairs(RENAMED_SETTINGS) do
-        local holder = Config
-        for part in rename[1]:gmatch('[^.]+') do
-            holder = type(holder) == 'table' and holder[part] or nil
-        end
-        if type(holder) == 'table' and holder[rename[2]] ~= nil then
-            if holder[rename[3]] == nil then
-                holder[rename[3]] = holder[rename[2]]
-                carried[#carried + 1] = rename[1] .. '.' .. rename[2] .. ' -> ' .. rename[3]
-            end
-            holder[rename[2]] = nil
-        end
-    end
-    if #carried > 0 then
-        print(('[crimson-hitman] your config.lua uses %d setting name(s) from before the '
-            .. 'rename; they are read as the new ones: %s. Rename them when you next edit it.')
-            :format(#carried, table.concat(carried, ', ')))
-    end
-    return carried
-end
-
 local function applyConfigDefaults()
     local filled = {}
-    applyRenamedSettings()
 
     -- Whole sections the operator's config does not have at all.
     --
@@ -499,7 +461,7 @@ local function validateConfig()
 
     -- A deadline past the lifetime is one that never arrives: the contract
     -- ends on its lifetime instead, and a lifetime ending hands the stake
-    -- back, so the penalty a hunter agreed to could never be taken.
+    -- back, so the penalty a hitman agreed to could never be taken.
     if Config.Limits.DefaultDeadlineSeconds > Config.Limits.ContractLifetimeSeconds then
         warn[#warn + 1] = ('Limits.DefaultDeadlineSeconds (%d) is longer than '
             .. 'ContractLifetimeSeconds (%d); a contract would end on its lifetime '
@@ -561,7 +523,7 @@ local function validateConfig()
     }) do
         local holder = named.table
         local value = holder and holder[named.key]
-        if holder and value ~= nil and not CB.MONEY_ACCOUNTS[value] then
+        if holder and value ~= nil and not CH.MONEY_ACCOUNTS[value] then
             holder[named.key] = 'bank'
             warn[#warn + 1] = ('%s is "%s", which is not an account this '
                 .. 'framework can charge (only cash and bank are; dirty money is '
@@ -885,7 +847,7 @@ function Recover()
     -- everybody is. A contract nobody had paused when the process went away
     -- only started pausing at the first tick after the boot, so the downtime
     -- itself was charged to the deadline — and one that fell due inside it
-    -- expired the moment both parties were back, forfeiting the hunter's
+    -- expired the moment both parties were back, forfeiting the hitman's
     -- stake for a restart. Dated from the last heartbeat instead.
     local now = os.time()
     local lastAlive = Storage.lastHeartbeat and Storage.lastHeartbeat() or nil
@@ -895,8 +857,8 @@ function Recover()
         local contract = contracts[i]
 
         if lastAlive and not contract.paused_since
-            and (contract.state == CB.STATE.ACTIVE or contract.state == CB.STATE.ACCEPTED
-                 or contract.state == CB.STATE.COMPLETING) then
+            and (contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED
+                 or contract.state == CH.STATE.COMPLETING) then
             if Storage.startPause(contract.id, lastAlive) then
                 contract.paused_since = lastAlive
                 paused = paused + 1
@@ -911,12 +873,12 @@ function Recover()
         local lines = Storage.readEscrow(contract.id)
         for j = 1, #lines do
             local line = lines[j]
-            if (line.state == CB.ESCROW_STATE.HELD or line.state == CB.ESCROW_STATE.RELEASING)
+            if (line.state == CH.ESCROW_STATE.HELD or line.state == CH.ESCROW_STATE.RELEASING)
                 and not line.owed_to and not line.releasing_to
-                and line.portion ~= CB.PORTION.OWED then
+                and line.portion ~= CH.PORTION.OWED then
                 untouched = true
             end
-            if lines[j].state == CB.ESCROW_STATE.RELEASING then
+            if lines[j].state == CH.ESCROW_STATE.RELEASING then
                 -- Claimed but never settled. The server stopped between
                 -- handing the money over and recording that it had, so we
                 -- cannot know which happened.
@@ -926,7 +888,7 @@ function Recover()
                 -- a few instructions wide, and a line left `releasing` is
                 -- money no code path can ever reach again. Every one of
                 -- these is logged with everything staff need to check it.
-                Storage.claimEscrowLine(lines[j].id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD)
+                Storage.claimEscrowLine(lines[j].id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD)
                 unstuck = unstuck + 1
                 print(('[crimson-hitman] escrow line %s was mid-release at shutdown; ' ..
                        'returned to held — verify it was not already paid')
@@ -939,19 +901,19 @@ function Recover()
             end
         end
 
-        if contract.state == CB.STATE.COMPLETING then
+        if contract.state == CH.STATE.COMPLETING then
             -- A claim that had paid its collection and died before moving
             -- the slot on. Every baseline line of that collection is either
             -- settled or waiting for the person it was paid to, so it was
-            -- paid; left where it was, the next hunter to kill the target
+            -- paid; left where it was, the next hitman to kill the target
             -- for it was paid out of an empty slot.
             local slot = contract.next_slot or 1
             local baseline, unpaid = 0, 0
             for j = 1, #lines do
                 local line = lines[j]
-                if line.slot == slot and line.portion == CB.PORTION.BASELINE then
+                if line.slot == slot and line.portion == CH.PORTION.BASELINE then
                     baseline = baseline + 1
-                    if line.state ~= CB.ESCROW_STATE.SETTLED and not line.owed_to then
+                    if line.state ~= CH.ESCROW_STATE.SETTLED and not line.owed_to then
                         unpaid = unpaid + 1
                     end
                 end
@@ -965,7 +927,7 @@ function Recover()
                 -- between advancing the slot and closing. Put back to
                 -- accepted, this was a live contract with nothing left to
                 -- claim, which then ran out and forfeited the stake of the
-                -- hunter who had collected all of it. It is finished instead.
+                -- hitman who had collected all of it. It is finished instead.
                 if modules.contracts.recoverEnded(contract.id) then
                     finished = finished + 1
                 end
@@ -973,10 +935,10 @@ function Recover()
                 -- Settlement was interrupted. Put it back to accepted so the
                 -- normal path can run again; escrow lines are individually
                 -- guarded, so anything already settled stays settled.
-                Storage.compareSetContractState(contract.id, CB.STATE.COMPLETING, CB.STATE.ACCEPTED)
+                Storage.compareSetContractState(contract.id, CH.STATE.COMPLETING, CH.STATE.ACCEPTED)
                 recovered = recovered + 1
             end
-        elseif untouched and CB.TERMINAL[contract.state] then
+        elseif untouched and CH.TERMINAL[contract.state] then
             -- Closed, and still holding something nobody tried to pay.
             -- `resolve` moves the state first and the money after, so a crash
             -- in between left the escrow on a contract nothing releases again.
@@ -987,13 +949,13 @@ function Recover()
 
         -- Both below read the contract as the steps above left it. Asked of
         -- the first read, an acceptance part-way on a contract another
-        -- hunter's claim had locked (COMPLETING) was skipped, and the claim
+        -- hitman's claim had locked (COMPLETING) was skipped, and the claim
         -- was then put back to ACCEPTED with the row still joining: its
-        -- stake held, its hunter unable to take it, leave it or work it.
+        -- stake held, its hitman unable to take it, leave it or work it.
         local current = Storage.readContract(contract.id) or contract
 
         -- An acceptance the crash left part-way (Contracts.recoverJoining).
-        if (current.state == CB.STATE.ACTIVE or current.state == CB.STATE.ACCEPTED)
+        if (current.state == CH.STATE.ACTIVE or current.state == CH.STATE.ACCEPTED)
             and modules.contracts.recoverJoining then
             recovered = recovered + modules.contracts.recoverJoining(current)
         end
@@ -1126,7 +1088,7 @@ end
 --- Close contracts whose deadline has passed.
 ---
 --- The completion clock is paused while either party is offline, so logging
---- out cannot run out a hunter's timer and cannot dodge a refund (§7.1). The
+--- out cannot run out a hitman's timer and cannot dodge a refund (§7.1). The
 --- absolute lifetime is NOT paused: without that ceiling a contract whose
 --- creator never logs in again would hold its escrow forever.
 ---
@@ -1179,25 +1141,25 @@ function ExpireContracts()
         -- claimed collection went back on offer and the next kill was paid
         -- out of a slot already settled — and the deadline check expired a
         -- contract its creator had just extended.
-        if contract.state == CB.STATE.ACTIVE or contract.state == CB.STATE.ACCEPTED then
+        if contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED then
             contract = Storage.readContract(contract.id) or contract
         end
-        if contract.state == CB.STATE.ACTIVE or contract.state == CB.STATE.ACCEPTED then
+        if contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED then
             -- The absolute ceiling applies whatever anyone's presence is.
             if contract.expires_at and now > contract.expires_at then
-                -- Whether the hunters failed is the paused deadline's
+                -- Whether the hitmen failed is the paused deadline's
                 -- question, not the lifetime's (§3.6, §14.18). The lifetime
                 -- runs through every pause, so reaching it while the
                 -- deadline still has time on it — which is how it is almost
                 -- always reached, a target who was out of the city — is not
-                -- a hunter who let the clock run out, and their stake comes
+                -- a hitman who let the clock run out, and their stake comes
                 -- back. It used to forfeit to the creator regardless: a
-                -- hunter holding a contract on a target who left for two
+                -- hitman holding a contract on a target who left for two
                 -- days lost their stake without ever having had them in
                 -- the city.
                 local deadlinePassed = not contract.paused_since
                     and contract.deadline_at ~= nil and now > contract.deadline_at
-                if modules.contracts.resolve(contract.id, CB.STATE.EXPIRED,
+                if modules.contracts.resolve(contract.id, CH.STATE.EXPIRED,
                     contract.creator_cid, nil, 'lifetime_exceeded',
                     { forfeit = deadlinePassed and true or false,
                       dueAt = now, byLifetime = true }) then
@@ -1207,7 +1169,7 @@ function ExpireContracts()
                 -- An anonymous creator's presence is not asked (§14.32).
                 -- Pausing for it moved the deadline on by exactly how long
                 -- they were away, and every viewer is sent the deadline:
-                -- their session, to the minute. The hunter loses nothing by
+                -- their session, to the minute. The hitman loses nothing by
                 -- it. A kill needs only the target, and a handover to a
                 -- creator nobody can locate is as easily avoided by one who
                 -- is online and elsewhere as by one who has logged off.
@@ -1215,11 +1177,11 @@ function ExpireContracts()
                     or modules.identity.byCitizenId(contract.creator_cid) ~= nil
                 local targetActor = modules.identity.byCitizenId(contract.target_cid)
                 -- A target in prison is as far out of reach as one who has
-                -- logged off, and the hunter's clock ran on while they
+                -- logged off, and the hitman's clock ran on while they
                 -- served their time. Not once the deadline has gone,
                 -- though: a sentence written after it would otherwise turn
                 -- an expiry into a pause, and the lifetime then hands the
-                -- hunter back a stake they had already lost.
+                -- hitman back a stake they had already lost.
                 local overdue = not contract.paused_since
                     and contract.deadline_at ~= nil and now > contract.deadline_at
                 local jailed = Config.Limits.PauseWhileTargetJailed and targetActor ~= nil
@@ -1254,7 +1216,7 @@ function ExpireContracts()
                     end
 
                     if contract.deadline_at and now > contract.deadline_at then
-                        if modules.contracts.resolve(contract.id, CB.STATE.EXPIRED,
+                        if modules.contracts.resolve(contract.id, CH.STATE.EXPIRED,
                             contract.creator_cid, nil, 'expired', { dueAt = now }) then
                             resolved = resolved + 1
                         end
@@ -1298,7 +1260,7 @@ AddEventHandler('onResourceStop', function(name)
             -- whatever state it is in.
             --
             -- A payout that could not be handed over when it was earned — a
-            -- hunter whose pockets were full, a creator who had logged off
+            -- hitman whose pockets were full, a creator who had logged off
             -- before an unearned bonus came back — is marked owed_to and
             -- delivered at that player's next login. In memory mode there is
             -- no next login: the tables go with the resource. The config says
@@ -1316,7 +1278,7 @@ AddEventHandler('onResourceStop', function(name)
             -- back from the crash that queued it, or never gone — is paid.
             local owed = {}
             for _, line in ipairs(Storage.readEscrow(c.id) or {}) do
-                if line.owed_to and line.state ~= CB.ESCROW_STATE.SETTLED then
+                if line.owed_to and line.state ~= CH.ESCROW_STATE.SETTLED then
                     owed[line.owed_to] = owed[line.owed_to] or {}
                     owed[line.owed_to][line.id] = true
                 end
@@ -1335,15 +1297,15 @@ AddEventHandler('onResourceStop', function(name)
                 modules.escrow.release(c.id, cid, { lines = ids }, 'resource_stopping_owed')
             end
 
-            if not CB.TERMINAL[c.state] then
-                -- Stakes belong to the hunters who put them up, and an
+            if not CH.TERMINAL[c.state] then
+                -- Stakes belong to the hitmen who put them up, and an
                 -- unfiltered release deliberately skips them — so they are
                 -- returned explicitly here rather than destroyed with the
                 -- tables.
-                local hunters = Storage.readHunters(c.id)
-                for j = 1, #hunters do
-                    modules.escrow.release(c.id, hunters[j].hunter_cid,
-                        { portion = CB.PORTION.STAKE, staker = hunters[j].hunter_cid },
+                local hitmen = Storage.readHitmen(c.id)
+                for j = 1, #hitmen do
+                    modules.escrow.release(c.id, hitmen[j].hitman_cid,
+                        { portion = CH.PORTION.STAKE, staker = hitmen[j].hitman_cid },
                         'resource_stopping')
                 end
                 modules.escrow.release(c.id, c.creator_cid, nil, 'resource_stopping')

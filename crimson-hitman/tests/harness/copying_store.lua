@@ -23,7 +23,7 @@ return function(inner)
     -- Reads that must not leak a live reference.
     local COPYING_READS = {
         readContract = true, allContracts = true, readEscrow = true,
-        readEscrowLine = true, readHunters = true, readHunter = true,
+        readEscrowLine = true, readHitmen = true, readHitman = true,
         readAmendment = true, readOpenAmendments = true, readMessages = true,
         readLedger = true, readPending = true, readAudit = true,
     }

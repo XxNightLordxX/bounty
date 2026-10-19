@@ -112,10 +112,10 @@ end
 ---@return string|nil err
 function Admin.timeline(contractId)
     contractId = Util.toId(contractId)
-    if not contractId then return nil, CB.ERR.INVALID_INPUT end
+    if not contractId then return nil, CH.ERR.INVALID_INPUT end
 
     local contract = Storage.readContract(contractId)
-    if not contract then return nil, CB.ERR.NOT_FOUND end
+    if not contract then return nil, CH.ERR.NOT_FOUND end
 
     -- Audit writes are queued and flushed on the tick, so a staff member
     -- investigating something that just happened would not see it. Flush
@@ -136,7 +136,7 @@ function Admin.timeline(contractId)
             creator = contract.anon_creator and '(anonymous)' or contract.creator_name,
         },
         escrow = Storage.readEscrow(contractId),
-        hunters = Storage.readHunters(contractId),
+        hitmen = Storage.readHitmen(contractId),
         events = rows,
     }
 end
@@ -171,7 +171,7 @@ function Admin.interrupted(src)
             local line = Storage.readEscrowLine(lineId)
             -- Only still-open ones: a line settled since is not a question
             -- anybody needs to answer.
-            if line and line.state ~= CB.ESCROW_STATE.SETTLED then
+            if line and line.state ~= CH.ESCROW_STATE.SETTLED then
                 local contractId = line.contract_id or row.contract_id
                 local contract = contracts[contractId]
                 if contract == nil then
@@ -223,11 +223,11 @@ end
 ---@return string|nil err
 function Admin.void(src, contractId, reason)
     contractId = Util.toId(contractId)
-    if not contractId then return false, CB.ERR.INVALID_INPUT end
+    if not contractId then return false, CH.ERR.INVALID_INPUT end
 
     local contract = Storage.readContract(contractId)
-    if not contract then return false, CB.ERR.NOT_FOUND end
-    if CB.TERMINAL[contract.state] then return false, CB.ERR.ALREADY_SETTLED end
+    if not contract then return false, CH.ERR.NOT_FOUND end
+    if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
 
     -- VOIDED, not CANCELLED. The state machine has declared VOIDED terminal
     -- and reachable from ACTIVE and ACCEPTED since it was written, commented
@@ -242,8 +242,8 @@ function Admin.void(src, contractId, reason)
     --
     -- Everything else is unchanged: resolve treats every terminal alike
     -- except BAILED_OUT and EXPIRED, so the escrow still comes back to the
-    -- creator in full and the hunters still get their stakes.
-    local ok, err = Contracts.resolve(contractId, CB.STATE.VOIDED,
+    -- creator in full and the hitmen still get their stakes.
+    local ok, err = Contracts.resolve(contractId, CH.STATE.VOIDED,
         contract.creator_cid, nil, 'voided_by_staff')
     if not ok then return false, err end
 
@@ -264,17 +264,17 @@ end
 ---@return string|nil err
 function Admin.settleLine(src, lineId, disposition)
     lineId = Util.toLineId(lineId)
-    if not lineId then return false, CB.ERR.INVALID_INPUT end
+    if not lineId then return false, CH.ERR.INVALID_INPUT end
     if disposition ~= 'pay' and disposition ~= 'return' then
-        return false, CB.ERR.INVALID_INPUT
+        return false, CH.ERR.INVALID_INPUT
     end
 
     local line = Storage.readEscrowLine(lineId)
-    if not line then return false, CB.ERR.NOT_FOUND end
-    if line.state == CB.ESCROW_STATE.SETTLED then return false, CB.ERR.ALREADY_SETTLED end
+    if not line then return false, CH.ERR.NOT_FOUND end
+    if line.state == CH.ESCROW_STATE.SETTLED then return false, CH.ERR.ALREADY_SETTLED end
 
     local contract = Storage.readContract(line.contract_id)
-    if not contract then return false, CB.ERR.NOT_FOUND end
+    if not contract then return false, CH.ERR.NOT_FOUND end
 
     -- Who it goes to. `settled_to` is who the interrupted release was
     -- paying; without one there is nobody to pay and it can only go back.
@@ -286,7 +286,7 @@ function Admin.settleLine(src, lineId, disposition)
     -- rewritten by every later release, so a 'return' that queued for an
     -- offline creator made a 'pay' after it go to the creator too.
     --
-    -- Return goes to whoever put the line up. A stake is the hunter's own
+    -- Return goes to whoever put the line up. A stake is the hitman's own
     -- money: returned "to the creator", an interrupted stake was handed to
     -- the one party it was never theirs to take. A line owed to somebody
     -- has no payer this can name.
@@ -298,18 +298,18 @@ function Admin.settleLine(src, lineId, disposition)
             if (rows[i].detail or {}).line == lineId then recorded = rows[i].actor_cid; break end
         end
         recipient = recorded or line.owed_to or line.releasing_to or line.settled_to
-    elseif line.portion == CB.PORTION.STAKE then
+    elseif line.portion == CH.PORTION.STAKE then
         recipient = line.staker
-    elseif line.portion == CB.PORTION.OWED then
-        return false, CB.ERR.INVALID_INPUT
+    elseif line.portion == CH.PORTION.OWED then
+        return false, CH.ERR.INVALID_INPUT
     else
         recipient = contract.creator_cid
     end
-    if not recipient then return false, CB.ERR.INVALID_INPUT end
+    if not recipient then return false, CH.ERR.INVALID_INPUT end
 
     -- Already queued for somebody by an earlier settle: settling it again
     -- to somebody else would take it off them.
-    if line.owed_to and line.owed_to ~= recipient then return false, CB.ERR.LOCKED end
+    if line.owed_to and line.owed_to ~= recipient then return false, CH.ERR.LOCKED end
 
     -- Through the normal release path, filtered to this one line, so the
     -- compare-and-set and the never-destroy-property rules still apply.
@@ -326,7 +326,7 @@ function Admin.settleLine(src, lineId, disposition)
     -- reported as "Could not settle it", so staff settled it again.
     if settled > 0 then return true, nil end
     if pending > 0 then return true, 'queued' end
-    return false, CB.ERR.LOCKED
+    return false, CH.ERR.LOCKED
 end
 
 --- Who is behind an anonymous party on a contract.
@@ -339,31 +339,31 @@ end
 ---@return string|nil err
 function Admin.identify(src, contractId)
     contractId = Util.toId(contractId)
-    if not contractId then return nil, CB.ERR.INVALID_INPUT end
+    if not contractId then return nil, CH.ERR.INVALID_INPUT end
 
     local contract = Storage.readContract(contractId)
-    if not contract then return nil, CB.ERR.NOT_FOUND end
+    if not contract then return nil, CH.ERR.NOT_FOUND end
 
-    local hunters = Storage.readHunters(contractId)
+    local hitmen = Storage.readHitmen(contractId)
     local operatives = {}
-    for i = 1, #hunters do
+    for i = 1, #hitmen do
         operatives[#operatives + 1] = {
-            alias = hunters[i].alias,
-            cid = hunters[i].hunter_cid,
-            name = hunters[i].hunter_name,
-            anonymous = hunters[i].anon == true,
-            state = hunters[i].state,
+            alias = hitmen[i].alias,
+            cid = hitmen[i].hitman_cid,
+            name = hitmen[i].hitman_name,
+            anonymous = hitmen[i].anon == true,
+            state = hitmen[i].state,
         }
     end
 
     Audit.staff('admin_identify', callerCid(src), contractId,
-        { anon_creator = contract.anon_creator == true, hunters = #operatives })
+        { anon_creator = contract.anon_creator == true, hitmen = #operatives })
 
     return {
         creator = { cid = contract.creator_cid, name = contract.creator_name,
                     anonymous = contract.anon_creator == true },
         target  = { cid = contract.target_cid, name = contract.target_name },
-        hunters = operatives,
+        hitmen = operatives,
     }
 end
 
@@ -773,9 +773,9 @@ end
 --- disabling any of them. What it deliberately does NOT touch:
 ---
 ---   * limits that are counts, not waits — informant purchases per
----     contract, slots per hunter. Those are the rules being tested.
+---     contract, slots per hitman. Those are the rules being tested.
 ---   * countdowns in progress. A kidnap countdown is a hold on a live
----     player and finishing one from a console is a delivery the hunter
+---     player and finishing one from a console is a delivery the hitman
 ---     did not make.
 ---   * anything a contract's escrow depends on. Deadlines are extended,
 ---     never brought forward: this must not be able to resolve a contract
@@ -813,9 +813,9 @@ function Admin.refreshTimers(src)
         -- As it stands now, not as the list had it (see below). One gone
         -- since has nothing left to refresh.
         local contract = Storage.readContract(contracts[i].id) or {}
-        local live = contract.state == CB.STATE.ACTIVE
-            or contract.state == CB.STATE.ACCEPTED
-            or contract.state == CB.STATE.COMPLETING
+        local live = contract.state == CH.STATE.ACTIVE
+            or contract.state == CH.STATE.ACCEPTED
+            or contract.state == CH.STATE.COMPLETING
 
         if live then
             -- Column by column, each against the row as it is now. The row
@@ -830,7 +830,7 @@ function Admin.refreshTimers(src)
             --
             -- Only ever later. Both were set to now plus the defaults, so a
             -- deadline the client had extended to forty hours came back to
-            -- three, and the expiry that followed forfeited the hunter's
+            -- three, and the expiry that followed forfeited the hitman's
             -- stake to the creator: a console command moving money, which
             -- is the one thing this must not do.
             local lifetime = now + (tonumber(Config.Limits.ContractLifetimeSeconds) or 0)
@@ -855,11 +855,11 @@ function Admin.refreshTimers(src)
             end)
             counts.deadlines = counts.deadlines + 1
 
-            local hunters = Storage.readHunters(contract.id)
-            for h = 1, #hunters do
-                local hunter = hunters[h]
-                if hunter.last_claim_at then
-                    Storage.updateHunter(hunter.id, {
+            local hitmen = Storage.readHitmen(contract.id)
+            for h = 1, #hitmen do
+                local hitman = hitmen[h]
+                if hitman.last_claim_at then
+                    Storage.updateHitman(hitman.id, {
                         last_claim_at = now - ((tonumber(Config.Limits.SlotCooldownSeconds) or 0) + 1),
                     })
                     counts.slots = counts.slots + 1

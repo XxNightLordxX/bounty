@@ -43,27 +43,27 @@ describe('giving back the last collection, on every backend', function()
             local f = fixture(s)
             Env.players[1].PlayerData.money.bank = 400000
             local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
                 reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } },
                                      { baseline = { cash = 3000 } } } },
                 penaltyAmount = 500,
             })
             truthy(c, 'placed')
-            truthy(s.contracts.accept(f.hunter, c.id, false))
-            local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.REDUCE_REWARD, { slot = 3 })
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.REDUCE_REWARD, { slot = 3 })
             truthy(proposal, 'proposed')
-            truthy(s.amendments.respond(f.hunter, proposal.id, true))
+            truthy(s.amendments.respond(f.hitman, proposal.id, true))
 
             eq(s.storage.readContract(c.id).payout_slots, 2, 'the upsert discarded the new '
                 .. 'count, so the emptied collection stayed on sale')
 
             local before = money(3)
-            truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+            truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
             Env.advance(Config.Limits.SlotCooldownSeconds + 1)
-            truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+            truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
 
-            eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED, 'the contract went on '
-                .. 'offering a collection worth nothing, holding the hunter\'s stake behind it')
+            eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED, 'the contract went on '
+                .. 'offering a collection worth nothing, holding the hitman\'s stake behind it')
             eq(money(3) - before, 3500, 'both funded collections, and the stake back')
         end)
     end
@@ -75,21 +75,21 @@ describe('coming back to a contract', function()
         local f = fixture(s)
         Config.Anonymity.HitmanFee = 1000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false), 'the first stint, named')
-        local seen = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1').hunters[1]
+        truthy(s.contracts.accept(f.hitman, c.id, false), 'the first stint, named')
+        local seen = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1').hitmen[1]
         eq(seen.name, 'Rook Ash')
-        truthy(s.contracts.abandon(f.hunter, c.id))
+        truthy(s.contracts.abandon(f.hitman, c.id))
 
         local before = money(3)
         Natives.calls.notifications = {}
-        truthy(s.contracts.accept(f.hunter, c.id, true), 'back, asking to be anonymous')
+        truthy(s.contracts.accept(f.hitman, c.id, true), 'back, asking to be anonymous')
 
         eq(before - money(3), 0, 'charged for anonymity the creator can see straight through: '
             .. 'the same alias and the same thread they were shown with a name')
-        local now = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1').hunters[1]
+        local now = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1').hitmen[1]
         eq(now.alias, seen.alias)
         eq(now.name, 'Rook Ash', 'named, as they already were')
 
@@ -105,19 +105,19 @@ describe('coming back to a contract', function()
         local f = fixture(s)
         Config.Anonymity.HitmanFee = 1000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         local start = money(3)
-        truthy(s.contracts.accept(f.hunter, c.id, true))
+        truthy(s.contracts.accept(f.hitman, c.id, true))
         eq(start - money(3), 1000, 'the first stint pays for it')
-        truthy(s.contracts.abandon(f.hunter, c.id))
+        truthy(s.contracts.abandon(f.hitman, c.id))
 
         -- Nothing left to pay a second fee with.
         Env.players[3].PlayerData.money.cash, Env.players[3].PlayerData.money.bank = 0, 0
-        local ok, err = s.contracts.accept(f.hunter, c.id, true)
+        local ok, err = s.contracts.accept(f.hitman, c.id, true)
         truthy(ok, 'refused a contract they were already anonymous on: ' .. tostring(err))
-        falsy(s.projection.contract(s.storage.readContract(c.id), 'CREATOR1').hunters[1].name,
+        falsy(s.projection.contract(s.storage.readContract(c.id), 'CREATOR1').hitmen[1].name,
             'and still anonymous')
     end)
 
@@ -125,16 +125,16 @@ describe('coming back to a contract', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        truthy(s.contracts.abandon(f.hunter, c.id))
-        truthy(s.contracts.accept(f.hunter, c.id, true), 'back, asking to be anonymous')
-        eq(s.projection.contract(s.storage.readContract(c.id), 'HUNTER01').myAnonymous, false,
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        truthy(s.contracts.accept(f.hitman, c.id, true), 'back, asking to be anonymous')
+        eq(s.projection.contract(s.storage.readContract(c.id), 'HITMAN01').myAnonymous, false,
             'the page said "accepted, anonymously" from the button that was pressed')
-        local settings = s.projection.listing('HUNTER01', 1).settings
-        eq(settings.anonymityFees.hunter, Config.Anonymity.HitmanFee)
+        local settings = s.projection.listing('HITMAN01', 1).settings
+        eq(settings.anonymityFees.hitman, Config.Anonymity.HitmanFee)
         eq(settings.messageMaxLength, Config.Relay.MaxLength)
     end)
 
@@ -142,13 +142,13 @@ describe('coming back to a contract', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, true))
-        truthy(s.contracts.abandon(f.hunter, c.id))
-        truthy(s.contracts.accept(f.hunter, c.id, true))
-        falsy(s.projection.contract(s.storage.readContract(c.id), 'CREATOR1').hunters[1].name)
+        truthy(s.contracts.accept(f.hitman, c.id, true))
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        truthy(s.contracts.accept(f.hitman, c.id, true))
+        falsy(s.projection.contract(s.storage.readContract(c.id), 'CREATOR1').hitmen[1].name)
     end)
 end)
 
@@ -173,9 +173,9 @@ local function handover(slots)
     local list = {}
     for i = 1, slots do list[i] = { baseline = { cash = 1000 * i } } end
     local c = s.contracts.create(f.creator, {
-        targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE, reward = { slots = list },
+        targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE, reward = { slots = list },
     })
-    truthy(s.contracts.accept(f.hunter, c.id, false))
+    truthy(s.contracts.accept(f.hitman, c.id, false))
     together()
     return s, f, c
 end
@@ -183,18 +183,18 @@ end
 describe('a handover that finishes while another payout holds the lock', function()
     it('is paid once the lock lets go, not refused as closed', function()
         local s, f, c = handover(2)
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
         ticks(s, Config.Kidnap.CountdownSeconds - 1)
 
         -- The final tick reads the contract as accepted. By the claim's own
-        -- read, another hunter's settlement has the lock: on mysql every
+        -- read, another hitman's settlement has the lock: on mysql every
         -- read yields, and another handler runs in the gap.
         local real = s.storage.readContract
         local reads = 0
         s.storage.readContract = function(id)
             reads = reads + 1
             if reads == 2 then
-                s.storage.compareSetContractState(id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING)
+                s.storage.compareSetContractState(id, CH.STATE.ACCEPTED, CH.STATE.COMPLETING)
             end
             return real(id)
         end
@@ -206,21 +206,21 @@ describe('a handover that finishes while another payout holds the lock', functio
             truthy(note.title ~= 'Handover not paid', 'told "' .. tostring(note.content)
                 .. '" about a contract that still had a payout on it')
         end
-        falsy(s.kidnap.outcome(c.id, 'HUNTER01'), 'the delivery was ended')
+        falsy(s.kidnap.outcome(c.id, 'HITMAN01'), 'the delivery was ended')
 
         -- The other settlement lets go with a payout left.
-        truthy(s.contracts.transition(c.id, CB.STATE.COMPLETING, CB.STATE.ACCEPTED, 'slot_claimed'))
+        truthy(s.contracts.transition(c.id, CH.STATE.COMPLETING, CH.STATE.ACCEPTED, 'slot_claimed'))
         local before = money(3)
         ticks(s, 2)
 
         eq(s.storage.readContract(c.id).next_slot, 2, 'and it is paid')
         eq(money(3) - before, 1000)
-        eq(s.kidnap.outcome(c.id, 'HUNTER01').outcome, 'paid')
+        eq(s.kidnap.outcome(c.id, 'HITMAN01').outcome, 'paid')
     end)
 
     it('is still refused when the contract really did close', function()
         local s, f, c = handover(1)
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
         ticks(s, Config.Kidnap.CountdownSeconds - 1)
         local real = s.storage.readContract
         local reads = 0
@@ -228,14 +228,14 @@ describe('a handover that finishes while another payout holds the lock', functio
             reads = reads + 1
             if reads == 2 then
                 -- Closed for real, through the path that settles its escrow.
-                truthy(s.contracts.resolve(id, CB.STATE.CANCELLED, 'CREATOR1', nil, 'test'))
+                truthy(s.contracts.resolve(id, CH.STATE.CANCELLED, 'CREATOR1', nil, 'test'))
             end
             return real(id)
         end
         s.kidnap.tick(Config.Kidnap.TickMs)
         s.storage.readContract = real
         eq(s.kidnap.activeCount(), 0)
-        eq(s.kidnap.outcome(c.id, 'HUNTER01').outcome, 'refused')
+        eq(s.kidnap.outcome(c.id, 'HITMAN01').outcome, 'refused')
     end)
 end)
 
@@ -243,19 +243,19 @@ describe('a handover re-armed and then walked away from', function()
     it('is not reported as the one before it', function()
         local s, f, c = handover(1)
         s.bridges.install(s)
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
         Env.players[2].PlayerData.metadata.ishandcuffed = false
         ticks(s, 5)
-        eq(s.kidnap.outcome(c.id, 'HUNTER01').outcome, 'failed', 'the first one failed')
+        eq(s.kidnap.outcome(c.id, 'HITMAN01').outcome, 'failed', 'the first one failed')
 
         Env.advance(Config.Kidnap.RearmCooldownSeconds + 1)
         Env.players[2].PlayerData.metadata.ishandcuffed = true
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
         ticks(s, 3)
-        truthy(s.contracts.abandon(f.hunter, c.id))
+        truthy(s.contracts.abandon(f.hitman, c.id))
 
-        local answer = s.app.handlers.kidnapProgress(f.hunter, { id = c.id })
-        falsy(type(answer) == 'table' and answer.done, 'the poller told a hunter who had just '
+        local answer = s.app.handlers.kidnapProgress(f.hitman, { id = c.id })
+        falsy(type(answer) == 'table' and answer.done, 'the poller told a hitman who had just '
             .. 'walked away that a handover from a minute earlier had failed')
     end)
 end)
@@ -281,18 +281,18 @@ describe('owed goods that will not fit, with money queued behind them', function
                 targetCid = 'TARGET01', reason = 'x', reward = { baseline = { items = items } },
             })
             truthy(c, 'placed')
-            truthy(s.contracts.accept(f.hunter, c.id, false))
+            truthy(s.contracts.accept(f.hitman, c.id, false))
             Env.players[3]._inventoryFull = true
-            truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
-            eq(#s.storage.readPending('HUNTER01'), #names, 'every stack owed')
+            truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+            eq(#s.storage.readPending('HITMAN01'), #names, 'every stack owed')
             Env.advance(1)
-            truthy(s.bailout.owe('HUNTER01', c.id, 4000, 'bank', 'test'))
+            truthy(s.bailout.owe('HITMAN01', c.id, 4000, 'bank', 'test'))
 
             local before = Env.players[3].PlayerData.money.bank
-            for _ = 1, 3 do s.escrow.retryPending('HUNTER01') end
+            for _ = 1, 3 do s.escrow.retryPending('HITMAN01') end
             eq(Env.players[3].PlayerData.money.bank - before, 4000,
                 'the same goods were tried on every pass and the money behind them never was')
-            eq(#s.storage.readPending('HUNTER01'), #names, 'and the goods are still owed')
+            eq(#s.storage.readPending('HITMAN01'), #names, 'and the goods are still owed')
         end)
     end
 end)
@@ -303,7 +303,7 @@ describe('the handover countdown thread', function()
     it('keeps counting after one tick throws', function()
         local s, f, c = handover(1)
         local before = #Env.threads
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
         eq(#Env.threads - before, 1, 'arming started the countdown thread')
 
         local realWait, realRead, realPrint = _G.Wait, s.storage.readContract, _G.print
@@ -325,7 +325,7 @@ describe('the handover countdown thread', function()
         _G.Wait, s.storage.readContract, _G.print = realWait, realRead, realPrint
 
         truthy(thrown, 'the read failed once')
-        local outcome = s.kidnap.outcome(c.id, 'HUNTER01')
+        local outcome = s.kidnap.outcome(c.id, 'HITMAN01')
         eq(outcome and outcome.outcome, 'paid',
             'one failed read stopped every handover on the server for good')
         local _ = f
@@ -343,10 +343,10 @@ describe('two retry passes for one player at once', function()
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { items = { { name = 'lockpick', count = 2 } } } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         Env.players[3]._inventoryFull = true
-        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
-        eq(#s.storage.readPending('HUNTER01'), 1, 'owed, and queued')
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        eq(#s.storage.readPending('HITMAN01'), 1, 'owed, and queued')
         return f, c
     end
 
@@ -365,17 +365,17 @@ describe('two retry passes for one player at once', function()
         local fired = false
         s.storage.claimEscrowLine = function(id, from, to)
             local ok = real(id, from, to)
-            if ok and not fired and to == CB.ESCROW_STATE.RELEASING then
+            if ok and not fired and to == CH.ESCROW_STATE.RELEASING then
                 fired = true
                 -- The login's pass, in the tick's wait.
-                s.escrow.retryPending('HUNTER01')
+                s.escrow.retryPending('HITMAN01')
             end
             return ok
         end
         s.escrow.retryWaiting(function() return true end)
         s.storage.claimEscrowLine = real
         truthy(fired)
-        eq(#s.storage.readPending('HUNTER01'), 1,
+        eq(#s.storage.readPending('HITMAN01'), 1,
             'the entry was cleared under a delivery that then failed')
 
         Env.players[3]._inventoryFull = false
@@ -397,7 +397,7 @@ describe('two retry passes for one player at once', function()
             calls = calls + 1
             if calls == 2 then
                 -- Answered before this lands: a buyout premium owed to them.
-                truthy(s.bailout.owe('HUNTER01', c.id, 4000, 'bank', 'test'))
+                truthy(s.bailout.owe('HITMAN01', c.id, 4000, 'bank', 'test'))
             end
             return answer
         end
@@ -425,13 +425,13 @@ describe('an agreed give-back while the client raises the bonus', function()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
             bonusPercent = 10,
         })
         truthy(c)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.REDUCE_REWARD, { slot = 2 })
         truthy(proposal)
 
         local real = s.escrow.take
@@ -439,12 +439,12 @@ describe('an agreed give-back while the client raises the bonus', function()
         s.escrow.take = function(...)
             if not agreed then
                 agreed = true
-                truthy(s.amendments.respond(f.hunter, proposal.id, true), 'the hunter agrees')
+                truthy(s.amendments.respond(f.hitman, proposal.id, true), 'the hitman agrees')
                 eq(s.storage.readContract(c.id).payout_slots, 1, 'given back')
             end
             return real(...)
         end
-        s.amendments.improve(f.creator, c.id, CB.AMENDMENT.RAISE_BONUS, { percent = 20 })
+        s.amendments.improve(f.creator, c.id, CH.AMENDMENT.RAISE_BONUS, { percent = 20 })
         s.escrow.take = real
         truthy(agreed)
         eq(s.storage.readContract(c.id).payout_slots, 1,
@@ -456,25 +456,25 @@ describe('a top-up that a payout lands on', function()
     --- The claim moved the slot after the top-up's lines were written and
     --- paid them out with its collection. The hand-back then found nothing
     --- to hand back, and the client was told the top-up had not gone
-    --- through while the hunter had the money.
+    --- through while the hitman had the money.
     it('mysql: is reported as added, since it was paid out', function()
         local s = mysqlStack()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local creatorBefore, hunterBefore = money(1), money(3)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local creatorBefore, hitmanBefore = money(1), money(3)
 
         local real = s.storage.writeEscrow
         local claimed = false
         s.storage.writeEscrow = function(id, lines)
             local out = real(id, lines)
-            if not claimed and lines[1] and lines[1].portion == CB.PORTION.BASELINE then
+            if not claimed and lines[1] and lines[1].portion == CH.PORTION.BASELINE then
                 claimed = true
-                truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+                truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
             end
             return out
         end
@@ -482,28 +482,28 @@ describe('a top-up that a payout lands on', function()
         s.storage.writeEscrow = real
         truthy(claimed)
         eq(money(1) - creatorBefore, -5000)
-        eq(money(3) - hunterBefore, 1000 + 5000, 'the collection, and the top-up with it')
-        truthy(ok, 'told the top-up was refused, with a hunter holding it: ' .. tostring(err))
+        eq(money(3) - hitmanBefore, 1000 + 5000, 'the collection, and the top-up with it')
+        truthy(ok, 'told the top-up was refused, with a hitman holding it: ' .. tostring(err))
     end)
 end)
 
-describe('a top-up a payout queued for the hunter', function()
-    --- The claim paid the new line to the hunter, but their pockets were full,
+describe('a top-up a payout queued for the hitman', function()
+    --- The claim paid the new line to the hitman, but their pockets were full,
     --- so it was queued for them: still held, owed to them. The hand-back
     --- then released it to the client by name, which overrides who it is
-    --- owed to, and the hunter's queued money went to the client.
+    --- owed to, and the hitman's queued money went to the client.
     for _, slots in ipairs({ 2, 1 }) do
-        it(slots .. ' collection(s): stays owed to the hunter', function()
+        it(slots .. ' collection(s): stays owed to the hitman', function()
             local s = mysqlStack()
             local f = fixture(s)
             Env.players[1].PlayerData.money.bank = 400000
             local spec = { { baseline = { cash = 1000 } } }
             if slots == 2 then spec[2] = { baseline = { cash = 2000 } } end
             local c = s.contracts.create(f.creator, {
-                targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
                 reward = { slots = spec },
             })
-            truthy(s.contracts.accept(f.hunter, c.id, false))
+            truthy(s.contracts.accept(f.hitman, c.id, false))
             local creatorBefore = money(1)
             Env.players[3]._refuseMoney = true
 
@@ -511,9 +511,9 @@ describe('a top-up a payout queued for the hunter', function()
             local claimed = false
             s.storage.writeEscrow = function(id, lines)
                 local out = real(id, lines)
-                if not claimed and lines[1] and lines[1].portion == CB.PORTION.BASELINE then
+                if not claimed and lines[1] and lines[1].portion == CH.PORTION.BASELINE then
                     claimed = true
-                    truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+                    truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
                 end
                 return out
             end
@@ -523,18 +523,18 @@ describe('a top-up a payout queued for the hunter', function()
 
             local topUp
             for _, line in ipairs(s.storage.readEscrow(c.id)) do
-                if line.portion == CB.PORTION.BASELINE and line.amount == 5000 then topUp = line end
+                if line.portion == CH.PORTION.BASELINE and line.amount == 5000 then topUp = line end
             end
             truthy(topUp, 'the top-up line exists')
-            eq(topUp.owed_to, 'HUNTER01', 'still owed to the hunter who was paid it')
+            eq(topUp.owed_to, 'HITMAN01', 'still owed to the hitman who was paid it')
             falsy(topUp.settled_to == 'CREATOR1', 'and not handed to the client')
             eq(money(1) - creatorBefore, -5000, 'the client paid for it once')
             truthy(ok, 'and is told it went in: ' .. tostring(err))
 
-            -- And it reaches the hunter once they can take it.
+            -- And it reaches the hitman once they can take it.
             Env.players[3]._refuseMoney = false
-            s.escrow.retryPending('HUNTER01')
-            eq(s.storage.readEscrowLine(topUp.id).settled_to, 'HUNTER01')
+            s.escrow.retryPending('HITMAN01')
+            eq(s.storage.readEscrowLine(topUp.id).settled_to, 'HITMAN01')
         end)
     end
 end)
@@ -542,16 +542,16 @@ end)
 describe('a top-up handed back while a claim queues it', function()
     --- The hand-back checked each line before releasing it, and the release
     --- itself overrides who a line is owed to. A claim queueing the line for
-    --- its hunter between the check and the release lost it to the client.
-    it('mysql: leaves it with the hunter it was queued for', function()
+    --- its hitman between the check and the release lost it to the client.
+    it('mysql: leaves it with the hitman it was queued for', function()
         local s = mysqlStack()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         -- The claim lands after the top-up is written, but pays slot 1 from
         -- the lines it read before it: the top-up is left held and unowed on
@@ -560,7 +560,7 @@ describe('a top-up handed back while a claim queues it', function()
         local topUp
         s.storage.writeEscrow = function(id, lines)
             local out = realWrite(id, lines)
-            if not topUp and lines[1] and lines[1].portion == CB.PORTION.BASELINE
+            if not topUp and lines[1] and lines[1].portion == CH.PORTION.BASELINE
                 and lines[1].amount == 500 then
                 topUp = lines[1].id
                 -- Through the store's own move: a whole-row write leaves the
@@ -569,7 +569,7 @@ describe('a top-up handed back while a claim queues it', function()
             end
             return out
         end
-        -- And the racing claim queues it for the hunter just before the
+        -- And the racing claim queues it for the hitman just before the
         -- hand-back's release takes it: after every read the hand-back makes
         -- of it, in the await the release's own claim of the line is.
         local realClaim = s.storage.claimEscrowLine
@@ -578,7 +578,7 @@ describe('a top-up handed back while a claim queues it', function()
             if topUp and id == topUp and not queued then
                 queued = true
                 local line = s.storage.readEscrowLine(topUp)
-                line.owed_to = 'HUNTER01'
+                line.owed_to = 'HITMAN01'
                 realWrite(c.id, { line })
             end
             return realClaim(id, from, to)
@@ -588,9 +588,9 @@ describe('a top-up handed back while a claim queues it', function()
         truthy(queued, 'the race was run')
 
         local line = s.storage.readEscrowLine(topUp)
-        eq(line.owed_to, 'HUNTER01')
-        falsy(line.settled_to == 'CREATOR1', 'handed to the client over the hunter it was queued for')
-        truthy(ok, 'queued for the hunter, and the client was told it failed: ' .. tostring(err))
+        eq(line.owed_to, 'HITMAN01')
+        falsy(line.settled_to == 'CREATOR1', 'handed to the client over the hitman it was queued for')
+        truthy(ok, 'queued for the hitman, and the client was told it failed: ' .. tostring(err))
     end)
 end)
 
@@ -606,19 +606,19 @@ describe('a bonus raise landing while a claim is paying', function()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE, bonusPercent = 10,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE, bonusPercent = 10,
             reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } },
                                  { baseline = { cash = 1000 } } } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         return s, f, c
     end
 
     local function bonusHeld(s, c, slot)
         local held = 0
         for _, l in ipairs(s.storage.readEscrow(c.id)) do
-            if l.slot == slot and l.portion == CB.PORTION.BONUS
-                and l.state == CB.ESCROW_STATE.HELD then held = held + l.amount end
+            if l.slot == slot and l.portion == CH.PORTION.BONUS
+                and l.state == CH.ESCROW_STATE.HELD then held = held + l.amount end
         end
         return held
     end
@@ -638,7 +638,7 @@ describe('a bonus raise landing while a claim is paying', function()
         end
         _G.Wait = function() if onWait then onWait() end end
         local ok, err = s.amendments.improve(s.identity.byCitizenId('CREATOR1'), c.id,
-            CB.AMENDMENT.RAISE_BONUS, { percent = 50 })
+            CH.AMENDMENT.RAISE_BONUS, { percent = 50 })
         s.escrow.take, _G.Wait = realTake, realWait
         truthy(raced, 'the race was run')
         return ok, err
@@ -656,7 +656,7 @@ describe('a bonus raise landing while a claim is paying', function()
         end
         local ok, err = raiseWhile(s, c, function()
             claim = coroutine.create(function()
-                return s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+                return s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
             end)
             coroutine.resume(claim)
         end, function()
@@ -675,10 +675,10 @@ describe('a bonus raise landing while a claim is paying', function()
     it('keeps the collection a refused claim was on', function()
         local s, f, c = placed()
         local ok, err = raiseWhile(s, c, function()
-            truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming_slot'))
+            truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED, CH.STATE.COMPLETING, 'claiming_slot'))
         end, function()
-            if s.storage.readContract(c.id).state == CB.STATE.COMPLETING then
-                s.contracts.transition(c.id, CB.STATE.COMPLETING, CB.STATE.ACCEPTED, 'claim_refused')
+            if s.storage.readContract(c.id).state == CH.STATE.COMPLETING then
+                s.contracts.transition(c.id, CH.STATE.COMPLETING, CH.STATE.ACCEPTED, 'claim_refused')
             end
         end)
         truthy(ok, tostring(err))
@@ -691,10 +691,10 @@ describe('a bonus raise landing while a claim is paying', function()
         local s, f, c = placed()
         local before = Env.players[1].PlayerData.money.bank
         local ok, err = raiseWhile(s, c, function()
-            truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming_slot'))
+            truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED, CH.STATE.COMPLETING, 'claiming_slot'))
         end)
         falsy(ok, 'reported applied')
-        eq(err, CB.ERR.BUSY)
+        eq(err, CH.ERR.BUSY)
         eq(s.storage.readContract(c.id).bonus_percent, 10, 'the percent was stored anyway')
         eq(Env.players[1].PlayerData.money.bank, before, 'and the client kept paying for it')
         for slot = 1, 3 do eq(bonusHeld(s, c, slot), 100) end
@@ -703,36 +703,36 @@ describe('a bonus raise landing while a claim is paying', function()
     it('does not call a raise applied when a stalled claim took only part of it', function()
         local s, f, c = placed()
         local ok, err = raiseWhile(s, c, function()
-            truthy(s.contracts.transition(c.id, CB.STATE.ACCEPTED, CB.STATE.COMPLETING, 'claiming_slot'))
+            truthy(s.contracts.transition(c.id, CH.STATE.ACCEPTED, CH.STATE.COMPLETING, 'claiming_slot'))
             -- The claim paid the collection it was on, top-up and all.
             for _, l in ipairs(s.storage.readEscrow(c.id)) do
                 if l.derived and l.slot == 1 and l.amount == 400 then
-                    truthy(s.storage.claimEscrowLine(l.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING))
-                    truthy(s.storage.settleEscrowLine(l.id, 'HUNTER01'))
+                    truthy(s.storage.claimEscrowLine(l.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+                    truthy(s.storage.settleEscrowLine(l.id, 'HITMAN01'))
                 end
             end
         end)
         falsy(ok, 'reported applied with the later collections handed back')
-        eq(err, CB.ERR.BUSY)
+        eq(err, CH.ERR.BUSY)
         eq(s.storage.readContract(c.id).bonus_percent, 10)
         eq(bonusHeld(s, c, 2), 100)
     end)
 end)
 
 describe('a top-up a stalled elimination has already shared out', function()
-    --- The claim marks the baseline for its hunter and the bonus back to the
+    --- The claim marks the baseline for its hitman and the bonus back to the
     --- client, since an elimination does not earn it, then stalls. The bonus
     --- going back was counted as the top-up failing, and the client was told
-    --- busy while the hunter was paid the baseline.
+    --- busy while the hitman was paid the baseline.
     it('is reported made', function()
         local s = mysqlStack()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { bank = 1000 } }, { baseline = { bank = 2000 } } } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         local claim, paused = nil, false
         local realWrite = s.storage.writeEscrow
@@ -752,7 +752,7 @@ describe('a top-up a stalled elimination has already shared out', function()
             if not started then
                 started = true
                 claim = coroutine.create(function()
-                    return s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+                    return s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
                 end)
                 coroutine.resume(claim)
             end
@@ -768,9 +768,9 @@ describe('a top-up a stalled elimination has already shared out', function()
 
         local baseline
         for _, l in ipairs(s.storage.readEscrow(c.id)) do
-            if l.portion == CB.PORTION.BASELINE and l.amount == 500 then baseline = l end
+            if l.portion == CH.PORTION.BASELINE and l.amount == 500 then baseline = l end
         end
-        eq(baseline.settled_to, 'HUNTER01', 'the hunter was paid the top-up')
+        eq(baseline.settled_to, 'HITMAN01', 'the hitman was paid the top-up')
         truthy(ok, 'and the client was told: ' .. tostring(err))
         eq(before - Env.players[1].PlayerData.money.bank, 500, 'the unearned bonus came back')
     end)
@@ -791,7 +791,7 @@ describe('an escrow write that raises', function()
         s.storage.writeEscrow = real
         falsy(c, 'placed with no escrow behind it')
         truthy(err)
-        falsy(err == CB.ERR.LOCKED, 'told somebody else got there first')
+        falsy(err == CH.ERR.LOCKED, 'told somebody else got there first')
         eq(Env.players[1].PlayerData.money.bank, 10000, 'the creator was charged')
     end)
 
@@ -837,38 +837,38 @@ describe('an escrow write that raises', function()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 10000
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
-            mode = CB.MODE.COMPETITIVE, reward = { baseline = { bank = 5000 } } })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local hunterBefore = Env.players[3].PlayerData.money.bank
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { bank = 5000 } } })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local hitmanBefore = Env.players[3].PlayerData.money.bank
         local real = s.storage.writeEscrow
         local raised = false
         s.storage.writeEscrow = function(...)
             if not raised then raised = true; error('lost connection', 0) end
             return real(...)
         end
-        local ok, err = pcall(s.contracts.claimSlot, c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+        local ok, err = pcall(s.contracts.claimSlot, c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         s.storage.writeEscrow = real
         truthy(raised, 'the marks were written')
         truthy(ok, 'the claim threw: ' .. tostring(err))
-        falsy(s.storage.readContract(c.id).state == CB.STATE.COMPLETING, 'the contract is stuck')
-        eq(Env.players[3].PlayerData.money.bank - hunterBefore, 5000, 'and the hunter was paid')
+        falsy(s.storage.readContract(c.id).state == CH.STATE.COMPLETING, 'the contract is stuck')
+        eq(Env.players[3].PlayerData.money.bank - hitmanBefore, 5000, 'and the hitman was paid')
     end)
 end)
 
 describe('a claim that stalls between the lines of its marks', function()
     --- On mysql the marks went out one statement a line. A top-up reading
-    --- between two of them saw its baseline owed to the hunter and its bonus
+    --- between two of them saw its baseline owed to the hitman and its bonus
     --- not yet marked back to the client: it handed the bonus back, called
-    --- the top-up failed, and the claim then paid the hunter the baseline.
+    --- the top-up failed, and the claim then paid the hitman the baseline.
     it('shows the top-up all of the marks or none', function()
         local s = mysqlStack()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { bank = 1000 } }, { baseline = { bank = 2000 } } } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         -- The claim stalls after its first write to escrow: after one line
         -- of its marks, if they go one statement a line.
@@ -895,7 +895,7 @@ describe('a claim that stalls between the lines of its marks', function()
                 started = true
                 MySQL.query, MySQL.transaction = stallAfter(realQuery), stallAfter(realTx)
                 claim = coroutine.create(function()
-                    return s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+                    return s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
                 end)
                 coroutine.resume(claim)
             end
@@ -911,9 +911,9 @@ describe('a claim that stalls between the lines of its marks', function()
 
         local baseline
         for _, l in ipairs(s.storage.readEscrow(c.id)) do
-            if l.portion == CB.PORTION.BASELINE and l.amount == 500 then baseline = l end
+            if l.portion == CH.PORTION.BASELINE and l.amount == 500 then baseline = l end
         end
-        eq(baseline.settled_to, 'HUNTER01', 'the hunter was paid the top-up')
+        eq(baseline.settled_to, 'HITMAN01', 'the hitman was paid the top-up')
         truthy(ok, 'and the client was told: ' .. tostring(err))
         eq(before - Env.players[1].PlayerData.money.bank, 500)
     end)
@@ -925,10 +925,10 @@ describe('a top-up the claim it waited on paid out', function()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
         })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         -- The claim holds the contract and has not yet read what to pay.
         local claim, paused = nil, false
@@ -946,10 +946,10 @@ describe('a top-up the claim it waited on paid out', function()
             local a, b, d = realTake(actor, id, lines)
             if not topUp and lines[1] and lines[1].amount == 500 then
                 for _, l in ipairs(realReadEscrow(c.id)) do
-                    if l.amount == 500 and l.portion == CB.PORTION.BASELINE then topUp = l.id end
+                    if l.amount == 500 and l.portion == CH.PORTION.BASELINE then topUp = l.id end
                 end
                 claim = coroutine.create(function()
-                    return s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+                    return s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
                 end)
                 coroutine.resume(claim)
             end
@@ -966,24 +966,24 @@ describe('a top-up the claim it waited on paid out', function()
         s.escrow.take, _G.Wait, s.storage.readEscrow = realTake, realWait, realReadEscrow
         truthy(resumed, 'the claim was waited on')
 
-        eq(s.storage.readEscrowLine(topUp).settled_to, 'HUNTER01', 'the claim paid the top-up')
-        truthy(ok, 'the top-up reached the hunter and the client was told: ' .. tostring(err))
+        eq(s.storage.readEscrowLine(topUp).settled_to, 'HITMAN01', 'the claim paid the top-up')
+        truthy(ok, 'the top-up reached the hitman and the client was told: ' .. tostring(err))
     end)
 end)
 
 describe('a handover tick that throws part-way through', function()
     --- Every finished countdown was taken out of the live set before any
     --- was claimed, and one throw ended the pass: the ones not yet claimed
-    --- were in neither place, their hunters shown "being paid" for two
+    --- were in neither place, their hitmen shown "being paid" for two
     --- minutes and then told to try again.
     it('pays every handover that finished, once the read comes back', function()
         local s, f, c = handover(2)
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
             cash = 5000, bank = 5000, firstname = 'Sol', lastname = 'Vane' })
         truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
         together()
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
-        truthy(s.kidnap.arm(c.id, 'HUNTER02'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN02'))
         ticks(s, Config.Kidnap.CountdownSeconds - 1)
 
         local before1, before2 = money(3), money(4)
@@ -1004,7 +1004,7 @@ describe('a handover tick that throws part-way through', function()
 
         eq((money(3) - before1) + (money(4) - before2), 1000 + 2000,
             'both handovers paid, one collection each')
-        eq(s.storage.readContract(c.id).state, CB.STATE.COMPLETED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
         local _ = f
     end)
 end)

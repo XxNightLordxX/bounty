@@ -5,15 +5,15 @@
 --- database, and every one of them had a way round it that the rest of the
 --- suite could not see: none of them moves money incorrectly, so
 --- conservation stays green while a contract grows to eight hundred escrow
---- rows, a $1,000 job carries a $1,000,000 stake, and a hunter is debited
+--- rows, a $1,000 job carries a $1,000,000 stake, and a hitman is debited
 --- for a figure that was never on their screen.
 
 --- Escrow rows a contract is holding, counted the way the ceiling counts
---- them: settled lines are not held, and neither are hunters' stakes.
+--- them: settled lines are not held, and neither are hitmen' stakes.
 local function heldLines(s, contractId)
     local n = 0
     for _, line in ipairs(s.storage.readEscrow(contractId)) do
-        if line.state ~= CB.ESCROW_STATE.SETTLED and line.portion ~= CB.PORTION.STAKE then
+        if line.state ~= CH.ESCROW_STATE.SETTLED and line.portion ~= CH.PORTION.STAKE then
             n = n + 1
         end
     end
@@ -33,7 +33,7 @@ describe('the escrow line ceiling', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 { baseline = { cash = 100, bank = 100 } },
                 { baseline = { cash = 100, bank = 100 } },
@@ -45,7 +45,7 @@ describe('the escrow line ceiling', function()
         local accepted = 0
         for percent = 1, Config.Bonus.maxPercent do
             local ok = s.amendments.improve(f.creator, c.id,
-                CB.AMENDMENT.RAISE_BONUS, { percent = percent })
+                CH.AMENDMENT.RAISE_BONUS, { percent = percent })
             if ok then accepted = accepted + 1 end
         end
 
@@ -58,7 +58,7 @@ describe('the escrow line ceiling', function()
     it('still lets a bonus be raised below the ceiling', function()
         -- The fix must refuse the run-away, not the feature. Of all the
         -- amendments this is the one that applies with no approval, on the
-        -- stated grounds that it can only benefit the hunter.
+        -- stated grounds that it can only benefit the hitman.
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
@@ -66,7 +66,7 @@ describe('the escrow line ceiling', function()
             reward = { baseline = { cash = 1000 } },
         })
         local ok, err = s.amendments.improve(f.creator, c.id,
-            CB.AMENDMENT.RAISE_BONUS, { percent = 50 })
+            CH.AMENDMENT.RAISE_BONUS, { percent = 50 })
         truthy(ok, tostring(err))
         eq(s.storage.readContract(c.id).bonus_percent, 50)
     end)
@@ -98,8 +98,8 @@ describe('a buyout premium with nowhere to go', function()
         end
         for _, c in ipairs(s.storage.allContracts()) do
             for _, line in ipairs(s.storage.readEscrow(c.id)) do
-                if CB.MONEY_ACCOUNTS[line.source]
-                    and line.state ~= CB.ESCROW_STATE.SETTLED then
+                if CH.MONEY_ACCOUNTS[line.source]
+                    and line.state ~= CH.ESCROW_STATE.SETTLED then
                     total = total + (line.amount or 0)
                 end
             end
@@ -143,7 +143,7 @@ describe('an acceptance that fails on the stake', function()
     --- failure paths. The competitive branch performs the same ACTIVE ->
     --- ACCEPTED transition and had no revert, so any player with an empty
     --- account could flip a competitive contract's advertised state for
-    --- every viewer of the board, with no hunter on it, by tapping Accept.
+    --- every viewer of the board, with no hitman on it, by tapping Accept.
     local function unaffordable(mode)
         local s = newStack()
         local f = fixture(s)
@@ -157,45 +157,45 @@ describe('an acceptance that fails on the stake', function()
         Env.players[3].PlayerData.money.bank = 0
         Env.players[3].PlayerData.money.cash = 0
 
-        local ok, err = s.contracts.accept(f.hunter, c.id, false)
+        local ok, err = s.contracts.accept(f.hitman, c.id, false)
         return s, c, ok, err
     end
 
     it('puts a competitive contract back on the board', function()
-        local s, c, ok, err = unaffordable(CB.MODE.COMPETITIVE)
-        falsy(ok, 'a hunter who cannot cover the stake cannot accept')
-        eq(err, CB.ERR.INSUFFICIENT)
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE,
+        local s, c, ok, err = unaffordable(CH.MODE.COMPETITIVE)
+        falsy(ok, 'a hitman who cannot cover the stake cannot accept')
+        eq(err, CH.ERR.INSUFFICIENT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE,
             'the board must not advertise a contract as taken by nobody')
-        eq(#s.storage.readHunters(c.id), 0)
+        eq(#s.storage.readHitmen(c.id), 0)
     end)
 
     it('puts an exclusive contract back on the board', function()
-        local s, c, ok = unaffordable(CB.MODE.EXCLUSIVE)
+        local s, c, ok = unaffordable(CH.MODE.EXCLUSIVE)
         falsy(ok)
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE)
     end)
 
-    it('leaves a contract another hunter already took alone', function()
+    it('leaves a contract another hitman already took alone', function()
         -- Only the call that advanced the contract may put it back. A
         -- competitive contract somebody else is already working is theirs.
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 50000 } }, penaltyAmount = 90000,
         })
         Env.players[3].PlayerData.money.bank = 100000
-        truthy(s.contracts.accept(f.hunter, c.id, false), 'the first hunter takes it')
+        truthy(s.contracts.accept(f.hitman, c.id, false), 'the first hitman takes it')
 
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
             cash = 0, bank = 0, firstname = 'Bly', lastname = 'Kade' })
         local ok = s.contracts.accept(s.identity.resolve(4), c.id, false)
         falsy(ok, 'the second cannot cover the stake')
 
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED,
-            'and must not have taken the first hunter off the board with them')
-        eq(#s.storage.readHunters(c.id), 1)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED,
+            'and must not have taken the first hitman off the board with them')
+        eq(#s.storage.readHitmen(c.id), 1)
     end)
 end)
 
@@ -252,7 +252,7 @@ describe('the failure stake', function()
 
     it('is clamped when it is raised by amendment too', function()
         -- raise_penalty is only allowed on an unheld contract, so the figure
-        -- it leaves is what the next hunter is asked to put up. An
+        -- it leaves is what the next hitman is asked to put up. An
         -- amendment that skipped the clamp would be the way back to it.
         local s = newStack()
         local f = fixture(s)
@@ -261,12 +261,12 @@ describe('the failure stake', function()
             reward = { baseline = { cash = 1000 } }, penaltyAmount = 100,
         })
         -- Raising a stake is not an improvement, so it goes through the
-        -- proposal path. With no hunter on the contract the creator is the
+        -- proposal path. With no hitman on the contract the creator is the
         -- only participant, so their own approval carries it — which is the
         -- only state raise_penalty is allowed in anyway: a stake may not be
-        -- raised over a hunter who already put up the old one.
+        -- raised over a hitman who already put up the old one.
         local proposal, err = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.RAISE_PENALTY, { amount = Config.MaxContractValue })
+            CH.AMENDMENT.RAISE_PENALTY, { amount = Config.MaxContractValue })
         truthy(proposal, tostring(err))
         eq(proposal.outcome, 'applied', tostring(proposal.error))
 
@@ -280,7 +280,7 @@ describe('the failure stake', function()
     --- premium is re-clamped there for exactly this reason, with a comment
     --- saying so; the stake was not, so the same door was open on the other
     --- side: fund the contract, price the stake at the ceiling that funding
-    --- buys, withdraw the funding, and every hunter who accepts afterwards
+    --- buys, withdraw the funding, and every hitman who accepts afterwards
     --- is asked for a stake the contract can no longer justify.
     it('moves down when the escrow it is proportional to is withdrawn', function()
         local s = newStack()
@@ -306,7 +306,7 @@ describe('the failure stake', function()
         local after = s.storage.readContract(c.id)
         local worth = s.escrow.moneyValue(c.id)
         truthy(after.penalty_amount <= math.floor(worth * Config.Penalty.MaxFractionOfEscrow),
-            ('the contract is worth %d and still asks a hunter for %d')
+            ('the contract is worth %d and still asks a hitman for %d')
                 :format(worth, after.penalty_amount))
     end)
 
@@ -324,7 +324,7 @@ describe('the failure stake', function()
         local s = newCopyingStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 { baseline = { cash = 1000 } },
                 { baseline = { cash = 40000 } },
@@ -338,29 +338,29 @@ describe('the failure stake', function()
         truthy(pricedAt > 0)
 
         local proposal, err = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+            CH.AMENDMENT.REDUCE_REWARD, { slot = 2 })
         truthy(proposal, tostring(err))
         eq(proposal.outcome, 'applied', tostring(proposal.error))
 
         local after = s.storage.readContract(c.id)
         local worth = s.escrow.moneyValue(c.id)
         truthy(after.penalty_amount <= math.floor(worth * Config.Penalty.MaxFractionOfEscrow),
-            ('the contract is worth %d and still asks a hunter for %d')
+            ('the contract is worth %d and still asks a hitman for %d')
                 :format(worth, after.penalty_amount))
         truthy(after.bailout_amount <= math.floor(worth * Config.Bailout.MaxMultiplier),
             ('the contract is worth %d and still prices the buyout at %d')
                 :format(worth, after.bailout_amount))
     end)
 
-    it('re-prices against the creator escrow, not the hunters stakes', function()
+    it('re-prices against the creator escrow, not the hitmen stakes', function()
         -- A stake is held on the contract too. Counting it priced the
-        -- buyout against the hunters' own money: giving back a collection
+        -- buyout against the hitmen' own money: giving back a collection
         -- raised what the target paid to escape.
         local s = newCopyingStack()
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 400000
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 { baseline = { cash = 10000 } },
                 { baseline = { cash = 10000 } },
@@ -370,13 +370,13 @@ describe('the failure stake', function()
         })
         truthy(c)
         local pricedAt = s.storage.readContract(c.id).bailout_amount
-        truthy(s.contracts.accept(f.hunter, c.id))
+        truthy(s.contracts.accept(f.hitman, c.id))
 
         local proposal = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+            CH.AMENDMENT.REDUCE_REWARD, { slot = 2 })
         truthy(proposal)
         if proposal.outcome ~= 'applied' then
-            truthy(s.amendments.respond(f.hunter, proposal.id, true))
+            truthy(s.amendments.respond(f.hitman, proposal.id, true))
         end
 
         local after = s.storage.readContract(c.id)
@@ -387,14 +387,14 @@ describe('the failure stake', function()
         truthy(after.bailout_amount <= math.floor(worth * Config.Bailout.MaxMultiplier),
             ('the contract is worth %d and prices the buyout at %d'):format(worth, after.bailout_amount))
         truthy(after.penalty_amount <= math.floor(worth * Config.Penalty.MaxFractionOfEscrow),
-            ('the contract is worth %d and asks the next hunter for %d'):format(worth, after.penalty_amount))
+            ('the contract is worth %d and asks the next hitman for %d'):format(worth, after.penalty_amount))
     end)
 
-    --- §3.6: "A hunter who cannot cover it cannot accept the contract, and
+    --- §3.6: "A hitman who cannot cover it cannot accept the contract, and
     --- is told so." §14.18: "The required stake is shown prominently on the
     --- listing before the accept button." The figure reached the creator
     --- alone, and acceptance debited it anyway.
-    it('is on the listing a prospective hunter reads', function()
+    it('is on the listing a prospective hitman reads', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
@@ -403,14 +403,14 @@ describe('the failure stake', function()
         })
         truthy(c)
 
-        local board = s.projection.listing('HUNTER01', 1)
+        local board = s.projection.listing('HITMAN01', 1)
         local row
         for _, entry in ipairs(board.contracts) do
             if entry.id == c.id then row = entry end
         end
-        truthy(row, 'the contract must be on the board for a prospective hunter')
+        truthy(row, 'the contract must be on the board for a prospective hitman')
         eq(row.penaltyAmount, 4000,
-            'a hunter must not learn what accepting costs from their bank balance')
+            'a hitman must not learn what accepting costs from their bank balance')
     end)
 
     it('is on the listing as zero when there is no stake', function()
@@ -422,7 +422,7 @@ describe('the failure stake', function()
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 10000 } },
         })
-        local board = s.projection.listing('HUNTER01', 1)
+        local board = s.projection.listing('HITMAN01', 1)
         local row
         for _, entry in ipairs(board.contracts) do
             if entry.id == c.id then row = entry end
@@ -446,10 +446,10 @@ describe('the failure stake', function()
         })
         Env.players[3].PlayerData.money.bank = 50000
 
-        -- The hunter is reading a board that says 2,000. The creator
+        -- The hitman is reading a board that says 2,000. The creator
         -- reprices while they read: allowed, because nobody holds it.
         local proposal = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.RAISE_PENALTY, { amount = 15000 })
+            CH.AMENDMENT.RAISE_PENALTY, { amount = 15000 })
         truthy(proposal)
         eq(proposal.outcome, 'applied')
         eq(s.storage.readContract(c.id).penalty_amount, 15000)
@@ -457,7 +457,7 @@ describe('the failure stake', function()
         falsy(s.contracts.stakeWasDisclosed(s.storage.readContract(c.id), 2000),
             'the figure the page had is not the figure on the contract')
         eq(Env.players[3].PlayerData.money.bank, 50000,
-            'and nothing has been taken from the hunter')
+            'and nothing has been taken from the hitman')
     end)
 
     it('accepts an acceptance that echoes the standing stake', function()
@@ -498,14 +498,14 @@ describe('the failure stake', function()
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 10000 } }, penaltyAmount = 4000,
         })
-        local board = s.projection.listing('HUNTER01', 1)
+        local board = s.projection.listing('HITMAN01', 1)
         local shown
         for _, entry in ipairs(board.contracts) do
             if entry.id == c.id then shown = entry.penaltyAmount end
         end
 
         Env.players[3].PlayerData.money.bank = 50000
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         eq(Env.players[3].PlayerData.money.bank, 50000 - shown,
             'the stake taken must be the stake shown')
     end)
@@ -571,7 +571,7 @@ describe('what opening the board costs', function()
     it('reads a contract escrow once per row, not once per figure on it', function()
         local s = boardWith(6)
         local counts = counting(s)
-        s.projection.listing('HUNTER01', 1)
+        s.projection.listing('HITMAN01', 1)
 
         eq(counts.readEscrow, 6,
             'six contracts on the board should be six escrow reads, and each '
@@ -606,9 +606,9 @@ describe('what opening the board costs', function()
     it('still returns the same board with the reads memoised', function()
         -- The point of the memo is that nothing about the answer changes.
         local s = boardWith(3)
-        local before = s.projection.listing('HUNTER01', 1)
+        local before = s.projection.listing('HITMAN01', 1)
         local after = s.escrow.cached(function()
-            return s.projection.listing('HUNTER01', 1)
+            return s.projection.listing('HITMAN01', 1)
         end)
 
         eq(#after.contracts, #before.contracts)
@@ -676,7 +676,7 @@ describe('a charge that lands between the check and the debit', function()
         local s, created, err = anonymousWithFee(10000, 10000, 500)
 
         falsy(created, 'this contract is not affordable and must be refused')
-        eq(err, CB.ERR.INSUFFICIENT)
+        eq(err, CH.ERR.INSUFFICIENT)
         truthy(Env.players[1].PlayerData.money.bank >= 0,
             'a creator must never be charged more than they hold: bank is '
             .. tostring(Env.players[1].PlayerData.money.bank))
@@ -713,7 +713,7 @@ describe('a charge that lands between the check and the debit', function()
 
         local took, takeErr = s.escrow.take(f.creator, 'ct00000099', lines)
         falsy(took, 'the debit must re-check what is actually there')
-        eq(takeErr, CB.ERR.INSUFFICIENT)
+        eq(takeErr, CH.ERR.INSUFFICIENT)
         eq(Env.players[1].PlayerData.money.bank, 4000,
             'and must leave the balance exactly as it found it')
     end)
@@ -750,14 +750,14 @@ describe('an escrow take that fails partway through', function()
         truthy(before > 0, 'the fixture creator carries lockpicks')
 
         local ok, err = s.escrow.take(f.creator, 'ct00000091', {
-            { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'lockpick',
+            { portion = 'baseline', source = CH.SOURCE.ITEM, item = 'lockpick',
               quantity = 2, slot = 1 },
-            { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'nothing_like_this',
+            { portion = 'baseline', source = CH.SOURCE.ITEM, item = 'nothing_like_this',
               quantity = 1, slot = 1 },
         })
 
         falsy(ok)
-        eq(err, CB.ERR.INSUFFICIENT)
+        eq(err, CH.ERR.INSUFFICIENT)
         eq(heldItems(1, 'lockpick'), before,
             'the lockpicks taken for the first line have to come back')
         eq(#s.storage.readEscrow('ct00000091'), 0, 'and nothing is stored')
@@ -771,7 +771,7 @@ describe('an escrow take that fails partway through', function()
 
         local ok = s.escrow.take(f.creator, 'ct00000092', {
             { portion = 'baseline', source = 'dirty', amount = 5000, slot = 1 },
-            { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'nothing_like_this',
+            { portion = 'baseline', source = CH.SOURCE.ITEM, item = 'nothing_like_this',
               quantity = 1, slot = 1 },
         })
 
@@ -786,7 +786,7 @@ describe('an escrow take that fails partway through', function()
         truthy(before > 0, 'the fixture creator carries a pistol')
 
         local ok = s.escrow.take(f.creator, 'ct00000093', {
-            { portion = 'baseline', source = CB.SOURCE.WEAPON, item = 'WEAPON_PISTOL',
+            { portion = 'baseline', source = CH.SOURCE.WEAPON, item = 'WEAPON_PISTOL',
               metadata = { serial = 'ABC123', ammo = 12 }, slot = 1 },
             { portion = 'baseline', source = 'cash', amount = 99999999, slot = 1 },
         })
@@ -805,9 +805,9 @@ describe('an escrow take that fails partway through', function()
         local ok = s.escrow.take(f.creator, 'ct00000094', {
             { portion = 'baseline', source = 'cash', amount = 5000, slot = 1 },
             { portion = 'baseline', source = 'dirty', amount = 2500, slot = 1 },
-            { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'lockpick',
+            { portion = 'baseline', source = CH.SOURCE.ITEM, item = 'lockpick',
               quantity = 1, slot = 1 },
-            { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'nothing_like_this',
+            { portion = 'baseline', source = CH.SOURCE.ITEM, item = 'nothing_like_this',
               quantity = 1, slot = 1 },
         })
 
@@ -834,9 +834,9 @@ describe('an escrow take that fails partway through', function()
 
         local ok = pcall(function()
             s.escrow.take(f.creator, 'ct00000095', {
-                { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'lockpick',
+                { portion = 'baseline', source = CH.SOURCE.ITEM, item = 'lockpick',
                   quantity = 1, slot = 1 },
-                { portion = 'baseline', source = CB.SOURCE.ITEM, item = 'nothing_like_this',
+                { portion = 'baseline', source = CH.SOURCE.ITEM, item = 'nothing_like_this',
                   quantity = 1, slot = 1 },
             })
         end)
@@ -860,10 +860,10 @@ end)
 --- A refusal that names the rule it is about.
 ---
 --- LIMIT_REACHED covered three unrelated rules: a creator holding too many
---- contracts, a hunter holding too many, and a contract already carrying as
+--- contracts, a hitman holding too many, and a contract already carrying as
 --- many operatives as it allows. The app words it as "You are holding too
 --- many contracts", which for the third is not merely vague — it is false.
---- The hunter may hold none. It sends them off to cancel their own work to
+--- The hitman may hold none. It sends them off to cancel their own work to
 --- fix somebody else's contract being popular.
 ---
 --- The same split has been made twice already here: the six reasons a
@@ -873,20 +873,20 @@ describe('a competitive contract that is full', function()
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
         })
         truthy(c)
 
-        -- Fill it to the cap with hunters who hold nothing else.
+        -- Fill it to the cap with hitmen who hold nothing else.
         local cap = Config.Limits.MaxHitmenPerContract
         for i = 1, cap do
             local cid = ('HNT%05d'):format(i)
             Env.addPlayer({ source = 50 + i, citizenid = cid,
                 license = 'license:h' .. i, cash = 5000, bank = 5000,
-                firstname = 'Hunter', lastname = 'Number' .. i })
+                firstname = 'Hitman', lastname = 'Number' .. i })
             truthy(s.contracts.accept(s.identity.resolve(50 + i), c.id, false),
-                'hunter ' .. i .. ' of ' .. cap)
+                'hitman ' .. i .. ' of ' .. cap)
         end
         return s, f, c, cap
     end
@@ -899,12 +899,12 @@ describe('a competitive contract that is full', function()
 
         local ok, err = s.contracts.accept(s.identity.resolve(90), c.id, false)
         falsy(ok)
-        eq(err, CB.ERR.CONTRACT_FULL,
-            'this hunter holds nothing; telling them they hold too much is a '
+        eq(err, CH.ERR.CONTRACT_FULL,
+            'this hitman holds nothing; telling them they hold too much is a '
             .. 'refusal about the wrong player')
     end)
 
-    it('still says too many when the hunter really does hold too many', function()
+    it('still says too many when the hitman really does hold too many', function()
         -- The other rule must keep its own answer, or the split has just
         -- moved the confusion.
         local s = newStack()
@@ -920,7 +920,7 @@ describe('a competitive contract that is full', function()
                     license = 'license:g' .. i, cash = 10, bank = 10,
                     firstname = 'Mark', lastname = 'Number' .. i })
                 local c = s.contracts.create(f.creator, {
-                    targetCid = targetCid, reason = 'x', mode = CB.MODE.COMPETITIVE,
+                    targetCid = targetCid, reason = 'x', mode = CH.MODE.COMPETITIVE,
                     reward = { baseline = { cash = 1000 } },
                 })
                 truthy(c, 'contract ' .. i)
@@ -930,11 +930,11 @@ describe('a competitive contract that is full', function()
 
         local last
         for i = 1, #held do
-            local ok, err = s.contracts.accept(f.hunter, held[i].id, false)
+            local ok, err = s.contracts.accept(f.hitman, held[i].id, false)
             if not ok then last = err end
         end
-        eq(last, CB.ERR.LIMIT_REACHED,
-            'a hunter who really is holding too many keeps that answer')
+        eq(last, CH.ERR.LIMIT_REACHED,
+            'a hitman who really is holding too many keeps that answer')
     end)
 
     it('shows the count against the cap before the tap', function()
@@ -945,8 +945,8 @@ describe('a competitive contract that is full', function()
             if entry.id == c.id then row = entry end
         end
         truthy(row, 'the contract is on the board')
-        eq(row.huntersActive, cap)
-        eq(row.huntersMax, cap,
+        eq(row.hitmenActive, cap)
+        eq(row.hitmenMax, cap,
             'the cap is already sent; the page just never read it')
     end)
 end)
@@ -970,7 +970,7 @@ describe('a buyout that is refused', function()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x',
-            mode = opts.mode or CB.MODE.COMPETITIVE,
+            mode = opts.mode or CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
             bailoutAmount = opts.bailout == nil and 15000 or opts.bailout,
         })
@@ -985,7 +985,7 @@ describe('a buyout that is refused', function()
             ok, err = s.bailout.buy(f.target, c.id)
         end)
         falsy(ok)
-        eq(err, CB.ERR.BAILOUT_OFF,
+        eq(err, CH.ERR.BAILOUT_OFF,
             'this will never work, and telling them "not right now" invites '
             .. 'them to keep trying')
     end)
@@ -994,29 +994,29 @@ describe('a buyout that is refused', function()
         local s, f, c = seeded({ bailout = 0 })
         local ok, err = s.bailout.buy(f.target, c.id)
         falsy(ok)
-        eq(err, CB.ERR.NO_BUYOUT_PRICE,
+        eq(err, CH.ERR.NO_BUYOUT_PRICE,
             'the creator did not offer one; waiting will not produce it')
     end)
 
     it('says the contract is already over', function()
         local s, f, c = seeded()
-        s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'cancelled')
+        s.contracts.resolve(c.id, CH.STATE.CANCELLED, f.creator.cid, nil, 'cancelled')
         local ok, err = s.bailout.buy(f.target, c.id)
         falsy(ok)
-        eq(err, CB.ERR.ALREADY_SETTLED)
+        eq(err, CH.ERR.ALREADY_SETTLED)
     end)
 
     it('says a buyout they already paid for is on its way', function()
         -- The one refusal that means it is working. Told "not right now",
         -- a target pays attention to the wrong thing entirely.
         local s, f, c = seeded()
-        truthy(s.contracts.accept(f.hunter, c.id, false), 'engaged, so it queues')
+        truthy(s.contracts.accept(f.hitman, c.id, false), 'engaged, so it queues')
         Env.players[2].PlayerData.money.bank = 100000
         truthy(s.bailout.buy(f.target, c.id))
 
         local ok, err = s.bailout.buy(f.target, c.id)
         falsy(ok)
-        eq(err, CB.ERR.BUYOUT_PENDING)
+        eq(err, CH.ERR.BUYOUT_PENDING)
     end)
 
     it('says they cannot do it from the floor', function()
@@ -1024,22 +1024,22 @@ describe('a buyout that is refused', function()
         Env.players[2].PlayerData.metadata.isdead = true
         local ok, err = s.bailout.buy(f.target, c.id)
         falsy(ok)
-        eq(err, CB.ERR.INCAPACITATED, 'this one clears by getting up')
+        eq(err, CH.ERR.INCAPACITATED, 'this one clears by getting up')
     end)
 
     it('says somebody already has hold of them', function()
         local s, f, c = seeded()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         for _, src in ipairs({ 1, 2, 3 }) do
             Env.players[src]._coords = { x = 200.0, y = 200.0, z = 30.0 }
         end
         Env.players[2].PlayerData.metadata.ishandcuffed = true
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
 
         Env.players[2].PlayerData.money.bank = 100000
         local ok, err = s.bailout.buy(f.target, c.id)
         falsy(ok)
-        eq(err, CB.ERR.HANDOVER_IN_PROGRESS,
+        eq(err, CH.ERR.HANDOVER_IN_PROGRESS,
             'they are seconds from being delivered; that is not "not right now"')
     end)
 

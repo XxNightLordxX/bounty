@@ -9,7 +9,7 @@
 --- The other suites assert an outcome: this one asserts a non-outcome. Each
 --- operation is driven twice with a byte-identical payload and the whole
 --- world is compared across the two — every purse, every inventory stack,
---- every contract row, every escrow line, every hunter row, every amendment,
+--- every contract row, every escrow line, every hitman row, every amendment,
 --- the pending-payout queue, the ledger, the live kidnap countdowns and the
 --- outstanding photo tokens. Then something unrelated is allowed to happen
 --- and the same request is sent a third time, because a guard that keys off
@@ -55,7 +55,7 @@ end
 --- it reports a replay as theft when the replay was refused correctly.
 local function world(stack)
     local snapshot = {
-        purses = {}, contracts = {}, escrow = {}, hunters = {},
+        purses = {}, contracts = {}, escrow = {}, hitmen = {},
         amendments = {}, pending = {}, ledger = {}, kidnaps = {},
     }
 
@@ -80,15 +80,15 @@ local function world(stack)
         end
         snapshot.escrow[contract.id] = lines
 
-        local hunters = {}
-        for _, hunter in ipairs(stack.storage.readHunters(contract.id)) do
-            hunters[hunter.id] = hunter
+        local hitmen = {}
+        for _, hitman in ipairs(stack.storage.readHitmen(contract.id)) do
+            hitmen[hitman.id] = hitman
             -- How far a countdown has run. A second arm that silently
             -- restarts one is not visible in any stored row.
-            snapshot.kidnaps[contract.id .. ':' .. hunter.hunter_cid] =
-                stack.kidnap.progress(contract.id, hunter.hunter_cid)
+            snapshot.kidnaps[contract.id .. ':' .. hitman.hitman_cid] =
+                stack.kidnap.progress(contract.id, hitman.hitman_cid)
         end
-        snapshot.hunters[contract.id] = hunters
+        snapshot.hitmen[contract.id] = hitmen
     end
 
     local db = stack.storage._raw()
@@ -169,14 +169,14 @@ local function place(stack, actor, opts)
     opts = opts or {}
     return stack.contracts.create(actor, {
         targetCid = 'TARGET01', reason = 'Unpaid debt',
-        mode = opts.mode or CB.MODE.COMPETITIVE,
+        mode = opts.mode or CH.MODE.COMPETITIVE,
         reward = opts.reward or { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
         penaltyAmount = opts.penalty,
         bailoutAmount = opts.bailout,
     })
 end
 
---- A contract, its creator, its target and a hunter.
+--- A contract, its creator, its target and a hitman.
 local function seeded(opts)
     local stack = newStack()
     local f = fixture(stack)
@@ -205,20 +205,20 @@ end
 --------------------------------------------------------------------------
 
 describe('accepting twice', function()
-    it('takes one hunter row and one stake, whatever the second tap does', function()
+    it('takes one hitman row and one stake, whatever the second tap does', function()
         local s, f, c = seeded({ penalty = 2000 })
         local first, second = replay(s, 'accept', function()
-            return s.contracts.accept(f.hunter, c.id, false)
+            return s.contracts.accept(f.hitman, c.id, false)
         end)
         truthy(first[1], 'the first acceptance stands')
         falsy(second[1], 'the second is refused rather than absorbed')
-        eq(second[2], CB.ERR.ALREADY_HOLDING)
+        eq(second[2], CH.ERR.ALREADY_HOLDING)
 
         local rows = 0
-        for _, hunter in ipairs(s.storage.readHunters(c.id)) do
-            if hunter.hunter_cid == 'HUNTER01' then rows = rows + 1 end
+        for _, hitman in ipairs(s.storage.readHitmen(c.id)) do
+            if hitman.hitman_cid == 'HITMAN01' then rows = rows + 1 end
         end
-        eq(rows, 1, 'one acceptance, one hunter row')
+        eq(rows, 1, 'one acceptance, one hitman row')
         eq(Env.players[3].PlayerData.money.bank, 5000 - 2000, 'and one stake')
     end)
 
@@ -233,7 +233,7 @@ describe('accepting twice', function()
         local before = world(s)
         local two = call('accept', 3, { id = c.id, anonymous = false })
         falsy(two and two.ok, 'the app refuses the double-tap')
-        truthy(two and two.err ~= CB.ERR.RATE_LIMITED,
+        truthy(two and two.err ~= CH.ERR.RATE_LIMITED,
             'and refuses it on the state, not on the rate limit: ' .. tostring(two and two.err))
         same(before, world(s), 'a double-tapped accept changed the world')
     end)
@@ -245,7 +245,7 @@ describe('accepting twice', function()
                      { Config.Anonymity, 'FeeAccount', 'bank' } }, function()
             local c = place(s, f.creator)
             replay(s, 'anonymous accept', function()
-                return s.contracts.accept(f.hunter, c.id, true)
+                return s.contracts.accept(f.hitman, c.id, true)
             end)
             eq(Env.players[3].PlayerData.money.bank, 5000 - 1000,
                 'one acceptance is one fee')
@@ -267,7 +267,7 @@ describe('cancelling twice', function()
         falsy(second[1])
         eq(Env.players[1].PlayerData.money.cash, 100000,
             'the escrow came home once, not twice')
-        eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.CANCELLED)
     end)
 
     it('is refused the same way through the app', function()
@@ -283,17 +283,17 @@ end)
 describe('abandoning twice', function()
     it('forfeits the stake once', function()
         local s, f, c = seeded({ penalty = 2000 })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         local first, second = replay(s, 'abandon', function()
-            return s.contracts.abandon(f.hunter, c.id)
+            return s.contracts.abandon(f.hitman, c.id)
         end)
         truthy(first[1])
         falsy(second[1])
-        eq(second[2], CB.ERR.NOT_PARTICIPANT)
+        eq(second[2], CH.ERR.NOT_PARTICIPANT)
         eq(Env.players[1].PlayerData.money.bank, 100000 + 2000,
             'the creator collects one forfeited stake')
-        eq(Env.players[3].PlayerData.money.bank, 3000, 'and the hunter loses it once')
+        eq(Env.players[3].PlayerData.money.bank, 3000, 'and the hitman loses it once')
     end)
 end)
 
@@ -310,17 +310,17 @@ describe('buying out twice', function()
         truthy(first[1])
         falsy(second[1])
         eq(Env.players[2].PlayerData.money.bank, 20000 - 15000, 'one premium')
-        eq(s.storage.readContract(c.id).state, CB.STATE.BAILED_OUT)
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
     end)
 
-    --- The window that matters. With a hunter engaged the buyout is charged
+    --- The window that matters. With a hitman engaged the buyout is charged
     --- now and settled later, so for the length of the delay the contract is
     --- still live and still names the target — which is exactly what the
     --- second tap sees. Nothing in the contract's state says "already bought
     --- out"; only the queue fields do.
     it('charges the premium once while the settlement is still queued', function()
         local s, f, c = seeded({ bailout = 15000 })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         truthy(Config.Bailout.ProcessingDelaySeconds > 0,
             'this test is only meaningful where buyouts are delayed')
 
@@ -329,7 +329,7 @@ describe('buying out twice', function()
         end)
         truthy(first[1], 'the first buyout is taken')
         falsy(second[1], 'the second is refused while the first is still queued')
-        eq(second[2], CB.ERR.BUYOUT_PENDING,
+        eq(second[2], CH.ERR.BUYOUT_PENDING,
             'the one refusal that means it is working; telling the target '
             .. '"not right now" points them at the wrong thing entirely')
         falsy(third[1])
@@ -343,7 +343,7 @@ describe('buying out twice', function()
 
     it('settles a queued buyout once however often the queue is processed', function()
         local s, f, c = seeded({ bailout = 15000 })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         truthy(s.bailout.buy(f.target, c.id))
         Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
 
@@ -359,14 +359,14 @@ describe('buying out twice', function()
         -- module a second time. That is a real protection, but it is not
         -- idempotence — the module's own guard, tested above, is.
         local s, f, c = seeded({ bailout = 15000 })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         local one = call('bailout', 2, { id = c.id })
         truthy(one and one.ok, tostring(one and one.err))
 
         local before = world(s)
         local two = call('bailout', 2, { id = c.id })
         falsy(two and two.ok)
-        eq(two and two.err, CB.ERR.RATE_LIMITED,
+        eq(two and two.err, CH.ERR.RATE_LIMITED,
             'the limiter is what answers the second tap here')
         same(before, world(s), 'a double-tapped buyout changed the world')
     end)
@@ -383,7 +383,7 @@ describe('withdrawing the same escrow line twice', function()
         })
         local bonusLine
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.BONUS then bonusLine = line.id end
+            if line.portion == CH.PORTION.BONUS then bonusLine = line.id end
         end
         truthy(bonusLine, 'a bonus line to withdraw')
 
@@ -392,7 +392,7 @@ describe('withdrawing the same escrow line twice', function()
         end)
         truthy(first[1])
         falsy(second[1], 'a settled line is not the creator to take back again')
-        eq(second[2], CB.ERR.BAD_STATE)
+        eq(second[2], CH.ERR.BAD_STATE)
         eq(Env.players[1].PlayerData.money.cash, 100000 - 5000,
             'the bonus came back exactly once')
     end)
@@ -406,7 +406,7 @@ describe('withdrawing the same escrow line twice', function()
         })
         local bonusLine
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
-            if line.portion == CB.PORTION.BONUS then bonusLine = line.id end
+            if line.portion == CH.PORTION.BONUS then bonusLine = line.id end
         end
         truthy(s.contracts.withdrawReward(f.creator, c.id, { bonusLine, bonusLine, bonusLine }))
         eq(Env.players[1].PlayerData.money.cash, 100000 - 5000,
@@ -421,41 +421,41 @@ end)
 describe('claiming the same payout slot twice', function()
     it('pays a single-slot contract once', function()
         local s, f, c = seeded()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         local first, second = replay(s, 'claimSlot', function()
-            return s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+            return s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         end)
         truthy(first[1])
         falsy(second[1], 'the contract is finished; there is nothing left to claim')
         eq(Env.players[3].PlayerData.money.cash, 5000 + 5000,
-            'the hunter is paid the baseline once')
+            'the hitman is paid the baseline once')
         eq(s.storage.readContract(c.id).slots_claimed, 1)
     end)
 
     it('does not let a multi-slot contract pay two slots to one tap', function()
         -- The interesting shape: after the first claim the contract is back
         -- in ACCEPTED with a slot still on offer, so nothing about the
-        -- contract's state refuses the replay. The per-hunter cooldown is
+        -- contract's state refuses the replay. The per-hitman cooldown is
         -- what does.
         local s = newStack()
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'Unpaid debt',
-            mode = CB.MODE.COMPETITIVE,
+            mode = CH.MODE.COMPETITIVE,
             reward = { slots = {
                 { baseline = { cash = 5000 } },
                 { baseline = { cash = 3000 } },
             } },
         })
         truthy(c)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         local first, second = replay(s, 'claimSlot (multi)', function()
-            return s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION)
+            return s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         end)
         truthy(first[1])
-        falsy(second[1], 'the same hunter cannot collect twice on one report')
+        falsy(second[1], 'the same hitman cannot collect twice on one report')
         eq(s.storage.readContract(c.id).next_slot, 2, 'one slot advanced')
         eq(Env.players[3].PlayerData.money.cash, 5000 + 5000, 'one payout')
     end)
@@ -468,10 +468,10 @@ end)
 describe('proposing the same amendment twice', function()
     it('leaves one proposal on the contract', function()
         local s, f, c = seeded()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         local first, second = replay(s, 'propose', function()
-            return s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_REASON,
+            return s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_REASON,
                 { reason = 'A different quarrel' })
         end)
         truthy(first[1], 'the first proposal is made')
@@ -484,13 +484,13 @@ end)
 describe('approving the same amendment twice', function()
     it('applies a change once', function()
         local s, f, c = seeded()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         local proposal = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.CHANGE_REASON, { reason = 'A different quarrel' })
+            CH.AMENDMENT.CHANGE_REASON, { reason = 'A different quarrel' })
         truthy(proposal)
 
         local first, second = replay(s, 'respond', function()
-            return s.amendments.respond(f.hunter, proposal.id, true)
+            return s.amendments.respond(f.hitman, proposal.id, true)
         end)
         truthy(first[1])
         eq(first[3], 'applied')
@@ -500,53 +500,53 @@ describe('approving the same amendment twice', function()
 
     it('does not return escrow twice for an agreed cancellation', function()
         local s, f, c = seeded()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        local proposal = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CANCEL, {})
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CANCEL, {})
         truthy(proposal)
 
         local first, second = replay(s, 'respond (cancel)', function()
-            return s.amendments.respond(f.hunter, proposal.id, true)
+            return s.amendments.respond(f.hitman, proposal.id, true)
         end)
         truthy(first[1])
         falsy(second[1])
         eq(Env.players[1].PlayerData.money.cash, 100000,
             'the escrow returned exactly once')
-        eq(s.storage.readContract(c.id).state, CB.STATE.CANCELLED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.CANCELLED)
     end)
 
     it('records one approval when a vote is still pending', function()
         -- The half that does not end the proposal. Answering twice must not
         -- count as two of the votes the proposal is waiting for.
         local s, f, c = seeded()
-        Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
             cash = 5000, bank = 5000 })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
         local proposal = s.amendments.propose(f.creator, c.id,
-            CB.AMENDMENT.CHANGE_REASON, { reason = 'A different quarrel' })
+            CH.AMENDMENT.CHANGE_REASON, { reason = 'A different quarrel' })
         truthy(proposal)
 
         local first, second = replay(s, 'respond (pending)', function()
-            return s.amendments.respond(f.hunter, proposal.id, true)
+            return s.amendments.respond(f.hitman, proposal.id, true)
         end)
         eq(first[3], 'pending')
-        eq(second[3], 'pending', 'still waiting on the other hunter')
+        eq(second[3], 'pending', 'still waiting on the other hitman')
         eq(s.storage.readAmendment(proposal.id).outcome, 'open',
-            'one hunter answering twice does not carry the vote')
+            'one hitman answering twice does not carry the vote')
     end)
 
     it('lowers a penalty to the same figure once', function()
         local s, f, c = seeded({ penalty = 2000 })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         local first, second = replay(s, 'lower penalty', function()
             return s.amendments.improve(f.creator, c.id,
-                CB.AMENDMENT.LOWER_PENALTY, { amount = 500 })
+                CH.AMENDMENT.LOWER_PENALTY, { amount = 500 })
         end)
         truthy(first[1])
         falsy(second[1], 'the penalty is already 500; there is nothing to lower')
         eq(Env.players[3].PlayerData.money.bank, 5000 - 500,
-            'the hunter got the difference back once')
+            'the hitman got the difference back once')
     end)
 end)
 
@@ -560,8 +560,8 @@ describe('buying informant data twice', function()
     --- which is also what stops the button being used to walk the roster.
     it('charges once inside the reroll lock and names the same operative', function()
         local s, f, c = seeded()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
-        -- The sampler has to have seen the hunter on the target, or there is
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        -- The sampler has to have seen the hitman on the target, or there is
         -- nobody in the pool and the purchase reveals nothing.
         Env.players[2]._coords = { x = 500.0, y = 500.0, z = 30.0 }
         Env.players[3]._coords = { x = 505.0, y = 500.0, z = 30.0 }
@@ -591,7 +591,7 @@ describe('the same death reported twice', function()
     --- capture token waiting to be issued.
     it('opens one pending completion', function()
         local s, f, c = seeded()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
         Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
         Env.players[2]._health = (Env.players[2]._health or 200) - 60
@@ -605,8 +605,8 @@ describe('the same death reported twice', function()
         eq(second[1], 1, 'and the replay still reports the same one contract')
         eq(third[1], 1)
 
-        truthy(s.death.getPending(c.id, 'HUNTER01'), 'one completion is pending')
-        truthy(s.photo.issue(f.hunter, c.id), 'and it is worth one token')
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'one completion is pending')
+        truthy(s.photo.issue(f.hitman, c.id), 'and it is worth one token')
         eq(s.photo.tokenCount(), 1, 'one token, however many reports arrived')
     end)
 end)
@@ -622,7 +622,7 @@ describe('submitting the same photo token twice', function()
         local s, f, c = seeded()
         Config.Completion.ExtraPhotoHosts = { 'cdn.fivemanage.com' }
         s.photo.loadAllowedHosts()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
 
         Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
         Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
@@ -631,7 +631,7 @@ describe('submitting the same photo token twice', function()
         Env.players[2].PlayerData.metadata.isdead = true
         eq(s.death.onVictimReport(2), 1, 'the kill is attributed')
 
-        local token = s.photo.issue(f.hunter, c.id)
+        local token = s.photo.issue(f.hitman, c.id)
         truthy(token, 'a capture token')
         return s, f, c, token
     end
@@ -639,11 +639,11 @@ describe('submitting the same photo token twice', function()
     it('pays for the kill once', function()
         local s, f, c, token = killed()
         local first, second = replay(s, 'submitPhoto', function()
-            return s.photo.submit(f.hunter, token, URL)
+            return s.photo.submit(f.hitman, token, URL)
         end)
         truthy(first[1], tostring(first[2]))
         falsy(second[1], 'the token is spent')
-        eq(second[2], CB.ERR.TOKEN_INVALID)
+        eq(second[2], CH.ERR.TOKEN_INVALID)
         eq(Env.players[3].PlayerData.money.cash, 5000 + 5000, 'one baseline')
         -- One completion writes one row per participant; a replay would
         -- write another three.
@@ -655,13 +655,13 @@ describe('submitting the same photo token twice', function()
         -- one asks for another — but the kill behind it has already been
         -- paid, so the fresh token must buy nothing.
         local s, f, c, token = killed()
-        truthy(s.photo.submit(f.hunter, token, URL))
+        truthy(s.photo.submit(f.hitman, token, URL))
         local before = world(s)
 
-        local reissued, err = s.photo.issue(f.hunter, c.id)
+        local reissued, err = s.photo.issue(f.hitman, c.id)
         falsy(reissued, 'nothing is pending any more: ' .. tostring(reissued))
-        eq(err, CB.ERR.NO_KILL_TO_VERIFY,
-            'the pending kill is gone, which is the same answer a hunter gets '
+        eq(err, CH.ERR.NO_KILL_TO_VERIFY,
+            'the pending kill is gone, which is the same answer a hitman gets '
             .. 'for asking before there was one')
         same(before, world(s), 'reissuing a token after the payout moved something')
     end)
@@ -676,7 +676,7 @@ describe('arming the same kidnap twice', function()
 
     local function together()
         local s, f, c = seeded()
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         for _, src in ipairs({ 1, 2, 3 }) do
             Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z }
         end
@@ -687,7 +687,7 @@ describe('arming the same kidnap twice', function()
     it('runs one countdown', function()
         local s, f, c = together()
         local first, second = replay(s, 'armKidnap', function()
-            return s.kidnap.arm(c.id, 'HUNTER01')
+            return s.kidnap.arm(c.id, 'HITMAN01')
         end)
         truthy(first[1])
         truthy(second[1], 'the second tap is absorbed, not refused')
@@ -696,29 +696,29 @@ describe('arming the same kidnap twice', function()
 
     --- The reason the snapshot carries countdown progress at all. A second
     --- arm that quietly restarts the timer is invisible in every stored row
-    --- and in every balance: the hunter holds the target longer, the
+    --- and in every balance: the hitman holds the target longer, the
     --- creator waits longer, and a client that re-sends on a tick never
     --- finishes a delivery at all.
     it('does not restart a countdown that is already running', function()
         local s, f, c = together()
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
 
         local ticks = math.floor((Config.Kidnap.CountdownSeconds * 1000)
             / Config.Kidnap.TickMs / 2)
         for _ = 1, ticks do s.kidnap.tick(Config.Kidnap.TickMs) end
 
-        local halfway = s.kidnap.progress(c.id, 'HUNTER01')
+        local halfway = s.kidnap.progress(c.id, 'HITMAN01')
         truthy(halfway and halfway.elapsed > 0, 'the countdown is under way')
 
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'), 'arming again is absorbed')
-        eq(s.kidnap.progress(c.id, 'HUNTER01').elapsed, halfway.elapsed,
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'), 'arming again is absorbed')
+        eq(s.kidnap.progress(c.id, 'HITMAN01').elapsed, halfway.elapsed,
             'and does not put the countdown back to the start')
     end)
 
     it('pays one delivery when the countdown finishes', function()
         local s, f, c = together()
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
 
         local completions = {}
         local ticks = math.floor((Config.Kidnap.CountdownSeconds * 1000)
@@ -762,7 +762,7 @@ describe('what this file leaves out', function()
         sendMessage = 'two messages is two messages',
         requestCall = 'asking twice rings twice, and the relay rate-limits it',
         requestPhotoToken = 'a second token deliberately invalidates the '
-            .. 'first, so a hunter cannot bank them',
+            .. 'first, so a hitman cannot bank them',
         -- Reads. Repeating a read is the definition of harmless.
         list = true, mine = true, ledger = true, searchTargets = true,
         browseTargets = true, mugshotImage = true, rewardOptions = true,

@@ -71,7 +71,7 @@ end
 --------------------------------------------------------------------------
 
 local FORBIDDEN_PAYLOAD_KEYS = {
-    'data%.citizenid', 'data%.cid', 'data%.hunterCid', 'data%.hunterId',
+    'data%.citizenid', 'data%.cid', 'data%.hitmanCid', 'data%.hitmanId',
     'payload%.citizenid', 'payload%.cid', 'payload%.source', 'data%.source',
     'data%.playerId', 'data%.serverId', 'payload%.serverId',
 }
@@ -841,7 +841,7 @@ end
 -- 15. The app never builds markup from data
 --------------------------------------------------------------------------
 --
--- Contract reasons, target names and hunter aliases are written by other
+-- Contract reasons, target names and hitman aliases are written by other
 -- players and rendered in everyone's phone. Every one of them goes through
 -- textContent today. An innerHTML assignment of anything but a literal
 -- empty string is how that stops being true.
@@ -960,7 +960,7 @@ end
 --
 -- `amount * (percent / 100)` divides first, and most hundredths are not
 -- representable in binary: 29/100 lands just under, so 29% of 50,000 came
--- out as 14,499. The creator promised a percentage, the hunter was shown a
+-- out as 14,499. The creator promised a percentage, the hitman was shown a
 -- percentage, and the escrow held a unit less than either.
 --
 -- Multiplying first keeps the whole calculation in integers, which is where
@@ -1248,7 +1248,7 @@ end
 -- and `x.forEach` throws outright — taking the whole tab down.
 --
 -- Two of these survived an earlier sweep for exactly this, on
--- contract.hunters: a creator whose contract nobody had taken yet, which is
+-- contract.hitmen: a creator whose contract nobody had taken yet, which is
 -- every contract the moment it is placed.
 --------------------------------------------------------------------------
 
@@ -1373,7 +1373,7 @@ do
                 .. 'Whatever the page URL carries, these are cached separately '
                 .. 'and stay stale.'
         end
-        if not page:find('CB_BUILD', 1, true) then
+        if not page:find('CH_BUILD', 1, true) then
             failures[#failures + 1] =
                 'ui/index.html does not record the build it was opened with. '
                 .. 'The app cannot then say which copy of itself is running, '
@@ -1540,9 +1540,9 @@ do
     local amendSrc = read('crimson-hitman/server/amendments.lua') or ''
     local constSrc = read('crimson-hitman/shared/constants.lua') or ''
 
-    -- CB.AMENDMENT.SHORTEN_DEADLINE -> 'shorten_deadline'
+    -- CH.AMENDMENT.SHORTEN_DEADLINE -> 'shorten_deadline'
     local enum = {}
-    local block = constSrc:match('CB%.AMENDMENT%s*=%s*(%b{})') or ''
+    local block = constSrc:match('CH%.AMENDMENT%s*=%s*(%b{})') or ''
     for name, value in block:gmatch("([%u_]+)%s*=%s*'([%w_]+)'") do enum[name] = value end
 
     -- What the page proposes, by kind.
@@ -1575,7 +1575,7 @@ do
         for i = 1, #cuts - 1 do
             local branch = body:sub(cuts[i], cuts[i + 1] - 1)
             local kinds = {}
-            for name in branch:gmatch('CB%.AMENDMENT%.([%u_]+)') do
+            for name in branch:gmatch('CH%.AMENDMENT%.([%u_]+)') do
                 if enum[name] then kinds[#kinds + 1] = enum[name] end
             end
             local keys = {}
@@ -1653,7 +1653,7 @@ do
     local constSrc = read('crimson-hitman/shared/constants.lua') or ''
 
     local codes = {}
-    local errBlock = constSrc:match('CB%.ERR%s*=%s*(%b{})') or ''
+    local errBlock = constSrc:match('CH%.ERR%s*=%s*(%b{})') or ''
     for name, value in errBlock:gmatch("([%u_]+)%s*=%s*'([%w_]+)'") do
         codes[value] = name
     end
@@ -1683,7 +1683,7 @@ do
     local unworded = {}
     for value, name in pairs(codes) do
         if not messages[value] then
-            unworded[#unworded + 1] = ('%s (CB.ERR.%s)'):format(value, name)
+            unworded[#unworded + 1] = ('%s (CH.ERR.%s)'):format(value, name)
         end
     end
     table.sort(unworded)
@@ -1837,7 +1837,7 @@ end
 -- 14e. No terminal state nothing can reach
 --------------------------------------------------------------------------
 --
--- CB.STATE.VOIDED was declared, marked terminal, allowed as a transition
+-- CH.STATE.VOIDED was declared, marked terminal, allowed as a transition
 -- from ACTIVE and ACCEPTED, and commented "admin" — and nothing ever set
 -- it. The one command that should, Admin.void, resolved to CANCELLED, which
 -- is the state that means the CREATOR changed their mind: so a staff member
@@ -1853,8 +1853,8 @@ do
 
     --- Every state named as the destination of a legal transition.
     local targets = {}
-    local table_ = constants:match('CB%.TRANSITIONS%s*=%s*{(.*)\n}') or ''
-    for name in table_:gmatch('%[CB%.STATE%.(%u[%u_]*)%]%s*=%s*true') do
+    local table_ = constants:match('CH%.TRANSITIONS%s*=%s*{(.*)\n}') or ''
+    for name in table_:gmatch('%[CH%.STATE%.(%u[%u_]*)%]%s*=%s*true') do
         targets[name] = true
     end
 
@@ -1870,10 +1870,10 @@ do
         -- CANCELLED from reading as a call that reaches it.
         local src = (read(path) or ''):gsub('%-%-[^\n]*', '')
         for call in src:gmatch('%.%s*resolve%s*%b()') do
-            for name in call:gmatch('CB%.STATE%.(%u[%u_]*)') do reached[name] = true end
+            for name in call:gmatch('CH%.STATE%.(%u[%u_]*)') do reached[name] = true end
         end
         for call in src:gmatch('%.%s*transition%s*%b()') do
-            for name in call:gmatch('CB%.STATE%.(%u[%u_]*)') do reached[name] = true end
+            for name in call:gmatch('CH%.STATE%.(%u[%u_]*)') do reached[name] = true end
         end
     end
 
@@ -1884,7 +1884,7 @@ do
     table.sort(unreachable)
 
     for _, name in ipairs(unreachable) do
-        failures[#failures + 1] = ('CB.STATE.%s is declared as a legal transition '
+        failures[#failures + 1] = ('CH.STATE.%s is declared as a legal transition '
             .. 'target and nothing ever moves a contract to it. Either something '
             .. 'should and does not — which is a contract ending in the wrong '
             .. 'state, with whatever that state\'s cooldowns and wording bring '

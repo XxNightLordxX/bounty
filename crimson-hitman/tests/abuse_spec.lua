@@ -36,7 +36,7 @@ local function place(s, actor, opts)
     opts = opts or {}
     local c, err = s.contracts.create(actor, {
         targetCid = opts.target or 'TARGET01', reason = opts.reason or 'Unpaid debt',
-        mode = opts.mode or CB.MODE.COMPETITIVE,
+        mode = opts.mode or CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = opts.cash or 5000 } },
         anonymous = opts.anonymous, penaltyAmount = opts.penalty,
     })
@@ -58,7 +58,7 @@ describe('a client-fired login event', function()
         local f = fixture(s)
         s.bridges.install(s)
         local c = place(s, f.creator)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         Env.advance(3600)
 
         for _ = 1, 5 do
@@ -68,8 +68,8 @@ describe('a client-fired login event', function()
             falsy(immune, 'the target made themselves immune: ' .. tostring(why))
         end
 
-        local ok, err = s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION, {})
-        truthy(ok, 'and the hunter is paid for the kill: ' .. tostring(err))
+        local ok, err = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION, {})
+        truthy(ok, 'and the hitman is paid for the kill: ' .. tostring(err))
     end)
 
     it('does not restart a session it watched begin', function()
@@ -126,7 +126,7 @@ describe('a client-fired login event', function()
         truthy(fire('local:qbx_core:server:playerLoaded', nil, { PlayerData = { source = 2 } }))
         local immune, why = s.contracts.isImmune(s.identity.resolve(2))
         truthy(immune, 'a player who has just walked in is not fair game')
-        eq(why, CB.ERR.TARGET_JUST_ON)
+        eq(why, CH.ERR.TARGET_JUST_ON)
 
         Env.advance((Config.Immunity.MinTargetSessionMinutes + 1) * 60)
         falsy(s.contracts.isImmune(s.identity.resolve(2)), 'and then they are')
@@ -143,10 +143,10 @@ describe("an anonymous client's presence", function()
         local s = newStack()
         local f = fixture(s)
         place(s, f.creator, { anonymous = true })
-        eq(#s.projection.listing('HUNTER01', 1).contracts, 1)
+        eq(#s.projection.listing('HITMAN01', 1).contracts, 1)
 
         Env.removePlayer(1)
-        eq(#s.projection.listing('HUNTER01', 1).contracts, 1,
+        eq(#s.projection.listing('HITMAN01', 1).contracts, 1,
             'the anonymous contract vanished when its creator logged off')
     end)
 
@@ -155,7 +155,7 @@ describe("an anonymous client's presence", function()
         local f = fixture(s)
         place(s, f.creator)
         Env.removePlayer(1)
-        eq(#s.projection.listing('HUNTER01', 1).contracts, 0)
+        eq(#s.projection.listing('HITMAN01', 1).contracts, 0)
     end)
 
     it('still hides any contract whose target is away', function()
@@ -163,14 +163,14 @@ describe("an anonymous client's presence", function()
         local f = fixture(s)
         place(s, f.creator, { anonymous = true })
         Env.removePlayer(2)
-        eq(#s.projection.listing('HUNTER01', 1).contracts, 0)
+        eq(#s.projection.listing('HITMAN01', 1).contracts, 0)
     end)
 
     it('cannot be asked by pressing Arm', function()
         local s = newStack()
         local f = fixture(s)
         local c = place(s, f.creator, { anonymous = true })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         Env.players[3]._coords = { x = 0.0, y = 0.0, z = 0.0 }
         Env.players[2]._coords = { x = 900.0, y = 900.0, z = 0.0 }
         Env.players[1]._coords = { x = 1500.0, y = 100.0, z = 0.0 }
@@ -187,14 +187,14 @@ describe("an anonymous client's presence", function()
         local s = newStack()
         local f = fixture(s)
         local c = place(s, f.creator, { anonymous = true })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         for _, src in ipairs({ 1, 2, 3 }) do Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z } end
         Env.players[2].PlayerData.metadata.ishandcuffed = true
         Env.players[1]._coords = { x = 9000.0, y = 9000.0, z = 30.0 }
 
-        local _, far = s.kidnap.arm(c.id, 'HUNTER01')
+        local _, far = s.kidnap.arm(c.id, 'HITMAN01')
         Env.removePlayer(1)
-        local _, gone = s.kidnap.arm(c.id, 'HUNTER01')
+        local _, gone = s.kidnap.arm(c.id, 'HITMAN01')
         eq(far, 'creator_too_far')
         eq(gone, far)
     end)
@@ -203,10 +203,10 @@ describe("an anonymous client's presence", function()
         local s = newStack()
         local f = fixture(s)
         local c = place(s, f.creator, { anonymous = true })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         for _, src in ipairs({ 1, 2, 3 }) do Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z } end
         Env.players[2].PlayerData.metadata.ishandcuffed = true
-        truthy(s.kidnap.arm(c.id, 'HUNTER01'))
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
 
         Env.removePlayer(1)
         Env.clientEvents = {}
@@ -220,7 +220,7 @@ describe("an anonymous client's presence", function()
                 said = event.args[1].content
             end
         end
-        truthy(said, 'the hunter is told the handover failed')
+        truthy(said, 'the hitman is told the handover failed')
         falsy(said:find('offline', 1, true), 'and not that their client went offline: ' .. said)
     end)
 end)
@@ -245,7 +245,7 @@ describe('a reason changed by agreement', function()
         local c = place(s, f.creator)
         local r = agree(s, c, { reason = 'join https://discord.gg/abc' })
         falsy(r.ok)
-        eq(r.err, CB.ERR.INVALID_INPUT)
+        eq(r.err, CH.ERR.INVALID_INPUT)
         eq(s.storage.readContract(c.id).reason, 'Unpaid debt', 'a link reached the board')
     end)
 
@@ -298,7 +298,7 @@ describe('a reason changed by agreement', function()
         local c = place(s, f.creator)
         for _, kind in ipairs({ false, 7, {} }) do
             local r = call('propose', 1, { id = c.id, kind = kind or nil })
-            eq(r.err, CB.ERR.INVALID_INPUT, 'kind ' .. tostring(kind))
+            eq(r.err, CH.ERR.INVALID_INPUT, 'kind ' .. tostring(kind))
         end
     end)
 end)
@@ -326,7 +326,7 @@ describe("a creator's limits, on another character", function()
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } },
         })
         falsy(again, 'a second character on the same licence skipped the two-hour wait')
-        eq(err, CB.ERR.SAME_TARGET_TOO_SOON)
+        eq(err, CH.ERR.SAME_TARGET_TOO_SOON)
     end)
 
     it('still waits out a cancellation', function()
@@ -340,7 +340,7 @@ describe("a creator's limits, on another character", function()
         local _, err = s.contracts.create(s.identity.resolve(1), {
             targetCid = 'TARGET02', reason = 'x', reward = { baseline = { cash = 5000 } },
         })
-        eq(err, CB.ERR.CANCELLED_TOO_SOON)
+        eq(err, CH.ERR.CANCELLED_TOO_SOON)
     end)
 
     it('counts open contracts across every character', function()
@@ -357,7 +357,7 @@ describe("a creator's limits, on another character", function()
         local _, err = s.contracts.create(s.identity.resolve(1), {
             targetCid = 'TGTEXTRA', reason = 'x', reward = { baseline = { cash = 5000 } },
         })
-        eq(err, CB.ERR.LIMIT_REACHED)
+        eq(err, CH.ERR.LIMIT_REACHED)
         local _ = f
     end)
 
@@ -397,7 +397,7 @@ describe('a call from somebody who paid to stay anonymous', function()
         local s = newStack()
         local f = fixture(s)
         local c = place(s, f.creator, { anonymous = true })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         local thread = s.comms.threads(f.creator, c.id)[1]
 
         withPlacer(function(dialled)
@@ -413,11 +413,11 @@ describe('a call from somebody who paid to stay anonymous', function()
         local s = newStack()
         local f = fixture(s)
         local c = place(s, f.creator)
-        truthy(s.contracts.accept(f.hunter, c.id, true))
+        truthy(s.contracts.accept(f.hitman, c.id, true))
 
         withPlacer(function(dialled)
             s.comms.resetCallCache()
-            truthy(s.comms.requestCall(f.hunter, c.id, nil))
+            truthy(s.comms.requestCall(f.hitman, c.id, nil))
             eq(dialled().anonymous, true)
         end)
     end)
@@ -426,7 +426,7 @@ describe('a call from somebody who paid to stay anonymous', function()
         local s = newStack()
         local f = fixture(s)
         local c = place(s, f.creator, { anonymous = true })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         local thread = s.comms.threads(f.creator, c.id)[1]
 
         withPlacer(function(dialled)
@@ -446,10 +446,10 @@ describe('a call from somebody who paid to stay anonymous', function()
         local s = newStack()
         local f = fixture(s)
         local c = place(s, f.creator)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         withPlacer(function(dialled)
             s.comms.resetCallCache()
-            truthy(s.comms.requestCall(f.hunter, c.id, nil))
+            truthy(s.comms.requestCall(f.hitman, c.id, nil))
             eq(dialled().anonymous, false)
         end)
     end)
@@ -468,10 +468,10 @@ describe('informant data bought by the creator', function()
             :format(namedFirst and 'named' or 'anonymous'), function()
             local s = newStack()
             local f = fixture(s)
-            Env.addPlayer({ source = 5, citizenid = 'HUNTER02', license = 'license:h2',
+            Env.addPlayer({ source = 5, citizenid = 'HITMAN02', license = 'license:h2',
                 cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
             local c = place(s, f.creator)
-            local named, anon = f.hunter, s.identity.resolve(5)
+            local named, anon = f.hitman, s.identity.resolve(5)
             if namedFirst then
                 truthy(s.contracts.accept(named, c.id, false))
                 truthy(s.contracts.accept(anon, c.id, true))
@@ -493,7 +493,7 @@ describe('informant data bought by the creator', function()
         local s = newStack()
         local f = fixture(s)
         local c = place(s, f.creator)
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         s.death.watchTargets(s.storage.allContracts())
         Env.players[2].PlayerData.money.bank = Config.Informant.Cost
         local ok, err, data = s.informant.buy(f.target, c.id)
@@ -511,11 +511,11 @@ describe('an exclusive contract held by somebody who is not working it', functio
         opts = opts or {}
         local s = newStack()
         local f = fixture(s)
-        Env.addPlayer({ source = 4, citizenid = 'REALHUNT', license = 'license:real',
+        Env.addPlayer({ source = 4, citizenid = 'REALHIT', license = 'license:real',
             cash = 50000, bank = 50000 })
-        local c = place(s, f.creator, { mode = CB.MODE.EXCLUSIVE, cash = 50000,
+        local c = place(s, f.creator, { mode = CH.MODE.EXCLUSIVE, cash = 50000,
             penalty = opts.penalty, anonymous = opts.anonymous })
-        truthy(s.contracts.accept(f.hunter, c.id, false))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
         -- Nowhere near the target.
         Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
         return s, f, c
@@ -536,8 +536,8 @@ describe('an exclusive contract held by somebody who is not working it', functio
         s.contracts.releaseIdleHolds()
         run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
 
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'the hold was never released')
-        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'released')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'the hold was never released')
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released')
         truthy(s.contracts.accept(s.identity.resolve(4), c.id, false),
             'somebody who will work it can take it')
         local _ = f
@@ -545,7 +545,7 @@ describe('an exclusive contract held by somebody who is not working it', functio
 
     it('is not released while the target is in prison', function()
         -- The deadline stops for a sentence; the hold's idle clock ran on,
-        -- and the hunter was taken off for not going near a target locked
+        -- and the hitman was taken off for not going near a target locked
         -- in Bolingbroke.
         local s, f, c = held()
         local zone = Config.Limits.JailZone
@@ -553,7 +553,7 @@ describe('an exclusive contract held by somebody who is not working it', functio
         Env.players[2]._coords = { x = zone.x, y = zone.y, z = 45.0 }
         s.contracts.releaseIdleHolds()
         run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 5)
-        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'active', 'still theirs')
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active', 'still theirs')
         local _ = f
     end)
 
@@ -575,23 +575,23 @@ describe('an exclusive contract held by somebody who is not working it', functio
         run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
 
         local r = call('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 0 })
-        eq(r.err, CB.ERR.HOLD_RELEASED)
+        eq(r.err, CH.ERR.HOLD_RELEASED)
 
         Env.removePlayer(3)
-        Env.addPlayer({ source = 3, citizenid = 'HUNTER02', license = 'license:ccc',
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN02', license = 'license:ccc',
             cash = 5000, bank = 5000 })
         local _, err = s.contracts.accept(s.identity.resolve(3), c.id, false)
-        eq(err, CB.ERR.HOLD_RELEASED)
+        eq(err, CH.ERR.HOLD_RELEASED)
         local _ = f
     end)
 
-    it('leaves alone a hunter who is working it', function()
+    it('leaves alone a hitman who is working it', function()
         local s, f, c = held()
         Env.players[3]._coords = { x = 20.0, y = 0.0, z = 0.0 }
         s.contracts.releaseIdleHolds()
         run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) * 3)
-        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'active')
-        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
         local _ = f
     end)
 
@@ -604,7 +604,7 @@ describe('an exclusive contract held by somebody who is not working it', functio
         Natives.calls.notifications = {}
         s.contracts.releaseIdleHolds()
         run(s, math.ceil(Config.Limits.ExclusiveAttemptWindowSeconds / 60) + 1)
-        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'released',
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released',
             'sat beside the target for hours and kept the contract from everyone')
         local told = false
         for _, note in ipairs(Natives.calls.notifications) do
@@ -623,7 +623,7 @@ describe('an exclusive contract held by somebody who is not working it', functio
             Env.players[2]._health = (Env.players[2]._health or 200) - 5
             s.death.recordDamage(3, 2, 123456)
         end
-        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'active')
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active')
         local _ = f
     end)
 
@@ -633,9 +633,9 @@ describe('an exclusive contract held by somebody who is not working it', functio
         s.contracts.releaseIdleHolds()
         for _ = 1, 4 do
             run(s, 45)
-            s.contracts.noteAttempt(c.id, 'HUNTER01')
+            s.contracts.noteAttempt(c.id, 'HITMAN01')
         end
-        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'active')
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active')
         local _ = f
     end)
 
@@ -647,13 +647,13 @@ describe('an exclusive contract held by somebody who is not working it', functio
         local target = Env.players[2]
         Env.removePlayer(2)
         run(s, 120)
-        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'active',
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active',
             'released for not finding a target who was not there')
 
         Env.players[2] = target
         Env.byCitizen['TARGET01'] = 2
         run(s, 10)
-        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'released')
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released')
         local _ = f
     end)
 
@@ -662,7 +662,7 @@ describe('an exclusive contract held by somebody who is not working it', functio
         s.contracts.releaseIdleHolds()
         Env.removePlayer(1)
         run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
-        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'active',
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active',
             'released while the client the handover is for was not in the city')
         local _ = f
     end)
@@ -672,7 +672,7 @@ describe('an exclusive contract held by somebody who is not working it', functio
         s.contracts.releaseIdleHolds()
         Env.removePlayer(1)
         run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
-        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'released',
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released',
             'the moment of the release told the holder when the client was in the city')
         local _ = f
     end)
@@ -690,7 +690,7 @@ describe('an exclusive contract held by somebody who is not working it', functio
         eq(fresh.reindexHolds(), 1)
         fresh.releaseIdleHolds()
         run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
-        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'released')
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released')
         local _ = f
     end)
 
@@ -700,7 +700,7 @@ describe('an exclusive contract held by somebody who is not working it', functio
         Config.Limits.ExclusiveAttemptWindowSeconds = 0
         s.contracts.releaseIdleHolds()
         run(s, 240)
-        eq(s.storage.readHunter(c.id, 'HUNTER01').state, 'active')
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active')
         local _ = f
     end)
 end)
@@ -714,8 +714,8 @@ describe('an anonymous operative logging off', function()
         local s = newStack()
         local f = fixture(s)
         s.bridges.install(s)
-        local c = place(s, f.creator, { mode = CB.MODE.COMPETITIVE })
-        truthy(s.contracts.accept(f.hunter, c.id, true))
+        local c = place(s, f.creator, { mode = CH.MODE.COMPETITIVE })
+        truthy(s.contracts.accept(f.hitman, c.id, true))
         local thread = s.comms.threads(f.creator, c.id)[1]
         truthy(thread and thread.handle)
         return s, f, c, thread.handle
@@ -725,7 +725,7 @@ describe('an anonymous operative logging off', function()
         local s, f, c, handle = threaded()
         local here = { s.comms.send(f.creator, c.id, handle, 'still there?') }
 
-        require('crimson-hitman.server.bridges').onPlayerDropped(s, 'HUNTER01')
+        require('crimson-hitman.server.bridges').onPlayerDropped(s, 'HITMAN01')
         Env.removePlayer(3)
         local away = { s.comms.send(f.creator, c.id, handle, 'still there?') }
         eq(away[1], here[1], 'the answer changed when they logged off: ' .. tostring(away[2]))
@@ -737,7 +737,7 @@ describe('an anonymous operative logging off', function()
 
     it('still closes the thread when they leave the contract', function()
         local s, f, c, handle = threaded()
-        truthy(s.contracts.abandon(f.hunter, c.id))
+        truthy(s.contracts.abandon(f.hitman, c.id))
         local ok = s.comms.send(f.creator, c.id, handle, 'hello?')
         falsy(ok, 'writing to an operative who is no longer on it')
     end)
@@ -757,7 +757,7 @@ describe('odd values where a table or a page number goes', function()
             local reply = call('propose', 1, { id = c.id, kind = 'cancel', payload = payload })
             truthy(reply, 'answered')
             falsy(tostring(reply.err):find('THREW', 1, true), tostring(reply.err))
-            eq(reply.err, CB.ERR.INVALID_INPUT, tostring(payload))
+            eq(reply.err, CH.ERR.INVALID_INPUT, tostring(payload))
         end
     end)
 

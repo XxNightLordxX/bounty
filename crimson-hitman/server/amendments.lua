@@ -1,8 +1,8 @@
 --- Contract amendments (§12).
 ---
 --- Additive changes apply immediately because they can only benefit the
---- hunter. Anything that could disadvantage the other side is a proposal
---- needing approval from the creator and every accepted hunter. The target of
+--- hitman. Anything that could disadvantage the other side is a proposal
+--- needing approval from the creator and every accepted hitman. The target of
 --- a contract is never amendable.
 
 local Util = require_shared('util')
@@ -23,15 +23,15 @@ function Amendments.init(deps)
     openContracts = {}
 end
 
---- Who has to agree: the client, and every hunter on the contract —
+--- Who has to agree: the client, and every hitman on the contract —
 --- including one part-way through accepting (Contracts.holds). Counting only
 --- active rows let a change be applied, as agreed by nobody else, under a
---- hunter who had already staked on the old terms.
+--- hitman who had already staked on the old terms.
 local function participants(contract)
     local out = { [contract.creator_cid] = 'creator' }
-    local hunters = Storage.readHunters(contract.id)
-    for i = 1, #hunters do
-        if Contracts.holds(hunters[i]) then out[hunters[i].hunter_cid] = 'hunter' end
+    local hitmen = Storage.readHitmen(contract.id)
+    for i = 1, #hitmen do
+        if Contracts.holds(hitmen[i]) then out[hitmen[i].hitman_cid] = 'hitman' end
     end
     return out
 end
@@ -42,7 +42,7 @@ end
 --- a push does, and nothing here sent one. A proposal never appeared on the
 --- other party's open Mine tab, so it ran out unseen; a decline or an
 --- expiry left the proposer's panel waiting on an answer that had come; an
---- improvement left a hunter's card showing the old terms. The target is
+--- improvement left a hitman's card showing the old terms. The target is
 --- never among them: a push to them would say something had changed on a
 --- contract they are not told exists.
 local function pushOthers(contract, actorCid, reason)
@@ -78,19 +78,19 @@ local CLAIM_WAIT_MS, CLAIM_POLL_MS = 3000, 100
 ---@return string|nil err
 local function keptOrReturned(actor, contractId, expectedSlot, ids)
     -- Only a line nobody else has been given can be handed back. A claim
-    -- landing in the awaits can already have paid a new line to its hunter
+    -- landing in the awaits can already have paid a new line to its hitman
     -- and, with their pockets full, queued it for them: still held, but
     -- owed to them. A named release overrides that, so handing it back gave
-    -- the creator the hunter's money and cleared the hunter's queue entry.
+    -- the creator the hitman's money and cleared the hitman's queue entry.
     local function returnable(line)
-        return line ~= nil and line.state == CB.ESCROW_STATE.HELD
+        return line ~= nil and line.state == CH.ESCROW_STATE.HELD
             and (line.owed_to == nil or line.owed_to == actor.cid)
     end
 
     -- And asked again where it binds: after the release has taken the line
     -- out of `held`, when nothing else can pay it. The read above is a
     -- filter, not a promise; a claim landing in the awaits between it and
-    -- the release could still queue the line for its hunter first.
+    -- the release could still queue the line for its hitman first.
     local function stillReturnable(line)
         local current = Storage.readEscrowLine(line.id)
         return current ~= nil
@@ -116,14 +116,14 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
     -- stalled, and is answered below without guessing.
     local now = Storage.readContract(contractId)
     local waited = 0
-    while now and now.state == CB.STATE.COMPLETING and waited < CLAIM_WAIT_MS do
+    while now and now.state == CH.STATE.COMPLETING and waited < CLAIM_WAIT_MS do
         Wait(CLAIM_POLL_MS)
         waited = waited + CLAIM_POLL_MS
         now = Storage.readContract(contractId)
     end
 
     local state = now and now.state
-    local open = state == CB.STATE.ACTIVE or state == CB.STATE.ACCEPTED
+    local open = state == CH.STATE.ACTIVE or state == CH.STATE.ACCEPTED
     if open and (expectedSlot == nil or (now.next_slot or 1) == expectedSlot) then
         return true
     end
@@ -148,14 +148,14 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
         if next(back) then
             Escrow.release(contractId, actor.cid, { lines = back }, 'escrow_added_to_moved',
                 stillReturnable)
-            -- One a claim took from under the release went to its hunter.
+            -- One a claim took from under the release went to its hitman.
             for id in pairs(back) do
                 if paidTo(id) then kept = true end
             end
         end
         if kept then return true end
         Audit.rejected('escrow_added_to_moved', actor.cid, contractId, { state = state })
-        return false, CB.ERR.LOCKED
+        return false, CH.ERR.LOCKED
     end
 
     if ids and next(ids) then
@@ -177,7 +177,7 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
         -- them out with its collection, and there was nothing to hand back:
         -- the top-up went where it was meant to go. Answering "someone got
         -- there first" told the client it had not gone through, while a
-        -- hunter had the money. That holds when the claim was the last one
+        -- hitman had the money. That holds when the claim was the last one
         -- and closed the contract, too. A contract that closed any other way
         -- is told as closed: its ending returned the lines to the client.
         --
@@ -189,15 +189,15 @@ local function keptOrReturned(actor, contractId, expectedSlot, ids)
             local paid = paidTo(id)
             if paid then to = to or paid elseif not routed[id] then handedBack = true end
         end
-        if to and (CB.TERMINAL[state] or not handedBack) then
+        if to and (CH.TERMINAL[state] or not handedBack) then
             Audit.action('escrow_added_paid_out', actor.cid, contractId, { to = to })
             return true
         end
     end
     Audit.rejected('escrow_added_to_moved', actor.cid, contractId, { state = state })
-    if CB.TERMINAL[state] then return false, CB.ERR.ALREADY_SETTLED end
-    if state == CB.STATE.COMPLETING then return false, CB.ERR.BUSY end
-    return false, CB.ERR.LOCKED
+    if CH.TERMINAL[state] then return false, CH.ERR.ALREADY_SETTLED end
+    if state == CH.STATE.COMPLETING then return false, CH.ERR.BUSY end
+    return false, CH.ERR.LOCKED
 end
 
 --- Add value to a live contract. Applies at once; escrow is taken through
@@ -211,26 +211,26 @@ local addEscrowUnlocked
 --- the same ones.
 function Amendments.addEscrow(actor, contractId, rewardSpec)
     contractId = Util.toId(contractId)
-    if not contractId then return false, CB.ERR.INVALID_INPUT end
+    if not contractId then return false, CH.ERR.INVALID_INPUT end
     return Contracts.serialized({ 'contract:' .. contractId },
         addEscrowUnlocked, actor, contractId, rewardSpec)
 end
 
 addEscrowUnlocked = function(actor, contractId, rewardSpec)
     local contract = Storage.readContract(contractId)
-    if not contract then return false, CB.ERR.NOT_FOUND end
-    if contract.creator_cid ~= actor.cid then return false, CB.ERR.NOT_PARTICIPANT end
-    if contract.state ~= CB.STATE.ACTIVE and contract.state ~= CB.STATE.ACCEPTED then
-        return false, CB.ERR.BAD_STATE
+    if not contract then return false, CH.ERR.NOT_FOUND end
+    if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
+    if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then
+        return false, CH.ERR.BAD_STATE
     end
 
     -- Counted against what the contract still holds, so a creator cannot top
     -- up past the line ceiling in small increments — but settled lines are
-    -- not held, and neither are hunters' stakes. Counting those refused a
+    -- not held, and neither are hitmen' stakes. Counting those refused a
     -- legitimate top-up on any contract that had already paid out.
     local held = 0
     for _, line in ipairs(Storage.readEscrow(contractId)) do
-        if line.state ~= CB.ESCROW_STATE.SETTLED and line.portion ~= CB.PORTION.STAKE then
+        if line.state ~= CH.ESCROW_STATE.SETTLED and line.portion ~= CH.PORTION.STAKE then
             held = held + 1
         end
     end
@@ -258,7 +258,7 @@ addEscrowUnlocked = function(actor, contractId, rewardSpec)
 
     local people = participants(contract)
     for cid, role in pairs(people) do
-        if role == 'hunter' then
+        if role == 'hitman' then
             Notify.toCitizen(cid, 'Contract improved',
                 'The client has increased the reward on a contract you hold.')
         end
@@ -268,7 +268,7 @@ addEscrowUnlocked = function(actor, contractId, rewardSpec)
     return true
 end
 
---- Improve a contract in a way that cannot disadvantage a hunter, applied
+--- Improve a contract in a way that cannot disadvantage a hitman, applied
 --- at once with no approval (§12.1). Reward increases go through
 --- addEscrow; these are the non-monetary improvements.
 ---@return boolean ok
@@ -277,8 +277,8 @@ local improveUnlocked
 
 function Amendments.improve(actor, contractId, kind, payload)
     contractId = Util.toId(contractId)
-    if not contractId then return false, CB.ERR.INVALID_INPUT end
-    if not CB.ADDITIVE[kind] then return false, CB.ERR.INVALID_INPUT end
+    if not contractId then return false, CH.ERR.INVALID_INPUT end
+    if not CH.ADDITIVE[kind] then return false, CH.ERR.INVALID_INPUT end
     -- Lowering the penalty cuts stakes, and an acceptance stakes: one at a
     -- time per contract (Contracts.serialized). Two cuts side by side each
     -- wrote an owed line and only one lowered the stake, and a crash between
@@ -289,7 +289,7 @@ function Amendments.improve(actor, contractId, kind, payload)
     -- read, and two at once both read the old one: a double tap of 10 to 20
     -- and 10 to 30 took both top-ups, 40 points of escrow, and showed
     -- whichever percent was written last.
-    if kind == CB.AMENDMENT.LOWER_PENALTY or kind == CB.AMENDMENT.RAISE_BONUS then
+    if kind == CH.AMENDMENT.LOWER_PENALTY or kind == CH.AMENDMENT.RAISE_BONUS then
         return Contracts.serialized({ 'contract:' .. contractId },
             improveUnlocked, actor, contractId, kind, payload)
     end
@@ -301,9 +301,9 @@ improveUnlocked = function(actor, contractId, kind, payload)
     local fields = {}
 
     local contract = Storage.readContract(contractId)
-    if not contract then return false, CB.ERR.NOT_FOUND end
-    if contract.creator_cid ~= actor.cid then return false, CB.ERR.NOT_PARTICIPANT end
-    if CB.TERMINAL[contract.state] then return false, CB.ERR.BAD_STATE end
+    if not contract then return false, CH.ERR.NOT_FOUND end
+    if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
+    if CH.TERMINAL[contract.state] then return false, CH.ERR.BAD_STATE end
 
     payload = type(payload) == 'table' and payload or {}
 
@@ -318,16 +318,16 @@ improveUnlocked = function(actor, contractId, kind, payload)
     --
     -- Extending the deadline is not in this class and is still allowed:
     -- COMPLETING can roll back to ACCEPTED when a settlement fails, and a
-    -- longer deadline is then a straightforward benefit to the hunter.
-    if kind == CB.AMENDMENT.RAISE_BONUS
-        and contract.state ~= CB.STATE.ACTIVE
-        and contract.state ~= CB.STATE.ACCEPTED then
-        return false, CB.ERR.BAD_STATE
+    -- longer deadline is then a straightforward benefit to the hitman.
+    if kind == CH.AMENDMENT.RAISE_BONUS
+        and contract.state ~= CH.STATE.ACTIVE
+        and contract.state ~= CH.STATE.ACCEPTED then
+        return false, CH.ERR.BAD_STATE
     end
 
-    if kind == CB.AMENDMENT.EXTEND_DEADLINE then
+    if kind == CH.AMENDMENT.EXTEND_DEADLINE then
         local seconds = Util.toPositive(payload.seconds, Config.Limits.ContractLifetimeSeconds)
-        if not seconds then return false, CB.ERR.INVALID_INPUT end
+        if not seconds then return false, CH.ERR.INVALID_INPUT end
         -- Against the deadline as it stands when written, not as this call
         -- read it: the expiry pass may have ended a pause in the meantime.
         local moved, was = Contracts.moveDeadline(contractId, function(current)
@@ -338,22 +338,22 @@ improveUnlocked = function(actor, contractId, kind, payload)
             end
             -- But never below where it stands. A banked pause can carry a
             -- deadline past the lifetime, and clamping that to the ceiling
-            -- brought it in, under a hunter's stake, before refusing the
+            -- brought it in, under a hitman's stake, before refusing the
             -- extension as already at its limit.
             return math.max(current.deadline_at or 0, deadline)
         end)
-        if not moved then return false, CB.ERR.LOCKED end
+        if not moved then return false, CH.ERR.LOCKED end
         -- Already at the ceiling: nothing moved. It answered "Deadline
-        -- extended." and told every hunter the terms had improved, and the
+        -- extended." and told every hitman the terms had improved, and the
         -- page went on offering an extension that did nothing each time.
-        if was ~= nil and moved <= was then return false, CB.ERR.DEADLINE_AT_LIMIT end
+        if was ~= nil and moved <= was then return false, CH.ERR.DEADLINE_AT_LIMIT end
         contract.deadline_at = moved
 
-    elseif kind == CB.AMENDMENT.RAISE_BONUS then
+    elseif kind == CH.AMENDMENT.RAISE_BONUS then
         local percent = Util.toPositive(payload.percent, Config.Bonus.maxPercent)
         local was = contract.bonus_percent or 0
         if not percent or percent <= was then
-            return false, CB.ERR.INVALID_INPUT
+            return false, CH.ERR.INVALID_INPUT
         end
 
         -- The difference is escrowed now, out of the creator's pocket,
@@ -361,11 +361,11 @@ improveUnlocked = function(actor, contractId, kind, payload)
         --
         -- This used to store the number and nothing else. The payout
         -- releases bonus escrow LINES, and no line grew — so raising the
-        -- bonus notified every hunter that the client had improved the
+        -- bonus notified every hitman that the client had improved the
         -- terms, showed them a bigger percentage, and paid them precisely
         -- what it would have paid before. Of all the amendments this is the
         -- one that applies with no approval, on the stated grounds that it
-        -- can only benefit the hunter.
+        -- can only benefit the hitman.
         -- Copied now: on the in-process store `contract` is the stored row,
         -- so a payout landing during the take would move this underneath us.
         local slotAtRead = contract.next_slot or 1
@@ -378,7 +378,7 @@ improveUnlocked = function(actor, contractId, kind, payload)
         local adding = 0
         for i = 1, #extra do adding = adding + (extra[i].amount or 0) end
         if Escrow.moneyValue(contractId) + adding > Config.MaxContractValue then
-            return false, CB.ERR.INVALID_REWARD
+            return false, CH.ERR.INVALID_REWARD
         end
 
         -- And the LINE ceiling, which this path applied to nothing. Only the
@@ -391,15 +391,15 @@ improveUnlocked = function(actor, contractId, kind, payload)
         -- player who opens the board, for as long as the contract lives.
         --
         -- Counted the way Amendments.addEscrow counts: settled lines are not
-        -- held, and neither are hunters' stakes.
+        -- held, and neither are hitmen' stakes.
         local held = 0
         for _, line in ipairs(Storage.readEscrow(contractId)) do
-            if line.state ~= CB.ESCROW_STATE.SETTLED and line.portion ~= CB.PORTION.STAKE then
+            if line.state ~= CH.ESCROW_STATE.SETTLED and line.portion ~= CH.PORTION.STAKE then
                 held = held + 1
             end
         end
         if held + #extra > Config.Limits.MaxEscrowLines then
-            return false, CB.ERR.INVALID_REWARD
+            return false, CH.ERR.INVALID_REWARD
         end
 
         if #extra == 0 then
@@ -407,7 +407,7 @@ improveUnlocked = function(actor, contractId, kind, payload)
             -- creator's own figure rather than a percentage, or there is no
             -- unsettled money baseline left to derive from. Refused, rather
             -- than recorded as an improvement that improves nothing.
-            return false, CB.ERR.INVALID_REWARD
+            return false, CH.ERR.INVALID_REWARD
         end
 
         local took, takeErr, ids = Escrow.take(actor, contractId, extra)
@@ -419,37 +419,37 @@ improveUnlocked = function(actor, contractId, kind, payload)
         contract.bonus_percent = percent
         fields.bonus_percent = percent
 
-    elseif kind == CB.AMENDMENT.LOWER_PENALTY then
+    elseif kind == CH.AMENDMENT.LOWER_PENALTY then
         local amount = Util.toCount(payload.amount, Config.MaxContractValue)
         if not amount or amount >= (contract.penalty_amount or 0) then
-            return false, CB.ERR.INVALID_INPUT
+            return false, CH.ERR.INVALID_INPUT
         end
 
         -- The reduction is paid OUT OF THE STAKE, never minted. Crediting the
         -- difference directly while leaving the escrow line whole would let a
-        -- creator and a hunter raise and lower the penalty in a loop and
+        -- creator and a hitman raise and lower the penalty in a loop and
         -- print money with nothing behind it.
         --
-        -- Each hunter's own line is the source of truth for what they staked:
-        -- successive reductions, and hunters who joined at different figures,
+        -- Each hitman's own line is the source of truth for what they staked:
+        -- successive reductions, and hitmen who joined at different figures,
         -- all settle correctly because the amount comes from their line.
         local lines = Storage.readEscrow(contractId)
         for i = 1, #lines do
             local line = lines[i]
             -- A stake already owed to someone belongs to them: a stake
             -- forfeited to an offline creator is still `held`, and refunding
-            -- its difference to the hunter who forfeited it hands the
+            -- its difference to the hitman who forfeited it hands the
             -- creator's money back to the person who walked away.
             local claimedByOther = line.owed_to ~= nil and line.owed_to ~= line.staker
 
-            -- And only a hunter still on the contract has a live stake —
+            -- And only a hitman still on the contract has a live stake —
             -- one part-way through accepting included, whose stake is as
             -- real as anybody's.
-            local hunter = line.staker and Storage.readHunter(contractId, line.staker)
-            local stillActive = Contracts.holds(hunter)
+            local hitman = line.staker and Storage.readHitman(contractId, line.staker)
+            local stillActive = Contracts.holds(hitman)
 
-            if line.portion == CB.PORTION.STAKE
-                and line.state == CB.ESCROW_STATE.HELD
+            if line.portion == CH.PORTION.STAKE
+                and line.state == CH.ESCROW_STATE.HELD
                 and not claimedByOther
                 and stillActive
                 and (line.amount or 0) > amount then
@@ -473,7 +473,7 @@ improveUnlocked = function(actor, contractId, kind, payload)
                 -- "they get it back in full when the contract resolves",
                 -- which held only for the endings that return a stake:
                 -- walking away or running out of clock forfeits the whole
-                -- line, so a hunter who happened to be offline when the
+                -- line, so a hitman who happened to be offline when the
                 -- client lowered the penalty to 500 forfeited the 2,000 they
                 -- had staked (§3.6).
                 local owedId, delivered = Escrow.reduceStake(contractId, line, amount,
@@ -492,7 +492,7 @@ improveUnlocked = function(actor, contractId, kind, payload)
         fields.penalty_amount = amount
 
     else
-        return false, CB.ERR.INVALID_INPUT
+        return false, CH.ERR.INVALID_INPUT
     end
 
     if next(fields) then Storage.setContractFields(contractId, fields) end
@@ -500,7 +500,7 @@ improveUnlocked = function(actor, contractId, kind, payload)
 
     local people = participants(contract)
     for cid, role in pairs(people) do
-        if role == 'hunter' then
+        if role == 'hitman' then
             Notify.toCitizen(cid, 'Contract improved',
                 'The client has improved the terms of a contract you hold.')
         end
@@ -544,15 +544,15 @@ end
 ---@return boolean ok
 ---@return string|nil err
 local function checkAgainst(contract, kind, payload)
-    if kind == CB.AMENDMENT.REDUCE_REWARD then
+    if kind == CH.AMENDMENT.REDUCE_REWARD then
         -- Only the LAST collection, and only one nobody is competing for:
         -- see apply() for why.
         local slots = contract.payout_slots or 1
         local slot = payload.slot
         if not slot or slot <= (contract.next_slot or 1) or slot ~= slots then
-            return false, CB.ERR.INVALID_INPUT
+            return false, CH.ERR.INVALID_INPUT
         end
-    elseif kind == CB.AMENDMENT.SHORTEN_DEADLINE then
+    elseif kind == CH.AMENDMENT.SHORTEN_DEADLINE then
         -- There has to be a deadline, and cutting it by this much has to
         -- leave some of it: as much as a cut may ever leave, told now
         -- rather than when everybody has agreed. A stopped clock has what
@@ -560,7 +560,7 @@ local function checkAgainst(contract, kind, payload)
         local left = contract.deadline_at
             and contract.deadline_at - (contract.paused_since or os.time())
         if not left or left - (payload.seconds or 0) < Contracts.MIN_LEFT_AFTER_CUT then
-            return false, CB.ERR.INVALID_INPUT
+            return false, CH.ERR.INVALID_INPUT
         end
     end
     return true
@@ -572,38 +572,38 @@ end
 ---@return string|nil err
 function Amendments.propose(actor, contractId, kind, payload)
     contractId = Util.toId(contractId)
-    if not contractId then return nil, CB.ERR.INVALID_INPUT end
-    if not Config.Amendments.Enabled then return nil, CB.ERR.BAD_STATE end
+    if not contractId then return nil, CH.ERR.INVALID_INPUT end
+    if not Config.Amendments.Enabled then return nil, CH.ERR.BAD_STATE end
     -- A kind is a string or nothing at all. kind:upper() below threw for a
     -- missing or numeric kind, which reached the player as a server fault,
     -- printed a line to the console, and handed the request's allowance
     -- back — so a client could repeat it as fast as the flood guard allows.
-    if type(kind) ~= 'string' then return nil, CB.ERR.INVALID_INPUT end
-    if CB.ADDITIVE[kind] then return nil, CB.ERR.INVALID_INPUT end
-    if not CB.AMENDMENT[kind:upper()] and not Amendments.isKnown(kind) then
-        return nil, CB.ERR.INVALID_INPUT
+    if type(kind) ~= 'string' then return nil, CH.ERR.INVALID_INPUT end
+    if CH.ADDITIVE[kind] then return nil, CH.ERR.INVALID_INPUT end
+    if not CH.AMENDMENT[kind:upper()] and not Amendments.isKnown(kind) then
+        return nil, CH.ERR.INVALID_INPUT
     end
 
     local contract = Storage.readContract(contractId)
-    if not contract then return nil, CB.ERR.NOT_FOUND end
+    if not contract then return nil, CH.ERR.NOT_FOUND end
 
     local people = participants(contract)
-    if not people[actor.cid] then return nil, CB.ERR.NOT_PARTICIPANT end
-    if contract.state ~= CB.STATE.ACTIVE and contract.state ~= CB.STATE.ACCEPTED then
-        return nil, CB.ERR.BAD_STATE
+    if not people[actor.cid] then return nil, CH.ERR.NOT_PARTICIPANT end
+    if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then
+        return nil, CH.ERR.BAD_STATE
     end
 
     -- The target is never amendable: retargeting is a new contract (§12.3).
     -- A payload is a table or nothing. Indexed as one when it was a boolean
     -- or a number, this threw, and a thrown handler refunds its own rate
     -- limit, so it could be repeated at the flood guard's pace.
-    if payload ~= nil and type(payload) ~= 'table' then return nil, CB.ERR.INVALID_INPUT end
+    if payload ~= nil and type(payload) ~= 'table' then return nil, CH.ERR.INVALID_INPUT end
     if payload and (payload.targetCid or payload.target) then
-        return nil, CB.ERR.INVALID_INPUT
+        return nil, CH.ERR.INVALID_INPUT
     end
 
     if #Amendments.answerable(contractId) >= Config.Amendments.MaxOpenPerContract then
-        return nil, CB.ERR.LIMIT_REACHED
+        return nil, CH.ERR.LIMIT_REACHED
     end
 
     -- Only the fields this amendment kind actually uses are kept, each
@@ -616,7 +616,7 @@ function Amendments.propose(actor, contractId, kind, payload)
     if not fits then return nil, fitErr end
 
     -- Only the proposer's answer is recorded here. The set of people who
-    -- must agree is recomputed when someone responds, so a hunter who joins
+    -- must agree is recomputed when someone responds, so a hitman who joins
     -- afterwards is not silently bound by a vote they never cast, and one
     -- who leaves does not keep a veto over a contract they abandoned.
     local approvals = { [actor.cid] = true }
@@ -625,7 +625,7 @@ function Amendments.propose(actor, contractId, kind, payload)
     -- second: both reach every participant, and a proposal from an anonymous
     -- client is a moment that client was online (§14.32). See Util.randomId.
     local proposalId = Util.mintId(Util.randomId, 'am', Storage.readAmendment)
-    if not proposalId then return nil, CB.ERR.BAD_STATE end
+    if not proposalId then return nil, CH.ERR.BAD_STATE end
 
     local proposal = {
         id          = proposalId,
@@ -677,7 +677,7 @@ end
 --- Open proposals on a contract, projected for one viewer.
 ---
 --- The proposer is named by role rather than by citizen id, and an
---- anonymous hunter is named by their alias — a proposal is not a hole in
+--- anonymous hitman is named by their alias — a proposal is not a hole in
 --- anonymity just because it carries a name field.
 ---@param actor table
 ---@param contractId string
@@ -685,18 +685,18 @@ end
 ---@return string|nil err
 function Amendments.openFor(actor, contractId)
     contractId = Util.toId(contractId)
-    if not contractId then return nil, CB.ERR.INVALID_INPUT end
+    if not contractId then return nil, CH.ERR.INVALID_INPUT end
 
     local contract = Storage.readContract(contractId)
-    if not contract then return nil, CB.ERR.NOT_FOUND end
+    if not contract then return nil, CH.ERR.NOT_FOUND end
 
     local people = participants(contract)
-    if not people[actor.cid] then return nil, CB.ERR.NOT_PARTICIPANT end
+    if not people[actor.cid] then return nil, CH.ERR.NOT_PARTICIPANT end
 
     local out = {}
     for _, proposal in ipairs(Amendments.answerable(contractId)) do
         -- Who must still answer. Recomputed from the current participants
-        -- for the same reason respond() recomputes it: a hunter who joined
+        -- for the same reason respond() recomputes it: a hitman who joined
         -- after the proposal is not bound by a vote they never cast.
         local waiting = 0
         for cid in pairs(people) do
@@ -707,8 +707,8 @@ function Amendments.openFor(actor, contractId)
         if proposal.proposer == contract.creator_cid then
             proposerName = contract.anon_creator and 'The client' or contract.creator_name
         else
-            local hunter = Storage.readHunter(contractId, proposal.proposer)
-            proposerName = hunter and hunter.alias or 'An operative'
+            local hitman = Storage.readHitman(contractId, proposal.proposer)
+            proposerName = hitman and hitman.alias or 'An operative'
         end
 
         out[#out + 1] = {
@@ -733,21 +733,21 @@ end
 ---@return table|nil clean
 ---@return string|nil err
 function Amendments.sanitize(kind, payload, actor)
-    if payload ~= nil and type(payload) ~= 'table' then return nil, CB.ERR.INVALID_INPUT end
+    if payload ~= nil and type(payload) ~= 'table' then return nil, CH.ERR.INVALID_INPUT end
     payload = payload or {}
     local clean = {}
 
-    if kind == CB.AMENDMENT.SHORTEN_DEADLINE or kind == CB.AMENDMENT.EXTEND_DEADLINE then
+    if kind == CH.AMENDMENT.SHORTEN_DEADLINE or kind == CH.AMENDMENT.EXTEND_DEADLINE then
         clean.seconds = Util.toPositive(payload.seconds, Config.Limits.ContractLifetimeSeconds)
-        if not clean.seconds then return nil, CB.ERR.INVALID_INPUT end
+        if not clean.seconds then return nil, CH.ERR.INVALID_INPUT end
 
-    elseif kind == CB.AMENDMENT.CHANGE_MODE then
-        if payload.mode ~= CB.MODE.COMPETITIVE and payload.mode ~= CB.MODE.EXCLUSIVE then
-            return nil, CB.ERR.INVALID_INPUT
+    elseif kind == CH.AMENDMENT.CHANGE_MODE then
+        if payload.mode ~= CH.MODE.COMPETITIVE and payload.mode ~= CH.MODE.EXCLUSIVE then
+            return nil, CH.ERR.INVALID_INPUT
         end
         clean.mode = payload.mode
 
-    elseif kind == CB.AMENDMENT.CHANGE_REASON then
+    elseif kind == CH.AMENDMENT.CHANGE_REASON then
         -- Held to every rule a placed or edited reason answers to — the
         -- mode, the length, the digit cap, the banned patterns and the
         -- phone's own word list — by the same function. Length and digits
@@ -756,37 +756,37 @@ function Amendments.sanitize(kind, payload, actor)
         --
         -- A server that shows no reason has none to change.
         if Config.Reason.Mode ~= 'freetext' and Config.Reason.Mode ~= 'preset' then
-            return nil, CB.ERR.INVALID_INPUT
+            return nil, CH.ERR.INVALID_INPUT
         end
         local reason, reasonErr = Contracts.reasonFor(actor or {}, {
             reason = payload.reason, reasonPreset = payload.reasonPreset,
         })
         if reasonErr or not reason or reason == '' then
-            return nil, reasonErr or CB.ERR.INVALID_INPUT
+            return nil, reasonErr or CH.ERR.INVALID_INPUT
         end
         clean.reason = reason
 
-    elseif kind == CB.AMENDMENT.RAISE_PENALTY or kind == CB.AMENDMENT.LOWER_PENALTY then
+    elseif kind == CH.AMENDMENT.RAISE_PENALTY or kind == CH.AMENDMENT.LOWER_PENALTY then
         clean.amount = Util.toCount(payload.amount, Config.MaxContractValue)
-        if not clean.amount then return nil, CB.ERR.INVALID_INPUT end
-        clean.raise = (kind == CB.AMENDMENT.RAISE_PENALTY) or nil
+        if not clean.amount then return nil, CH.ERR.INVALID_INPUT end
+        clean.raise = (kind == CH.AMENDMENT.RAISE_PENALTY) or nil
 
-    elseif kind == CB.AMENDMENT.REDUCE_REWARD then
+    elseif kind == CH.AMENDMENT.REDUCE_REWARD then
         clean.slot = Util.toPositive(payload.slot, Config.Limits.MaxPayoutSlots)
-        if not clean.slot then return nil, CB.ERR.INVALID_INPUT end
+        if not clean.slot then return nil, CH.ERR.INVALID_INPUT end
 
-    elseif kind == CB.AMENDMENT.CANCEL or kind == CB.AMENDMENT.WITHDRAW then
+    elseif kind == CH.AMENDMENT.CANCEL or kind == CH.AMENDMENT.WITHDRAW then
         -- No parameters.
 
     else
-        return nil, CB.ERR.INVALID_INPUT
+        return nil, CH.ERR.INVALID_INPUT
     end
 
     return clean
 end
 
 function Amendments.isKnown(kind)
-    for _, value in pairs(CB.AMENDMENT) do
+    for _, value in pairs(CH.AMENDMENT) do
         if value == kind then return true end
     end
     return false
@@ -801,8 +801,8 @@ local respondUnlocked
 
 --- Proposals with an answer being recorded in this process.
 ---
---- An answer reads the proposal, waits on the contract and its hunters, and
---- writes the proposal back with its own approval added. Two hunters
+--- An answer reads the proposal, waits on the contract and its hitmen, and
+--- writes the proposal back with its own approval added. Two hitmen
 --- agreeing in the same instant each wrote back a copy holding only their
 --- own approval, so the second write erased the first: both were told the
 --- change was waiting on the other, and it expired unapplied though
@@ -812,8 +812,8 @@ local responding = {}
 
 function Amendments.respond(actor, amendmentId, approve)
     amendmentId = Util.toId(amendmentId)
-    if not amendmentId then return false, CB.ERR.INVALID_INPUT end
-    if responding[amendmentId] then return false, CB.ERR.LOCKED end
+    if not amendmentId then return false, CH.ERR.INVALID_INPUT end
+    if responding[amendmentId] then return false, CH.ERR.LOCKED end
     responding[amendmentId] = true
     local ok, a, b, c = pcall(respondUnlocked, actor, amendmentId, approve)
     responding[amendmentId] = nil
@@ -824,16 +824,16 @@ end
 respondUnlocked = function(actor, amendmentId, approve)
 
     local proposal = Storage.readAmendment(amendmentId)
-    if not proposal or proposal.outcome ~= 'open' then return false, CB.ERR.NOT_FOUND end
+    if not proposal or proposal.outcome ~= 'open' then return false, CH.ERR.NOT_FOUND end
 
     if os.time() > proposal.expires_at then
         proposal.outcome = 'expired'
         Storage.writeAmendment(proposal)
-        return false, CB.ERR.BAD_STATE, 'expired'
+        return false, CH.ERR.BAD_STATE, 'expired'
     end
 
     local contract = Storage.readContract(proposal.contract_id)
-    if not contract then return false, CB.ERR.NOT_FOUND end
+    if not contract then return false, CH.ERR.NOT_FOUND end
 
     --- The contract has to still be live.
     ---
@@ -854,17 +854,17 @@ respondUnlocked = function(actor, amendmentId, approve)
     --- Closed out rather than merely refused. The contract it belongs to
     --- will never be live again, so leaving the proposal open would leave
     --- both parties a button that can only ever fail.
-    if CB.TERMINAL[contract.state] then
+    if CH.TERMINAL[contract.state] then
         proposal.outcome = 'stale'
         Storage.writeAmendment(proposal)
         Audit.action('amendment_stale', actor.cid, proposal.contract_id,
             { kind = proposal.kind, state = contract.state })
-        return false, CB.ERR.ALREADY_SETTLED, 'stale'
+        return false, CH.ERR.ALREADY_SETTLED, 'stale'
     end
 
     -- Live participants, not the set captured when the proposal was made.
     local people = participants(contract)
-    if not people[actor.cid] then return false, CB.ERR.NOT_PARTICIPANT end
+    if not people[actor.cid] then return false, CH.ERR.NOT_PARTICIPANT end
 
     if not approve then
         proposal.outcome = 'declined'
@@ -891,7 +891,7 @@ respondUnlocked = function(actor, amendmentId, approve)
     local ok, err = Amendments.apply(proposal)
     -- Busy is "not this instant", not "no": the proposal stays open and the
     -- answer can be given again.
-    if not ok and err == CB.ERR.BUSY then return false, err, 'busy' end
+    if not ok and err == CH.ERR.BUSY then return false, err, 'busy' end
     proposal.outcome = ok and 'applied' or 'failed'
     proposal.error = err
     Storage.writeAmendment(proposal)
@@ -920,8 +920,8 @@ local applyUnlocked
 --- may be applied at all.
 function Amendments.apply(proposal)
     local kind = proposal.kind
-    if kind == CB.AMENDMENT.RAISE_PENALTY or kind == CB.AMENDMENT.LOWER_PENALTY
-        or kind == CB.AMENDMENT.CHANGE_MODE then
+    if kind == CH.AMENDMENT.RAISE_PENALTY or kind == CH.AMENDMENT.LOWER_PENALTY
+        or kind == CH.AMENDMENT.CHANGE_MODE then
         return Contracts.serialized({ 'contract:' .. tostring(proposal.contract_id) },
             applyUnlocked, proposal)
     end
@@ -931,7 +931,7 @@ end
 applyUnlocked = function(proposal)
     local fields = {}
     local contract = Storage.readContract(proposal.contract_id)
-    if not contract then return false, CB.ERR.NOT_FOUND end
+    if not contract then return false, CH.ERR.NOT_FOUND end
     local kind, payload = proposal.kind, proposal.payload
 
     -- Set by any branch that takes escrow back out of the contract.
@@ -941,12 +941,12 @@ applyUnlocked = function(proposal)
     if not fits then return false, fitErr end
 
     -- Only shortening. Extending is additive — it can only help whoever is
-    -- hunting — so propose() refuses it and the creator applies it directly
+    -- working — so propose() refuses it and the creator applies it directly
     -- through improve(), which already moves the deadline by the amount and
     -- holds it to the contract's lifetime.
-    if kind == CB.AMENDMENT.SHORTEN_DEADLINE then
+    if kind == CH.AMENDMENT.SHORTEN_DEADLINE then
         local seconds = Util.toPositive(payload.seconds, Config.Limits.ContractLifetimeSeconds)
-        if not seconds then return false, CB.ERR.INVALID_INPUT end
+        if not seconds then return false, CH.ERR.INVALID_INPUT end
 
         -- An amount of time to move the deadline BY, not the deadline to
         -- move it to. This set it to now + seconds, while everything either
@@ -957,7 +957,7 @@ applyUnlocked = function(proposal)
         --
         -- checkAgainst() above has already refused a cut longer than what is
         -- left now, including time that passed while it waited for an answer.
-        -- And not over anybody who did not agree to it: a hunter who took
+        -- And not over anybody who did not agree to it: a hitman who took
         -- the contract while this was being decided is put back on the
         -- deadline they accepted (Contracts.bringDeadlineIn).
         local moved, moveErr = Contracts.bringDeadlineIn(proposal.contract_id, function(current)
@@ -966,50 +966,50 @@ applyUnlocked = function(proposal)
         if not moved then return false, moveErr end
         contract.deadline_at = moved
 
-    elseif kind == CB.AMENDMENT.CHANGE_MODE then
-        local mode = payload.mode == CB.MODE.COMPETITIVE and CB.MODE.COMPETITIVE or CB.MODE.EXCLUSIVE
-        if mode == CB.MODE.EXCLUSIVE then
-            -- Exclusive means one hunter. Switching while several hold it
+    elseif kind == CH.AMENDMENT.CHANGE_MODE then
+        local mode = payload.mode == CH.MODE.COMPETITIVE and CH.MODE.COMPETITIVE or CH.MODE.EXCLUSIVE
+        if mode == CH.MODE.EXCLUSIVE then
+            -- Exclusive means one hitman. Switching while several hold it
             -- would leave a contract in a state its own rules forbid.
             local active = 0
-            local hunters = Storage.readHunters(proposal.contract_id)
-            for i = 1, #hunters do
-                if Contracts.holds(hunters[i]) then active = active + 1 end
+            local hitmen = Storage.readHitmen(proposal.contract_id)
+            for i = 1, #hitmen do
+                if Contracts.holds(hitmen[i]) then active = active + 1 end
             end
-            if active > 1 then return false, CB.ERR.BAD_STATE end
+            if active > 1 then return false, CH.ERR.BAD_STATE end
         end
         contract.mode = mode
         fields.mode = mode
 
-    elseif kind == CB.AMENDMENT.CHANGE_REASON then
+    elseif kind == CH.AMENDMENT.CHANGE_REASON then
         local reason = Util.sanitizeText(payload.reason, Config.Reason.MaxLength)
-        if not reason then return false, CB.ERR.INVALID_INPUT end
+        if not reason then return false, CH.ERR.INVALID_INPUT end
         contract.reason = reason
         fields.reason = reason
 
-    elseif kind == CB.AMENDMENT.RAISE_PENALTY or kind == CB.AMENDMENT.LOWER_PENALTY then
+    elseif kind == CH.AMENDMENT.RAISE_PENALTY or kind == CH.AMENDMENT.LOWER_PENALTY then
         -- A penalty is only real if it was staked (§3.6). Raising the figure
-        -- after a hunter has staked the old one would display a penalty
+        -- after a hitman has staked the old one would display a penalty
         -- nobody has put up, so it is only allowed while the contract is
-        -- unheld — a hunter stakes whatever it says when they accept.
-        local hunters = Storage.readHunters(proposal.contract_id)
-        for i = 1, #hunters do
-            if Contracts.holds(hunters[i]) then return false, CB.ERR.BAD_STATE end
+        -- unheld — a hitman stakes whatever it says when they accept.
+        local hitmen = Storage.readHitmen(proposal.contract_id)
+        for i = 1, #hitmen do
+            if Contracts.holds(hitmen[i]) then return false, CH.ERR.BAD_STATE end
         end
         -- Through the same clamp creation uses. An amendment that skipped
         -- it would be the way back to an uncapped stake: raise_penalty is
         -- only allowed on an unheld contract, so the figure it leaves is
-        -- what the next hunter is asked to put up.
+        -- what the next hitman is asked to put up.
         contract.penalty_amount = Contracts.clampPenalty(payload.amount,
             Escrow.moneyValue(proposal.contract_id))
         fields.penalty_amount = contract.penalty_amount
 
-    elseif kind == CB.AMENDMENT.CANCEL or kind == CB.AMENDMENT.WITHDRAW then
+    elseif kind == CH.AMENDMENT.CANCEL or kind == CH.AMENDMENT.WITHDRAW then
         -- Agreed cancellation: escrow returns to the creator in full.
-        return Contracts.resolve(proposal.contract_id, CB.STATE.CANCELLED,
+        return Contracts.resolve(proposal.contract_id, CH.STATE.CANCELLED,
             contract.creator_cid, nil, 'cancelled_by_agreement')
 
-    elseif kind == CB.AMENDMENT.REDUCE_REWARD then
+    elseif kind == CH.AMENDMENT.REDUCE_REWARD then
         -- Reducing a reward means returning part of the escrow to the
         -- creator. Only an unclaimed slot may be given back.
         -- Only a slot nobody is competing for yet may be withdrawn. Emptying
@@ -1026,7 +1026,7 @@ applyUnlocked = function(proposal)
         -- This released the escrow and left payout_slots where it was, so the
         -- emptied collection stayed one the contract sold: next_slot walks
         -- onto it, the board shows the contract at nothing for the current
-        -- collection, and a hunter who eliminates the target for it is paid
+        -- collection, and a hitman who eliminates the target for it is paid
         -- out of an empty slot. The app's own dialog already promised
         -- otherwise — "Collection N of M goes back to the client. M-1 would
         -- remain."
@@ -1041,7 +1041,7 @@ applyUnlocked = function(proposal)
         -- A crash between the two leaves that escrow on a collection the
         -- contract no longer sells, which its ending returns to the client.
         if not Storage.reduceSlots(proposal.contract_id, slots) then
-            return false, CB.ERR.LOCKED
+            return false, CH.ERR.LOCKED
         end
         Escrow.release(proposal.contract_id, contract.creator_cid, { slot = slot }, 'reward_reduced')
         contract.payout_slots = slots - 1
@@ -1054,7 +1054,7 @@ applyUnlocked = function(proposal)
         reclamp = true
 
     else
-        return false, CB.ERR.INVALID_INPUT
+        return false, CH.ERR.INVALID_INPUT
     end
 
     if next(fields) then Storage.setContractFields(proposal.contract_id, fields) end
