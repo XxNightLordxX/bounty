@@ -240,7 +240,8 @@ end
 ---@param contract table
 ---@param hitmanRecord table|nil
 ---@param photoRef string|nil the proof image, where the route produced one
-function Notify.contractCompleted(contract, hitmanRecord, photoRef)
+---@param result table|nil the claim's own answer (Contracts.claimSlot)
+function Notify.contractCompleted(contract, hitmanRecord, photoRef, result)
     local hasPhoto = type(photoRef) == 'string' and photoRef ~= ''
     -- A receipt, so outside the budget (§14.40). Relay messages spend the
     -- same budget, so five from the hitman in the minute before the kill
@@ -258,7 +259,24 @@ function Notify.contractCompleted(contract, hitmanRecord, photoRef)
     else
         body = 'Your contract was fulfilled.'
     end
-    Notify.toCitizen(contract.creator_cid, 'Contract fulfilled', body,
+    local title = 'Contract fulfilled'
+
+    -- One collection of several is not the contract done. Every claim
+    -- came here, so the creator of a three-payout contract read "Your
+    -- contract was fulfilled" after the first, with two still on offer
+    -- and what pays for them still held.
+    if type(result) == 'table' and result.exhausted == false then
+        title = 'Collection paid'
+        body = ('Collection %d of %d on your contract was paid%s.'):format(
+            tonumber(result.slot) or 1, tonumber(contract.payout_slots) or 1,
+            hasPhoto and '' or ' by live delivery')
+        if hasPhoto and Config.Ledger and Config.Ledger.StorePhotos then
+            body = body .. ' The verification photograph is on your Ledger tab.'
+        end
+        body = body .. (' It is still running, with %d more to collect.')
+            :format(tonumber(result.remaining) or 0)
+    end
+    Notify.toCitizen(contract.creator_cid, title, body,
         { bypassBudget = true })
     local _ = hitmanRecord
 end

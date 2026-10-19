@@ -3514,6 +3514,11 @@ async function main() {
     it('still bounds the bonus by a ceiling above nought', function () {
       eq(String(live(buyouts, 'bonus').max), '200');
     });
+    const lowCap = await place({}, { bonusPercent: 25 });
+    it('opens the bonus at a ceiling under 50, not over it', function () {
+      eq(String(live(lowCap, 'bonus').value), '25',
+        'opened at 50 beside "(up to 25)", and the totals took 50');
+    });
 
     const feeFree = await place({});
     const feeCharged = await place({ anonymityFees: { creator: 7500, hitman: 0 } });

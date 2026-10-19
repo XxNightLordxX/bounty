@@ -663,7 +663,7 @@ button.chip:hover { color: var(--ink); border-color: var(--rose); background: rg
 /* The countdown and a waiting proposal sit inside the actions, between the
    two ways to finish and the tools below them, each across the full width. */
 .actions > .countdown,
-.actions > .proposals { flex-basis: 100%; margin: 0; }
+.actions > .proposals { flex-basis: 100%; margin: 0; min-width: 0; }
 /* A hitman has two ways to finish, and they sit side by side. */
 .actions.is-working > .primary,
 .actions.is-working > button:not(.primary) { flex: 1 1 0; }
@@ -1034,10 +1034,17 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
   border-radius: var(--radius-sm);
   padding: 0.7rem 0.75rem; margin-top: 0.45rem; background: rgba(207, 169, 98, 0.06);
 }
-.proposal .what { font-size: var(--t-md); color: var(--ink); font-weight: 600; }
+/* Wrapped anywhere, as the reason on a card is: a proposed reason quotes
+   the proposer's own words, and one unbroken word in it pushed the panel,
+   and Agree and Decline with it, off the side of the phone. */
+.proposal .what {
+  font-size: var(--t-md); color: var(--ink); font-weight: 600;
+  overflow-wrap: anywhere;
+}
 .proposal .who {
   font-size: var(--t-xs); color: var(--gold); font-weight: 600;
   letter-spacing: 0.02em; margin-top: 0.25rem;
+  overflow-wrap: anywhere;
 }
 .proposal .hint { margin-top: 0.35rem; }
 /* What agreeing costs the reader, in the colour the card's own "stake at

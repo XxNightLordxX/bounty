@@ -461,7 +461,7 @@ function Kidnap.tick(deltaMs)
             pcall(function()
                 local contract = Storage.readContract(done.contractId)
                 Ledger.record(contract, done.hitmanCid, nil, CH.FULFILMENT.KIDNAPPING, result)
-                Notify.contractCompleted(contract, done.hitmanCid, nil)
+                Notify.contractCompleted(contract, done.hitmanCid, nil, result)
                 Audit.financial('kidnap_completed', done.hitmanCid, done.contractId, { slot = result.slot })
             end)
         else

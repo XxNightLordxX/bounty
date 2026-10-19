@@ -294,6 +294,26 @@ describe('editing a contract nobody has taken', function()
             'and never past the absolute lifetime')
     end)
 
+    --- A paused clock stopped where the pause began, and the whole pause is
+    --- added back when it ends. A deadline set from now, two hours into a
+    --- pause, came out two hours longer than the creator set it.
+    it('sets a new deadline from where a paused clock stopped', function()
+        local s = newStack()
+        local f, c = placed(s)
+        local since = os.time()
+        truthy(s.storage.startPause(c.id, since))
+        Env.advance(2 * 3600)
+
+        truthy(s.contracts.revise(f.creator, c.id, { deadlineSeconds = 3 * 3600 }))
+
+        Env.advance(3600)
+        local now = os.time()
+        truthy(s.storage.endPause(c.id, since, now - since))
+        local left = s.storage.readContract(c.id).deadline_at - now
+        truthy(left <= 3 * 3600 + require_shared('util').CLOCK_STEP,
+            'three hours set, and ' .. left .. ' seconds left once the target was back')
+    end)
+
     it('refuses a deadline in the past', function()
         local s = newStack()
         local f, c = placed(s)

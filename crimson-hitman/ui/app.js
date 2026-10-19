@@ -1493,8 +1493,7 @@
                 // the poller read that ending as a failed delivery and told
                 // a hitman who had just walked away to get the target back
                 // to the client and try again.
-                if (countdownFor === contract.id) { stopCountdown(); }
-                delete state.progress[contract.id];
+                endCountdown(contract.id);
                 say('You are off the contract.', 'ok');
                 refresh();
               });
@@ -1518,7 +1517,9 @@
       // holding somebody is watching it — and it was drawn last, below
       // Message, Propose change and Abandon, a scroll away from the button
       // that started it. A proposal waiting on an answer goes with it.
-      var progress = state.progress[contract.id] || contract.kidnapProgress;
+      var snapshot = countdownOver[contract.id] === undefined
+        ? contract.kidnapProgress : null;
+      var progress = state.progress[contract.id] || snapshot;
       var panel = proposalPanel(contract);
       if (progress) { row.appendChild(countdown(progress)); }
       // A handover already running when the page opened (reopened, or
@@ -1526,7 +1527,7 @@
       // poll, so the bar froze at the snapshot it was drawn from.
       // Never in place of one already followed: a second handover's card
       // took the poll over on every redraw, and the first bar froze.
-      if (contract.kidnapProgress && !countdownTimer) {
+      if (snapshot && !countdownTimer) {
         pollCountdown(contract.id);
       }
       if (panel) { row.appendChild(panel); }
@@ -2110,14 +2111,30 @@
   var countdownTimer = null;
   var countdownFor = null;
 
+  /* Handovers this page has seen end, against the Mine load that was
+     newest when it did. The card restarts the poll from the projection's
+     snapshot, and Mine as last read still carried one: the first redraw
+     after an ending — the board's reply, landing before Mine's — drew the
+     old bar again and polled a handover that was over, so "You are off the
+     contract." became "The handover ended. Get them back to the client and
+     try again." The snapshot is trusted again from the next Mine read. */
+  var countdownOver = {};
+
   function stopCountdown() {
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     countdownFor = null;
   }
 
+  function endCountdown(id) {
+    if (countdownFor === id) { stopCountdown(); }
+    delete state.progress[id];
+    countdownOver[id] = loadSeq.mine;
+  }
+
   function pollCountdown(id) {
     stopCountdown();
     countdownFor = id;
+    delete countdownOver[id];
 
     // Long enough for the server's own countdown and its grace, read from
     // the progress it sends; two minutes when there is none yet.
@@ -2132,8 +2149,7 @@
 
     timer = countdownTimer = setInterval(function () {
       if (Date.now() > deadline) {
-        stopCountdown();
-        delete state.progress[id];
+        endCountdown(id);
         say('Lost track of the handover. Your contracts show how it ended.');
         refresh();
         return;
@@ -2152,8 +2168,7 @@
           // just been PAID for a handover was told it had ended and to try
           // again, and one refused at the end was told to try again on a
           // refusal no retry fixes.
-          stopCountdown();
-          delete state.progress[id];
+          endCountdown(id);
           handoverEnded(r.data);
           refresh();
           return;
@@ -2162,8 +2177,7 @@
           // Over, one way or another. The bar goes rather than freezing,
           // and the player is told — a delivery that simply stops moving is
           // the one thing a hitman holding a target cannot interpret.
-          stopCountdown();
-          delete state.progress[id];
+          endCountdown(id);
           say(r.err === 'no_handover' || r.err === 'not_found'
                 || r.err === 'bad_state'
             ? 'The handover ended. Get them back to the client and try again.'
@@ -2443,14 +2457,27 @@
 
   function loadProposals(contract) {
     post('amendments', { id: contract.id }).then(function (r) {
-      if (!r.ok) { return fail(r); }
+      /* Read in the background, so a refusal is not the player's to read.
+         It raised "Slow down" on a player who had pressed nothing, and left
+         the proposal undrawn until something else refreshed. Left unasked,
+         and asked again once the server allows it. */
+      if (!r.ok) {
+        if (r.err === 'rate_limited') {
+          var wait = (Number(r.data && r.data.retryAfter) || 2) * 1000;
+          setTimeout(function () {
+            if (state.proposals[contract.id] === undefined
+              && (state.tab === 'mine' || state.tab === 'thread')) { loadProposals(contract); }
+          }, wait);
+        }
+        return;
+      }
       state.proposals[contract.id] = asList(r.data);
       // Counted down from when this landed, as the cards' clocks are.
       stampClocks(state.proposals[contract.id]);
       // One per contract on the page. Redrawing for each meant a screen of
       // five contracts redrew five times, on top of the three from the
       // refresh that asked for them.
-      redraw();
+      redrawOffPlace();
     });
   }
 
@@ -3208,6 +3235,10 @@
     add.onclick = function () {
       var contract = edit.contract;
       state.dialog = null; state.reward = null;
+      // Closed on screen as well as in state. The wallet is read first, and
+      // a refusal, or nothing this server takes, is only said: the editor
+      // stayed drawn with no dialog behind it, its buttons still live.
+      render();
       addEscrow(contract);
     };
     row.appendChild(add);
@@ -4268,7 +4299,11 @@
     if (bonusCap === 0) {
       delete state.draft.bonus;
     } else {
-      var bonusField = drafted(numberInput('bonus', 50), 'bonus', '50');
+      // Opens at 50 or the ceiling, whichever is lower: a max attribute
+      // does not hold a value set from script, so under a lower ceiling it
+      // opened at 50 beside "(up to 25)" and was charged at 50.
+      var bonusOpen = String(bonusCap ? Math.min(50, bonusCap) : 50);
+      var bonusField = drafted(numberInput('bonus', bonusOpen), 'bonus', bonusOpen);
       if (bonusCap) { bonusField.max = bonusCap; }
       terms.appendChild(labelled(
         'Kidnapping bonus %' + (bonusCap ? ' (up to ' + bonusCap + ')' : ''),
@@ -4934,7 +4969,7 @@
   function showPlaceTotal() {
     var node = document.getElementById('place-total');
     if (!node) { return; }
-    var composed = composeTotals(draftSlots(), num('bonus') || 0);
+    var composed = composeTotals(draftSlots(), bonusPercent());
     var taken = takenText(composed);
     if (!taken) { node.textContent = 'Nothing in the reward yet.'; return; }
 
@@ -5041,7 +5076,7 @@
      * doing anything strange: the shipped caps allow five payouts of three
      * money sources, ten item stacks and three weapons, which is eighty
      * lines against a ceiling of sixty. */
-    var bonusPct = num('bonus') || 0;
+    var bonusPct = bonusPercent();
     var composed = composeTotals(slots, bonusPct);
     var lines = composed.lines;
     var totals = composed.totals;
@@ -5118,7 +5153,7 @@
       reasonPreset: reasonPresetIndex(),
       mode: state.draft.mode || 'exclusive',
       reward: { slots: slots },
-      bonusPercent: num('bonus'),
+      bonusPercent: bonusPercent(),
       bailoutAmount: num('bailout'),
       penaltyAmount: num('penalty'),
       anonymous: state.draft.anon === true
@@ -5187,6 +5222,17 @@
       refresh();
     });
     });
+  }
+
+  /* The kidnapping bonus as the server will take it: never over the
+     ceiling it sent, which it clamps to. Totalled and checked at the figure
+     typed, a creator who could cover the ceiling was refused for the rest,
+     and one who could cover it all was shown more than they got. */
+  function bonusPercent() {
+    var typed = num('bonus') || 0;
+    var caps = state.wallet && state.wallet.caps;
+    var cap = caps && typeof caps.bonusPercent === 'number' ? caps.bonusPercent : null;
+    return cap !== null && typed > cap ? cap : typed;
   }
 
   // From the draft, so a value survives the form being rebuilt under it.
@@ -5290,6 +5336,16 @@
 
     var results = el('div', 'target-results');
     var status = el('div', 'hint');
+    // Who is chosen, on a line of its own under the list. It was written
+    // into `status`, which the list's own count overwrites on every
+    // rebuild, so after the wallet landed or a push nothing on the form
+    // named the person it would be placed on.
+    var chosen = el('div', 'hint');
+    function sayChosen() {
+      show(chosen, state.draft.targetName
+        ? 'Contract will be placed on ' + state.draft.targetName + '.' : '');
+      chosen.hidden = !state.draft.targetName;
+    }
 
     var timer = null;
     var seq = 0;
@@ -5519,7 +5575,7 @@
         // The chosen name stays visible rather than the list vanishing, so
         // the player can see who they picked and change their mind.
         renderPeople([person], null);
-        show(status, 'Contract will be placed on ' + person.name + '.');
+        sayChosen();
         // And a way back to everyone else. The list collapsed to the one
         // row with nothing under it, so a player who tapped the wrong name
         // had to guess that the already-lit Everyone button would undo it.
@@ -5544,10 +5600,8 @@
     wrap.appendChild(handle);
     wrap.appendChild(status);
     wrap.appendChild(results);
-
-    if (state.draft.targetName) {
-      show(status, 'Contract will be placed on ' + state.draft.targetName + '.');
-    }
+    wrap.appendChild(chosen);
+    sayChosen();
 
     // Open on the list rather than on an empty box: seeing who is out there
     // is the whole point. A rebuild of the form redraws what was already
@@ -5581,18 +5635,17 @@
        that redrew it while the player was typing - a reply landing, their
        own send going out and coming back, a push refreshing the page -
        took the focus out of the message box mid-sentence. It was put back
-       after a thread re-read only. */
-    var active = document.activeElement;
-    var typing = !!(active && active.id === 'compose-input');
+       after a thread re-read only.
+
+       And then for the message box only. On the Place form and in every
+       dialog, a reply landing mid-word — the wallet the form reads as it
+       opens, a push — dropped the rest of what was typed, so 5000 typed
+       into Cash could be left at 50. Any field is found again by its id,
+       with the caret where it was. */
+    var typing = typingIn(document.activeElement);
     var drawn = Diag.guard('render:' + state.tab, draw);
     if (drawn !== Diag.FAILED) {
-      if (typing) {
-        var box = document.getElementById('compose-input');
-        if (box && box.focus) {
-          box.focus();
-          try { box.setSelectionRange(box.value.length, box.value.length); } catch (e) { /* not every input type */ }
-        }
-      }
+      if (typing) { refocus(typing); }
       return;
     }
 
@@ -5623,6 +5676,26 @@
 
     panel.appendChild(row);
     view.appendChild(panel);
+  }
+
+  function typingIn(node) {
+    if (!node || !node.id || !/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName || '')) {
+      return null;
+    }
+    var was = { id: node.id, value: node.value, start: null, end: null };
+    try { was.start = node.selectionStart; was.end = node.selectionEnd; } catch (e) { /* not every input type has a caret */ }
+    return was;
+  }
+
+  function refocus(was) {
+    var box = document.getElementById(was.id);
+    if (!box || !box.focus || box === document.activeElement) { return; }
+    box.focus();
+    // Where it was; at the end if the box now holds something else, as
+    // the message box does once a send has cleared it.
+    var same = box.value === was.value && typeof was.start === 'number';
+    var at = same ? was.start : String(box.value || '').length;
+    try { box.setSelectionRange(at, same ? was.end : at); } catch (e) { /* not every input type */ }
   }
 
   function draw() {
@@ -5685,6 +5758,13 @@
       redrawQueued = false;
       render();
     }, 0);
+  }
+
+  /* For a reply the Place form does not show: the board, Mine, the ledger.
+     Each rebuilt the whole form under a player filling it in, for nothing
+     on it — every push did, three times. The tab draws them when opened. */
+  function redrawOffPlace() {
+    if (state.tab !== 'place') { redraw(); }
   }
 
   /* Why a section is empty, when the reason is a refusal.
@@ -5751,22 +5831,39 @@
         refresh();
         return;
       }
+      // The Place form shows the server's settings, which come with the
+      // board, and nothing else of it.
+      var settingsWere = JSON.stringify(settings());
       state.board = r.data;
       stampClocks(r.data.contracts);
-      redraw();
+      if (JSON.stringify(settings()) !== settingsWere) { redraw(); } else { redrawOffPlace(); }
     });
 
     var mineIsCurrent = newestLoad('mine');
+    var mineAsked = loadSeq.mine;
     post('mine', {}).then(function (r) {
       if (!mineIsCurrent()) { return; }
+      var opening = !state.loaded.mine;
       if (!loadResult('mine', r)) { return; }
       state.mine = r.data;
+      // Read after the handover ended, so its snapshot is current again.
+      Object.keys(countdownOver).forEach(function (id) {
+        if (countdownOver[id] < mineAsked) { delete countdownOver[id]; }
+      });
       [r.data.created, r.data.accepted, r.data.onMe].forEach(stampClocks);
-      redraw();
+      redrawOffPlace();
       // Only for contracts this player is actually party to, and only for
       // ones not already loaded: most contracts have no open proposal and
       // asking about every one of them every refresh would be three
       // requests a card.
+      //
+      // And, once the page is open, only while Mine is, the one tab that
+      // draws them. Every push empties them, and each was read again on
+      // whatever tab was open: three placed and three taken made a push
+      // cost nine reads from the bucket the board, Mine and the ledger
+      // share, so a few acceptances in a row ran the page into its own rate
+      // limit. Opening Mine refreshes, and reads them then.
+      if (!opening && state.tab !== 'mine' && state.tab !== 'thread') { return; }
       asList(r.data.created).concat(asList(r.data.accepted)).forEach(function (c) {
         if (state.proposals[c.id] === undefined) { loadProposals(c); }
       });
@@ -5776,7 +5873,7 @@
       if (!ledgerIsCurrent()) { return; }
       if (!loadResult('ledger', r)) { return; }
       state.ledger = r.data;
-      redraw();
+      redrawOffPlace();
     });
   }
 

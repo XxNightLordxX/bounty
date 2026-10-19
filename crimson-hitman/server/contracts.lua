@@ -1938,7 +1938,7 @@ function Contracts.revise(actor, contractId, changes)
     -- is the stored row, and a change made to it here would stand even
     -- when the deadline below is refused.
     local touched = {}
-    local deadline, newReason
+    local deadlineFor, newReason
 
     if changes.reason ~= nil or changes.reasonPreset ~= nil then
         -- Through the same function placing one goes through, so the two
@@ -1965,9 +1965,18 @@ function Contracts.revise(actor, contractId, changes)
         -- holding escrow forever. Never sooner than the least a deadline may
         -- be brought in to (Contracts.bringDeadlineIn). Rounded, like one
         -- set at creation: set from now, it dated the edit.
-        deadline = Util.roundClock(os.time() + math.max(seconds, MIN_LEFT_AFTER_CUT))
-        if contract.expires_at and deadline > contract.expires_at then
-            deadline = contract.expires_at
+        --
+        -- From where the clock stands, which on a paused contract is where
+        -- it stopped. The whole pause is added back when it ends
+        -- (Storage.endPause), so "three hours from now" set two hours into
+        -- a pause came out as five once the target was back.
+        deadlineFor = function(current)
+            local from = current.paused_since or os.time()
+            local at = Util.roundClock(from + math.max(seconds, MIN_LEFT_AFTER_CUT))
+            if current.expires_at and at > current.expires_at then
+                at = current.expires_at
+            end
+            return at
         end
         touched[#touched + 1] = 'deadline'
     end
@@ -1975,12 +1984,12 @@ function Contracts.revise(actor, contractId, changes)
     if #touched == 0 then return false, CH.ERR.INVALID_INPUT end
 
     -- The clock moves only through its own writes, and first: a new
-    -- deadline, set from now, that is put back if somebody took the
-    -- contract while this call was deciding (Contracts.bringDeadlineIn).
-    -- Refused then, reason and all, rather than half made.
-    if deadline then
-        local moved, moveErr = Contracts.bringDeadlineIn(contractId,
-            function() return deadline end)
+    -- deadline, set from the clock as it stands, that is put back if
+    -- somebody took the contract while this call was deciding
+    -- (Contracts.bringDeadlineIn). Refused then, reason and all, rather
+    -- than half made.
+    if deadlineFor then
+        local moved, moveErr = Contracts.bringDeadlineIn(contractId, deadlineFor)
         if not moved then return false, moveErr end
     end
     -- The reason alone, never the row: `contract` was read before every

@@ -410,7 +410,7 @@ function Photo.submit(actor, rawToken, rawUrl)
 
     local contract = Storage.readContract(record.contractId)
     Ledger.record(contract, actor.cid, rawUrl, CH.FULFILMENT.ELIMINATION, result)
-    Notify.contractCompleted(contract, actor, rawUrl)
+    Notify.contractCompleted(contract, actor, rawUrl, result)
 
     return true, nil, result
 end
