@@ -1220,15 +1220,19 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
    instead, laid on the page colour so the messages pass under it; the
    negative margins carry it out over main's padding, edge to edge. */
 .thread-head {
-  align-items: center; flex-wrap: nowrap;
   position: sticky; top: calc(-1 * var(--view-pad)); z-index: 1;
   margin: calc(-1 * var(--view-pad)) calc(-1 * var(--view-pad)) 0;
   padding: var(--view-pad) var(--view-pad) 0.5rem;
   background: var(--bg);
   border-bottom: 1px solid var(--line-soft);
 }
-.thread-head > button { flex: 0 0 auto; min-width: 0; }
-.thread-head > .hint { flex: 1 1 auto; min-width: 0; margin: 0; text-align: center; color: var(--ink-dim); }
+.thread-head > .row { margin-top: 0; }
+.thread-bar { align-items: center; flex-wrap: nowrap; }
+.thread-head .row > button { flex: 0 0 auto; min-width: 0; }
+.thread-bar > .hint { flex: 1 1 auto; min-width: 0; margin: 0; text-align: center; color: var(--ink-dim); }
+/* Mute, under Back and Call rather than beside them: its width came out of
+   the line saying which operative the thread is with. */
+.thread-head > .thread-tools { justify-content: flex-end; margin-top: 0.4rem; }
 /* The contract, then who it is with: a line each, cut short rather than
    wrapped, so a long name never pushes Back and Call onto lines of their
    own. */

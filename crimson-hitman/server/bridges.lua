@@ -607,14 +607,36 @@ function Bridges.installCommands(modules)
         local lines = Admin.interrupted(src)
         if #lines == 0 then return reply(src, 'No interrupted releases.') end
 
-        reply(src, ('%d escrow line(s) were mid-release at a shutdown:'):format(#lines))
+        local interrupted, nameless = {}, {}
         for i = 1, #lines do
-            local line = lines[i]
-            reply(src, ('  %s  contract %s  %s %s  was paying %s  (%s)'):format(
-                line.line, line.contract, tostring(line.portion), describeLine(line),
-                tostring(line.intended), os.date('%Y-%m-%d %H:%M', line.at)))
+            local list = lines[i].orphan and nameless or interrupted
+            list[#list + 1] = lines[i]
         end
-        reply(src, ('Settle each with /%s <line> pay|return'):format(names.settle))
+
+        if #interrupted > 0 then
+            reply(src, ('%d escrow line(s) were mid-release at a shutdown:'):format(#interrupted))
+            for i = 1, #interrupted do
+                local line = interrupted[i]
+                reply(src, ('  %s  contract %s  %s %s  was paying %s  (%s)'):format(
+                    line.line, line.contract, tostring(line.portion), describeLine(line),
+                    tostring(line.intended), os.date('%Y-%m-%d %H:%M', line.at)))
+            end
+            reply(src, ('Settle each with /%s <line> pay|return'):format(names.settle))
+        end
+
+        -- Lines of a contract never stored, written before a line said
+        -- whose it was (Admin.interrupted).
+        if #nameless > 0 then
+            reply(src, ('%d escrow line(s) of contracts never stored do not say whose they '
+                .. 'are:'):format(#nameless))
+            for i = 1, #nameless do
+                local line = nameless[i]
+                reply(src, ('  %s  contract %s  %s %s'):format(line.line, line.contract,
+                    tostring(line.portion), describeLine(line)))
+            end
+            reply(src, ('Find out who put each up, then /%s <line> return <citizenid>')
+                :format(names.settle))
+        end
     end)
 
     -- Not through `command`: this one refuses the extra ACEs. `command`
@@ -636,7 +658,7 @@ function Bridges.installCommands(modules)
     end
 
     command(names.settle, Config.Admin.Ace, function(src, args)
-        local ok, err = Admin.settleLine(src, args[1], args[2])
+        local ok, err = Admin.settleLine(src, args[1], args[2], args[3])
         if ok and err == 'queued' then
             return reply(src, 'Queued: they are not in the city, so it is delivered at their next login.')
         end

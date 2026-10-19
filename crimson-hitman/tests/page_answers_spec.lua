@@ -295,6 +295,36 @@ describe('a refusal that says what was missing', function()
         eq(reply.data.account, 'bank')
     end)
 
+    it('says what fee a stake refusal would also have charged, and 0 where none is owed', function()
+        -- The page added the fee setting to every anonymous stake refusal,
+        -- and a hitman back on a contract they had already paid anonymity
+        -- on was told to find $1,000 that would never have been taken.
+        local s = newStack()
+        local f = fixture(s)
+        Config.Anonymity.HitmanFee = 1000
+        Config.Anonymity.FeeAccount = 'bank'
+        local c = staked(s, f, 2000)
+        local money = Env.players[3].PlayerData.money
+        money.bank, money.cash = 1500, 1500
+        local first = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 2000 })
+        eq(first.data and first.data.part, 'stake')
+        eq(first.data.fee, 1000)
+        eq(first.data.feeAccount, 'bank')
+
+        money.bank, money.cash = 3000, 0
+        Env.advance(30)
+        truthy(call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 2000 }).ok)
+        truthy(s.contracts.abandon(f.hitman, c.id))
+
+        money.bank, money.cash = 1500, 1500
+        Env.advance(30)
+        local again = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 2000 })
+        eq(again.err, CH.ERR.INSUFFICIENT)
+        eq(again.data and again.data.part, 'stake')
+        eq(again.data.fee, 0, 'anonymity here was paid for on the first stint')
+        eq(again.data.feeAccount, nil)
+    end)
+
     it('names the buyout price', function()
         local s = newStack()
         local f = fixture(s)

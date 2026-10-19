@@ -582,6 +582,80 @@ async function main() {
       editorClipped.length + ' element(s) clipped: ' + editorClipped.slice(0, 4).join(' | '));
   });
 
+  /* ---- the head of a thread ----
+   *
+   * Back, Call and Mute each took their width out of the middle of one
+   * line, the who-and-what: at 390px a client's thread read "with Operat…",
+   * and one with several operatives could not tell which one it was writing
+   * to. Measured with Call and Unmute both drawn, Unmute being the wider. */
+  function threadStub() {
+    const contract = {
+      id: 'ct00000031', reason: 'Unpaid debt', mode: 'competitive', state: 'accepted',
+      reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+      hitmenActive: 1, hitmenMax: 5, role: 'creator',
+      targetName: 'Maximilian Featherstonehaugh-Cholmondeley',
+      hitmen: [{ alias: 'Operative #2', name: 'Vic Marlowe' }],
+    };
+    const answers = {
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: { calls: true, reasonMode: 'freetext' } } },
+      mine: { ok: true, data: { created: [contract] } },
+      threads: { ok: true, data: [{ handle: 'h2', alias: 'Operative #2', name: 'Vic Marlowe' }] },
+      readThread: { ok: true, data: { muted: true,
+        messages: [{ alias: 'Operative #2', body: 'On it.' }] } },
+    };
+    window.fetch = function (url) {
+      const name = url.split('/crimson:')[1];
+      return Promise.resolve({ json: function () {
+        return Promise.resolve(answers[name] || { ok: true });
+      } });
+    };
+  }
+
+  const tp = await browser.newPage({ viewport: { width: 390, height: 720 } });
+  await tp.addInitScript(threadStub);
+  await tp.goto('file://' + UI);
+  await tp.waitForTimeout(250);
+  await tp.click('[data-tab="mine"]');
+  await tp.waitForTimeout(200);
+  await tp.evaluate(function () {
+    const b = Array.prototype.slice.call(document.querySelectorAll('button'))
+      .filter(function (n) { return n.textContent === 'Threads'; })[0];
+    if (b) { b.click(); }
+  });
+  await tp.waitForTimeout(250);
+  const threadHead = await tp.evaluate(function () {
+    const withLine = document.querySelector('.thread-head .with');
+    const about = document.querySelector('.thread-head .about');
+    const call = document.getElementById('thread-call');
+    const mute = document.getElementById('thread-mute');
+    if (!withLine) { return null; }
+    // What "with Operative #2" takes, in the line's own font.
+    const probe = document.createElement('span');
+    probe.textContent = 'with Operative #2';
+    probe.style.whiteSpace = 'nowrap';
+    withLine.appendChild(probe);
+    const needed = probe.getBoundingClientRect().width;
+    withLine.removeChild(probe);
+    return {
+      text: withLine.textContent, needed: Math.ceil(needed),
+      width: Math.floor(withLine.getBoundingClientRect().width),
+      about: about ? Math.floor(about.getBoundingClientRect().width) : 0,
+      call: !!(call && call.getBoundingClientRect().width > 0),
+      mute: mute ? mute.textContent : null,
+    };
+  });
+  await tp.close();
+
+  it('keeps which operative a thread is with readable beside Call and Mute', function () {
+    truthy(threadHead, 'the thread did not open, so this measures nothing');
+    truthy(threadHead.call && threadHead.mute === 'Unmute',
+      'Call and Unmute both have to be drawn: ' + JSON.stringify(threadHead));
+    atLeast(threadHead.width, threadHead.needed,
+      '"with Operative #2" is cut off (' + JSON.stringify(threadHead) + ')');
+    atLeast(threadHead.about, 120, 'the target\'s name');
+  });
+
   /* ---- every screen this might be on ----
    *
    * Everything above measures one 390x720 viewport, which is how a dialog

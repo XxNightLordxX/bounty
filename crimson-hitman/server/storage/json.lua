@@ -58,8 +58,9 @@ local quarantined = {}
 --- flush adds only the rest. `rewrite` marks a file to write whole: one
 --- that ended torn, or an add that failed part-way. `named` is the days an
 --- index on disk lists, since there is no directory listing native and the
---- index is the only record of which files exist.
-local auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {} }
+--- index is the only record of which files exist. `unread` is the named
+--- days whose file read back empty at the start (see auditKey).
+local auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {}, unread = {} }
 
 --- What could not be loaded, for the boot report and ch-diag.
 ---@return table[] entries
@@ -81,9 +82,33 @@ local function auditDay(ts)
 end
 
 --- Only a day this store would name: it read the name from the index, and
---- the index is a file anybody can edit.
+--- the index is a file anybody can edit. A day, or a day with `.<n>` after
+--- it, which is where its rows went while its own file could not be read
+--- (auditKey).
 local function isAuditDay(day)
-    return type(day) == 'string' and day:match('^%d%d%d%d%-%d%d%-%d%d$') ~= nil
+    return type(day) == 'string' and (day:match('^%d%d%d%d%-%d%d%-%d%d$') ~= nil
+        or day:match('^%d%d%d%d%-%d%d%-%d%d%.%d+$') ~= nil)
+end
+
+--- Which file a day's new rows go to: its own, unless the index names that
+--- file and it read back empty at the start.
+---
+--- Empty may be a failed read rather than an empty file, and there is no
+--- telling which. Added to, a file that did not end cleanly would have the
+--- next row glued onto its torn one; written whole, as a day's first write
+--- is, it lost every row it held for good, among them the
+--- release_interrupted rows /ch-stuck and /ch-settle are built from. The
+--- index will not start over an empty read and a shard is quarantined, not
+--- overwritten; a day's file is left alone the same way, and its rows go to
+--- audit-<day>.1.jsonl instead (or .2, if that read back empty too). Both
+--- are named in the index and read at every start.
+local function auditKey(day)
+    local key, n = day, 0
+    while auditLog.unread[key] do
+        n = n + 1
+        key = day .. '.' .. n
+    end
+    return key
 end
 
 --- In data/ itself rather than a directory of its own: SaveResourceFile
@@ -243,10 +268,11 @@ local function appendFile(target, lines, from)
     return ok ~= nil
 end
 
---- One day's audit file: its rows, encoded and decoded, and whether it
---- ended cleanly. A line that will not parse is the tail of a write a
---- crash cut short; the rows before it are kept, and the file is marked to
---- be written whole so the next row is not added onto the torn one.
+--- One day's audit file: its rows, encoded and decoded, whether it ended
+--- cleanly, and whether it read back empty. A line that will not parse is
+--- the tail of a write a crash cut short; the rows before it are kept, and
+--- the file is marked to be written whole so the next row is not added onto
+--- the torn one.
 local function readAuditDay(day)
     local file = auditPath(day)
     -- Twice, as a shard is, before believing it is empty.
@@ -254,7 +280,7 @@ local function readAuditDay(day)
     if not raw or raw == '' then raw = LoadResourceFile(resource, file) end
 
     local lines, rows, bad = {}, {}, 0
-    if not raw or raw == '' then return lines, rows, true end
+    if not raw or raw == '' then return lines, rows, true, true end
     for line in raw:gmatch('[^\n]+') do
         line = line:gsub('\r$', '')
         local ok, row = pcall(json.decode, line)
@@ -356,13 +382,16 @@ end
 ---
 --- Only a day an index on disk already names. Written first, a crash before
 --- the index left a file nothing would ever read; named first, the worst a
---- crash leaves is a name with no file, which reads back as an empty day.
+--- crash leaves is a name with no file, which reads back as an empty day
+--- whose rows go on in a file of their own (auditKey).
 ---@return boolean ok
 local function saveAudit()
     local ok = true
     for day, lines in pairs(auditLog.lines) do
         local done = auditLog.onDisk[day] or 0
-        if auditLog.named[day] and (#lines > done or auditLog.rewrite[day]) then
+        -- Never a day whose file read back empty: see auditKey.
+        if auditLog.named[day] and not auditLog.unread[day]
+            and (#lines > done or auditLog.rewrite[day]) then
             local file = auditPath(day)
             -- Added to where it can be, so a busy day is not rewritten whole
             -- every flush; written whole the first time, and where the add
@@ -388,7 +417,7 @@ end
 --- once an index without it is on disk, as a pruned contract's is.
 local function dropAuditDay(day)
     auditLog.lines[day], auditLog.onDisk[day] = nil, nil
-    auditLog.rewrite[day], auditLog.named[day] = nil, nil
+    auditLog.rewrite[day], auditLog.named[day], auditLog.unread[day] = nil, nil, nil
     pendingUnlinks[#pendingUnlinks + 1] = auditPath(day)
     indexDirty, dirty = true, true
 end
@@ -402,7 +431,7 @@ end
 --- many rows as the index has for it was written by that earlier attempt,
 --- or since, and is kept as it is, so a second move adds nothing twice.
 local function loadAudit(decoded)
-    auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {} }
+    auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {}, unread = {} }
     local rowsByDay = {}
     local cutoff = auditCutoff()
     local cutoffDay = cutoff and auditDay(cutoff)
@@ -411,11 +440,20 @@ local function loadAudit(decoded)
     for i = 1, #named do
         local day = named[i]
         if isAuditDay(day) and not auditLog.lines[day] then
-            local lines, rows, clean = readAuditDay(day)
+            local lines, rows, clean, empty = readAuditDay(day)
             auditLog.lines[day], auditLog.onDisk[day] = lines, #lines
             auditLog.rewrite[day] = (not clean) or nil
             auditLog.named[day] = true
+            auditLog.unread[day] = empty or nil
             rowsByDay[day] = rows
+        end
+    end
+    for day in pairs(auditLog.unread) do
+        if not (cutoffDay and day < cutoffDay) then
+            print(('[crimson-hitman] %s is named in %s but is missing or read back empty. '
+                .. 'It is left as it is, in case it was the read that failed; that day\'s new '
+                .. 'audit rows go to %s instead. Restore it from a backup if it should hold '
+                .. 'rows.'):format(auditPath(day), path(), auditPath(auditKey(day:sub(1, 10)))))
         end
     end
 
@@ -540,7 +578,7 @@ function JsonStore.open()
 
         db = json.decode(json.encode(EMPTY))
         dirtyShards, shardIds, quarantined, indexDirty = {}, {}, {}, true
-        auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {} }
+        auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {}, unread = {} }
         JsonStore.save(true)
         JsonStore.assertWritable()
         return true
@@ -1480,7 +1518,7 @@ function JsonStore.writeAudit(entry)
     local line = json.encode(entry)
     db.audit[#db.audit + 1] = entry
 
-    local day = auditDay(entry.ts)
+    local day = auditKey(auditDay(entry.ts))
     local lines = auditLog.lines[day]
     if not lines then
         lines = {}

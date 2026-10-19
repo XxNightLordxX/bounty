@@ -260,4 +260,41 @@ describe('the audit log and a money write', function()
         io.open, _G.GetResourcePath = realOpen, realPath
         if not ok then error(err, 0) end
     end)
+
+    it('does not write over a day\'s file that read back empty; that day goes on in another', function()
+        -- A failed read looked like an empty day, and the day's next row was
+        -- its first write: the whole file, holding only that row. Every
+        -- earlier row was gone, release_interrupted among them.
+        local store = freshStore()
+        store.writeAudit({ ts = os.time(), kind = 'conduct', action = 'a', detail = {} })
+        store.writeAudit({ ts = os.time(), kind = 'financial', action = 'release_interrupted', detail = {} })
+        store.close()
+        local before = Natives.files[today()]
+
+        local realLoad = _G.LoadResourceFile
+        _G.LoadResourceFile = function(res, file)
+            if file == today() then return nil end
+            return realLoad(res, file)
+        end
+        local ok, err = pcall(function()
+            package.loaded['crimson-hitman.server.storage.json'] = nil
+            local unread = require('crimson-hitman.server.storage.json')
+            unread.open()
+            unread.writeAudit({ ts = os.time(), kind = 'conduct', action = 'c', detail = {} })
+            truthy(unread.flush(), 'the row is written')
+        end)
+        _G.LoadResourceFile = realLoad
+        if not ok then error(err, 0) end
+
+        eq(Natives.files[today()], before, 'the file that would not read is left as it was')
+        local beside = today():gsub('%.jsonl$', '.1.jsonl')
+        truthy((Natives.files[beside] or ''):find('"c"', 1, true), 'the new row is in ' .. beside)
+
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        local reopened = require('crimson-hitman.server.storage.json')
+        reopened.open()
+        local actions = {}
+        for _, row in ipairs(reopened.readAudit()) do actions[#actions + 1] = row.action end
+        eq(table.concat(actions, ','), 'a,release_interrupted,c', 'and every row reads back')
+    end)
 end)

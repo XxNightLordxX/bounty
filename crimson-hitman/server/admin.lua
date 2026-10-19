@@ -141,6 +141,14 @@ function Admin.timeline(contractId)
     }
 end
 
+--- A held line nothing can hand back: no contract row to name a client,
+--- and the line does not say who it was taken from. Only escrow written
+--- before lines recorded that; /ch-settle takes a citizen id for these.
+local function namesNobody(line)
+    return line.state == CH.ESCROW_STATE.HELD and not line.owed_to and not line.releasing_to
+        and not line.taken_from and not (line.portion == CH.PORTION.STAKE and line.staker)
+end
+
 --- Every interrupted release still open, and who it was paying.
 ---
 --- Read in one pass over the log's release_interrupted rows. It asked the
@@ -193,6 +201,25 @@ function Admin.interrupted(src)
                     at = row.ts,
                 }
             end
+        end
+    end
+
+    -- Escrow of a contract that was never stored, from before lines said
+    -- whose they were (Contracts.recoverNeverPlaced): held, and naming
+    -- nobody to hand it back to. Not an interrupted payment, but the same
+    -- question for staff, and the boot told them to look here for it.
+    for _, line in ipairs(Storage.orphanEscrow and Storage.orphanEscrow() or {}) do
+        if not seen[line.id] and namesNobody(line) then
+            seen[line.id] = true
+            out[#out + 1] = {
+                line = line.id,
+                contract = line.contract_id,
+                amount = line.amount,
+                source = line.source,
+                item = line.item,
+                portion = line.portion,
+                orphan = true,
+            }
         end
     end
 
@@ -326,13 +353,22 @@ end
 
 --- Settle one interrupted line deliberately: either to the person it was
 --- being paid to, or back to the contract's creator.
+---
+--- `owner` is a citizen id, for `return` only, and only on a line that
+--- names nobody (namesNobody): staff found out whose it was, since nothing
+--- on the server can say.
 ---@param disposition string 'pay' | 'return'
+---@param owner string|nil
 ---@return boolean ok
 ---@return string|nil err
-function Admin.settleLine(src, lineId, disposition)
+function Admin.settleLine(src, lineId, disposition, owner)
     lineId = Util.toLineId(lineId)
     if not lineId then return false, CH.ERR.INVALID_INPUT end
     if disposition ~= 'pay' and disposition ~= 'return' then
+        return false, CH.ERR.INVALID_INPUT
+    end
+    if owner ~= nil and (disposition ~= 'return' or type(owner) ~= 'string' or #owner > 64
+        or not owner:match('^[%w_%-]+$')) then
         return false, CH.ERR.INVALID_INPUT
     end
 
@@ -342,9 +378,15 @@ function Admin.settleLine(src, lineId, disposition)
 
     -- A contract that was never stored has no row, and its lines still say
     -- whose they are (Contracts.recoverNeverPlaced leaves one caught
-    -- mid-payment for staff, as recovery does any other).
+    -- mid-payment for staff, as recovery does any other). One that does not
+    -- goes where staff say, and nowhere else does: anywhere else, a citizen
+    -- id typed here would take the line from the one it names.
     local contract = Storage.readContract(line.contract_id)
-    if not contract and not line.taken_from then return false, CH.ERR.NOT_FOUND end
+    if owner then
+        if contract or not namesNobody(line) then return false, CH.ERR.INVALID_INPUT end
+    elseif not contract and not line.taken_from then
+        return false, CH.ERR.NOT_FOUND
+    end
 
     -- Who it goes to. `settled_to` is who the interrupted release was
     -- paying; without one there is nobody to pay and it can only go back.
@@ -368,10 +410,12 @@ function Admin.settleLine(src, lineId, disposition)
             if (rows[i].detail or {}).line == lineId then recorded = rows[i].actor_cid; break end
         end
         recipient = recorded or line.owed_to or line.releasing_to or line.settled_to
-    elseif line.portion == CH.PORTION.STAKE then
-        recipient = line.staker
     elseif line.portion == CH.PORTION.OWED then
         return false, CH.ERR.INVALID_INPUT
+    elseif owner then
+        recipient = owner
+    elseif line.portion == CH.PORTION.STAKE then
+        recipient = line.staker
     else
         recipient = contract and contract.creator_cid or line.taken_from
     end
@@ -390,7 +434,7 @@ function Admin.settleLine(src, lineId, disposition)
 
     Audit.financial('admin_settle_line', callerCid(src), line.contract_id,
         { line = lineId, disposition = disposition, recipient = recipient,
-          settled = settled, pending = pending })
+          named_by_staff = owner and true or nil, settled = settled, pending = pending })
 
     -- Queued is done: it is theirs, delivered at their next login. It was
     -- reported as "Could not settle it", so staff settled it again.

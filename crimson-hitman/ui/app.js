@@ -1927,7 +1927,19 @@
           var stake = contract.penaltyAmount || 0;
           var fee = anonymous ? anonymityFee('hitman') : 0;
           var from = feeAccount;
-          if (short.part === 'stake' && Number(short.need) > 0) { stake = Number(short.need); }
+          if (short.part === 'stake' && Number(short.need) > 0) {
+            stake = Number(short.need);
+            // With it, the fee the server would have charged, 0 where none
+            // is owed: back on a contract whose anonymity was paid for
+            // already, or named to its client. The setting alone named a fee
+            // to find that would never have been taken.
+            if (short.fee !== undefined && short.fee !== null) {
+              fee = Number(short.fee) || 0;
+              if (short.feeAccount === 'bank' || short.feeAccount === 'cash') {
+                from = short.feeAccount;
+              }
+            }
+          }
           if (short.part === 'fee' && Number(short.need) > 0) {
             fee = Number(short.need);
             if (short.account === 'bank' || short.account === 'cash') { from = short.account; }
@@ -4093,7 +4105,12 @@
     var t = state.thread;
     if (!t) { state.tab = 'mine'; return render(); }
 
-    var row = el('div', 'row thread-head');
+    // The head stays on the top edge (see the stylesheet): Back, who and
+    // what the thread is about, and Call on one line, Mute on its own under
+    // them.
+    var head = el('div', 'thread-head');
+    var row = el('div', 'row thread-bar');
+    head.appendChild(row);
 
     var back = el('button', 'ghost ico i-left', 'Back');
     back.onclick = function () { navigated(); state.tab = 'mine'; render(); };
@@ -4149,14 +4166,22 @@
 
     // Silences this thread's ring on this phone only. Words rather than an
     // icon, because which way it is set is the whole point of the button.
+    //
+    // On a line of its own. In the one above, its width came out of the
+    // who-and-what in the middle, the only thing in the head that cannot
+    // be put back with a tap: at 390px "with Operative #2" was cut to
+    // "with Operat…", and a client with several operatives could not tell
+    // which one they were writing to.
     var mute = actionButton('ghost', t.muted ? 'Unmute' : 'Mute',
       'mute:' + threadKey(t.contract, t.thread),
       t.muted ? 'Unmuting\u2026' : 'Muting\u2026',
       function () { return toggleMute(); });
     mute.id = 'thread-mute';
-    row.appendChild(mute);
+    var tools = el('div', 'row thread-tools');
+    tools.appendChild(mute);
+    head.appendChild(tools);
 
-    view.appendChild(row);
+    view.appendChild(head);
 
     var thread = el('div', 'thread');
     t.messages.forEach(function (m) {

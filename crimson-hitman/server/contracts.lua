@@ -865,8 +865,15 @@ end
 --- page names it (§14.18: "naming the shortfall"): which charge, how much,
 --- and from where. The stake's account is 'bank_or_cash' because it is
 --- taken whole from one or the other, never split between them.
-local function shortfall(part, need, account)
-    return { part = part, need = need, account = account }
+---
+--- A stake shortfall carries the anonymity fee this acceptance would also
+--- have charged, 0 where none is owed. The page added the fee setting to
+--- every anonymous refusal, and told a hitman back on a contract they had
+--- already paid anonymity on, or one the client knows by name, that they
+--- needed money they did not.
+local function shortfall(part, need, account, fee, feeAccount)
+    return { part = part, need = need, account = account,
+             fee = fee, feeAccount = (fee or 0) > 0 and feeAccount or nil }
 end
 
 --- Accept a contract. Conditional write: in exclusive mode the ACTIVE →
@@ -1059,7 +1066,7 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     end
     local stakeAccount = left.bank >= stake and 'bank' or 'cash'
     if stake > 0 and (left[stakeAccount] or 0) < stake then
-        return false, CH.ERR.INSUFFICIENT, shortfall('stake', stake, 'bank_or_cash')
+        return false, CH.ERR.INSUFFICIENT, shortfall('stake', stake, 'bank_or_cash', fee, feeAccount)
     end
 
     local hitmanId = previous and previous.id
@@ -1172,7 +1179,7 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
                 -- A contract busy with another take is not the hitman being
                 -- short of money.
                 if takeErr == CH.ERR.LOCKED then return false, CH.ERR.LOCKED end
-                short = shortfall('stake', stake, 'bank_or_cash')
+                short = shortfall('stake', stake, 'bank_or_cash', fee, feeAccount)
                 return false, CH.ERR.INSUFFICIENT
             end
             Audit.financial('stake_taken', actor.cid, contractId, { amount = stake })
@@ -1343,7 +1350,7 @@ local function returnNeverPlaced(contractId)
     -- Placed after all: the lines are its escrow.
     if Storage.readContract(contractId) then return 0 end
 
-    local returned = 0
+    local returned, reported = 0, nil
     for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
         if line.state == CH.ESCROW_STATE.RELEASING
             and Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD) then
@@ -1367,13 +1374,25 @@ local function returnNeverPlaced(contractId)
             else
                 -- Written before lines said who they came from. Nothing
                 -- here can tell, so staff are told, every boot until it is
-                -- settled.
+                -- settled: /ch-stuck lists it, and /ch-settle returns it to
+                -- whoever staff find it was. The audit row once per line,
+                -- not once a boot.
                 print(('[crimson-hitman] escrow line %s belongs to contract %s, which was never '
-                    .. 'stored, and does not say whose it is; left held for staff')
-                    :format(tostring(line.id), tostring(contractId)))
-                Audit.financial('escrow_orphaned', nil, contractId,
-                    { line = line.id, source = line.source, amount = line.amount,
-                      item = line.item, quantity = line.quantity, review = true })
+                    .. 'stored, and does not say whose it is; left held for staff (/%s)')
+                    :format(tostring(line.id), tostring(contractId),
+                        tostring(Config.Admin.Commands.stuck)))
+                if not reported then
+                    reported = {}
+                    for _, row in ipairs(Storage.auditByAction('escrow_orphaned', 1000) or {}) do
+                        if (row.detail or {}).line then reported[row.detail.line] = true end
+                    end
+                end
+                if not reported[line.id] then
+                    reported[line.id] = true
+                    Audit.financial('escrow_orphaned', nil, contractId,
+                        { line = line.id, source = line.source, amount = line.amount,
+                          item = line.item, quantity = line.quantity, review = true })
+                end
             end
         end
     end

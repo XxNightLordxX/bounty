@@ -7689,6 +7689,19 @@ async function main() {
       eq(said.indexOf('stake'), -1, said);
     });
 
+    // Back on a contract whose anonymity they already paid for: the server
+    // charges no fee, and says so, so the setting's $1,000 is not named.
+    acceptReply = { ok: false, err: 'insufficient_funds',
+      data: { part: 'stake', need: 2000, account: 'bank_or_cash', fee: 0 } };
+    click(app, 'Accept contract');
+    click(app, 'Anonymously');
+    await settle(); await settle();
+    it('names no anonymity fee on a stake refusal when the server says none is owed', function () {
+      const said = app.notice();
+      truthy(said.indexOf('$2,000') !== -1 && said.indexOf('not split') !== -1, said);
+      eq(said.indexOf('anonymity'), -1, said);
+    });
+
     acceptReply = { ok: false, err: 'limit_reached', data: { max: 3 } };
     click(app, 'Accept contract');
     click(app, 'Under my name');

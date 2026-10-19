@@ -18,6 +18,9 @@ contract that changed.
 per line. The flush adds new rows to the end of the day's file, and a money
 write never touches it. A day's file is deleted once the whole day is older
 than `Config.Audit.RetentionDays`. A `store.json` from an older version that
-still holds the log is moved into these files on the first start.
+still holds the log is moved into these files on the first start. If a
+day's file is named in `store.json` but reads back empty at a start, it is
+left untouched (the read may have failed) and that day's new rows go to
+`audit-<day>.1.jsonl` beside it; both are read at every start.
 
 Nothing here is needed in `mysql` or `memory` mode.

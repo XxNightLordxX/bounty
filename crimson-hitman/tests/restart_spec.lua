@@ -1903,4 +1903,43 @@ describe('a crash between taking a new contract\'s escrow and storing it', funct
         main.recover()
         eq(money(1), before, 'handed back a second time')
     end)
+
+    --- Lines written before they said whose they were. Staff were told at
+    --- every boot, with a fresh audit row each time, and no command could
+    --- list or settle them.
+    it('memory: a line that names nobody is listed for staff, logged once, and goes where they say', function()
+        local main, s = boot('memory')
+        local f = fixture(s)
+        local live = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        truthy(live)
+        local before = money(1)
+        s.storage.writeEscrow('ct00000099', { { id = 'ct00000099:1', contract_id = 'ct00000099',
+            slot = 1, portion = CH.PORTION.BASELINE, source = 'bank', amount = 700,
+            state = CH.ESCROW_STATE.HELD } })
+
+        main.recover()
+        main.tick()
+        main.recover()
+        main.tick()
+        eq(#s.storage.auditByAction('escrow_orphaned', 100), 1, 'logged again at every boot')
+
+        local stuck = s.admin.interrupted()
+        eq(#stuck, 1, '/ch-stuck does not list it')
+        eq(stuck[1].line, 'ct00000099:1')
+        truthy(stuck[1].orphan)
+
+        eq(select(2, s.admin.settleLine(0, 'ct00000099:1', 'return')), CH.ERR.NOT_FOUND)
+        eq(select(2, s.admin.settleLine(0, 'ct00000099:1', 'pay', 'CREATOR1')), CH.ERR.INVALID_INPUT)
+        eq(select(2, s.admin.settleLine(0, live.id .. ':1', 'return', 'HITMAN01')),
+            CH.ERR.INVALID_INPUT, 'a typed citizen id took a line from the client it names')
+
+        truthy(s.admin.settleLine(0, 'ct00000099:1', 'return', 'CREATOR1'))
+        eq(money(1), before + 700)
+        eq(#s.admin.interrupted(), 0)
+        local rows = s.storage.auditByAction('admin_settle_line', 10)
+        eq(rows[#rows].detail.recipient, 'CREATOR1')
+        truthy(rows[#rows].detail.named_by_staff)
+    end)
 end)

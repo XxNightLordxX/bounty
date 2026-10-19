@@ -877,6 +877,21 @@ describe('what a staff command prints', function()
         truthy(said(3):find('No interrupted releases'), said(3))
     end)
 
+    it('prints a line that says nobody\'s name, and settles it to the citizen id given', function()
+        local s = newStack(); fixture(s)
+        s.storage.writeEscrow('ct00000099', { { id = 'ct00000099:1', contract_id = 'ct00000099',
+            slot = 1, portion = CH.PORTION.BASELINE, source = 'bank', amount = 700,
+            state = CH.ESCROW_STATE.HELD } })
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+        truthy(pcall(cmd[Config.Admin.Commands.stuck], 3, {}))
+        local out = said(3)
+        truthy(out:find('ct00000099:1', 1, true) and out:find('return <citizenid>', 1, true), out)
+
+        truthy(pcall(cmd[Config.Admin.Commands.settle], 3, { 'ct00000099:1', 'return', 'CREATOR1' }))
+        eq(s.storage.readEscrowLine('ct00000099:1').state, CH.ESCROW_STATE.SETTLED, said(3))
+    end)
+
     it('prints an unmasking whose parties the framework cannot name', function()
         local s, f, c = seeded({ accept = true, anonymous = true, anonHitman = true })
 
