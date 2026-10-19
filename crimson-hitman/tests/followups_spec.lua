@@ -73,7 +73,7 @@ describe('coming back to a contract', function()
     it('cannot buy anonymity a named first stint already gave away', function()
         local s = newStack()
         local f = fixture(s)
-        Config.Anonymity.HunterFee = 1000
+        Config.Anonymity.HitmanFee = 1000
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
@@ -103,7 +103,7 @@ describe('coming back to a contract', function()
     it('is not charged twice for anonymity on the same contract', function()
         local s = newStack()
         local f = fixture(s)
-        Config.Anonymity.HunterFee = 1000
+        Config.Anonymity.HitmanFee = 1000
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } },
@@ -134,7 +134,7 @@ describe('coming back to a contract', function()
         eq(s.projection.contract(s.storage.readContract(c.id), 'HUNTER01').myAnonymous, false,
             'the page said "accepted, anonymously" from the button that was pressed')
         local settings = s.projection.listing('HUNTER01', 1).settings
-        eq(settings.anonymityFees.hunter, Config.Anonymity.HunterFee)
+        eq(settings.anonymityFees.hunter, Config.Anonymity.HitmanFee)
         eq(settings.messageMaxLength, Config.Relay.MaxLength)
     end)
 

@@ -11,7 +11,7 @@ mode rather than run that way, and the message names this directory.
 
 `store.json` holds the index — the sequence, the ledger, pending payouts,
 the audit log and the stats. `contracts/<id>.json` holds one contract each,
-with its escrow, hunters, amendments and messages, so a write touches only
+with its escrow, hitmen, amendments and messages, so a write touches only
 the contract that changed.
 
 Nothing here is needed in `mysql` or `memory` mode.

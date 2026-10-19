@@ -129,7 +129,7 @@ describe('storage conformance', function()
 
     --- The audit detail, as a table rather than the text it is stored in.
     ---
-    --- /cb-stuck walks the log for release_interrupted rows and reads
+    --- /ch-stuck walks the log for release_interrupted rows and reads
     --- detail.line to find the escrow that was left mid-release. On mysql
     --- the column came back as the JSON string it is stored as, and
     --- indexing a string in Lua is nil rather than an error — so the command
@@ -1782,7 +1782,7 @@ end)
 describe('audit retention', function()
     --- 0 kept a finished contract and a ledger photo forever, and deleted
     --- the audit log: the cutoff became now, and every row older than the
-    --- current second went, including what /cb-stuck is built from.
+    --- current second went, including what /ch-stuck is built from.
     it('keeps the log when set to 0, and prunes by age otherwise', function()
         for _, backend in ipairs(backends()) do
             local store = backend.store

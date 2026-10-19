@@ -267,7 +267,7 @@ local DYNAMIC = {
     phone = true, id_card = true, driver_license = true, weaponlicense = true,
     handcuffs = true, black_money = true,
     -- Coercion detector names.
-    handcuffed = true, passengerOfHunter = true,
+    handcuffed = true, passengerOfHitman = true,
 }
 
 for key in configSrc:gmatch('\n%s*([%w_]+)%s*=') do

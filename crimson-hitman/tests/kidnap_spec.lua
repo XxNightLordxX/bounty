@@ -311,7 +311,7 @@ describe('deciding whether a target is restrained', function()
     --- Only the named detectors switched on, so each is tested alone rather
     --- than being carried by whichever one happens to be true.
     local function onlyDetector(name)
-        local rules = { handcuffed = false, passengerOfHunter = false }
+        local rules = { handcuffed = false, passengerOfHitman = false }
         if name then rules[name] = true end
         return rules
     end
@@ -340,7 +340,7 @@ describe('deciding whether a target is restrained', function()
     it('takes a target riding in the hunters own vehicle', function()
         local s = newStack()
         local f, c = together(s)
-        withConfig({ { Config.Kidnap, 'Coercion', onlyDetector('passengerOfHunter') } }, function()
+        withConfig({ { Config.Kidnap, 'Coercion', onlyDetector('passengerOfHitman') } }, function()
             Env.players[2]._vehicle = 77
             Env.players[3]._vehicle = 77
             local ok, how = s.kidnap.isCoerced(3, 2)
@@ -352,7 +352,7 @@ describe('deciding whether a target is restrained', function()
     it('does not take a target riding in somebody elses vehicle', function()
         local s = newStack()
         local f, c = together(s)
-        withConfig({ { Config.Kidnap, 'Coercion', onlyDetector('passengerOfHunter') } }, function()
+        withConfig({ { Config.Kidnap, 'Coercion', onlyDetector('passengerOfHitman') } }, function()
             Env.players[2]._vehicle = 77
             Env.players[3]._vehicle = 88
             falsy(s.kidnap.isCoerced(3, 2),
@@ -464,7 +464,7 @@ describe('deciding whether a target is restrained', function()
         local s = newStack()
         local f, c = together(s)
         withConfig({ { Config.Kidnap, 'Coercion',
-            { handcuffed = true, passengerOfHunter = true } } }, function()
+            { handcuffed = true, passengerOfHitman = true } } }, function()
             Env.players[2].PlayerData.metadata.ishandcuffed = false
             Env.players[2]._vehicle = 55
             Env.players[3]._vehicle = 55
@@ -477,7 +477,7 @@ describe('deciding whether a target is restrained', function()
         local s = newStack()
         local f, c = together(s)
         withConfig({ { Config.Kidnap, 'Coercion',
-            { handcuffed = true, passengerOfHunter = true } } }, function()
+            { handcuffed = true, passengerOfHitman = true } } }, function()
             falsy(s.kidnap.isCoerced(3, 2),
                 'walking beside a willing friend is not a kidnapping')
         end)
@@ -579,7 +579,7 @@ describe('a handover left behind', function()
         withConfig({
             { Config.Limits, 'MaxActiveContractsPerCreator', cap + 2 },
             { Config.Limits, 'MaxActiveContractsPerTarget', cap + 2 },
-            { Config.Limits, 'MaxAcceptedPerHunter', cap + 2 },
+            { Config.Limits, 'MaxAcceptedPerHitman', cap + 2 },
         }, function()
             for i = 1, cap do
                 local targetCid = ('TGT%05d'):format(i)

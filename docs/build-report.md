@@ -14,7 +14,7 @@ system, `sc-police`, `sc-ambulance`, `sc-dispatch`, `sc-blackmarket` and
 
 | | |
 |---|---|
-| `docs/bounty-hunter-app-spec.md` | The specification, consolidated from your three drafts and extended as decisions were made |
+| `docs/hitman-app-spec.md` | The specification, consolidated from your three drafts and extended as decisions were made |
 | `docs/implementation-plan.md` | The environment facts read from your uploads, and the decisions taken |
 | `docs/in-game-checklist.md` | What to test on a live server, which no automated check can cover |
 | `crimson-hitman/README.md` | Install and configuration |
@@ -26,20 +26,20 @@ repeated here. The parts worth knowing about because they cost the most
 thought:
 
 - **Payout slots.** A contract can be collected several times, each
-  collection funded separately and escrowed up front. More hunters may
+  collection funded separately and escrowed up front. More hitmen may
   accept than there are payouts; the first to fulfil are paid.
-- **The law enforcement advisory.** Hunting a cop is allowed and loud. Every
+- **The law enforcement advisory.** Putting a hit on a cop is allowed and loud. Every
   officer online is told when the contract is posted and again on each
   acceptance, with a running count, on their phone and in dispatch. Both
   sides are warned first. The creator is never named — that is police work.
 - **Dead or alive.** A kill pays the baseline; a live delivery pays baseline
   plus bonus. The bonus is real escrow taken at creation, not a promise.
-- **Masked relay.** Creator and hunters can talk without either learning who
+- **Masked relay.** Creator and hitmen can talk without either learning who
   the other is, addressed by per-viewer handles rather than identities.
 - **Amendments.** Improvements apply at once; anything that could disadvantage
   the other side needs both sides to agree. The target is never amendable.
 - **The failure penalty is staked**, not invoiced — a penalty charged after a
-  failure is one the hunter can walk away from.
+  failure is one the hitman can walk away from.
 - **Progression.** Completing a contract feeds `sc-blackmarket` trust, so this
   is part of the criminal economy you already have rather than beside it.
 
@@ -57,7 +57,7 @@ You said to use my judgement. These are the ones that were mine:
    five the original spec listed.
 3. **Contracts on officers are allowed.** The advisory is what makes it fair.
 4. **A proof window after a death.** Players respawn in seconds, and without
-   it a hunter standing over the body loses the payout to the respawn button.
+   it a hitman standing over the body loses the payout to the respawn button.
 5. **A missing playtime source skips the new-player rule** rather than
    refusing everyone. See below for why that matters.
 

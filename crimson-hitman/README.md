@@ -36,6 +36,14 @@ In `mysql` mode nothing changes: the tables were always named `crimson_*`.
 The phone app's identifier is now `crimson-hitman`, so players install
 Crimson-Hitman from the phone's app store once; the old icon goes away.
 
+The staff commands are now `/hitmanadmin` (was `/bountyadmin`) and `/ch-*`
+(was `/cb-*`). If your `config.lua` has a `Commands` section, it still names
+the old ones, and those keep working until you change them there. Five
+settings were renamed: `Anonymity.HitmanFee`, `Limits.MaxAcceptedPerHitman`,
+`Limits.MaxHitmenPerContract`, `Advisory.WarnHitman` and
+`Kidnap.Coercion.passengerOfHitman`. A `config.lua` that still uses the
+`Hunter` names is read as the new ones, and the console says so at start.
+
 ### Configuration worth reading before you start
 
 | Setting | Why it matters |
@@ -50,7 +58,7 @@ Crimson-Hitman from the phone's app store once; the old icon goes away.
 ### Dirty money
 
 `sc-blackmarket` prices dirty money at `0.85`, which makes it worth about
-**18% more** than clean money there. Paying a bounty out as dirty money at
+**18% more** than clean money there. Paying a contract out as dirty money at
 face value would turn every contract into a risk-free laundering rail, so:
 
 - Escrow pays out in **exactly the sources it holds**. Cash in, cash out.
@@ -68,17 +76,17 @@ items and weapons. Set how many times it can be collected — each collection
 is funded separately and all of it is escrowed up front. Optionally set a
 kidnapping bonus, a buyout price, and a failure penalty.
 
-**Changing what it pays.** While nobody is hunting it, the client can add to
+**Changing what it pays.** While nobody is working it, the client can add to
 the reward or take part of it back — tick the lines to return and they come
 home as the same property, the same weapon with the same serial. A slot's
 baseline cannot be emptied, because a collection that pays nothing is not a
 contract. The moment somebody accepts, the client can only add to it on their
-own: the hunter took it as written, and escrow exists so it cannot be pulled
+own: the hitman took it as written, and escrow exists so it cannot be pulled
 out from under them. Anything else — a shorter deadline, giving back the last
 payout, cancelling — is proposed in the app and happens only if the other side
 agrees.
 
-**Taking one.** Accept from the board, anonymously if you like. More hunters
+**Taking one.** Accept from the board, anonymously if you like. More hitmen
 may accept than there are payouts; the first to fulfil are paid. If the
 contract carries a penalty, you stake it when you accept — walk away and the
 client keeps it. The accept dialog says how long is left, and a staked
@@ -88,7 +96,7 @@ acceptance is refused and the board refreshes rather than taking a stake on
 terms you were not shown. You can take it up again later, staking again; the wait
 between payouts on one contract (`Config.Limits.SlotCooldownSeconds`) carries
 over, so walking away is not a way round it. Where the server charges for
-hunter anonymity and you cannot cover it, the acceptance is refused rather
+hitman anonymity and you cannot cover it, the acceptance is refused rather
 than made under your name. An exclusive contract you hold without going near
 the target for `Config.Limits.ExclusiveIdleReleaseSeconds` (counted only while
 the client and the target are both in the city) goes back on the board with
@@ -130,17 +138,17 @@ for thirty seconds for baseline plus bonus.
 **Counter-play.** A target can see the price on their head and buy it out.
 Players the app is closed to — law enforcement and EMS — do the same with
 `/cleanse` (lists what is on them) and `/cleanse <id>` (buys one out). Either
-side can pay an informant to unmask one hunter. Creator and hunters can
+side can pay an informant to unmask one hitman. Creator and hitmen can
 message or call each other through the app without either learning who the
 other is (`Config.Relay`; switching it off removes messaging and calls
 entirely). A call to an anonymous party asks them to call back rather than
 ringing them, since a phone that rings only when its owner is in the city
 would say whether they are.
 
-**Hunting a cop.** Allowed, and loud. Every officer online is advised when the
+**Putting a hit on a cop.** Allowed, and loud. Every officer online is advised when the
 contract is posted and again on each acceptance, with a running count, on
-their phone and in dispatch. Both the creator and the hunter are warned first,
-and the listing is flagged. Nobody hunts a cop by accident. The dispatch entry
+their phone and in dispatch. Both the creator and the hitman are warned first,
+and the listing is flagged. Nobody puts a hit on a cop by accident. The dispatch entry
 is closed when the contract ends. An officer is an officer by every job they
 hold (`qbx_core` multi-job, `sc-multijob`): switching to a second job for the
 evening neither opens the app to them nor takes them off the protected list.
@@ -152,7 +160,7 @@ without asking them; quitting it from their job menu gives the app back.
 
 ## What stops it being abused
 
-The full reasoning is in `../docs/bounty-hunter-app-spec.md` (in the repository) §14. In short:
+The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. In short:
 
 - **Money cannot be duplicated.** Every escrow line settles at most once,
   guarded by a compare-and-set. Every release path shares one function.
@@ -170,7 +178,7 @@ The full reasoning is in `../docs/bounty-hunter-app-spec.md` (in the repository)
 - **Anonymity is enforced by omission.** An anonymous party's identity is
   never put in the payload, so there is nothing to find client-side. An
   anonymous client's contract stays on the board while they are offline, and
-  nothing a hunter can press says whether they are in the city.
+  nothing a hitman can press says whether they are in the city.
 - **New players are protected.** Playtime and session floors, post-respawn
   immunity, per-target contract caps and re-listing cooldowns. A login event
   never restarts a session that is already running, so the session floor
@@ -183,22 +191,22 @@ The full reasoning is in `../docs/bounty-hunter-app-spec.md` (in the repository)
 
 All work from the server console. In game they need the `crimson.admin` ACE
 (`add_ace group.admin crimson.admin allow`). `Config.Admin.ExtraAces` also opens
-the read-only ones (`cb-diag`, `cb-timeline`, `cb-stuck`); `cb-void` and
-`cb-settle` always need `crimson.admin` itself, and `cb-whois` `crimson.identity`.
+the read-only ones (`ch-diag`, `ch-timeline`, `ch-stuck`); `ch-void` and
+`ch-settle` always need `crimson.admin` itself, and `ch-whois` `crimson.identity`.
 
 | Command | What it does |
 |---|---|
-| `/cb-diag [player id]` | Why the app is not showing something: runs the app's own reads as that player and says what each answered, plus the last faults their phone reported |
-| `/cb-timeline <contract>` | One contract's state, escrow lines and audit trail |
-| `/cb-whois <contract>` | Who is really behind an anonymous creator or hunter. Needs `crimson.identity`, a separate ACE |
-| `/cb-void <contract> [reason]` | Close a contract and return its escrow to the creator |
-| `/cb-stuck` | Escrow lines that were mid-payment when the server stopped. Who each was paying is shown as a role (the client, an operative) unless you also hold `crimson.identity` |
-| `/cb-settle <line> pay\|return` | Finish one of those by hand. `pay` goes to whom the interrupted payment was for; `return` goes to whoever put the line up, so a hunter's stake goes back to that hunter. A player who is offline gets it at their next login, and the command says so |
-| `/bountyadmin timers` | Test servers: bring every wait and cooldown forward. Deadlines are only ever moved later, never earlier. `crimson.admin` itself only — the extra ACEs do not open it — and audited |
+| `/ch-diag [player id]` | Why the app is not showing something: runs the app's own reads as that player and says what each answered, plus the last faults their phone reported |
+| `/ch-timeline <contract>` | One contract's state, escrow lines and audit trail |
+| `/ch-whois <contract>` | Who is really behind an anonymous creator or hitman. Needs `crimson.identity`, a separate ACE |
+| `/ch-void <contract> [reason]` | Close a contract and return its escrow to the creator |
+| `/ch-stuck` | Escrow lines that were mid-payment when the server stopped. Who each was paying is shown as a role (the client, an operative) unless you also hold `crimson.identity` |
+| `/ch-settle <line> pay\|return` | Finish one of those by hand. `pay` goes to whom the interrupted payment was for; `return` goes to whoever put the line up, so a hitman's stake goes back to that hitman. A player who is offline gets it at their next login, and the command says so |
+| `/hitmanadmin timers` | Test servers: bring every wait and cooldown forward. Deadlines are only ever moved later, never earlier. `crimson.admin` itself only — the extra ACEs do not open it — and audited |
 
 Faults the phone page hits are reported to the server, printed to the console
-and kept for `/cb-diag`; `Config.Debug = true` adds each one's full stack trace.
-The page log `/cb-diag` asks a player's phone for is printed whatever Debug
+and kept for `/ch-diag`; `Config.Debug = true` adds each one's full stack trace.
+The page log `/ch-diag` asks a player's phone for is printed whatever Debug
 says, once, and only within thirty seconds of being asked for. The staff webhook (`Config.Audit.Webhook`) sends one message per audit
 flush rather than one per row, and backs off when Discord says to.
 On the phone, tapping the build line at the bottom of the Ledger tab five times

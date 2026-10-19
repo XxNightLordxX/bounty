@@ -41,7 +41,7 @@ local shardIds = {}
 --- the index no longer names them.
 local quarantined = {}
 
---- What could not be loaded, for the boot report and cb-diag.
+--- What could not be loaded, for the boot report and ch-diag.
 ---@return table[] entries
 function JsonStore.quarantined()
     return quarantined
@@ -1139,7 +1139,7 @@ function JsonStore.writeAudit(entry)
     db.audit[#db.audit + 1] = entry
     -- 0 keeps it, as the retention settings beside it do. Read as a number
     -- of days, 0 made the cutoff now, and every row older than the current
-    -- second went, including the ones /cb-stuck is built from.
+    -- second went, including the ones /ch-stuck is built from.
     local days = tonumber(Config.Audit.RetentionDays) or 0
     if days > 0 then
         local cutoff = os.time() - (days * 86400)

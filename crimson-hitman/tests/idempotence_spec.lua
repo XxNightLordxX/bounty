@@ -241,7 +241,7 @@ describe('accepting twice', function()
     it('does not let the anonymity fee be charged twice', function()
         local s = newStack()
         local f = fixture(s)
-        withConfig({ { Config.Anonymity, 'HunterFee', 1000 },
+        withConfig({ { Config.Anonymity, 'HitmanFee', 1000 },
                      { Config.Anonymity, 'FeeAccount', 'bank' } }, function()
             local c = place(s, f.creator)
             replay(s, 'anonymous accept', function()

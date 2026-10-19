@@ -42,7 +42,7 @@ A staff account that can adjust money and spawn items makes this much faster.
       and attachments
 - [ ] Taking back the whole baseline of a slot is refused
 - [ ] "Add cash" from the same screen still puts more up
-- [ ] Once a hunter accepts, the screen says why the reward cannot be
+- [ ] Once a hitman accepts, the screen says why the reward cannot be
       reduced — and adding still works
 - [ ] Nothing on that screen is cut off, and its buttons clear the tab bar
 
@@ -50,13 +50,13 @@ A staff account that can adjust money and spawn items makes this much faster.
 
 - [ ] A 3-payout contract escrows all three reward sets at creation
 - [ ] The board shows "Slot 1 of 3" and slot 1's reward
-- [ ] Four hunters can all accept a 3-payout contract
+- [ ] Four hitmen can all accept a 3-payout contract
 - [ ] After the first claim, the board shows slot 2's reward
-- [ ] After the third claim the contract closes and the fourth hunter gets nothing
+- [ ] After the third claim the contract closes and the fourth hitman gets nothing
 
 ## 5. Elimination
 
-- [ ] Hunter kills target with a firearm → hunter can request the camera
+- [ ] Hitman kills target with a firearm → hitman can request the camera
 - [ ] Photographing the body pays the baseline and closes the slot
 - [ ] The creator receives the completion notification **with the photo**
 - [ ] The photo appears in the creator's Ledger tab
@@ -68,7 +68,7 @@ A staff account that can adjust money and spawn items makes this much faster.
 ## 6. Kidnapping
 
 - [ ] Restrain the target (cuffs, or put them in your vehicle)
-- [ ] With hunter, target and creator together, the countdown starts
+- [ ] With hitman, target and creator together, the countdown starts
 - [ ] Walking away pauses it and it recovers within the grace window
 - [ ] Walking away for longer fails the delivery
 - [ ] Completing pays **baseline + bonus**
@@ -92,21 +92,21 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] Buying out closes the contract, returns escrow **and** premium to the creator
 - [ ] A cash-paid premium arrives as cash, not bank
 - [ ] Buying out is refused while a handover countdown is running
-- [ ] Informant data names one hunter, and charges even when it finds nobody
+- [ ] Informant data names one hitman, and charges even when it finds nobody
 - [ ] Buying informant data twice returns the same name
 
 ## 9. Communication
 
-- [ ] Creator and hunter can message under aliases
+- [ ] Creator and hitman can message under aliases
 - [ ] Neither sees the other's real name when anonymous
-- [ ] On a competitive contract, hunters cannot see each other's threads
+- [ ] On a competitive contract, hitmen cannot see each other's threads
 
 ## 10. Amendments
 
-- [ ] Adding to the pot applies immediately and notifies the hunter
+- [ ] Adding to the pot applies immediately and notifies the hitman
 - [ ] Extending the deadline applies immediately
-- [ ] Shortening the deadline requires the hunter to agree
-- [ ] The hunter declining leaves the original terms intact
+- [ ] Shortening the deadline requires the hitman to agree
+- [ ] The hitman declining leaves the original terms intact
 
 ## 11. Presence and persistence
 

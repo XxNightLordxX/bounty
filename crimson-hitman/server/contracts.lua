@@ -820,7 +820,7 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     end
 
     local held = Storage.countHunterContracts(actor.cid, LIVE_STATES)
-    if held >= Config.Limits.MaxAcceptedPerHunter then return false, CB.ERR.LIMIT_REACHED end
+    if held >= Config.Limits.MaxAcceptedPerHitman then return false, CB.ERR.LIMIT_REACHED end
 
     local existing = Storage.readHunters(contractId)
     local activeCount = 0
@@ -846,7 +846,7 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         -- answer hunters read often, and "Not right now." named neither the
         -- reason nor what to do about it.
         if activeCount > 0 then return false, CB.ERR.CONTRACT_FULL end
-    elseif activeCount >= Config.Limits.MaxHuntersPerContract then
+    elseif activeCount >= Config.Limits.MaxHitmenPerContract then
         -- Not LIMIT_REACHED: that one is about what the CALLER is holding,
         -- and this is about what the contract is holding.
         return false, CB.ERR.CONTRACT_FULL
@@ -872,8 +872,8 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     -- A refused row is not a stint, so it has paid for nothing.
     local feeAccount = Config.Anonymity.FeeAccount or 'bank'
     local paidBefore = stint and previousAnon == true
-    local fee = (anonymous and not paidBefore and (Config.Anonymity.HunterFee or 0) > 0)
-        and Config.Anonymity.HunterFee or 0
+    local fee = (anonymous and not paidBefore and (Config.Anonymity.HitmanFee or 0) > 0)
+        and Config.Anonymity.HitmanFee or 0
 
     -- The failure penalty is staked here, at acceptance, or not at all: a
     -- penalty that is only charged after a failure is a penalty the hunter
@@ -1126,7 +1126,7 @@ end
 ---
 --- Per contract, so a penalty change or a second acceptance cannot land in
 --- the middle of this one's awaits; per player, so their two acceptances
---- each count the other against MaxAcceptedPerHunter. See acceptUnlocked.
+--- each count the other against MaxAcceptedPerHitman. See acceptUnlocked.
 function Contracts.accept(actor, contractId, anonymous, opts)
     contractId = Util.toId(contractId)
     if not contractId then return false, CB.ERR.INVALID_INPUT end

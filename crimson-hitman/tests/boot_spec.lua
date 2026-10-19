@@ -465,7 +465,7 @@ end)
 --- Three keys crashed boot rather than being filled or reported, and all
 --- three crashed inside the validation — the code whose whole job is to say
 --- what is wrong with a configuration was itself the thing that fell over
---- on one, taking cb-diag down with it.
+--- on one, taking ch-diag down with it.
 ---
 --- A deliberate refusal that names the setting is an acceptable outcome
 --- here; an unhandled error is not. Operators are told what to fix, or the

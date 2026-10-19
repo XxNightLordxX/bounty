@@ -108,7 +108,7 @@ ConfigDefaults.Payout = {
 
 ConfigDefaults.Anonymity = {
     CreatorFee = 0,          -- flat fee, 0 = free
-    HunterFee  = 0,
+    HitmanFee  = 0,
     FeeAccount = 'bank',     -- 'cash' | 'bank'
 }
 
@@ -117,10 +117,10 @@ ConfigDefaults.Anonymity = {
 --------------------------------------------------------------------------
 
 ConfigDefaults.Penalty = {
-    --- The creator names the stake a hunter must put up to accept, and the
+    --- The creator names the stake a hitman must put up to accept, and the
     --- server clamps it the same way it clamps the bailout premium and for
     --- the same reason: unclamped, an "accept" is an uncapped transfer of
-    --- the hunter's money to the creator, forfeit on abandonment or expiry,
+    --- the hitman's money to the creator, forfeit on abandonment or expiry,
     --- on a contract that need only advertise a token reward. A $1,000
     --- contract could carry a $1,000,000 stake.
     ---
@@ -131,7 +131,7 @@ ConfigDefaults.Penalty = {
     MaxFractionOfEscrow = 2.0,
     RequireDisclosureOnAccept = true,
     --- A staked acceptance is refused with less than this long left before
-    --- the deadline, so a hunter cannot stake on a contract about to run
+    --- the deadline, so a hitman cannot stake on a contract about to run
     --- out and lose the stake to the client at once.
     MinWindowMinutes = 30,
 }
@@ -148,9 +148,9 @@ ConfigDefaults.Bailout = {
     MinMultiplier = 1.0,
     MaxMultiplier = 3.0,
     AbsoluteMax = 500000,
-    --- A bailout does not resolve instantly once a hunter is engaged: the
-    --- hunter gets this long to complete before it takes effect, so a target
-    --- cannot rug-pull a hunter mid-fight.
+    --- A bailout does not resolve instantly once a hitman is engaged: the
+    --- hitman gets this long to complete before it takes effect, so a target
+    --- cannot rug-pull a hitman mid-fight.
     ProcessingDelaySeconds = 120,
     --- Bailout is blocked while the target is dead or in last stand.
     BlockWhileIncapacitated = true,
@@ -175,9 +175,9 @@ ConfigDefaults.Bailout = {
 
 ConfigDefaults.Limits = {
     MaxActiveContractsPerCreator = 3,
-    MaxAcceptedPerHunter         = 3,
+    MaxAcceptedPerHitman         = 3,
     MaxActiveContractsPerTarget  = 2,
-    MaxHuntersPerContract        = 5,
+    MaxHitmenPerContract        = 5,
 
     --- How many times one contract may be collected. Each slot carries its
     --- own reward set and all of them are escrowed at creation.
@@ -193,7 +193,7 @@ ConfigDefaults.Limits = {
     --- nearer deadline. A ceiling rather than a target: it bounds how stale
     --- the cached "nothing to do until" answer can get.
     MaxDeadlineSkipSeconds       = 600,
-    --- The same hunter may not claim two slots inside this window. Without
+    --- The same hitman may not claim two slots inside this window. Without
     --- it a multi-slot contract becomes a respawn-camping machine.
     SlotCooldownSeconds          = 600,
 
@@ -307,12 +307,12 @@ ConfigDefaults.Immunity = {
 --------------------------------------------------------------------------
 
 ConfigDefaults.Completion = {
-    --- Save the verification photo to the hunter's own phone gallery.
+    --- Save the verification photo to the hitman's own phone gallery.
     ---
     --- Off by default. It is a second upload of the same image, made inside
     --- the operation that already uploads it once — and on some lb-phone
     --- builds that is where the phone dies mid-upload. It also leaves a
-    --- photograph of a body in the hunter's gallery, which is evidence of a
+    --- photograph of a body in the hitman's gallery, which is evidence of a
     --- crime they are carrying around.
     SavePhotoToGallery = false,
 
@@ -335,7 +335,7 @@ ConfigDefaults.Completion = {
     DeathReportWindowMs = 30000,
     --- A killer named by their victim must also appear in the damage log
     --- the server built for itself. The victim naming them is a client
-    --- saying so; without this a hunter can be credited for a target the
+    --- saying so; without this a hitman can be credited for a target the
     --- server never observed them touch.
     ---
     --- The cost is that a kill by something that raises no weapon damage
@@ -360,7 +360,7 @@ ConfigDefaults.Completion = {
     --- target's own game says who last damaged them, and a drop it puts down
     --- to somebody else — an NPC, a player with no hit waiting — goes to no
     --- hit. Where it says nothing (sc-ambulance clears it within a tenth of a
-    --- second), a slow sampler lets a hunter who lands one shot inherit
+    --- second), a slow sampler lets a hitman who lands one shot inherit
     --- whatever else happened to the target in between — a fall, a blast.
     --- Bounded by the number of live contracts.
     ConditionSampleMs = 1000,
@@ -371,8 +371,8 @@ ConfigDefaults.Completion = {
     --- is back on their feet.
     ---
     --- Without this the elimination path barely works: players respawn in
-    --- seconds, and a hunter standing over the body would lose the payout to
-    --- the target pressing respawn. The kill genuinely happened, the hunter
+    --- seconds, and a hitman standing over the body would lose the payout to
+    --- the target pressing respawn. The kill genuinely happened, the hitman
     --- is still at the recorded scene, and the window is short.
     ProofWindowSeconds = 60,
     --- A photo URL is accepted only from the host lb-phone uploads to.
@@ -387,9 +387,9 @@ ConfigDefaults.Kidnap = {
     MaxTotalGraceMs    = 3000,
     TickMs             = 1000,
     MaxConcurrentCountdowns = 20,
-    --- How long a hunter must wait before re-arming a handover that failed
+    --- How long a hitman must wait before re-arming a handover that failed
     --- on this contract. The countdown itself is bounded by the grace
-    --- budget; without this the *retrying* is not, and a hunter whose client
+    --- budget; without this the *retrying* is not, and a hitman whose client
     --- never turns up can hold a target in a loop at no cost.
     RearmCooldownSeconds = 60,
     --- A kidnapping is a *live* delivery. The target must be conscious the
@@ -401,11 +401,11 @@ ConfigDefaults.Kidnap = {
     RejectLastStand    = true,
     MinTargetHealthPercent = 20,
     --- Observable coercion: the target must be restrained or under the
-    --- hunter's physical control. Any enabled detector satisfies it.
+    --- hitman's physical control. Any enabled detector satisfies it.
     RequireCoercion    = true,
     Coercion = {
         handcuffed        = true,   -- QBox metadata 'ishandcuffed'
-        passengerOfHunter = true,   -- target is in the hunter's vehicle
+        passengerOfHitman = true,   -- target is in the hitman's vehicle
     },
     --- Optional resource exposing IsRestrained(playerId) for custom rope /
     --- ziptie scripts. Leave nil if unused.
@@ -470,7 +470,7 @@ ConfigDefaults.Targeting = {
     NearbyRadius = 30.0,
     --- How many of the nearest to name, closest first.
     MaxNearby = 12,
-    --- Protected-job players may be targeted by default: hunting a cop is
+    --- Protected-job players may be targeted by default: putting a hit on a cop is
     --- legitimate criminal roleplay. What makes it fair is the advisory
     --- below, not a ban. Set false to refuse creation instead.
     AllowProtectedJobTargets = true,
@@ -499,16 +499,16 @@ ConfigDefaults.Advisory = {
     --- The targeted officer is always told, whatever the paranoid-alert
     --- setting says — they cannot open the app to check for themselves.
     AlwaysAlertTarget = true,
-    --- Warn the creator before escrow is taken, and the hunter before they
+    --- Warn the creator before escrow is taken, and the hitman before they
     --- accept, that the target is law enforcement. The listing also carries a
-    --- permanent flag. Nobody hunts a cop by accident.
+    --- permanent flag. Nobody puts a hit on a cop by accident.
     --- Advisories fire at creation and again on the first acceptance, so
     --- the department learns both that a threat exists and that it went
     --- live. Later acceptances on a competitive contract stay silent.
     OnCreate = true,
     OnAccept = true,
     WarnCreator = true,
-    WarnHunter = true,
+    WarnHitman = true,
     FlagListing = true,
 }
 
@@ -577,14 +577,14 @@ ConfigDefaults.Informant = {
     Cost = 25000,
     Account = 'bank',
     RevealMode = 'name',        -- 'name' | 'description'
-    --- Only a hunter the server has actually seen near the target may be
-    --- named (§6.1). A hunter who pressed accept and did nothing is not
+    --- Only a hitman the server has actually seen near the target may be
+    --- named (§6.1). A hitman who pressed accept and did nothing is not
     --- tracking anyone, and revealing them turns the purchase into a roster
     --- dump. Proximity is observed by the condition sampler; nothing is ever
     --- taken from a client's word for where it is.
     RequireProximity = true,
     ProximityRadius = 120.0,
-    --- How long an observation counts for. Long enough that a hunter who
+    --- How long an observation counts for. Long enough that a hitman who
     --- tailed you and backed off is still named; short enough that one who
     --- walked past yesterday is not.
     ProximityWindowMinutes = 10,
@@ -684,7 +684,7 @@ ConfigDefaults.Audit = {
 }
 
 ConfigDefaults.AntiCollusion = {
-    --- Compares creator / hunter / target account identifiers. A shared
+    --- Compares creator / hitman / target account identifiers. A shared
     --- account is blocked outright. Households are deliberately not
     --- considered: families and roommates share a connection, and blocking
     --- or flagging them would punish ordinary players.
@@ -696,7 +696,7 @@ ConfigDefaults.AntiCollusion = {
 --------------------------------------------------------------------------
 
 --- Completing a contract feeds the server's existing criminal progression,
---- so the bounty board is part of the criminal economy rather than a
+--- so the contract board is part of the criminal economy rather than a
 --- parallel one. Disabled automatically if the resource is not running.
 ConfigDefaults.Progression = {
     Enabled = true,
@@ -735,17 +735,17 @@ ConfigDefaults.Admin = {
 
     --- Command names, without the leading slash.
     Commands = {
-        timeline = 'cb-timeline',
-        void     = 'cb-void',
-        stuck    = 'cb-stuck',
-        settle   = 'cb-settle',
-        whois    = 'cb-whois',
+        timeline = 'ch-timeline',
+        void     = 'ch-void',
+        stuck    = 'ch-stuck',
+        settle   = 'ch-settle',
+        whois    = 'ch-whois',
         --- Reports why the app is not showing something. Runs the same
         --- reads the app does and says what each one answered.
-        diagnose = 'cb-diag',
+        diagnose = 'ch-diag',
         --- Brings every wait forward so a test server can be tested. ACE
         --- only — the extra ACEs above do NOT open it, because it writes.
-        refresh  = 'bountyadmin',
+        refresh  = 'hitmanadmin',
     },
     --- Rows read per contract for a timeline. A cap, because the audit log
     --- is the largest table here and a staff command should not be able to

@@ -81,7 +81,7 @@ describe('RACE F2: a contract resolves while a hunter is mid-accept', function()
     local function run(which, fee)
         local s = newStack()
         local f = fixture(s)
-        if fee then Config.Anonymity.HunterFee = fee end
+        if fee then Config.Anonymity.HitmanFee = fee end
         local c = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.EXCLUSIVE,
             reward = { baseline = { cash = 5000 } }, penaltyAmount = 1000,
@@ -1042,10 +1042,10 @@ describe('RACE F14: the penalty changes while a hunter is part-way through accep
 end)
 
 describe('RACE F15: one player\'s two acceptances at once', function()
-    it('never leaves them over MaxAcceptedPerHunter', function()
+    it('never leaves them over MaxAcceptedPerHitman', function()
         local s = newStack()
         local f = fixture(s)
-        Config.Limits.MaxAcceptedPerHunter = 1
+        Config.Limits.MaxAcceptedPerHitman = 1
         Env.addPlayer({ source = 6, citizenid = 'TARGET02', license = 'license:t2',
             firstname = 'Tia', lastname = 'Orr' })
         local x = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
@@ -1085,7 +1085,7 @@ describe('RACE F16: a throw part-way through accepting', function()
 
     it('takes it back when the fee charge throws, rather than leave an unpaid anonymous hunter', function()
         local s, f, c = staked(newStack, 1000)
-        Config.Anonymity.HunterFee = 1500
+        Config.Anonymity.HitmanFee = 1500
         local before = money(3)
         local fns = f.hunter.player.Functions
         local realRemove = fns.RemoveMoney
@@ -1131,7 +1131,7 @@ end)
 describe('the anonymity fee and the stake from different accounts', function()
     it('takes the stake from cash when the bank only covers the fee', function()
         local s, f, c = staked(newStack, 1000)
-        Config.Anonymity.HunterFee, Config.Anonymity.FeeAccount = 500, 'bank'
+        Config.Anonymity.HitmanFee, Config.Anonymity.FeeAccount = 500, 'bank'
         Env.players[3].PlayerData.money.bank = 1000
         Env.players[3].PlayerData.money.cash = 5000
         local ok, err = s.contracts.accept(f.hunter, c.id, true)
@@ -1525,7 +1525,7 @@ describe('more of the acceptance, pinned', function()
     it('never leaves one player over the cap when the second lands before the first row', function()
         local s = newStack()
         local f = fixture(s)
-        Config.Limits.MaxAcceptedPerHunter = 1
+        Config.Limits.MaxAcceptedPerHitman = 1
         Env.addPlayer({ source = 6, citizenid = 'TARGET02', license = 'license:t2',
             firstname = 'Tia', lastname = 'Orr' })
         local x = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',

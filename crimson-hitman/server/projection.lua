@@ -98,7 +98,7 @@ function Projection.contract(contract, viewerCid)
         slotsClaimed  = contract.slots_claimed or 0,
         currentSlot   = contract.next_slot or 1,
         huntersActive = activeHunters,
-        huntersMax    = Config.Limits.MaxHuntersPerContract,
+        huntersMax    = Config.Limits.MaxHitmenPerContract,
         targetName    = contract.target_name,
         -- The listing carries a *reference* to the target's live headshot
         -- (§7.2), not the image. Inlining the base64 put a whole image in
@@ -273,7 +273,7 @@ local function buildListing(viewerCid, page)
         -- targets, rather than deciding for itself (§7.5).
         settings = {
             warnCreator = Config.Advisory.WarnCreator ~= false,
-            warnHunter  = Config.Advisory.WarnHunter ~= false,
+            warnHunter  = Config.Advisory.WarnHitman ~= false,
             flagListing = Config.Advisory.FlagListing ~= false,
             minQueryLength = Config.Targeting.MinQueryLength,
             -- Which ways of browsing the app should offer, rather than
@@ -303,7 +303,7 @@ local function buildListing(viewerCid, page)
             -- Charged, but never shown anywhere, on a server that set one.
             anonymityFees = {
                 creator = Config.Anonymity.CreatorFee or 0,
-                hunter = Config.Anonymity.HunterFee or 0,
+                hunter = Config.Anonymity.HitmanFee or 0,
                 account = Config.Anonymity.FeeAccount or 'bank',
             },
             -- Whether this server runs buyouts at all, so the page can tell
@@ -401,7 +401,7 @@ function Projection.rewardLines(contractId, viewerCid)
         for i = 1, #hunters do
             if hunters[i].state == 'active' then
                 editable = false
-                why = 'Somebody is hunting this. You can add to the reward, '
+                why = 'A hitman is working this. You can add to the reward, '
                     .. 'but not take from it.'
                 break
             end

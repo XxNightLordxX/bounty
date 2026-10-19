@@ -99,16 +99,16 @@ local DEFAULTS = {
     },
     --- The names the admin commands register under. Indexed directly while
     --- registering them, so a config carrying an Admin section without this
-    --- key took the resource down at boot — including cb-diag, which is the
+    --- key took the resource down at boot — including ch-diag, which is the
     --- one command an operator needs in order to find out why.
     Admin = {
         Commands = {
-            timeline = 'cb-timeline',
-            void     = 'cb-void',
-            stuck    = 'cb-stuck',
-            settle   = 'cb-settle',
-            whois    = 'cb-whois',
-            diagnose = 'cb-diag',
+            timeline = 'ch-timeline',
+            void     = 'ch-void',
+            stuck    = 'ch-stuck',
+            settle   = 'ch-settle',
+            whois    = 'ch-whois',
+            diagnose = 'ch-diag',
         },
     },
     Immunity = {
@@ -203,7 +203,7 @@ local DEFAULTS = {
         --- who has one keeps exactly the detectors they left in it.
         Coercion = {
             handcuffed = true,
-            passengerOfHunter = true,
+            passengerOfHitman = true,
         },
     },
     --- The board's page size, read straight into arithmetic in
@@ -273,8 +273,46 @@ local function isRecord(value)
     return false
 end
 
+--- Settings renamed when the resource became Crimson-Hitman. A config.lua
+--- written before then still says the old names, and nothing reads those
+--- any more: the setting would fall back to its default without a word.
+--- { path to the table holding it, old name, new name }
+local RENAMED_SETTINGS = {
+    { 'Anonymity',        'HunterFee',             'HitmanFee' },
+    { 'Limits',           'MaxAcceptedPerHunter',  'MaxAcceptedPerHitman' },
+    { 'Limits',           'MaxHuntersPerContract', 'MaxHitmenPerContract' },
+    { 'Advisory',         'WarnHunter',            'WarnHitman' },
+    { 'Kidnap.Coercion',  'passengerOfHunter',     'passengerOfHitman' },
+}
+
+--- Read an old name as its new one, where only the old one is set.
+---@return string[] what was carried across, as "old -> new"
+local function applyRenamedSettings()
+    local carried = {}
+    for _, rename in ipairs(RENAMED_SETTINGS) do
+        local holder = Config
+        for part in rename[1]:gmatch('[^.]+') do
+            holder = type(holder) == 'table' and holder[part] or nil
+        end
+        if type(holder) == 'table' and holder[rename[2]] ~= nil then
+            if holder[rename[3]] == nil then
+                holder[rename[3]] = holder[rename[2]]
+                carried[#carried + 1] = rename[1] .. '.' .. rename[2] .. ' -> ' .. rename[3]
+            end
+            holder[rename[2]] = nil
+        end
+    end
+    if #carried > 0 then
+        print(('[crimson-hitman] your config.lua uses %d setting name(s) from before the '
+            .. 'rename; they are read as the new ones: %s. Rename them when you next edit it.')
+            :format(#carried, table.concat(carried, ', ')))
+    end
+    return carried
+end
+
 local function applyConfigDefaults()
     local filled = {}
+    applyRenamedSettings()
 
     -- Whole sections the operator's config does not have at all.
     --
@@ -369,9 +407,9 @@ local function validateConfig()
     -- code reads that the shipped config never defined.
     local REQUIRED_NUMBERS = {
         { 'Limits', 'MaxActiveContractsPerCreator' },
-        { 'Limits', 'MaxAcceptedPerHunter' },
+        { 'Limits', 'MaxAcceptedPerHitman' },
         { 'Limits', 'MaxActiveContractsPerTarget' },
-        { 'Limits', 'MaxHuntersPerContract' },
+        { 'Limits', 'MaxHitmenPerContract' },
         { 'Limits', 'MaxPayoutSlots' },
         { 'Limits', 'MaxEscrowLines' },
         { 'Limits', 'MaxDeadlineSkipSeconds' },
@@ -572,7 +610,7 @@ local function validateConfig()
     -- would not expect.
     if (Config.Limits.ExclusiveIdleReleaseSeconds or 0) <= 0
         and (Config.Limits.ExclusiveAttemptWindowSeconds or 0) > 0 then
-        warn[#warn + 1] = ('Limits.ExclusiveIdleReleaseSeconds is off, but a hunter who holds an '
+        warn[#warn + 1] = ('Limits.ExclusiveIdleReleaseSeconds is off, but a hitman who holds an '
             .. 'exclusive contract without an attempt is still released after %d s '
             .. '(Limits.ExclusiveAttemptWindowSeconds; 0 turns that off too)')
             :format(Config.Limits.ExclusiveAttemptWindowSeconds)

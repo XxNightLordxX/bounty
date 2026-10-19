@@ -677,7 +677,7 @@ describe('refreshing every timer for testing', function()
 end)
 
 --- Second, independent check: drive the command the way an operator does.
-describe('bountyadmin from the console', function()
+describe('hitmanadmin from the console', function()
     local function run(s, args)
         Env.commands = {}
         require('crimson-hitman.server.bridges').installCommands(s)

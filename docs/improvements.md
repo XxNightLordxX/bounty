@@ -53,7 +53,7 @@ in the main file, and flush only the contracts that changed. The
 `server/completion/death.lua` corroborates a claim against condition the
 server observed, and credits the attacker with the **whole** observed drop.
 The named-killer path (the victim's own game naming who killed them) is the
-primary signal and is sound, but the fallback still means a hunter who lands
+primary signal and is sound, but the fallback still means a hitman who lands
 one shot during someone else's firefight can inherit a large delta.
 
 **Do:** two things, both small. Sample condition for live targets on a
@@ -82,7 +82,7 @@ amount).
 The server has supported item and weapon escrow since the first commit —
 validation, metadata snapshots, restoration, the lot — and it was tested. The
 form did not expose it: `ui/app.js` collected cash, bank and dirty money only,
-so nobody could put a weapon up as a bounty.
+so nobody could put a weapon up as a contract.
 
 **Done.** `rewardOptions` now returns the creator's stackable items (aggregated
 across inventory slots, weapons and currency excluded, blacklist applied) and
@@ -95,7 +95,7 @@ already promised to the other payouts before anything is sent.
 Four things came out of building it:
 
 - **One weapon could be staged in two payouts.** Both lines snapshotted the
-  same physical object; the take removed it once and then failed hunting for
+  same physical object; the take removed it once and then failed searching for
   its twin, rolling the whole contract back. `Escrow.validate` now refuses a
   repeated inventory slot up front.
 - **The per-payout limits multiply.** Five payouts × two portions × ten item
@@ -132,7 +132,7 @@ threads be the whole of it. Half-built is the worst of the three.
 ### 2.4 The app never learns anything it did not ask for
 `ui/app.js` refreshes on a `push` message that nothing sends — deliberately,
 because refreshing on every reply was an exponential storm. So a creator is
-not told in-app when a hunter accepts, and a hunter's card does not change
+not told in-app when a hitman accepts, and a hitman's card does not change
 when the handover settles. The phone notification arrives; the open app does
 not move.
 
@@ -143,7 +143,7 @@ cause one refresh.
 
 ### 2.5 The countdown fetches its grace state and shows none of it
 `Kidnap.progress` returns `graceLeft` and `breaking`, the app polls it every
-second, and `countdown()` renders neither. A hunter whose hold is slipping
+second, and `countdown()` renders neither. A hitman whose hold is slipping
 has no idea until it fails.
 
 **Do:** render the grace budget and the reason it is breaking
@@ -244,8 +244,8 @@ spec, which is the other honest way to close a gap.
 
 | Spec | Resolution |
 |---|---|
-| §6.1 informant requires recorded proximity | **Built.** The pool is hunters the condition sampler has actually seen within `Config.Informant.ProximityRadius` of the target, inside a window. A hunter who pressed accept and went to bed is no longer named, which is what turned the purchase into a roster dump. `RequireProximity = false` restores the old behaviour. |
-| §14.25 maximum hold time, creator arrival clock | **Built.** The countdown was always bounded by the grace budget; the *retrying* was not, so a hunter whose client never turned up could re-arm in a loop and hold a target at no cost. `Config.Kidnap.RearmCooldownSeconds` bounds it, the creator is told the moment a handover starts, and the hunter is told why one failed. |
+| §6.1 informant requires recorded proximity | **Built.** The pool is hitmen the condition sampler has actually seen within `Config.Informant.ProximityRadius` of the target, inside a window. A hitman who pressed accept and went to bed is no longer named, which is what turned the purchase into a roster dump. `RequireProximity = false` restores the old behaviour. |
+| §14.25 maximum hold time, creator arrival clock | **Built.** The countdown was always bounded by the grace budget; the *retrying* was not, so a hitman whose client never turned up could re-arm in a loop and hold a target at no cost. `Config.Kidnap.RearmCooldownSeconds` bounds it, the creator is told the moment a handover starts, and the hitman is told why one failed. |
 | §14.43 photo retention window | **Built.** `Config.Ledger.PhotoRetentionDays` drops the photo reference from ledger rows past the window, in every backend — one indexed UPDATE on mysql. The row stays, because the record is the point of the ledger; the photo of somebody's corpse does not. Zero keeps them forever. |
 | §7.5 out-of-app buyout for officers | **Built.** `/cleanse` lists what is out on the caller and buys one out. Law enforcement and EMS are barred from the app by §2, so an officer had no way to reach the one mechanic a target is supposed to have. Not ACE-gated: it only ever acts on a contract naming the caller, and applies every check the app's button does. |
 | §14.22 coarse target tracking | **Spec amended, not built.** This resource ships no tracking of any kind, and §14.22 now says so at the top. Every safeguard that section lists exists to stop a feature that hands a player another player's position from becoming a cheat feed, and the safest version is the one that does not exist. §1's tracking pillar is served by the informant purchase and by nothing else. A server that wants it should build it to that section. |
@@ -275,12 +275,12 @@ were not, which is the argument for checking each one yourself.
 **Exploit:**
 - A living player could claim a revive. Each claim renewed post-respawn
   immunity and cleared the damage log, so anyone could stay permanently
-  untargetable and erase a hunter's attribution seconds after being shot.
+  untargetable and erase a hitman's attribution seconds after being shot.
 
 **Authority:**
 - `Config.Sources.item.enabled` and `weapon.enabled` were honoured only
   where the picker is built, not in validation.
-- MySQL's `updateHunter` had no branch for `anon`, so a hunter who could
+- MySQL's `updateHunter` had no branch for `anon`, so a hitman who could
   not afford the anonymity fee stayed listed as anonymous — on the backend
   that ships by default.
 - MySQL could mint a contract id one character shorter than `Util.toId`
@@ -289,11 +289,11 @@ were not, which is the argument for checking each one yourself.
 **Correctness:**
 - `claimSlot` wrote back a contract snapshot taken before several yielding
   reads.
-- The escrow-line ceiling counted settled lines and hunters' stakes against
+- The escrow-line ceiling counted settled lines and hitmen's stakes against
   a top-up.
 - An interrupted release recorded no recipient, so the staff command that
   exists for exactly that case could never pay it.
-- A payout funded with items or weapons was advertised to hunters as $0.
+- A payout funded with items or weapons was advertised to hitmen as $0.
 
 **And the form:** its values lived only in the DOM, so a tab change emptied
 it and the sworn-officer confirmation threw it away. The wallet it builds

@@ -3,7 +3,7 @@
 **Resource name:** `crimson-hitman`
 **App name:** Crimson Hitman System
 **UI:** red / black
-**Spec:** `docs/bounty-hunter-app-spec.md` (§ references below point there)
+**Spec:** `docs/hitman-app-spec.md` (§ references below point there)
 
 ---
 
@@ -83,7 +83,7 @@ crimson-hitman/
 
 `contracts` — id, creator_cid, creator_account, target_cid, reason, mode (`exclusive|competitive`), state, created_at, deadline_at, paused_ms, bailout_amount, penalty_amount, anon_creator, mugshot_ref, resolved_at, resolution.
 `escrow` — contract_id, portion (`baseline|bonus`), source (`cash|bank|dirty|item|weapon`), amount|item_name|qty|metadata_json, state (`held|releasing|settled`), settled_at, settled_to.
-`hunters` — contract_id, hunter_cid, hunter_account, alias, anon, accepted_at, stake_amount, state.
+`hunters` — contract_id, hitman_cid, hitman_account, alias, anon, accepted_at, stake_amount, state.
 `amendments` — contract_id, proposer, kind, diff_json, expires_at, approvals_json, outcome.
 `messages` — contract_id, thread_id, from_alias, body, sent_at.
 `ledger` — cid, contract_id, role, photo_ref, summary_json, resolved_at.

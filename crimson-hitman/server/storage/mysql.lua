@@ -675,7 +675,7 @@ end
 ---
 --- Stored as JSON text and handed straight back as text. Indexing a string
 --- in Lua is nil rather than an error, so every reader of a detail field
---- quietly found nothing: /cb-stuck walks the log for release_interrupted
+--- quietly found nothing: /ch-stuck walks the log for release_interrupted
 --- rows and reads detail.line, and reported "No interrupted releases" every
 --- time, on every server, however much escrow was actually stuck.
 local function hydrateAudit(row)
@@ -1019,7 +1019,7 @@ end
 --- first ones, so on a contract with more history than the limit — a relay
 --- conversation writes a row per message — the timeline stopped at its
 --- two-hundredth event and never showed what staff were asking about, and
---- /cb-stuck, which reads this for release_interrupted rows, reported a
+--- /ch-stuck, which reads this for release_interrupted rows, reported a
 --- stuck release as nothing at all.
 function MySQLStore.auditForContract(contractId, limit)
     local newest = MySQL.query.await(
@@ -1031,7 +1031,7 @@ function MySQLStore.auditForContract(contractId, limit)
 end
 
 --- Every audit row with one action, oldest first, the newest `limit` of
---- them: one query, where /cb-stuck asked once per contract.
+--- them: one query, where /ch-stuck asked once per contract.
 function MySQLStore.auditByAction(action, limit)
     local newest = MySQL.query.await(
         'SELECT * FROM crimson_audit WHERE action = ? ORDER BY id DESC LIMIT ?',

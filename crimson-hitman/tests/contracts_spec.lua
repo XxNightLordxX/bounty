@@ -544,7 +544,7 @@ describe('anonymity fees', function()
     local function withFees(creatorFee, hunterFee)
         local s = newStack()
         Config.Anonymity.CreatorFee = creatorFee
-        Config.Anonymity.HunterFee = hunterFee
+        Config.Anonymity.HitmanFee = hunterFee
         local f = fixture(s)
         Env.players[3].PlayerData.money.bank = 50000
         return s, f

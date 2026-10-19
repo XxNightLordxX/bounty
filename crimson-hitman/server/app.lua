@@ -868,7 +868,7 @@ function App.register()
         -- the console gone. Kept in the audit row either way, so turning the
         -- switch on is about where it is convenient to read, not about
         -- whether it was recorded.
-        -- Except the log a staff member asked for with /cb-diag, which was
+        -- Except the log a staff member asked for with /ch-diag, which was
         -- promised to them in this console and, with Debug off, never came.
         -- One line per event, as the page recorded them.
         local requested = what == 'page diagnostics' and where == 'requested'

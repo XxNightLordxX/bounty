@@ -49,7 +49,7 @@ function Kidnap.isCoerced(hunterSource, targetSource)
         if meta and meta.ishandcuffed then return true, 'handcuffed' end
     end
 
-    if rules.passengerOfHunter then
+    if rules.passengerOfHitman then
         local targetVeh = GetVehiclePedIsIn(GetPlayerPed(targetSource))
         local hunterVeh = GetVehiclePedIsIn(GetPlayerPed(hunterSource))
         if targetVeh and targetVeh ~= 0 and targetVeh == hunterVeh then

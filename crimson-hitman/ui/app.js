@@ -468,7 +468,7 @@
     bailout_off: 'This server does not offer buyouts.',
     no_buyout_price: 'The client did not put a price on closing this one. '
       + 'There is nothing to pay.',
-    buyout_pending: 'You have already paid. It closes shortly — a hunter is '
+    buyout_pending: 'You have already paid. It closes shortly — a hitman is '
       + 'engaged, so it is not instant.',
     incapacitated: 'Not from the floor. Get up first.',
     handover_in_progress: 'Somebody has hold of you. You cannot buy your way '
@@ -1399,7 +1399,7 @@
       // price again on a card identical to the one before their money left.
       if (contract.bailoutPaid) {
         row.appendChild(el('div', 'hint',
-          'You have paid to close this. A hunter is engaged, so it is not '
+          'You have paid to close this. A hitman is engaged, so it is not '
           + 'instant \u2014 it closes shortly and your money is already gone.'));
       } else if (contract.bailoutAvailable) {
         var out = el('button', 'primary danger', 'Buy out \u2014 ' + money(contract.bailoutAmount));
@@ -1977,7 +1977,7 @@
     },
     change_mode: function (p) {
       return 'Change this to a ' + ((p && p.mode) === 'exclusive'
-        ? 'single-hunter contract' : 'competitive contract');
+        ? 'single-hitman contract' : 'competitive contract');
     },
     change_reason: function (p) {
       return 'Change the stated reason' + (p && p.reason ? ' to "' + p.reason + '"' : '');
@@ -2351,7 +2351,7 @@
     var ceiling = Number(settings().deadlineMaxMinutes) || 0;
     askNumber('Extend the deadline by how many minutes?',
               standing + ' This applies at once \u2014 it can only help '
-              + 'whoever is hunting.',
+              + 'whoever is working it.',
               function (minutes) {
                 post('improve', {
                   id: contract.id,
@@ -3297,7 +3297,7 @@
 
     var mode = document.createElement('select');
     mode.id = 'mode';
-    [['exclusive', 'Exclusive — one hunter'],
+    [['exclusive', 'Exclusive — one hitman'],
      ['competitive', 'Competitive — first to finish']].forEach(function (o) {
       var opt = document.createElement('option');
       opt.value = o[0]; opt.textContent = o[1];
@@ -3319,7 +3319,7 @@
     ceilingNote.id = 'slots-ceiling';
     pay.appendChild(ceilingNote);
     pay.appendChild(el('div', 'hint',
-      'Every payout is funded and escrowed up front. More hunters may accept than there are ' +
+      'Every payout is funded and escrowed up front. More hitmen may accept than there are ' +
       'payouts — the first to finish are paid.'));
 
     var slotBox = el('div');
@@ -3367,7 +3367,7 @@
     terms.appendChild(labelled('Failure penalty (0 for none)',
       drafted(numberInput('penalty', 0), 'penalty', '0')));
     terms.appendChild(el('div', 'hint',
-      'A hunter stakes this when they accept, and forfeits it to you if they walk away.'));
+      'A hitman stakes this when they accept, and forfeits it to you if they walk away.'));
 
     var anon = document.createElement('input');
     anon.type = 'checkbox'; anon.id = 'anon';

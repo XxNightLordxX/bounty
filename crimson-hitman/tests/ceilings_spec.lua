@@ -879,7 +879,7 @@ describe('a competitive contract that is full', function()
         truthy(c)
 
         -- Fill it to the cap with hunters who hold nothing else.
-        local cap = Config.Limits.MaxHuntersPerContract
+        local cap = Config.Limits.MaxHitmenPerContract
         for i = 1, cap do
             local cid = ('HNT%05d'):format(i)
             Env.addPlayer({ source = 50 + i, citizenid = cid,
@@ -914,7 +914,7 @@ describe('a competitive contract that is full', function()
             { Config.Limits, 'MaxActiveContractsPerCreator', 20 },
             { Config.Limits, 'MaxActiveContractsPerTarget', 20 },
         }, function()
-            for i = 1, Config.Limits.MaxAcceptedPerHunter + 1 do
+            for i = 1, Config.Limits.MaxAcceptedPerHitman + 1 do
                 local targetCid = ('TG%06d'):format(i)
                 Env.addPlayer({ source = 60 + i, citizenid = targetCid,
                     license = 'license:g' .. i, cash = 10, bank = 10,

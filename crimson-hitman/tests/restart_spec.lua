@@ -724,7 +724,7 @@ describe('the staff view of a busy contract', function()
     --- mysql returned the OLDEST rows up to the limit, where the other
     --- backends return the newest. A relay conversation writes a row per
     --- message, so on a busy contract the timeline stopped at its
-    --- two-hundredth event and /cb-stuck could not see a stuck release.
+    --- two-hundredth event and /ch-stuck could not see a stuck release.
     for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
         it(mode .. ': the timeline ends at the latest row', function()
             local _, s = boot(mode)
@@ -739,7 +739,7 @@ describe('the staff view of a busy contract', function()
         end)
     end
 
-    it('mysql: /cb-stuck finds an interrupted release on a busy contract', function()
+    it('mysql: /ch-stuck finds an interrupted release on a busy contract', function()
         local _, s = boot('mysql')
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
@@ -797,7 +797,7 @@ describe('an acceptance and the anonymity fee, when something goes wrong', funct
         it(mode .. ': a crash part-way through costs no fee', function()
             local _, s = boot(mode)
             local f = fixture(s)
-            Config.Anonymity.HunterFee = 1500
+            Config.Anonymity.HitmanFee = 1500
             local c = s.contracts.create(f.creator, {
                 targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
                 reward = { baseline = { cash = 10000 } }, penaltyAmount = 1000,
@@ -818,7 +818,7 @@ describe('an acceptance and the anonymity fee, when something goes wrong', funct
     it('charges the fee after an acceptance that was refused', function()
         local _, s = boot('memory')
         local f = fixture(s)
-        Config.Anonymity.HunterFee = 1500
+        Config.Anonymity.HitmanFee = 1500
         Env.addPlayer({ source = 4, citizenid = 'HUNTER02', license = 'license:ddd',
             cash = 5000, bank = 20000, firstname = 'Sol', lastname = 'Vane' })
         local c = s.contracts.create(f.creator, {
@@ -1329,7 +1329,7 @@ describe('a crash part-way through accepting', function()
         it(('mysql: a crash as a hunter takes it up again keeps their %s first stint')
             :format(firstAnon and 'anonymous' or 'named'), function()
             local _, s = boot('mysql')
-            Config.Anonymity.HunterFee = 1500
+            Config.Anonymity.HitmanFee = 1500
             local f = fixture(s)
             Env.players[3].PlayerData.money.bank = 20000
             local c = s.contracts.create(f.creator, {
@@ -1345,7 +1345,7 @@ describe('a crash part-way through accepting', function()
             falsy(pcall(s.contracts.accept, f.hunter, c.id, true))
 
             local _, s2 = restart('mysql', s)
-            Config.Anonymity.HunterFee = 1500
+            Config.Anonymity.HitmanFee = 1500
             local row = holders(s2, c.id).HUNTER01
             eq(row.state, 'abandoned', 'the earlier stint was erased')
             local before = money(3)
