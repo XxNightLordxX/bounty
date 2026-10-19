@@ -67,6 +67,11 @@ end
 --- See Contracts.retryStuckJoins.
 local stuckJoins = {}
 
+--- Contracts a throw left undecided while they were being placed, by id:
+--- who placed it, and whether their anonymity fee is still to come back.
+--- See Contracts.retryStuckCreates.
+local stuckCreates = {}
+
 --- Contracts somebody has accepted, so the idle-hold sweep reads those and
 --- not the whole table. Filled on acceptance and rebuilt once at boot
 --- (Contracts.reindexHolds); one no longer held drops out on the next sweep.
@@ -453,6 +458,58 @@ local function refundAnonymityFee(actor, contractId, anonymous)
     return false
 end
 
+--- Take a new contract's escrow and store its row: the part of
+--- Contracts.create that runs while the contract is held. Until the row is
+--- written, its lines look exactly like the ones a crash leaves behind, and
+--- the sweep that hands those back (Contracts.recoverNeverPlaced) asks for
+--- the same key and is turned away.
+---@return boolean|nil placed
+---@return string|nil err
+local function placeUnlocked(actor, contract, lines)
+    local ran, took, err = pcall(Escrow.take, actor, contract.id, lines)
+    if not ran or not took then
+        -- Put the anonymity fee back: nothing else was charged. A take
+        -- that raises places no contract either, and the fee used to go
+        -- with the raise.
+        refundAnonymityFee(actor, contract.id, contract.anon_creator)
+        if not ran then
+            -- It may have stored lines it could not confirm
+            -- (escrow_take_unverified). Whatever is there goes back once
+            -- the store answers again.
+            stuckCreates[contract.id] = { cid = actor.cid }
+            error(took, 0)
+        end
+        return nil, err
+    end
+
+    -- A write that raised may or may not have landed, as for the escrow
+    -- (Escrow.take): what the store holds decides. Every backend answers
+    -- true or raises, so the branch below was dead, and a dropped
+    -- connection here left the reward in lines no contract, recovery or
+    -- refund would ever reach.
+    local wrote, stored = pcall(Storage.writeContract, contract)
+    if not wrote then
+        Audit.financial('contract_write_failed', actor.cid, contract.id, { error = tostring(stored) })
+        local read, found = pcall(Storage.readContract, contract.id)
+        if not read then
+            -- A read that raises too decides nothing. Asked again by the
+            -- tick once the store answers: a contract that is there was
+            -- placed, and one that is not has its escrow and fee handed back.
+            stuckCreates[contract.id] = { cid = actor.cid, fee = contract.anon_creator }
+            error(found, 0)
+        end
+        stored = found ~= nil
+    end
+    if not stored then
+        -- The contract could not be stored, so everything taken comes back:
+        -- the escrow, and the anonymity fee charged before it.
+        Escrow.release(contract.id, actor.cid, nil, 'contract_write_failed')
+        refundAnonymityFee(actor, contract.id, contract.anon_creator)
+        return nil, CH.ERR.BAD_STATE
+    end
+    return true
+end
+
 --- The phone's own word blacklist, where this build has one.
 ---
 --- lb-phone ships its server code escrowed and its export surface has moved
@@ -734,35 +791,16 @@ function Contracts.create(actor, req)
 
     -- Escrow is taken before the contract is persisted, so a failure leaves
     -- no row behind at all rather than a cancelled shell that still counts
-    -- against the creator's cooldowns.
-    local ran, took
-    ran, took, err = pcall(Escrow.take, actor, contract.id, lines)
-    if not ran or not took then
-        -- Put the anonymity fee back: nothing else was charged. A take
-        -- that raises places no contract either, and the fee used to go
-        -- with the raise.
-        refundAnonymityFee(actor, contract.id, contract.anon_creator)
-        if not ran then error(took, 0) end
+    -- against the creator's cooldowns. Held while that happens; see
+    -- placeUnlocked.
+    local placed
+    placed, err = Contracts.serialized({ 'contract:' .. contract.id },
+        placeUnlocked, actor, contract, lines)
+    if not placed then
+        -- False is busy, and nothing ran: an id the sweep is handing escrow
+        -- back under, which a fresh one is not. The fee comes back anyway.
+        if placed == false then refundAnonymityFee(actor, contract.id, contract.anon_creator) end
         return nil, err
-    end
-
-    -- A write that raised may or may not have landed, as for the escrow
-    -- (Escrow.take): what the store holds decides. Every backend answers
-    -- true or raises, so the branch below was dead, and a dropped
-    -- connection here left the reward in lines no contract, recovery or
-    -- refund would ever reach. A read that raises too decides nothing, and
-    -- the row says where the reward is.
-    local wrote, stored = pcall(Storage.writeContract, contract)
-    if not wrote then
-        Audit.financial('contract_write_failed', actor.cid, contract.id, { error = tostring(stored) })
-        stored = Storage.readContract(contract.id) ~= nil
-    end
-    if not stored then
-        -- The contract could not be stored, so everything taken comes back:
-        -- the escrow, and the anonymity fee charged before it.
-        Escrow.release(contract.id, actor.cid, nil, 'contract_write_failed')
-        refundAnonymityFee(actor, contract.id, contract.anon_creator)
-        return nil, CH.ERR.BAD_STATE
     end
 
     Audit.action('contract_created', actor.cid, contract.id, {
@@ -1262,6 +1300,123 @@ function Contracts.retryStuckJoins()
         end
     end
     return done
+end
+
+--- Hand back the escrow of a contract that was never stored, to whoever
+--- each line came from: the hitman for a stake, the client for the rest.
+---
+--- Through Escrow.release one line at a time, so each moves at most once
+--- and someone offline is owed it at their next login. Nothing is said to
+--- anybody else, and nobody else was ever shown the contract.
+---
+--- Every line here was held under this key or by the boot, so one found
+--- `releasing` is a release a crash or a throw stopped. Put back to held as
+--- Recover does: paid on if it had not reached anybody yet, and left for
+--- staff (/ch-stuck) if it may already have been.
+---@param contractId string
+---@return integer returned lines handed back or queued
+local function returnNeverPlaced(contractId)
+    -- Placed after all: the lines are its escrow.
+    if Storage.readContract(contractId) then return 0 end
+
+    local returned = 0
+    for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
+        if line.state == CH.ESCROW_STATE.RELEASING
+            and Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD) then
+            if line.releasing_to then
+                print(('[crimson-hitman] escrow line %s of a contract never placed was mid-release; '
+                    .. 'returned to held — verify it was not already paid'):format(tostring(line.id)))
+                Audit.financial('release_interrupted', line.releasing_to, contractId,
+                    { line = line.id, amount = line.amount, review = true })
+            else
+                line.state = CH.ESCROW_STATE.HELD
+            end
+        end
+
+        if line.state == CH.ESCROW_STATE.HELD and not line.owed_to and not line.releasing_to then
+            local from = line.portion == CH.PORTION.STAKE and line.staker or line.taken_from
+            if from then
+                local _, result = Escrow.release(contractId, from, { line = line.id }, 'never_placed')
+                if result and (result.settled + result.pending) > 0 then
+                    returned = returned + 1
+                end
+            else
+                -- Written before lines said who they came from. Nothing
+                -- here can tell, so staff are told, every boot until it is
+                -- settled.
+                print(('[crimson-hitman] escrow line %s belongs to contract %s, which was never '
+                    .. 'stored, and does not say whose it is; left held for staff')
+                    :format(tostring(line.id), tostring(contractId)))
+                Audit.financial('escrow_orphaned', nil, contractId,
+                    { line = line.id, source = line.source, amount = line.amount,
+                      item = line.item, quantity = line.quantity, review = true })
+            end
+        end
+    end
+
+    -- Owed to somebody and not queued: the process went between the two.
+    return returned + Escrow.recoverOwed(Storage.readEscrow(contractId))
+end
+
+--- Contracts a throw left undecided as they were placed (placeUnlocked),
+--- finished once the store answers again: without a restart, the escrow
+--- of one that was not stored waited for the next boot. Its fee comes back
+--- here too, which no boot can do: the contract that said there was one is
+--- the thing that was never stored.
+---@return integer done
+function Contracts.retryStuckCreates()
+    local done = 0
+    for contractId, stuck in pairs(stuckCreates) do
+        local ran, err = Contracts.serialized({ 'contract:' .. contractId }, function()
+            if Storage.readContract(contractId) then return true end
+            returnNeverPlaced(contractId)
+            -- Last, so a throw above leaves it to come back on the next pass.
+            -- Credited if they are here; otherwise the row tells staff.
+            if stuck.fee then
+                refundAnonymityFee(Identity.byCitizenId(stuck.cid) or { cid = stuck.cid },
+                    contractId, true)
+            end
+            return true
+        end)
+        if ran then
+            stuckCreates[contractId] = nil
+            done = done + 1
+        elseif err ~= CH.ERR.BUSY then
+            break
+        end
+    end
+    return done
+end
+
+--- Hand back escrow held for contracts that were never stored.
+---
+--- create takes the escrow first and writes the row after it. A process
+--- that died in between left the reward in lines whose contract does not
+--- exist; Recover walks contracts, so it never saw them, and an audit row
+--- was the only record. Run at boot, before anything is answered: nothing
+--- is being placed, and the key turns away anything that is. A second boot
+--- finds every line settled or owed and does nothing.
+---@return integer returned
+function Contracts.recoverNeverPlaced()
+    if not Storage.orphanEscrow then return 0 end
+    local ids, seen = {}, {}
+    for _, line in ipairs(Storage.orphanEscrow() or {}) do
+        if line.contract_id and not seen[line.contract_id] then
+            seen[line.contract_id] = true
+            ids[#ids + 1] = line.contract_id
+        end
+    end
+
+    local returned = 0
+    for i = 1, #ids do
+        local n = Contracts.serialized({ 'contract:' .. ids[i] }, returnNeverPlaced, ids[i])
+        if type(n) == 'number' and n > 0 then
+            returned = returned + n
+            print(('[crimson-hitman] contract %s was never stored; %d escrow line(s) handed '
+                .. 'back to whoever put them up'):format(tostring(ids[i]), n))
+        end
+    end
+    return returned
 end
 
 --- A hitman walks away. The contract reverts to open rather than resolving,

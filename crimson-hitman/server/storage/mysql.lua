@@ -71,6 +71,9 @@ local SCHEMA = {
         settled_to VARCHAR(32),
         settled_at INT,
         derived TINYINT(1) DEFAULT 0,
+        -- Who the line was taken from. Added to existing databases by
+        -- migrate; NULL on older rows.
+        taken_from VARCHAR(32),
         INDEX idx_contract (contract_id),
         INDEX idx_state (state)
     )]],
@@ -664,8 +667,8 @@ end
 local ESCROW_UPSERT = [[
     INSERT INTO crimson_escrow
         (id, contract_id, slot, portion, source, amount, item, quantity, metadata,
-         staker, inv_slot, owed_to, releasing_to, state, derived)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         staker, inv_slot, owed_to, releasing_to, state, derived, taken_from)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     -- State and amount are NOT written here, as they move only through
     -- claimEscrowLine / settleEscrowLine / setEscrowAmount, which are
     -- guarded. Writing them from a caller-held copy could resurrect a
@@ -685,6 +688,9 @@ local function escrowParams(contractId, l)
         -- and with no column at all, that was every slot on this
         -- backend.
         l.derived and 1 or 0,
+        -- Never updated, like the staker: who put the line up does not
+        -- change. See MySQLStore.orphanEscrow.
+        l.taken_from,
     }
 end
 
@@ -744,6 +750,20 @@ end
 function MySQLStore.readEscrowLine(id)
     local rows = MySQL.query.await('SELECT * FROM crimson_escrow WHERE id = ?', { id })
     return hydrateEscrow(rows and rows[1])
+end
+
+--- Escrow not yet settled whose contract does not exist; see the memory
+--- backend. Read once, at boot.
+function MySQLStore.orphanEscrow()
+    local rows = MySQL.query.await([[
+        SELECT * FROM crimson_escrow e
+        WHERE e.state IN ('held', 'releasing')
+          AND NOT EXISTS (
+              SELECT 1 FROM crimson_contracts c WHERE c.id = e.contract_id)
+        ORDER BY id
+    ]]) or {}
+    for i = 1, #rows do hydrateEscrow(rows[i]) end
+    return rows
 end
 
 --- The compare-and-set that makes double release impossible (§14.3).

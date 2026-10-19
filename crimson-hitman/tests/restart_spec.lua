@@ -1723,3 +1723,184 @@ describe('a target in prison', function()
         eq(s.storage.readContract(c.id).state, CH.STATE.EXPIRED)
     end)
 end)
+
+--- A new contract's escrow is written before its row. A crash between the
+--- two left the reward in lines whose contract does not exist: Recover walks
+--- contracts, so it never saw them, and the client's money was gone.
+describe('a crash between taking a new contract\'s escrow and storing it', function()
+    --- A live contract with a hitman's stake on it, then a second contract
+    --- whose placing dies once its escrow is written.
+    local function crashed(mode)
+        local main, s = boot(mode)
+        local f = fixture(s)
+        local live = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        truthy(live)
+        truthy(s.contracts.accept(f.hitman, live.id, false))
+        local before, hitman = money(1), money(3)
+        killAt(s, function(name, contractId)
+            return name == 'writeEscrow' and contractId ~= live.id
+        end)
+        falsy(pcall(s.contracts.create, f.creator, {
+            targetCid = 'TARGET01', reason = 'y', reward = { baseline = { bank = 7000 } },
+        }))
+        eq(money(1), before - 7000, 'the crash came after the charge')
+        return main, s, live, before, hitman
+    end
+
+    local function heldOn(s, contractId)
+        local out = {}
+        for _, l in ipairs(s.storage.readEscrow(contractId)) do
+            if l.state == CH.ESCROW_STATE.HELD then out[#out + 1] = l.amount end
+        end
+        table.sort(out)
+        return table.concat(out, ',')
+    end
+
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': the client gets it back once, and a live contract keeps its own', function()
+            local _, s, live, before, hitman = crashed(mode)
+
+            local _, s2 = restart(mode, s)
+            eq(money(1), before, 'the reward of a contract never stored was not handed back')
+            eq(#s2.storage.orphanEscrow(), 0)
+            eq(heldOn(s2, live.id), '2000,10000', 'the live contract\'s escrow was touched')
+            eq(s2.storage.readContract(live.id).state, CH.STATE.ACCEPTED)
+
+            local _, s3 = restart(mode, s2)
+            eq(money(1), before, 'handed back a second time')
+            eq(money(3), hitman)
+            eq(heldOn(s3, live.id), '2000,10000')
+        end)
+
+        it(mode .. ': a client who is offline is owed it, and paid it once at login', function()
+            local _, s, _, before = crashed(mode)
+            local creator = Env.players[1]
+            Env.removePlayer(1)
+
+            local _, s2 = restart(mode, s)
+            local _, s3 = restart(mode, s2)
+            eq(#s3.storage.readPending('CREATOR1'), 1, 'owed once, however many boots')
+
+            Env.players[1], Env.byCitizen.CREATOR1 = creator, 1
+            eq(s3.escrow.retryPending('CREATOR1'), 1)
+            eq(money(1), before)
+            local _, s4 = restart(mode, s3)
+            eq(s4.escrow.retryPending('CREATOR1'), 0)
+            eq(money(1), before, 'paid twice')
+        end)
+    end
+
+    it('mysql: dying while handing it back leaves it for staff, and it is paid once', function()
+        local _, s, _, before = crashed('mysql')
+
+        -- The first boot dies once it has written whom the line is going to.
+        local realRun, dead = Exec.run, false
+        Exec.run = function(sql, params)
+            if dead then error('process dead', 0) end
+            local out = realRun(sql, params)
+            if type(sql) == 'string' and sql:find('INSERT INTO crimson_escrow') then
+                dead = true
+                error('process killed', 0)
+            end
+            return out
+        end
+        falsy(pcall(restart, 'mysql', s))
+        Exec.run = realRun
+
+        local _, s3 = restart('mysql', s)
+        eq(money(1), before - 7000, 'paid on although it may already have been')
+        local stuck = s3.admin.interrupted()
+        eq(#stuck, 1, 'not reported to staff')
+        truthy(s3.admin.settleLine(0, stuck[1].line, 'return'))
+        eq(money(1), before)
+        restart('mysql', s3)
+        eq(money(1), before, 'paid twice')
+    end)
+
+    --- Memory holds nothing across a restart, so the boot's sweep is run on
+    --- the same process. The store refuses the contract write and the read
+    --- after it, which is the one way a running server gets here.
+    local function refused(main, s, f, req)
+        local realWrite, realRead, down = s.storage.writeContract, s.storage.readContract, false
+        s.storage.writeContract = function()
+            down = true
+            error('mysql: connection lost', 0)
+        end
+        s.storage.readContract = function(id)
+            if down then error('mysql: connection lost', 0) end
+            return realRead(id)
+        end
+        falsy(pcall(s.contracts.create, f.creator, req))
+        s.storage.writeContract, s.storage.readContract = realWrite, realRead
+    end
+
+    it('memory: the sweep hands it back once, the weapon as it was', function()
+        local main, s = boot('memory')
+        local f = fixture(s, { creatorInventory = {
+            { name = 'WEAPON_PISTOL', count = 1, slot = 3,
+              metadata = { serial = 'ABC123', registered = 'Vic Marlowe' } },
+        } })
+        local live = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 10000 } },
+        })
+        truthy(live)
+        local before = money(1)
+        refused(main, s, f, { targetCid = 'TARGET01', reason = 'y', anonymous = true,
+            reward = { baseline = { bank = 7000,
+                weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } } })
+        eq(money(1), before - 7000)
+
+        main.recover()
+        eq(money(1), before)
+        local pistol
+        for _, slot in ipairs(Env.players[1]._inventory) do
+            if slot.name == 'WEAPON_PISTOL' then pistol = slot end
+        end
+        eq(pistol and pistol.metadata.registered, 'Vic Marlowe',
+            'the client\'s own weapon came back with their name taken off')
+        eq(heldOn(s, live.id), '10000')
+
+        main.recover()
+        main.tick()
+        eq(money(1), before, 'handed back a second time')
+    end)
+
+    it('memory: a contract being placed is not swept from under itself', function()
+        local _, s = boot('memory')
+        local f = fixture(s)
+        local before = money(1)
+        local realWrite, swept = s.storage.writeContract, nil
+        s.storage.writeContract = function(contract)
+            -- Its escrow is written and its row is not yet.
+            if swept == nil then swept = s.contracts.recoverNeverPlaced() end
+            return realWrite(contract)
+        end
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { bank = 7000 } },
+        })
+        s.storage.writeContract = realWrite
+        truthy(c)
+        eq(swept, 0, 'the sweep took the escrow of a contract still being placed')
+        eq(money(1), before - 7000)
+        eq(heldOn(s, c.id), '7000')
+    end)
+
+    it('memory: the tick hands back the reward and the anonymity fee once the store answers', function()
+        local main, s = boot('memory')
+        local f = fixture(s)
+        Config.Anonymity.CreatorFee = 500
+        local before = money(1)
+        refused(main, s, f, { targetCid = 'TARGET01', reason = 'y', anonymous = true,
+            reward = { baseline = { bank = 7000 } } })
+        eq(money(1), before - 7500, 'the fee and the reward were both taken')
+
+        main.tick()
+        eq(money(1), before, 'not handed back while the server ran')
+        main.tick()
+        main.recover()
+        eq(money(1), before, 'handed back a second time')
+    end)
+end)

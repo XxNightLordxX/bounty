@@ -340,8 +340,11 @@ function Admin.settleLine(src, lineId, disposition)
     if not line then return false, CH.ERR.NOT_FOUND end
     if line.state == CH.ESCROW_STATE.SETTLED then return false, CH.ERR.ALREADY_SETTLED end
 
+    -- A contract that was never stored has no row, and its lines still say
+    -- whose they are (Contracts.recoverNeverPlaced leaves one caught
+    -- mid-payment for staff, as recovery does any other).
     local contract = Storage.readContract(line.contract_id)
-    if not contract then return false, CH.ERR.NOT_FOUND end
+    if not contract and not line.taken_from then return false, CH.ERR.NOT_FOUND end
 
     -- Who it goes to. `settled_to` is who the interrupted release was
     -- paying; without one there is nobody to pay and it can only go back.
@@ -370,7 +373,7 @@ function Admin.settleLine(src, lineId, disposition)
     elseif line.portion == CH.PORTION.OWED then
         return false, CH.ERR.INVALID_INPUT
     else
-        recipient = contract.creator_cid
+        recipient = contract and contract.creator_cid or line.taken_from
     end
     if not recipient then return false, CH.ERR.INVALID_INPUT end
 

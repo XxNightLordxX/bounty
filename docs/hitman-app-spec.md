@@ -360,6 +360,7 @@ Memory mode holds no durable escrow, so it must not be able to destroy player pr
 
 - The escrow record (§9.1) has the same shape in all three modes; storage is behind one interface, so no game logic branches on the mode.
 - Restart recovery (`mysql` and `json`): on startup, every contract in `accepted` state has its capture tokens invalidated and its failure-penalty timer resumed from stored elapsed time — never restarted from zero, which would silently extend a hitman's deadline.
+- Restart recovery also returns escrow whose contract was never stored. Creation takes the escrow before it writes the contract, so a crash between the two leaves held lines naming a contract that does not exist. Every escrow line taken from a player records who it was taken from, and on startup each such line is released through `releaseEscrow` to that player (a hitman's stake to that hitman) — owed and delivered at next login if they are offline — exactly once, with an audit row; a later startup finds nothing left to do. A contract being placed holds its own lock, so the sweep never takes the escrow of one mid-creation. A creation whose contract write and the read after it both fail is retried by the maintenance tick once the store answers, and that path also refunds the anonymity fee. A line that names nobody (written before lines recorded it) is left held and reported for staff.
 
 ---
 

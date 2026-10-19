@@ -1774,6 +1774,7 @@ do
         ['crimson_escrow.quantity']           = 'how much of it',
         ['crimson_escrow.metadata']           = 'the item as it was, serial and all',
         ['crimson_escrow.staker']             = 'who put it up',
+        ['crimson_escrow.taken_from']         = 'who it was taken from, when it was taken',
         ['crimson_escrow.inv_slot']           = 'the inventory slot it came from, for returning it',
         ['crimson_escrow.derived']            = 'whether this resource worked the bonus out or the '
             .. 'creator named it; a property of how the line was made',

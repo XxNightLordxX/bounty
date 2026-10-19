@@ -639,6 +639,11 @@ takeUnlocked = function(actor, contractId, lines)
         line.contract_id = contractId
         line.state = CH.ESCROW_STATE.HELD
         line.slot = line.slot or 1
+        -- Who it came from, on the line itself. A new contract's escrow is
+        -- written before its row, and a crash between the two left lines
+        -- naming a contract that does not exist: nothing said whose they
+        -- were, so nothing could hand them back (Contracts.recoverNeverPlaced).
+        line.taken_from = actor.cid
 
         if not line.id or used[line.id] then
             repeat
@@ -984,11 +989,14 @@ end
 --- rather than writing the new holder's name in. The serial and everything
 --- else go with it unchanged, and the stored snapshot is not touched, so a
 --- refund is the weapon exactly as it was taken. A contract that can no
---- longer be read is treated as anonymous.
+--- longer be read is treated as anonymous — except by the one the line came
+--- from, who gets back what they put up: a contract that was never stored
+--- cannot be read, and its client's own weapon went back to them unregistered.
 ---@return table|nil metadata
 local function handedOver(recipientCid, line)
     local meta = line.metadata
     if type(meta) ~= 'table' or type(meta.registered) ~= 'string' then return meta end
+    if line.taken_from ~= nil and line.taken_from == recipientCid then return meta end
     local contract = line.contract_id and Storage.readContract(line.contract_id)
     if contract and (not contract.anon_creator or contract.creator_cid == recipientCid) then
         return meta

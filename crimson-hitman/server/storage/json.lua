@@ -1191,6 +1191,21 @@ end
 
 function JsonStore.readEscrowLine(id) return db.escrow[id] end
 
+--- Escrow not yet settled whose contract does not exist; see the memory
+--- backend. A shard holding escrow and no contract row loads as exactly
+--- that. A contract whose shard could not be read is not here: its lines
+--- were in the file that could not be read.
+function JsonStore.orphanEscrow()
+    local out = {}
+    for _, line in pairs(db.escrow) do
+        if line.state ~= CH.ESCROW_STATE.SETTLED and not db.contracts[line.contract_id] then
+            out[#out + 1] = line
+        end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 function JsonStore.claimEscrowLine(id, expected, next_)
     local line = db.escrow[id]
     if not line or line.state ~= expected then return false end

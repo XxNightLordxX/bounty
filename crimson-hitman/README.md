@@ -164,7 +164,9 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
   guarded by a compare-and-set. Every release path shares one function.
 - **Money cannot be destroyed.** A payout that cannot be delivered — full
   inventory, player offline — stays owed and is delivered on their next
-  login, never dropped.
+  login, never dropped. A contract the server went down while placing (its
+  reward taken, the contract itself never stored) has its reward handed back
+  to the client at the next start, once, and nobody else is told it existed.
 - **Identity is never taken from a payload.** Every handler resolves the
   acting player from the connection. Citizen ids never reach a client;
   searches and threads use expiring per-viewer handles.
@@ -204,7 +206,7 @@ entry, and `/ch-contracts` lists it for any player.
 | `/ch-timeline <contract>` | One contract's state, escrow lines and audit trail |
 | `/ch-whois <contract>` | Who is really behind an anonymous creator or hitman. Needs `crimson.identity`, a separate ACE |
 | `/ch-void <contract> [reason]` | Close a contract and return its escrow to the creator |
-| `/ch-stuck` | Escrow lines that were mid-payment when the server stopped. Who each was paying is shown as a role (the client, an operative) unless you also hold `crimson.identity` |
+| `/ch-stuck` | Escrow lines that were mid-payment when the server stopped, including one being handed back from a contract that was never placed. Who each was paying is shown as a role (the client, an operative) unless you also hold `crimson.identity` |
 | `/ch-settle <line> pay\|return` | Finish one of those by hand. `pay` goes to whom the interrupted payment was for; `return` goes to whoever put the line up, so a hitman's stake goes back to that hitman. A player who is offline gets it at their next login, and the command says so |
 | `/hitmanadmin timers` | Test servers: bring every wait and cooldown forward. Deadlines are only ever moved later, never earlier. `crimson.admin` itself only — the extra ACEs do not open it — and audited |
 

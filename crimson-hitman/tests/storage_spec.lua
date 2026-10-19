@@ -807,6 +807,7 @@ describe('the mysql schema holds every field the code writes', function()
             source = 'bank', amount = 100, item = 'x', quantity = 1,
             metadata = {}, staker = 'HITMAN01', inv_slot = 3,
             state = 'held', settled_to = 'HITMAN01', settled_at = 1,
+            taken_from = 'HITMAN01',
         }
 
         local missing = sim.missingColumns('crimson_escrow', line)
@@ -886,6 +887,29 @@ describe('owed escrow survives in every backend', function()
 
         local missing = Sim.missingColumns('crimson_escrow', line('ct1:owed1'))
         eq(#missing, 0, 'crimson_escrow cannot store: ' .. table.concat(missing, ', '))
+    end)
+end)
+
+describe('escrow whose contract was never stored', function()
+    --- Read once at boot to hand those lines back (Contracts.recoverNeverPlaced).
+    it('is found, with whom it came from, in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ct00000001'))
+            b.store.writeEscrow('ct00000001', { { id = 'ct00000001:1', contract_id = 'ct00000001',
+                slot = 1, portion = 'baseline', source = 'cash', amount = 100, state = 'held',
+                taken_from = 'CREATOR1' } })
+            b.store.writeEscrow('ct00000009', {
+                { id = 'ct00000009:1', contract_id = 'ct00000009', slot = 1, portion = 'baseline',
+                  source = 'bank', amount = 700, state = 'held', taken_from = 'CREATOR1' },
+                { id = 'ct00000009:2', contract_id = 'ct00000009', slot = 1, portion = 'baseline',
+                  source = 'cash', amount = 50, state = 'settled', taken_from = 'CREATOR1' },
+            })
+            local found = b.store.orphanEscrow()
+            eq(#found, 1, b.name .. ': lines of a stored contract, or settled ones, were included')
+            eq(found[1].id, 'ct00000009:1', b.name)
+            eq(found[1].taken_from, 'CREATOR1', b.name .. ': whom it came from was not kept')
+            eq(found[1].amount, 700, b.name)
+        end
     end)
 end)
 
@@ -1550,6 +1574,7 @@ describe('every mysql statement is executable', function()
             function() m.writeEscrow('c1', { { id='c1:1', contract_id='c1', slot=1, portion='baseline', source='cash', amount=100, state='held' } }) end,
             function() m.readEscrow('c1') end,
             function() m.readEscrowLine('c1:1') end,
+            function() m.orphanEscrow() end,
             function() m.claimEscrowLine('c1:1','held','releasing') end,
             function() m.setEscrowAmount('c1:1','releasing',50,100) end,
             function() m.settleEscrowLine('c1:1','A') end,

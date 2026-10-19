@@ -501,6 +501,15 @@ describe('RACE F7b: the last hitman walks away while another accepts', function(
 end)
 
 describe('RACE F8: the stake is repriced between the disclosure check and the charge', function()
+    --- The handler checks the stake against its own read, and the acceptance
+    --- reads the contract again under its lock. A raise that lands between
+    --- the two is caught by the second check alone.
+    ---
+    --- This hooked the store's first read and raised there. In a copying
+    --- stack the handler reads the store behind the wrapper, so the read it
+    --- caught was the acceptance's own, inside the lock: the raise was turned
+    --- away as busy, the stake stayed at 1,000, and the test passed with the
+    --- check it names removed. The raise now lands in the gap itself.
     it('charges only the stake the hitman was shown', function()
         local s = newCopyingStack()
         local f = fixture(s)
@@ -512,32 +521,23 @@ describe('RACE F8: the stake is repriced between the disclosure check and the ch
         truthy(c)
         eq(c.penalty_amount, 1000)
 
-        local realRead = s.storage.readContract
-        local reads, fired = 0, false
-        s.storage.readContract = function(id)
-            reads = reads + 1
-            -- The handler's own read (1) passed the disclosure check; the
-            -- creator reprices before Contracts.accept reads it (2).
-            if reads == 1 and not fired then
-                fired = true
-                s.storage.readContract = realRead
-                local p = s.amendments.propose(f.creator, c.id,
-                    CH.AMENDMENT.RAISE_PENALTY, { amount = 30000 })
-                say('  creator proposes a 30,000 stake ->', p and p.id)
-                local ok, err, outcome = s.amendments.respond(f.creator, p.id, true)
-                say('  creator agrees with themselves ->', ok, err, outcome,
-                    'stake now', realRead(c.id).penalty_amount)
-                s.storage.readContract = function(x) reads = reads + 1 return realRead(x) end
-            end
-            return realRead(id)
+        -- The handler's check has passed on 1,000; the client reprices
+        -- before Contracts.accept reads the contract.
+        local realAccept = s.contracts.accept
+        s.contracts.accept = function(...)
+            s.contracts.accept = realAccept
+            local p = s.amendments.propose(f.creator, c.id,
+                CH.AMENDMENT.RAISE_PENALTY, { amount = 30000 })
+            eq(p and p.outcome, 'applied', 'the raise did not land in the gap')
+            return realAccept(...)
         end
-        local before = Env.players[3].PlayerData.money.bank + Env.players[3].PlayerData.money.cash
+        local before = money(3)
         local result, err = s.app.handlers.accept(f.hitman, { id = c.id, penaltyAmount = 1000 })
-        s.storage.readContract = realRead
-        local after = Env.players[3].PlayerData.money.bank + Env.players[3].PlayerData.money.cash
-        say('  accept with 1,000 on screen ->', result and 'ok' or 'refused', err,
-            'charged', before - after)
-        truthy(before - after <= 1000, 'the hitman was charged a stake they were never shown')
+        s.contracts.accept = realAccept
+        eq(s.storage.readContract(c.id).penalty_amount, 30000)
+        falsy(result, 'accepted on a stake that was not on screen')
+        eq(err, CH.ERR.TERMS_CHANGED)
+        eq(money(3), before, 'the hitman was charged a stake they were never shown')
     end)
 end)
 

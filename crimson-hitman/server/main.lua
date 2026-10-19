@@ -1013,12 +1013,19 @@ function Recover()
         end
     end
 
-    if recovered > 0 or unstuck > 0 or finished > 0 then
+    -- Escrow whose contract was never stored: a crash between taking a new
+    -- contract's escrow and writing its row (Contracts.recoverNeverPlaced).
+    -- The walk above only reaches lines through a contract that exists.
+    local returned = modules.contracts.recoverNeverPlaced
+        and modules.contracts.recoverNeverPlaced() or 0
+
+    if recovered > 0 or unstuck > 0 or finished > 0 or returned > 0 then
         print(('[crimson-hitman] recovery: %d contracts resumed, %d finished, %d escrow '
-            .. 'lines unstuck'):format(recovered, finished, unstuck))
+            .. 'lines unstuck, %d handed back from contracts never placed')
+            :format(recovered, finished, unstuck, returned))
         modules.audit.action('startup_recovery', nil, nil,
             { contracts = recovered, finished = finished, lines = unstuck,
-              paused = paused })
+              paused = paused, never_placed = returned })
     end
 
     -- Alive from here on.
@@ -1118,6 +1125,11 @@ function Tick()
     -- An acceptance a throw left part-way, and whose taking back threw too.
     if modules.contracts.retryStuckJoins then
         job('contracts.retryStuckJoins', modules.contracts.retryStuckJoins)
+    end
+    -- A contract a throw left undecided as it was placed: its escrow and
+    -- fee back once the store answers, if it was not stored after all.
+    if modules.contracts.retryStuckCreates then
+        job('contracts.retryStuckCreates', modules.contracts.retryStuckCreates)
     end
     job('expireContracts', ExpireContracts)
     -- When this process was last known to be running, so the next boot can

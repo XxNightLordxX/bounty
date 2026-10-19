@@ -311,6 +311,23 @@ function Memory.readEscrowLine(id)
     return db.escrow[id]
 end
 
+--- Escrow not yet settled whose contract does not exist.
+---
+--- A new contract's escrow is written before its row, so a crash, or a
+--- write that failed, between the two leaves lines no contract owns. Read
+--- once at boot (Contracts.recoverNeverPlaced); everything else reaches
+--- escrow through its contract and never sees these.
+function Memory.orphanEscrow()
+    local out = {}
+    for _, line in pairs(db.escrow) do
+        if line.state ~= CH.ESCROW_STATE.SETTLED and not db.contracts[line.contract_id] then
+            out[#out + 1] = line
+        end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 --- The compare-and-set that makes double release impossible (§14.3).
 function Memory.claimEscrowLine(id, expected, next_)
     local line = db.escrow[id]
