@@ -260,6 +260,10 @@ Config.Cooldowns = {
     --- Submitting one. Separate from asking for a token, because both used
     --- to bill `photo` and one verification therefore cost two attempts —
     --- with the second charged after the photograph had been taken.
+    --- A refusal is given back, as everywhere, except one that came after
+    --- the server read the picture ('server' storage): that keeps its
+    --- charge, so this is also how often a hitman can have the server
+    --- decode a picture.
     photoSubmit = { per = 15, burst = 5 },
     --- Opening a kill photo from the Ledger. Each photo opens once, so this
     --- only has to stop somebody trying handles.
@@ -364,7 +368,9 @@ Config.Completion = {
     --- 4000000), and the server refuses anything bigger. Every photo is
     --- sent to the server and, when opened, back out to the client's phone,
     --- so keep these modest: the defaults give a clear photo of a few
-    --- hundred kilobytes.
+    --- hundred kilobytes. The server also decodes each photo it keeps, in
+    --- Lua on its main thread: about 60ms at the default size, half a
+    --- second at the largest, once per kill.
     PhotoMaxSide = 1280,
     PhotoMaxBytes = 600000,
 

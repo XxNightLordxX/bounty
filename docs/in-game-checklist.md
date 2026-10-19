@@ -112,11 +112,16 @@ uploads, and with neither. Restart the resource between them.
       (Fivemanage or the like): `/ch-diag` shows `photo links: none (...)`.
       Save to Photos uploads it, the phone's Photos has it, and its file is
       gone from `data/photos/` at once
-- [ ] **With neither** (no address, and lb-phone's upload not working): the
-      dialog's button reads **Save**, with "Your phone can't take it, so it is
-      kept for you in this app". Save keeps it: the row reads "Kept for you
-      in this app" and still has **View photo**, and the file is in
-      `data/photos/kept/`
+- [ ] **With neither** (no address, and lb-phone's upload not working, e.g.
+      no `Config.UploadMethod` it can reach): the dialog's button still reads
+      **Save to Photos**, since the page cannot tell an upload will fail
+      before trying it. Tap it: the save fails, the dialog says the phone could
+      not save it and offers **Keep it in the app instead**. That keeps it:
+      the row reads "Kept for you in this app" and still has **View photo**,
+      and the file is in `data/photos/kept/`. (A button reading **Save**, with
+      "Your phone can't take it, so it is kept for you in this app", appears
+      only on a phone build whose app page has no `components.uploadMedia` /
+      `components.saveToGallery` at all.)
 - [ ] A kept photo opens again as often as you like, with **Delete** and
       **Close**; Close keeps it, Delete removes it and its file
 - [ ] When a save to Photos fails (take the host off lb-phone's list and

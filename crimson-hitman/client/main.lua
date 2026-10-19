@@ -475,11 +475,17 @@ end)
 -- NUI callbacks — the UI's only route to the server
 --------------------------------------------------------------------------
 
+--- Not requestPhotoToken, and not submitPhoto. The token is what lets a
+--- picture claim a payout, and this file asks for it itself, from inside
+--- takeVerificationPhoto, and keeps it (heldTokens). On this list the page,
+--- or any frame that addresses this resource, was answered with a live
+--- token, and asking for one put a new one in place of the token held for
+--- an open viewfinder.
 local UI_EVENTS = {
     'list', 'mine', 'ledger', 'searchTargets', 'browseTargets',
     'rewardOptions', 'mugshotImage',
     'create', 'accept', 'abandon', 'cancel', 'revise',
-    'requestPhotoToken', 'armKidnap', 'kidnapProgress',
+    'armKidnap', 'kidnapProgress',
     'bailout', 'informant',
     'addEscrow', 'rewardBreakdown', 'withdrawReward',
     'improve', 'propose', 'respondAmendment', 'amendments',
@@ -537,7 +543,14 @@ local function awaitPhoto(handle, rawCb, said)
         photoWaiting[handle] = nil
         -- Its own code: the one look was spent on a photo that never got
         -- here, and the page says so rather than "no answer, try again".
-        cb({ ok = false, event = 'openPhoto', err = 'photo_no_answer' })
+        --
+        -- With whether the server said it is kept in the app. Opening one
+        -- of those spends nothing and it opens again, and without this the
+        -- page could not tell the two apart: it reported a kept photo as
+        -- deleted, and the server deleted it, file and all, because one
+        -- delivery was slow.
+        cb({ ok = false, event = 'openPhoto', err = 'photo_no_answer',
+             data = { handle = handle, kept = said.kept == true or nil } })
     end)
 end
 

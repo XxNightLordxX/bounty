@@ -213,9 +213,17 @@ local SIGNATURES = {
 --- and ready to keep: { kind = 'file', data = bytes, mime }.
 ---
 --- A data URI, as the page makes it, of one of CH.PHOTO_MIME's three types
---- and no bigger than Config.Completion.PhotoMaxBytes once decoded. The size
---- is judged from the text before anything is decoded, so an oversized
---- upload costs a length check and not a decode.
+--- and no bigger than Config.Completion.PhotoMaxBytes once decoded.
+---
+--- Every way it can be refused is judged before the decode, which is the
+--- one costly step: base64 in pure Lua, about 60ms for a picture of the
+--- default size and half a second for the largest an owner may allow, on
+--- the server's main thread. The checks ran on the decoded bytes, so a
+--- picture of the right size and the wrong kind cost a whole decode to
+--- refuse, as many times as it was sent. Now the size comes from the
+--- length of the text, the kind from its first sixteen characters, and
+--- whether the rest is base64 at all from one native pattern scan; only a
+--- picture that will be kept is decoded.
 ---@param raw any
 ---@return table|nil capture
 ---@return string|nil err
@@ -238,16 +246,39 @@ function Photo.readImage(raw)
     if encoded > math.ceil(max / 3) * 4 then
         return nil, CH.ERR.PHOTO_TOO_LARGE, 'photo_too_large', { bytes = encoded }
     end
-
-    local data = Util.fromBase64(raw:sub(comma + 1))
-    if not data or #data == 0 then
+    if encoded == 0 or encoded % 4 ~= 0 then
         return nil, CH.ERR.PHOTO_BAD_IMAGE, 'photo_bad_format', { mime = mime }
     end
-    if #data > max then
-        return nil, CH.ERR.PHOTO_TOO_LARGE, 'photo_too_large', { bytes = #data }
+
+    -- The exact size it decodes to: three bytes for every four characters,
+    -- less one for each '=' that pads the end.
+    local pad = raw:sub(-2) == '==' and 2 or raw:sub(-1) == '=' and 1 or 0
+    local bytes = encoded // 4 * 3 - pad
+    if bytes > max then
+        return nil, CH.ERR.PHOTO_TOO_LARGE, 'photo_too_large', { bytes = bytes }
     end
-    if not SIGNATURES[mime](data) then
+
+    -- What kind of picture it is, from the first twelve bytes alone: the
+    -- longest signature (webp's) ends at the twelfth.
+    local first = Util.fromBase64(raw:sub(comma + 1, comma + math.min(encoded, 16)))
+    if not first or not SIGNATURES[mime](first) then
         return nil, CH.ERR.PHOTO_BAD_IMAGE, 'photo_magic_mismatch', { mime = mime }
+    end
+
+    -- Base64 to the end, '=' only as the last one or two. Anchored, so the
+    -- scan runs once along the text and never backs up: a few milliseconds
+    -- where the decode would have spent its whole length finding the one
+    -- bad character at the end.
+    local _, last = raw:find('^[A-Za-z0-9+/]*', comma + 1)
+    if #raw - (last or comma) ~= pad then
+        return nil, CH.ERR.PHOTO_BAD_IMAGE, 'photo_bad_format', { mime = mime }
+    end
+
+    -- The decoder still has the last word on what it can read, and on the
+    -- size worked out above.
+    local data = Util.fromBase64(raw:sub(comma + 1))
+    if not data or #data ~= bytes then
+        return nil, CH.ERR.PHOTO_BAD_IMAGE, 'photo_bad_format', { mime = mime }
     end
     return { kind = 'file', data = data, mime = mime }
 end
@@ -345,13 +376,15 @@ end
 
 --- Verify a submitted photo and, if everything holds, claim a payout slot.
 ---
---- Four factors are checked together, and all of them are server-side facts:
+--- Four factors are checked together, and all of them are server-side facts.
+--- In this order, the photo last, because reading a picture is the one that
+--- costs the server anything:
 ---   * the token exists, is unused, unexpired, and was issued to this hitman
+---   * the hitman is standing at the death scene
+---   * the target is still dead — a revive invalidates the claim
 ---   * the photo is one this server takes: on 'host' storage a link from
 ---     the host lb-phone uploads to, on 'server' a real picture of a size
 ---     it keeps
----   * the hitman is standing at the death scene
----   * the target is still dead — a revive invalidates the claim
 ---
 --- Only the form the configured storage takes is accepted. A link sent to a
 --- server that keeps its photos itself is refused, not stored: the owner
@@ -364,6 +397,7 @@ end
 ---@return boolean ok
 ---@return string|nil err
 ---@return table|nil result
+---@return boolean|nil read on a refusal, true where the picture was read
 function Photo.submit(actor, rawToken, rawUrl, rawImage)
     local token = Util.toId(rawToken)
     if not token then
@@ -397,23 +431,13 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
         return false, CH.ERR.PROOF_EXPIRED
     end
 
-    local capture
-    if Photo.storage() == 'host' then
-        if type(rawUrl) ~= 'string' or #rawUrl > Util.MAX_URL_LENGTH or not Photo.hostAllowed(rawUrl) then
-            Audit.rejected('photo_host_not_allowed', actor.cid, record.contractId,
-                { host = Util.urlHost(rawUrl) })
-            return false, CH.ERR.PHOTO_BAD_HOST
-        end
-        capture = { kind = 'url', url = rawUrl }
-    else
-        local image, imageErr, why, detail = Photo.readImage(rawImage)
-        if not image then
-            Audit.rejected(why, actor.cid, record.contractId, detail)
-            return false, imageErr
-        end
-        capture = image
-    end
-
+    -- The server's own facts first, and the photo only once they hold. On
+    -- 'server' storage reading the photo is a decode in pure Lua, and it
+    -- used to come first: a picture sent from nowhere near the body, or for
+    -- a kill already undone, was decoded in full and only then refused, as
+    -- often as it was sent. Now only a hitman standing at a kill that still
+    -- stands gets that far.
+    --
     -- The hitman must be at the scene. Position is read server-side; a
     -- client claiming to be somewhere is not consulted.
     local hitmanCoords = GetEntityCoords(GetPlayerPed(actor.source))
@@ -484,8 +508,33 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
     -- But one claim on it at a time. The claim awaits on mysql, and the same
     -- token sent again in that gap passed every check above and claimed
     -- too: with no slot cooldown, one kill paid one collection per send.
+    -- Asked before the photo is read, so a second send in that gap is not
+    -- a second decode; nothing between here and the claim yields.
     if record.used then return false, CH.ERR.TOKEN_INVALID end
     if record.claiming then return false, CH.ERR.BUSY end
+
+    -- The photo itself. On 'server' storage a refusal from here on read the
+    -- picture, and says so fourth: the allowance it was sent under is kept,
+    -- not given back (App's submitPhoto). Given back, one token bought as
+    -- many decodes as the flood guard let through. A link costs a string
+    -- match, and its refusal is given back like any other.
+    local capture
+    if Photo.storage() == 'host' then
+        if type(rawUrl) ~= 'string' or #rawUrl > Util.MAX_URL_LENGTH or not Photo.hostAllowed(rawUrl) then
+            Audit.rejected('photo_host_not_allowed', actor.cid, record.contractId,
+                { host = Util.urlHost(rawUrl) })
+            return false, CH.ERR.PHOTO_BAD_HOST
+        end
+        capture = { kind = 'url', url = rawUrl }
+    else
+        local image, imageErr, why, detail = Photo.readImage(rawImage)
+        if not image then
+            Audit.rejected(why, actor.cid, record.contractId, detail)
+            return false, imageErr, nil, true
+        end
+        capture = image
+    end
+
     record.claiming = true
     local ran, ok, err, result = pcall(Contracts.claimSlot,
         record.contractId, actor.cid, CH.FULFILMENT.ELIMINATION,
@@ -495,7 +544,7 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
 
     if not ok then
         Audit.rejected('photo_claim_failed', actor.cid, record.contractId, { reason = err })
-        return false, err
+        return false, err, nil, capture.kind == 'file'
     end
 
     record.used = true

@@ -683,6 +683,40 @@ describe('the viewfinder, on a server that keeps its photos itself', function()
             'the token went to the page, in the answer or in the mirrored reply')
     end)
 
+    it('gives the page no way to ask for the token, or to send one', function()
+        -- Any frame the phone draws can address this resource's NUI
+        -- callbacks. One that forwarded requestPhotoToken answered it with
+        -- a live token, and replaced the one held for an open viewfinder.
+        Env.reset()
+        Client.boot()
+        for _, name in ipairs({ 'requestPhotoToken', 'submitPhoto' }) do
+            falsy(Client.nui['crimson:' .. name], 'crimson:' .. name .. ' is open to the page')
+        end
+
+        -- Every callback the page does have, asked with a contract id while
+        -- the server hands out a token: none answers with it.
+        local leaked = {}
+        local names = {}
+        for name in pairs(Client.nui) do names[#names + 1] = name end
+        table.sort(names)
+        for _, name in ipairs(names) do
+            local before = #Client.toServer
+            Client.nuiCall(name, { id = 'ct00000001', handle = 'ph00000000aa' })
+            for i = before + 1, #Client.toServer do
+                local sent = Client.toServer[i]
+                if sent.name == 'crimson-hitman:requestPhotoToken' then
+                    Client.fire('crimson-hitman:result', {
+                        rid = sent.args[1].__rid, event = 'requestPhotoToken', ok = true,
+                        data = { token = 'tk-secret-01', storage = 'server',
+                                 maxSide = 1280, maxBytes = 600000 },
+                    })
+                end
+            end
+            if toPage():find('tk-secret-01', 1, true) then leaked[#leaked + 1] = name end
+        end
+        eq(#leaked, 0, 'the token reached the page through ' .. table.concat(leaked, ', '))
+    end)
+
     it('sends the picture on as a latent event with the token it holds', function()
         Env.reset()
         Client.boot()
@@ -897,8 +931,29 @@ describe('a kill photo kept on the server, on its way to the client', function()
         truthy(Client.answered, 'the page was left waiting for good')
         falsy(Client.answer.ok)
         eq(Client.answer.err, 'photo_no_answer')
+        falsy(Client.answer.data and Client.answer.data.kept,
+            'a photo waiting for its one look is not one kept in the app')
         Client.fire('crimson-hitman:photoImage', { handle = 'ph00000000aa', src = SRC })
         eq(Client.answerCount, 1, 'and is not answered a second time when it turns up late')
+    end)
+
+    it('says when a photo that never arrived is one kept in the app', function()
+        -- Opening a kept photo spends nothing, and it opens again. Told only
+        -- "no answer", the page reported it deleted and the server deleted
+        -- it, file and all.
+        Env.reset()
+        Client.boot()
+        local asked = openAsked('ph00000000bb')
+        Client.fire('crimson-hitman:result', {
+            rid = asked.args[1].__rid, event = 'openPhoto', ok = true,
+            data = { handle = 'ph00000000bb', latent = true, kept = true },
+        })
+        Client.runTimeouts()
+        truthy(Client.answered)
+        falsy(Client.answer.ok)
+        eq(Client.answer.err, 'photo_no_answer')
+        eq(Client.answer.data.kept, true)
+        eq(Client.answer.data.handle, 'ph00000000bb')
     end)
 end)
 

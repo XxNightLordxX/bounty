@@ -247,6 +247,9 @@ describe('a kill photo sent to be kept on this server', function()
             'data:' .. ('image/jpeg'):rep(20) .. ';base64,/9j/',
             'data:image/jpeg;base64,' .. ('A'):rep(2000000),
         }) do
+            -- A refused picture keeps its charge; each of these is to reach
+            -- the checks, not the rate limit.
+            s.ratelimit.resetAll()
             local reply = call('submitPhoto', 3, { token = token, image = image })
             truthy(reply, 'answered')
             falsy(reply.ok, 'accepted ' .. tostring(image):sub(1, 40))
@@ -255,6 +258,23 @@ describe('a kill photo sent to be kept on this server', function()
         end
         eq(Env.players[3].PlayerData.money.cash, cash)
         eq(#photoFiles(), 0)
+    end)
+
+    it('refuses text that is not base64 to the end, and padding anywhere but the end', function()
+        local good = Util.toBase64(JPEG)
+        for label, body in pairs({
+            ['a bad last character'] = good:sub(1, -2) .. '!',
+            ['a NUL near the end'] = good:sub(1, -5) .. '\0AAA',
+            ['padding in the middle'] = good:sub(1, 16) .. '=AAA' .. good:sub(21),
+            ['three pads'] = good:sub(1, -4) .. '===',
+            ['a space'] = good:sub(1, 20) .. ' ' .. good:sub(22),
+        }) do
+            local s, f, c = killed()
+            local token = s.photo.issue(f.hitman, c.id)
+            local ok, err = s.photo.submit(f.hitman, token, nil, 'data:image/jpeg;base64,' .. body)
+            falsy(ok, label)
+            eq(err, CH.ERR.PHOTO_BAD_IMAGE, label)
+        end
     end)
 
     it('writes nothing when the ledger keeps no photos', function()
@@ -280,6 +300,148 @@ describe('a kill photo sent to be kept on this server', function()
         eq(#s.storage.photosOf('CREATOR1'), 0, 'no record of a photo that is not there')
         local said = table.concat(Env.console, ' | ')
         truthy(said:find('data/photos', 1, true), 'and the owner is told where to look: ' .. said)
+    end)
+end)
+
+describe('what a refused picture costs the server', function()
+    --- Decoding a picture is base64 in pure Lua, on the server's main thread:
+    --- about 60ms for one of the default size. It used to come before every
+    --- other check, and a refusal gave the hitman's allowance back, so one
+    --- token was worth a full decode for every send the flood guard let
+    --- through, from anywhere on the map. A refusal is now judged before the
+    --- decode, the server's own facts come first, and a refusal of the
+    --- picture keeps its charge.
+
+    --- The largest picture the server keeps, as the page would send it.
+    local function largest(head)
+        local max = Config.Completion.PhotoMaxBytes
+        return uri('image/jpeg', head .. ('\0'):rep(max - #head))
+    end
+
+    --- Count the decodes of anything longer than a picture's first sixteen
+    --- characters, while `fn` runs.
+    local function decodesDuring(fn)
+        local real = Util.fromBase64
+        local decoded = 0
+        Util.fromBase64 = function(text, ...)
+            if type(text) == 'string' and #text > 16 then decoded = decoded + 1 end
+            return real(text, ...)
+        end
+        local ok, err = pcall(fn)
+        Util.fromBase64 = real
+        if not ok then error(err, 0) end
+        return decoded
+    end
+
+    it('decodes nothing for a hitman away from the body, and gives the try back', function()
+        local s, f, c = killed()
+        local token = s.photo.issue(f.hitman, c.id)
+        local image = largest(JPEG)
+        Env.players[3]._coords = { x = 900.0, y = 100.0, z = 30.0 }
+
+        local errs = {}
+        local decoded = decodesDuring(function()
+            for i = 1, Config.Cooldowns.photoSubmit.burst + 3 do
+                errs[i] = call('submitPhoto', 3, { token = token, image = image }).err
+            end
+        end)
+        eq(decoded, 0, 'a picture sent from 800m away was decoded to be refused')
+        for i, err in ipairs(errs) do
+            eq(err, CH.ERR.PHOTO_TOO_FAR, 'send ' .. i .. ': a hitman told to move closer can try again')
+        end
+
+        -- Back at the body, the same token takes it.
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        local paid = call('submitPhoto', 3, { token = token, image = image })
+        truthy(paid.ok, tostring(paid.err))
+    end)
+
+    it('reads what kind of picture it is before decoding the rest', function()
+        local s, f, c = killed()
+        local token = s.photo.issue(f.hitman, c.id)
+        local max = Config.Completion.PhotoMaxBytes
+        local ok, err
+        local decoded = decodesDuring(function()
+            -- Valid base64 of the largest size, and not a jpeg at all.
+            ok, err = s.photo.submit(f.hitman, token, nil,
+                'data:image/jpeg;base64,' .. ('x'):rep(max // 3 * 4))
+        end)
+        falsy(ok)
+        eq(err, CH.ERR.PHOTO_BAD_IMAGE)
+        eq(decoded, 0, 'the wrong kind of picture was decoded in full to be refused')
+
+        decoded = decodesDuring(function()
+            local text = Util.toBase64(JPEG .. ('\0'):rep(max - #JPEG))
+            ok, err = s.photo.submit(f.hitman, token, nil,
+                'data:image/jpeg;base64,' .. text:sub(1, -2) .. '!')
+        end)
+        falsy(ok)
+        eq(err, CH.ERR.PHOTO_BAD_IMAGE)
+        eq(decoded, 0, 'a bad character at the very end cost a whole decode to find')
+    end)
+
+    it('keeps the charge of a refused picture: the sixth on one token is told to slow down', function()
+        local s, f, c = killed()
+        local token = s.photo.issue(f.hitman, c.id)
+        local burst = Config.Cooldowns.photoSubmit.burst
+        local image = 'data:image/jpeg;base64,' .. ('x'):rep(Config.Completion.PhotoMaxBytes // 3 * 4)
+
+        local errs = {}
+        for i = 1, burst + 1 do
+            errs[i] = call('submitPhoto', 3, { token = token, image = image }).err
+        end
+        for i = 1, burst do eq(errs[i], CH.ERR.PHOTO_BAD_IMAGE, 'send ' .. i) end
+        eq(errs[burst + 1], CH.ERR.RATE_LIMITED,
+            'every refused picture was given its allowance back')
+        eq(#photoFiles(), 0)
+    end)
+
+    it('keeps the charge of a picture decoded and then refused by the claim', function()
+        local s, f, c = killed()
+        local token = s.photo.issue(f.hitman, c.id)
+        local burst = Config.Cooldowns.photoSubmit.burst
+        local image = largest(JPEG)
+        local realClaim = s.contracts.claimSlot
+        s.contracts.claimSlot = function() return false, CH.ERR.BUSY end
+
+        local errs = {}
+        local decoded = decodesDuring(function()
+            for i = 1, burst + 2 do
+                errs[i] = call('submitPhoto', 3, { token = token, image = image }).err
+            end
+        end)
+        s.contracts.claimSlot = realClaim
+        eq(decoded, burst, 'one decode for each send the allowance paid for, and no more')
+        eq(errs[burst + 1], CH.ERR.RATE_LIMITED)
+        eq(errs[burst + 2], CH.ERR.RATE_LIMITED)
+
+        -- The token was never spent: once the claim can go through, the
+        -- kill is still the hitman's.
+        s.ratelimit.resetAll()
+        local paid = call('submitPhoto', 3, { token = token, image = image })
+        truthy(paid.ok, tostring(paid.err))
+    end)
+
+    it('answers a second send during a claim without decoding it', function()
+        local s, f, c = killed()
+        local token = s.photo.issue(f.hitman, c.id)
+        local image = largest(JPEG)
+        local realClaim = s.contracts.claimSlot
+        local inner
+        local decoded
+        s.contracts.claimSlot = function(...)
+            -- The claim awaits on mysql; the same token sent again lands here.
+            decoded = decodesDuring(function()
+                inner = { s.photo.submit(f.hitman, token, nil, image) }
+            end)
+            return realClaim(...)
+        end
+        local ok = s.photo.submit(f.hitman, token, nil, image)
+        s.contracts.claimSlot = realClaim
+        truthy(ok, 'the first send is paid')
+        eq(inner[2], CH.ERR.BUSY)
+        eq(decoded, 0, 'the second send was decoded only to be told the first is being claimed')
+        eq(#photoFiles(), 1)
     end)
 end)
 

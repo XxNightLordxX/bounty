@@ -497,6 +497,10 @@
     // was spent all the same, so it is gone.
     photo_no_answer: 'The photo did not reach your phone, and it could be '
       + 'opened only once. It has been deleted.',
+    // The same for a photo kept in this app, which spent nothing by being
+    // opened: it is still kept, and opens again (openProof).
+    photo_kept_no_answer: 'The photo did not reach your phone. It is still kept '
+      + 'for you in this app: tap View photo to try again.',
     /* The viewfinder's photo, which the page makes itself: the server could
        not read it, it would not shrink to the size the server keeps, or
        this phone could not make one at all. A new Verify kill is a new
@@ -835,20 +839,44 @@
     });
   }
 
+  // What this page last heard of a photo: its Ledger row's state, or its
+  // entry in the list of photos kept in the app. Null for one it never saw.
+  function proofStateOf(handle) {
+    var ledger = state.ledger || {};
+    var found = null;
+    asList(ledger.entries).forEach(function (row) {
+      if (row.photo && row.photo.handle === handle) { found = row.photo.state; }
+    });
+    asList(ledger.kept).forEach(function (photo) {
+      if (photo && photo.handle === handle) { found = photo.state; }
+    });
+    return found;
+  }
+
   function openProof(handle) {
+    // Read before asking: by the time the answer comes, a refresh may have
+    // redrawn the row.
+    var wasKept = proofStateOf(handle) === 'kept';
     return post('openPhoto', { handle: handle }).then(function (r) {
       // A link to the image host, or, where the server keeps its photos,
       // the photo itself as a data URI.
       var src = r.ok && r.data
         && (typeof r.data.src === 'string' ? r.data.src : r.data.url);
       if (typeof src !== 'string') {
-        fail(r);
+        // Opened on the server and never delivered. A photo kept in the
+        // app spent nothing by being opened, so it is still kept and opens
+        // again: by what the client said the server answered, or by what
+        // this page knew of it, either one. Reported as deleted, the server
+        // deleted it, file and all, because one delivery was slow.
+        var keptStill = r.err === 'photo_no_answer'
+          && (wasKept || (r.data && r.data.kept === true));
+        fail(keptStill ? { err: 'photo_kept_no_answer' } : r);
         // Whatever it was, it is not waiting to be opened any more.
         if (r.err === 'photo_gone') { markProof(handle, 'deleted'); redraw(); }
-        // Opened on the server and never delivered: the one look was spent
-        // on it all the same. The server is told it is deleted now, rather
-        // than being left to delete it when the time to decide runs out.
-        if (r.err === 'photo_no_answer') {
+        // A photo that was waiting for its one look spent it all the same.
+        // The server is told it is deleted now, rather than being left to
+        // delete it when the time to decide runs out.
+        if (r.err === 'photo_no_answer' && !keptStill) {
           markProof(handle, 'deleted');
           post('photoDecision', { handle: handle, choice: 'delete' });
           redraw();

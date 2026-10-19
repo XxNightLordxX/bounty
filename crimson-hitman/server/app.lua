@@ -242,7 +242,9 @@ local function handler(name, action, fn)
         -- A refusal may say more than its code: what the player was short of
         -- and how much, or the most the server allows. Returned third, as
         -- `false, err, data`, and only by the handlers that build it.
-        local ok, result, resultErr, refusalData = pcall(fn, actor, payload)
+        -- Fourth, `true` where the refusal did the work all the same and
+        -- keeps its charge (below).
+        local ok, result, resultErr, refusalData, keepCharge = pcall(fn, actor, payload)
         if not ok then
             deps.audit.rejected('error_' .. name, actor.cid, nil, { error = tostring(result) })
 
@@ -267,7 +269,15 @@ local function handler(name, action, fn)
         -- The allowance is for work done. A request the handler refused did
         -- none, and charging for it meant a player fixing a typo was told
         -- to slow down.
-        if not succeeded and action then deps.ratelimit.refund(actor, action) end
+        --
+        -- Unless it did the work and was refused after: a kill photo whose
+        -- picture was read (submitPhoto). Given back, the one charge that
+        -- bounds how often the server decodes a picture never landed, and a
+        -- single token was worth a decode for every send the flood guard let
+        -- through.
+        if not succeeded and action and keepCharge ~= true then
+            deps.ratelimit.refund(actor, action)
+        end
 
         return App.reply(src, name, succeeded, resultErr,
             succeeded and result or refusalData, rid)
@@ -740,9 +750,16 @@ function App.register()
     -- client sends the picture as a latent event, which arrives here like
     -- any other. Never from the page: this is not one of the page's events,
     -- and the token it needs stays in the client's Lua.
+    --
+    -- A refusal about where the hitman is or whether the kill still stands
+    -- is given back like any other, since they can move and try again. One
+    -- that read the picture keeps its charge (Photo.submit says which): a
+    -- page makes a picture the server can read, so one it refused is not
+    -- worth trying again at once, and reading it is the work this limit is
+    -- for.
     handler('submitPhoto', 'photoSubmit', function(actor, payload)
-        local ok, err, result = deps.photo.submit(actor, payload.token, payload.url, payload.image)
-        if not ok then return false, err end
+        local ok, err, result, read = deps.photo.submit(actor, payload.token, payload.url, payload.image)
+        if not ok then return false, err, nil, read == true end
         return result
     end)
 

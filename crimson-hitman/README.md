@@ -207,7 +207,11 @@ lb-phone's Photos app keeps a link to each photo, never the picture, so
    lb-phone's own upload (whatever `Config.UploadMethod` the phone uses),
    saves that link, and the server deletes its copy at once.
 3. **Kept in the app.** With neither, the photo is kept for the client in
-   this app, as above.
+   this app, as above. The page cannot tell lb-phone's upload will fail
+   before it tries, so on a phone that has an upload at all the button still
+   reads **Save to Photos**; when the upload fails, the dialog offers **Keep
+   it in the app instead**. **Save** appears only on a phone build that gives
+   the app no upload or gallery save.
 
 `/ch-diag` says which: the address it serves photos from (or why there is
 none), whether lb-phone's `UploadWhitelistedHostnames` / `Domains` take it,

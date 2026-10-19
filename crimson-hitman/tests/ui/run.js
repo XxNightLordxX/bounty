@@ -1009,6 +1009,62 @@ async function main() {
     });
   })();
 
+  /* A photo kept in the app spends nothing by being opened, so one whose
+     delivery ran out is still kept. Reported as deleted, the server deleted
+     it, file and all, because one delivery was slow. The client says it was
+     kept; the page also knows from the row, or from the kept list. */
+  await (async function keptPhotoNeverArrived() {
+    for (const variant of [
+      { name: 'the client says it is kept', ledger: photoLedger('kept'),
+        answer: { ok: false, err: 'photo_no_answer', data: { handle: 'ph00000000aa', kept: true } } },
+      { name: 'the row says it is kept', ledger: photoLedger('kept'),
+        answer: { ok: false, err: 'photo_no_answer' } },
+      { name: 'the kept list says it is kept',
+        ledger: { ok: true, data: {
+          record: { completed: 0, placed: 1, survived: 0, standing: 'Unproven' },
+          entries: [],
+          kept: [{ handle: 'ph00000000aa', state: 'kept', taken_at: Math.floor(Date.now() / 1000) - 60 }]
+        } },
+        answer: { ok: false, err: 'photo_no_answer' } }
+    ]) {
+      let opened = 0;
+      const app = boot({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        mine: MINE,
+        ledger: variant.ledger,
+        openPhoto: function () {
+          opened++;
+          return opened === 1 ? variant.answer
+            : { ok: true, data: { handle: 'ph00000000aa', src: KEPT, kept: true } };
+        },
+        photoDecision: function (body) {
+          return { ok: true, data: { handle: body.handle, state: 'deleted' } };
+        }
+      });
+      await settle(); await settle();
+      tab(app, 'ledger');
+      click(app, 'View photo');
+      await settle(); await settle();
+
+      it('keeps a kept photo whose delivery ran out (' + variant.name + ')', function () {
+        drewCleanly(app, 'a kept photo that never arrived');
+        eq(decisions(app).length, 0, 'the server was told to delete a photo its owner kept');
+        truthy(app.notice().indexOf('still kept') !== -1, app.notice());
+        eq(app.notice().indexOf('deleted'), -1, app.notice());
+        eq(app.view.textContent.indexOf('Photo deleted'), -1, app.view.textContent);
+        truthy(labels(app).indexOf('View photo') !== -1, labels(app).join(','));
+      });
+
+      click(app, 'View photo');
+      await settle(); await settle();
+      it('and opens it on the next try (' + variant.name + ')', function () {
+        eq(opened, 2);
+        eq(images(app).length, 1);
+        eq(labels(app).join(','), 'Delete,Close');
+      });
+    }
+  })();
+
   await (async function lawEnforcementWarning() {
     const leo = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
     leo.targetProtected = true;

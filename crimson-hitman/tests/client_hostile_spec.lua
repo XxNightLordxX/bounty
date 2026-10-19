@@ -446,13 +446,18 @@ describe('replies arriving in a runtime that does not keep order', function()
         local names = {
             'list', 'mine', 'ledger', 'searchTargets', 'browseTargets',
             'rewardOptions', 'create', 'accept', 'abandon', 'cancel', 'revise',
-            'requestPhotoToken', 'armKidnap', 'kidnapProgress', 'bailout',
+            'armKidnap', 'kidnapProgress', 'bailout',
             'informant', 'addEscrow', 'rewardBreakdown', 'withdrawReward',
             'improve', 'propose', 'respondAmendment', 'amendments',
             'threads', 'readThread', 'sendMessage', 'requestCall', 'muteThread',
             'openPhoto', 'photoDecision',
         }
         local seen = {}
+        -- Not the photo token, which the client asks for itself inside
+        -- takeVerificationPhoto and never hands the page; nor submitPhoto.
+        for _, name in ipairs({ 'requestPhotoToken', 'submitPhoto' }) do
+            falsy(Client.nui['crimson:' .. name], 'the page can reach crimson:' .. name)
+        end
         for _, name in ipairs(names) do
             local req = press(name, {})
             eq(req.event, 'crimson-hitman:' .. name)
