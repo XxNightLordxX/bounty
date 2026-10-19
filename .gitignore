@@ -1,9 +1,9 @@
 # Live store, written at runtime by Config.Database.Mode = 'json'.
-# The directories themselves are tracked (see crimson-bounty/data/README.md);
+# The directories themselves are tracked (see crimson-hitman/data/README.md);
 # what the server writes into them is not.
-crimson-bounty/data/store.json
-crimson-bounty/data/contracts/*.json
-crimson-bounty/data/contracts/.writable
+crimson-hitman/data/store.json
+crimson-hitman/data/contracts/*.json
+crimson-hitman/data/contracts/.writable
 
 # Throwaway probes. A one-off spec plus a copy of the runner with its suite
 # list narrowed to that spec is how a question about this code gets asked:
@@ -11,8 +11,8 @@ crimson-bounty/data/contracts/.writable
 # moved into a real suite and registered in tests/run.lua, so what is left
 # under these names is by definition scratch — and three times now it has
 # ended up staged by a `git add -A` and had to be taken back out.
-crimson-bounty/tests/_probe*.lua
-crimson-bounty/tests/zz_*.lua
+crimson-hitman/tests/_probe*.lua
+crimson-hitman/tests/zz_*.lua
 zz_*.lua
 
 # Worktrees created for isolated subagent runs. Never part of the repo.

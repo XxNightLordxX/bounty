@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crimson-Hitman</title>
+<!-- The stylesheet and the script are loaded with the same ?v= this page
+     was itself opened with, which the client sets from the resource version.
+
+     FiveM's CEF caches by URL on its own disk, and this page's URL never
+     used to change — so a player who had opened the app once kept that
+     copy of app.js through resource restarts, server restarts and updates.
+     Every fix shipped to the page did nothing for them, with no way to tell
+     from either end. Propagating the query is what makes updating the
+     resource update what they are actually running. -->
+<script>
+  (function () {
+    var build = (location.search.match(/[?&]v=([^&]+)/) || [])[1] || 'dev';
+    window.CB_BUILD = decodeURIComponent(build);
+
+    var css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = 'app.css?v=' + build;
+    document.head.appendChild(css);
+  })();
+</script>
+</head>
+<body>
+<div id="app">
+  <!-- No app header.
+       
+       There used to be one: a crimson tile, an <h1> reading "Crimson-Hitman"
+       and the line "Contracts, quietly arranged." It cost 67 of 720 pixels,
+       measured, and sat immediately below lb-phone's OWN header, which
+       already shows this app's name and icon and is the thing a player uses
+       to leave. Two headers, one of them redundant, on the smallest screen
+       this will ever run on.
+       
+       Removing it gives the content 67px back — a whole contract card's
+       worth of the eight the board can hold. -->
+  <div id="notice"></div>
+  <main id="view"></main>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab is-active" data-tab="board"  role="tab">Board</button>
+    <button class="tab" data-tab="mine"   role="tab">Mine</button>
+    <button class="tab" data-tab="place"  role="tab">Place</button>
+    <button class="tab" data-tab="onme"   role="tab">On&nbsp;Me</button>
+    <button class="tab" data-tab="ledger" role="tab">Ledger</button>
+  </nav>
+</div>
+<script>
+  (function () {
+    var build = (location.search.match(/[?&]v=([^&]+)/) || [])[1] || 'dev';
+    var js = document.createElement('script');
+    js.src = 'app.js?v=' + build;
+    document.body.appendChild(js);
+  })();
+</script>
+</body>
+</html>

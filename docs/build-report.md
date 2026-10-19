@@ -1,4 +1,4 @@
-# Crimson Bounty System — build report
+# Crimson Hitman System — build report
 
 Where the work got to, what was found along the way, and what still needs
 your hands. Written for you to read cold.
@@ -7,7 +7,7 @@ your hands. Written for you to read cold.
 
 ## What exists
 
-A complete FiveM resource at `crimson-bounty/`, built against your actual
+A complete FiveM resource at `crimson-hitman/`, built against your actual
 stack — `qbx_core`, `ox_inventory`, lb-phone 2.8.0, the 17mov character
 system, `sc-police`, `sc-ambulance`, `sc-dispatch`, `sc-blackmarket` and
 `MugShotBase64` — plus three documents:
@@ -17,7 +17,7 @@ system, `sc-police`, `sc-ambulance`, `sc-dispatch`, `sc-blackmarket` and
 | `docs/bounty-hunter-app-spec.md` | The specification, consolidated from your three drafts and extended as decisions were made |
 | `docs/implementation-plan.md` | The environment facts read from your uploads, and the decisions taken |
 | `docs/in-game-checklist.md` | What to test on a live server, which no automated check can cover |
-| `crimson-bounty/README.md` | Install and configuration |
+| `crimson-hitman/README.md` | Install and configuration |
 
 ## What it does
 
@@ -64,7 +64,7 @@ You said to use my judgement. These are the ones that were mine:
 ## How it was verified
 
 ```
-sh crimson-bounty/tests/all.sh
+sh crimson-hitman/tests/all.sh
 ```
 
 - **301 server tests** — escrow arithmetic, the state machine, every payout

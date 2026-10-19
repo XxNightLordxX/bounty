@@ -1,4 +1,4 @@
-# In-game smoke test — Crimson Bounty System
+# In-game smoke test — Crimson Hitman System
 
 The automated suite exercises the server logic against stubs. These are the
 things only a running server can tell you. Work top to bottom; each section
@@ -11,8 +11,8 @@ A staff account that can adjust money and spawn items makes this much faster.
 
 ## 1. It starts
 
-- [ ] `ensure crimson-bounty` produces `[crimson-bounty] started in mysql mode`
-- [ ] No errors in `txAdmin` console on start or on a `restart crimson-bounty`
+- [ ] `ensure crimson-hitman` produces `[crimson-hitman] started in mysql mode`
+- [ ] No errors in `txAdmin` console on start or on a `restart crimson-hitman`
 - [ ] The `crimson_*` tables exist in the database
 - [ ] Restarting twice in a row is clean (recovery runs, nothing duplicates)
 
@@ -117,7 +117,7 @@ A staff account that can adjust money and spawn items makes this much faster.
 
 ## 12. Performance
 
-- [ ] `resmon` for `crimson-bounty` stays near 0.01ms idle
+- [ ] `resmon` for `crimson-hitman` stays near 0.01ms idle
 - [ ] With 10+ live contracts and the app open, it stays under 0.05ms
 - [ ] A kidnap countdown running does not spike it
 - [ ] No console spam during normal play

@@ -1,0 +1,343 @@
+--- Outbound player notifications (§7.3) and the law enforcement threat
+--- advisory (§7.5).
+---
+--- Every send passes a per-recipient budget so a contract storm cannot be
+--- used to flood phones (§14.40).
+
+local Notify = {}
+
+local Util = require_shared('util')
+
+local Identity
+local budgets = {}
+local advisorySent = {}
+
+--- [cid] = os.time() of the last push, so a burst of state changes on one
+--- contract does not become a burst of refreshes.
+local lastPush = {}
+
+--- [cid] = the reason for a push held back by the floor, waiting to go.
+local trailing = {}
+
+function Notify.init(deps)
+    Identity = deps.identity
+    budgets, advisorySent = {}, {}
+    lastPush, trailing = {}, {}
+end
+
+local function withinBudget(cid)
+    local bucket = budgets[cid]
+    local now = os.time()
+    if not bucket or now - bucket.minuteStart >= 60 then
+        bucket = { minuteStart = now, minute = 0, hourStart = bucket and bucket.hourStart or now, hour = bucket and bucket.hour or 0 }
+        budgets[cid] = bucket
+    end
+    if now - bucket.hourStart >= 3600 then
+        bucket.hourStart, bucket.hour = now, 0
+    end
+    if bucket.minute >= Config.Notifications.MaxPerRecipientPerMinute then return false end
+    if bucket.hour >= Config.Notifications.MaxPerRecipientPerHour then return false end
+    bucket.minute = bucket.minute + 1
+    bucket.hour = bucket.hour + 1
+    return true
+end
+
+--- Send to one player by citizen id. Silently no-ops when they are offline.
+---
+--- lb-phone's SendNotification is a *client* export — there is no server-side
+--- equivalent — so the server hands the notification to that player's client,
+--- which calls the export locally.
+function Notify.toCitizen(cid, title, content, opts)
+    if not cid then return false end
+    if not (opts and opts.bypassBudget) and not withinBudget(cid) then return false end
+
+    local actor = Identity.byCitizenId(cid)
+    if not actor then return false end
+
+    TriggerClientEvent('crimson-hitman:notify', actor.source, {
+        title = title,
+        content = content,
+    })
+    return true
+end
+
+--------------------------------------------------------------------------
+-- App pushes
+--------------------------------------------------------------------------
+--
+-- A phone notification tells a player something happened; it does not move
+-- an app they already have open. The app deliberately refreshes only on an
+-- unsolicited push, because refreshing on every mirrored reply was an
+-- exponential storm — so nothing sending a push meant a creator watching
+-- their own contract never saw it get accepted.
+--
+-- A push carries no contract data, only a reason. The app re-reads through
+-- the normal projections, so a push can never become a channel that leaks
+-- what a projection would have withheld.
+
+
+--- Nudge one player's open app.
+---@param cid string
+---@param reason string what changed, for the app's own logging
+---@return boolean sent
+function Notify.push(cid, reason)
+    if not cid or not Config.Notifications.PushEnabled then return false end
+
+    local now = os.time()
+    local last = lastPush[cid]
+    local floor = Config.Notifications.PushMinIntervalSeconds or 1
+    if last and (now - last) < floor then
+        -- Held back, not dropped. The app refreshes on the push it already
+        -- got, and that refresh can read the contract before this change
+        -- lands — two hunters accepting in the same second left the
+        -- creator's open card showing one operative until something else
+        -- happened to change. One push goes once the floor has passed, so a
+        -- burst still costs one refresh after the first, and the last word
+        -- is always seen.
+        if not trailing[cid] then
+            SetTimeout(math.max(1, floor - (now - last)) * 1000, function()
+                local held = trailing[cid]
+                trailing[cid] = nil
+                -- Due by now: the timer waits out the rest of the floor.
+                if held then Notify.push(cid, held) end
+            end)
+        end
+        -- A message re-reads only the thread on the page, and anything else
+        -- re-reads the thread as well. So a message held behind an
+        -- acceptance must not take its place: the creator's card never
+        -- showed the new operative.
+        if not (reason == 'message' and trailing[cid] and trailing[cid] ~= 'message') then
+            trailing[cid] = reason
+        end
+        return false
+    end
+
+    local actor = Identity.byCitizenId(cid)
+    if not actor then return false end
+
+    lastPush[cid] = now
+    TriggerClientEvent('crimson-hitman:push', actor.source, { reason = reason })
+    return true
+end
+
+--- Nudge every party to a contract. Used on the four transitions that change
+--- what a card should say: accepted, settled, bought out, expired.
+---@param contract table
+---@param hunterCids string[]|nil
+---@param reason string
+function Notify.pushParties(contract, hunterCids, reason)
+    if not contract then return 0 end
+
+    local seen, sent = {}, 0
+    local function nudge(cid)
+        if not cid or seen[cid] then return end
+        seen[cid] = true
+        if Notify.push(cid, reason) then sent = sent + 1 end
+    end
+
+    nudge(contract.creator_cid)
+    nudge(contract.target_cid)
+    for i = 1, #(hunterCids or {}) do nudge(hunterCids[i]) end
+
+    return sent
+end
+
+function Notify.clearPush(cid)
+    lastPush[cid] = nil
+    trailing[cid] = nil
+end
+
+--------------------------------------------------------------------------
+-- Contract lifecycle notifications
+--------------------------------------------------------------------------
+
+function Notify.contractCreated(contract, targetActor)
+    -- The target's paranoid alert. Deliberately vague: it tells them
+    -- something is wrong, not who or how much.
+    -- An officer is told by the posting bulletin instead, unless none goes.
+    if Config.Notifications.ParanoidAlert
+        and (not contract.target_protected or not Notify.advises('posted')) then
+        Notify.toCitizen(contract.target_cid, 'Unsettling',
+            'You feel eyes on you. A price has been put on your head.')
+    end
+
+    if contract.target_protected then
+        Notify.advisory(contract, 'posted', targetActor)
+    end
+end
+
+function Notify.contractAccepted(contract, hunterRecord, activeHunters)
+    local who = hunterRecord.anon and 'an operative' or hunterRecord.hunter_name
+    Notify.toCitizen(contract.creator_cid, 'Contract accepted',
+        ('Your contract on %s has been accepted by %s. %d operative%s now active.')
+            :format(contract.target_name, who, activeHunters, activeHunters == 1 and ' is' or 's are'))
+
+    -- Every acceptance raises an advisory carrying the running count, so law
+    -- enforcement can judge the scale of the threat and not just its
+    -- existence. The per-contract hunter cap bounds the total (§7.5).
+    if contract.target_protected then
+        Notify.advisory(contract, 'accepted', activeHunters)
+    end
+
+    -- The creator's own card now shows one more operative, and the hunter's
+    -- Mine tab has a contract in it that was not there a moment ago. The
+    -- target is deliberately not pushed: they are not told a contract exists
+    -- unless the paranoid alert or an advisory tells them.
+    Notify.push(contract.creator_cid, 'accepted')
+    Notify.push(hunterRecord.hunter_cid, 'accepted')
+end
+
+--- Tell the creator their contract was fulfilled.
+---
+--- The photograph is mentioned only when there is one. This took photoRef and
+--- never read it: the body was a single hardcoded string promising a
+--- verification photo, and the live-delivery route passes nil because a
+--- handover has no photograph to take. So the creator of every delivery was
+--- sent to an archive row with nothing attached — which reads as the archive
+--- having lost the picture rather than as there never having been one.
+---@param contract table
+---@param hunterRecord table|nil
+---@param photoRef string|nil the proof image, where the route produced one
+function Notify.contractCompleted(contract, hunterRecord, photoRef)
+    local hasPhoto = type(photoRef) == 'string' and photoRef ~= ''
+    -- A receipt, so outside the budget (§14.40). Relay messages spend the
+    -- same budget, so five from the hunter in the minute before the kill
+    -- used to mean the creator never heard it had been done.
+    Notify.toCitizen(contract.creator_cid, 'Contract fulfilled',
+        hasPhoto
+            and 'Your contract was fulfilled. The verification photograph is '
+                .. 'in your archive.'
+            or  'Your contract was fulfilled by live delivery. There is no '
+                .. 'photograph — the target was handed over in person.',
+        { bypassBudget = true })
+    local _ = hunterRecord
+end
+
+--------------------------------------------------------------------------
+-- Law enforcement threat advisory (§7.5)
+--------------------------------------------------------------------------
+
+--- The departments the dispatch entry is for: the job names configured to
+--- receive advisories, so the MDT and the phones are told the same people.
+--- It was a list of its own, and a department added to one was missing
+--- from the other.
+local function dispatchJobs()
+    local jobs = {}
+    for name, on in pairs(Config.Advisory.RecipientJobNames or {}) do
+        if on == true and type(name) == 'string' then jobs[#jobs + 1] = name end
+    end
+    table.sort(jobs)
+    if #jobs == 0 then jobs = { 'police' } end
+    return jobs
+end
+
+--- Advise every online law enforcement player, and the officer themselves,
+--- that a contract exists or has gone live.
+---
+--- The creator is never named, even when they are not anonymous: the advisory
+--- says a threat exists and who it is against. Finding out who ordered it is
+--- police work.
+---@param contract table
+---@param stage string 'posted' | 'accepted'
+---@param activeHunters integer|nil count of hunters now on the contract
+--- Whether officers are told at this stage; see Util.advises.
+Notify.advises = Util.advises
+
+function Notify.advisory(contract, stage, activeHunters)
+    if not Notify.advises(stage) then return end
+
+    -- One advisory per contract per stage; acceptances are keyed by count so
+    -- each new operative raises exactly one bulletin.
+    local key = contract.id .. ':' .. stage .. ':' .. tostring(activeHunters or 0)
+    if advisorySent[key] then return end
+    advisorySent[key] = true
+
+    local rank = contract.target_job and (contract.target_job:upper() .. ' ') or ''
+    local title, content
+
+    if stage == 'posted' then
+        title = 'THREAT ADVISORY'
+        content = ('A contract has been placed on %s%s.'):format(rank, contract.target_name)
+    else
+        title = 'THREAT ADVISORY — ACTIVE'
+        local n = activeHunters or 1
+        content = ('The contract on %s%s has been accepted. %d operative%s active.')
+            :format(rank, contract.target_name, n, n == 1 and ' is' or 's are')
+    end
+
+    local recipients = 0
+    local online = Identity.online()
+    for i = 1, #online do
+        local actor = online[i]
+        -- The targeted officer is skipped here: they are law enforcement and
+        -- would otherwise match the recipient filter, receiving both this
+        -- broadcast and their own direct alert below.
+        if actor.cid ~= contract.target_cid and Identity.isAdvisoryRecipient(actor.job) then
+            Notify.toCitizen(actor.cid, title, content, { bypassBudget = true })
+            recipients = recipients + 1
+        end
+    end
+
+    -- The targeted officer cannot open the app to check for themselves, so
+    -- they are told directly whatever the paranoid-alert setting says.
+    if Config.Advisory.AlwaysAlertTarget then
+        Notify.toCitizen(contract.target_cid, title,
+            stage == 'posted'
+                and 'A contract has been placed on you. Your department has been advised.'
+                or  ('The contract on you has been accepted. %d operative%s active.')
+                        :format(activeHunters or 1, (activeHunters or 1) == 1 and ' is' or 's are'),
+            { bypassBudget = true })
+    end
+
+    -- The same advisory goes to dispatch so it lands in the MDT alongside
+    -- other calls, not just on phones.
+    if Config.Advisory.UseDispatch and GetResourceState('sc-dispatch') == 'started' then
+        pcall(function()
+            exports['sc-dispatch']:AddNotification({
+                title = title,
+                message = content,
+                priority = Config.Advisory.DispatchPriority,
+                caller = 'Criminal Intelligence',
+                job_table = dispatchJobs(),
+                unique_id = 'cb-' .. contract.id .. '-' .. stage,
+            })
+        end)
+    end
+
+    return recipients
+end
+
+--- Release a player's notification budget when they disconnect, so the
+--- table cannot grow across a long uptime.
+function Notify.clearPlayer(cid)
+    budgets[cid] = nil
+    lastPush[cid] = nil
+    trailing[cid] = nil
+end
+
+function Notify.clearContract(contractId, contract)
+    for key in pairs(advisorySent) do
+        if key:sub(1, #contractId + 1) == contractId .. ':' then advisorySent[key] = nil end
+    end
+
+    -- Take the threat off the MDT. sc-dispatch files an advisory as an
+    -- active call, and nothing closed it: an officer's dispatch list kept a
+    -- live threat against a colleague for a contract long since settled.
+    -- Every stage that could have been filed is cleared, because what was
+    -- sent before a restart is not remembered. In a thread of its own: the
+    -- export waits on the database, and this is the end of a settlement.
+    if contract and contract.target_protected
+        and Config.Advisory.UseDispatch and GetResourceState('sc-dispatch') == 'started' then
+        local jobs = dispatchJobs()
+        for _, stage in ipairs({ 'posted', 'accepted' }) do
+            if Notify.advises(stage) then
+                local uid = 'cb-' .. contractId .. '-' .. stage
+                CreateThread(function()
+                    pcall(function() exports['sc-dispatch']:ClearNotification(uid, jobs) end)
+                end)
+            end
+        end
+    end
+end
+
+return Notify

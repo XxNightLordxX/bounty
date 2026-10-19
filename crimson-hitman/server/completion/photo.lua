@@ -1,0 +1,354 @@
+--- Verification photo (§7.4, §14.20, §14.35).
+---
+--- The photo authenticates a claim that the server already believes: a
+--- pending completion must exist before a token is issued, and the token is
+--- what binds the eventual image to that specific contract, hunter and death
+--- scene. An image URL on its own proves nothing and is never enough.
+
+local Util = require_shared('util')
+
+local Photo = {}
+
+local Storage, Identity, Contracts, Audit, Death, Notify, Ledger
+
+--- [token] = { contractId, hunterCid, victimCid, coords, issuedAt, used }
+local tokens = {}
+--- Hosts a photo may legitimately come from, learned from lb-phone's own
+--- upload configuration at boot plus anything the owner adds.
+local allowedHosts = {}
+
+function Photo.init(deps)
+    Storage, Identity, Contracts, Audit, Death, Notify, Ledger =
+        deps.storage, deps.identity, deps.contracts, deps.audit,
+        deps.death, deps.notify, deps.ledger
+    tokens = {}
+    Photo.loadAllowedHosts()
+end
+
+--- Read the upload host from lb-phone's config so the allowlist matches
+--- wherever the phone actually uploads to on this server.
+---
+--- Re-read on the maintenance tick rather than only at boot: an owner who
+--- changes upload provider would otherwise have to restart this resource
+--- too, and the failure mode is every verification photo being rejected
+--- with nothing saying why. A change is logged, because a silently shifting
+--- allowlist is its own debugging problem.
+---@return table allowedHosts
+function Photo.loadAllowedHosts()
+    local previous = allowedHosts or {}
+    allowedHosts = {}
+
+    for _, host in ipairs(Config.Completion.ExtraPhotoHosts or {}) do
+        allowedHosts[tostring(host):lower()] = true
+    end
+
+    local ok, phoneConfig = pcall(function()
+        return exports['lb-phone']:GetConfig()
+    end)
+    if ok and type(phoneConfig) == 'table' then
+        local upload = phoneConfig.Upload or phoneConfig.upload
+        if type(upload) == 'table' then
+            for _, value in pairs(upload) do
+                if type(value) == 'string' then
+                    local host = Util.urlHost(value)
+                    if host then allowedHosts[host] = true end
+                elseif type(value) == 'table' then
+                    for _, inner in pairs(value) do
+                        local host = type(inner) == 'string' and Util.urlHost(inner) or nil
+                        if host then allowedHosts[host] = true end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Only report a set that actually differs. On the tick this runs
+    -- constantly and an unchanged allowlist is not news.
+    local added, removed = {}, {}
+    for host in pairs(allowedHosts) do
+        if not previous[host] then added[#added + 1] = host end
+    end
+    for host in pairs(previous) do
+        if not allowedHosts[host] then removed[#removed + 1] = host end
+    end
+
+    if #added > 0 or #removed > 0 then
+        table.sort(added)
+        table.sort(removed)
+        -- next(previous) is nil only on the very first load, which is not a
+        -- change worth reporting as one.
+        if next(previous) ~= nil then
+            print(('[crimson-hitman] photo host allowlist changed: %s%s%s'):format(
+                #added > 0 and ('+' .. table.concat(added, ' +')) or '',
+                (#added > 0 and #removed > 0) and ' ' or '',
+                #removed > 0 and ('-' .. table.concat(removed, ' -')) or ''))
+        end
+
+        Photo.hostsChangedAt = os.time()
+    end
+
+    -- Outside the change block. On the first load an empty list is "no
+    -- change" from nothing, so the one warning that says every kill photo
+    -- will be refused was never printed on the server it was written for.
+    -- Once, and again only after hosts have come and gone.
+    if next(allowedHosts) == nil then
+        if not Photo.warnedEmpty then
+            Photo.warnedEmpty = true
+            print('[crimson-hitman] warning: no photo upload host is allowed; ' ..
+                'every verification photo will be rejected. Check lb-phone\'s upload ' ..
+                'config or set Config.Completion.ExtraPhotoHosts')
+        end
+    else
+        Photo.warnedEmpty = false
+    end
+
+    return allowedHosts
+end
+
+--- Every host currently accepted, sorted. For the admin command and tests.
+function Photo.allowedHosts()
+    local out = {}
+    for host in pairs(allowedHosts) do out[#out + 1] = host end
+    table.sort(out)
+    return out
+end
+
+function Photo.hostAllowed(url)
+    local host = Util.urlHost(url)
+    if not host then return false end
+    if allowedHosts[host] then return true end
+    -- A subdomain of an allowed host is allowed; an unrelated host is not.
+    for allowed in pairs(allowedHosts) do
+        if #host > #allowed and host:sub(-(#allowed + 1)) == '.' .. allowed then return true end
+    end
+    return false
+end
+
+--------------------------------------------------------------------------
+-- Tokens
+--------------------------------------------------------------------------
+
+local counter = 0
+
+--- Issue a capture token for a pending completion. One live token per
+--- hunter-contract pair: requesting another invalidates the first, so a
+--- hunter cannot bank tokens for later.
+---@return string|nil token
+---@return string|nil err
+function Photo.issue(actor, contractId)
+    contractId = Util.toId(contractId)
+    if not contractId then return nil, CB.ERR.INVALID_INPUT end
+
+    -- Its own code. This is the ordinary outcome of tapping Verify kill at
+    -- any moment other than standing over a body the server saw this hunter
+    -- put there, and it needs to say so.
+    local record = Death.getPending(contractId, actor.cid)
+    if not record then return nil, CB.ERR.NO_KILL_TO_VERIFY end
+
+    for token, existing in pairs(tokens) do
+        if existing.contractId == contractId and existing.hunterCid == actor.cid then
+            tokens[token] = nil
+        end
+    end
+
+    counter = counter + 1
+    local token = ('tk%s%08d'):format(contractId:gsub('[^%w]', ''), counter)
+
+    tokens[token] = {
+        contractId = contractId,
+        hunterCid  = actor.cid,
+        victimCid  = record.victimCid,
+        coords     = record.coords,
+        diedAt     = record.at,
+        issuedAt   = Util.monotonicMs(),
+        used       = false,
+    }
+    -- The kill this token proves is kept as long as the token is good, and
+    -- the token is good no longer than the kill is kept. A token asked for
+    -- late outlived its kill, and the photograph was refused as a revive
+    -- with the body still on the ground.
+    local lifetimeMs = Config.Completion.PhotoTokenLifetimeSeconds * 1000
+    tokens[token].expiresAt = Death.holdPending(contractId, actor.cid,
+        tokens[token].issuedAt + lifetimeMs) or (tokens[token].issuedAt + lifetimeMs)
+
+    Audit.action('photo_token_issued', actor.cid, contractId, {})
+    return token
+end
+
+--------------------------------------------------------------------------
+-- Submission
+--------------------------------------------------------------------------
+
+--- Verify a submitted photo and, if everything holds, claim a payout slot.
+---
+--- Four factors are checked together, and all of them are server-side facts:
+---   * the token exists, is unused, unexpired, and was issued to this hunter
+---   * the image URL came from the host lb-phone uploads to
+---   * the hunter is standing at the death scene
+---   * the target is still dead — a revive invalidates the claim
+---
+---@param actor table resolved from the event source
+---@param rawToken any
+---@param rawUrl any
+---@return boolean ok
+---@return string|nil err
+---@return table|nil result
+function Photo.submit(actor, rawToken, rawUrl)
+    local token = Util.toId(rawToken)
+    if not token then
+        Audit.rejected('photo_bad_token', actor.cid, nil, {})
+        return false, CB.ERR.TOKEN_INVALID
+    end
+
+    local record = tokens[token]
+    if not record or record.used then
+        Audit.rejected('photo_token_unknown_or_used', actor.cid, nil, {})
+        return false, CB.ERR.TOKEN_INVALID
+    end
+
+    -- The token belongs to whoever it was issued to, and to nobody else.
+    if record.hunterCid ~= actor.cid then
+        Audit.rejected('photo_token_foreign', actor.cid, record.contractId, {})
+        return false, CB.ERR.TOKEN_INVALID
+    end
+
+    if Util.monotonicMs() - record.issuedAt > (Config.Completion.PhotoTokenLifetimeSeconds * 1000)
+        or (record.expiresAt and Util.monotonicMs() > record.expiresAt) then
+        tokens[token] = nil
+        return false, CB.ERR.TOKEN_INVALID
+    end
+
+    if type(rawUrl) ~= 'string' or #rawUrl > Util.MAX_URL_LENGTH or not Photo.hostAllowed(rawUrl) then
+        Audit.rejected('photo_host_not_allowed', actor.cid, record.contractId,
+            { host = Util.urlHost(rawUrl) })
+        return false, CB.ERR.PHOTO_BAD_HOST
+    end
+
+    -- The hunter must be at the scene. Position is read server-side; a
+    -- client claiming to be somewhere is not consulted.
+    local hunterCoords = GetEntityCoords(GetPlayerPed(actor.source))
+    local radius = Config.Completion.PhotoRadius
+    if Util.dist2(hunterCoords, record.coords) > (radius * radius) then
+        Audit.rejected('photo_out_of_range', actor.cid, record.contractId, {})
+        return false, CB.ERR.PHOTO_TOO_FAR
+    end
+
+    -- The kill this token was issued for must still stand: a revive clears
+    -- it (Death.onRevived), and the token outlived it. A target revived and
+    -- then gone offline, or dead again of something else, passed the check
+    -- below, and the hunter was paid for a kill that had been undone.
+    local stillPending = Death.getPending(record.contractId, actor.cid)
+    if not stillPending then
+        Audit.rejected('photo_kill_undone', actor.cid, record.contractId, {})
+        tokens[token] = nil
+        return false, CB.ERR.PHOTO_REVIVED
+    end
+    -- A newer kill of theirs took its place: the target got up and this
+    -- hunter put them down again. That one needs its own photograph, and
+    -- being told they had been brought back read as the kill being lost.
+    if record.diedAt and stillPending.at ~= record.diedAt then
+        Audit.rejected('photo_kill_replaced', actor.cid, record.contractId, {})
+        tokens[token] = nil
+        return false, CB.ERR.TOKEN_INVALID
+    end
+
+    -- Still dead? A target revived between the kill and the photo was not
+    -- eliminated (§7.4) — but a short proof window follows the death itself,
+    -- because players respawn in seconds and the hunter standing over the
+    -- body should not lose a kill they made to the respawn button.
+    local victim = Identity.byCitizenId(record.victimCid)
+    if victim and not Identity.isTrulyDead(victim.source) then
+        local sinceDeath = (Util.monotonicMs() - (record.diedAt or record.issuedAt)) / 1000
+        -- On the ground again, not on their feet: a defibrillator takes
+        -- them from dead to last stand. Not a kill until they are finished,
+        -- and not a revive either, so the kill is kept and the hunter told
+        -- what to do. Refused as revived, the kill was thrown away with the
+        -- target still lying there.
+        local _, down, known = Identity.deathState(victim.source)
+        if sinceDeath > (Config.Completion.ProofWindowSeconds or 0) and known and down then
+            Audit.rejected('photo_target_down', actor.cid, record.contractId, {})
+            return false, CB.ERR.PHOTO_STILL_DOWN
+        end
+        -- Up, but not yet for long enough to be a revive: the moment a
+        -- defibrillator leaves before last stand reads the same way. The
+        -- kill is the revive's to void, once it is one; thrown away here,
+        -- on one reading, it went with the target still on the ground.
+        if sinceDeath > (Config.Completion.ProofWindowSeconds or 0)
+            and Death.wasSeenDead(record.victimCid) then
+            Audit.rejected('photo_target_not_dead', actor.cid, record.contractId, {})
+            return false, CB.ERR.PHOTO_NOT_DEAD
+        end
+        if sinceDeath > (Config.Completion.ProofWindowSeconds or 0) then
+            Audit.rejected('photo_target_revived', actor.cid, record.contractId,
+                { since = math.floor(sinceDeath) })
+            Death.clearPending(record.contractId, actor.cid)
+            tokens[token] = nil
+            return false, CB.ERR.PHOTO_REVIVED
+        end
+    end
+
+    -- The token is spent only once the slot is actually claimed. Burning it
+    -- first meant a transient refusal — a lock held elsewhere, a cooldown —
+    -- destroyed the proof of a kill the server itself had attributed.
+    local ok, err, result = Contracts.claimSlot(
+        record.contractId, actor.cid, CB.FULFILMENT.ELIMINATION,
+        { deathAt = record.diedAt })
+
+    if not ok then
+        Audit.rejected('photo_claim_failed', actor.cid, record.contractId, { reason = err })
+        return false, err
+    end
+
+    record.used = true
+    tokens[token] = nil
+
+    Death.clearPending(record.contractId, actor.cid)
+
+    local contract = Storage.readContract(record.contractId)
+    Ledger.record(contract, actor.cid, rawUrl, CB.FULFILMENT.ELIMINATION, result)
+    Notify.contractCompleted(contract, actor, rawUrl)
+
+    return true, nil, result
+end
+
+--- Drop a hunter's token on one contract: they are no longer on it.
+---
+--- The spec invalidates a token on abandonment (§14 capture token rule), and
+--- nothing did. It did not matter while a hunter who walked away could never
+--- come back; now they can, and a token minted during the first stint would
+--- otherwise still claim a payout during the second.
+function Photo.forget(contractId, hunterCid)
+    for token, record in pairs(tokens) do
+        if record.contractId == contractId and record.hunterCid == hunterCid then
+            tokens[token] = nil
+        end
+    end
+end
+
+--- Drop tokens belonging to a player who disconnected, so the table cannot
+--- grow across a long uptime.
+function Photo.clearPlayer(cid)
+    for token, record in pairs(tokens) do
+        if record.hunterCid == cid then tokens[token] = nil end
+    end
+end
+
+function Photo.sweep()
+    local cutoff = Util.monotonicMs() - (Config.Completion.PhotoTokenLifetimeSeconds * 1000)
+    local removed = 0
+    for token, record in pairs(tokens) do
+        if record.issuedAt < cutoff then
+            tokens[token] = nil
+            removed = removed + 1
+        end
+    end
+    return removed
+end
+
+function Photo.tokenCount()
+    local n = 0
+    for _ in pairs(tokens) do n = n + 1 end
+    return n
+end
+
+return Photo

@@ -1,0 +1,1172 @@
+--- The network surface (§14.1, §14.27).
+---
+--- Every handler in this file is registered through `handler()`, which
+--- resolves the actor from `source`, re-checks the job blacklist and applies
+--- the rate limit before the body runs. No handler body reads an identity
+--- from its payload, and none of them is reachable without passing the gate.
+
+local Util = require_shared('util')
+
+local App = {}
+
+local deps
+
+--- Whether requests are answered yet.
+---
+--- The handlers are registered before boot recovery runs, and on mysql every
+--- step of recovery is a yield that lets a player's request run in the
+--- middle of it. Recovery takes back any acceptance it finds part-way, as
+--- the dead process's — so one a player had just started in this process was
+--- taken back under them, its stake returned while they went on to hold the
+--- contract; and a penalty being lowered had half its work undone. Held off
+--- until recovery has finished (StartCrimsonHitman), and answered as busy
+--- meanwhile. True outside that window, as a stack built without a boot has
+--- nothing to recover.
+App.ready = true
+
+function App.init(d)
+    deps = d
+    App.register()
+end
+
+--------------------------------------------------------------------------
+-- The gate
+--------------------------------------------------------------------------
+
+--- Wrap a handler so it can only run for a resolved, permitted, non-flooding
+--- player. `fn` receives (actor, payload) and never sees `source`.
+---@param name string event suffix
+---@param action string|nil rate-limit bucket
+---@param fn fun(actor: table, payload: table): any
+--- Cheap per-source counter, consulted BEFORE identity resolution.
+---
+--- A caller who cannot pass the gate never consumes a rate-limit token,
+--- because tokens are keyed on a citizen id they never get. Without this,
+--- a blocked player can flood the gate path — each call resolving identity,
+--- writing an audit row and sending a reply — and evict genuine rows from
+--- the audit queue.
+local floodCounters = {}
+
+--- Raw requests one client may make in ten seconds.
+---
+--- Twenty was below what the app asks for by itself. Opening the board is
+--- three requests and then one headshot per contract on it, so a board of
+--- eight is eleven before the player has touched anything — and every
+--- render, every refresh and every push adds more. A guard that trips on
+--- ordinary use is a guard against the app.
+local FLOOD_WINDOW_MS = 10000
+local FLOOD_LIMIT = 90
+
+--- Whether a gate refusal for this source is worth writing down.
+---
+--- The gate refuses blocked jobs and players it cannot resolve, and it
+--- refuses them on every request they send. One row each fills the audit
+--- queue with the same fact repeated, pushing out the rows somebody would
+--- actually want.
+local gateLogged = {}
+
+local function shouldLogGate(src)
+    local now = Util.monotonicMs()
+    local last = gateLogged[src]
+    if last and now - last < FLOOD_WINDOW_MS then return false end
+    gateLogged[src] = now
+    return true
+end
+
+--- Whether a rate-limit refusal for this player and bucket is worth writing
+--- down: once per window, as the gate's are. One row per refused request
+--- let a single client write hundreds of rows a minute, and on the json
+--- store every row is kept for the retention period in a file rewritten in
+--- full on each flush.
+local ratelimitLogged = {}
+
+local function shouldLogRatelimit(cid, name)
+    local key = tostring(cid) .. ':' .. tostring(name)
+    local now = Util.monotonicMs()
+    local last = ratelimitLogged[key]
+    if last and now - last < FLOOD_WINDOW_MS then return false end
+    ratelimitLogged[key] = now
+    return true
+end
+
+local function floodCheck(src)
+    local now = Util.monotonicMs()
+    local entry = floodCounters[src]
+
+    if not entry or now - entry.since > FLOOD_WINDOW_MS then
+        floodCounters[src] = { since = now, count = 1, warned = false }
+        return true, false
+    end
+
+    entry.count = entry.count + 1
+    if entry.count <= FLOOD_LIMIT then return true, false end
+
+    -- Past the threshold. Logged once per window rather than once per call,
+    -- so a flood cannot blind the log it is recorded in.
+    local shouldLog = not entry.warned
+    entry.warned = true
+    return false, shouldLog
+end
+
+function App.sweepFloodCounters()
+    local now = Util.monotonicMs()
+    for src, entry in pairs(floodCounters) do
+        if now - entry.since > 60000 then floodCounters[src] = nil end
+    end
+    for src, at in pairs(gateLogged) do
+        if now - at > 60000 then gateLogged[src] = nil end
+    end
+    for key, at in pairs(ratelimitLogged) do
+        if now - at > 60000 then ratelimitLogged[key] = nil end
+    end
+end
+
+--- Forget every flood counter, for the staff timer refresh.
+---
+--- Separate from the sweep above, which only forgets windows that have
+--- already lapsed. A tester who has just tripped the guard is inside a live
+--- window, which is the one the sweep will not touch.
+---@return integer forgotten
+function App.resetFloodCounters()
+    local forgotten = 0
+    for src in pairs(floodCounters) do
+        floodCounters[src] = nil
+        forgotten = forgotten + 1
+    end
+    for src in pairs(gateLogged) do gateLogged[src] = nil end
+    for key in pairs(ratelimitLogged) do ratelimitLogged[key] = nil end
+    return forgotten
+end
+
+--- The flood gate, exposed for the events registered outside handler().
+--- Those are the highest-frequency events in the resource and skipping the
+--- gate on them defeats the point of having one.
+function App.floodOk(src, name)
+    local allowed, shouldLog = floodCheck(src)
+    if not allowed then
+        if shouldLog then deps.audit.rejected('flood_' .. name, nil, nil, { source = src }) end
+        return false
+    end
+    return true
+end
+
+--- Whether a reward source is switched on.
+---
+--- Read through a helper because a config that predates a source has it
+--- absent rather than false, and indexing the absent one throws — inside a
+--- handler, where it becomes a request that never answers. Absent reads as
+--- off here, and startup fills in the shipped default so it should never
+--- come to this.
+---@param name string
+---@return boolean
+local function sourceEnabled(name)
+    local source = Config.Sources and Config.Sources[name]
+    return (source and source.enabled) == true
+end
+
+--- Every handler body, by name.
+---
+--- So the diagnosis can run the real thing rather than a reconstruction of
+--- it. A report that reads every config value a handler reads, and calls
+--- every export it calls, and still misses the one line where it actually
+--- throws, is a report that says "healthy" about a server whose app is
+--- empty — which is exactly what happened, for days.
+App.handlers = {}
+
+local function handler(name, action, fn)
+    App.handlers[name] = fn
+
+    RegisterNetEvent('crimson-hitman:' .. name, function(payload)
+        local src = source
+
+        if not App.ready then
+            return App.reply(src, name, false, CB.ERR.BUSY, nil,
+                type(payload) == 'table' and tonumber(payload.__rid) or nil)
+        end
+
+        local allowed, shouldLog = floodCheck(src)
+        if not allowed then
+            if shouldLog then
+                deps.audit.rejected('flood_' .. name, nil, nil, { source = src })
+            end
+            -- Answered, not dropped. The page waits on every request it
+            -- sends and gives up after fifteen seconds, so a silent drop is
+            -- not a refusal anybody sees — it is the app sitting there
+            -- doing nothing for a quarter of a minute, once per click.
+            return App.reply(src, name, false, CB.ERR.RATE_LIMITED, nil,
+                type(payload) == 'table' and tonumber(payload.__rid) or nil)
+        end
+
+        -- Guarded: the gate reads the framework, and a throw here is before
+        -- the handler's own pcall — so it used to take the whole net event
+        -- with it and leave the request with no reply at all. The page waits
+        -- fifteen seconds on every request it sends.
+        local gateOk, actor, err = pcall(deps.identity.gate, src)
+        if not gateOk then
+            actor, err = nil, CB.ERR.NO_PLAYER
+        end
+
+        if not actor then
+            -- Once per window per source, not once per request. Somebody the
+            -- gate refuses can still send as fast as the flood guard allows,
+            -- and a row for each would evict the rows worth keeping from a
+            -- queue that has a fixed size.
+            if shouldLogGate(src) then
+                deps.audit.rejected('gate_' .. name, nil, nil, { source = src, reason = err })
+            end
+            return App.reply(src, name, false, err, nil,
+                type(payload) == 'table' and tonumber(payload.__rid) or nil)
+        end
+
+        if action and not deps.ratelimit.check(actor, action) then
+            if shouldLogRatelimit(actor.cid, name) then
+                deps.audit.rejected('ratelimit_' .. name, actor.cid, nil, {})
+            end
+            -- With the wait, because "slow down" on its own is not something
+            -- a player can act on: they cannot tell two seconds from five
+            -- minutes, so they tap again, read the same words, and decide
+            -- the button is broken.
+            local wait = deps.ratelimit.retryAfter and deps.ratelimit.retryAfter(actor, action) or 0
+            return App.reply(src, name, false, CB.ERR.RATE_LIMITED,
+                wait > 0 and { retryAfter = wait } or nil,
+                type(payload) == 'table' and tonumber(payload.__rid) or nil)
+        end
+
+        if type(payload) ~= 'table' then payload = {} end
+
+        -- The client's correlation id is echoed back so concurrent requests
+        -- resolve into their own callbacks. It is opaque to the server and
+        -- never used for anything else.
+        local rid = tonumber(payload.__rid)
+
+        local ok, result, resultErr = pcall(fn, actor, payload)
+        if not ok then
+            deps.audit.rejected('error_' .. name, actor.cid, nil, { error = tostring(result) })
+
+            -- Printed, not only audited. A handler that throws is a fault in
+            -- this resource, and the audit queue is not somewhere an
+            -- operator looks — or can look, without a command they may not
+            -- be able to run. For a long time a crashing handler produced a
+            -- shrug on the player's screen and complete silence in the
+            -- console, which is the worst pairing available: the one person
+            -- who could fix it is the one person not told.
+            print(('[crimson-hitman] the %s handler threw: %s')
+                :format(name, tostring(result)))
+
+            if action then deps.ratelimit.refund(actor, action) end
+            -- Not INVALID_INPUT. Nothing the player typed is wrong, and
+            -- telling them to check it sends them hunting for a fault they
+            -- cannot reach.
+            return App.reply(src, name, false, CB.ERR.SERVER_ERROR, nil, rid)
+        end
+
+        local succeeded = result ~= false and result ~= nil
+        -- The allowance is for work done. A request the handler refused did
+        -- none, and charging for it meant a player fixing a typo was told
+        -- to slow down.
+        if not succeeded and action then deps.ratelimit.refund(actor, action) end
+
+        return App.reply(src, name, succeeded, resultErr, result, rid)
+    end)
+end
+
+--- Send a result back to one client. Payloads are built by the projection
+--- module, so nothing leaks here that the viewer may not see.
+function App.reply(src, name, ok, err, data, rid)
+    TriggerClientEvent('crimson-hitman:result', src, {
+        event = name, ok = ok and true or false, err = err, data = data, rid = rid,
+    })
+end
+
+--------------------------------------------------------------------------
+-- Faults the page reported
+--------------------------------------------------------------------------
+--
+-- Kept here as well as in the audit log, because the audit log is not
+-- somewhere an operator looks — or can look, without a command and a
+-- database. The diagnosis command reads this, so "the app is broken for my
+-- players" has an answer in the same place as every other question about
+-- why the app is not working.
+--
+-- A fixed ring. Diagnostic data with a durable copy already written does
+-- not justify growing without bound for the life of the server.
+
+local pageFaults = {}
+local PAGE_FAULTS_KEPT = 20
+
+--- The most recent faults, newest first.
+---@return table[]
+function App.recentPageFaults()
+    local out = {}
+    for i = #pageFaults, 1, -1 do out[#out + 1] = pageFaults[i] end
+    return out
+end
+
+--- Pages a staff member has asked for their log, and until when the answer
+--- is taken. [source] = os.time() deadline.
+---
+--- The page says it was asked, and the page is a browser any player can
+--- script: the printed log was a way to write to the server console on
+--- demand, several lines at a time. It prints only for a page that was.
+local dumpsAsked = {}
+local DUMP_ANSWER_SECONDS = 30
+
+--- Note that this player's page has been asked for its log.
+function App.expectDump(src)
+    local now = os.time()
+    for asked, until_ in pairs(dumpsAsked) do
+        if until_ < now then dumpsAsked[asked] = nil end
+    end
+    if src then dumpsAsked[src] = now + DUMP_ANSWER_SECONDS end
+end
+
+--------------------------------------------------------------------------
+-- Handlers
+--------------------------------------------------------------------------
+
+function App.register()
+    -- Listings ----------------------------------------------------------
+
+    handler('list', 'load', function(actor, payload)
+        return deps.projection.listing(actor.cid, payload.page)
+    end)
+
+    handler('mine', 'load', function(actor)
+        return {
+            created  = deps.projection.mine(actor.cid),
+            accepted = deps.projection.accepted(actor.cid),
+            onMe     = deps.projection.onMe(actor.cid),
+        }
+    end)
+
+    handler('ledger', 'load', function(actor)
+        return {
+            entries = deps.ledger.read(actor.cid),
+            record  = deps.progression.record(actor.cid),
+        }
+    end)
+
+    -- Target search: returns opaque handles and capped results, never a
+    -- roster of everyone online (§14.33). The handles are minted per
+    -- searcher and expire, so a citizen id never reaches a client and one
+    -- player's handles are useless to another.
+    handler('searchTargets', 'search', function(actor, payload)
+        local query = Util.sanitizeText(payload.query, 32)
+        if not query or #query < Config.Targeting.MinQueryLength then
+            return false, CB.ERR.INVALID_INPUT
+        end
+
+        local needle = query:lower()
+        local out = {}
+        local online = deps.identity.online()
+        for i = 1, #online do
+            local candidate = online[i]
+            if candidate.cid ~= actor.cid
+                and not deps.identity.sameAccount(candidate.account, actor.account)
+                and candidate.name:lower():find(needle, 1, true) then
+                out[#out + 1] = {
+                    handle = App.mintTargetHandle(actor.cid, candidate.cid),
+                    name = candidate.name,
+                    -- Whether the target is law enforcement is disclosed, so
+                    -- nobody places a contract on an officer unaware (§7.5).
+                    -- Which force they serve is not: that would make search
+                    -- a roster of who is on duty tonight.
+                    protected = deps.identity.isProtected(candidate),
+                }
+                if #out >= Config.Targeting.MaxResults then break end
+            end
+        end
+        return out
+    end)
+
+    -- Everyone a player could put a contract on, without having to know a
+    -- name first.
+    --
+    -- Two scopes. `all` is every player currently online, paged and
+    -- alphabetical: this IS the roster §14.33 originally refused, and it is
+    -- here because the server owner asked for it — see
+    -- Config.Targeting.AllowBrowseAll, which turns it off. `nearby` is the
+    -- narrower one: who is within a few metres, nearest first, which is the
+    -- question a player looking at somebody across a car park actually has.
+    --
+    -- Both mint the same opaque, per-searcher, expiring handles as a name
+    -- search, so a citizen id still never reaches a client, and both refuse
+    -- to name anyone sharing the browser's own account.
+    handler('browseTargets', 'search', function(actor, payload)
+        payload = payload or {}
+        local nearby = payload.scope == 'nearby'
+
+        if nearby and not Config.Targeting.AllowNearby then return { people = {}, total = 0 } end
+        if not nearby and not Config.Targeting.AllowBrowseAll then return { people = {}, total = 0 } end
+
+        -- A name typed into the browser narrows it without a round trip per
+        -- keystroke, and without needing the full length a name search does:
+        -- the list is already bounded, so this is a filter rather than a
+        -- lookup.
+        local needle = Util.sanitizeText(payload.query, 32)
+        needle = needle and needle:lower() or nil
+
+        local origin
+        if nearby then
+            local ped = GetPlayerPed(actor.source)
+            origin = ped and ped ~= 0 and GetEntityCoords(ped) or nil
+            if not origin then return { people = {}, total = 0 } end
+        end
+
+        local found = {}
+        local online = deps.identity.online()
+
+        for i = 1, #online do
+            local candidate = online[i]
+            if candidate.cid ~= actor.cid
+                and not deps.identity.sameAccount(candidate.account, actor.account)
+                and (not needle or candidate.name:lower():find(needle, 1, true)) then
+
+                if nearby then
+                    local theirPed = GetPlayerPed(candidate.source)
+                    local coords = theirPed and theirPed ~= 0 and GetEntityCoords(theirPed) or nil
+                    if coords then
+                        local metres = math.sqrt(Util.dist2(origin, coords))
+                        if metres <= Config.Targeting.NearbyRadius then
+                            found[#found + 1] = { actor = candidate, metres = metres }
+                        end
+                    end
+                else
+                    found[#found + 1] = { actor = candidate }
+                end
+            end
+        end
+
+        if nearby then
+            -- The person you are looking at is the one you mean.
+            table.sort(found, function(a, b) return a.metres < b.metres end)
+        else
+            -- Stable and scannable, so paging through it means something.
+            table.sort(found, function(a, b)
+                if a.actor.name == b.actor.name then return a.actor.cid < b.actor.cid end
+                return a.actor.name < b.actor.name
+            end)
+        end
+
+        local total = #found
+        local perPage = nearby and Config.Targeting.MaxNearby or Config.Targeting.BrowsePageSize
+        local page = Util.toPositive(payload.page, 200) or 1
+        local first = ((page - 1) * perPage) + 1
+
+        local people = {}
+        for i = first, math.min(first + perPage - 1, total) do
+            local entry = found[i]
+            people[#people + 1] = {
+                handle = App.mintTargetHandle(actor.cid, entry.actor.cid),
+                name = entry.actor.name,
+                -- Whether the target is law enforcement is disclosed, so
+                -- nobody places a contract on an officer unaware (§7.5).
+                protected = deps.identity.isProtected(entry.actor),
+                -- Rounded: an exact figure is a rangefinder, and a rough one
+                -- is all it takes to tell two people with the same name
+                -- apart.
+                metres = entry.metres and math.floor(entry.metres + 0.5) or nil,
+            }
+        end
+
+        return {
+            people = people,
+            total = total,
+            page = page,
+            pages = math.max(1, math.ceil(total / perPage)),
+        }
+    end)
+
+    -- One target headshot, by the reference a projection handed out. The
+    -- listing carries references rather than images (§7.2), so a board
+    -- refresh re-sends no image bytes at all and the app fetches a face
+    -- once per render.
+    --
+    -- A reference is only learnable from a projection the viewer was
+    -- entitled to receive, and it resolves to nothing once a newer render
+    -- replaces it, so this serves no more than the listing already showed.
+    handler('mugshotImage', 'image', function(actor, payload)
+        local image = deps.mugshot.byHandle(payload and payload.id)
+        if not image then return false, CB.ERR.NOT_FOUND end
+        return { id = payload.id, image = image }
+    end)
+
+    -- What the creator can actually put up, read server-side so the builder
+    -- never displays something they do not hold.
+    handler('rewardOptions', 'wallet', function(actor)
+        local dirty = exports.ox_inventory:GetItem(actor.source, Config.Sources.dirty.item, nil, true) or 0
+
+        -- Read once and shared: items and weapons come out of the same
+        -- inventory, and asking for it twice per request is one round trip
+        -- to ox_inventory more than it takes.
+        local carried, readOk = App.readInventory(actor)
+
+        return {
+            cash    = actor.player.Functions.GetMoney('cash'),
+            bank    = actor.player.Functions.GetMoney('bank'),
+            dirty   = dirty,
+            items   = App.escrowableItems(actor, carried),
+            weapons = App.escrowableWeapons(actor, carried),
+            -- False when ox_inventory could not be read at all, which is a
+            -- different thing from carrying nothing and has to say so.
+            inventoryRead = readOk,
+            caps    = {
+                cash = Config.Sources.cash.max, bank = Config.Sources.bank.max,
+                dirty = Config.Sources.dirty.max, slots = Config.Limits.MaxPayoutSlots,
+                bonusPercent = Config.Bonus.maxPercent,
+                maxStacks = Config.Sources.item.maxStacks,
+                maxPerStack = Config.Sources.item.maxPerStack,
+                maxWeapons = Config.Sources.weapon.max,
+                -- Whether the server takes goods at all. A form that simply
+                -- omits the section leaves the player hunting for an option
+                -- that was switched off.
+                itemsEnabled = sourceEnabled('item'),
+                weaponsEnabled = sourceEnabled('weapon'),
+                -- The same for the three money sources. Each has an
+                -- `enabled` flag the server honours when the contract is
+                -- submitted, and the form was never told about it — so a
+                -- source an operator had switched off was still offered, with
+                -- the player's balance printed above it, and the whole
+                -- contract was then refused with "That reward does not add
+                -- up". The message blames the numbers; the numbers were fine.
+                cashEnabled = sourceEnabled('cash'),
+                bankEnabled = sourceEnabled('bank'),
+                dirtyEnabled = sourceEnabled('dirty'),
+                -- The total the server will accept across every payout.
+                -- Without it the form could build a contract that is always
+                -- refused, and blame the amounts.
+                maxLines = Config.Limits.MaxEscrowLines,
+                -- And the most one contract may be worth in money, bonus
+                -- included. Over it the server refused the contract as not
+                -- adding up, about amounts that each sat inside their caps.
+                maxValue = Config.MaxContractValue,
+            },
+        }
+    end)
+
+    -- Contracts ---------------------------------------------------------
+
+    handler('create', 'create', function(actor, payload)
+        -- A handle that no longer resolves is a person who cannot be named
+        -- any more — the handle lapsed, or they left and took their handles
+        -- with them — not a field the player typed wrong. It answered
+        -- INVALID_INPUT, "Check what you entered.", on a form with nothing
+        -- wrong in it; NOT_FOUND is what the same person already produces
+        -- when they log off between being picked and being placed, and the
+        -- page re-reads the list on it.
+        local targetCid = App.resolveTargetHandle(actor.cid, payload.target)
+        if not targetCid then
+            if type(payload.target) ~= 'string' or payload.target == '' then
+                return false, CB.ERR.INVALID_INPUT
+            end
+            return false, CB.ERR.NOT_FOUND
+        end
+
+        local contract, err = deps.contracts.create(actor, {
+            targetCid     = targetCid,
+            reason        = payload.reason,
+            reasonPreset  = payload.reasonPreset,
+            mode          = payload.mode,
+            reward        = payload.reward,
+            bonusPercent  = payload.bonusPercent,
+            bailoutAmount = payload.bailoutAmount,
+            penaltyAmount = payload.penaltyAmount,
+            anonymous     = payload.anonymous,
+        })
+        if not contract then return false, err end
+        return deps.projection.contract(contract, actor.cid)
+    end)
+
+    handler('accept', 'accept', function(actor, payload)
+        -- penaltyAmount is what the page had on screen when the player
+        -- tapped Accept, echoed back so a stake that has moved since is
+        -- refused rather than charged (§14.18).
+        local standing = deps.storage.readContract(Util.toId(payload.id))
+        if not deps.contracts.stakeWasDisclosed(standing, payload.penaltyAmount) then
+            return false, CB.ERR.TERMS_CHANGED
+        end
+
+        local ok, err = deps.contracts.accept(actor, payload.id, payload.anonymous,
+            { checkDisclosure = true, disclosed = payload.penaltyAmount,
+              shownDeadline = tonumber(payload.deadline) })
+        if not ok then return false, err end
+        local contract = deps.storage.readContract(Util.toId(payload.id))
+        return deps.projection.contract(contract, actor.cid)
+    end)
+
+    -- Taking a contract back down, and changing one nobody has taken.
+    -- Both are creator-only and both are refused the moment somebody is
+    -- actually hunting it.
+    handler('cancel', 'accept', function(actor, payload)
+        local ok, err, result = deps.contracts.cancel(actor, payload.id)
+        if not ok then return false, err end
+        -- How much could not be handed back yet, so the page does not say
+        -- "everything has been returned" beside a phone notification saying
+        -- some of it is waiting.
+        return { id = payload.id, queued = result and result.owed or 0 }
+    end)
+
+    handler('revise', 'amend', function(actor, payload)
+        local ok, err = deps.contracts.revise(actor, payload.id, {
+            reason = payload.reason,
+            -- The index a preset server takes instead of text. Left out
+            -- here, the picker the Edit dialog draws sent a choice that
+            -- never arrived, and the edit was refused as invalid input.
+            reasonPreset = payload.reasonPreset,
+            deadlineSeconds = payload.deadlineSeconds,
+        })
+        if not ok then return false, err end
+        return { id = payload.id }
+    end)
+
+    -- What the reward is made of, for the creator who is changing it.
+    --
+    -- A separate request from the listing on purpose: the listing is a money
+    -- total and a count of goods, which is what a hunter decides on, and it
+    -- is sent to everyone. This is the individual property, with the ids
+    -- that name it, and only ever to the person who put it up.
+    handler('rewardBreakdown', 'load', function(actor, payload)
+        local breakdown = deps.projection.rewardLines(Util.toId(payload.id) or '', actor.cid)
+        -- Not found and not yours are the same answer. Telling them apart
+        -- would turn this into a way to ask whether a contract id exists.
+        if not breakdown then return false, CB.ERR.NOT_FOUND end
+        return breakdown
+    end)
+
+    -- Take part of a reward back out. The other half of addEscrow, which
+    -- only ever adds.
+    handler('withdrawReward', 'amend', function(actor, payload)
+        local ids = payload.lines
+        if type(ids) ~= 'table' then return false, CB.ERR.INVALID_INPUT end
+
+        -- msgpack hands a client-sent array over as a map when its keys are
+        -- not a clean 1..n sequence, and a hand-built payload need not be an
+        -- array at all. Flattened to a list here so what follows counts what
+        -- was really sent rather than what #ids happens to say — a map's
+        -- length operator reports zero, so an unflattened one would look
+        -- like an empty request whatever it held.
+        --
+        -- The ceiling is checked while flattening rather than afterwards:
+        -- a client sending a hundred thousand keys must not become a
+        -- hundred thousand table appends before anything refuses it. This
+        -- is about what a refusal costs, not whether it happens —
+        -- Contracts.withdrawReward re-checks the length it is handed, and
+        -- that is the check the suite can see. What each entry *is* is not
+        -- checked here either: withdrawReward puts every id through
+        -- Util.toLineId, and a second shallower version of that rule here
+        -- would only be a second place to keep it in step.
+        local list = {}
+        for _, id in pairs(ids) do
+            list[#list + 1] = id
+            if #list > Config.Limits.MaxEscrowLines then
+                return false, CB.ERR.INVALID_INPUT
+            end
+        end
+
+        local ok, err, result = deps.contracts.withdrawReward(actor, payload.id, list)
+        if not ok then return false, err end
+        return {
+            id = payload.id,
+            returned = result and result.settled or 0,
+            -- A line that could not be handed back right now is not lost: it
+            -- is owed and retried on next login. The page says so rather
+            -- than reporting a smaller refund than the creator asked for.
+            queued = result and result.pending or 0,
+        }
+    end)
+
+    handler('abandon', 'accept', function(actor, payload)
+        local ok, err = deps.contracts.abandon(actor, Util.toId(payload.id) or '')
+        if not ok then return false, err end
+        return true
+    end)
+
+    -- Fulfilment --------------------------------------------------------
+
+    handler('requestPhotoToken', 'photo', function(actor, payload)
+        local token, err = deps.photo.issue(actor, payload.id)
+        if not token then return false, err end
+        return { token = token }
+    end)
+
+    -- Its own bucket, not the one requestPhotoToken bills.
+    --
+    -- Both used to charge `photo`, so one verification spent two of three
+    -- allowed attempts — and the second charge lands AFTER the hunter has
+    -- lined up and taken the shot. Whether a retry sequence can actually
+    -- exhaust it depends on how long the camera is open, because the bucket
+    -- refills while it is; the reachability is marginal. What is not
+    -- marginal is the shape of the failure when it happens: a confirmed
+    -- kill, photographed, refused for going too fast, at the one moment in
+    -- the flow where the player has already done the work.
+    --
+    -- Asking for a token is the act worth limiting — it is what somebody
+    -- probing would repeat. A submission is the completion of work the
+    -- server itself authorised, against a token it issued and that can only
+    -- be used once, so it is limited separately and more loosely.
+    handler('submitPhoto', 'photoSubmit', function(actor, payload)
+        local ok, err, result = deps.photo.submit(actor, payload.token, payload.url)
+        if not ok then return false, err end
+        return result
+    end)
+
+    handler('armKidnap', 'accept', function(actor, payload)
+        local ok, err = deps.kidnap.arm(payload.id, actor.cid)
+        if not ok then return false, err end
+        return { armed = true }
+    end)
+
+    handler('kidnapProgress', 'progress', function(actor, payload)
+        -- Returned unchanged: a fabricated { elapsed = 0 } has no `required`,
+        -- which draws a NaN bar and a poller that can never finish.
+        local id = Util.toId(payload.id) or ''
+        local progress = deps.kidnap.progress(id, actor.cid)
+        if not progress then
+            -- How it ended, if it ended a moment ago. The poller is what is
+            -- watching when a countdown finishes, and every ending looked the
+            -- same to it — so a hunter who had just been paid for a handover
+            -- was told it had ended and to try again. Keyed by this actor's
+            -- own citizen id, so it only ever describes their own handover.
+            local ended = deps.kidnap.outcome and deps.kidnap.outcome(id, actor.cid)
+            -- Held long enough and being paid right now. Answered as a full
+            -- bar rather than as an ending, so the page keeps asking and
+            -- hears how the payout went.
+            if ended and ended.outcome == 'settling' then
+                return { settling = true,
+                         elapsed = Config.Kidnap.CountdownSeconds,
+                         required = Config.Kidnap.CountdownSeconds }
+            end
+            if ended then
+                return { done = true, outcome = ended.outcome,
+                         reason = ended.reason, pending = ended.pending }
+            end
+            -- Named, rather than left as a bare nil.
+            --
+            -- A handler returning nil is read as a refusal by App.reply, and
+            -- with no second return value the reply carried ok = false and
+            -- err = nil — a refusal with no reason in it. The page has
+            -- nothing to look up, so a countdown that simply is not running
+            -- reached the player as "Lost track of the handover", which
+            -- sounds like a fault and is not one. Asking about a handover
+            -- that has ended, or was never armed, is an ordinary question.
+            return false, CB.ERR.NO_HANDOVER
+        end
+        return progress
+    end)
+
+    -- Target counter-play ----------------------------------------------
+
+    handler('bailout', 'bailout', function(actor, payload)
+        local ok, err = deps.bailout.buy(actor, payload.id)
+        if not ok then return false, err end
+        return true
+    end)
+
+    handler('informant', 'informant', function(actor, payload)
+        local ok, err, data = deps.informant.buy(actor, payload.id)
+        if not ok then return false, err end
+        return data
+    end)
+
+    -- Amendments --------------------------------------------------------
+
+    handler('addEscrow', 'amend', function(actor, payload)
+        local ok, err = deps.amendments.addEscrow(actor, payload.id, payload.reward)
+        if not ok then return false, err end
+        return true
+    end)
+
+    handler('improve', 'amend', function(actor, payload)
+        local ok, err = deps.amendments.improve(actor, payload.id, payload.kind, payload.payload)
+        if not ok then return false, err end
+        return true
+    end)
+
+    -- What is on the table right now. Storage.readOpenAmendments was read
+    -- only by the expiry sweep, so a proposal could be made and approved
+    -- and nobody could see one waiting.
+    handler('amendments', 'load', function(actor, payload)
+        local open, err = deps.amendments.openFor(actor, payload.id)
+        if not open then return false, err end
+        return open
+    end)
+
+    handler('propose', 'amend', function(actor, payload)
+        local proposal, err = deps.amendments.propose(actor, payload.id, payload.kind, payload.payload)
+        if not proposal then return false, err end
+        -- outcome 'applied' when nobody else had to agree and it is in
+        -- effect already; 'failed' when it was agreed but no longer fits.
+        return { id = proposal.id, kind = proposal.kind, expires = proposal.expires_at,
+                 outcome = proposal.outcome, err = proposal.error }
+    end)
+
+    handler('respondAmendment', 'amend', function(actor, payload)
+        local ok, err, outcome = deps.amendments.respond(actor, payload.id, payload.approve == true)
+        if not ok then return false, err end
+        return { outcome = outcome }
+    end)
+
+    -- Relay -------------------------------------------------------------
+
+    handler('threads', 'load', function(actor, payload)
+        return deps.comms.threads(actor, payload.id)
+    end)
+
+    handler('readThread', 'load', function(actor, payload)
+        local messages, err = deps.comms.read(actor, payload.id, payload.thread)
+        if not messages then return false, err end
+        return messages
+    end)
+
+    -- No bucket here: Comms.send owns the message throttle, and applying it
+    -- in both places charged two tokens per message.
+    handler('sendMessage', nil, function(actor, payload)
+        local ok, err = deps.comms.send(actor, payload.id, payload.thread, payload.body)
+        if not ok then return false, err end
+        return true
+    end)
+
+    handler('requestCall', 'message', function(actor, payload)
+        local ok, err, result = deps.comms.requestCall(actor, payload.id, payload.thread)
+        if not ok then return false, err end
+        -- Whether a call is actually ringing or the other party has merely
+        -- been asked to call back. The app says which; implying a call is
+        -- connecting when none is, is the worst of the three outcomes.
+        return { placed = result and result.placed == true }
+    end)
+
+    -- Diagnostics ---------------------------------------------------------
+
+    --- A fault the page caught, on its way to somewhere an owner can read it.
+    ---
+    --- The app runs in CEF, which has no console anybody looks at. Until
+    --- this existed a JavaScript error in the page reached nothing: not the
+    --- client, not this log, not the operator. Every render crash this
+    --- resource has shipped was found because a player said "it broke", and
+    --- that is the entire diagnostic anyone had.
+    ---
+    --- Gated, throttled and rate-limited like every other handler, because
+    --- it is reachable from any frame the phone draws. Everything in the
+    --- payload came from a browser and is treated as such: truncated to
+    --- lengths the audit detail can hold, and never interpolated into
+    --- anything but a log line.
+    handler('pageError', 'diagnostic', function(actor, payload)
+        local what = Util.sanitizeText(payload.what, 300) or 'unspecified'
+        local where = Util.sanitizeText(payload.where, 200)
+        local stack = Util.sanitizeText(payload.stack, 900)
+        local build = Util.sanitizeText(payload.build, 40)
+
+        -- Printed as well as audited. An operator does not read the audit
+        -- table, and the whole point of this path is that somebody who can
+        -- fix the page finds out the page is broken.
+        print(('[crimson-hitman] the app reported a fault: %s (%s, build %s, %s)')
+            :format(what, where or 'nowhere named', build or 'unknown', actor.cid))
+
+        -- The stack only under Config.Debug. It is what actually locates the
+        -- fault, and it is also several lines of console per report — which
+        -- on a busy server, from a page that breaks for everyone at once, is
+        -- the console gone. Kept in the audit row either way, so turning the
+        -- switch on is about where it is convenient to read, not about
+        -- whether it was recorded.
+        -- Except the log a staff member asked for with /cb-diag, which was
+        -- promised to them in this console and, with Debug off, never came.
+        -- One line per event, as the page recorded them.
+        local requested = what == 'page diagnostics' and where == 'requested'
+            and (dumpsAsked[actor.source] or 0) >= os.time()
+        if requested then dumpsAsked[actor.source] = nil end
+        if (Config.Debug or requested) and stack and stack ~= '' then
+            for line in (stack .. ' || '):gmatch('(.-) || ') do
+                if line ~= '' then print(('[crimson-hitman]   %s'):format(line)) end
+            end
+        end
+
+        deps.audit.rejected('page_error', actor.cid, nil, {
+            what = what, where = where, stack = stack, build = build,
+        })
+
+        pageFaults[#pageFaults + 1] = {
+            at = os.time(), cid = actor.cid, what = what,
+            where = where, build = build,
+        }
+        if #pageFaults > PAGE_FAULTS_KEPT then table.remove(pageFaults, 1) end
+
+        -- Answered so the page knows it landed. It does nothing with the
+        -- reply today, but a report that silently vanishes is the thing
+        -- this handler exists to stop happening.
+        return { recorded = true }
+    end)
+
+    -- Death reporting ---------------------------------------------------
+    --
+    -- Accepted only from the victim's own client, and everything about it is
+    -- then verified server-side (§14.2). A killer cannot report a death.
+    --
+    -- These carry no payload but are still gated and throttled: a client can
+    -- fire them as fast as it likes, and each one walks the contract table.
+
+    RegisterNetEvent('crimson-hitman:iDied', function(killerServerId)
+        local src = source
+        -- Not while boot recovery runs (App.ready); the kill is still
+        -- recorded by the condition sampler, and the photo can prove it.
+        if not App.ready then return end
+        if not App.floodOk(src, 'iDied') then return end
+
+        local actor = deps.identity.resolve(src)
+        if not actor then return end
+        if not deps.ratelimit.check(actor, 'death') then
+            if shouldLogRatelimit(actor.cid, 'iDied') then
+                deps.audit.rejected('ratelimit_iDied', actor.cid, nil, {})
+            end
+            return
+        end
+
+        -- The killer id is a hint from the victim, not an instruction: the
+        -- server still checks they accepted the contract, were in range, and
+        -- that the condition loss was observed.
+        local ok, err = pcall(deps.death.onVictimReport, src, tonumber(killerServerId))
+        if not ok then deps.audit.rejected('error_iDied', actor.cid, nil, { error = tostring(err) }) end
+    end)
+
+    RegisterNetEvent('crimson-hitman:iRevived', function()
+        local src = source
+        if not App.ready then return end
+        if not App.floodOk(src, 'iRevived') then return end
+
+        local actor = deps.identity.resolve(src)
+        if not actor then return end
+        if not deps.ratelimit.check(actor, 'death') then
+            if shouldLogRatelimit(actor.cid, 'iRevived') then
+                deps.audit.rejected('ratelimit_iRevived', actor.cid, nil, {})
+            end
+            return
+        end
+        local ok, err = pcall(deps.death.onRevivedVerified, src, actor.cid)
+        if not ok then deps.audit.rejected('error_iRevived', actor.cid, nil, { error = tostring(err) }) end
+    end)
+end
+
+--------------------------------------------------------------------------
+-- What a creator may put up
+--------------------------------------------------------------------------
+--
+-- The server has always been able to escrow items and weapons — validated,
+-- snapshotted and restored. The form could not offer them because nothing
+-- told it what the player was carrying. These do.
+
+--- Read a player's inventory, tolerating whichever export this build has.
+--- The player's inventory, and whether it could actually be read.
+---
+--- An empty table and an unreadable inventory used to look identical to
+--- every caller, so a build whose export shape neither branch matched
+--- produced a Place form with no item or weapon section at all — nothing on
+--- screen to say the inventory could not be read, and nothing to try again.
+--- The second return distinguishes them.
+---@return table slots
+---@return boolean read
+--- Which read actually answered, so the startup report can say. An empty
+--- item picker with no explanation is the symptom; this is how an operator
+--- finds out whether their build was even asked the right question.
+App.inventorySource = nil
+
+--- The reads a build might answer with, in order.
+---
+--- ox_inventory's export surface has moved: GetInventory returns a table
+--- whose `items` are keyed by slot number rather than listed, and some
+--- builds expose GetInventoryItems while others do not. Calling an export
+--- that is not there throws rather than returning nil, so each is tried
+--- under pcall — and a shape that is not a table of slots is not accepted
+--- just because the call did not fail.
+---
+--- Only exports that exist are listed. Guessing at further names would read
+--- as robustness while testing nothing: every entry here is exercised by
+--- the suite, and one that is not does not belong.
+local INVENTORY_READS = {
+    { name = 'GetInventoryItems', read = function(src)
+        return exports.ox_inventory:GetInventoryItems(src)
+    end },
+    { name = 'GetInventory.items', read = function(src)
+        local inv = exports.ox_inventory:GetInventory(src)
+        return inv and inv.items or nil
+    end },
+}
+
+--- Whether this looks like a list of inventory slots rather than something
+--- else that happens to be a table — an empty inventory and a wrong shape
+--- are both `{}` to a type check, and accepting the wrong one means every
+--- later read comes back empty for good.
+local function looksLikeSlots(value)
+    if type(value) ~= 'table' then return false end
+    local seen = 0
+    for _, slot in pairs(value) do
+        seen = seen + 1
+        if type(slot) ~= 'table' or type(slot.name) ~= 'string' then return false end
+        if seen >= 5 then break end
+    end
+    return true
+end
+
+--- The player's inventory, and whether it could actually be read.
+---
+--- An empty table and an unreadable inventory used to look identical to
+--- every caller, so a build whose export shape neither branch matched
+--- produced a Place form with no item or weapon section at all — nothing on
+--- screen to say the inventory could not be read, and nothing to try again.
+--- The second return distinguishes them.
+---@return table slots
+---@return boolean read
+function App.readInventory(actor)
+    for i = 1, #INVENTORY_READS do
+        local attempt = INVENTORY_READS[i]
+        local ok, inventory = pcall(attempt.read, actor.source)
+        if ok and looksLikeSlots(inventory) then
+            App.inventorySource = attempt.name
+            return inventory, true
+        end
+    end
+
+    App.inventorySource = false
+    return {}, false
+end
+
+--- Ask ox_inventory which read this build answers, using somebody who is
+--- online. Reported rather than acted on: the answer is for the operator.
+---
+--- Takes the actor rather than finding one, so it can be called before the
+--- app is wired — which is exactly when the startup report runs.
+---@param actor table|nil nil when nobody is online to ask about
+---@return string|false|nil
+function App.probeInventory(actor)
+    if not actor then return nil end
+    App.readInventory(actor)
+    return App.inventorySource
+end
+
+local function isWeapon(name)
+    return type(name) == 'string' and name:upper():sub(1, 7) == 'WEAPON_'
+end
+
+--- Stackable items the creator could escrow, excluding weapons, currency
+--- and anything the server forbids.
+---@param carried table[]|nil an already-read inventory, to save a round trip
+function App.escrowableItems(actor, carried)
+    if not sourceEnabled('item') then return {} end
+
+    local totals, order = {}, {}
+    local slots = carried or App.readInventory(actor) or {}
+
+    for _, slot in pairs(slots) do
+        local name = slot and slot.name
+        if type(name) == 'string'
+            and not isWeapon(name)
+            and not deps.escrow.isDirtyItem(name)
+            and not deps.escrow.blacklisted(name) then
+            if not totals[name] then
+                totals[name] = { name = name, label = slot.label or name, count = 0 }
+                order[#order + 1] = totals[name]
+            end
+            totals[name].count = totals[name].count + (slot.count or 1)
+        end
+    end
+
+    table.sort(order, function(a, b) return a.label < b.label end)
+    return order
+end
+
+--- Individual weapons, kept separate because each is one object with its
+--- own serial and attachments rather than a stack.
+---@param carried table[]|nil an already-read inventory, to save a round trip
+function App.escrowableWeapons(actor, carried)
+    if not sourceEnabled('weapon') then return {} end
+
+    local out = {}
+    local slots = carried or App.readInventory(actor) or {}
+
+    for _, slot in pairs(slots) do
+        local name = slot and slot.name
+        -- The inventory slot is what identifies the weapon on submit, so a
+        -- record without one cannot be escrowed and must not be offered:
+        -- picking it would hand the server a payload it can only refuse.
+        local invSlot = slot and tonumber(slot.slot)
+        if isWeapon(name) and invSlot and not deps.escrow.blacklisted(name) then
+            out[#out + 1] = {
+                name  = name,
+                label = slot.label or name,
+                slot  = invSlot,
+                -- Enough for the creator to tell two of the same weapon
+                -- apart, without publishing the serial to anyone else.
+                serial = slot.metadata and slot.metadata.serial
+                    and tostring(slot.metadata.serial):sub(-4) or nil,
+            }
+        end
+    end
+
+    table.sort(out, function(a, b)
+        if a.label == b.label then return (a.slot or 0) < (b.slot or 0) end
+        return a.label < b.label
+    end)
+    return out
+end
+
+--------------------------------------------------------------------------
+-- Target handles
+--------------------------------------------------------------------------
+--
+-- A citizen id is an internal key. Search results carry a per-searcher,
+-- expiring handle instead, so a client cannot collect ids or reuse another
+-- player's results.
+
+local targetHandles = {}
+local targetSeq = 0
+
+function App.mintTargetHandle(searcherCid, targetCid)
+    for handle, entry in pairs(targetHandles) do
+        if entry.searcher == searcherCid and entry.target == targetCid then
+            entry.at = Util.monotonicMs()
+            return handle
+        end
+    end
+
+    targetSeq = targetSeq + 1
+    local handle = ('tg%08d'):format(targetSeq)
+    targetHandles[handle] = { searcher = searcherCid, target = targetCid, at = Util.monotonicMs() }
+    return handle
+end
+
+function App.resolveTargetHandle(searcherCid, handle)
+    if type(handle) ~= 'string' then return nil end
+    local entry = targetHandles[handle]
+    if not entry or entry.searcher ~= searcherCid then return nil end
+    if Util.monotonicMs() - entry.at > 600000 then
+        targetHandles[handle] = nil
+        return nil
+    end
+    return entry.target
+end
+
+--- Drop stale handles. Called from the maintenance tick.
+function App.sweepHandles()
+    local cutoff = Util.monotonicMs() - 600000
+    local removed = 0
+    for handle, entry in pairs(targetHandles) do
+        if entry.at < cutoff then
+            targetHandles[handle] = nil
+            removed = removed + 1
+        end
+    end
+    return removed
+end
+
+function App.clearPlayerHandles(cid)
+    for handle, entry in pairs(targetHandles) do
+        if entry.searcher == cid or entry.target == cid then targetHandles[handle] = nil end
+    end
+end
+
+--- Whether a player may see the app at all. lb-phone asks this before it
+--- shows the icon; the answer is re-checked on every event regardless.
+function App.canUseApp(src)
+    local actor = deps.identity.gate(src)
+    return actor ~= nil
+end
+
+return App

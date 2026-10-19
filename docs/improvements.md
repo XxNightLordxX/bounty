@@ -1,4 +1,4 @@
-# Crimson Bounty System — improvements to what exists
+# Crimson Hitman System — improvements to what exists
 
 Not a feature list. Every item here sharpens something already built, and
 each says why it matters and where it lives. Ordered by what I would do

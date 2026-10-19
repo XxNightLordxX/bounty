@@ -1,0 +1,424 @@
+--- Masked relay between creator and hunters (§11).
+---
+--- Messages are relayed server-side and rendered under a per-contract alias.
+--- No phone number, character name, citizen id or source ever crosses to the
+--- other participant; anonymity is enforced by what is *not* in the payload.
+
+local Util = require_shared('util')
+
+local Comms = {}
+
+--- The phone's own word blacklist, where this build has one.
+---
+--- lb-phone ships its server code escrowed and its export surface has moved
+--- across releases, so indexing an export that is not there throws — and
+--- both call sites are inside handlers, which makes that not a degraded
+--- feature but every contract refused with server_error and every message
+--- the same. The resource states this rule in two places and enforced it
+--- only on the client.
+---
+--- Open rather than closed when the export is missing: refusing everything
+--- would be the same outage with a tidier message, and the rules this
+--- resource owns — the length cap, the digit cap, the pattern denylist —
+--- are applied either way. Which build this is gets reported at startup.
+---@param source integer
+---@param text string
+---@return boolean blocked
+local function phoneRefuses(source, text)
+    local ok, blocked = pcall(function()
+        return exports['lb-phone']:ContainsBlacklistedWord(source, text)
+    end)
+    return ok and blocked == true
+end
+
+local Storage, Identity, Audit, Notify, RateLimit
+
+--- Opaque thread handles issued to clients, so a citizen id never leaves the
+--- server. [handle] = { contractId, hunterCid, ownerCid }
+local handles = {}
+local handleSeq = 0
+
+function Comms.init(deps)
+    Storage, Identity, Audit, Notify, RateLimit =
+        deps.storage, deps.identity, deps.audit, deps.notify, deps.ratelimit
+    handles = {}
+end
+
+--- Mint (or reuse) a handle that stands in for a hunter on one contract, for
+--- one viewer. Handing the creator a hunter's citizen id would defeat
+--- Anonymous Mode outright, and a citizen id is an internal key in any case.
+local function handleFor(ownerCid, contractId, hunterCid)
+    for handle, entry in pairs(handles) do
+        if entry.ownerCid == ownerCid and entry.contractId == contractId
+            and entry.hunterCid == hunterCid then
+            return handle
+        end
+    end
+
+    handleSeq = handleSeq + 1
+    local handle = ('th%s%06d'):format(contractId:gsub('[^%w]', ''), handleSeq)
+    handles[handle] = { contractId = contractId, hunterCid = hunterCid, ownerCid = ownerCid }
+    return handle
+end
+
+--- Resolve a handle back to a hunter, for one viewer only. A handle minted
+--- for someone else is not accepted.
+local function resolveHandle(ownerCid, contractId, handle)
+    if type(handle) ~= 'string' then return nil end
+    local entry = handles[handle]
+    if not entry then return nil end
+    if entry.ownerCid ~= ownerCid or entry.contractId ~= contractId then return nil end
+    return entry.hunterCid
+end
+
+function Comms.clearContract(contractId)
+    for handle, entry in pairs(handles) do
+        if entry.contractId == contractId then handles[handle] = nil end
+    end
+end
+
+--- A player has gone: the handles they were given go with them.
+---
+--- Only theirs. It also dropped every handle that NAMED them, so when an
+--- anonymous operative logged off, the client's handle for their thread
+--- stopped working and the next `threads` minted a new one — a message,
+--- a call or a re-read told the client the moment their anonymous operative
+--- left the city and came back. A handle naming a hunter lasts while that
+--- hunter is on the contract (Comms.clearHunter) and the contract lives.
+function Comms.clearPlayer(cid)
+    for handle, entry in pairs(handles) do
+        if entry.ownerCid == cid then handles[handle] = nil end
+    end
+end
+
+--- A hunter has left a contract: nobody's handle for their thread on it
+--- means anything now.
+function Comms.clearHunter(contractId, hunterCid)
+    for handle, entry in pairs(handles) do
+        if entry.contractId == contractId and entry.hunterCid == hunterCid then
+            handles[handle] = nil
+        end
+    end
+end
+
+--- A thread is one creator-hunter pair. In competitive mode the creator has
+--- a separate thread per hunter, and hunters never see each other.
+local function threadId(contractId, hunterCid)
+    return contractId .. '|' .. hunterCid
+end
+
+--- Resolve the caller's role and thread, or refuse.
+---@return table|nil ctx { contract, role, hunterCid, threadId, alias }
+---@return string|nil err
+--- @param threadHandle string|nil an opaque handle from Comms.threads
+function Comms.context(actor, contractId, threadHandle)
+    contractId = Util.toId(contractId)
+    if not contractId then return nil, CB.ERR.INVALID_INPUT end
+
+    local contract = Storage.readContract(contractId)
+    if not contract then return nil, CB.ERR.NOT_FOUND end
+
+    -- A thread lives as long as its contract (§11.2). Nothing here asked,
+    -- and a hunter's row stays 'active' when a contract ends — only the
+    -- creator's handles are dropped — so a hunter could go on writing to
+    -- the client of a finished contract indefinitely, every message a
+    -- notification on their phone, while the client could no longer answer
+    -- and was told "That is not yours" about the conversation instead.
+    if CB.TERMINAL[contract.state] then return nil, CB.ERR.ALREADY_SETTLED end
+
+    if contract.creator_cid == actor.cid then
+        -- The creator names a thread by its handle, never by a citizen id.
+        local hunterCid = resolveHandle(actor.cid, contractId, threadHandle)
+        local hunter = hunterCid and Storage.readHunter(contractId, hunterCid)
+        if not hunter or hunter.state ~= 'active' then return nil, CB.ERR.NOT_PARTICIPANT end
+        return {
+            contract = contract, role = 'creator', hunterCid = hunter.hunter_cid,
+            threadId = threadId(contractId, hunter.hunter_cid), alias = 'Client',
+        }
+    end
+
+    local hunter = Storage.readHunter(contractId, actor.cid)
+    if hunter and hunter.state == 'active' then
+        return {
+            contract = contract, role = 'hunter', hunterCid = actor.cid,
+            threadId = threadId(contractId, actor.cid), alias = hunter.alias,
+        }
+    end
+
+    return nil, CB.ERR.NOT_PARTICIPANT
+end
+
+--- Send a message into a contract thread.
+---@return boolean ok
+---@return string|nil err
+function Comms.send(actor, contractId, threadHandle, rawBody)
+    if not Config.Relay.Enabled then return false, CB.ERR.RELAY_OFF end
+
+    local ctx, err = Comms.context(actor, contractId, threadHandle)
+    if not ctx then return false, err end
+
+    -- This module owns the message bucket, so every caller is throttled and
+    -- a message never costs two tokens.
+    if not RateLimit.check(actor, 'message') then return false, CB.ERR.RATE_LIMITED end
+
+    local body = Util.sanitizeText(rawBody, Config.Relay.MaxLength)
+    if not body then return false, CB.ERR.INVALID_INPUT end
+
+    if phoneRefuses(actor.source, body) then
+        Audit.rejected('relay_blacklisted_word', actor.cid, contractId, {})
+        return false, CB.ERR.INVALID_INPUT
+    end
+
+    Storage.writeMessage({
+        contract_id = contractId,
+        thread_id   = ctx.threadId,
+        from_cid    = actor.cid,     -- server-side only, for the audit trail
+        from_alias  = ctx.alias,     -- the only identity the other side sees
+        body        = body,
+        sent_at     = os.time(),
+    })
+
+    local recipient = ctx.role == 'creator' and ctx.hunterCid or ctx.contract.creator_cid
+    Notify.toCitizen(recipient, 'Contract message', ('%s: %s'):format(ctx.alias, body))
+    -- And the thread, if they have it open: a buzz does not change a page,
+    -- so two people in the same conversation never saw each other's replies.
+    Notify.push(recipient, 'message')
+
+    Audit.action('relay_message', actor.cid, contractId, { role = ctx.role })
+    return true
+end
+
+--- Read a thread. Returns only alias-attributed messages: the caller cannot
+--- learn who the other party is from what comes back.
+---@return table[]|nil messages
+---@return string|nil err
+function Comms.read(actor, contractId, threadHandle)
+    -- The switch applies to the whole relay, not only to sending. It was
+    -- read by send() alone, so with it off the thread still opened, with a
+    -- compose box whose every message was refused.
+    if not Config.Relay.Enabled then return nil, CB.ERR.RELAY_OFF end
+
+    local ctx, err = Comms.context(actor, contractId, threadHandle)
+    if not ctx then return nil, err end
+
+    local rows = Storage.readMessages(contractId, ctx.threadId)
+    local out = {}
+    for i = 1, #rows do
+        out[#out + 1] = {
+            alias = rows[i].from_alias,
+            body  = rows[i].body,
+            at    = rows[i].sent_at,
+            mine  = rows[i].from_cid == actor.cid,
+        }
+    end
+    return out
+end
+
+--- Threads visible to the caller, for the app's inbox.
+function Comms.threads(actor, contractId)
+    if not Config.Relay.Enabled then return nil, CB.ERR.RELAY_OFF end
+
+    local contract = Storage.readContract(Util.toId(contractId) or '')
+    if not contract then return {} end
+    -- Closed with its contract, like the threads themselves.
+    if CB.TERMINAL[contract.state] then return {} end
+
+    if contract.creator_cid == actor.cid then
+        local hunters = Storage.readHunters(contract.id)
+        local out = {}
+        for i = 1, #hunters do
+            local h = hunters[i]
+            if h.state == 'active' then
+                out[#out + 1] = {
+                    handle = handleFor(actor.cid, contract.id, h.hunter_cid),
+                    alias  = h.alias,
+                    -- A hunter's real name appears only when they chose to
+                    -- be seen; their citizen id never appears at all.
+                    name   = (not h.anon) and h.hunter_name or nil,
+                }
+            end
+        end
+        return out
+    end
+
+    local hunter = Storage.readHunter(contract.id, actor.cid)
+    if hunter and hunter.state == 'active' then
+        return { { handle = handleFor(actor.cid, contract.id, actor.cid), alias = 'Client' } }
+    end
+
+    return {}
+end
+
+--- Request a masked voice call. Refuses rather than degrading: a call that
+--- would reveal a number an anonymous participant paid to hide is not placed
+--- at all (§11.3).
+---@return boolean ok
+---@return string|nil err
+function Comms.requestCall(actor, contractId, threadHandle)
+    -- Calls are part of the relay. With the relay switched off they used to
+    -- be placed anyway: only AllowMaskedCalls was read here, so a server
+    -- owner who turned messaging off still had players' phones ringing.
+    if not Config.Relay.Enabled then return false, CB.ERR.RELAY_OFF end
+    if not Config.Relay.AllowMaskedCalls then return false, CB.ERR.CALLS_OFF end
+
+    local ctx, err = Comms.context(actor, contractId, threadHandle)
+    if not ctx then return false, err end
+
+    -- Both parties' choices, not only the callee's. The call is placed from
+    -- the caller's phone, so the number a callee would see is the CALLER's:
+    -- asking for masking only when the other side was anonymous meant an
+    -- anonymous creator ringing a named operative did so with caller id on,
+    -- handing over the number they had paid to hide.
+    local otherAnon, selfAnon
+    local hunter = Storage.readHunter(ctx.contract.id, ctx.hunterCid)
+    if ctx.role == 'creator' then
+        otherAnon = hunter and hunter.anon
+        selfAnon = ctx.contract.anon_creator
+    else
+        otherAnon = ctx.contract.anon_creator
+        selfAnon = hunter and hunter.anon
+    end
+    otherAnon, selfAnon = otherAnon == true, selfAnon == true
+
+    if otherAnon and not Comms.maskingAvailable() then
+        return false, CB.ERR.CALL_UNMASKED
+    end
+
+    local recipient = ctx.role == 'creator' and ctx.hunterCid or ctx.contract.creator_cid
+
+    -- Place the call for real when this phone build can, rather than only
+    -- telling the other party somebody wants to talk. Whether it can is
+    -- probed at boot, not assumed: lb-phone ships its server code escrowed,
+    -- so an invented export name would be a call that silently does nothing.
+    --
+    -- An anonymous caller on a phone that cannot mask is not refused: the
+    -- other party is asked to call back instead, which reveals nothing, and
+    -- placeCall declines to dial for exactly that case.
+    --
+    -- Never a live call TO an anonymous party. A call rings only if they are
+    -- in the city, so the caller learned whether they were — the one thing
+    -- an anonymous client's contract is built never to answer (§14.32), and
+    -- for an anonymous operative the same thing set beside who is online.
+    -- They are asked to call back instead, which reads the same either way;
+    -- calling back is theirs to choose, and is placed masked.
+    local placed = false
+    if not otherAnon then
+        placed = Comms.placeCall(actor, recipient, selfAnon)
+    end
+
+    Notify.toCitizen(recipient,
+        placed and 'Incoming call' or 'Call request',
+        placed
+            and ('%s is calling you about a contract.'):format(ctx.alias)
+            or  ('%s wants to speak with you about a contract.'):format(ctx.alias))
+
+    Audit.action(placed and 'call_placed' or 'call_requested', actor.cid, contractId,
+        { anonymous = otherAnon or selfAnon })
+
+    -- The caller is told which of the two happened, so the app can say
+    -- "calling" or "they have been asked to call you" rather than implying
+    -- a call is ringing when none is.
+    return true, nil, { placed = placed }
+end
+
+--------------------------------------------------------------------------
+-- Placing a call
+--------------------------------------------------------------------------
+
+--- The configured call export, resolved once and remembered.
+--- `false` means probed and not available, distinct from `nil` for not yet
+--- probed — a phone without the export must not be re-probed per call.
+local callExport = nil
+
+--- Whether this server can place a call at all.
+---
+--- The export must be configured, its resource running, and the export
+--- itself must resolve to something callable. Any of those missing leaves
+--- call requests as notifications, which is what they have always been.
+---@return function|nil
+function Comms.callPlacer()
+    if callExport ~= nil then return callExport or nil end
+
+    local spec = Config.Relay.CallExport
+    if not (spec and spec.resource and spec.export) then
+        callExport = false
+        return nil
+    end
+
+    if GetResourceState(spec.resource) ~= 'started' then
+        callExport = false
+        return nil
+    end
+
+    local ok, fn = pcall(function() return exports[spec.resource][spec.export] end)
+    if not ok or type(fn) ~= 'function' then
+        print(('[crimson-hitman] warning: Relay.CallExport names %s:%s, which this build ' ..
+               'does not export; call requests will be notifications only')
+               :format(spec.resource, spec.export))
+        callExport = false
+        return nil
+    end
+
+    callExport = fn
+    return fn
+end
+
+function Comms.resetCallCache()
+    callExport = nil
+end
+
+--- Ring the other party's phone.
+---
+--- Refuses rather than degrading when the callee is anonymous and identity
+--- cannot be suppressed: a call that reveals a number somebody paid to hide
+--- is not a call worth placing (§11.3).
+---@return boolean placed
+function Comms.placeCall(actor, recipientCid, anonymous)
+    local placer = Comms.callPlacer()
+    if not placer then return false end
+
+    if anonymous and Config.Relay.RequireMaskingForAnonymous
+        and not Comms.maskingAvailable() then
+        return false
+    end
+
+    local recipient = Identity.byCitizenId(recipientCid)
+    if not recipient then return false end
+
+    -- The callee's number, read server-side. Never from a payload, and
+    -- never handed back to the caller: the caller's phone is told to dial,
+    -- it is not told what it dialled.
+    local ok, number = pcall(function()
+        return exports['lb-phone']:GetEquippedPhoneNumber(recipient.source)
+    end)
+    if not ok or type(number) ~= 'string' or number == '' then return false end
+
+    -- A pcall that merely did not throw is not proof the call was placed:
+    -- an export returning false has told us it failed. Only an explicit
+    -- false counts as a refusal, since many exports return nothing at all.
+    local ok2, result = pcall(function()
+        return placer(nil, actor.source, number, anonymous == true)
+    end)
+    if not ok2 then return false end
+    return result ~= false
+end
+
+--- Whether this lb-phone build can suppress caller identity. Checked once at
+--- boot and cached; when it cannot, masked calls stay disabled.
+local maskingChecked, maskingOk = false, false
+function Comms.maskingAvailable()
+    if maskingChecked then return maskingOk end
+    maskingChecked = true
+    local ok, result = pcall(function()
+        local config = exports['lb-phone']:GetConfig()
+        return type(config) == 'table' and config.AnonymousCalls ~= false
+    end)
+    maskingOk = ok and result == true
+    return maskingOk
+end
+
+function Comms.resetMaskingCache()
+    maskingChecked, maskingOk = false, false
+end
+
+return Comms

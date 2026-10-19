@@ -1,0 +1,1029 @@
+--- Staff commands.
+---
+--- The audit log recorded everything and nothing surfaced it in game, so a
+--- staff member handling "the script ate my gun" needed database access.
+--- These cover the four things staff can now do — and, as importantly, what
+--- someone without the ACE cannot.
+
+local function money(src)
+    local m = Env.players[src].PlayerData.money
+    return m.cash + m.bank
+end
+
+local function seeded(opts)
+    opts = opts or {}
+    local s = newStack()
+    local f = fixture(s)
+    Env.players[3].PlayerData.money.bank = 50000
+    local c = s.contracts.create(f.creator, {
+        targetCid = 'TARGET01', reason = 'Unpaid debt',
+        mode = opts.mode or CB.MODE.COMPETITIVE,
+        reward = { baseline = { cash = 5000 } },
+        anonymous = opts.anonymous,
+    })
+    if opts.accept then s.contracts.accept(f.hunter, c.id, opts.anonHunter) end
+    return s, f, c
+end
+
+--- Run a registered command as a player would. The commands are registered
+--- by bridges.install, which the harness's stack does not run, so they are
+--- installed here against the same modules.
+local function commands(s)
+    Env.commands = {}
+    require('crimson-hitman.server.bridges').installCommands(s)
+    return Env.commands
+end
+
+local function said(target)
+    local out = {}
+    for _, line in ipairs(Env.chat) do
+        if line.target == target then out[#out + 1] = line.text end
+    end
+    return table.concat(out, '\n')
+end
+
+describe('staff permission', function()
+    it('refuses every command to a player without the ace', function()
+        local s, f, c = seeded()
+        local cmd = commands(s)
+        Env.chat = {}
+
+        for name, handler in pairs(cmd) do
+            handler(3, { c.id, 'pay' })
+            local _ = name
+        end
+
+        truthy(said(3):find('Not authorised'), 'every command refuses: ' .. said(3))
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACTIVE, 'and nothing happened')
+    end)
+
+    it('separates reading a history from unmasking a person', function()
+        local s, f, c = seeded({ accept = true, anonHunter = true })
+        local cmd = commands(s)
+
+        -- A staff member with the ordinary ace, and not the identity one.
+        Env.aces[3] = { ['crimson.admin'] = true }
+        Env.chat = {}
+
+        cmd[Config.Admin.Commands.timeline](3, { c.id })
+        falsy(said(3):find('Not authorised'), 'the timeline is theirs to read')
+
+        Env.chat = {}
+        cmd[Config.Admin.Commands.whois](3, { c.id })
+        truthy(said(3):find('Not authorised'),
+            'unmasking is a different permission: ' .. said(3))
+    end)
+
+    it('always allows the server console', function()
+        local s = newStack()
+        truthy(s.admin.allowed(0, 'crimson.admin'),
+            'an owner locked out of their own recovery tools has no way back in')
+        falsy(s.admin.allowed(3, 'crimson.admin'))
+    end)
+end)
+
+describe('contract timeline', function()
+    it('reads a contract with its escrow and its history', function()
+        local s, f, c = seeded({ accept = true })
+        local view, err = s.admin.timeline(c.id)
+        truthy(view, tostring(err))
+
+        eq(view.contract.id, c.id)
+        eq(view.contract.target, 'Dana Reyes')
+        truthy(#view.escrow > 0, 'the escrow lines')
+        eq(#view.hunters, 1, 'the hunter who accepted')
+        truthy(#view.events > 0, 'and what happened')
+    end)
+
+    it('does not name an anonymous creator', function()
+        local s, f, c = seeded({ anonymous = true })
+        local view = s.admin.timeline(c.id)
+        eq(view.contract.creator, '(anonymous)',
+            'the timeline is a history; unmasking is its own command')
+        falsy(tostring(view.contract.creator):find('Vic'))
+    end)
+
+    it('refuses an id that is not one', function()
+        local s = newStack()
+        for _, bogus in ipairs({ '', 'ct nope', '../etc/passwd', 'ct99999999' }) do
+            falsy(s.admin.timeline(bogus), 'must not resolve ' .. bogus)
+        end
+        falsy(s.admin.timeline(nil))
+        falsy(s.admin.timeline({}))
+    end)
+end)
+
+describe('voiding a contract', function()
+    it('closes it and returns everything to the creator', function()
+        local s, f, c = seeded({ accept = true })
+        local before = Env.players[1].PlayerData.money.cash + Env.players[1].PlayerData.money.bank
+
+        truthy(s.admin.void(0, c.id, 'refunded a stuck handover'))
+        eq(s.storage.readContract(c.id).state, CB.STATE.VOIDED,
+            'the state the machine declares for an admin close, not the one '
+            .. 'that means the creator changed their mind')
+
+        local after = Env.players[1].PlayerData.money.cash + Env.players[1].PlayerData.money.bank
+        eq(after - before, 5000, 'the escrow comes back')
+    end)
+
+    it('returns a hunter their stake rather than forfeiting it', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } }, penaltyAmount = 10000,
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        eq(Env.players[3].PlayerData.money.bank, 40000, 'staked')
+
+        truthy(s.admin.void(0, c.id, 'staff'))
+        eq(Env.players[3].PlayerData.money.bank, 50000,
+            'a staff void is not the hunter failing')
+    end)
+
+    it('leaves nothing held', function()
+        local s, f, c = seeded({ accept = true })
+        truthy(s.admin.void(0, c.id, 'staff'))
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            eq(line.state, CB.ESCROW_STATE.SETTLED, 'every line settles')
+        end
+    end)
+
+    it('refuses a contract that has already ended', function()
+        local s, f, c = seeded({ accept = true })
+        truthy(s.contracts.claimSlot(c.id, 'HUNTER01', CB.FULFILMENT.ELIMINATION))
+        local ok, err = s.admin.void(0, c.id, 'too late')
+        falsy(ok)
+        eq(err, CB.ERR.ALREADY_SETTLED)
+    end)
+
+    it('writes who did it and why', function()
+        local s, f, c = seeded()
+        truthy(s.admin.void(0, c.id, 'duplicate contract'))
+        s.audit.flush()
+
+        local found = false
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'admin_void' then
+                found = true
+                truthy(tostring(row.detail.reason):find('duplicate'), 'the reason is recorded')
+            end
+        end
+        truthy(found, 'a staff action nobody can review is not accountable')
+    end)
+end)
+
+describe('interrupted releases', function()
+    --- Reproduce what a shutdown mid-release leaves behind: a line claimed
+    --- but never settled, which recovery returns to `held` and logs.
+    local function stranded()
+        local s, f, c = seeded()
+        local line = s.storage.readEscrow(c.id)[1]
+
+        truthy(s.storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING))
+        -- Recovery's half: back to held, logged for review.
+        truthy(s.storage.claimEscrowLine(line.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD))
+        s.audit.financial('release_interrupted', 'HUNTER01', c.id,
+            { line = line.id, amount = line.amount, review = true })
+        s.audit.flush()
+
+        return s, f, c, line
+    end
+
+    it('lists a line that was mid-release at a shutdown', function()
+        local s, f, c, line = stranded()
+        local rows = s.admin.interrupted()
+        eq(#rows, 1)
+        eq(rows[1].line, line.id)
+        eq(rows[1].contract, c.id)
+        eq(rows[1].intended, 'HUNTER01', 'who it was being paid to')
+    end)
+
+    it('stops listing one that has since been settled', function()
+        local s, f, c, line = stranded()
+        truthy(s.admin.settleLine(0, line.id, 'return'))
+        eq(#s.admin.interrupted(), 0, 'a resolved question is not a question')
+    end)
+
+    it('returns an interrupted stake to the hunter who put it up', function()
+        -- "Return" sent every line to the creator, including a hunter's own
+        -- stake, which was never the creator's.
+        local s, f, c = seeded()
+        s.storage.writeContract((function()
+            local row = s.storage.readContract(c.id); row.penalty_amount = 2000; return row
+        end)())
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+        local stake
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CB.PORTION.STAKE then stake = l end
+        end
+        truthy(stake, 'the hunter staked')
+        truthy(s.storage.claimEscrowLine(stake.id, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING))
+        truthy(s.storage.claimEscrowLine(stake.id, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD))
+        s.audit.financial('release_interrupted', 'HUNTER01', c.id, { line = stake.id, review = true })
+        s.audit.flush()
+        local creatorBefore, hunterBefore = money(1), money(3)
+        truthy(s.admin.settleLine(0, stake.id, 'return'))
+        eq(money(3) - hunterBefore, 2000, 'back to the hunter who staked it')
+        eq(money(1), creatorBefore, 'and not to the creator')
+    end)
+
+    it('says a payment to somebody offline is queued, not failed', function()
+        local s, f, c, line = stranded()
+        Env.removePlayer(3)
+        local ok, note = s.admin.settleLine(0, line.id, 'pay')
+        truthy(ok, 'queued is settled as far as staff are concerned')
+        eq(note, 'queued')
+    end)
+
+    it('pays whom the interrupted release was paying, after a return was queued', function()
+        -- A 'return' queued for an offline creator rewrote who the line was
+        -- owed to, and a 'pay' after it then went to the creator as well.
+        local s, f, c, line = stranded()
+        Env.removePlayer(1)
+        local ok = s.admin.settleLine(0, line.id, 'return')
+        truthy(ok)
+        local again, err = s.admin.settleLine(0, line.id, 'pay')
+        falsy(again, 'queued for the creator already, so not paid again elsewhere')
+        eq(err, CB.ERR.LOCKED)
+    end)
+
+    it('hides who it was paying from staff without the identity permission', function()
+        local s, f, c, line = stranded()
+        Env.aces[7] = { command = true }
+        Env.addPlayer({ source = 7, citizenid = 'STAFF001', license = 'license:st' })
+        local rows = s.admin.interrupted(7)
+        eq(#rows, 1)
+        eq(rows[1].intended, 'an operative', 'a citizen id behind an anonymous party')
+        Env.aces[7] = { command = true, ['crimson.identity'] = true }
+        eq(s.admin.interrupted(7)[1].intended, 'HUNTER01', 'shown to staff who may see it')
+    end)
+
+    it('pays the intended recipient when staff say to', function()
+        local s, f, c, line = stranded()
+        local before = Env.players[3].PlayerData.money.cash
+
+        -- The line records who the interrupted release was paying.
+        line.releasing_to = 'HUNTER01'
+        s.storage.writeEscrow(c.id, { line })
+
+        truthy(s.admin.settleLine(0, line.id, 'pay'))
+        eq(Env.players[3].PlayerData.money.cash - before, 5000)
+    end)
+
+    --- The real path: a release that actually starts and is interrupted.
+    --- The stranded() helper above fakes the states; this drives Escrow
+    --- itself, which is where the recipient has to be recorded.
+    it('remembers who a genuinely interrupted release was paying', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.contracts.accept(f.hunter, c.id, false))
+
+        -- The hunter cannot be paid, so the release stalls exactly where a
+        -- shutdown would leave it.
+        Env.players[3]._inventoryFull = true
+        Env.players[3].PlayerData.money._refuse = true
+
+        local lineId = s.storage.readEscrow(c.id)[1].id
+        truthy(s.storage.claimEscrowLine(lineId, CB.ESCROW_STATE.HELD, CB.ESCROW_STATE.RELEASING))
+        -- Recovery's half.
+        truthy(s.storage.claimEscrowLine(lineId, CB.ESCROW_STATE.RELEASING, CB.ESCROW_STATE.HELD))
+        Env.players[3]._inventoryFull = false
+
+        -- Now do it for real and check what the line remembers.
+        s.escrow.release(c.id, 'HUNTER01', { portion = CB.PORTION.BASELINE }, 'payout')
+        eq(s.storage.readEscrowLine(lineId).releasing_to, 'HUNTER01',
+            'a line must name who it was going to, before the money moves')
+    end)
+
+    it('carries the intended recipient through storage in every backend', function()
+        local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+        for _, name in ipairs({ 'memory', 'json', 'mysql' }) do
+            local store
+            if name == 'mysql' then
+                Exec.install(Natives)
+                package.loaded['crimson-hitman.server.storage.mysql'] = nil
+                store = require('crimson-hitman.server.storage.mysql')
+            else
+                package.loaded['crimson-hitman.server.storage.' .. name] = nil
+                Natives.files = {}
+                store = require('crimson-hitman.server.storage.' .. name)
+            end
+            store.open()
+
+            store.writeEscrow('ct1', { {
+                id = 'ct1:1', contract_id = 'ct1', slot = 1, portion = 'baseline',
+                source = 'cash', amount = 5000, state = CB.ESCROW_STATE.HELD,
+                releasing_to = 'HUNTER01',
+            } })
+            eq(store.readEscrowLine('ct1:1').releasing_to, 'HUNTER01',
+                name .. ': without this, staff cannot pay the person it was for')
+        end
+    end)
+
+    it('returns it to the creator when staff say to', function()
+        local s, f, c, line = stranded()
+        local before = Env.players[1].PlayerData.money.cash
+
+        truthy(s.admin.settleLine(0, line.id, 'return'))
+        eq(Env.players[1].PlayerData.money.cash - before, 5000)
+    end)
+
+    it('settles only the line it was given', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { slots = {
+                { baseline = { cash = 5000 } },
+                { baseline = { cash = 3000 } },
+            } },
+        })
+        local lines = s.storage.readEscrow(c.id)
+        eq(#lines, 2)
+
+        truthy(s.admin.settleLine(0, lines[1].id, 'return'))
+        eq(s.storage.readEscrowLine(lines[1].id).state, CB.ESCROW_STATE.SETTLED)
+        eq(s.storage.readEscrowLine(lines[2].id).state, CB.ESCROW_STATE.HELD,
+            'a named line must not release the whole contract')
+    end)
+
+    it('refuses a disposition it does not understand', function()
+        local s, f, c, line = stranded()
+        for _, bad in ipairs({ 'refund', 'PAY', '', 'delete' }) do
+            local ok, err = s.admin.settleLine(0, line.id, bad)
+            falsy(ok, 'must refuse ' .. bad)
+            eq(err, CB.ERR.INVALID_INPUT)
+        end
+        eq(s.storage.readEscrowLine(line.id).state, CB.ESCROW_STATE.HELD, 'untouched')
+    end)
+
+    it('refuses to settle a line twice', function()
+        local s, f, c, line = stranded()
+        truthy(s.admin.settleLine(0, line.id, 'return'))
+        local ok, err = s.admin.settleLine(0, line.id, 'return')
+        falsy(ok)
+        eq(err, CB.ERR.ALREADY_SETTLED)
+    end)
+end)
+
+describe('identifying an anonymous party', function()
+    it('names everyone behind a contract', function()
+        local s, f, c = seeded({ accept = true, anonymous = true, anonHunter = true })
+        local who, err = s.admin.identify(0, c.id)
+        truthy(who, tostring(err))
+
+        eq(who.creator.cid, 'CREATOR1')
+        eq(who.creator.anonymous, true)
+        eq(who.target.cid, 'TARGET01')
+        eq(#who.hunters, 1)
+        eq(who.hunters[1].cid, 'HUNTER01')
+        eq(who.hunters[1].anonymous, true)
+        truthy(who.hunters[1].alias, 'and the alias they were shown under')
+    end)
+
+    it('records the lookup itself', function()
+        local s, f, c = seeded({ anonymous = true })
+        truthy(s.admin.identify(0, c.id))
+        s.audit.flush()
+
+        local found = false
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'admin_identify' then found = true end
+        end
+        truthy(found, 'the point of anonymity is that looking is exceptional')
+    end)
+end)
+
+describe('what a staff command calls a line of escrow', function()
+    --- Decided by the line's source, not by whether it happens to carry an
+    --- amount. The MySQL schema declares `amount INT DEFAULT 0`, so an item
+    --- or weapon line reads back with an amount of 0 rather than nothing —
+    --- and 0 is truthy in Lua, so every piece of escrowed property was
+    --- reported to staff as "$0". In the recovery tool that is the one place
+    --- it must not happen: somebody settling an interrupted release needs to
+    --- know what the property was in order to hand it back.
+    local function said(s)
+        local out = {}
+        local bridges = require('crimson-hitman.server.bridges')
+        bridges.installCommands(s)
+        return out
+    end
+
+    it('does not call a piece of property "$0"', function()
+        local describe = require('crimson-hitman.server.bridges').describeLine
+
+        -- Exactly what MySQL hands back for a line that is not money: the
+        -- column default, not nil. And 0 is truthy in Lua.
+        eq(describe({ source = 'item', item = 'lockpick', quantity = 2, amount = 0 }),
+            'lockpick x2',
+            'every escrowed item was reported to staff as $0, in the one tool '
+            .. 'that exists for handing property back')
+        eq(describe({ source = 'weapon', item = 'WEAPON_PISTOL', quantity = 1, amount = 0 }),
+            'WEAPON_PISTOL')
+    end)
+
+    it('still says what money is, and which kind', function()
+        local describe = require('crimson-hitman.server.bridges').describeLine
+        eq(describe({ source = 'cash', amount = 5000 }), '$5000')
+        eq(describe({ source = 'bank', amount = 3000 }), '$3000 bank')
+        eq(describe({ source = 'dirty', amount = 1000 }), '$1000 dirty',
+            'a staff member settling this by hand needs to know which currency')
+    end)
+
+    it('names an item that the database read back with an amount of zero', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CB.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000,
+                items = { { name = 'lockpick', count = 2 } } } },
+        })
+        truthy(c)
+
+        -- Exactly what MySQL hands back: a column default rather than nil.
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.source == 'item' then line.amount = 0 end
+        end
+
+        local view = s.admin.timeline(c.id)
+        truthy(view, 'the timeline should be readable')
+
+        local item
+        for _, line in ipairs(view.escrow) do
+            if line.source == 'item' then item = line end
+        end
+        truthy(item, 'the item line should be in the timeline')
+        eq(item.item, 'lockpick',
+            'the timeline has to carry what the property actually is, or no '
+            .. 'wording of it can be right')
+        eq(item.quantity, 2)
+    end)
+end)
+
+describe('refreshing every timer for testing', function()
+    local function cmd(s)
+        Env.commands = {}
+        require('crimson-hitman.server.bridges').installCommands(s)
+        return Env.commands[Config.Admin.Commands.refresh]
+    end
+
+    it('is not opened by the extra aces that open every read-only tool', function()
+        local s, f, c = seeded()
+        local handler = cmd(s)
+        truthy(handler, 'the command should be registered')
+
+        -- `command` is the ace most admin groups already carry. It opens the
+        -- diagnosis on purpose. It must not open a command that writes.
+        Env.aces[3] = { ['command'] = true }
+        Env.chat = {}
+        handler(3, {})
+
+        truthy(said(3):find('Not authorised'),
+            'an ace every admin already has must not move the whole server\'s '
+            .. 'clocks: ' .. said(3))
+        eq(s.storage.readContract(c.id).deadline_at, c.deadline_at,
+            'and nothing was refreshed')
+    end)
+
+    it('refills a rate-limit bucket and ages a spent slot cooldown', function()
+        local s, f, c = seeded({ accept = true })
+        local now = os.time()
+
+        local hunter = s.storage.readHunter(c.id, f.hunter.cid)
+        s.storage.updateHunter(hunter.id, { last_claim_at = now })
+        for _ = 1, 200 do s.ratelimit.check(f.creator, 'create') end
+        eq(s.ratelimit.check(f.creator, 'create'), false, 'the bucket is spent')
+
+        Env.aces[3] = { ['crimson.admin'] = true }
+        Env.chat = {}
+        cmd(s)(3, {})
+
+        eq(s.ratelimit.check(f.creator, 'create'), true, 'the bucket was refilled')
+        local after = s.storage.readHunter(c.id, f.hunter.cid)
+        truthy(now - after.last_claim_at > Config.Limits.SlotCooldownSeconds,
+            'the slot cooldown was aged past its window')
+        truthy(said(3):find('Timers refreshed'), said(3))
+    end)
+
+    it('ages a resolved contract past the re-list cooldown', function()
+        local s, f, c = seeded()
+        s.contracts.resolve(c.id, CB.STATE.EXPIRED, f.creator.cid, nil, 'expired')
+
+        local relist = { targetCid = 'TARGET01', reason = 'Again',
+                         reward = { baseline = { cash = 1000 } } }
+        eq(select(2, s.contracts.create(f.creator, relist)),
+            CB.ERR.TARGET_RECENTLY_ON, 'the re-list cooldown is running')
+
+        Env.aces[3] = { ['crimson.admin'] = true }
+        cmd(s)(3, {})
+
+        truthy(s.contracts.create(f.creator, relist),
+            'a test server cannot be tested if every target is locked out for '
+            .. 'half an hour after each run')
+    end)
+
+    it('extends a live deadline and never brings one forward', function()
+        local s, f, c = seeded()
+        -- A contract with minutes left on a deadline the operator set to days.
+        local contract = s.storage.readContract(c.id)
+        contract.deadline_at = os.time() + 60
+        contract.expires_at = os.time() + 120
+        s.storage.writeContract(contract)
+
+        Env.aces[3] = { ['crimson.admin'] = true }
+        cmd(s)(3, {})
+
+        local after = s.storage.readContract(c.id)
+        truthy(after.deadline_at > os.time() + 60,
+            'the point of the refresh is not having to wait out the deadline')
+        truthy(after.deadline_at <= after.expires_at,
+            'the deadline is still clamped to the lifetime')
+        eq(after.state, CB.STATE.ACTIVE,
+            'refreshing must never resolve a contract, which would move money')
+    end)
+
+    it('leaves a deadline the client extended where it is', function()
+        -- Set to now plus the default, a forty-hour deadline came back to
+        -- three hours, and the expiry after it forfeited the hunter's stake.
+        local s, f, c = seeded()
+        local contract = s.storage.readContract(c.id)
+        contract.deadline_at = os.time() + 40 * 3600
+        contract.expires_at = os.time() + 48 * 3600
+        s.storage.writeContract(contract)
+
+        Env.aces[3] = { ['crimson.admin'] = true }
+        cmd(s)(3, {})
+
+        local after = s.storage.readContract(c.id)
+        truthy(after.deadline_at >= os.time() + 40 * 3600,
+            'the refresh brought the deadline forward by '
+            .. (os.time() + 40 * 3600 - after.deadline_at) .. 's')
+        truthy(after.expires_at >= os.time() + 48 * 3600, 'nor the lifetime')
+    end)
+
+    it('counts a pause already banked when it clears it', function()
+        local s, f, c = seeded()
+        local contract = s.storage.readContract(c.id)
+        contract.deadline_at = os.time() + 4 * 3600
+        contract.paused_since = os.time() - 2 * 3600
+        s.storage.writeContract(contract)
+
+        Env.aces[3] = { ['crimson.admin'] = true }
+        cmd(s)(3, {})
+
+        local after = s.storage.readContract(c.id)
+        falsy(after.paused_since)
+        truthy(after.deadline_at >= os.time() + 6 * 3600,
+            'two hours of pause were owed to the deadline and the refresh dropped them')
+    end)
+
+    it('leaves the counts that are limits rather than waits alone', function()
+        local s, f, c = seeded({ accept = true })
+        Config.Informant.MaxPurchasesPerContract = 1
+        Env.players[3].PlayerData.money.bank = 50000
+
+        local ok = s.informant.buy(f.creator, c.id)
+        truthy(ok, 'the first purchase works')
+        eq(select(2, s.informant.buy(f.creator, c.id)), nil,
+            'a second inside the lock returns the same name rather than rolling')
+
+        Env.aces[3] = { ['crimson.admin'] = true }
+        cmd(s)(3, {})
+
+        -- The lock is gone, so this is a fresh roll — and the purchase count
+        -- is not, so it is refused.
+        eq(select(2, s.informant.buy(f.creator, c.id)), CB.ERR.LIMIT_REACHED,
+            'the refresh must not hand a buyer the whole roster')
+    end)
+
+    it('writes nothing back from the list it read at the start', function()
+        -- Every store call is a yield on mysql. The pass wrote back the row
+        -- it listed, putting back whatever a bonus raise or a re-price had
+        -- changed while it waited.
+        local s, f, c = seeded()
+        local real = s.storage.allContracts
+        s.storage.allContracts = function()
+            local copies = {}
+            for i, row in ipairs(real()) do
+                local copy = {}
+                for k, v in pairs(row) do copy[k] = v end
+                copies[i] = copy
+            end
+            s.storage.setContractFields(c.id, { bonus_percent = 40, bailout_amount = 777 })
+            return copies
+        end
+        Env.aces[3] = { ['crimson.admin'] = true }
+        local ok, err = pcall(cmd(s), 3, {})
+        s.storage.allContracts = real
+        truthy(ok, tostring(err))
+
+        local after = s.storage.readContract(c.id)
+        eq(after.bonus_percent, 40, 'the raise was undone')
+        eq(after.bailout_amount, 777, 'the re-price was undone')
+        truthy(after.deadline_at > os.time(), 'and the refresh itself still happened')
+    end)
+
+    it('does not reopen a proposal answered while it worked', function()
+        local s, f, c = seeded({ accept = true })
+        local ok, err0 = s.amendments.propose(f.creator, c.id, CB.AMENDMENT.CHANGE_REASON,
+            { reason = 'A better reason' })
+        truthy(ok, 'a proposal to refresh: ' .. tostring(err0))
+        local open = s.storage.readOpenAmendments(c.id)
+        eq(#open, 1)
+
+        local real = s.storage.readOpenAmendments
+        s.storage.readOpenAmendments = function(id)
+            local rows = {}
+            for i, row in ipairs(real(id)) do
+                local copy = {}
+                for k, v in pairs(row) do copy[k] = v end
+                rows[i] = copy
+            end
+            -- Declined in the moment the pass waited.
+            local live = s.storage.readAmendment(open[1].id)
+            live.outcome = 'declined'
+            s.storage.writeAmendment(live)
+            return rows
+        end
+        Env.aces[3] = { ['crimson.admin'] = true }
+        local ran, err = pcall(cmd(s), 3, {})
+        s.storage.readOpenAmendments = real
+        truthy(ran, tostring(err))
+        eq(s.storage.readAmendment(open[1].id).outcome, 'declined',
+            'the refresh put an answered proposal back open')
+    end)
+
+    it('writes down that somebody did it', function()
+        local s, f, c = seeded()
+        Env.aces[3] = { ['crimson.admin'] = true }
+        cmd(s)(3, {})
+
+        local found = false
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'admin_timers_refreshed' then found = true end
+        end
+        truthy(found, 'a server whose cooldowns were quietly reset is a server '
+            .. 'whose history stops explaining itself')
+    end)
+end)
+
+--- Second, independent check: drive the command the way an operator does.
+describe('bountyadmin from the console', function()
+    local function run(s, args)
+        Env.commands = {}
+        require('crimson-hitman.server.bridges').installCommands(s)
+        -- The console route replies through print, so it is captured here.
+        local out, real = {}, print
+        _G.print = function(...) out[#out + 1] = tostring((...)) end
+        local ok, err = pcall(Env.commands[Config.Admin.Commands.refresh], 0, args or {})
+        _G.print = real
+        if not ok then error(err) end
+        return table.concat(out, '\n')
+    end
+
+    it('the console is never refused and reports what it did', function()
+        local s = newStack()
+        local f = fixture(s)
+        local out = run(s)
+        truthy(not out:find('Not authorised'), out)
+        truthy(out:find('Timers refreshed'), out)
+        truthy(out:find('Purchase and slot COUNTS are untouched'), out)
+        local _ = f
+    end)
+
+    it('refuses a subcommand it does not know rather than guessing', function()
+        local s = newStack(); fixture(s)
+        local out = run(s, { 'wipe' })
+        truthy(out:find('Usage'), out)
+        truthy(not out:find('Timers refreshed'), 'a typo must not fire it: ' .. out)
+    end)
+
+    it('clears a pause so the deadline granted is the deadline kept', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 100000
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 5000 } } })
+        local contract = s.storage.readContract(c.id)
+        contract.paused_since = os.time() - 100000
+        s.storage.writeContract(contract)
+
+        run(s)
+        eq(s.storage.readContract(c.id).paused_since, nil,
+            'a pause that began before the refresh would be paid out as an '
+            .. 'extension on top of the deadline just granted')
+    end)
+
+    it('moves no money and resolves nothing', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 100000
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 5000 } } })
+        s.contracts.accept(f.hunter, c.id)
+
+        local before = {}
+        for i = 1, 3 do
+            before[i] = Env.players[i].PlayerData.money.cash
+                      + Env.players[i].PlayerData.money.bank
+        end
+        local lines = #s.storage.readEscrow(c.id)
+
+        run(s); run(s); run(s)
+
+        for i = 1, 3 do
+            eq(Env.players[i].PlayerData.money.cash
+               + Env.players[i].PlayerData.money.bank, before[i],
+               'player ' .. i .. ' balance moved')
+        end
+        eq(#s.storage.readEscrow(c.id), lines, 'escrow line count changed')
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED)
+    end)
+
+    it('is idempotent — running it ten times is running it once', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 100000
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 5000 } } })
+        run(s)
+        local first = s.storage.readContract(c.id)
+        local d, e = first.deadline_at, first.expires_at
+        for _ = 1, 9 do run(s) end
+        local after = s.storage.readContract(c.id)
+        eq(after.deadline_at, d, 'deadline drifted')
+        eq(after.expires_at, e, 'lifetime drifted')
+    end)
+end)
+
+describe('the wait before a new character can be a target', function()
+    it('is brought forward, because it is the wait before anything can be tested', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 100000
+
+        -- A character who has just walked in, watched arriving.
+        s.identity.endSession(f.target.cid)
+        s.identity.beginSession(f.target.cid, false)
+        Config.Immunity.MinTargetSessionMinutes = 10
+
+        eq(select(2, s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 5000 } } })),
+            CB.ERR.TARGET_JUST_ON, 'the new-player rule is running')
+
+        Env.commands = {}
+        require('crimson-hitman.server.bridges').installCommands(s)
+        Env.commands[Config.Admin.Commands.refresh](0, {})
+
+        -- The clock, not the flag. Marking the session unobserved would also
+        -- let the contract through, by making the session length unknown —
+        -- which is a lie about a session we did watch begin.
+        local minutes = s.identity.sessionMinutes(f.target.cid)
+        truthy(minutes ~= nil,
+            'the session is still one this resource watched begin')
+        truthy(minutes >= Config.Immunity.MinTargetSessionMinutes,
+            'the session clock itself has to be the thing that moved, got '
+            .. tostring(minutes))
+
+        truthy(s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 5000 } } }),
+            'ten minutes per character is the whole afternoon on a test server')
+    end)
+end)
+
+describe('what a staff command prints', function()
+    --- The bodies below were never run.
+    ---
+    --- Every test in this file so far calls Admin.void, Admin.interrupted and
+    --- Admin.identify directly and asserts on what they RETURN. Nothing ran
+    --- the code that turns those returns into lines a staff member reads, so
+    --- the format strings were unexecuted — which is where the last defect in
+    --- this file lived: a piece of escrowed property reported as "$0", in the
+    --- one tool that exists for handing property back.
+    ---
+    --- A staff command is used at the worst moment, by somebody already
+    --- dealing with a problem. It throwing is not a cosmetic fault.
+    local function commands(s)
+        Env.commands = {}
+        require('crimson-hitman.server.bridges').installCommands(s)
+        Env.chat = {}
+        return Env.commands
+    end
+
+    local function said(target)
+        local out = {}
+        for _, line in ipairs(Env.chat) do
+            if line.target == target then out[#out + 1] = line.text end
+        end
+        return table.concat(out, '\n')
+    end
+
+    it('prints a void, and a refused void, without throwing', function()
+        local s, f, c = seeded()
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+
+        truthy(pcall(cmd[Config.Admin.Commands.void], 3, { c.id, 'duplicate', 'listing' }))
+        truthy(said(3):find('voided'), said(3))
+        eq(s.storage.readContract(c.id).state, CB.STATE.VOIDED)
+
+        Env.chat = {}
+        truthy(pcall(cmd[Config.Admin.Commands.void], 3, { 'ct-nope' }),
+            'a void of a contract that is not there must not throw')
+        truthy(said(3):find('Could not void it'), said(3))
+    end)
+
+    it('prints interrupted releases, including property and a missing timestamp', function()
+        local s, f, c = seeded({ accept = true })
+
+        -- Exactly what a shutdown mid-release leaves behind: lines claimed
+        -- for release, and the audit row that records the interruption.
+        -- The item line's amount is the MySQL column default, not nil.
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            s.storage.claimEscrowLine(line.id, CB.ESCROW_STATE.HELD,
+                CB.ESCROW_STATE.RELEASING)
+            local stored = s.storage.readEscrowLine(line.id)
+            if stored and stored.source == 'item' then stored.amount = 0 end
+            s.audit.financial('release_interrupted', f.hunter.cid, c.id,
+                { line = line.id })
+        end
+        s.audit.flush()
+
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+        truthy(pcall(cmd[Config.Admin.Commands.stuck], 3, {}))
+
+        local out = said(3)
+        truthy(out:find('mid%-release'), out)
+        truthy(not out:find('lockpick%s+%$0'),
+            'the one tool for handing property back must not call it $0: ' .. out)
+        truthy(out:find('Settle each with'), out)
+    end)
+
+    it('prints an empty interrupted list rather than a header with nothing under it', function()
+        local s = newStack(); fixture(s)
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+        truthy(pcall(cmd[Config.Admin.Commands.stuck], 3, {}))
+        truthy(said(3):find('No interrupted releases'), said(3))
+    end)
+
+    it('prints an unmasking whose parties the framework cannot name', function()
+        local s, f, c = seeded({ accept = true, anonymous = true, anonHunter = true })
+
+        -- A hunter and a creator the server has no current name for: they
+        -- disconnected, or the framework never described them. The row keeps
+        -- the id, which is the whole point of the tool.
+        local contract = s.storage.readContract(c.id)
+        contract.creator_name, contract.target_name = nil, nil
+        s.storage.writeContract(contract)
+        for _, h in ipairs(s.storage.readHunters(c.id)) do
+            s.storage.updateHunter(h.id, { hunter_name = nil, alias = nil })
+        end
+
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.identity'] = true }
+        truthy(pcall(cmd[Config.Admin.Commands.whois], 3, { c.id }),
+            'unmasking a party nobody can name must still print their id')
+
+        local out = said(3)
+        truthy(out:find('CREATOR1'), 'the creator id is the answer: ' .. out)
+        truthy(out:find('HUNTER01'), 'and the hunter id: ' .. out)
+    end)
+
+    it('prints a timeline for a contract with property, a resolution and events', function()
+        local s, f, c = seeded({ accept = true })
+        s.contracts.resolve(c.id, CB.STATE.CANCELLED, f.creator.cid, nil, 'test')
+        s.audit.flush()
+
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+        truthy(pcall(cmd[Config.Admin.Commands.timeline], 3, { c.id }))
+
+        local out = said(3)
+        truthy(out:find(c.id), out)
+        truthy(out:find('escrow'), 'the escrow lines are the point: ' .. out)
+
+        Env.chat = {}
+        truthy(pcall(cmd[Config.Admin.Commands.timeline], 3, { 'ct-nope' }))
+        truthy(said(3):find('No such contract'), said(3))
+    end)
+end)
+
+describe('a contract staff voided', function()
+    it('does not cost the creator the cooldown for cancelling their own', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 100000
+        Config.Amendments.CancelCooldownSeconds = 300
+
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'a mistake staff will fix', reward = { baseline = { cash = 5000 } } })
+        truthy(s.admin.void(0, c.id, 'placed on the wrong person'))
+
+        -- The target cooldown is a separate rule and still applies, so this
+        -- lists somebody else — the question here is only whether the
+        -- CREATOR is being held back for a cancellation they did not make.
+        Env.addPlayer({ source = 4, citizenid = 'TARGET09', license = 'license:ddd',
+            cash = 100, bank = 100, firstname = 'Sam', lastname = 'Okonkwo' })
+        local again, err = s.contracts.create(f.creator, { targetCid = 'TARGET09',
+            reason = 'unrelated', reward = { baseline = { cash = 5000 } } })
+
+        truthy(again, 'staff fixing a problem must not rate-limit the person '
+            .. 'they were helping, got ' .. tostring(err))
+    end)
+
+    it('still returns the escrow in full, exactly as cancelling did', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 100000
+        local before = Env.players[1].PlayerData.money.cash
+                     + Env.players[1].PlayerData.money.bank
+
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'x', reward = { baseline = { cash = 5000 } } })
+        s.contracts.accept(f.hunter, c.id)
+        truthy(s.admin.void(0, c.id, 'staff'))
+
+        eq(Env.players[1].PlayerData.money.cash
+           + Env.players[1].PlayerData.money.bank, before,
+           'changing which terminal state this lands in must not change the money')
+    end)
+end)
+
+describe('the diagnosis and what the app itself reported', function()
+    --- Everything else the diagnosis prints is the server's view of itself.
+    --- The app runs in a browser on the player's machine, and from here that
+    --- was invisible: a page throwing on every render looked exactly like a
+    --- player who had stopped opening the app.
+    local function diagnose(s)
+        -- Naming a player: the console-only path stops before the
+        -- server-wide section this is about.
+        return table.concat(s.admin.diagnose(0, '3'), '\n')
+    end
+
+    it('says plainly when no page has reported anything', function()
+        local s = newStack(); fixture(s)
+        local out = diagnose(s)
+        truthy(out:find('app faults: none'),
+            'silence has to be reported as silence, or a reader cannot tell '
+            .. 'it from a check that was never run: ' .. out)
+    end)
+
+    it('shows what a player\'s page reported, and which build it was', function()
+        local s = newStack()
+        local f = fixture(s)
+
+        s.app.handlers.pageError(f.hunter, {
+            what = 'contract.reward is undefined', where = 'app.js:512:8',
+            stack = 'at card', build = '2026.09.1',
+        })
+
+        local out = diagnose(s)
+        truthy(out:find('contract%.reward is undefined'),
+            'the fault itself: ' .. out)
+        truthy(out:find('app%.js:512'), 'and where it happened: ' .. out)
+        truthy(out:find('2026%.09%.1'),
+            'and which copy of the page they are running, which is the first '
+            .. 'thing to check: ' .. out)
+        truthy(out:find(f.hunter.cid), 'and who saw it: ' .. out)
+    end)
+
+    it('keeps the newest faults rather than the first twenty', function()
+        local s = newStack()
+        local f = fixture(s)
+        for i = 1, 30 do
+            s.app.handlers.pageError(f.hunter, { what = 'fault number ' .. i })
+        end
+
+        local kept = s.app.recentPageFaults()
+        truthy(#kept <= 20, 'the ring has to be bounded, got ' .. #kept)
+        eq(kept[1].what, 'fault number 30',
+            'newest first: the one that just happened is the one being looked for')
+    end)
+end)
+
+describe('the extra ACEs open only the read-only staff commands', function()
+    it('refuses void, settle and whois to a player with only `command`', function()
+        local s, _, c = seeded({ accept = true, anonHunter = true })
+        local cmds = commands(s)
+        Env.aces[3] = { command = true }
+        Env.chat = {}
+        cmds[Config.Admin.Commands.whois](3, { c.id })
+        falsy(said(3):find('HUNTER01', 1, true), 'unmasked on the generic command ACE: ' .. said(3))
+        cmds[Config.Admin.Commands.void](3, { c.id })
+        eq(s.storage.readContract(c.id).state, CB.STATE.ACCEPTED, 'voided on the generic command ACE')
+        Env.chat = {}
+        cmds[Config.Admin.Commands.diagnose](3, {})
+        truthy(#said(3) > 0, 'the read-only diagnosis stays open to it')
+    end)
+end)

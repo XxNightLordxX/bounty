@@ -1,7 +1,7 @@
-# Crimson Bounty System — Implementation Plan
+# Crimson Hitman System — Implementation Plan
 
-**Resource name:** `crimson-bounty`
-**App name:** Crimson Bounty System
+**Resource name:** `crimson-hitman`
+**App name:** Crimson Hitman System
 **UI:** red / black
 **Spec:** `docs/bounty-hunter-app-spec.md` (§ references below point there)
 
@@ -36,7 +36,7 @@ Read directly from the uploaded server resources, not assumed:
 ## 3. Module layout
 
 ```
-crimson-bounty/
+crimson-hitman/
   fxmanifest.lua
   config/
     config.lua            main tunables (§8, §15 appendix)

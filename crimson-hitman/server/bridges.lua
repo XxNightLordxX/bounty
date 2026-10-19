@@ -1,0 +1,682 @@
+--- FiveM event bridges.
+---
+--- Every engine event this resource listens to is registered here, in one
+--- place, through a function the test suite calls too. A producer that is
+--- written but never wired is a silent dead path — the elimination payout
+--- depended on exactly one of these, and nothing else would have noticed.
+
+local Bridges = {}
+
+--- Observe damage the engine reports, so an elimination can be attributed
+--- without trusting either player's account of it (§14.2).
+---
+--- `sender` is engine-supplied and trustworthy. The entity list inside the
+--- payload is not, which is why Death.recordDamage re-checks the distance
+--- server-side before recording anything.
+---@param modules table
+---@param sender number
+---@param data table
+function Bridges.onWeaponDamage(modules, sender, data)
+    if not modules.death or type(data) ~= 'table' then return 0 end
+    if (data.weaponDamage or 0) <= 0 then return 0 end
+
+    local hits = data.hitGlobalIds
+    if type(hits) ~= 'table' then return 0 end
+
+    local recorded = 0
+    for i = 1, #hits do
+        local ped = NetworkGetEntityFromNetworkId(hits[i])
+        if ped and ped ~= 0 and DoesEntityExist(ped) then
+            local victimSrc = NetworkGetEntityOwner(ped)
+            -- The player's own ped, and nothing else they own. A player's
+            -- client owns their car and the NPCs around them too, and a round
+            -- into any of those was queued as a hit on them, to take the
+            -- damage of the next real shot that landed.
+            if victimSrc and victimSrc > 0 and victimSrc ~= sender
+                and ped == GetPlayerPed(victimSrc) then
+                modules.death.recordDamage(sender, victimSrc, data.weaponType)
+                recorded = recorded + 1
+            end
+        end
+    end
+    return recorded
+end
+
+--- Deliver anything owed to a player who has just come online (§9.3).
+function Bridges.onPlayerReady(modules, src)
+    local actor = modules.identity and modules.identity.resolve(src)
+    if not actor then return 0 end
+
+    local delivered = modules.escrow.retryPending(actor.cid)
+    if delivered > 0 then
+        modules.notify.toCitizen(actor.cid, 'Outstanding payment',
+            ('%d outstanding item%s been delivered.')
+                :format(delivered, delivered == 1 and ' has' or 's have'),
+            { bypassBudget = true })
+    end
+    return delivered
+end
+
+--- Release per-player state when someone disconnects.
+---
+--- Identity is resolved from a citizen id captured while they were still
+--- connected: by the time playerDropped fires, the framework may already
+--- have discarded the player, and cleanup that depends on resolving them
+--- would silently never run.
+function Bridges.onPlayerDropped(modules, cid)
+    if not cid then return false end
+
+    -- Someone leaving pauses the clock on every contract they are party to.
+    if modules.scheduler then modules.scheduler.presenceChanged() end
+
+    modules.identity.endSession(cid)
+    modules.ratelimit.clear(cid)
+    modules.death.clearPlayer(cid)
+    modules.photo.clearPlayer(cid)
+    modules.kidnap.clearPlayer(cid)
+    modules.notify.clearPlayer(cid)
+    modules.comms.clearPlayer(cid)
+    modules.mugshot.clearPlayer(cid)
+    modules.informant.clearPlayer(cid)
+    modules.app.clearPlayerHandles(cid)
+
+    -- Memory mode holds no durable escrow, so a creator disconnecting would
+    -- strand it. Refund and close rather than risk losing their property.
+    if Config.Database.Mode == 'memory' then
+        local contracts = modules.storage.allContracts()
+        for i = 1, #contracts do
+            local c = contracts[i]
+            if c.creator_cid == cid and c.state == CB.STATE.ACTIVE then
+                modules.contracts.resolve(c.id, CB.STATE.CANCELLED, cid, nil,
+                    'creator_disconnected_memory_mode')
+            end
+        end
+    end
+
+    return true
+end
+
+--- Register every bridge against the live runtime.
+--- The last answer sent to each source, so the sweep below sends only
+--- changes rather than an event per player per tick.
+local lastAccess = {}
+
+--- How many sources it is holding an answer for. Bounded by who is
+--- connected, not by who has ever connected: this table is written on every
+--- tick for the life of the server, so a leak here is one that only grows.
+function Bridges.accessMemoSize()
+    local n = 0
+    for _ in pairs(lastAccess) do n = n + 1 end
+    return n
+end
+
+function Bridges.install(modules)
+    -- Per-contract caches in modules that contracts.lua cannot see are
+    -- released through this hook when a contract resolves.
+    modules.contracts.onResolved = function(contractId)
+        modules.informant.clearContract(contractId)
+        modules.comms.clearContract(contractId)
+        modules.death.clearProximity(contractId)
+        -- Kidnap was missing from this list. An armed handover on a contract
+        -- that then cancelled, expired, or was completed by somebody else
+        -- stayed in memory for the life of the process: it holds one of
+        -- Config.Kidnap.MaxConcurrentCountdowns and keeps the tick thread
+        -- running. Fill the cap that way and live delivery stops working for
+        -- everybody on the server, refused as limit_reached, until a
+        -- restart.
+        modules.kidnap.clearContract(contractId)
+    end
+
+    --- A hunter who is no longer on a contract has no handover on it either.
+    ---
+    --- Through a hook rather than a direct call, like onResolved above:
+    --- contracts.lua does not know about the kidnap module and should not
+    --- start to. Kidnap.cancel existed for this and had no caller.
+    modules.contracts.onHunterLeft = function(contractId, hunterCid, reason)
+        modules.kidnap.cancel(contractId, hunterCid, reason)
+        -- And the proof of a kill made during the stint that just ended. A
+        -- hunter may now take the contract up again, and a kill or a photo
+        -- token from before they walked away is not something the new stint
+        -- earned.
+        modules.death.clearPending(contractId, hunterCid)
+        modules.photo.forget(contractId, hunterCid)
+        -- And the handles that stood for their thread on it.
+        if modules.comms and modules.comms.clearHunter then
+            modules.comms.clearHunter(contractId, hunterCid)
+        end
+    end
+
+    -- The expiry pass skips itself when nothing could have changed since the
+    -- last one. Creating or ending a contract can move the earliest
+    -- deadline, so it is told.
+    modules.contracts.onChanged = modules.scheduler and modules.scheduler.contractsChanged or nil
+
+    -- Citizen ids are remembered while players are connected, so disconnect
+    -- cleanup does not depend on the framework still knowing them.
+    local connected = {}
+
+    --- Sources with a readiness pass already on the way.
+    ---
+    --- The pass is what delivers escrow owed to somebody who was offline
+    --- when it was released, so it has to happen on login and must not
+    --- happen a thousand times. Two things schedule it: this server may have
+    --- both framework shims present and fire both loaded events for one
+    --- login, and — the reason it is latched rather than merely
+    --- de-duplicated — QBCore:Server:OnPlayerLoaded is a RegisterNetEvent,
+    --- so any client on the server can fire it as often as it likes.
+    ---
+    --- Measured before this existed: 200 firings from one source queued 200
+    --- server timers and 200 reads of the pending-payout table, five seconds
+    --- later, with nothing to stop the next 200.
+    local readying = {}
+
+    local function scheduleReady(src)
+        if not src or readying[src] then return false end
+        readying[src] = true
+        SetTimeout(Config.PendingEscrow.LoginRetryDelayMs or 5000, function()
+            readying[src] = nil
+            -- Owed money is not delivered while boot recovery is still
+            -- deciding what is owed (App.ready): asked again shortly.
+            if modules.app and modules.app.ready == false then
+                return scheduleReady(src)
+            end
+            Bridges.onPlayerReady(modules, src)
+        end)
+        return true
+    end
+
+    AddEventHandler('weaponDamageEvent', function(sender, data)
+        Bridges.onWeaponDamage(modules, sender, data)
+    end)
+
+    -- sc-ambulance's defibrillator, heard as it is sent to sc-ambulance: the
+    -- moment it leaves between dead and last stand is no revive, whatever
+    -- lands in it. Death.noteDefib asks what sc-ambulance asks — an on-duty
+    -- medic of Config.Completion.MedicJobs, holding the DefibItem, within
+    -- DefibRange of a patient who is dead — so a medic firing it proves
+    -- nothing they could not do with the real device. What it cannot read
+    -- is whether sc-ambulance's defibrillator is switched on at all: with
+    -- it off, set MedicJobs = {} so none is heard.
+    RegisterNetEvent('sc-ambulance:server:UseDefib', function(targetId)
+        local src = source
+        if not modules.death or not modules.death.noteDefib then return end
+        pcall(modules.death.noteDefib, src, targetId)
+    end)
+
+    -- A sentence starting or ending moves a contract's clock as a player
+    -- arriving or leaving does. qbx_core announces every metadata write on
+    -- the server; a local event, so no client can raise it.
+    --
+    -- Going in and coming out only. sc-police writes the sentence down a
+    -- month at a time, every thirty seconds, for every inmate, and a full
+    -- pass on each write was the table read the expiry skip exists to save.
+    AddEventHandler('qbx_core:server:onSetMetaData', function(key, old, new)
+        if key ~= 'injail' or not modules.scheduler then return end
+        local was = (tonumber(old) or 0) > 0
+        local now = (tonumber(new) or 0) > 0
+        if was ~= now then modules.scheduler.presenceChanged() end
+    end)
+
+    ---@param untrusted boolean|nil true for the event any client can fire
+    local function remember(src, untrusted)
+        local actor = modules.identity.resolve(src)
+        if actor then
+            connected[src] = actor.cid
+            -- Someone arriving can unpause a contract's clock.
+            if modules.scheduler then modules.scheduler.presenceChanged() end
+            -- A session we watched begin, so its length is known exactly.
+            -- Identity.resolve may already have noted them as observed a
+            -- moment ago; that becomes the real thing. Never restarted:
+            -- one of the two events that lands here is a net event any
+            -- client can fire, and restarting the clock on it made the
+            -- sender "just arrived" — immune to every claim — on demand.
+            modules.identity.confirmSession(actor.cid, untrusted)
+        end
+        return actor
+    end
+
+    -- A net event, not a local one, because some builds relay it from the
+    -- client. That also means any client can fire it, so it answers to the
+    -- same flood guard as this resource's own events — every one of which
+    -- has one, and this did not.
+    RegisterNetEvent('QBCore:Server:OnPlayerLoaded', function()
+        local src = source
+        if not modules.app.floodOk(src, 'playerLoaded') then return end
+        remember(src, true)
+        scheduleReady(src)
+    end)
+
+    AddEventHandler('qbx_core:server:playerLoaded', function(player)
+        -- Type-checked, not merely truth-checked. `player and
+        -- player.PlayerData` throws for a number or a boolean, and again one
+        -- level down for a PlayerData that is not a table — and an event
+        -- name is a server-wide namespace, so this resource is not the only
+        -- thing that can put something on it. The same rule the client's own
+        -- handlers answer to.
+        if type(player) ~= 'table' or type(player.PlayerData) ~= 'table' then return end
+        local src = player.PlayerData.source
+        remember(src)
+        Bridges.tellAccess(src)
+        scheduleReady(src)
+    end)
+
+    -- Whether this player may have the app at all.
+    --
+    -- The gate already refuses every request from a barred job, but a player
+    -- whose job is barred was still shown the app: it installed, opened, and
+    -- answered nothing, which reads as broken rather than as not-for-them.
+    -- An officer looking at a bounty board they cannot use is also a design
+    -- problem, not only a cosmetic one.
+    --
+    -- The decision is the server's, because the client cannot be trusted
+    -- with it and because the job blacklist lives in the server's config.
+    --- The app going away because of a job the player holds but is not
+    --- working. They may not have taken it themselves (a department boss
+    --- can hire anybody through the MDT), so they are told which job it is
+    --- and how to get the app back, once, when it goes.
+    local function explainHeld(actor, was)
+        if was == false then return end
+        local job, held = modules.identity.barredBy(actor)
+        if not job or not held then return end
+        modules.notify.toCitizen(actor.cid, 'Crimson-Hitman',
+            ('Closed to you while you hold the %s job. Quit it from your job '
+            .. 'menu to use it again.'):format(job), { bypassBudget = true })
+    end
+
+    local function tellAccess(src)
+        if not src or src <= 0 then return end
+        local actor = modules.identity.resolve(src)
+        -- Unresolvable is not "allowed": a player mid-join gets told nothing
+        -- and asks again, rather than being handed the app on a job nobody
+        -- has read yet.
+        if not actor then return end
+
+        local allowed = Config.HideAppFromBlockedJobs == false
+            or not modules.identity.isBarred(actor)
+        if not allowed then explainHeld(actor, lastAccess[src]) end
+        lastAccess[src] = allowed
+        TriggerClientEvent('crimson-hitman:access', src, allowed)
+    end
+
+    Bridges.tellAccess = tellAccess
+
+    --- Re-check everyone, and tell only those whose answer changed.
+    ---
+    --- The job-change event is not enough on its own. Its name has differed
+    --- across framework versions, and a name that is wrong fails silently in
+    --- the worst possible direction: a player who takes a barred job keeps
+    --- the app, and — far worse — one who LEAVES that job never gets it back
+    --- and has no way to ask. Taking something away on an event you cannot
+    --- verify, and only restoring it on that same event, is how a fix
+    --- becomes the bug.
+    ---
+    --- So the answer is recomputed on the ordinary maintenance tick, which
+    --- depends on no framework event at all. It costs one job read per
+    --- player and sends nothing unless the answer has moved.
+    function Bridges.refreshAccess()
+        local seen = {}
+        local players = GetPlayers() or {}
+
+        for i = 1, #players do
+            local src = tonumber(players[i])
+            if src then
+                seen[src] = true
+                local ok, actor = pcall(modules.identity.resolve, src)
+                if ok and actor then
+                    local allowed = Config.HideAppFromBlockedJobs == false
+                        or not modules.identity.isBarred(actor)
+                    if lastAccess[src] ~= allowed then
+                        if not allowed then explainHeld(actor, lastAccess[src]) end
+                        lastAccess[src] = allowed
+                        TriggerClientEvent('crimson-hitman:access', src, allowed)
+                    end
+                end
+            end
+        end
+
+        -- A source is reused by the next player to take that slot, so a
+        -- remembered answer for somebody who has gone would be applied to a
+        -- stranger.
+        for src in pairs(lastAccess) do
+            if not seen[src] then lastAccess[src] = nil end
+        end
+    end
+
+    -- Asked for by the client when it starts, so a client that loaded after
+    -- the push above is not left waiting for an event that has been and
+    -- gone. Rate-limited by the flood guard like anything else a client can
+    -- send.
+    RegisterNetEvent('crimson-hitman:whoAmI', function()
+        local src = source
+        if not modules.app.floodOk(src, 'whoami') then return end
+        tellAccess(src)
+    end)
+
+    -- A player who takes a barred job loses the app, and one who leaves it
+    -- gets it back, without waiting for a reconnect. qbx_core fires this
+    -- whenever a job is set.
+    AddEventHandler('qbx_core:server:onSetJob', function(src)
+        local id = tonumber(src)
+        if id then tellAccess(id) end
+    end)
+
+    -- A player's own client is the only one that can reliably render their
+    -- headshot, so the image arrives from them and is bounded on arrival.
+    RegisterNetEvent('crimson-hitman:mugshot', function(image)
+        local src = source
+        if not modules.app.floodOk(src, 'mugshot') then return end
+        local actor = modules.identity.resolve(src)
+        if not actor then return end
+        if not modules.ratelimit.check(actor, 'mugshot') then return end
+        modules.mugshot.store(actor.cid, image)
+    end)
+
+    RegisterNetEvent('crimson-hitman:appearanceChanged', function()
+        local src = source
+        if not modules.app.floodOk(src, 'appearanceChanged') then return end
+        local actor = modules.identity.resolve(src)
+        if not actor then return end
+        if not modules.ratelimit.check(actor, 'mugshot') then return end
+        modules.mugshot.invalidate(actor.cid)
+    end)
+
+    AddEventHandler('playerDropped', function()
+        local src = source
+        local cid = connected[src]
+        if not cid then
+            local actor = modules.identity.resolve(src)
+            cid = actor and actor.cid
+        end
+        connected[src] = nil
+        readying[src] = nil
+        Bridges.onPlayerDropped(modules, cid)
+    end)
+
+    -- A character switch. The player stays connected and keeps their source,
+    -- but the character this resource has been dealing with is gone — on
+    -- this server that runs through the selector's /relog, which calls the
+    -- framework's Logout.
+    --
+    -- Without this, everything keyed on the old citizen id is orphaned:
+    -- their session start never ends, their rate-limit buckets and damage
+    -- records stay, and an armed handover keeps its slot in the global
+    -- countdown budget until the grace timer happens to expire it. It is
+    -- the same cleanup as a disconnect, because from here it is the same
+    -- event — that character has left.
+    local function unload(src)
+        src = tonumber(src)
+        if not src then return end
+
+        local cid = connected[src]
+        if not cid then
+            local actor = modules.identity.resolve(src)
+            cid = actor and actor.cid
+        end
+        connected[src] = nil
+        if cid then Bridges.onPlayerDropped(modules, cid) end
+    end
+
+    -- Both spellings: qbx_core emits the QBCore-compatible one, and a build
+    -- that emits its own is still covered. The handler is idempotent, so
+    -- being called twice for one switch costs nothing.
+    AddEventHandler('QBCore:Server:OnPlayerUnload', function(src)
+        unload(src or source)
+    end)
+    AddEventHandler('qbx_core:server:playerLoggedOut', function(src)
+        unload(src or source)
+    end)
+
+    Bridges.installCommands(modules)
+    return true
+end
+
+--------------------------------------------------------------------------
+-- Staff commands
+--------------------------------------------------------------------------
+
+--- Print to whoever ran the command — the console when there is no player.
+local function reply(src, line)
+    if src == 0 then
+        print(line)
+    else
+        TriggerClientEvent('chat:addMessage', src, { args = { 'CRIMSON', line } })
+    end
+end
+
+--- An escrow line in words, for a staff command.
+---
+--- Decided by the line's SOURCE, not by whether it happens to carry an
+--- amount. The MySQL schema declares `amount INT DEFAULT 0`, so an item or
+--- weapon line reads back with an amount of 0 rather than nothing — and 0 is
+--- truthy in Lua, so every piece of escrowed property was reported to staff
+--- as "$0". In the recovery tool that is the one place it must not happen:
+--- somebody settling an interrupted release needs to know what the property
+--- was to hand it back.
+---@param line table
+---@return string
+local function describeLine(line)
+    if CB.MONEY_SOURCES[line.source] then
+        return ('$%s%s'):format(tostring(line.amount or 0),
+            line.source ~= 'cash' and (' ' .. tostring(line.source)) or '')
+    end
+
+    local what = tostring(line.item or line.source or 'something')
+    local many = tonumber(line.quantity) or 0
+    return many > 1 and (what .. ' x' .. many) or what
+end
+
+Bridges.describeLine = describeLine
+
+--- Register the staff commands. Kept here with the other engine bindings so
+--- there is one place that knows what this resource attaches to the runtime.
+function Bridges.installCommands(modules)
+    if not Config.Admin.Enabled then return false end
+
+    local Admin = modules.admin
+    local names = Config.Admin.Commands
+
+    --- Wrap a command in its permission check. A caller without the ACE is
+    --- told the same thing whether or not the contract exists, so the
+    --- command cannot be used to probe for ids.
+    ---@param strict boolean|nil only the named ACE: Config.Admin.ExtraAces
+    --- opens the read-only commands, never one that moves money or unmasks
+    --- an anonymous party.
+    local function command(name, ace, fn, strict)
+        RegisterCommand(name, function(src, args)
+            if not Admin.allowed(src, ace, strict) then
+                reply(src, Admin.howToAuthorise(ace))
+                return
+            end
+            fn(src, args or {})
+        end, false)
+    end
+
+    --- Why the app is not showing something.
+    ---
+    --- Reads only, and reads the same things the app reads, as the person
+    --- running it. Three separate causes have produced the same symptom on
+    --- a live server and none of them left anything behind to look at, so
+    --- this asks the server rather than guessing.
+    command(names.diagnose, Config.Admin.Ace, function(src, args)
+        -- The optional player id is what makes this runnable from the server
+        -- console, which is the one place that never refuses an owner.
+        local lines = Admin.diagnose(src, args[1])
+        for i = 1, #lines do reply(src, lines[i]) end
+    end)
+
+    command(names.timeline, Config.Admin.Ace, function(src, args)
+        local view, err = Admin.timeline(args[1])
+        if not view then return reply(src, 'No such contract (' .. tostring(err) .. ').') end
+
+        local c = view.contract
+        reply(src, ('%s  %s  %s -> %s'):format(c.id, c.state, c.creator, c.target))
+        reply(src, ('slots %d/%d  created %s%s'):format(
+            c.claimed or 0, c.slots or 1, os.date('%Y-%m-%d %H:%M', c.created_at),
+            c.resolved_at and ('  resolved ' .. os.date('%Y-%m-%d %H:%M', c.resolved_at)
+                .. ' (' .. tostring(c.resolution) .. ')') or ''))
+
+        for i = 1, #view.escrow do
+            local line = view.escrow[i]
+            reply(src, ('  escrow %s  %s %s  %s  slot %s  %s'):format(
+                line.id, line.portion, line.source, describeLine(line),
+                tostring(line.slot), line.state))
+        end
+
+        for i = 1, #view.events do
+            local row = view.events[i]
+            reply(src, ('  %s  %-10s %s'):format(
+                os.date('%H:%M:%S', row.ts), row.kind, row.action))
+        end
+    end)
+
+    command(names.void, Config.Admin.Ace, function(src, args)
+        local reason = table.concat(args, ' ', math.min(2, #args + 1))
+        local ok, err = Admin.void(src, args[1], reason)
+        reply(src, ok and 'Contract voided; escrow returned to the creator.'
+                       or ('Could not void it: ' .. tostring(err)))
+    end, true)
+
+    command(names.stuck, Config.Admin.Ace, function(src)
+        local lines = Admin.interrupted(src)
+        if #lines == 0 then return reply(src, 'No interrupted releases.') end
+
+        reply(src, ('%d escrow line(s) were mid-release at a shutdown:'):format(#lines))
+        for i = 1, #lines do
+            local line = lines[i]
+            reply(src, ('  %s  contract %s  %s %s  was paying %s  (%s)'):format(
+                line.line, line.contract, tostring(line.portion), describeLine(line),
+                tostring(line.intended), os.date('%Y-%m-%d %H:%M', line.at)))
+        end
+        reply(src, ('Settle each with /%s <line> pay|return'):format(names.settle))
+    end)
+
+    -- Not through `command`: this one refuses the extra ACEs. `command`
+    -- most admin groups already carry opens every read-only tool here, and
+    -- that is right for them — it is not right for the one command that
+    -- moves every clock on the server.
+    if names.refresh then
+        RegisterCommand(names.refresh, function(src, args)
+            if not Admin.allowed(src, Config.Admin.Ace, true) then
+                return reply(src, Admin.howToAuthorise(Config.Admin.Ace))
+            end
+            local what = tostring((args or {})[1] or 'timers'):lower()
+            if what ~= 'timers' and what ~= 'refresh' then
+                return reply(src, ('Usage: /%s timers'):format(names.refresh))
+            end
+            local lines = Admin.refreshTimers(src)
+            for i = 1, #lines do reply(src, lines[i]) end
+        end, false)
+    end
+
+    command(names.settle, Config.Admin.Ace, function(src, args)
+        local ok, err = Admin.settleLine(src, args[1], args[2])
+        if ok and err == 'queued' then
+            return reply(src, 'Queued: they are not in the city, so it is delivered at their next login.')
+        end
+        reply(src, ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err)))
+    end, true)
+
+    --- What /cleanse says for each refusal, where the app's words do not
+    --- reach because the app is closed to the player running it.
+    local CLEANSE_REFUSALS = {
+        [CB.ERR.BAILOUT_OFF] = 'this server does not offer buyouts.',
+        [CB.ERR.NO_BUYOUT_PRICE] = 'the client did not put a price on closing that one.',
+        [CB.ERR.BUYOUT_PENDING] = 'you have already paid; it closes shortly.',
+        [CB.ERR.INCAPACITATED] = 'not from the floor. Get up first.',
+        [CB.ERR.HANDOVER_IN_PROGRESS] = 'somebody has hold of you.',
+        [CB.ERR.INSUFFICIENT] = 'you do not have that much.',
+        [CB.ERR.ALREADY_SETTLED] = 'that contract has already closed.',
+        [CB.ERR.NOT_FOUND] = 'no contract on you has that id.',
+        [CB.ERR.NOT_PARTICIPANT] = 'that contract is not on you.',
+        [CB.ERR.INVALID_INPUT] = 'that is not a contract id.',
+    }
+
+    -- Buying out a contract on yourself, for players the app is closed to.
+    --
+    -- Law enforcement and EMS are barred from the app by §2, so an officer
+    -- with a contract on them had no way to reach the one mechanic the
+    -- target of a contract is supposed to have. Not ACE-gated — anyone may
+    -- run it — because it only ever acts on a contract naming the caller,
+    -- and every check the app's button passes is applied here too.
+    if Config.Bailout.Enabled and Config.Bailout.Command then
+        RegisterCommand(Config.Bailout.Command, function(src, args)
+            if src == 0 then
+                return reply(src, 'This is for a player buying out a contract on themselves.')
+            end
+
+            local actor = modules.identity.resolve(src)
+            if not actor then return end
+
+            -- Deliberately past the app's job gate: being barred from the
+            -- app is the reason this exists.
+            --
+            -- Two allowances, for two things. Every run of the command reads
+            -- the store, so every run spends from `load` — the budget the app
+            -- itself reads on — which bounds a player hammering it: a command
+            -- does not pass the net-event flood guard the app's requests do.
+            -- The one-a-minute `bailout` allowance is for a purchase, and
+            -- only a purchase spends it. It used to be spent by the listing,
+            -- so running /cleanse, reading the id it printed and doing
+            -- exactly what it said was refused as "Slow down."
+            local function slowDown(bucket)
+                local wait = modules.ratelimit.retryAfter(actor, bucket) or 0
+                return reply(src, wait > 0
+                    and ('Slow down. Try again in %d second(s).'):format(wait)
+                    or 'Slow down.')
+            end
+            if not modules.ratelimit.check(actor, 'load') then return slowDown('load') end
+
+            local open = modules.bailout.available(actor)
+            if #open == 0 then
+                return reply(src, 'Nothing is out on you.')
+            end
+
+            if not args[1] then
+                reply(src, ('%d contract(s) on you can be bought out:'):format(#open))
+                for i = 1, #open do
+                    reply(src, ('  %s  $%d%s'):format(open[i].id, open[i].amount,
+                        open[i].queued and '  (already paid, closing shortly)' or ''))
+                end
+                return reply(src, ('Buy one out with /%s <id>'):format(Config.Bailout.Command))
+            end
+
+            -- Not while boot recovery runs (App.ready), like every app request.
+            if modules.app and modules.app.ready == false then
+                return reply(src, 'The server is still starting. Try again in a moment.')
+            end
+            if not modules.ratelimit.check(actor, 'bailout') then return slowDown('bailout') end
+
+            local ok, err = modules.bailout.buy(actor, args[1])
+            if not ok then
+                -- Nothing was bought, so the purchase allowance goes back,
+                -- as the app's own handler does. And in words: the command
+                -- printed the raw code, "Could not buy it out: incapacitated".
+                modules.ratelimit.refund(actor, 'bailout')
+                return reply(src, 'Could not buy it out: '
+                    .. (CLEANSE_REFUSALS[err] or tostring(err)))
+            end
+            reply(src, 'Paid. The contract closes shortly.')
+        end, false)
+    end
+
+    -- Its own ACE: reading a history and unmasking a person are different
+    -- kinds of act, and should not be the same permission.
+    command(names.whois, Config.Admin.IdentityAce, function(src, args)
+        local who, err = Admin.identify(src, args[1])
+        if not who then return reply(src, 'No such contract (' .. tostring(err) .. ').') end
+
+        reply(src, ('creator  %s  %s%s'):format(who.creator.cid, who.creator.name,
+            who.creator.anonymous and '  (listed anonymously)' or ''))
+        reply(src, ('target   %s  %s'):format(who.target.cid, who.target.name))
+        for i = 1, #who.hunters do
+            local h = who.hunters[i]
+            reply(src, ('%-8s %s  %s%s'):format(
+                h.alias or 'operative', h.cid, h.name,
+                h.anonymous and '  (listed anonymously)' or ''))
+        end
+    end, true)
+
+    return true
+end
+
+return Bridges
