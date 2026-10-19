@@ -201,10 +201,30 @@ local function declarationsIn(sql)
     if not name then return nil, {}, {} end
 
     local columns, indexes = {}, {}
-    local body = sql:match('%((.*)%)%s*$') or ''
+    -- MySQL ignores the `--` comments; this has to as well. Read as
+    -- declarations, the prose in them became columns named `and` and
+    -- `which`, the ALTER TABLE built from them was a syntax error, oxmysql
+    -- raised it, and mysql mode never started.
+    local body = sql:gsub('%-%-[^\n]*', ''):match('%((.*)%)%s*$') or ''
 
-    for line in body:gmatch('[^,\n]+') do
-        local trimmed = line:match('^%s*(.-)%s*$')
+    -- Split on the commas between declarations only. One inside brackets
+    -- belongs to a declaration: `INDEX idx_cid (cid, resolved_at)` is one.
+    local parts, depth, start = {}, 0, 1
+    for i = 1, #body do
+        local ch = body:sub(i, i)
+        if ch == '(' then
+            depth = depth + 1
+        elseif ch == ')' then
+            depth = depth - 1
+        elseif ch == ',' and depth == 0 then
+            parts[#parts + 1] = body:sub(start, i - 1)
+            start = i + 1
+        end
+    end
+    parts[#parts + 1] = body:sub(start)
+
+    for _, part in ipairs(parts) do
+        local trimmed = part:gsub('%s+', ' '):match('^%s*(.-)%s*$')
         local head = trimmed:match('^([%w_]+)')
 
         if head then
@@ -425,10 +445,19 @@ function MySQLStore.setBailoutQueue(id, fields)
     return (tonumber(affected) or 0) > 0
 end
 
+--- A TINYINT(1) column as the boolean the rest of the resource compares
+--- against. oxmysql's typeCast hands these back as true and false, while a
+--- driver without it hands back 0 and 1. Comparing with `== 1` read every
+--- flag as false under oxmysql: anonymous parties were shown by name and an
+--- officer target lost its flag.
+local function flag(value)
+    return value == true or (tonumber(value) or 0) ~= 0
+end
+
 local function hydrateContract(row)
     if not row then return nil end
-    row.target_protected = row.target_protected == 1
-    row.anon_creator = row.anon_creator == 1
+    row.target_protected = flag(row.target_protected)
+    row.anon_creator = flag(row.anon_creator)
     return row
 end
 
@@ -667,7 +696,7 @@ local function hydrateEscrow(row)
     -- Back to the boolean the rest of the resource compares against. A 0
     -- from the database is truthy in Lua, so leaving it as a number would
     -- make every line look derived rather than none of them.
-    row.derived = (tonumber(row.derived) or 0) ~= 0 or nil
+    row.derived = flag(row.derived) or nil
     return row
 end
 
@@ -762,7 +791,7 @@ function MySQLStore.addHitman(h)
 end
 
 local function hydrateHitman(row)
-    if row then row.anon = row.anon == 1 end
+    if row then row.anon = flag(row.anon) end
     return row
 end
 

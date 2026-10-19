@@ -13,11 +13,13 @@
 --- It is faithful in the ways that have actually caused bugs here:
 ---   * a row is stored as the columns the schema declares and nothing else,
 ---     so an undeclared field is dropped exactly as MySQL drops it;
----   * booleans come back as 0 and 1, not as true and false;
+---   * a TINYINT(1) comes back as true and false, as oxmysql's typeCast
+---     hands it back (Exec.booleans = false gives the 0 and 1 of a driver
+---     without it);
 ---   * every read returns a fresh copy, so a caller mutating what it read
 ---     does not reach into the store.
 
-local Exec = { tables = {}, schema = {}, primary = {} }
+local Exec = { tables = {}, schema = {}, primary = {}, booleans = true }
 
 local function copy(value)
     if type(value) ~= 'table' then return value end
@@ -39,7 +41,7 @@ local function parseSchema(sql)
     if not name then return end
 
     local columns, order, primary = {}, {}, nil
-    local body = sql:match('%((.*)%)%s*$') or ''
+    local body = sql:gsub('%-%-[^\n]*', ''):match('%((.*)%)%s*$') or ''
 
     for line in body:gmatch('[^,\n]+') do
         local trimmed = line:match('^%s*(.-)%s*$')
@@ -64,16 +66,17 @@ local function parseSchema(sql)
     Exec.tables[name] = Exec.tables[name] or {}
 end
 
---- Store a value the way MySQL would: booleans as 0 and 1, everything else
---- as it stands. Anything the schema does not declare is dropped.
+--- Store a value the way it will be read back: a TINYINT(1) in the shape
+--- of Exec.booleans, everything else as it stands. Anything the schema does
+--- not declare is dropped.
 local function coerce(tableName, column, value)
     local declared = Exec.schema[tableName]
     local kind = declared and declared.columns[column]
     if not kind then return nil end
     if kind == 'bool' then
-        if value == true then return 1 end
-        if value == false then return 0 end
-        return tonumber(value) or 0
+        local on = value == true or (tonumber(value) or 0) ~= 0
+        if Exec.booleans then return on end
+        return on and 1 or 0
     end
     return value
 end

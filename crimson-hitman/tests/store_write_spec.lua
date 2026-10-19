@@ -134,3 +134,52 @@ describe('writing the json store', function()
         truthy(closed, 'and it has to say it has stopped, not just go quiet')
     end)
 end)
+
+
+--- store.json is rewritten in place, so a crash mid-write can leave it
+--- empty. Read as a first install, that wrote an index naming no contracts
+--- over it, and every open contract and the escrow it held were gone, with
+--- no warning and no quarantine.
+describe('an index that reads back empty', function()
+    local function reopen()
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        local store = require('crimson-hitman.server.storage.json')
+        return store, pcall(store.open)
+    end
+
+    local function heldContract()
+        local store = freshStore()
+        store.writeContract({ id = 'ctheld01', creator_cid = 'C', target_cid = 'T',
+            state = CH.STATE.ACTIVE, created_at = os.time() })
+        store.writeEscrow('ctheld01', { { id = 'ctheld01:1', contract_id = 'ctheld01', slot = 1,
+            portion = 'baseline', source = 'cash', amount = 50000, state = CH.ESCROW_STATE.HELD } })
+        store.close()
+    end
+
+    it('refuses to start where the store has run before, and overwrites nothing', function()
+        heldContract()
+        local _, opened = reopen()
+        truthy(opened, 'a whole index opens')
+        truthy((Natives.files['data/store.json.prev'] or ''):find('ctheld01', 1, true),
+            'and is kept as the copy to restore from')
+
+        Natives.files['data/store.json'] = ''
+        local _, ok, err = reopen()
+        falsy(ok, 'an empty index on a store that has run is not a first install')
+        truthy(tostring(err):find('store.json.prev', 1, true), 'names the copy: ' .. tostring(err))
+        eq(Natives.files['data/store.json'], '', 'and has not written an empty index over it')
+        truthy(Natives.files['data/contracts/ctheld01.json'], 'the contract file is still there')
+
+        Natives.files['data/store.json'] = Natives.files['data/store.json.prev']
+        local store, restored = reopen()
+        truthy(restored, 'restored from the copy, it starts')
+        eq(store.readEscrowLine('ctheld01:1').amount, 50000, 'with the escrow held')
+    end)
+
+    it('starts empty on a first install', function()
+        Natives.files = {}
+        local store, ok = reopen()
+        truthy(ok, 'nothing has run here, so empty is right')
+        eq(#store.allContracts(), 0)
+    end)
+end)

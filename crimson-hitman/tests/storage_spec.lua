@@ -888,6 +888,44 @@ describe('indexed contract lookups agree across backends', function()
 end)
 
 
+--- oxmysql's typeCast reads a TINYINT(1) back as true or false; a driver
+--- without it reads 0 or 1. Compared with `== 1`, every flag read false under
+--- oxmysql, so an anonymous client or hitman was shown by name, an officer
+--- target lost its flag and no bonus line counted as derived.
+describe('mysql flags in either shape', function()
+    it('reads every TINYINT(1) flag back as it was written', function()
+        local ok, err = pcall(function()
+            for _, booleans in ipairs({ true, false }) do
+                Exec.booleans = booleans
+                local shape = booleans and 'true/false' or '0/1'
+                package.loaded['crimson-hitman.server.storage.mysql'] = nil
+                Exec.install(Natives)
+                local store = require('crimson-hitman.server.storage.mysql')
+                store.open()
+
+                local c = contractFixture('ctflag01')
+                c.target_protected, c.anon_creator = true, true
+                store.writeContract(c)
+                store.writeEscrow('ctflag01', { {
+                    id = 'ctflag01:1', contract_id = 'ctflag01', slot = 1, portion = 'bonus',
+                    source = 'cash', amount = 100, state = CH.ESCROW_STATE.HELD, derived = true,
+                } })
+                store.addHitman({ id = 'hnflag01', contract_id = 'ctflag01',
+                    hitman_cid = 'HITMAN01', anon = true, accepted_at = 1, state = 'active' })
+
+                local read = store.readContract('ctflag01')
+                eq(read.target_protected, true, shape .. ': officer flag')
+                eq(read.anon_creator, true, shape .. ': anonymous client')
+                eq(store.readEscrowLine('ctflag01:1').derived, true, shape .. ': derived bonus')
+                eq(store.readHitmen('ctflag01')[1].anon, true, shape .. ': anonymous hitman')
+            end
+        end)
+        Exec.booleans = true
+        if not ok then error(err, 0) end
+    end)
+end)
+
+
 --- Schema migration.
 ---
 --- CREATE TABLE IF NOT EXISTS creates a table and then never touches it
@@ -916,8 +954,24 @@ describe('mysql schema migration', function()
     end
 
     it('adds nothing to a database it just created', function()
+        -- The sim answers with what CREATE TABLE made, as MySQL does. The
+        -- schema's comments read as declarations once produced columns
+        -- named `and` and `which` here, and an ALTER oxmysql raised on.
         opened(nil)
-        eq(#Sim.altered, 0, 'a fresh install needs no migration')
+        local sql = {}
+        for _, change in ipairs(Sim.altered) do sql[#sql + 1] = change.sql end
+        eq(#Sim.altered, 0, 'a fresh install needs no migration: ' .. table.concat(sql, ' | '))
+    end)
+
+    it('adds an index on two columns whole', function()
+        opened({ crimson_ledger = { id = true, cid = true, contract_id = true,
+                                    role = true, resolved_at = true } },
+               { crimson_ledger = { PRIMARY = true } })
+        local sql = {}
+        for _, change in ipairs(Sim.altered) do sql[#sql + 1] = change.sql end
+        local all = table.concat(sql, ' | ')
+        truthy(all:find('ALTER TABLE crimson_ledger ADD INDEX idx_cid (cid, resolved_at)', 1, true),
+            'not cut at its comma: ' .. all)
     end)
 
     it('adds the columns an older version never had', function()
@@ -1112,6 +1166,25 @@ describe('json sharding', function()
         eq(#reopened.readEscrow('ct1'), 1, 'its escrow')
         eq(reopened.readEscrowLine('ct1:1').amount, 5000)
         eq(#reopened.readHitmen('ct1'), 1, 'and its hitmen')
+    end)
+
+    --- apply's own financial write flushes the proposal still open with every
+    --- approval in it. With 'applied' left to the debounce, a crash brought
+    --- it back open, and one more Agree cut the same deadline twice.
+    it('writes an answered proposal at once, not on the next flush', function()
+        local store = fresh()
+        store.writeContract(contract('ct1'))
+        store.writeAmendment({ id = 'am1', contract_id = 'ct1', proposer = 'CREATOR1',
+            kind = 'shorten_deadline', approvals = { CREATOR1 = true, HITMAN01 = true },
+            outcome = 'open' })
+        store.save(true)
+
+        local proposal = store.readAmendment('am1')
+        proposal.outcome = 'applied'
+        store.writeAmendment(proposal)
+
+        local onDisk = json.decode(Natives.files['data/contracts/ct1.json'])
+        eq(onDisk.amendments.am1.outcome, 'applied', 'on disk before any flush')
     end)
 
     --- A shard the index names but that will not load.

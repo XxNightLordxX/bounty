@@ -1486,7 +1486,7 @@ describe('requests while boot recovery is running', function()
             .. tostring(after and after.err))
     end)
 
-    it('mysql: a death reported while recovery runs is not acted on yet', function()
+    it('mysql: a death reported while recovery runs is acted on once it has finished', function()
         local _, s = boot('mysql')
         local f = fixture(s)
         truthy(s.contracts.create(f.creator, {
@@ -1514,6 +1514,15 @@ describe('requests while boot recovery is running', function()
         truthy(ok)
         truthy(fired, 'recovery never read the escrow')
         falsy(handled, 'a kill was settled while recovery was still deciding what the crash left')
+
+        -- Held, not dropped: the client reports a death once, and nothing
+        -- else opens the kill a photo has to prove.
+        local death = package.loaded['server.completion.death']
+        local real, later = death.onVictimReport, false
+        death.onVictimReport = function(...) later = true return real(...) end
+        Env.advance(2)
+        death.onVictimReport = real
+        truthy(later, 'the report made during recovery was never handled')
     end)
 end)
 

@@ -917,11 +917,41 @@ function App.register()
     -- These carry no payload but are still gated and throttled: a client can
     -- fire them as fast as it likes, and each one walks the contract table.
 
+    --- Deaths reported while boot recovery runs (App.ready), one per player,
+    --- held until it has finished.
+    ---
+    --- They were dropped, on the word of a comment saying the condition
+    --- sampler records the kill anyway. It does not: it marks the death and
+    --- attributes nothing, and the client reports a death once and not again
+    --- while the player stays dead. The hitman standing over the body was
+    --- told there was no kill to verify, and the kill paid nobody.
+    local heldDeaths = {}
+    local onDied
+
+    local function holdDeath(src, killerServerId)
+        local waiting = heldDeaths[src] ~= nil
+        heldDeaths[src] = { killer = killerServerId }
+        if waiting then return end
+        local function later()
+            SetTimeout(1000, function()
+                if not App.ready then return later() end
+                local held = heldDeaths[src]
+                heldDeaths[src] = nil
+                -- Checked again as it stands now: dead, in range, and on a
+                -- contract, as any report is.
+                if held then onDied(src, held.killer) end
+            end)
+        end
+        later()
+    end
+
     RegisterNetEvent('crimson-hitman:iDied', function(killerServerId)
         local src = source
-        -- Not while boot recovery runs (App.ready); the kill is still
-        -- recorded by the condition sampler, and the photo can prove it.
-        if not App.ready then return end
+        if not App.ready then return holdDeath(src, killerServerId) end
+        onDied(src, killerServerId)
+    end)
+
+    onDied = function(src, killerServerId)
         if not App.floodOk(src, 'iDied') then return end
 
         local actor = deps.identity.resolve(src)
@@ -938,7 +968,7 @@ function App.register()
         -- that the condition loss was observed.
         local ok, err = pcall(deps.death.onVictimReport, src, tonumber(killerServerId))
         if not ok then deps.audit.rejected('error_iDied', actor.cid, nil, { error = tostring(err) }) end
-    end)
+    end
 
     RegisterNetEvent('crimson-hitman:iRevived', function()
         local src = source

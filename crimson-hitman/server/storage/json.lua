@@ -1,9 +1,10 @@
 --- Flat-file backend (§10.2).
 ---
---- For servers that do not want to run MySQL. Fully durable: writes are
---- atomic (temp file then rename), financial transitions bypass the debounce,
---- and a malformed data file halts the resource rather than starting with
---- empty escrow.
+--- For servers that do not want to run MySQL. Financial transitions bypass
+--- the debounce, and a malformed data file halts the resource rather than
+--- starting with empty escrow. Writes are not atomic: each file is rewritten
+--- in place (see writeFile), so a crash mid-write can tear one. A torn index
+--- halts the boot too, and store.json.prev holds the one the last start read.
 
 local Util = require_shared('util')
 
@@ -263,9 +264,28 @@ end
 --- the index names and cannot be read — that is one contract's money
 --- missing, which is not something to start up and hope about.
 function JsonStore.open()
+    -- Read twice, as a shard is, before believing there is no index.
     local raw = LoadResourceFile(resource, path())
+    if raw == nil or raw == '' then raw = LoadResourceFile(resource, path()) end
 
     if raw == nil or raw == '' then
+        -- Empty is a first install only where this store has never run.
+        -- assertWritable leaves contracts/.writable behind on every boot, so
+        -- finding it means there was an index and it is now missing or
+        -- empty: store.json is rewritten in place, and a crash mid-write
+        -- leaves it zero-length. Starting empty here wrote an index naming
+        -- no contracts over it, and every open contract and the escrow it
+        -- held were gone without a word.
+        local ranBefore = LoadResourceFile(resource, directory() .. '/contracts/.writable')
+        if ranBefore and ranBefore ~= '' then
+            error(('[crimson-hitman] %s is missing or empty, but this store has run before. ' ..
+                   'Refusing to start: starting empty would drop every open contract and its ' ..
+                   'escrow. Restore it from %s.prev, the index as of the last start (a ' ..
+                   'contract created since still has its file in %s/contracts/), or from a ' ..
+                   'backup. To start empty on purpose, delete %s/contracts/.writable too.')
+                   :format(path(), path(), directory(), directory()))
+        end
+
         db = json.decode(json.encode(EMPTY))
         dirtyShards, shardIds, quarantined, indexDirty = {}, {}, {}, true
         JsonStore.save(true)
@@ -276,8 +296,8 @@ function JsonStore.open()
     local ok, decoded = pcall(json.decode, raw)
     if not ok or type(decoded) ~= 'table' then
         error(('[crimson-hitman] %s is unreadable. Refusing to start: continuing would ' ..
-               'discard every open contract and its escrow. Restore the file from a backup ' ..
-               'or move it aside deliberately.'):format(path()))
+               'discard every open contract and its escrow. Restore the file from %s.prev ' ..
+               'or a backup, or move it aside deliberately.'):format(path(), path()))
     end
 
     db = json.decode(json.encode(EMPTY))
@@ -291,6 +311,11 @@ function JsonStore.open()
     seq = tonumber(db.seq) or 0
 
     if type(decoded.contractIds) == 'table' then
+        -- The index as this start found it, so a later start that finds it
+        -- torn has something to restore from. Once per start rather than on
+        -- every write, which would double the cost of the commonest write.
+        SaveResourceFile(resource, path() .. '.prev', raw, -1)
+
         -- Sharded layout. There is no directory listing native, so the index
         -- is the only record of which shards exist; a named shard that will
         -- not load is a missing contract, not a missing file.
@@ -1029,7 +1054,17 @@ end
 -- Amendments, messages, ledger, pending, audit
 --------------------------------------------------------------------------
 
-function JsonStore.writeAmendment(a) db.amendments[a.id] = a touch(false, a.contract_id) return true end
+--- An answered proposal is written at once, as a financial write is. What
+--- it changed already was: apply moved the deadline or the reward with a
+--- financial write, which flushed the proposal too, still open and holding
+--- every approval. With 'applied' left on the debounce, a crash in between
+--- brought it back open after the restart, and one more Agree applied the
+--- same change a second time.
+function JsonStore.writeAmendment(a)
+    db.amendments[a.id] = a
+    touch(a.outcome ~= 'open', a.contract_id)
+    return true
+end
 function JsonStore.readAmendment(id) return db.amendments[id] end
 
 function JsonStore.readOpenAmendments(contractId)

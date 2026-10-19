@@ -7,25 +7,38 @@
 --- That is exactly how the stake owner, the pause marker and the queued
 --- bailout were all silently dropped in the default configuration.
 
-local Sim = { tables = {}, schema = {} }
+local Sim = { tables = {}, schema = {}, indexes = {} }
 
+--- Read a CREATE TABLE the way MySQL does: `--` comments are not there,
+--- and only a comma outside brackets ends a declaration.
 local function parseSchema(sql)
     local name = sql:match('CREATE TABLE IF NOT EXISTS ([%w_]+)')
     if not name then return end
 
-    local columns = {}
-    local body = sql:match('%((.*)%)%s*$')
-    for line in (body or ''):gmatch('[^,\n]+') do
-        local column = line:match('^%s*([%w_]+)%s+[%w()]+')
-        if column then
-            local upper = column:upper()
-            if upper ~= 'INDEX' and upper ~= 'PRIMARY' and upper ~= 'KEY' then
-                columns[column] = true
+    local columns, indexes = {}, { PRIMARY = true }
+    local body = sql:gsub('%-%-[^\n]*', ''):match('%((.*)%)%s*$') or ''
+    local depth, part = 0, {}
+    for ch in (body .. ','):gmatch('.') do
+        if ch == ',' and depth == 0 then
+            local line = table.concat(part)
+            part = {}
+            local column = line:match('^%s*([%w_]+)%s+[%w()]+')
+            if column then
+                local upper = column:upper()
+                if upper == 'INDEX' or upper == 'KEY' then
+                    indexes[line:match('^%s*[%w_]+%s+([%w_]+)')] = true
+                elseif upper ~= 'PRIMARY' then
+                    columns[column] = true
+                end
             end
+        else
+            if ch == '(' then depth = depth + 1 elseif ch == ')' then depth = depth - 1 end
+            part[#part + 1] = ch
         end
     end
 
     Sim.schema[name] = columns
+    Sim.indexes[name] = indexes
     Sim.tables[name] = Sim.tables[name] or {}
 end
 
@@ -43,7 +56,7 @@ local function parseInsert(sql)
 end
 
 function Sim.reset()
-    Sim.tables, Sim.schema = {}, {}
+    Sim.tables, Sim.schema, Sim.indexes = {}, {}, {}
     Sim.rejected = {}
     -- What a pre-existing database reports it has, which is the whole point
     -- of a migration: nil means the table is new and matches its
@@ -114,12 +127,13 @@ function Sim.install(Natives)
         if sql:find('CREATE TABLE', 1, true) then parseSchema(sql) end
         if sql:find('INSERT INTO', 1, true) then Sim.check(sql) end
 
-        -- What the database says it already has. Only answered when a test
-        -- has set up a pre-existing schema; otherwise the empty answer means
-        -- "just created, nothing to migrate", which is the live behaviour
-        -- for a fresh install.
+        -- What the database says it already has: the shape a test set up
+        -- as left by an older version, or else what CREATE TABLE just made.
+        -- Real MySQL never answers a table it has with nothing, and an empty
+        -- answer here once hid a migration that could not start.
         if sql:find('information_schema.COLUMNS', 1, true) then
-            local held = Sim.existing and Sim.existing[params and params[1]]
+            local table_ = params and params[1]
+            local held = Sim.existing and Sim.existing[table_] or Sim.schema[table_]
             if not held then return {} end
             local rows = {}
             for column in pairs(held) do rows[#rows + 1] = { COLUMN_NAME = column } end
@@ -127,7 +141,10 @@ function Sim.install(Natives)
         end
 
         if sql:find('information_schema.STATISTICS', 1, true) then
-            local held = Sim.existingIndexes and Sim.existingIndexes[params and params[1]]
+            local table_ = params and params[1]
+            local held = Sim.existing and Sim.existing[table_]
+                and Sim.existingIndexes and Sim.existingIndexes[table_]
+                or Sim.indexes[table_]
             if not held then return {} end
             local rows = {}
             for index in pairs(held) do rows[#rows + 1] = { INDEX_NAME = index } end

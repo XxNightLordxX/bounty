@@ -1,7 +1,7 @@
 # Live store, written at runtime by Config.Database.Mode = 'json'.
 # The directories themselves are tracked (see crimson-hitman/data/README.md);
 # what the server writes into them is not.
-crimson-hitman/data/store.json
+crimson-hitman/data/store.json*
 crimson-hitman/data/contracts/*.json
 crimson-hitman/data/contracts/.writable
 
