@@ -1159,7 +1159,10 @@
     }
     reward.appendChild(el('div', 'amount' + (stamp.charAt(0) === '$' ? '' : ' is-goods'), stamp));
     if (paid.bonus > 0) {
-      reward.appendChild(el('div', 'bonus', '+' + money(paid.bonus) + ' alive'));
+      // "If alive", not "alive": "+$75,000 alive" read as a figure with a
+      // stray word after it. Not "if delivered alive", which is too long to
+      // sit under the stamp at 390px without pushing the target's name down.
+      reward.appendChild(el('div', 'bonus', '+' + money(paid.bonus) + ' if alive'));
     }
 
     // What the headline figure does not say goes on a line of its own under
@@ -1168,10 +1171,12 @@
     // few letters a line — on exactly the contracts that pay the most.
     var notes = el('div', 'reward-notes');
 
-    // How much of that is black money, when any of it is.
+    // How much of that is dirty money, when any of it is. "Dirty money",
+    // the Place form's and the wallet's word for it: this note said "black
+    // money", so one currency went by two names a screen apart.
     //
     // The headline is one figure covering all three money sources, and they
-    // are not worth the same: black money sells for a fraction of its face
+    // are not worth the same: dirty money sells for a fraction of its face
     // value. A hitman looking at "$250,000" could be looking at a quarter of
     // a million black_money items with no way to tell.
     //
@@ -1182,10 +1187,10 @@
     var dirtyBase = Number(paid.sources && paid.sources.dirty) || 0;
     var dirtyBonus = Number(paid.bonusSources && paid.bonusSources.dirty) || 0;
     var dirtyText = dirtyBase > 0 && dirtyBonus > 0
-      ? money(dirtyBase) + ' of this is black money, and ' + money(dirtyBonus)
-        + ' of the alive bonus'
-      : dirtyBase > 0 ? money(dirtyBase) + ' of this is black money'
-      : dirtyBonus > 0 ? money(dirtyBonus) + ' of the alive bonus is black money'
+      ? money(dirtyBase) + ' of this is dirty money, and ' + money(dirtyBonus)
+        + ' of the kidnapping bonus'
+      : dirtyBase > 0 ? money(dirtyBase) + ' of this is dirty money'
+      : dirtyBonus > 0 ? money(dirtyBonus) + ' of the kidnapping bonus is dirty money'
       : null;
     if (dirtyText) { notes.appendChild(el('div', 'hint ico i-coin', dirtyText)); }
 
@@ -1193,7 +1198,7 @@
     var goods = goodsLine(paid.goods);
     if (goods) { notes.appendChild(el('div', 'goods ico i-box', goods)); }
     var bonusGoods = goodsLine(paid.bonusGoods);
-    if (bonusGoods) { notes.appendChild(el('div', 'goods ico i-box', '+ ' + bonusGoods + ' alive')); }
+    if (bonusGoods) { notes.appendChild(el('div', 'goods ico i-box', '+ ' + bonusGoods + ' if alive')); }
     head.appendChild(reward);
     node.appendChild(head);
     if (notes.children.length) { node.appendChild(notes); }
@@ -1277,6 +1282,14 @@
     // was the money leaving their bank.
     if (contract.penaltyAmount > 0) {
       meta.appendChild(chip(money(contract.penaltyAmount) + ' stake', 'warn', 'i-coin'));
+    }
+    // The buyout as the server set it, on the client's own card. The server
+    // moves a price outside what the reward allows to the nearest limit, and
+    // the target was the only one shown the result: a client who meant to
+    // let them off cheaply had no way to see that they had not.
+    if (mine && settings().buyouts !== false) {
+      var buyout = Number(contract.bailoutAmount) || 0;
+      meta.appendChild(chip(buyout > 0 ? 'Buyout ' + money(buyout) : 'No buyout', null, 'i-exit'));
     }
     // Only when there is something to say: a row carrying neither drew an
     // empty pill. On the client's own card their own name is noise, but
@@ -2297,7 +2310,7 @@
           ? ' (from ' + durationText(now) + ' left to ' + durationText(now - by) + ')' : '');
     },
     raise_penalty: function (p) {
-      return 'Raise the failure stake' + (p && p.amount ? ' to ' + money(p.amount) : '');
+      return 'Raise the stake' + (p && p.amount ? ' to ' + money(p.amount) : '');
     },
     change_mode: function (p) {
       return 'Change this to a ' + ((p && p.mode) === 'exclusive'
@@ -2852,6 +2865,8 @@
     if (!edit) { closeDialog(); return; }
 
     var total = el('div', 'hint');
+    // Drawn further down; showTotal wakes it once something is ticked.
+    var take = null;
 
     /* Rewritten in place rather than by redrawing the dialog: a redraw
        rebuilds every checkbox, and rebuilding a checkbox the player is
@@ -2861,7 +2876,7 @@
       // lines below, and shadowing it turned the whole dialog into a
       // TypeError the moment anything was ticked.
       // Dirty money counted apart from clean. Adding them into one figure
-      // says a creator is getting back "$7,000" when three of it is black
+      // says a creator is getting back "$7,000" when three of it is dirty
       // money, which does not spend the same.
       var amount = 0, dirty = 0, goods = 0;
       asList(edit.data && edit.data.lines).forEach(function (line) {
@@ -2875,6 +2890,16 @@
         }
       });
 
+      // The crimson button is the one the screen is for, and with nothing
+      // ticked that is adding, not taking back: raising the reward on a
+      // contract nobody will take is the usual reason to be here, and it
+      // sat beside a loud "Take back what I ticked" that did nothing.
+      if (take) {
+        var any = !!(amount || dirty || goods);
+        take.className = (any ? 'primary' : 'ghost') + ' take-back';
+        take.disabled = !any;
+      }
+
       if (!amount && !dirty && !goods) {
         total.textContent = 'Nothing ticked yet.';
         return;
@@ -2882,7 +2907,7 @@
 
       var parts = [];
       if (amount) { parts.push(money(amount)); }
-      if (dirty) { parts.push(money(dirty) + ' black money'); }
+      if (dirty) { parts.push(money(dirty) + ' dirty money'); }
       if (goods) { parts.push(goods + (goods === 1 ? ' item' : ' items')); }
       total.textContent = 'Coming back to you: ' + parts.join(' and ') + '.';
     }
@@ -2898,7 +2923,7 @@
         panel.appendChild(el('div', 'reason', edit.data.reason));
       } else {
         panel.appendChild(el('div', 'reason',
-          'Tick anything you want back. The rest stays on the contract.'));
+          'Add more, or tick anything you want back. The rest stays on the contract.'));
       }
 
       if (!lines.length) {
@@ -2949,22 +2974,26 @@
     // ticked".
     var takeable = !!(edit.data && edit.data.editable !== false
       && asList(edit.data.lines).some(function (l) { return l && l.id; }));
-    if (edit.data && !edit.pending && takeable) {
-      var take = el('button', 'primary', 'Take back what I ticked');
-      take.onclick = function () { withdrawChosen(edit); };
-      row.appendChild(take);
-    }
 
     // Adding is offered from the same screen whether or not taking back is
     // allowed: a contract somebody is working can still be sweetened, and
-    // that is exactly when a creator wants to.
-    var add = el('button', 'ghost ico i-plus', 'Add cash');
+    // that is exactly when a creator wants to. First in the row, and "Add
+    // money" rather than "Add cash": the next step offers bank and dirty
+    // money too.
+    var add = el('button', 'ghost ico i-plus', 'Add money');
     add.onclick = function () {
       var contract = edit.contract;
       state.dialog = null; state.reward = null;
       addEscrow(contract);
     };
     row.appendChild(add);
+
+    if (edit.data && !edit.pending && takeable) {
+      take = el('button', 'primary take-back', 'Take back what I ticked');
+      take.onclick = function () { withdrawChosen(edit); };
+      row.appendChild(take);
+      showTotal();
+    }
 
     var close = el('button', 'ghost', 'Done');
     close.onclick = function () { state.reward = null; closeDialog(); };
@@ -3817,32 +3846,51 @@
         bonusField));
       // It opens at 50 and is money taken now, which nothing said: a creator
       // holding exactly what they entered was refused for the half on top.
+      // The total it comes to is said above the Place button.
       terms.appendChild(el('div', 'hint',
-        'Paid on top of a payout when the target is delivered alive. It is '
-        + 'taken from you now with the rest, and comes back if nobody earns it. '
-        + 'Set 0 for none. Delivered alive means brought to you: you have to be '
-        + 'there in person for the handover.'));
+        'Paid on top of a payout when the target is delivered alive, plus any '
+        + 'items marked alive only. It is taken from you now with the rest, and '
+        + 'comes back if nobody earns it. Set 0 for none. Delivered alive means '
+        + 'brought to you: you have to be there in person for the handover.'));
     }
     // Not on a server without buyouts, where the figure was taken and then
     // quietly set to nothing.
     if (settings().buyouts !== false) {
       terms.appendChild(labelled('Buyout price (0 for none)',
         drafted(numberInput('bailout', 0), 'bailout', '0')));
+      // The server holds the price between the clean money in the reward,
+      // bonus lines included, and a multiple of it, and moves anything
+      // outside to the nearest limit without a word: $1,000 on $10,000 with
+      // the 50% bonus became $15,000. Said here, and the price it settled on
+      // is said once it is placed and on the client's card.
       terms.appendChild(el('div', 'hint',
-        'What the target can pay to close this early. It needs cash or bank '
-        + 'in the reward to be priced against.'));
+        'What the target can pay to close this early. It is kept between the '
+        + 'cash and bank you put up (kidnapping bonus included) and a few times '
+        + 'that, and is moved to the nearest limit if outside.'));
     } else {
       delete state.draft.bailout;
     }
-    terms.appendChild(labelled('Failure penalty (0 for none)',
+    // "Stake", the word every card, dialog and proposal uses for it. Set
+    // here as a "failure penalty", it came back on the client's own card as
+    // "$5,000 stake", which read as a second figure.
+    terms.appendChild(labelled("Hitman's stake (0 for none)",
       drafted(numberInput('penalty', 0), 'penalty', '0')));
     terms.appendChild(el('div', 'hint',
       'A hitman stakes this when they accept, and forfeits it to you if they walk away.'));
 
+    // How long it runs. The form has no deadline of its own: every contract
+    // gets the server's default, and nothing here said what that was, so a
+    // client expecting a day-long contract who never opened Edit had it
+    // lapse after three hours.
+    terms.appendChild(el('div', 'hint',
+      'It runs for ' + durationText(Number(settings().defaultDeadlineMinutes) || 180)
+      + ' while the target is in the city, then lapses and what you put up comes '
+      + 'back. Extend it at any time from Mine \u2192 Extend deadline.'));
+
     var anon = document.createElement('input');
     anon.type = 'checkbox'; anon.id = 'anon';
     anon.checked = state.draft.anon === true;
-    anon.onclick = function () { state.draft.anon = anon.checked; };
+    anon.onclick = function () { state.draft.anon = anon.checked; showPlaceTotal(); };
     // A label, so the words toggle it too. The box on its own is a twenty
     // pixel target on a phone screen, which is a coin toss.
     var toggle = document.createElement('label');
@@ -3853,6 +3901,12 @@
       + (anonymityFee('creator') > 0 ? ' (costs ' + money(anonymityFee('creator')) + ')' : '')));
     terms.appendChild(toggle);
     form.appendChild(terms);
+
+    // What placing it takes, right above the button that takes it. Filled
+    // in by showPlaceTotal, which every field on the form calls.
+    var placeTotal = el('div', 'hint place-total');
+    placeTotal.id = 'place-total';
+    form.appendChild(placeTotal);
 
     // Through `once`, because this one charges money. Nothing on screen
     // changed for the whole round trip and the button stayed live, so a
@@ -3945,7 +3999,20 @@
         var ceiling = caps[source];
         if (ceiling) { field.max = ceiling; }
 
-        split.appendChild(labelled(SOURCE_LABELS[source] || source, field));
+        // The amount read back with its separators. A number box cannot
+        // show them, and a third of a phone's width scrolls the start of a
+        // long figure out of view, so $125,000 typed read as "12500".
+        // Through addEventListener: drafted() owns oninput.
+        var echo = el('div', 'hint money-echo');
+        function readBack() {
+          echo.textContent = Number(field.value) > 0 ? '= ' + money(Number(field.value)) : '';
+        }
+        field.addEventListener('input', readBack);
+        readBack();
+
+        var labelledField = labelled(SOURCE_LABELS[source] || source, field);
+        labelledField.appendChild(echo);
+        split.appendChild(labelledField);
       });
 
       if (offered > 0) {
@@ -3959,6 +4026,10 @@
       slot.appendChild(goodsBox(i));
       box.appendChild(slot);
     }
+
+    // Goods added or taken away and payouts added or dropped all come
+    // through here, so the total above the Place button follows them.
+    showPlaceTotal();
   }
 
   /* ---------- items and weapons ----------
@@ -3967,24 +4038,41 @@
      server-read inventory in rewardOptions, and every amount is checked
      there again on submit — this only keeps the form honest. */
 
+  /* What is staged on one payout. `alive` holds the goods that pay only
+     for a live delivery — the server's bonus portion, which it has always
+     escrowed and paid and which the form never let anyone fill — and
+     `aliveOnly` is whether the next pick goes there. */
   function pickedFor(index) {
-    if (!state.picked[index]) { state.picked[index] = { items: {}, weapons: {} }; }
+    if (!state.picked[index]) {
+      state.picked[index] = { items: {}, weapons: {}, alive: { items: {}, weapons: {} },
+                              aliveOnly: false };
+    }
     return state.picked[index];
   }
 
+  // Both halves of a payout, the kill's and the live delivery's.
+  function stagedHalves(picked) {
+    return picked.alive ? [picked, picked.alive] : [picked];
+  }
+
   // How much of an item is already promised across every payout, so the
-  // same 3 lockpicks cannot be put into three different payouts.
+  // same 3 lockpicks cannot be put into three different payouts — or into
+  // one payout twice, once for a kill and once more alive only.
   function allocatedItem(name) {
     var total = 0;
     Object.keys(state.picked).forEach(function (index) {
-      total += state.picked[index].items[name] || 0;
+      stagedHalves(state.picked[index]).forEach(function (half) {
+        total += half.items[name] || 0;
+      });
     });
     return total;
   }
 
   function weaponTaken(slotNumber) {
     return Object.keys(state.picked).some(function (index) {
-      return state.picked[index].weapons[slotNumber] !== undefined;
+      return stagedHalves(state.picked[index]).some(function (half) {
+        return half.weapons[slotNumber] !== undefined;
+      });
     });
   }
 
@@ -4015,22 +4103,45 @@
 
     var picked = pickedFor(index);
 
-    // What is already in this payout, each removable.
+    // What is already in this payout, each removable, the alive-only ones
+    // marked as such.
     var chosen = el('div', 'meta');
-    Object.keys(picked.items).forEach(function (name) {
-      chosen.appendChild(removable(
-        labelOf(items, name) + ' x' + picked.items[name],
-        function () { delete picked.items[name]; renderSlots(); }));
-    });
-    Object.keys(picked.weapons).forEach(function (slotNumber) {
-      var weapon = picked.weapons[slotNumber];
-      chosen.appendChild(removable(weapon.label + (weapon.serial ? ' #' + weapon.serial : ''),
-        function () { delete picked.weapons[slotNumber]; renderSlots(); }));
+    stagedHalves(picked).forEach(function (half) {
+      var tail = (half === picked) ? '' : ' \u2014 alive only';
+      Object.keys(half.items).forEach(function (name) {
+        chosen.appendChild(removable(
+          labelOf(items, name) + ' x' + half.items[name] + tail,
+          function () { delete half.items[name]; renderSlots(); }));
+      });
+      Object.keys(half.weapons).forEach(function (slotNumber) {
+        var weapon = half.weapons[slotNumber];
+        chosen.appendChild(removable(weapon.label + (weapon.serial ? ' #' + weapon.serial : '') + tail,
+          function () { delete half.weapons[slotNumber]; renderSlots(); }));
+      });
     });
     if (chosen.children.length > 0) { wrap.appendChild(chosen); }
 
     if (items.length > 0) { wrap.appendChild(itemPicker(index, items)); }
     if (weapons.length > 0) { wrap.appendChild(weaponPicker(index, weapons)); }
+
+    // Goods that pay only for a live delivery, which config and spec have
+    // always promised and the server has always escrowed and paid: the form
+    // offered one percentage and nothing else, so a rifle for bringing them
+    // in breathing could not be put up. Not on a server with no kidnapping
+    // bonus, the same rule the percentage field follows.
+    var bonusCap = typeof caps.bonusPercent === 'number' ? caps.bonusPercent : null;
+    if ((items.length > 0 || weapons.length > 0) && bonusCap !== 0) {
+      var alive = document.createElement('input');
+      alive.type = 'checkbox'; alive.id = 'slot-alive-' + index;
+      alive.checked = picked.aliveOnly === true;
+      alive.onclick = function () { picked.aliveOnly = alive.checked; };
+      var aliveToggle = document.createElement('label');
+      aliveToggle.className = 'toggle';
+      aliveToggle.htmlFor = alive.id;
+      aliveToggle.appendChild(alive);
+      aliveToggle.appendChild(el('span', null, 'Only if delivered alive'));
+      wrap.appendChild(aliveToggle);
+    }
 
     if (items.length === 0 && weapons.length === 0) {
       wrap.appendChild(el('div', 'hint', goodsAbsenceReason(wallet, caps)));
@@ -4157,7 +4268,10 @@
       if (!name || wanted <= 0) { return say('Choose an item and how many.'); }
 
       var caps = state.wallet.caps || {};
+      // The half the pick goes into. The server bounds each half on its
+      // own, so the limits below are counted the same way.
       var picked = pickedFor(index);
+      if (picked.aliveOnly) { picked = picked.alive; }
       var held = 0;
       items.forEach(function (item) { if (item.name === name) { held = item.count; } });
 
@@ -4200,6 +4314,7 @@
 
       var caps = state.wallet.caps || {};
       var picked = pickedFor(index);
+      if (picked.aliveOnly) { picked = picked.alive; }
       if (Object.keys(picked.weapons).length >= (caps.maxWeapons || Infinity)) {
         return say('This payout is already carrying as many weapons as it can.');
       }
@@ -4224,24 +4339,31 @@
   // Whether any payout has goods staged on it, as opposed to money only.
   function stagedAnything() {
     return Object.keys(state.picked).some(function (index) {
-      var picked = state.picked[index];
-      return Object.keys(picked.items).length > 0
-        || Object.keys(picked.weapons).length > 0;
+      return stagedHalves(state.picked[index]).some(function (half) {
+        return Object.keys(half.items).length > 0
+          || Object.keys(half.weapons).length > 0;
+      });
     });
   }
 
-  // The chosen goods for one payout, in the shape the server validates.
+  // The chosen goods for one payout, in the shape the server validates:
+  // the kill's half, and under `alive` the half paid only for a delivery.
   function goodsOf(index) {
     var picked = state.picked[index];
-    if (!picked) { return { items: [], weapons: [] }; }
-
-    var items = Object.keys(picked.items).map(function (name) {
-      return { name: name, count: picked.items[name] };
-    });
-    var weapons = Object.keys(picked.weapons).map(function (slotNumber) {
-      return { name: picked.weapons[slotNumber].name, slot: parseInt(slotNumber, 10) };
-    });
-    return { items: items, weapons: weapons };
+    function shaped(half) {
+      if (!half) { return { items: [], weapons: [] }; }
+      return {
+        items: Object.keys(half.items).map(function (name) {
+          return { name: name, count: half.items[name] };
+        }),
+        weapons: Object.keys(half.weapons).map(function (slotNumber) {
+          return { name: half.weapons[slotNumber].name, slot: parseInt(slotNumber, 10) };
+        })
+      };
+    }
+    var goods = shaped(picked);
+    goods.alive = shaped(picked && picked.alive);
+    return goods;
   }
 
   // The preset the picker is showing, as the one-based index the server
@@ -4249,6 +4371,173 @@
   function reasonPresetIndex() {
     if (settings().reasonMode !== 'preset') { return null; }
     return parseInt(state.draft.reasonPreset, 10) || 1;
+  }
+
+  /* The payouts on the form, in the shape the server takes them, read from
+     the draft. One reading for the submit and for the total shown above it,
+     so the two cannot describe different contracts.
+
+     Only sources the creator actually funded are sent. A zero is not a
+     reward, and a contract offering one is rejected server-side — which is
+     why sending all three keys unconditionally made every contract creation
+     fail. An amount num() cannot read is left out here; the submit refuses
+     it by name before it gets this far. */
+  function draftSlots() {
+    var slots = [];
+    for (var i = 1; i <= payoutCount(); i++) {
+      var baseline = {};
+      ['cash', 'bank', 'dirty'].forEach(function (src) {
+        var amount = num('slot-' + src + '-' + i);
+        if (amount) { baseline[src] = amount; }
+      });
+
+      var goods = goodsOf(i);
+      if (goods.items.length) baseline.items = goods.items;
+      if (goods.weapons.length) baseline.weapons = goods.weapons;
+
+      var slot = { baseline: baseline };
+      if (goods.alive.items.length || goods.alive.weapons.length) {
+        slot.bonus = {};
+        if (goods.alive.items.length) slot.bonus.items = goods.alive.items;
+        if (goods.alive.weapons.length) slot.bonus.weapons = goods.alive.weapons;
+      }
+      slots.push(slot);
+    }
+    return slots;
+  }
+
+  /* What a set of payouts takes from the creator, and how many separate
+     rewards the server will count in it.
+
+     The kidnapping bonus is escrowed now, on top of each payout, as one
+     more reward per funded money source. Left out of every sum here, a
+     creator holding exactly what they entered was refused for funds they
+     had, and a form just under the reward limit was refused over it. The
+     server derives it the same way — multiply, then floor — beside goods
+     marked alive only, which are a bonus of their own and not a reason to
+     drop the percentage. */
+  function composeTotals(slots, bonusPct) {
+    var out = { lines: 0, totals: { cash: 0, bank: 0, dirty: 0 },
+                bonus: { cash: 0, bank: 0, dirty: 0 } };
+    slots.forEach(function (slot) {
+      var b = slot.baseline;
+      ['cash', 'bank', 'dirty'].forEach(function (src) {
+        if (!b[src]) { return; }
+        out.lines++;
+        out.totals[src] += b[src];
+        var extra = Math.floor(b[src] * bonusPct / 100);
+        if (extra > 0) { out.lines++; out.totals[src] += extra; out.bonus[src] += extra; }
+      });
+      [b, slot.bonus || {}].forEach(function (half) {
+        out.lines += (half.items || []).length;
+        out.lines += (half.weapons || []).length;
+      });
+    });
+    return out;
+  }
+
+  /* "$75,000 cash ($50,000 + $25,000 kidnapping bonus) and Lockpick x2",
+     or null when nothing is in the reward yet. The goods are named from
+     what is staged, across every payout. */
+  function takenText(composed) {
+    var parts = [];
+    var words = { cash: 'cash', bank: 'bank', dirty: 'dirty money' };
+    ['cash', 'bank', 'dirty'].forEach(function (src) {
+      var all = composed.totals[src];
+      if (!all) { return; }
+      var extra = composed.bonus[src];
+      parts.push(money(all) + ' ' + words[src] + (extra
+        ? ' (' + money(all - extra) + ' + ' + money(extra) + ' kidnapping bonus)' : ''));
+    });
+
+    // One entry per item and half, summed over the payouts; each weapon on
+    // its own, since two of one model are two objects.
+    var goods = [], byKey = {};
+    for (var i = 1; i <= payoutCount(); i++) {
+      var picked = state.picked[i];
+      if (!picked) { continue; }
+      stagedHalves(picked).forEach(function (half) {
+        var tail = (half === picked) ? '' : ' (alive only)';
+        Object.keys(half.items).forEach(function (name) {
+          var key = name + tail;
+          if (!byKey[key]) {
+            byKey[key] = { label: itemLabel(name), tail: tail, count: 0 };
+            goods.push(byKey[key]);
+          }
+          byKey[key].count += half.items[name];
+        });
+        Object.keys(half.weapons).forEach(function (slotNumber) {
+          goods.push({ label: half.weapons[slotNumber].label, tail: tail, count: 1 });
+        });
+      });
+    }
+    goods.forEach(function (g) {
+      parts.push(g.label + (g.count > 1 ? ' x' + g.count : '') + g.tail);
+    });
+
+    if (!parts.length) { return null; }
+    return parts.length === 1 ? parts[0]
+      : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+  }
+
+  /* What placing the form would take, rewritten above the Place button on
+     every edit. Nothing on the form added it up: the kidnapping bonus opens
+     at 50% and is escrowed with the rest, so $40,000 typed into Cash took
+     $60,000, and the only place that figure appeared was a refusal for not
+     having it. A no-op off the Place form. */
+  function showPlaceTotal() {
+    var node = document.getElementById('place-total');
+    if (!node) { return; }
+    var composed = composeTotals(draftSlots(), num('bonus') || 0);
+    var taken = takenText(composed);
+    if (!taken) { node.textContent = 'Nothing in the reward yet.'; return; }
+
+    var text = 'Taken from you now: ' + taken + '.';
+    // The fee is charged, not held, so it is said apart from the escrow.
+    var fee = state.draft.anon === true ? anonymityFee('creator') : 0;
+    if (fee > 0) {
+      text += ' Plus ' + money(fee) + ' from your '
+        + ((settings().anonymityFees || {}).account === 'cash' ? 'cash' : 'bank')
+        + ' for anonymity.';
+    }
+    var bonus = composed.bonus.cash + composed.bonus.bank + composed.bonus.dirty;
+    if (bonus > 0 || taken.indexOf('(alive only)') !== -1) {
+      text += ' The bonus comes back to you if the target is killed rather than delivered.';
+    }
+    node.textContent = text;
+  }
+
+  /* The confirmation, saying what was held and the terms the server
+     settled on. It said only "Contract placed.": the buyout and the stake
+     are moved to the nearest amount the reward allows without a word, and
+     the deadline was the server's default, which the form never named. */
+  function placedText(held, placed, asked) {
+    var text = 'Contract placed.';
+    if (held) { text += ' Held from you: ' + held + '.'; }
+
+    var terms = [];
+    var moved = [];
+    if (typeof placed.bailoutAmount === 'number' && placed.bailoutAmount > 0) {
+      terms.push('Buyout ' + money(placed.bailoutAmount));
+      if (asked.bailout > 0 && asked.bailout !== placed.bailoutAmount) { moved.push('buyout'); }
+    }
+    if (typeof placed.penaltyAmount === 'number' && placed.penaltyAmount > 0) {
+      terms.push('stake ' + money(placed.penaltyAmount));
+      if (asked.penalty > 0 && asked.penalty !== placed.penaltyAmount) { moved.push('stake'); }
+    }
+    if (terms.length) { text += ' ' + terms.join('; ') + '.'; }
+    if (moved.length) {
+      text += ' The ' + moved.join(' and the ') + (moved.length > 1 ? ' were' : ' was')
+        + ' moved to the nearest amount this reward allows.';
+    }
+
+    var seconds = Number(placed.secondsLeft);
+    var minutes = seconds > 0 ? Math.ceil(seconds / 60)
+      : Number(settings().defaultDeadlineMinutes) || 0;
+    if (minutes > 0) {
+      text += ' It runs out in ' + durationText(minutes) + ' unless you extend it.';
+    }
+    return text;
   }
 
   function submitContract() {
@@ -4269,19 +4558,9 @@
     var caps = (state.wallet && state.wallet.caps) || {};
     var labels = { cash: 'Cash', bank: 'Bank', dirty: 'Dirty money' };
 
-    var slots = [];
-    for (var i = 1; i <= count; i++) {
-      // Only sources the creator actually funded are sent. A zero is not a
-      // reward, and a contract offering one is rejected server-side — which
-      // is why sending all three keys unconditionally made every contract
-      // creation fail.
-      var baseline = {};
-      var cash = num('slot-cash-' + i);
-      var bank = num('slot-bank-' + i);
-      var dirty = num('slot-dirty-' + i);
-      if (cash) baseline.cash = cash;
-      if (bank) baseline.bank = bank;
-      if (dirty) baseline.dirty = dirty;
+    var slots = draftSlots();
+    for (var i = 1; i <= slots.length; i++) {
+      var baseline = slots[i - 1].baseline;
       // Held to the server's ceiling here, where the field can be named:
       // over it, the server refused the whole contract as not adding up.
       for (var src in labels) {
@@ -4292,14 +4571,15 @@
         }
       }
 
-      var goods = goodsOf(i);
-      if (goods.items.length) baseline.items = goods.items;
-      if (goods.weapons.length) baseline.weapons = goods.weapons;
-
-      if (!cash && !bank && !dirty && !goods.items.length && !goods.weapons.length) {
-        return say('Payout ' + i + ' has no reward in it.');
+      // A payout has to pay something for a kill. Goods marked alive only
+      // do not: the server refuses a payout whose kill half is empty.
+      if (!baseline.cash && !baseline.bank && !baseline.dirty
+          && !baseline.items && !baseline.weapons) {
+        return say(slots[i - 1].bonus
+          ? 'Payout ' + i + ' pays nothing for a kill. Put something in it '
+            + 'that is not marked alive only.'
+          : 'Payout ' + i + ' has no reward in it.');
       }
-      slots.push({ baseline: baseline });
     }
 
     /* How many separate rewards this contract would carry.
@@ -4315,27 +4595,10 @@
      * doing anything strange: the shipped caps allow five payouts of three
      * money sources, ten item stacks and three weapons, which is eighty
      * lines against a ceiling of sixty. */
-    /* The kidnapping bonus is escrowed now, on top of each payout, as one
-       more reward per funded money source. Left out of every sum here, a
-       creator holding exactly what they entered was refused for funds they
-       had, and a form just under the reward limit was refused over it. */
     var bonusPct = num('bonus') || 0;
-    function bonusOf(amount) { return Math.floor(amount * bonusPct / 100); }
-
-    var lines = 0;
-    var totals = { cash: 0, bank: 0, dirty: 0 };
-    slots.forEach(function (slot) {
-      var b = slot.baseline;
-      ['cash', 'bank', 'dirty'].forEach(function (src) {
-        if (!b[src]) { return; }
-        lines++;
-        totals[src] += b[src];
-        var extra = bonusOf(b[src]);
-        if (extra > 0) { lines++; totals[src] += extra; }
-      });
-      lines += (b.items || []).length;
-      lines += (b.weapons || []).length;
-    });
+    var composed = composeTotals(slots, bonusPct);
+    var lines = composed.lines;
+    var totals = composed.totals;
 
     // Every payout drawn from one balance, bonus included, against what the
     // player holds: each payout passing on its own is not the contract
@@ -4391,6 +4654,10 @@
       return;
     }
     state.leoConfirmed = false;
+
+    // Kept for the confirmation: the draft is cleared once it is placed.
+    var held = takenText(composed);
+    var asked = { bailout: num('bailout'), penalty: num('penalty') };
 
     // Guarded here rather than at the top of the function: everything above
     // is client-side validation that answers instantly, and locking the
@@ -4463,7 +4730,7 @@
         }
         return fail(r);
       }
-      say('Contract placed.', 'ok');
+      say(placedText(held, r.data || {}, asked), 'ok');
       // The goods are gone from the player's pockets now; leaving them
       // staged would offer them again on the next contract.
       state.picked = {};
@@ -4501,10 +4768,12 @@
   }
 
   // An input whose value is the draft's, and whose edits go back into it.
+  // Every field built this way is on the Place form, so each edit also
+  // brings the total above the Place button up to date.
   function drafted(input, key, fallback) {
     input.value = state.draft[key] !== undefined ? state.draft[key] : (fallback || '');
-    input.oninput = function () { state.draft[key] = input.value; };
-    input.onchange = function () { state.draft[key] = input.value; };
+    input.oninput = function () { state.draft[key] = input.value; showPlaceTotal(); };
+    input.onchange = function () { state.draft[key] = input.value; showPlaceTotal(); };
     return input;
   }
 
@@ -4805,6 +5074,16 @@
         // the player can see who they picked and change their mind.
         renderPeople([person], null);
         show(status, 'Contract will be placed on ' + person.name + '.');
+        // And a way back to everyone else. The list collapsed to the one
+        // row with nothing under it, so a player who tapped the wrong name
+        // had to guess that the already-lit Everyone button would undo it.
+        // The list already read is drawn again with this pick still lit:
+        // tapping another row replaces it, and nothing is asked twice.
+        var change = el('button', 'ghost ico i-swap', 'Choose someone else');
+        change.onclick = function () {
+          if (browse.data) { browse.draw(browse.data); } else { setScope(browse.scope); }
+        };
+        results.appendChild(change);
         if (person.protected) {
           say('That is a sworn officer.'
             + (advised('posted') ? ' Placing this will alert their department.'

@@ -1444,6 +1444,82 @@ async function main() {
     });
   })();
 
+  /* What placing takes, said before the button and again after it.
+   *
+   * The kidnapping bonus opens at 50% and is escrowed with the rest, and the
+   * only place the total ever appeared was a refusal for not having it. The
+   * confirmation said "Contract placed." about a buyout the server had moved
+   * and a deadline nobody was told. Goods marked alive only go into the
+   * payout's bonus half, which the form had no way to fill. */
+  await (async function placeSaysWhatItTakes() {
+    const app = placeForm({
+      create: function (body) {
+        app.body = body;
+        return { ok: true, data: { bailoutAmount: 60000, penaltyAmount: 0, secondsLeft: 10800 } };
+      }
+    });
+    await settle(); await settle();
+    tab(app, 'place');
+    await settle(); await settle();
+
+    const query = pick(app, 'target-query');
+    query.value = 'Dana';
+    query.oninput();
+    app.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+    app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent.indexOf('Dana Reyes') === 0;
+    })[0].onclick();
+
+    it('offers a way back to the list once somebody is picked', function () {
+      truthy(app.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Choose someone else';
+      }), 'a wrong tap left one row and nothing to undo it');
+    });
+
+    const total = function () { return app.document.getElementById('place-total').textContent; };
+    it('says there is nothing in it yet', function () {
+      eq(total(), 'Nothing in the reward yet.');
+    });
+
+    pick(app, 'slot-cash-1', 40000);
+    it('counts the bonus on top in the total', function () {
+      eq(total(), 'Taken from you now: $60,000 cash ($40,000 + $20,000 kidnapping bonus). '
+        + 'The bonus comes back to you if the target is killed rather than delivered.');
+    });
+
+    const alive = pick(app, 'slot-alive-1');
+    alive.checked = true;
+    alive.onclick();
+    pick(app, 'slot-item-1').value = 'lockpick';
+    press(app, 'slot-item-add-1');
+    it('marks a pick made alive only, and names it in the total', function () {
+      truthy(app.view.textContent.indexOf('Lockpick x1 — alive only') !== -1, app.view.textContent);
+      truthy(total().indexOf('$60,000 cash ($40,000 + $20,000 kidnapping bonus) and Lockpick (alive only).') !== -1,
+        total());
+    });
+
+    pick(app, 'bailout', 1000);
+    press(app, 'place-submit');
+    await settle(); await settle();
+
+    it('sends the alive-only pick as the payout bonus, beside the percentage', function () {
+      const slot = app.body.reward.slots[0];
+      eq(slot.baseline.cash, 40000);
+      falsy(slot.baseline.items, 'kept out of what a kill pays');
+      eq(JSON.stringify(slot.bonus), JSON.stringify({ items: [{ name: 'lockpick', count: 1 }] }));
+      eq(app.body.bonusPercent, 50);
+    });
+
+    it('says what was held, the buyout it settled on and when it runs out', function () {
+      const said = app.notice();
+      truthy(said.indexOf('Held from you: $60,000 cash') !== -1, said);
+      truthy(said.indexOf('Buyout $60,000.') !== -1, said);
+      truthy(said.indexOf('moved to the nearest amount') !== -1, said);
+      truthy(said.indexOf('runs out in 3h') !== -1, said);
+    });
+  })();
+
   // A form whose values live only in the DOM loses them every time anything
   // re-renders — a tab change, a push, a late reply, or a dialog. Both of
   // these were found by review, not by the tests written alongside the
@@ -2479,7 +2555,7 @@ async function main() {
         .filter(function (n) { return n.tagName === 'BUTTON'; })
         .map(function (n) { return n.textContent; });
       falsy(labels.indexOf('Take back what I ticked') !== -1, labels.join(' | '));
-      truthy(labels.indexOf('Add cash') !== -1, 'adding is still offered: ' + labels.join(' | '));
+      truthy(labels.indexOf('Add money') !== -1, 'adding is still offered: ' + labels.join(' | '));
     });
 
     /* Taken while the editor was open: the server says so, and the page
@@ -2624,7 +2700,7 @@ async function main() {
     it('still offers to add, which is the half that is allowed', function () {
       const labels = held.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
         .map(function (n) { return n.textContent; });
-      truthy(labels.indexOf('Add cash') !== -1,
+      truthy(labels.indexOf('Add money') !== -1,
         'adding is allowed while somebody works it: ' + labels.join(' | '));
     });
 
@@ -3097,7 +3173,7 @@ async function main() {
     await settle(); await settle();
     click(own, 'Change reward');
     await settle(); await settle();
-    click(own, 'Add cash');
+    click(own, 'Add money');
     await settle();
 
     it('offers every source a creator actually holds when adding', function () {
@@ -4706,7 +4782,7 @@ async function main() {
     const KINDS = [
       ['reduce_reward', { slot: 2 }, 'give back payout'],
       ['shorten_deadline', { seconds: 600 }, 'deadline'],
-      ['raise_penalty', { amount: 2500 }, 'failure stake'],
+      ['raise_penalty', { amount: 2500 }, 'raise the stake'],
       ['change_mode', { mode: 'competitive' }, 'ompetitive'],
       ['change_reason', { reason: 'Actually, theft' }, 'theft'],
       ['withdraw', {}, 'ithdraw'],
@@ -7153,8 +7229,8 @@ async function main() {
       sources: { cash: 100000, dirty: 50000 }, bonusSources: { cash: 50000, dirty: 25000 } };
     const app = boot({ list: board, mine: MINE, ledger: LEDGER });
     await settle(); await settle();
-    it('says how much of the base and of the bonus is black money', function () {
-      truthy(app.view.textContent.indexOf('$50,000 of this is black money, and $25,000 of the alive bonus') !== -1,
+    it('says how much of the base and of the bonus is dirty money', function () {
+      truthy(app.view.textContent.indexOf('$50,000 of this is dirty money, and $25,000 of the kidnapping bonus') !== -1,
         app.view.textContent);
       falsy(app.view.textContent.indexOf('$75,000 of it') !== -1, app.view.textContent);
     });

@@ -366,6 +366,12 @@ local function buildListing(viewerCid, page)
             -- The server refuses anything larger, and the box asking for it
             -- had no ceiling to hold the player to.
             deadlineMaxMinutes = math.floor((Config.Limits.ContractLifetimeSeconds or 0) / 60),
+            -- How long a new contract runs before anyone extends it, held to
+            -- the lifetime the same way Contracts.create holds it. The Place
+            -- form has no deadline field, and without this it could not say
+            -- that every contract lapses after three hours.
+            defaultDeadlineMinutes = math.floor(math.min(Config.Limits.DefaultDeadlineSeconds or 0,
+                Config.Limits.ContractLifetimeSeconds or 0) / 60),
             -- And the least a shortening may leave on it: the server refuses
             -- a cut that leaves less, so the box stops short of it.
             deadlineMinLeftMinutes = math.floor(Util.CLOCK_STEP / 60),

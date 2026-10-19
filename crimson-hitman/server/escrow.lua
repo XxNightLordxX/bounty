@@ -443,12 +443,17 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
     -- what a kill is worth.
     bonusPercent = Util.toCount(bonusPercent, Config.Bonus.maxPercent) or 0
     if bonusPercent > 0 then
-        -- A slot that already names its own bonus is left alone: the
+        -- A slot that already names its own money bonus is left alone: the
         -- creator said exactly what they meant, and deriving another on top
-        -- would charge them twice for one promise.
+        -- would charge them twice for one promise. Money only: goods marked
+        -- for a live delivery are a different promise, made beside the
+        -- percentage, and counting them here silently dropped the money
+        -- bonus from any payout carrying one.
         local explicit = {}
         for i = 1, #lines do
-            if lines[i].portion == CH.PORTION.BONUS then explicit[lines[i].slot] = true end
+            if lines[i].portion == CH.PORTION.BONUS and CH.MONEY_SOURCES[lines[i].source] then
+                explicit[lines[i].slot] = true
+            end
         end
 
         local derived = {}
@@ -1024,7 +1029,10 @@ function Escrow.bonusTopUp(contractId, fromPercent, toPercent, nextSlot)
     local explicit, settled = {}, {}
     for i = 1, #held do
         local line = held[i]
-        if line.portion == CH.PORTION.BONUS and not line.derived then
+        -- A named money bonus only, as at creation: alive-only goods sit
+        -- beside the percentage rather than replacing it.
+        if line.portion == CH.PORTION.BONUS and not line.derived
+            and CH.MONEY_SOURCES[line.source] then
             explicit[line.slot] = true
         end
         -- A collection is paid when its baseline is. Any settled line used

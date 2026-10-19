@@ -40,24 +40,24 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] Ticking a line and confirming returns exactly that, and nothing else
 - [ ] An item comes back **with its metadata**; a weapon with its serial
       and attachments
-- [ ] Taking back the whole baseline of a slot is refused
-- [ ] "Add cash" from the same screen still puts more up
+- [ ] Taking back the whole base reward of a payout is refused
+- [ ] "Add money" from the same screen still puts more up
 - [ ] Once a hitman accepts, the screen says why the reward cannot be
       reduced — and adding still works
 - [ ] Nothing on that screen is cut off, and its buttons clear the tab bar
 
-## 4. Payout slots
+## 4. Payouts
 
 - [ ] A 3-payout contract escrows all three reward sets at creation
-- [ ] The board shows "Slot 1 of 3" and slot 1's reward
+- [ ] The board shows "Payout 1 of 3" and payout 1's reward
 - [ ] Four hitmen can all accept a 3-payout contract
-- [ ] After the first claim, the board shows slot 2's reward
+- [ ] After the first claim, the board shows payout 2's reward
 - [ ] After the third claim the contract closes and the fourth hitman gets nothing
 
 ## 5. Elimination
 
 - [ ] Hitman kills target with a firearm → hitman can request the camera
-- [ ] Photographing the body pays the baseline and closes the slot
+- [ ] Photographing the body pays the base reward and closes that payout
 - [ ] The creator receives the completion notification **with the photo**
 - [ ] The photo appears in the creator's Ledger tab
 - [ ] **Downing** the target without killing them does **not** allow a claim

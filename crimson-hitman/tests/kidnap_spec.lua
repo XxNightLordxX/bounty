@@ -622,3 +622,45 @@ describe('a handover left behind', function()
         eq(row.contract_id, c.id)
     end)
 end)
+
+--- Goods put up for a live delivery only, beside a percentage bonus. The
+--- percentage used to be skipped on any payout that named a bonus line of
+--- its own, goods included, so marking a lockpick "alive only" quietly took
+--- the money bonus off that payout — at creation and on every later raise.
+describe('alive-only goods beside a percentage bonus', function()
+    local function placed()
+        local s = newStack()
+        local f = fixture(s)
+        local c = assert(s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', bonusPercent = 50,
+            reward = { slots = { {
+                baseline = { cash = 5000 },
+                bonus = { items = { { name = 'lockpick', count = 1 } } },
+            } } },
+        }))
+        return s, f, c
+    end
+
+    it('keeps the percentage and pays both on a live delivery', function()
+        local s, f, c = placed()
+        s.contracts.accept(f.hitman, c.id, false)
+        for _, src in ipairs({ 1, 2, 3 }) do
+            Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z }
+        end
+        Env.players[2].PlayerData.metadata.ishandcuffed = true
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+        eq(#runCountdown(s, Config.Kidnap.CountdownSeconds), 1, 'delivery completed')
+
+        eq(Env.players[3].PlayerData.money.cash, 12500, '5000 own + 5000 base + 2500 bonus')
+        local picks = 0
+        for _, slot in ipairs(Env.players[3]._inventory) do
+            if slot.name == 'lockpick' then picks = picks + slot.count end
+        end
+        eq(picks, 1, 'and the lockpick held for a live delivery')
+    end)
+
+    it('still tops the percentage up when it is raised', function()
+        local s, f, c = placed()
+        eq(#s.escrow.bonusTopUp(c.id, 50, 100), 1, 'the cash bonus is recomputed')
+    end)
+end)
