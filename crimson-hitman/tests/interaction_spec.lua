@@ -1218,6 +1218,8 @@ describe('masked calls', function()
         local ok, err, result = s.comms.requestCall(f.hitman, c.id, nil)
         truthy(ok, tostring(err))
         eq(result.placed, false, 'nothing was dialled')
+        eq(result.reason, 'no_calls', 'and the page is told nothing could be')
+        falsy(s.comms.canCall(), 'so the app draws no Call button')
 
         local said = Natives.calls.notifications[1]
         truthy(said, 'the other party is still told')
@@ -1372,6 +1374,109 @@ describe('masked calls', function()
 
         Natives.callExport = nil
         s.comms.resetMaskingCache()
+    end)
+
+    --- lb-phone's documented export, used when no override is configured.
+    --- The phone shows the caller table's phoneNumber, so that is the alias.
+    describe("through lb-phone's own CreateCall", function()
+        local phone = exports['lb-phone']
+
+        local function withCreateCall(answer, fn)
+            local made = {}
+            phone.CreateCall = function(_, caller, number, options)
+                made[#made + 1] = { caller = caller, number = number, options = options }
+                return answer
+            end
+            local ok, err = pcall(fn, made)
+            phone.CreateCall = nil
+            -- The resolved placer holds the stub, so it goes with it.
+            if ok and err then err.comms.resetCallCache() end
+            if not ok then error(err, 0) end
+        end
+
+        it('rings the other party with the alias as the caller', function()
+            withCreateCall(42, function(made)
+                local s, f, c = threaded({ anonHitman = true })
+                truthy(s.comms.canCall(), 'a phone with CreateCall can call')
+                local alias = s.comms.threads(f.creator, c.id)[1].alias
+
+                local ok, err, result = s.comms.requestCall(f.hitman, c.id, nil)
+                truthy(ok, tostring(err))
+                eq(result.placed, true)
+                eq(#made, 1)
+                eq(made[1].caller.source, 3, 'from the caller')
+                eq(made[1].caller.phoneNumber, alias, 'shown as their alias, not their number')
+                eq(made[1].number, '555-1', "to the callee's own number")
+                eq(made[1].options.hideNumber, true, 'the operative chose to be anonymous')
+                return s
+            end)
+        end)
+
+        it('counts a call with no id as one that did not start', function()
+            withCreateCall(nil, function(made)
+                local s, f, c = threaded()
+                local ok, _, result = s.comms.requestCall(f.hitman, c.id, nil)
+                truthy(ok)
+                eq(#made, 1, 'it was tried')
+                eq(result.placed, false, 'nil is not a call')
+                eq(result.reason, 'not_placed')
+                return s
+            end)
+        end)
+
+        it('leaves an override in charge when one is set', function()
+            withCreateCall(42, function(made)
+                local s, f, c = threaded()
+                local dialled = 0
+                Natives.callExport = function() dialled = dialled + 1 return true end
+                withConfig({ { Config.Relay, 'CallExport',
+                               { resource = 'lb-phone', export = 'StartCall' } } }, function()
+                    s.comms.resetCallCache()
+                    truthy(s.comms.requestCall(f.hitman, c.id, nil))
+                end)
+                Natives.callExport = nil
+                eq(dialled, 1)
+                eq(#made, 0, 'CreateCall was used despite the override')
+                return s
+            end)
+        end)
+
+        it('rings nobody when both sides are anonymous, and says so', function()
+            withCreateCall(42, function(made)
+                local s, f, c = threaded({ anonCreator = true, anonHitman = true })
+                Natives.calls.notifications = {}
+                local ok, err, result = s.comms.requestCall(f.hitman, c.id, nil)
+                truthy(ok, tostring(err))
+                eq(result.placed, false)
+                eq(result.reason, 'both_anonymous')
+                eq(#made, 0)
+                eq(#Natives.calls.notifications, 0,
+                    'a call back neither side can place was asked for')
+                return s
+            end)
+        end)
+    end)
+
+    --- CreateCall draws no call screen, so the thread's Hang up is the
+    --- caller's only way to end a call placed from here.
+    it("hangs up the caller's own call, and says when it was already over", function()
+        local s, f = threaded()
+        local phone = exports['lb-phone']
+        local live, ended = true, {}
+        phone.IsInCall = function(_, src) return live end
+        phone.EndCall = function(_, src) ended[#ended + 1] = src live = false end
+
+        local ok, err, result = s.comms.endCall(f.hitman)
+        truthy(ok, tostring(err))
+        eq(result.ended, true)
+        eq(ended[1], 3, "the caller's own call, nobody else's")
+
+        local again, _, second = s.comms.endCall(f.hitman)
+        truthy(again)
+        eq(second.ended, false, 'it was already over')
+        eq(#ended, 1)
+
+        phone.IsInCall, phone.EndCall = nil, nil
     end)
 
     it('is refused entirely when calls are switched off', function()

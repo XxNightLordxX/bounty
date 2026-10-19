@@ -1044,7 +1044,8 @@ async function main() {
         mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
         ledger: LEDGER,
         readThread: { ok: true, data: [] },
-        requestCall: callReply
+        requestCall: callReply,
+        endCall: { ok: true, data: { ended: true } }
       });
       return app;
     }
@@ -1086,8 +1087,30 @@ async function main() {
       truthy(app.notice().indexOf('Calling') !== -1, 'the notice: ' + app.notice());
     });
 
+    // lb-phone draws no call screen for a call placed this way, so the
+    // thread is the only place the caller can hang it up.
+    const hangButton = app.document.getElementById('thread-hangup');
+
+    it('offers Hang up while the call is live', function () {
+      truthy(hangButton, 'a hang up button');
+      falsy(app.document.getElementById('thread-call'), 'in place of Call');
+    });
+
+    if (hangButton) {
+      hangButton.onclick();
+      await settle(); await settle();
+    }
+
+    it('hangs up through the server and offers Call again', function () {
+      eq(app.sent.filter(function (s) { return s.name === 'endCall'; }).length, 1);
+      truthy(app.notice().indexOf('Call ended') !== -1, 'the notice: ' + app.notice());
+      truthy(app.document.getElementById('thread-call'), 'Call is back');
+      falsy(app.document.getElementById('thread-hangup'));
+    });
+
     // A phone that cannot place calls still gets the other party asked.
-    const asked = open({ calls: true }, { ok: true, data: { placed: false } });
+    const asked = open({ calls: true },
+      { ok: true, data: { placed: false, reason: 'callback' } });
     await settle(); await settle();
     asked.document.querySelectorAll('.tab')
       .filter(function (t) { return t.dataset.tab === 'mine'; })[0].onclick();

@@ -599,6 +599,9 @@ MATRIX.requestCall = {
     why = 'ringing somebody masked phone is for the party they are dealing with',
 }
 
+MATRIX.endCall = { payload = {}, expect = ANYONE,
+    why = 'hangs up the caller own call and names no contract' }
+
 -- The two events the victim's own client fires --------------------------
 --
 -- These reply to nobody, so they have no permit/refuse cell. What they do

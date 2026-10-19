@@ -308,7 +308,8 @@ function _G.newStack()
 
     mugshot.init({ identity = identity, audit = audit })
     projection.init({ storage = storage, identity = identity, escrow = escrow,
-                      kidnap = kidnap, mugshot = mugshot, progression = progression })
+                      kidnap = kidnap, mugshot = mugshot, progression = progression,
+                      comms = comms })
 
     -- Wired exactly as main.lua wires it. The app was previously left
     -- uninitialised here, so anything it reached for through deps was

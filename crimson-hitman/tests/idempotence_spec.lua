@@ -761,6 +761,7 @@ describe('what this file leaves out', function()
             .. 'same values',
         sendMessage = 'two messages is two messages',
         requestCall = 'asking twice rings twice, and the relay rate-limits it',
+        endCall = 'hanging up twice: the second finds no call and says so',
         requestPhotoToken = 'a second token deliberately invalidates the '
             .. 'first, so a hitman cannot bank them',
         -- Reads. Repeating a read is the definition of harmless.

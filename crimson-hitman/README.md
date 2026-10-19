@@ -125,7 +125,10 @@ message or call each other through the app without either learning who the
 other is (`Config.Relay`; switching it off removes messaging and calls
 entirely). A call to an anonymous party asks them to call back rather than
 ringing them, since a phone that rings only when its owner is in the city
-would say whether they are.
+would say whether they are. Calls go through lb-phone's `CreateCall` export
+with the caller's alias shown, and are hung up from the thread. On a phone
+build without it the Call button is not drawn, and when both sides are
+anonymous neither can ring the other: they use messages.
 
 **Putting a hit on a cop.** Allowed, and loud. Every officer online is advised when the
 contract is posted and again on each acceptance, with a running count, on

@@ -49,7 +49,14 @@ Object.defineProperty(Node.prototype, 'innerHTML', {
   // Counted, because rebuilding the view is what the app's own redraw
   // costs and there is no other way to see how often it happens. One click
   // used to redraw the whole page three times over.
-  set: function (v) { if (v === '') { this._clears = (this._clears || 0) + 1; this.children = []; } }
+  // The children are detached too, as a browser detaches them: left pointing
+  // at their old parent, a button the redraw replaced was still found by id.
+  set: function (v) {
+    if (v !== '') { return; }
+    this._clears = (this._clears || 0) + 1;
+    this.children.forEach(function (child) { child.parentNode = null; });
+    this.children = [];
+  }
 });
 
 function ClassList(node) { this.node = node; }

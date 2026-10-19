@@ -61,7 +61,10 @@
     proposals: {},
     // Half-typed messages, one per conversation — keyed by contract and
     // operative, so a draft never turns up in somebody else's thread.
-    drafts: {}
+    drafts: {},
+    // The thread (by threadKey) a call placed from here is live in. The
+    // phone draws no call screen for it, so this is what puts Hang up there.
+    call: null
   };
 
   /* ---------- diagnostics ----------------------------------------------
@@ -2850,6 +2853,19 @@
     });
   }
 
+  /* What the player is told when no call rang, by the server's reason.
+     It used to be "they have been asked to call you back" every time, on
+     servers where the other side had no way to do that either. */
+  var CALL_NOT_PLACED = {
+    callback: 'They have been asked to call you back.',
+    both_anonymous: 'Both of you are anonymous, so calls are off for this '
+      + 'contract. Use messages.',
+    no_calls: 'They have been told you want to talk. This server cannot '
+      + 'place calls, so use messages.',
+    not_placed: 'The call could not be placed, so they have been told you '
+      + 'want to talk. Use messages.'
+  };
+
   function requestCall() {
     var t = state.thread;
     if (!t) { return; }
@@ -2859,13 +2875,30 @@
       thread: t.thread ? t.thread.handle : null
     }).then(function (r) {
       if (!r.ok) { return fail(r); }
-      // Say which of the two actually happened. A phone that cannot place
-      // the call still gets the other party asked to ring back, and telling
-      // the player a call is connecting when none is would be worse than
-      // either.
-      say(r.data && r.data.placed
-        ? 'Calling.'
-        : 'They have been asked to call you back.', 'gold');
+      // Say which actually happened. Telling the player a call is
+      // connecting when none is would be worse than any of the others.
+      if (r.data && r.data.placed) {
+        state.call = threadKey(t.contract, t.thread);
+        // Redrawn only where the player still is, so Hang up appears
+        // without a late reply rebuilding some other page under them.
+        if (state.tab === 'thread' && sameThread(state.thread, t.contract, t.thread)) {
+          render();
+        }
+        return say('Calling. Hang up here when you are done.', 'gold');
+      }
+      var line = CALL_NOT_PLACED[r.data && r.data.reason];
+      say(typeof line === 'string' ? line : CALL_NOT_PLACED.not_placed, 'gold');
+    });
+  }
+
+  function endCall() {
+    post('endCall', {}).then(function (r) {
+      if (!r.ok) { return fail(r); }
+      state.call = null;
+      if (state.tab === 'thread') { render(); }
+      // Over already — the other side hung up or never answered — is said
+      // as it is, rather than claiming this ended it.
+      say(r.data && r.data.ended ? 'Call ended.' : 'The call had already ended.', 'gold');
     });
   }
 
@@ -3139,10 +3172,20 @@
     // The server has always had a call path and nothing reached it, so the
     // whole feature was unreachable from the phone.
     if (settings().calls) {
-      var call = el('button', 'ghost ico i-phone', 'Call');
-      call.id = 'thread-call';
-      call.onclick = function () { requestCall(); };
-      row.appendChild(call);
+      if (state.call === threadKey(t.contract, t.thread)) {
+        // lb-phone draws no call screen for a call placed from here — its
+        // CreateCall is built for payphones — so this is the only way the
+        // caller can put the phone down.
+        var hang = el('button', 'ghost ico i-xcircle', 'Hang up');
+        hang.id = 'thread-hangup';
+        hang.onclick = function () { endCall(); };
+        row.appendChild(hang);
+      } else {
+        var call = el('button', 'ghost ico i-phone', 'Call');
+        call.id = 'thread-call';
+        call.onclick = function () { requestCall(); };
+        row.appendChild(call);
+      }
     }
 
     view.appendChild(row);

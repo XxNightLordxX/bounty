@@ -832,7 +832,17 @@ function App.register()
         -- Whether a call is actually ringing or the other party has merely
         -- been asked to call back. The app says which; implying a call is
         -- connecting when none is, is the worst of the three outcomes.
-        return { placed = result and result.placed == true }
+        return { placed = result and result.placed == true,
+                 reason = result and result.reason or nil }
+    end)
+
+    -- The Hang up the phone itself does not draw for a call placed from
+    -- here. Names no contract: it ends the caller's own call and nobody
+    -- else's.
+    handler('endCall', 'message', function(actor)
+        local ok, err, result = deps.comms.endCall(actor)
+        if not ok then return false, err end
+        return { ended = result and result.ended == true }
     end)
 
     -- Diagnostics ---------------------------------------------------------

@@ -317,6 +317,7 @@ describe('the grid covers the whole action surface', function()
         informant = true,         -- interaction_spec
         respondAmendment = true,  -- needs an open proposal
         readThread = true, sendMessage = true, requestCall = true,
+        endCall = true,           -- names no contract: the caller's own call
     }
 
     it('has a row for every contract action app.lua registers', function()

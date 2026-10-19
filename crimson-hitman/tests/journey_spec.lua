@@ -151,6 +151,12 @@ describe('the two parties talking', function()
         -- ui/app.js:1441 — post('requestCall', { id, thread })
         ok('requestCall', 1, { id = c.id, thread = handle })
     end)
+
+    it('hangs up through the event the Hang up button sends', function()
+        talking()
+        -- ui/app.js — post('endCall', {})
+        ok('endCall', 1, {})
+    end)
 end)
 
 describe('changing a contract after it is placed', function()

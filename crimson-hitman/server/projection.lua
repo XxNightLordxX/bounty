@@ -9,11 +9,12 @@ local Projection = {}
 
 local Util = require_shared('util')
 
-local Storage, Identity, Escrow, Kidnap, Mugshot, Progression
+local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms
 
 function Projection.init(deps)
-    Storage, Identity, Escrow, Kidnap, Mugshot, Progression =
-        deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot, deps.progression
+    Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms =
+        deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot, deps.progression,
+        deps.comms
 end
 
 --- Roles a viewer can hold relative to a contract. The role decides the key
@@ -282,8 +283,10 @@ local function buildListing(viewerCid, page)
             allowNearby = Config.Targeting.AllowNearby == true,
             nearbyRadius = Config.Targeting.NearbyRadius,
             -- Whether the app should offer a call at all. Off, the button
-            -- is not drawn rather than drawn and refused.
-            calls = Config.Relay.Enabled and Config.Relay.AllowMaskedCalls,
+            -- is not drawn rather than drawn and refused. That includes a
+            -- server where nothing can place a call: a button there could
+            -- only send requests the other side had no way to answer.
+            calls = Comms ~= nil and Comms.canCall(),
             -- Whether messaging exists at all. Absent, the page drew Message
             -- and Threads on a server with the relay switched off, and every
             -- message was refused.

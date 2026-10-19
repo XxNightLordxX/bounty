@@ -525,21 +525,17 @@ ConfigDefaults.Relay = {
     MaxLength = 200,
     AllowMaskedCalls = true,
 
-    --- The export that actually places a call, if this phone build has one.
+    --- An override for the export that places a call. Leave it nil.
     ---
-    --- lb-phone ships its server code escrowed, so the name and signature
-    --- of a call-placing export cannot be read from the resource and are
-    --- not guessed here: an invented export name is a call that silently
-    --- does nothing on a live server, which is worse than one that says it
-    --- cannot place calls.
+    --- Calls go through lb-phone's documented server export CreateCall,
+    --- with the caller's alias as the number the other phone shows. lb-phone
+    --- draws no call screen for those, so the app's thread gets a Hang up
+    --- button (lb-phone's EndCall). Whether CreateCall exists is probed, not
+    --- assumed; on a build without it the Call button is not drawn.
     ---
-    --- Set `resource` and `export` if your build exposes one. It is probed
-    --- at boot — the export must exist and be callable — and the startup
-    --- report says whether it was found. Until then a call request notifies
-    --- the other party, which is what it has always done, and the app says
-    --- plainly that it is a request rather than a call.
-    ---
-    --- The export is called as
+    --- Set `resource` and `export` only to use a call export of your own
+    --- instead. It is probed the same way — it must exist and be callable —
+    --- and when it does not resolve, nothing is dialled. It is called as
     ---   exports[resource][export](callerSource, targetNumber, anonymous)
     --- and anything that does not match that shape needs a shim resource.
     CallExport = nil,

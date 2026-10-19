@@ -288,8 +288,7 @@ function Comms.requestCall(actor, contractId, threadHandle)
 
     -- Place the call for real when this phone build can, rather than only
     -- telling the other party somebody wants to talk. Whether it can is
-    -- probed at boot, not assumed: lb-phone ships its server code escrowed,
-    -- so an invented export name would be a call that silently does nothing.
+    -- probed once, not assumed (Comms.callPlacer).
     --
     -- An anonymous caller on a phone that cannot mask is not refused: the
     -- other party is asked to call back instead, which reveals nothing, and
@@ -303,68 +302,164 @@ function Comms.requestCall(actor, contractId, threadHandle)
     -- calling back is theirs to choose, and is placed masked.
     local placed = false
     if not otherAnon then
-        placed = Comms.placeCall(actor, recipient, selfAnon)
+        placed = Comms.placeCall(actor, recipient, selfAnon, ctx.alias)
     end
 
-    Notify.toCitizen(recipient,
-        placed and 'Incoming call' or 'Call request',
-        placed
-            and ('%s is calling you about a contract.'):format(ctx.alias)
-            or  ('%s wants to speak with you about a contract.'):format(ctx.alias))
+    -- Why it was not placed, so the page can say what is true rather than
+    -- one "they will call you back" for every case. Decided from settings
+    -- and from who chose anonymity, never from whether the other party is
+    -- here — except for a named party, whose presence a ringing phone
+    -- would tell anyone anyway.
+    local reason
+    if not placed then
+        if otherAnon and selfAnon then
+            -- Neither side can be rung, so there is no call back to ask
+            -- for: telling them somebody wants to talk would send them to a
+            -- Call button that can only do the same.
+            reason = 'both_anonymous'
+        elseif not Comms.callPlacer() then
+            reason = 'no_calls'
+        elseif otherAnon then
+            reason = 'callback'
+        else
+            reason = 'not_placed'
+        end
+    end
 
-    Audit.action(placed and 'call_placed' or 'call_requested', actor.cid, contractId,
-        { anonymous = otherAnon or selfAnon })
+    if reason ~= 'both_anonymous' then
+        Notify.toCitizen(recipient,
+            placed and 'Incoming call' or 'Call request',
+            placed
+                and ('%s is calling you about a contract.'):format(ctx.alias)
+                or  ('%s wants to speak with you about a contract.'):format(ctx.alias))
+
+        Audit.action(placed and 'call_placed' or 'call_requested', actor.cid, contractId,
+            { anonymous = otherAnon or selfAnon })
+    end
 
     -- The caller is told which of the two happened, so the app can say
     -- "calling" or "they have been asked to call you" rather than implying
     -- a call is ringing when none is.
-    return true, nil, { placed = placed }
+    return true, nil, { placed = placed, reason = reason }
+end
+
+--- Hang up the caller's own call.
+---
+--- lb-phone's CreateCall is built for payphones: it starts a call the
+--- phone draws no call screen for, so a player who placed one from here had
+--- no way to end it but to wait for the other side to. It names no
+--- contract, because a contract that closes mid-call must not leave the
+--- caller unable to put the phone down, and it can only end the caller's
+--- own call.
+---@return boolean ok
+---@return string|nil err
+---@return table|nil result { ended = boolean }
+function Comms.endCall(actor)
+    if not Config.Relay.Enabled then return false, CH.ERR.RELAY_OFF end
+    if not Config.Relay.AllowMaskedCalls then return false, CH.ERR.CALLS_OFF end
+
+    local ok, inCall = pcall(function()
+        return exports['lb-phone']:IsInCall(actor.source)
+    end)
+    -- Already over — the other side hung up or never answered — is not an
+    -- error, and the page says so rather than claiming it ended anything.
+    -- A build that cannot say is still asked to end it, rather than the
+    -- button doing nothing.
+    if ok and not inCall then return true, nil, { ended = false } end
+
+    local ended = pcall(function()
+        exports['lb-phone']:EndCall(actor.source)
+    end)
+    return true, nil, { ended = ended }
 end
 
 --------------------------------------------------------------------------
 -- Placing a call
 --------------------------------------------------------------------------
 
---- The configured call export, resolved once and remembered.
---- `false` means probed and not available, distinct from `nil` for not yet
---- probed — a phone without the export must not be re-probed per call.
-local callExport = nil
+--- How this server places a call, resolved once and remembered: a
+--- function (actor, number, anonymous, alias) -> placed. `false` means
+--- probed and not available, distinct from `nil` for not yet probed — a
+--- phone without the export must not be re-probed per call.
+local callPlacer = nil
 
---- Whether this server can place a call at all.
----
---- The export must be configured, its resource running, and the export
---- itself must resolve to something callable. Any of those missing leaves
---- call requests as notifications, which is what they have always been.
----@return function|nil
-function Comms.callPlacer()
-    if callExport ~= nil then return callExport or nil end
-
-    local spec = Config.Relay.CallExport
-    if not (spec and spec.resource and spec.export) then
-        callExport = false
-        return nil
+--- An owner's own export, named in Config.Relay.CallExport and called as
+--- (callerSource, number, anonymous). Many exports return nothing at all,
+--- so only an explicit false counts as a refusal here.
+local function overridePlacer(fn)
+    return function(actor, number, anonymous)
+        local ok, result = pcall(fn, nil, actor.source, number, anonymous == true)
+        return ok and result ~= false
     end
+end
 
-    if GetResourceState(spec.resource) ~= 'started' then
-        callExport = false
-        return nil
+--- lb-phone's own documented export:
+---   CreateCall(caller, calleeNumber, options) -> callId, or nil on failure
+--- The caller table's phoneNumber is what the callee's phone shows, so the
+--- caller's alias goes there and their real number is never read at all
+--- (§11.3: the alias is the caller name). The callId is the only proof a
+--- call started: nil is a call that did not, however quietly it failed.
+local function lbPhonePlacer(createCall)
+    return function(actor, number, anonymous, alias)
+        local ok, callId = pcall(createCall, nil,
+            { source = actor.source, phoneNumber = alias or 'Unknown' },
+            number,
+            { requirePhone = true, hideNumber = anonymous == true })
+        return ok and callId ~= nil and callId ~= false
     end
+end
 
-    local ok, fn = pcall(function() return exports[spec.resource][spec.export] end)
-    if not ok or type(fn) ~= 'function' then
-        print(('[crimson-hitman] warning: Relay.CallExport names %s:%s, which this build ' ..
-               'does not export; call requests will be notifications only')
-               :format(spec.resource, spec.export))
-        callExport = false
-        return nil
-    end
-
-    callExport = fn
+--- Resolve an export to a function, or nil. lb-phone ships its server code
+--- escrowed, so whether an export exists is probed, never assumed: indexing
+--- a missing one throws in FiveM, and an invented name would be a call that
+--- silently does nothing.
+local function resolveExport(resource, name)
+    if GetResourceState(resource) ~= 'started' then return nil end
+    local ok, fn = pcall(function() return exports[resource][name] end)
+    if not ok or type(fn) ~= 'function' then return nil end
     return fn
 end
 
+local function findPlacer()
+    -- An owner's override wins outright. One that does not resolve leaves
+    -- calls as requests rather than quietly using an export they chose not
+    -- to.
+    local spec = Config.Relay.CallExport
+    if spec and spec.resource and spec.export then
+        local fn = resolveExport(spec.resource, spec.export)
+        if not fn then
+            if GetResourceState(spec.resource) == 'started' then
+                print(('[crimson-hitman] warning: Relay.CallExport names %s:%s, which this build ' ..
+                       'does not export; call requests will be notifications only')
+                       :format(spec.resource, spec.export))
+            end
+            return nil
+        end
+        return overridePlacer(fn)
+    end
+
+    local createCall = resolveExport('lb-phone', 'CreateCall')
+    return createCall and lbPhonePlacer(createCall) or nil
+end
+
+--- Whether this server can place a call at all, and how.
+---
+--- With nothing that resolves, call requests stay notifications and the
+--- app does not draw a Call button that can only ask.
+---@return function|nil
+function Comms.callPlacer()
+    if callPlacer == nil then callPlacer = findPlacer() or false end
+    return callPlacer or nil
+end
+
 function Comms.resetCallCache()
-    callExport = nil
+    callPlacer = nil
+end
+
+--- Whether the app should offer a call at all.
+function Comms.canCall()
+    return Config.Relay.Enabled == true and Config.Relay.AllowMaskedCalls == true
+        and Comms.callPlacer() ~= nil
 end
 
 --- Ring the other party's phone.
@@ -373,7 +468,7 @@ end
 --- cannot be suppressed: a call that reveals a number somebody paid to hide
 --- is not a call worth placing (§11.3).
 ---@return boolean placed
-function Comms.placeCall(actor, recipientCid, anonymous)
+function Comms.placeCall(actor, recipientCid, anonymous, alias)
     local placer = Comms.callPlacer()
     if not placer then return false end
 
@@ -393,14 +488,9 @@ function Comms.placeCall(actor, recipientCid, anonymous)
     end)
     if not ok or type(number) ~= 'string' or number == '' then return false end
 
-    -- A pcall that merely did not throw is not proof the call was placed:
-    -- an export returning false has told us it failed. Only an explicit
-    -- false counts as a refusal, since many exports return nothing at all.
-    local ok2, result = pcall(function()
-        return placer(nil, actor.source, number, anonymous == true)
-    end)
-    if not ok2 then return false end
-    return result ~= false
+    -- A pcall that merely did not throw is not proof the call was placed;
+    -- each placer decides what its export's answer means.
+    return placer(actor, number, anonymous == true, alias) == true
 end
 
 --- Whether this lb-phone build can suppress caller identity. Checked once at
