@@ -168,6 +168,9 @@ An owner who changes upload provider has to restart this resource too, and
 the failure mode is every verification photo being rejected.
 
 **Do:** re-read it on the maintenance tick, and log when the set changes.
+(Built. Only on `'host'` photo storage now: on `'server'` storage no image
+host is involved and the allowlist is neither read on the tick nor warned
+about.)
 
 ### 3.3 Expire by deadline, not by scanning
 `ExpireContracts` walks every contract on every tick. Contracts carry

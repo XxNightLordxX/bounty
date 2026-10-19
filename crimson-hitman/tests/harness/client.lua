@@ -69,6 +69,15 @@ local function defaultExports()
         SaveToGallery = function(_, link)
             table.insert(Client.phone, { call = 'SaveToGallery', link = link })
         end,
+        -- The game camera behind a custom app's own viewfinder, as
+        -- lb-phone's app template turns it on and off. EnableWalkableCam
+        -- takes whether it is the selfie camera.
+        EnableWalkableCam = function(_, selfie)
+            table.insert(Client.phone, { call = 'EnableWalkableCam', selfie = selfie })
+        end,
+        DisableWalkableCam = function()
+            table.insert(Client.phone, { call = 'DisableWalkableCam' })
+        end,
     }
 end
 
@@ -139,6 +148,11 @@ function Client.boot(opts)
     end })
     _G.TriggerServerEvent = function(name, ...)
         table.insert(Client.toServer, { name = name, args = { ... } })
+    end
+    -- The same, sent in pieces at `bps` bytes a second; marked, so a test
+    -- can tell a photo sent latent from one sent as an ordinary event.
+    _G.TriggerLatentServerEvent = function(name, bps, ...)
+        table.insert(Client.toServer, { name = name, args = { ... }, latent = true, bps = bps })
     end
 
     -- Registration and the event handlers are the whole point, so they go

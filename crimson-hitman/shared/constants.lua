@@ -87,6 +87,12 @@ CH.FULFILMENT = { ELIMINATION = 'elimination', KIDNAPPING = 'kidnapping' }
 --- they are what lets the Ledger say which happened.
 CH.PHOTO = { PENDING = 'pending', OPEN = 'open', SAVED = 'saved', DELETED = 'deleted' }
 
+--- The kinds of picture a kill photo kept on this server may be
+--- (Config.Completion.PhotoStorage = 'server'), and the file extension
+--- each is kept under. A list of three, not a pattern: 'image/svg+xml' is
+--- an image type too, and a script in a picture is not a photograph.
+CH.PHOTO_MIME = { ['image/webp'] = 'webp', ['image/jpeg'] = 'jpg', ['image/png'] = 'png' }
+
 CH.AMENDMENT = {
     ADD_ESCROW       = 'add_escrow',
     RAISE_BONUS      = 'raise_bonus',
@@ -251,6 +257,14 @@ CH.ERR = {
     PHOTO_STILL_DOWN = 'photo_still_down',
     PHOTO_NOT_DEAD   = 'photo_not_dead',
     PHOTO_BAD_HOST   = 'photo_bad_host',
+    --- A photo sent to be kept on this server that is not one: not a webp,
+    --- jpeg or png, or not what it says it is. The page makes the picture
+    --- itself, so this is a modified client or a broken encoder, never the
+    --- hitman's aim.
+    PHOTO_BAD_IMAGE  = 'photo_bad_image',
+    --- Bigger than Config.Completion.PhotoMaxBytes. The page shrinks a
+    --- photo to fit before sending it, so this too says the page did not.
+    PHOTO_TOO_LARGE  = 'photo_too_large',
     --- A kill photograph that cannot be opened or decided on. One code for
     --- a handle that was never minted, one that belongs to somebody else,
     --- and one already seen: told apart, the answer would say whether a

@@ -152,6 +152,10 @@ local function registerApp()
             -- requests here would duplicate them and drain the rate limit
             -- before the player has typed anything.
             onOpen      = function() end,
+            -- The kill photo viewfinder runs lb-phone's game camera behind
+            -- the app. A phone put away with the viewfinder still up would
+            -- otherwise leave it running.
+            onClose     = function() App.walkableCam(false) end,
         })
     end)
 
@@ -304,8 +308,21 @@ end)
 -- Server round trips
 --------------------------------------------------------------------------
 
+--- How fast a kill photo goes to the server, in bytes a second, on
+--- 'server' storage. A latent event is sent in pieces at this rate rather
+--- than as one burst; FiveM's default of 25000 is half a minute for a large
+--- photo with the hitman standing over the body. This sends the largest
+--- one the server allows in about two seconds.
+local PHOTO_BPS = 500000
+
 --- Ask the server for something and hand the answer to the UI.
-function App.request(event, payload, cb)
+---
+--- `opts.latent` sends it as a latent event, for a payload too big to go
+--- as an ordinary one (a kill photo), and `opts.timeoutMs` waits longer
+--- than the usual fifteen seconds for the answer, since a latent event
+--- takes as long as it takes to arrive.
+---@param opts table|nil { latent = boolean, timeoutMs = integer }
+function App.request(event, payload, cb, opts)
     requestSeq = requestSeq + 1
     local id = requestSeq
 
@@ -323,7 +340,7 @@ function App.request(event, payload, cb)
     if cb then
         pending[id] = cb
         -- Never leak a callback: if the server never answers, drop it.
-        SetTimeout(15000, function()
+        SetTimeout(opts and opts.timeoutMs or 15000, function()
             if pending[id] then
                 pending[id] = nil
                 cb({ ok = false, err = 'timeout', event = event })
@@ -331,7 +348,11 @@ function App.request(event, payload, cb)
         end)
     end
 
-    TriggerServerEvent('crimson-hitman:' .. event, payload)
+    if opts and opts.latent then
+        TriggerLatentServerEvent('crimson-hitman:' .. event, PHOTO_BPS, payload)
+    else
+        TriggerServerEvent('crimson-hitman:' .. event, payload)
+    end
 end
 
 --- The kill photo this player has open, if any: { handle, url }.
@@ -371,10 +392,18 @@ RegisterNetEvent('crimson-hitman:result', function(result)
     end
 
     -- Everything also goes to the UI, which decides what to render.
+    --
+    -- Except a photo token. It is what lets a picture claim a payout, and it
+    -- stays in this file: the page hands over the picture and nothing else,
+    -- and this client puts the token to it (sendVerificationPhoto). A page
+    -- is a browser anybody can script, and every reply mirrored to it is
+    -- readable there.
+    local data = result.data
+    if result.event == 'requestPhotoToken' then data = nil end
     phone('SendCustomAppMessage', function()
         exports['lb-phone']:SendCustomAppMessage('crimson-hitman', {
             type = 'result', event = result.event, ok = result.ok,
-            err = result.err, data = result.data,
+            err = result.err, data = data,
         })
     end)
 end)
@@ -457,9 +486,71 @@ local UI_EVENTS = {
     'pageError',
 }
 
+--------------------------------------------------------------------------
+-- A kill photo kept on the server, on its way to the client's page
+--------------------------------------------------------------------------
+--
+-- The server sends it as a latent event of its own, not in the reply to
+-- openPhoto (App's openPhoto handler), and the page's request is held here
+-- until it arrives. Either can come first: the reply is an ordinary event
+-- and the photo a slower latent one, but nothing promises the order.
+
+--- How long the page's request waits for the photo once the server has
+--- said it is on its way. A few hundred kilobytes at the server's rate is
+--- a couple of seconds; this is for a connection far slower than that.
+local PHOTO_WAIT_MS = 60000
+
+--- [handle] = the page's callback, waiting for that photo.
+local photoWaiting = {}
+--- A photo that came before the reply that names it: { handle, src }.
+local photoArrived
+
+local function awaitPhoto(handle, cb)
+    if photoArrived and photoArrived.handle == handle then
+        local src = photoArrived.src
+        photoArrived = nil
+        return cb({ ok = true, event = 'openPhoto', data = { handle = handle, src = src } })
+    end
+    photoWaiting[handle] = cb
+    SetTimeout(PHOTO_WAIT_MS, function()
+        if photoWaiting[handle] ~= cb then return end
+        photoWaiting[handle] = nil
+        -- Its own code: the one look was spent on a photo that never got
+        -- here, and the page says so rather than "no answer, try again".
+        cb({ ok = false, event = 'openPhoto', err = 'photo_no_answer' })
+    end)
+end
+
+RegisterNetEvent('crimson-hitman:photoImage', function(data)
+    -- Type-checked like every handler here: net event names are a
+    -- server-wide namespace. Only a picture, as a data URI, is passed on.
+    if type(data) ~= 'table' or type(data.handle) ~= 'string' or type(data.src) ~= 'string'
+        or not data.src:find('^data:image/') then
+        return
+    end
+    local cb = photoWaiting[data.handle]
+    if cb then
+        photoWaiting[data.handle] = nil
+        return cb({ ok = true, event = 'openPhoto', data = { handle = data.handle, src = data.src } })
+    end
+    -- Ahead of the reply. Only the latest is kept, and only until the wait
+    -- for it would have run out.
+    local arrived = { handle = data.handle, src = data.src }
+    photoArrived = arrived
+    SetTimeout(PHOTO_WAIT_MS, function()
+        if photoArrived == arrived then photoArrived = nil end
+    end)
+end)
+
 for _, event in ipairs(UI_EVENTS) do
     RegisterNUICallback('crimson:' .. event, function(data, cb)
-        App.request(event, data, function(result) cb(result) end)
+        App.request(event, data, function(result)
+            if event == 'openPhoto' and result.ok and type(result.data) == 'table'
+                and result.data.latent and type(result.data.handle) == 'string' then
+                return awaitPhoto(result.data.handle, cb)
+            end
+            cb(result)
+        end)
     end)
 end
 
@@ -714,9 +805,85 @@ RegisterNetEvent('qbx_core:client:playerLoggedOut', forgetDeath)
 -- Verification photo (§7.4)
 --------------------------------------------------------------------------
 --
--- The camera flow is started by the script for one specific contract. The
--- URL it produces is submitted with the server-issued token, so an image
--- alone can never claim a payout.
+-- The camera flow is started by the script for one specific contract. What
+-- it produces is submitted with the server-issued token, so an image alone
+-- can never claim a payout.
+--
+-- Two cameras, by the server's Config.Completion.PhotoStorage, which it
+-- names when it issues the token. On 'host' it is lb-phone's own camera,
+-- which uploads the photo and hands back a link. On 'server' it is the
+-- app's own viewfinder: the page draws lb-phone's game camera into itself,
+-- takes the picture and sends it here (sendVerificationPhoto), and this
+-- client sends it on with the token. The token never goes to the page.
+
+--- The token for each contract whose viewfinder is open, by contract id:
+--- { token, maxBytes }. Held here and not given to the page, which hands
+--- over the picture alone. One picture per token: sending takes it.
+local heldTokens = {}
+
+--- Whether lb-phone's game camera is running behind the viewfinder.
+local walkable = false
+
+--- Turn lb-phone's game camera on behind the app's viewfinder, or off.
+---
+--- The rear camera, said out loud: a selfie would put the hitman in the
+--- photo the client is shown. Through `phone`, as every lb-phone export
+--- is: a build without these answers the page rather than leaving it
+--- waiting.
+---@param on boolean
+---@return boolean ok
+function App.walkableCam(on)
+    on = on == true
+    if on == walkable then return true end
+    local called = phone(on and 'EnableWalkableCam' or 'DisableWalkableCam', function()
+        if on then
+            exports['lb-phone']:EnableWalkableCam(false)
+        else
+            exports['lb-phone']:DisableWalkableCam()
+        end
+    end)
+    if called then walkable = on end
+    return called
+end
+
+RegisterNUICallback('crimson:verificationCamera', function(data, cb)
+    local on = type(data) == 'table' and data.on == true
+    local ok = App.walkableCam(on)
+    cb({ ok = ok, err = (not ok) and 'camera_unavailable' or nil })
+end)
+
+--- The picture the page took in its viewfinder, sent on to the server with
+--- the token this client holds for that contract.
+---
+--- As a latent event: a photo is a few hundred kilobytes, which FiveM's
+--- documentation says not to send as an ordinary event. Bounded here by
+--- the size the server said it keeps, so a page cannot make this client
+--- upload a great deal of anything; the server checks it properly.
+RegisterNUICallback('crimson:sendVerificationPhoto', function(data, rawCb)
+    local answered = false
+    local function cb(payload)
+        if answered then return end
+        answered = true
+        pcall(rawCb, payload)
+    end
+
+    local contractId = type(data) == 'table' and data.id or nil
+    local held = contractId ~= nil and heldTokens[tostring(contractId)] or nil
+    if not held then return cb({ ok = false, err = 'no_token' }) end
+
+    local image = data.image
+    if type(image) ~= 'string' or not image:find('^data:image/') then
+        return cb({ ok = false, err = 'photo_bad_image' })
+    end
+    if #image > math.ceil((held.maxBytes or 600000) / 3) * 4 + 64 then
+        return cb({ ok = false, err = 'photo_too_large' })
+    end
+
+    heldTokens[tostring(contractId)] = nil
+    App.request('submitPhoto', { token = held.token, image = image }, function(result)
+        cb({ ok = result.ok, err = result.err, data = result.data })
+    end, { latent = true, timeoutMs = 60000 })
+end)
 
 RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
     -- Answered exactly once, whatever happens after.
@@ -765,6 +932,20 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
         end
 
         local token = result.data.token
+
+        -- 'server' storage: the page opens its own viewfinder, and sends
+        -- the picture back through sendVerificationPhoto, which puts this
+        -- token to it. The page is told the size the server keeps and
+        -- nothing else.
+        if result.data.storage == 'server' then
+            local maxBytes = tonumber(result.data.maxBytes)
+            heldTokens[tostring(contractId)] = { token = token, maxBytes = maxBytes }
+            return cb({ ok = true, data = {
+                viewfinder = true,
+                maxSide = tonumber(result.data.maxSide),
+                maxBytes = maxBytes,
+            } })
+        end
 
         --- What the camera produced: a URL, or nothing if the player backed
         --- out.

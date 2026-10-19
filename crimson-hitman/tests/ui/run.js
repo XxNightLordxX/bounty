@@ -734,6 +734,59 @@ async function main() {
     }
   })();
 
+  /* A photo kept on the server reaches the page as the photo itself, a
+     data URI, which the client held the request for. */
+  const KEPT = 'data:image/webp;base64,UklGRgAAAABXRUJQ';
+
+  await (async function photoKeptOnTheServer() {
+    const gallery = [];
+    const app = await openedPhoto({
+      openPhoto: { ok: true, data: { handle: 'ph00000000aa', src: KEPT } }
+    });
+    app.sandbox.window.components = {
+      saveToGallery: function (url) { gallery.push(url); return Promise.resolve(42); }
+    };
+
+    it('shows a photo the server keeps, as it was sent', function () {
+      drewCleanly(app, 'a kept photo');
+      const images = app.view.all().filter(function (n) { return n.tagName === 'IMG'; });
+      eq(images.length, 1);
+      eq(images[0].src, KEPT);
+      truthy(app.view.textContent.indexOf('You can see this once') !== -1);
+    });
+
+    click(app, 'Save to Photos');
+    await settle(); await settle();
+
+    it('does not hand the phone\'s Photos a picture it cannot keep', function () {
+      eq(gallery.length, 0, 'lb-phone\'s gallery keeps links of 500 characters at most');
+      eq(decisions(app).length, 0, 'not reported saved: the server would delete the only copy');
+      falsy(app.sent.some(function (r) { return r.name === 'saveToPhotos'; }));
+      truthy(app.notice().indexOf('kept on the server') !== -1, app.notice());
+      eq(app.view.all().filter(function (n) { return n.tagName === 'IMG'; }).length, 1,
+        'still open, to look at and delete');
+    });
+
+    tab(app, 'board');
+    await settle(); await settle();
+    it('counts closing it any other way as Delete here too', function () {
+      eq(decisions(app).join(','), 'delete');
+    });
+  })();
+
+  await (async function photoNeverArrived() {
+    const app = await openedPhoto({
+      openPhoto: { ok: false, err: 'photo_no_answer' }
+    });
+    it('says a photo that never reached the phone is gone, and tells the server', function () {
+      drewCleanly(app, 'a photo that never arrived');
+      truthy(app.notice().indexOf('did not reach your phone') !== -1, app.notice());
+      eq(decisions(app).join(','), 'delete', 'deleted now, not when the time to decide runs out');
+      truthy(app.view.textContent.indexOf('Photo deleted') !== -1, app.view.textContent);
+      eq(app.view.all().filter(function (n) { return n.tagName === 'IMG'; }).length, 0);
+    });
+  })();
+
   await (async function lawEnforcementWarning() {
     const leo = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
     leo.targetProtected = true;
@@ -5855,6 +5908,228 @@ async function main() {
           });
         });
       }
+    })();
+
+    /* ---------- the viewfinder, on a server that keeps its photos ----------
+
+       There the client answers Verify kill with the viewfinder to open, and
+       the page takes the photo itself, in lb-phone's game render. */
+
+    /* lb-phone's components as the viewfinder uses them, and what a
+       browser gives it to shrink the photo with. Records what was asked of
+       each, so a test can see the camera let go of. */
+    function withGameCamera(app, opts) {
+      opts = opts || {};
+      const camera = { created: [], resized: [], destroyed: 0, taken: 0, encodes: [] };
+      if (opts.noGameRender) {
+        app.sandbox.window.components = {};
+        return camera;
+      }
+      app.sandbox.window.components = {
+        createGameRender: function (canvas) {
+          const render = {
+            destroyed: false,
+            resizeByAspect: function (ratio) { camera.resized.push(ratio); },
+            takePhoto: function () {
+              camera.taken++;
+              // A phone camera's full-size portrait frame, as a Blob.
+              return Promise.resolve({ type: 'image/png', size: 9000000,
+                width: 2160, height: 3840 });
+            },
+            destroy: function () { render.destroyed = true; camera.destroyed++; }
+          };
+          camera.created.push(canvas);
+          camera.render = render;
+          return render;
+        }
+      };
+      app.sandbox.window.createImageBitmap = function (blob) {
+        return Promise.resolve({ width: blob.width, height: blob.height,
+          close: function () { camera.closed = true; } });
+      };
+      app.sandbox.window.FileReader = function () {
+        const reader = this;
+        reader.readAsDataURL = function (blob) {
+          camera.encoded = blob;
+          Promise.resolve().then(function () {
+            reader.result = 'data:' + blob.type + ';base64,UklGRgAAAABXRUJQ';
+            reader.onload();
+          });
+        };
+      };
+      app.document.encode = function (canvas, type, quality) {
+        camera.encodes.push({ type: type, quality: quality,
+          width: canvas.width, height: canvas.height });
+        if (opts.encode) { return opts.encode(type, quality); }
+        return { type: type, size: 180000 };
+      };
+      return camera;
+    }
+
+    function finder(app) { return app.document.getElementById('viewfinder'); }
+
+    function pressIn(node, label) {
+      const match = node.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === label;
+      });
+      if (!match.length) { throw new Error('no button labelled "' + label + '" in the viewfinder'); }
+      match[0].onclick();
+    }
+
+    function camerasAsked(app) {
+      return app.sent.filter(function (r) { return r.name === 'verificationCamera'; })
+        .map(function (r) { return r.body.on; });
+    }
+
+    async function viewfinderOpen(extra, cameraOpts) {
+      const app = boot(Object.assign({
+        mine: mineWithAJob(),
+        takeVerificationPhoto: { ok: true,
+          data: { viewfinder: true, maxSide: 1280, maxBytes: 600000 } },
+        sendVerificationPhoto: { ok: true, data: { settled: 1, pending: 0 } }
+      }, extra || {}));
+      const camera = withGameCamera(app, cameraOpts);
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      click(app, 'Verify kill');
+      await settle(); await settle();
+      return { app: app, camera: camera };
+    }
+
+    async function shoot(app) {
+      pressIn(finder(app), 'Take photo');
+      for (let i = 0; i < 8; i++) { await settle(); }
+    }
+
+    await (async function viewfinderTakesThePhoto() {
+      const { app, camera } = await viewfinderOpen();
+
+      it('opens the app\'s own viewfinder over everything, with the game camera in it', function () {
+        const shade = finder(app);
+        truthy(shade, 'no viewfinder on screen');
+        truthy(shade.parentNode === app.document.body,
+          'drawn outside #view, which redraws and would take the camera\'s canvas with it');
+        truthy(shade.textContent.indexOf('Point the phone at the body and take the photo.') !== -1,
+          shade.textContent);
+        eq(camera.created.length, 1, 'one game render');
+        eq(camera.created[0].tagName, 'CANVAS');
+        truthy(shade.all().indexOf(camera.created[0]) !== -1, 'drawn into the viewfinder\'s canvas');
+        eq(camera.resized.length, 1, 'sized to the frame, as lb-phone\'s template does');
+        eq(camerasAsked(app).join(','), 'true', 'the camera behind the app is turned on');
+        falsy(app.sent.some(function (r) { return r.name === 'sendVerificationPhoto'; }));
+        const labels = shade.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+          .map(function (n) { return n.textContent; });
+        eq(labels.join(','), 'Take photo,Cancel', 'a shutter and a way out; no selfie camera');
+      });
+
+      await shoot(app);
+
+      it('sends the picture, shrunk, and nothing else', function () {
+        const sends = app.sent.filter(function (r) { return r.name === 'sendVerificationPhoto'; });
+        eq(sends.length, 1);
+        eq(Object.keys(sends[0].body).sort().join(','), 'id,image',
+          'the page has no token to send: the client holds it');
+        eq(sends[0].body.id, 'ct00000001');
+        eq(sends[0].body.image.indexOf('data:image/webp;base64,'), 0, sends[0].body.image);
+        eq(camera.taken, 1);
+        const made = camera.encodes[camera.encodes.length - 1];
+        eq(made.type, 'image/webp');
+        eq(made.quality, 0.8);
+        eq(Math.max(made.width, made.height), 1280, 'the longest side brought down to the limit');
+        eq(made.width, 720, 'in proportion');
+      });
+
+      it('lets go of the camera and the picture once it is taken', function () {
+        eq(camera.destroyed, 1, 'the game render destroyed');
+        eq(camerasAsked(app).join(','), 'true,false', 'and the camera behind the app turned off');
+        eq(camera.created[0].width, 0, 'its canvas emptied');
+        truthy(camera.closed, 'the decoded picture closed');
+        eq(finder(app), null, 'the viewfinder is gone');
+      });
+
+      it('says the kill is verified', function () {
+        truthy(app.notice().indexOf('Verified') !== -1, app.notice());
+        drewCleanly(app, 'the viewfinder');
+      });
+    })();
+
+    await (async function viewfinderCancelled() {
+      const { app, camera } = await viewfinderOpen();
+      pressIn(finder(app), 'Cancel');
+      await settle(); await settle();
+
+      it('closes on Cancel, turns the camera off and sends nothing', function () {
+        eq(finder(app), null);
+        eq(camera.destroyed, 1);
+        eq(camerasAsked(app).join(','), 'true,false');
+        falsy(app.sent.some(function (r) { return r.name === 'sendVerificationPhoto'; }));
+        eq(app.notice(), '', 'backing out is the hitman\'s own choice and says nothing');
+        truthy(app.view.all().some(function (n) {
+          return n.tagName === 'BUTTON' && n.textContent === 'Verify kill';
+        }), 'and Verify kill is there to tap again');
+      });
+    })();
+
+    await (async function viewfinderWithoutWebp() {
+      // A browser that cannot make webp hands back a PNG instead.
+      const { app, camera } = await viewfinderOpen({}, {
+        encode: function (type) { return { type: type === 'image/webp' ? 'image/png' : type, size: 200000 }; }
+      });
+      await shoot(app);
+      it('sends a jpeg where the browser makes no webp', function () {
+        eq(camera.encodes.map(function (e) { return e.type; }).join(','), 'image/webp,image/jpeg');
+        const sends = app.sent.filter(function (r) { return r.name === 'sendVerificationPhoto'; });
+        eq(sends.length, 1);
+        eq(sends[0].body.image.indexOf('data:image/jpeg;base64,'), 0);
+      });
+    })();
+
+    await (async function viewfinderShrinksToFit() {
+      // Over the limit at the first two qualities, under it at the third.
+      const { app, camera } = await viewfinderOpen({}, {
+        encode: function (type, quality) { return { type: type, size: quality > 0.6 ? 700000 : 400000 }; }
+      });
+      await shoot(app);
+      it('lowers the quality until the photo is no bigger than the server keeps', function () {
+        eq(camera.encodes.map(function (e) { return e.quality; }).join(','), '0.8,0.65,0.5');
+        eq(app.sent.filter(function (r) { return r.name === 'sendVerificationPhoto'; }).length, 1);
+      });
+    })();
+
+    await (async function viewfinderTooBig() {
+      const { app, camera } = await viewfinderOpen({}, {
+        encode: function (type) { return { type: type, size: 5000000 }; }
+      });
+      await shoot(app);
+      it('says a photo that will not shrink enough was not sent', function () {
+        falsy(app.sent.some(function (r) { return r.name === 'sendVerificationPhoto'; }));
+        truthy(app.notice().indexOf('too big') !== -1, app.notice());
+        eq(camera.destroyed, 1);
+        eq(finder(app), null);
+      });
+    })();
+
+    await (async function viewfinderRefused() {
+      const { app } = await viewfinderOpen({
+        sendVerificationPhoto: { ok: false, err: 'photo_too_far' }
+      });
+      await shoot(app);
+      it('says why the server refused the photo, and keeps it on the card', function () {
+        truthy(app.notice().indexOf('too far') !== -1, app.notice());
+        truthy(app.view.textContent.indexOf('too far') !== -1, 'kept under the buttons: '
+          + app.view.textContent);
+        eq(finder(app), null);
+      });
+    })();
+
+    await (async function viewfinderWithoutGameRender() {
+      const { app } = await viewfinderOpen({}, { noGameRender: true });
+      it('says the phone cannot open the camera where lb-phone has no game render', function () {
+        eq(finder(app), null, 'no viewfinder with nothing to show in it');
+        truthy(app.notice().indexOf('cannot open the camera') !== -1, app.notice());
+        eq(camerasAsked(app).length, 0);
+      });
     })();
   })();
 

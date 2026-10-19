@@ -1523,6 +1523,46 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
   object-fit: contain;
 }
 
+/* The kill photo viewfinder, on a server that keeps its photos itself.
+   Over the whole app, tab bar included, rather than inside #view: the page
+   redraws #view on every change, and the canvas lb-phone draws its game
+   camera into has to stay put while the hitman lines up the shot. The
+   picture takes everything the line above it and the two buttons leave,
+   and the buttons stay on screen, clear of lb-phone's home indicator. */
+.viewfinder {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  /* The page's own side margin; --view-pad lives on #view, not here. */
+  padding: 0.8rem 0.9rem 1.6rem;
+  background: rgba(8, 6, 6, 0.97);
+}
+.viewfinder-hint {
+  flex: none;
+  color: var(--ink);
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+.viewfinder-frame {
+  flex: 1 1 auto;
+  min-height: 6rem;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--line);
+}
+.viewfinder-frame canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.viewfinder > .row { flex: none; }
+.viewfinder > .row > button { flex: 1 1 8rem; min-height: 2.75rem; }
+
 /* The compose box and its Send button share a row. The box was alone and
    Enter-only, which on a phone depends on what the on-screen keyboard
    chooses to send. */

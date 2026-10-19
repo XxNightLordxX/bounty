@@ -823,8 +823,21 @@ function Admin.diagnose(source, subjectId)
         end
     end
 
-    -- Photo hosts ---------------------------------------------------------
-    if Photo and Photo.allowedHosts then
+    -- Photo storage and hosts --------------------------------------------
+    --
+    -- Which of the two ways kill photos are taken and kept, because what to
+    -- check next depends on it: the host allowlist only matters on 'host',
+    -- and on 'server' a "no host allowed, every photo refused" line sent
+    -- owners to fix an image host they do not use.
+    local storage = Photo and Photo.storage and Photo.storage() or 'server'
+    if storage == 'host' then
+        say('photo storage: host (lb-phone\'s camera uploads to the phone\'s image host; '
+            .. 'this server keeps the link)')
+    else
+        say('photo storage: server (taken in the app and kept in data/photos; no image '
+            .. 'host is used)')
+    end
+    if storage == 'host' and Photo and Photo.allowedHosts then
         local okHosts, hosts = pcall(Photo.allowedHosts)
         hosts = okHosts and type(hosts) == 'table' and hosts or {}
         say(('photo hosts: %d%s'):format(#hosts,

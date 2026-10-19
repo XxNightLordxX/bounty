@@ -163,11 +163,15 @@ describe('starting on a config that predates a setting', function()
         boot(function()
             Config.Completion.PhotoStorage = nil
             Config.Completion.PhotoOpenSeconds = nil
+            Config.Completion.PhotoMaxSide = nil
+            Config.Completion.PhotoMaxBytes = nil
             Config.Cooldowns.photoView = nil
             Config.Cooldowns.photoDecide = nil
         end)
         eq(Config.Completion.PhotoStorage, 'server', 'absent is the default, not a third place')
         eq(Config.Completion.PhotoOpenSeconds, 600)
+        eq(Config.Completion.PhotoMaxSide, 1280, 'read on every photo sent')
+        eq(Config.Completion.PhotoMaxBytes, 600000)
         truthy(Config.Cooldowns.photoView and Config.Cooldowns.photoDecide,
             'the one view gets the allowance it was built against')
         resetConfig()
@@ -176,14 +180,30 @@ describe('starting on a config that predates a setting', function()
         boot(function()
             Config.Completion.PhotoStorage = 'cloud'
             Config.Completion.PhotoOpenSeconds = 0
+            Config.Completion.PhotoMaxSide = 40
+            Config.Completion.PhotoMaxBytes = 'big'
         end)
-        _G.print = realPrint
         eq(Config.Completion.PhotoStorage, 'server', 'a misspelling is read as the default')
         eq(Config.Completion.PhotoOpenSeconds, 600,
             'zero would delete a photo the moment it was opened')
+        eq(Config.Completion.PhotoMaxSide, 1280, 'a photo forty pixels across proves nothing')
+        eq(Config.Completion.PhotoMaxBytes, 600000, 'not a number is the default')
         local told = table.concat(said, ' | ')
         truthy(told:find('PhotoStorage', 1, true), 'and the operator is told: ' .. told)
         truthy(told:find('PhotoOpenSeconds', 1, true), told)
+        truthy(told:find('PhotoMaxSide', 1, true), told)
+        truthy(told:find('PhotoMaxBytes', 1, true), told)
+        resetConfig()
+
+        said = {}
+        boot(function()
+            Config.Completion.PhotoMaxSide = 1920.6
+            Config.Completion.PhotoMaxBytes = 99999999
+        end)
+        _G.print = realPrint
+        eq(Config.Completion.PhotoMaxSide, 1920, 'a whole number of pixels')
+        eq(Config.Completion.PhotoMaxBytes, 600000,
+            'every photo goes to the server and back out to the client whole')
         resetConfig()
 
         boot(function() Config.Completion.PhotoStorage = 'host' end)

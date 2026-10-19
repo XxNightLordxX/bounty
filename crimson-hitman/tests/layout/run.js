@@ -170,6 +170,9 @@ function serverStub() {
         '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920">'
         + '<rect width="1080" height="1920" fill="#555"/></svg>') } },
     photoDecision: { ok: true, data: { handle: 'ph00000000aa', state: 'deleted' } },
+    // A server that keeps its photos itself: Verify kill opens the app's
+    // own viewfinder rather than lb-phone's camera.
+    takeVerificationPhoto: { ok: true, data: { viewfinder: true, maxSide: 1280, maxBytes: 600000 } },
     rewardOptions: { ok: true, data: { cash: 100000, bank: 50000, dirty: 2000,
       items: [{ name: 'lockpick', label: 'Lockpick', count: 5 }],
       weapons: [{ name: 'WEAPON_PISTOL', label: 'Pistol', slot: 3, serial: 'C123' }],
@@ -927,6 +930,65 @@ async function main() {
       'a grouping label was drawn at least as large as the name of the person '
       + 'there is a price on (' + grouping.targetSize + 'px): '
       + JSON.stringify(loud));
+  });
+
+  /* The kill photo viewfinder, on a server that keeps its photos itself.
+     Over the whole app, tab bar included, with the game camera taking most
+     of the screen, and the shutter clear of lb-phone's home indicator: a
+     shutter under the gesture bar is a photo that is never taken. lb-phone's
+     game render is stood in for; it draws into the canvas the page gives it. */
+  await page.evaluate(function () {
+    window.components = {
+      createGameRender: function () {
+        return {
+          destroyed: false,
+          resizeByAspect: function () {},
+          destroy: function () { this.destroyed = true; },
+          takePhoto: function () { return new Promise(function () {}); }
+        };
+      }
+    };
+    const b = Array.prototype.slice.call(document.querySelectorAll('button'))
+      .filter(function (n) { return n.textContent === 'Verify kill'; })[0];
+    if (b) { b.click(); }
+  });
+  await page.waitForTimeout(300);
+
+  const finder = await page.evaluate(function () {
+    const shade = document.getElementById('viewfinder');
+    if (!shade) { return null; }
+    const r = shade.getBoundingClientRect();
+    const frame = shade.querySelector('.viewfinder-frame').getBoundingClientRect();
+    const buttons = Array.prototype.slice.call(shade.querySelectorAll('button'));
+    const nav = document.querySelector('.tabs').getBoundingClientRect();
+    const overTabs = document.elementFromPoint(nav.left + nav.width / 2, nav.top + nav.height / 2);
+    return {
+      covers: r.left <= 0.5 && r.top <= 0.5 && r.right >= window.innerWidth - 0.5
+        && r.bottom >= window.innerHeight - 0.5,
+      overTabs: !!overTabs && shade.contains(overTabs),
+      frameH: Math.round(frame.height),
+      viewportH: window.innerHeight,
+      lowest: Math.max.apply(Math, buttons.map(function (b) { return b.getBoundingClientRect().bottom; })),
+      shortest: Math.min.apply(Math, buttons.map(function (b) { return b.getBoundingClientRect().height; })),
+      labels: buttons.map(function (b) { return b.textContent; }),
+      sideways: shade.scrollWidth > shade.clientWidth + 1
+    };
+  });
+
+  it('opens the viewfinder over the whole app, tab bar included', function () {
+    truthy(finder, 'Verify kill opened no viewfinder, so this measures nothing');
+    truthy(finder.covers, 'the viewfinder leaves part of the app showing');
+    truthy(finder.overTabs, 'a tap meant for the shutter could land on a tab');
+    truthy(finder.labels.join(',') === 'Take photo,Cancel', JSON.stringify(finder.labels));
+    truthy(!finder.sideways, 'the viewfinder is cut off sideways');
+  });
+
+  it('gives the camera most of the screen and keeps the shutter clear of the home indicator', function () {
+    atLeast(finder ? finder.frameH : 0, Math.round((finder ? finder.viewportH : 0) * 0.5),
+      'the picture being lined up is drawn ' + (finder && finder.frameH) + 'px tall');
+    truthy(finder && finder.lowest <= finder.viewportH - 16,
+      'a button ends at ' + (finder && finder.lowest) + ' of ' + (finder && finder.viewportH));
+    atLeast(finder ? finder.shortest : 0, 44, 'shortest viewfinder button');
   });
 
   it('fits every screen size it might be opened on', function () {

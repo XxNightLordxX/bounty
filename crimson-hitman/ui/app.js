@@ -489,6 +489,20 @@
     // Neither lb-phone's own save nor the client's fallback took it.
     save_unavailable: 'This phone could not save the photo. It is still open: '
       + 'try again, or delete it.',
+    // A photo kept on this server, which the phone's Photos cannot hold.
+    save_not_offered: 'This photo is kept on the server and cannot go into '
+      + 'your phone\u2019s Photos. It is still open: look at it, then delete it.',
+    // The server opened it and it never reached this phone. The one look
+    // was spent all the same, so it is gone.
+    photo_no_answer: 'The photo did not reach your phone, and it could be '
+      + 'opened only once. It has been deleted.',
+    /* The viewfinder's photo, which the page makes itself: the server could
+       not read it, it would not shrink to the size the server keeps, or
+       this phone could not make one at all. A new Verify kill is a new
+       token, so each says to start there. */
+    photo_bad_image: 'The photo could not be read. Tap Verify kill and take it again.',
+    photo_too_large: 'The photo was too big to send. Tap Verify kill and take it again.',
+    photo_unreadable: 'The photo could not be made. Tap Verify kill and take it again.',
     bad_state: 'Not right now.',
 
     /* The six ways a buyout is refused. They shared bad_state — "Not right
@@ -811,15 +825,27 @@
 
   function openProof(handle) {
     return post('openPhoto', { handle: handle }).then(function (r) {
-      if (!r.ok || !r.data || typeof r.data.url !== 'string') {
+      // A link to the image host, or, where the server keeps its photos,
+      // the photo itself as a data URI.
+      var src = r.ok && r.data
+        && (typeof r.data.src === 'string' ? r.data.src : r.data.url);
+      if (typeof src !== 'string') {
         fail(r);
         // Whatever it was, it is not waiting to be opened any more.
         if (r.err === 'photo_gone') { markProof(handle, 'deleted'); redraw(); }
+        // Opened on the server and never delivered: the one look was spent
+        // on it all the same. The server is told it is deleted now, rather
+        // than being left to delete it when the time to decide runs out.
+        if (r.err === 'photo_no_answer') {
+          markProof(handle, 'deleted');
+          post('photoDecision', { handle: handle, choice: 'delete' });
+          redraw();
+        }
         return;
       }
       markProof(handle, 'open');
       proofShown = { handle: handle };
-      state.dialog = { kind: 'proof', handle: handle, src: r.data.url };
+      state.dialog = { kind: 'proof', handle: handle, src: src };
       render();
     });
   }
@@ -854,6 +880,15 @@
      the phone has it is the server told 'save' — it forgets the photo the
      moment it hears that. */
   function saveProof(d) {
+    // A photo the server keeps itself arrives as a data URI, and lb-phone's
+    // gallery keeps links of at most 500 characters. Handed one, it would
+    // either refuse or keep a broken entry while the server, told 'save',
+    // deleted the only copy. So it is not handed over: the photo stays
+    // open, to look at and then delete.
+    if (/^data:/.test(d.src)) {
+      fail({ err: 'save_not_offered' });
+      return Promise.resolve();
+    }
     var phone = window.components;
     var saving;
     if (phone && typeof phone.saveToGallery === 'function') {
@@ -2178,6 +2213,198 @@
     return el('div', 'hint', text);
   }
 
+  /* ---------- the kill photo viewfinder ----------
+
+     On a server that keeps kill photos itself (Config.Completion
+     .PhotoStorage = 'server') the hitman takes the photo here rather than
+     in lb-phone's camera. lb-phone draws its game camera into a canvas of
+     this page (components.createGameRender, as lb-phone's own app template
+     does), the client turns that camera on behind the app, and the shutter
+     takes a picture of it. The picture is shrunk and encoded here and
+     handed to the client, which sends it on with the token it holds: this
+     page never has the token, and keeps nothing of the picture once it is
+     sent. lb-phone's gallery and image host are never involved, so the
+     photo does not stay on the hitman's phone.
+
+     Drawn over everything, outside #view: the page redraws #view on every
+     change, and the canvas the game camera draws into has to stay the same
+     canvas for as long as the viewfinder is up. */
+
+  // The shape asked of the game camera where the frame cannot be measured:
+  // a phone held upright.
+  var VIEWFINDER_ASPECT = 9 / 16;
+
+  // The qualities a photo is encoded at, best first, until it is no bigger
+  // than the server keeps.
+  var PHOTO_QUALITIES = [0.8, 0.65, 0.5, 0.35];
+
+  // A picture to draw, from the Blob the camera hands over.
+  function pictureOf(blob) {
+    if (typeof window.createImageBitmap === 'function') {
+      return window.createImageBitmap(blob);
+    }
+    return new Promise(function (resolve, reject) {
+      var url = window.URL.createObjectURL(blob);
+      var img = new window.Image();
+      img.onload = function () { window.URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = function () {
+        window.URL.revokeObjectURL(url);
+        reject({ err: 'photo_unreadable' });
+      };
+      img.src = url;
+    });
+  }
+
+  function canvasBlob(canvas, type, quality) {
+    return new Promise(function (resolve) {
+      canvas.toBlob(function (blob) { resolve(blob); }, type, quality);
+    });
+  }
+
+  function dataUrlOf(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new window.FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = function () { reject({ err: 'photo_unreadable' }); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /* The photo as the server keeps it, as a data URI: its longest side no
+     more than maxSide pixels, webp where this browser makes webp and jpeg
+     where it does not (asked for webp, a browser that cannot hands back a
+     PNG several times the size), at the best quality that comes in under
+     maxBytes. */
+  function shrinkPhoto(blob, limits) {
+    var maxSide = Number(limits && limits.maxSide) || 1280;
+    var maxBytes = Number(limits && limits.maxBytes) || 600000;
+    return pictureOf(blob).then(function (picture) {
+      var width = picture.width, height = picture.height;
+      if (!(width > 0 && height > 0)) { throw { err: 'photo_unreadable' }; }
+      var scale = Math.min(1, maxSide / Math.max(width, height));
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      canvas.getContext('2d').drawImage(picture, 0, 0, canvas.width, canvas.height);
+      if (typeof picture.close === 'function') { picture.close(); }
+
+      var type = 'image/webp';
+      function attempt(i) {
+        if (i >= PHOTO_QUALITIES.length) {
+          canvas.width = 0; canvas.height = 0;
+          throw { err: 'photo_too_large' };
+        }
+        return canvasBlob(canvas, type, PHOTO_QUALITIES[i]).then(function (out) {
+          if ((!out || out.type !== type) && type === 'image/webp') {
+            type = 'image/jpeg';
+            return canvasBlob(canvas, type, PHOTO_QUALITIES[i]);
+          }
+          return out;
+        }).then(function (out) {
+          if (!out || out.type !== type) { throw { err: 'photo_unreadable' }; }
+          if (out.size > maxBytes) { return attempt(i + 1); }
+          canvas.width = 0; canvas.height = 0;
+          return dataUrlOf(out);
+        });
+      }
+      return attempt(0);
+    });
+  }
+
+  /* Open the viewfinder for one contract, and settle with what the claim
+     came to once the photo has been sent — or with 'cancelled', which the
+     page says nothing about, when the hitman backs out. */
+  function viewfinder(contract, limits) {
+    return new Promise(function (resolve) {
+      var phone = window.components;
+      var host = document.body || document.getElementById('app');
+      if (!host || !phone || typeof phone.createGameRender !== 'function') {
+        resolve({ ok: false, err: 'camera_unavailable' });
+        return;
+      }
+
+      var shade = el('div', 'viewfinder');
+      shade.id = 'viewfinder';
+      shade.appendChild(el('div', 'viewfinder-hint',
+        'Point the phone at the body and take the photo.'));
+      var frame = el('div', 'viewfinder-frame');
+      var canvas = document.createElement('canvas');
+      frame.appendChild(canvas);
+      shade.appendChild(frame);
+      var row = el('div', 'row');
+      var shutter = el('button', 'primary', 'Take photo');
+      var cancel = el('button', 'ghost', 'Cancel');
+      row.appendChild(shutter);
+      row.appendChild(cancel);
+      shade.appendChild(row);
+      host.appendChild(shade);
+
+      var gameRender = null;
+      var watch = null;
+      var settled = false;
+
+      // The game camera off and its canvas let go of, the moment it has
+      // done its part.
+      function stopCamera() {
+        if (watch !== null) { clearInterval(watch); watch = null; }
+        if (gameRender) {
+          var done = gameRender;
+          gameRender = null;
+          try { if (!done.destroyed) { done.destroy(); } } catch (err) { /* already gone */ }
+          post('verificationCamera', { on: false });
+        }
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+
+      function finish(result) {
+        if (settled) { return; }
+        settled = true;
+        stopCamera();
+        if (shade.parentNode) { shade.parentNode.removeChild(shade); }
+        resolve(result);
+      }
+
+      try {
+        gameRender = phone.createGameRender(canvas);
+        var w = frame.clientWidth, h = frame.clientHeight;
+        gameRender.resizeByAspect(w > 0 && h > 0 ? w / h : VIEWFINDER_ASPECT);
+      } catch (err) {
+        finish({ ok: false, err: 'camera_unavailable' });
+        return;
+      }
+
+      post('verificationCamera', { on: true }).then(function (r) {
+        if (!r.ok) { finish({ ok: false, err: r.err || 'camera_unavailable' }); }
+      });
+
+      // lb-phone takes the game render down itself when the phone is put
+      // away, as its own template watches for.
+      watch = setInterval(function () {
+        if (gameRender && gameRender.destroyed) { finish({ ok: false, err: 'cancelled' }); }
+      }, 1000);
+
+      cancel.onclick = function () { finish({ ok: false, err: 'cancelled' }); };
+      shutter.onclick = function () {
+        if (!gameRender || shutter.disabled) { return; }
+        shutter.disabled = true;
+        cancel.disabled = true;
+        shutter.textContent = 'Sending\u2026';
+        var taking = gameRender;
+        Promise.resolve().then(function () {
+          return taking.takePhoto();
+        }).then(function (blob) {
+          stopCamera();
+          return shrinkPhoto(blob, limits);
+        }).then(function (image) {
+          return post('sendVerificationPhoto', { id: contract.id, image: image });
+        }).then(finish, function (err) {
+          finish({ ok: false, err: (err && err.err) || 'photo_unreadable' });
+        });
+      };
+    });
+  }
+
   /* Which contracts last answered Verify kill with no kill at all. The rate
      limit's reassurance that "the kill is still yours" is untrue for those. */
   var noKillOn = {};
@@ -2186,6 +2413,12 @@
     delete state.lastRefusal[contract.id];
     // Returned, so `once` knows when the camera and the upload are done.
     return post('takeVerificationPhoto', { id: contract.id }).then(function (r) {
+      // A server that keeps its photos itself answers with the viewfinder
+      // to open rather than with the claim. The claim comes back once the
+      // photo taken in it has been sent.
+      if (r.ok && r.data && r.data.viewfinder) { return viewfinder(contract, r.data); }
+      return r;
+    }).then(function (r) {
       if (!r.ok) {
         /* Two codes mean something different on this path than in the shared
            table, and both reach a hitman standing over a body they have just

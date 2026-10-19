@@ -274,6 +274,13 @@ local function handler(name, action, fn)
     end)
 end
 
+--- How fast a kill photo kept on this server is sent to the phone opening
+--- it, in bytes a second. FiveM's default for a latent event is 25000,
+--- half a minute for a large photo with the client watching an empty
+--- dialog; this sends the largest one PhotoMaxBytes allows in about two
+--- seconds, to one player, once.
+App.PHOTO_BPS = 500000
+
 --- Send a result back to one client. Payloads are built by the projection
 --- module, so nothing leaks here that the viewer may not see. A refusal's
 --- data is built by its handler from the asker's own figures alone.
@@ -694,10 +701,20 @@ function App.register()
 
     -- Fulfilment --------------------------------------------------------
 
+    -- With how the photo is to be taken. On 'server' storage the client
+    -- opens the app's own viewfinder rather than lb-phone's camera, and the
+    -- page shrinks the picture to these before sending it. Said here, from
+    -- the config the server checked at startup, rather than read by the
+    -- client from a config file it never checks.
     handler('requestPhotoToken', 'photo', function(actor, payload)
         local token, err = deps.photo.issue(actor, payload.id)
         if not token then return false, err end
-        return { token = token }
+        return {
+            token = token,
+            storage = deps.photo.storage(),
+            maxSide = Config.Completion.PhotoMaxSide,
+            maxBytes = Config.Completion.PhotoMaxBytes,
+        }
     end)
 
     -- Its own bucket, not the one requestPhotoToken bills.
@@ -715,8 +732,13 @@ function App.register()
     -- probing would repeat. A submission is the completion of work the
     -- server itself authorised, against a token it issued and that can only
     -- be used once, so it is limited separately and more loosely.
+    --
+    -- A link on 'host' storage, the picture itself on 'server' storage; the
+    -- client sends the picture as a latent event, which arrives here like
+    -- any other. Never from the page: this is not one of the page's events,
+    -- and the token it needs stays in the client's Lua.
     handler('submitPhoto', 'photoSubmit', function(actor, payload)
-        local ok, err, result = deps.photo.submit(actor, payload.token, payload.url)
+        local ok, err, result = deps.photo.submit(actor, payload.token, payload.url, payload.image)
         if not ok then return false, err end
         return result
     end)
@@ -727,9 +749,21 @@ function App.register()
     --
     -- Owner only and once only (Photos.open). A handle that is not the
     -- caller's is answered exactly as one that does not exist.
+    --
+    -- A photo kept on this server is a few hundred kilobytes of data URI. It
+    -- goes to the client's phone alone, as a latent event, which FiveM
+    -- sends in pieces at a set rate rather than as one burst. The ordinary
+    -- reply only says it is on its way: every reply is also handed to the
+    -- open app as a message, and a picture of a body has no business being
+    -- passed around twice.
     handler('openPhoto', 'photoView', function(actor, payload)
         local view, err = deps.photos.open(actor, payload.handle)
         if not view then return false, err end
+        if view.image then
+            TriggerLatentClientEvent('crimson-hitman:photoImage', actor.source, App.PHOTO_BPS,
+                { handle = view.handle, src = view.image })
+            return { handle = view.handle, latent = true }
+        end
         return view
     end)
 

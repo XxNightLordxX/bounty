@@ -34,6 +34,10 @@ server_scripts {
     'server/main.lua',
 }
 
+-- Kill photos are not served from here. On 'server' photo storage (the
+-- default) they are written to data/photos/ by the server, which must be
+-- able to write there, and reach the client's phone as a latent event when
+-- they open one; they are never one of the page's files.
 files {
     'ui/index.html',
     'ui/app.css',

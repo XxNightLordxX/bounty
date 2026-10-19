@@ -57,18 +57,30 @@ A staff account that can adjust money and spawn items makes this much faster.
 ## 5. Elimination
 
 - [ ] Hitman kills target with a firearm → hitman can request the camera
+- [ ] `/ch-diag` says which photo storage is in use (`server` as shipped)
+- [ ] On `'server'` storage, **Verify kill** opens the app's own viewfinder
+      over the whole screen, showing the phone's rear camera, with **Take
+      photo** and **Cancel**; Cancel closes it and the game camera with it
+- [ ] Take photo sends it (the button reads "Sending…") and the viewfinder
+      closes; a file appears in `crimson-hitman/data/photos/` and nothing new
+      is in the hitman's Photos app or on the image host
+- [ ] On `'host'` storage, Verify kill opens lb-phone's camera instead
 - [ ] Photographing the body pays the base reward and closes that payout
 - [ ] The creator's completion notification says the photo is waiting under
       Ledger and can be seen once (it carries no photo itself)
 - [ ] The creator's Ledger row has **View photo**; the hitman's and the
       target's rows have no photo, and nothing new is in the hitman's Photos app
 - [ ] View photo shows it full-screen with **Save to Photos** and **Delete**;
-      Save puts it in the phone's Photos app and the row then reads
-      "Photo saved to your phone"
+      on `'host'` storage Save puts it in the phone's Photos app and the row
+      then reads "Photo saved to your phone"; on `'server'` storage Save says
+      it cannot go into Photos and the photo stays open
 - [ ] Opening it again is refused; switching tab while it is open deletes it
-      and the row reads "Photo deleted"
+      and the row reads "Photo deleted"; on `'server'` storage its file is
+      gone from `data/photos/`
 - [ ] A photo left open (phone closed mid-view) is deleted after
       `Config.Completion.PhotoOpenSeconds`
+- [ ] A stray file put in `data/photos/` (named like the others) is removed
+      at the next resource start, and the waiting photos are not
 - [ ] **Downing** the target without killing them does **not** allow a claim
 - [ ] A target who is revived before the photo invalidates the claim
 - [ ] A kill by someone who never accepted pays nobody

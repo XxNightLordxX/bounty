@@ -3,7 +3,14 @@
 --- The photo authenticates a claim that the server already believes: a
 --- pending completion must exist before a token is issued, and the token is
 --- what binds the eventual image to that specific contract, hitman and death
---- scene. An image URL on its own proves nothing and is never enough.
+--- scene. An image on its own proves nothing and is never enough.
+---
+--- Two ways a photo arrives, by Config.Completion.PhotoStorage. On 'host'
+--- lb-phone's camera uploads it to the phone's image host and the client
+--- sends the link, which must come from a host on the allowlist below. On
+--- 'server' the app's own viewfinder takes it and the client sends the
+--- picture itself, which is checked here and kept as a file on this server;
+--- no image host and no allowlist are involved.
 
 local Util = require_shared('util')
 
@@ -35,6 +42,14 @@ function Photo.init(deps)
         deps.death, deps.notify, deps.ledger
     tokens = {}
     Photo.loadAllowedHosts()
+end
+
+--- Where kill photos go: 'server' or 'host'. Checked at startup, so
+--- anything else here is a config changed under a running server, read as
+--- the default the startup check would have made it.
+---@return string
+function Photo.storage()
+    return Config.Completion.PhotoStorage == 'host' and 'host' or 'server'
 end
 
 --- A host as somebody might write it — 'https://cdn.fivemanage.com/',
@@ -135,7 +150,13 @@ function Photo.loadAllowedHosts()
     -- change" from nothing, so the one warning that says every kill photo
     -- will be refused was never printed on the server it was written for.
     -- Once, and again only after hosts have come and gone.
-    if next(now) == nil then
+    --
+    -- Only where photos come from a host. On 'server' storage the list is
+    -- never consulted, and a warning that every kill photo will be refused
+    -- would send the owner to fix an image host they do not use.
+    if Photo.storage() ~= 'host' then
+        Photo.warnedEmpty = false
+    elseif next(now) == nil then
         if not Photo.warnedEmpty then
             Photo.warnedEmpty = true
             print('[crimson-hitman] warning: no photo upload host is allowed, so every kill photo '
@@ -173,6 +194,62 @@ function Photo.hostAllowed(url)
         if host:match(pattern) then return true end
     end
     return false
+end
+
+--------------------------------------------------------------------------
+-- A photo kept on this server
+--------------------------------------------------------------------------
+
+--- How each kind of picture begins, checked on the decoded bytes so the
+--- label the client put on it is not what decides what the client's page
+--- is later shown (the mugshot's rule, server/mugshot.lua).
+local SIGNATURES = {
+    ['image/png']  = function(b) return b:sub(1, 8) == '\137PNG\r\n\26\n' end,
+    ['image/jpeg'] = function(b) return b:sub(1, 3) == '\255\216\255' end,
+    ['image/webp'] = function(b) return b:sub(1, 4) == 'RIFF' and b:sub(9, 12) == 'WEBP' end,
+}
+
+--- The picture a client sent for 'server' storage, checked, decoded once
+--- and ready to keep: { kind = 'file', data = bytes, mime }.
+---
+--- A data URI, as the page makes it, of one of CH.PHOTO_MIME's three types
+--- and no bigger than Config.Completion.PhotoMaxBytes once decoded. The size
+--- is judged from the text before anything is decoded, so an oversized
+--- upload costs a length check and not a decode.
+---@param raw any
+---@return table|nil capture
+---@return string|nil err
+---@return string|nil why for the audit row
+---@return table|nil detail for the audit row, never the picture
+function Photo.readImage(raw)
+    if type(raw) ~= 'string' then return nil, CH.ERR.PHOTO_BAD_IMAGE, 'photo_not_an_image', {} end
+    local max = tonumber(Config.Completion.PhotoMaxBytes) or 600000
+
+    -- Read without a pattern over the whole text first: the prefix is
+    -- short, and the bound on the rest is what keeps a huge upload cheap.
+    local comma = raw:find(',', 1, true)
+    local head = comma and comma <= 40 and raw:sub(1, comma) or nil
+    local mime = head and head:match('^data:(image/[%w%+%-%.]+);base64,$')
+    if not mime or not CH.PHOTO_MIME[mime] then
+        return nil, CH.ERR.PHOTO_BAD_IMAGE, 'photo_bad_format',
+            { mime = mime and mime:sub(1, 32) or nil }
+    end
+    local encoded = #raw - comma
+    if encoded > math.ceil(max / 3) * 4 then
+        return nil, CH.ERR.PHOTO_TOO_LARGE, 'photo_too_large', { bytes = encoded }
+    end
+
+    local data = Util.fromBase64(raw:sub(comma + 1))
+    if not data or #data == 0 then
+        return nil, CH.ERR.PHOTO_BAD_IMAGE, 'photo_bad_format', { mime = mime }
+    end
+    if #data > max then
+        return nil, CH.ERR.PHOTO_TOO_LARGE, 'photo_too_large', { bytes = #data }
+    end
+    if not SIGNATURES[mime](data) then
+        return nil, CH.ERR.PHOTO_BAD_IMAGE, 'photo_magic_mismatch', { mime = mime }
+    end
+    return { kind = 'file', data = data, mime = mime }
 end
 
 --------------------------------------------------------------------------
@@ -270,17 +347,24 @@ end
 ---
 --- Four factors are checked together, and all of them are server-side facts:
 ---   * the token exists, is unused, unexpired, and was issued to this hitman
----   * the image URL came from the host lb-phone uploads to
+---   * the photo is one this server takes: on 'host' storage a link from
+---     the host lb-phone uploads to, on 'server' a real picture of a size
+---     it keeps
 ---   * the hitman is standing at the death scene
 ---   * the target is still dead — a revive invalidates the claim
 ---
+--- Only the form the configured storage takes is accepted. A link sent to a
+--- server that keeps its photos itself is refused, not stored: the owner
+--- chose 'server' so that no image host is involved.
+---
 ---@param actor table resolved from the event source
 ---@param rawToken any
----@param rawUrl any
+---@param rawUrl any the link, on 'host' storage
+---@param rawImage any the picture as a data URI, on 'server' storage
 ---@return boolean ok
 ---@return string|nil err
 ---@return table|nil result
-function Photo.submit(actor, rawToken, rawUrl)
+function Photo.submit(actor, rawToken, rawUrl, rawImage)
     local token = Util.toId(rawToken)
     if not token then
         Audit.rejected('photo_bad_token', actor.cid, nil, {})
@@ -313,10 +397,21 @@ function Photo.submit(actor, rawToken, rawUrl)
         return false, CH.ERR.PROOF_EXPIRED
     end
 
-    if type(rawUrl) ~= 'string' or #rawUrl > Util.MAX_URL_LENGTH or not Photo.hostAllowed(rawUrl) then
-        Audit.rejected('photo_host_not_allowed', actor.cid, record.contractId,
-            { host = Util.urlHost(rawUrl) })
-        return false, CH.ERR.PHOTO_BAD_HOST
+    local capture
+    if Photo.storage() == 'host' then
+        if type(rawUrl) ~= 'string' or #rawUrl > Util.MAX_URL_LENGTH or not Photo.hostAllowed(rawUrl) then
+            Audit.rejected('photo_host_not_allowed', actor.cid, record.contractId,
+                { host = Util.urlHost(rawUrl) })
+            return false, CH.ERR.PHOTO_BAD_HOST
+        end
+        capture = { kind = 'url', url = rawUrl }
+    else
+        local image, imageErr, why, detail = Photo.readImage(rawImage)
+        if not image then
+            Audit.rejected(why, actor.cid, record.contractId, detail)
+            return false, imageErr
+        end
+        capture = image
     end
 
     -- The hitman must be at the scene. Position is read server-side; a
@@ -408,11 +503,11 @@ function Photo.submit(actor, rawToken, rawUrl)
 
     Death.clearPending(record.contractId, actor.cid)
 
-    -- The link goes to the client's photo record and nowhere else: not to
+    -- The photo goes to the client's photo record and nowhere else: not to
     -- the hitman's ledger row, and not back to the hitman's page, which is
     -- answered with the claim's result alone.
     local contract = Storage.readContract(record.contractId)
-    local handle = Ledger.record(contract, actor.cid, { kind = 'url', url = rawUrl },
+    local handle = Ledger.record(contract, actor.cid, capture,
         CH.FULFILMENT.ELIMINATION, result)
     Notify.contractCompleted(contract, actor, { photo = handle }, result)
 

@@ -26,8 +26,9 @@ are created automatically on first start. Nothing to import either way.
 
 | Setting | Why it matters |
 |---|---|
-| `Config.Completion.PhotoStorage` | Where kill photos are kept: `'server'` (as shipped) keeps them on this server, and `'host'` uses lb-phone's own camera and the image host it uploads to, keeping only the link. Either way only the client who placed the contract sees the photo, once (see *The kill photo* below) |
-| `Config.Completion.ExtraPhotoHosts` | Kill photos are accepted only from image hosts lb-phone itself allows uploads from, plus these. Ships with Fivemanage (`fivemanage.com`, `fmfile.com`), lb-phone's default uploader. If `/ch-diag` shows `photo hosts: 0`, or kill photos are refused with "not on this server's allow list", add your phone's upload host here (a bare domain, no `https://`). lb-phone's camera upload must work first |
+| `Config.Completion.PhotoStorage` | Where kill photos are kept. `'server'` (as shipped) needs no image host: the hitman takes the photo in the app's own viewfinder and it is kept as a file in `crimson-hitman/data/photos/`, which the server must be able to write to. `'host'` uses lb-phone's own camera and the image host it uploads to, keeping only the link. Either way only the client who placed the contract sees the photo, once (see *The kill photo* below). `/ch-diag` says which is in use |
+| `Config.Completion.PhotoMaxSide` / `PhotoMaxBytes` | `'server'` storage only: the app shrinks each kill photo until its longest side is at most this many pixels (1280) and it weighs at most this many bytes (600000), and the server refuses anything bigger |
+| `Config.Completion.ExtraPhotoHosts` | `'host'` storage only. Kill photos are accepted only from image hosts lb-phone itself allows uploads from, plus these. Ships with Fivemanage (`fivemanage.com`, `fmfile.com`), lb-phone's default uploader. If `/ch-diag` shows `photo hosts: 0`, or kill photos are refused with "not on this server's allow list", add your phone's upload host here (a bare domain, no `https://`). lb-phone's camera upload must work first |
 | `Config.Database.Mode` | `json` (as shipped; no database at all), `mysql` (oxmysql), `memory` (testing only — nothing survives a restart) |
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who cannot open the app. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit |
 | `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry |
@@ -104,8 +105,11 @@ sentence, as `sc-police` writes it, and standing inside
 `Config.Limits.JailZone` (Bolingbroke by default): `sc-police` lets a client
 write its own sentence, so the metadata alone is not trusted.
 
-**Finishing it.** Kill the target and photograph the body through the app's
-camera for the baseline. With `sc-ambulance`, downing them is not the kill:
+**Finishing it.** Kill the target, tap **Verify kill** and photograph the
+body for the baseline. On `'server'` storage the app opens its own
+viewfinder over the screen, showing the phone's rear camera: point it at the
+body and tap **Take photo** (or **Cancel**). On `'host'` storage lb-phone's
+own camera opens instead. With `sc-ambulance`, downing them is not the kill:
 they are in last stand, and you have to finish them. The kill is credited to
 whoever landed a hit within `Config.Completion.DeathReportWindowMs` (30
 seconds) of the death, and bleeding out takes minutes, so a target left to
@@ -131,12 +135,15 @@ many tokens are asked for. Or take them alive to the client and hold them there
 for thirty seconds for baseline plus bonus.
 
 **The kill photo.** The photo is the client's alone, and they get to see it
-once. Nothing of it stays on the hitman's phone: the camera never saves it to
-their gallery, their page is never sent the link, and their Ledger row has no
-photo. The client is told it is waiting under Ledger. Their row there has a
-**View photo** button, and tapping it opens the photo full-screen with **Save to
-Photos** and **Delete**. Save puts it in the phone's own Photos app; anything
-else deletes it, including closing it another way, such as switching tab.
+once. Nothing of it stays on the hitman's phone: on `'server'` storage the
+photo never touches lb-phone's gallery or image host and the app lets go of
+it the moment it is sent; on `'host'` storage the camera never saves it to
+their gallery and their page is never sent the link. Either way their Ledger
+row has no photo. The client is told it is waiting under Ledger. Their row
+there has a **View photo** button, and tapping it opens the photo full-screen
+with **Save to Photos** and **Delete**. On `'host'` storage Save puts it in
+the phone's own Photos app (on `'server'` storage, see below); anything else
+deletes it, including closing it another way, such as switching tab.
 Afterwards the row says which of the two happened. Reading the Ledger does not
 count as a view; only tapping the button does. A photo is also deleted if:
 
@@ -146,10 +153,24 @@ count as a view; only tapping the button does. A photo is also deleted if:
 - its row is pushed off the client's ledger (`Config.Ledger.Depth`);
 - staff void the contract with `/ch-void`.
 
-With `Config.Ledger.StorePhotos = false` no photo is kept at all. On `'host'`
-storage (`Config.Completion.PhotoStorage`), deleting a photo only makes the
-app forget its link. The file stays on the image host (Fivemanage, say),
-because lb-phone gives a resource no way to delete it.
+With `Config.Ledger.StorePhotos = false` no photo is kept at all. On
+`'server'` storage every one of these deletes the photo's file from
+`data/photos/`, and each start removes any file there that no photo still
+names (left by a crash, say; this needs a server build with `io.readdir`).
+On `'host'` storage (`Config.Completion.PhotoStorage`), deleting a photo only
+makes the app forget its link. The file stays on the image host (Fivemanage,
+say), because lb-phone gives a resource no way to delete it.
+
+**No image host? Use `PhotoStorage = 'server'`** (the shipped setting). The
+photo is taken in the app with lb-phone's own game camera, sent to this
+server over a latent event, checked (a webp, jpeg or png of at most
+`PhotoMaxBytes`, and really what it says it is) and kept as a file in
+`crimson-hitman/data/photos/`. When the client opens it, it is sent to their
+phone alone. Nothing about it depends on Fivemanage or any other upload
+service, and the host allowlist is not used. A photo kept on the server is
+not put into the client's phone **Photos** app, whose gallery stores only
+links: **Save to Photos** says so, and the client looks at it in the app and
+deletes it there.
 
 **Counter-play.** A target can see the price on their head and buy it out.
 Players the app is closed to — law enforcement and EMS — do the same with

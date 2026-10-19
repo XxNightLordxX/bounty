@@ -132,6 +132,30 @@ function makeDocument() {
       set: function (v) { node._id = v; byId[v] = node; },
       configurable: true
     });
+    /* A canvas, as far as the kill photo viewfinder uses one: a size, a 2d
+       context it draws a picture into, and toBlob, which answers on a later
+       tick as a browser's does. What toBlob makes is up to doc.encode, so a
+       test can be a browser that cannot make webp, or one whose photos come
+       out too big; by default the type asked for, at a size that falls
+       with the quality. */
+    if (node.tagName === 'CANVAS') {
+      node.width = 300;
+      node.height = 150;
+      node.getContext = function () {
+        return {
+          drawImage: function (picture, x, y, w, h) {
+            node.drawn = { picture: picture, width: w, height: h };
+          }
+        };
+      };
+      node.toBlob = function (cb, type, quality) {
+        var made = (doc.encode || function (canvas, asked, q) {
+          return { type: asked || 'image/png',
+                   size: Math.round(canvas.width * canvas.height * (q || 0.92) * 0.25) };
+        })(node, type, quality);
+        Promise.resolve().then(function () { cb(made); });
+      };
+    }
     // Focus, as the page reads it back: which element the keyboard is in.
     node.focus = function () { doc.activeElement = node; };
     node.blur = function () { if (doc.activeElement === node) { doc.activeElement = null; } };

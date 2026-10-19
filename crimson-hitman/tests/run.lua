@@ -60,6 +60,17 @@ end
 
 local CONFIG_DEFAULTS = deepCopy(Config)
 
+--- Every stack sends its kill photos as a link ('host' storage) unless a
+--- test says otherwise, though the resource ships 'server'.
+---
+--- The specs that photograph a kill are about what the photo claims — the
+--- token, the scene, the kill still standing, the slot — and those checks
+--- are the same on both. They were written sending a link, some fifty
+--- call sites of it. What only 'server' storage does — the picture's own
+--- checks, the file it is kept in, the latent sends — is the business of
+--- the specs that set 'server' and send a picture (server_photos_spec).
+CONFIG_DEFAULTS.Completion.PhotoStorage = 'host'
+
 --- Restore in place, recursing into tables that exist in both. Assigning a
 --- fresh table would leave anything holding a subtable — a module that did
 --- `local rules = Config.Sources.item` at load — looking at a detached copy.
@@ -230,6 +241,7 @@ function _G.newStack()
     Natives.resetResourceStates()
     Natives.resetConvars()
     Natives.blocked = {}
+    Natives.dirs = {}
     -- shared/util is not reloaded between stacks, so its wrap-absorbing
     -- clock would carry the previous test's elapsed time into this one.
     require('crimson-hitman.shared.util').resetMonotonic()
@@ -377,7 +389,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

@@ -307,18 +307,33 @@ ConfigDefaults.Immunity = {
 ConfigDefaults.Completion = {
     --- Where kill photos are kept: 'server' (the default) or 'host'.
     ---
-    --- 'server' keeps the photo on this server, so no image host is
-    --- involved at all. 'host' uses lb-phone's own camera, which uploads
-    --- the photo to the image host lb-phone is set up with (Fivemanage, for
-    --- instance), and this resource keeps only the link. Deleting a photo
-    --- then only makes the app forget the link: the file stays on the host,
-    --- because lb-phone gives a resource no way to delete it.
+    --- 'server' needs no image host at all. The hitman takes the photo in
+    --- this app's own viewfinder (lb-phone's game camera, drawn inside the
+    --- app), and it is sent to this server and kept as a file in
+    --- data/photos/ inside this resource. Deleting a photo deletes the file.
+    --- The server must be able to write to that folder.
+    ---
+    --- 'host' uses lb-phone's own camera, which uploads the photo to the
+    --- image host lb-phone is set up with (Fivemanage, for instance), and
+    --- this resource keeps only the link. Deleting a photo then only makes
+    --- the app forget the link: the file stays on the host, because
+    --- lb-phone gives a resource no way to delete it. ExtraPhotoHosts and
+    --- PhotoHostRefreshSeconds apply to this mode only.
     ---
     --- Either way the photo never stays on the hitman's phone, and the
     --- client who placed the contract can open it once (see
     --- PhotoOpenSeconds and Config.Ledger). Anything else is read as
-    --- 'server', with a warning at startup.
+    --- 'server', with a warning at startup. /ch-diag says which is in use.
     PhotoStorage = 'server',
+    --- 'server' storage only: how big a kill photo may be. The app shrinks
+    --- the photo until its longest side is at most PhotoMaxSide pixels
+    --- (320 to 4096) and it weighs at most PhotoMaxBytes bytes (50000 to
+    --- 4000000), and the server refuses anything bigger. Every photo is
+    --- sent to the server and, when opened, back out to the client's phone,
+    --- so keep these modest: the defaults give a clear photo of a few
+    --- hundred kilobytes.
+    PhotoMaxSide = 1280,
+    PhotoMaxBytes = 600000,
 
     --- Elimination requires a genuine death. A player who is merely downed
     --- or bleeding out is not a kill, and this is re-checked when the proof
@@ -331,10 +346,10 @@ ConfigDefaults.Completion = {
         { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
         { resource = 'qbx_medical',  dead = 'IsDead', lastStand = 'IsLaststand' },
     },
-    --- How often the photo host allowlist is re-read from lb-phone's upload
-    --- config. Read only at boot, an owner who changed upload provider had
-    --- to restart this resource too, and the failure mode is every
-    --- verification photo being rejected.
+    --- 'host' storage only: how often the photo host allowlist is re-read
+    --- from lb-phone's upload config. Read only at boot, an owner who
+    --- changed upload provider had to restart this resource too, and the
+    --- failure mode is every verification photo being rejected.
     PhotoHostRefreshSeconds = 300,
     DeathReportWindowMs = 30000,
     --- A killer named by their victim must also appear in the damage log
@@ -384,9 +399,9 @@ ConfigDefaults.Completion = {
     --- the target pressing respawn. The kill genuinely happened, the hitman
     --- is still at the recorded scene, and the window is short.
     ProofWindowSeconds = 60,
-    --- A photo URL is accepted only from the host lb-phone uploads to.
-    --- Populated at boot from lb-phone's own upload config; entries here are
-    --- added to that set.
+    --- 'host' storage only: a photo URL is accepted only from the host
+    --- lb-phone uploads to. Populated at boot from lb-phone's own upload
+    --- config; entries here are added to that set.
     ExtraPhotoHosts = { 'fivemanage.com', 'fmfile.com' },
 }
 
@@ -611,17 +626,18 @@ ConfigDefaults.Ledger = {
     --- Whether a kill photo is kept for the client who placed the contract.
     --- Only they ever see it: never the hitman, never the target. Off, the
     --- client is told their contract was fulfilled and there is no photo to
-    --- open.
+    --- open, and on 'server' storage the photo is never written to disk.
     StorePhotos = true,
     --- How long a kill photo the client has not opened is kept (§14.43).
     ---
     --- The ledger row stays — a record of what somebody finished is the
     --- point of the ledger — but a photo of somebody's corpse is the most
     --- sensitive thing this resource stores. Past this age it is forgotten
-    --- whatever became of it, and an unopened one is deleted. On 'host'
-    --- storage that forgets the link; the file stays on the image host,
-    --- which is not this resource's to delete. Zero keeps an unopened photo
-    --- until its ledger row goes.
+    --- whatever became of it, and an unopened one is deleted. On 'server'
+    --- storage its file is deleted. On 'host' storage that forgets the
+    --- link; the file stays on the image host, which is not this
+    --- resource's to delete. Zero keeps an unopened photo until its
+    --- ledger row goes.
     PhotoRetentionDays = 7,
 }
 

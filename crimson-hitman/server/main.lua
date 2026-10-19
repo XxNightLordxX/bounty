@@ -129,6 +129,10 @@ local DEFAULTS = {
         --- storage is checked below, the open time read by the tick.
         PhotoStorage = 'server',
         PhotoOpenSeconds = 600,
+        --- How big a photo kept on this server may be. Absent on the same
+        --- configs, and read on every photo sent; checked below.
+        PhotoMaxSide = 1280,
+        PhotoMaxBytes = 600000,
         --- A list, so filled whole or not at all: see isRecord.
         DeathStateProviders = {
             { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
@@ -506,6 +510,24 @@ local function validateConfig()
         Config.Completion.PhotoStorage = 'server'
     end
 
+    -- How big a photo kept on this server may be: the longest side the page
+    -- shrinks it to, and the most it may weigh once decoded. Whole numbers
+    -- above a floor, because the page draws to this many pixels and a
+    -- photo of a body forty pixels across proves nothing; and a ceiling on
+    -- the bytes, because each one is sent whole to the server and back out
+    -- to the client's phone.
+    local function photoLimit(key, default, floor, ceiling)
+        local value = tonumber(Config.Completion[key])
+        if not value or value ~= value or value < floor or value > ceiling then
+            warn[#warn + 1] = ('Completion.%s is %s; it has to be a number from %d to %d. '
+                .. 'Using %d.'):format(key, tostring(Config.Completion[key]), floor, ceiling, default)
+            value = default
+        end
+        Config.Completion[key] = math.floor(value)
+    end
+    photoLimit('PhotoMaxSide', 1280, 320, 4096)
+    photoLimit('PhotoMaxBytes', 600000, 50000, 4000000)
+
     -- How long an opened kill photo waits for Save or Delete. Read on every
     -- tick; zero or less would delete a photo the moment it was opened.
     local openFor = tonumber(Config.Completion.PhotoOpenSeconds)
@@ -872,6 +894,13 @@ function StartCrimsonHitman()
     death.startSampler()
 
     Recover()
+    -- Kill photo files no record names any more. Before the app answers:
+    -- a photo is written to its file a moment before its record, and a
+    -- sweep that ran alongside a kill being verified would remove that one.
+    local swept, sweepErr = pcall(photos.sweepFiles)
+    if not swept then
+        print(('[crimson-hitman] the sweep of kill photo files failed: %s'):format(tostring(sweepErr)))
+    end
     amendments.reindex()
     -- Contracts already held when this process started, so an idle hold
     -- from before a restart is still one the sweep can see.
@@ -1131,7 +1160,10 @@ function Tick()
     job('photo.sweep', modules.photo.sweep)
 
     local now = os.time()
-    if now - lastHostRefresh >= (Config.Completion.PhotoHostRefreshSeconds or 300) then
+    -- Only where photos come from a host. On 'server' storage the
+    -- allowlist is never consulted.
+    if Config.Completion.PhotoStorage == 'host'
+        and now - lastHostRefresh >= (Config.Completion.PhotoHostRefreshSeconds or 300) then
         -- Marked done whether or not the read succeeds: retrying a
         -- cross-resource config read every ten seconds because it failed
         -- once is how one broken export becomes a busy loop.

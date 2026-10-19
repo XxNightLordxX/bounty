@@ -332,6 +332,34 @@ describe('storage conformance', function()
         end
     end)
 
+    --- A kill photo kept on this server ('server' storage) is a record of
+    --- what file it is in, of what kind and size. Every backend keeps all
+    --- three, and closing it clears the file name in the same step, so no
+    --- closed record still points at a picture.
+    it('keeps where a photo kept on this server lives, in every backend', function()
+        for _, b in ipairs(backends()) do
+            local store = b.store
+            store.writePhoto({ id = 'ph00000000cc', contract_id = 'ct3', slot = 1,
+                owner_cid = 'CREATOR1', kind = 'file', file = 'data/photos/ph00000000cc.webp',
+                mime = 'image/webp', size = 183456,
+                state = CH.PHOTO.PENDING, created_at = 1000 })
+
+            local read = store.readPhoto('ph00000000cc')
+            truthy(read, b.name .. ': written and read back')
+            eq(read.kind, 'file', b.name)
+            eq(read.file, 'data/photos/ph00000000cc.webp', b.name)
+            eq(read.mime, 'image/webp', b.name)
+            eq(tonumber(read.size), 183456, b.name)
+            falsy(read.url, b.name .. ': and no link')
+
+            truthy(store.openPhoto('ph00000000cc', 1100), b.name)
+            truthy(store.closePhoto('ph00000000cc', CH.PHOTO.OPEN, CH.PHOTO.DELETED), b.name)
+            local closed = store.readPhoto('ph00000000cc')
+            eq(closed.state, CH.PHOTO.DELETED, b.name)
+            falsy(closed.file, b.name .. ': no file name left behind')
+        end
+    end)
+
     --- A thread mute (§11.4): one per thread and person, the same when
     --- written twice, and gone on unmute.
     it('keeps a thread mute per thread and person in every backend', function()

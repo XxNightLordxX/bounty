@@ -606,6 +606,250 @@ describe('saving the client their kill photo', function()
     end)
 end)
 
+describe('the viewfinder, on a server that keeps its photos itself', function()
+    --- On 'server' storage the page takes the photo in its own viewfinder
+    --- and hands the client the picture; the client puts the token to it.
+    --- The token must never reach the page, and the picture must go as a
+    --- latent event.
+
+    local IMAGE = 'data:image/webp;base64,UklGRgAAAABXRUJQ'
+
+    local function tokenIssued(data)
+        local asked = Client.toServer[#Client.toServer]
+        Client.fire('crimson-hitman:result', {
+            rid = asked.args[1].__rid, event = 'requestPhotoToken', ok = true,
+            data = data or { token = 'tk-secret-01', storage = 'server',
+                             maxSide = 1280, maxBytes = 600000 },
+        })
+    end
+
+    local function called(name)
+        local out = {}
+        for _, call in ipairs(Client.phone) do
+            if call.call == name then out[#out + 1] = call end
+        end
+        return out
+    end
+
+    --- Everything that went to the page: NUI answers and app messages.
+    local function toPage()
+        local parts = { tostring(Client.answer and Client.answer.data and
+            (Client.answer.data.token or '') or '') }
+        for _, call in ipairs(called('SendCustomAppMessage')) do
+            local m = call.message
+            parts[#parts + 1] = tostring(m.data and m.data.token or '')
+        end
+        return table.concat(parts, ' ')
+    end
+
+    it('opens the viewfinder rather than lb-phone\'s camera, and keeps the token', function()
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued()
+
+        truthy(Client.answered, 'the page is told at once to open its viewfinder')
+        truthy(Client.answer.ok)
+        eq(Client.answer.data.viewfinder, true)
+        eq(Client.answer.data.maxSide, 1280)
+        eq(Client.answer.data.maxBytes, 600000)
+        eq(#called('SetCameraComponent'), 0, 'lb-phone\'s camera uploads to its image host')
+        falsy(toPage():find('tk-secret-01', 1, true),
+            'the token went to the page, in the answer or in the mirrored reply')
+    end)
+
+    it('sends the picture on as a latent event with the token it holds', function()
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued()
+
+        Client.nuiCall('crimson:sendVerificationPhoto', { id = 'ct00000001', image = IMAGE })
+        local sent = Client.toServer[#Client.toServer]
+        eq(sent.name, 'crimson-hitman:submitPhoto')
+        truthy(sent.latent, 'a photo is too big for an ordinary event')
+        truthy((sent.bps or 0) > 25000, 'and faster than FiveM\'s default of half a minute a photo')
+        eq(sent.args[1].token, 'tk-secret-01')
+        eq(sent.args[1].image, IMAGE)
+        falsy(sent.args[1].url)
+
+        falsy(Client.answered, 'the page waits for the verdict')
+        Client.fire('crimson-hitman:result', {
+            rid = sent.args[1].__rid, event = 'submitPhoto', ok = true, data = { settled = 1 },
+        })
+        truthy(Client.answered and Client.answer.ok, 'and is told it')
+        eq(Client.answer.data.settled, 1)
+        eq(Client.answerCount, 1)
+    end)
+
+    it('puts one picture to each token, and none to a contract it holds none for', function()
+        Env.reset()
+        Client.boot()
+        local _, answer = Client.nuiCall('crimson:sendVerificationPhoto',
+            { id = 'ct00000001', image = IMAGE })
+        eq(answer.err, 'no_token', 'nothing was asked for: the page cannot make a claim alone')
+
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued()
+        Client.nuiCall('crimson:sendVerificationPhoto', { id = 'ct00000001', image = IMAGE })
+        local before = #Client.toServer
+        _, answer = Client.nuiCall('crimson:sendVerificationPhoto', { id = 'ct00000001', image = IMAGE })
+        eq(answer.err, 'no_token', 'a second picture needs a second Verify kill')
+        _, answer = Client.nuiCall('crimson:sendVerificationPhoto', { id = 'ct00000002', image = IMAGE })
+        eq(answer.err, 'no_token', 'nor does one contract\'s token go to another')
+        eq(#Client.toServer, before, 'and nothing more went to the server')
+    end)
+
+    it('sends nothing that is not a picture, or is bigger than the server keeps', function()
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued({ token = 'tk-secret-01', storage = 'server', maxSide = 1280, maxBytes = 3000 })
+        local before = #Client.toServer
+
+        local _, answer = Client.nuiCall('crimson:sendVerificationPhoto',
+            { id = 'ct00000001', image = 'https://cdn.fivemanage.com/proof.png' })
+        eq(answer.err, 'photo_bad_image')
+        _, answer = Client.nuiCall('crimson:sendVerificationPhoto',
+            { id = 'ct00000001', image = 'data:image/webp;base64,' .. ('A'):rep(8000) })
+        eq(answer.err, 'photo_too_large', 'a page cannot have this client upload a great deal')
+        eq(#Client.toServer, before, 'neither went anywhere')
+    end)
+
+    it('still opens lb-phone\'s camera on a server that keeps links', function()
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued({ token = 'tk-secret-01', storage = 'host' })
+        eq(#called('SetCameraComponent'), 1)
+        falsy(Client.answered, 'the page waits for the camera')
+    end)
+
+    it('runs the rear game camera behind the viewfinder, and turns it off', function()
+        Env.reset()
+        Client.boot()
+        local _, answer = Client.nuiCall('crimson:verificationCamera', { on = true })
+        truthy(answer.ok)
+        local on = called('EnableWalkableCam')
+        eq(#on, 1)
+        eq(on[1].selfie, false, 'never the selfie camera: the hitman is not in the photo')
+
+        _, answer = Client.nuiCall('crimson:verificationCamera', { on = false })
+        truthy(answer.ok)
+        eq(#called('DisableWalkableCam'), 1)
+        Client.nuiCall('crimson:verificationCamera', { on = false })
+        eq(#called('DisableWalkableCam'), 1, 'off once, not on every ask')
+    end)
+
+    it('turns the camera off when the phone is put away mid-shot', function()
+        Env.reset()
+        Client.boot()
+        Natives.resourceStates = { ['lb-phone'] = 'started' }
+        Client.fire('crimson-hitman:access', true)
+        Client.runThreads()
+        local spec
+        for _, call in ipairs(called('AddCustomApp')) do spec = call.spec end
+        truthy(spec and spec.onClose, 'the app tells lb-phone what to do when it closes')
+
+        Client.nuiCall('crimson:verificationCamera', { on = true })
+        local real = _G.exports
+        _G.exports = setmetatable({}, { __index = function(_, r)
+            if r == 'lb-phone' then return Client.exports end
+            return real[r]
+        end })
+        spec.onClose()
+        _G.exports = real
+        eq(#called('DisableWalkableCam'), 1)
+    end)
+
+    it('answers the page on a phone without the game camera', function()
+        Env.reset()
+        Client.boot({ without = { 'EnableWalkableCam', 'DisableWalkableCam' } })
+        local answered, answer = Client.nuiCall('crimson:verificationCamera', { on = true })
+        truthy(answered, 'a missing export must not leave the viewfinder waiting')
+        falsy(answer.ok)
+        eq(answer.err, 'camera_unavailable')
+    end)
+end)
+
+describe('a kill photo kept on the server, on its way to the client', function()
+    --- The server sends the photo as a latent event of its own and the
+    --- ordinary reply only says it is coming. The page's request is held
+    --- until it arrives, whichever comes first.
+
+    local SRC = 'data:image/webp;base64,UklGRgAAAABXRUJQ'
+
+    local function openAsked(handle)
+        Client.nuiCall('crimson:openPhoto', { handle = handle })
+        return Client.toServer[#Client.toServer]
+    end
+
+    local function replied(asked, handle)
+        Client.fire('crimson-hitman:result', {
+            rid = asked.args[1].__rid, event = 'openPhoto', ok = true,
+            data = { handle = handle, latent = true },
+        })
+    end
+
+    it('hands the page the photo once it arrives', function()
+        Env.reset()
+        Client.boot()
+        local asked = openAsked('ph00000000aa')
+        replied(asked, 'ph00000000aa')
+        falsy(Client.answered, 'held until the photo itself is here')
+
+        Client.fire('crimson-hitman:photoImage', { handle = 'ph00000000aa', src = SRC })
+        truthy(Client.answered)
+        truthy(Client.answer.ok)
+        eq(Client.answer.data.src, SRC)
+        eq(Client.answer.data.handle, 'ph00000000aa')
+        eq(Client.answerCount, 1)
+
+        for _, call in ipairs(Client.phone) do
+            if call.call == 'SendCustomAppMessage' then
+                falsy(tostring(call.message.data and call.message.data.src or ''):find('base64', 1, true),
+                    'the photo is passed around once, not mirrored to the page as well')
+            end
+        end
+    end)
+
+    it('takes a photo that came before the reply naming it', function()
+        Env.reset()
+        Client.boot()
+        local asked = openAsked('ph00000000aa')
+        Client.fire('crimson-hitman:photoImage', { handle = 'ph00000000aa', src = SRC })
+        falsy(Client.answered)
+        replied(asked, 'ph00000000aa')
+        truthy(Client.answered and Client.answer.ok)
+        eq(Client.answer.data.src, SRC)
+    end)
+
+    it('passes on nothing that is not the photo it was waiting for', function()
+        Env.reset()
+        Client.boot()
+        local asked = openAsked('ph00000000aa')
+        replied(asked, 'ph00000000aa')
+        Client.fire('crimson-hitman:photoImage', { handle = 'ph00000000bb', src = SRC })
+        Client.fire('crimson-hitman:photoImage', { handle = 'ph00000000aa',
+            src = 'https://elsewhere.example/x.png' })
+        Client.fire('crimson-hitman:photoImage', 'nonsense')
+        falsy(Client.answered, 'another handle, a link and junk are none of them the photo')
+    end)
+
+    it('tells the page when the photo never arrives', function()
+        Env.reset()
+        Client.boot()
+        local asked = openAsked('ph00000000aa')
+        replied(asked, 'ph00000000aa')
+        Client.runTimeouts()
+        truthy(Client.answered, 'the page was left waiting for good')
+        falsy(Client.answer.ok)
+        eq(Client.answer.err, 'photo_no_answer')
+        Client.fire('crimson-hitman:photoImage', { handle = 'ph00000000aa', src = SRC })
+        eq(Client.answerCount, 1, 'and is not answered a second time when it turns up late')
+    end)
+end)
+
 describe('a job that is barred from the app', function()
     --- The gate already refuses every request from a barred job, but the app
     --- was still installed and opened for them: it answered nothing, which

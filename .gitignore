@@ -5,6 +5,11 @@ crimson-hitman/data/store.json*
 crimson-hitman/data/contracts/*.json
 crimson-hitman/data/contracts/.writable
 crimson-hitman/data/audit-*.jsonl
+# Kill photos kept on the server (Config.Completion.PhotoStorage = 'server').
+# Photographs of bodies, for one client's eyes once: never committed.
+crimson-hitman/data/photos/*.webp
+crimson-hitman/data/photos/*.jpg
+crimson-hitman/data/photos/*.png
 
 # Throwaway probes. A one-off spec plus a copy of the runner with its suite
 # list narrowed to that spec is how a question about this code gets asked:

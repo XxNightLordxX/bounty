@@ -192,7 +192,7 @@ A hitman must **explicitly accept** the contract via the phone app to participat
 
 #### Elimination Fulfillment
 - Payout triggers **only** if the target is killed specifically by a player who accepted the contract.
-- To claim, the hitman must stand near the dead target and take a **verification photo** using the lb-phone camera.
+- To claim, the hitman must stand near the dead target and take a **verification photo** with the phone's camera: in the app's own viewfinder, which draws lb-phone's game camera into the app (`Config.Completion.PhotoStorage = 'server'`, the default), or with lb-phone's own camera, which uploads to the phone's image host (`'host'`).
 - The script confirms completion only if the target player's entity is within a short radius of the hitman at capture time.
 - On verification: the photo is kept for the creator, who is told it is waiting under Ledger and can open it once (§14.43); **baseline rewards** are released, and the contract closes for all hitmen. Nothing of the photo stays on the hitman's phone.
 - **No payout** if the target dies by local elements, suicide, or a player who did not accept the contract.
@@ -304,7 +304,7 @@ Completion takes a lock on the contract before any funds move. A contract can tr
 Every escrow, payout, refund, bailout, and penalty is written to an admin-readable log with amounts, sources, both parties, and timestamp. This is the only way to adjudicate a player dispute after the fact.
 
 ### 9.9 Persistence footprint
-Active contracts plus the last 10 completed contracts per player. A verification photo is a record of its own, kept for the creator alone until they have seen it once (§14.43); a ledger row carries its handle, never the image or its link. Storage backend is selectable per §10 without changing any of these rules.
+Active contracts plus the last 10 completed contracts per player. A verification photo is a record of its own, kept for the creator alone until they have seen it once (§14.43); a ledger row carries its handle, never the image or its link. On `'server'` photo storage the image itself is a file in the resource's `data/photos/`, named for the record's handle; on `'host'` storage the record holds a link to the image host. Storage backend is selectable per §10 without changing any of these rules.
 
 ### 9.10 Contract state machine
 `draft → active → accepted → (completed | bailed_out | expired | cancelled)`, with `hidden` as a display flag orthogonal to state (§7.1). No transition skips escrow resolution.
@@ -630,13 +630,22 @@ Severity is the damage if the rule is absent, not the difficulty of the fix.
 
 #### 14.20 The verification photo is obtained from the camera flow, never from the payload
 
-> **As built.** The photo is bound to a server-issued capture token, the
-> recorded death scene and an allowlist of image hosts (§14.35, §14.36);
-> lb-phone exposes no server-side upload result to bind it to instead. It
-> is no longer pushed to anybody: the creator opens it once from their
-> Ledger (§14.43). `Config.Ledger.StorePhotos = false` is the "no image
-> moves" mode, and there is no purge command: the creator deletes their
-> own photo, and a staff void (`/ch-void`) deletes the contract's photos.
+> **As built.** The photo is bound to a server-issued capture token and
+> the recorded death scene (§14.35, §14.36), and the token never leaves
+> the hitman's client Lua: the page cannot submit a photo, it only hands
+> the client a picture. On `'server'` storage (the default) the server
+> receives the picture itself, over a latent event from the client that
+> holds the token, and checks it: a webp, jpeg or png data URI of at most
+> `Config.Completion.PhotoMaxBytes` once decoded, whose decoded bytes begin
+> as that type does. Anything else is refused before the claim, and the
+> file is named for the server's own handle, never from anything the
+> client sent. On `'host'` storage lb-phone exposes no server-side upload
+> result to bind it to, so the link must come from an allowlisted image
+> host. Either way it is no longer pushed to anybody: the creator opens it
+> once from their Ledger (§14.43). `Config.Ledger.StorePhotos = false` is
+> the "no image moves" mode, and there is no purge command: the creator
+> deletes their own photo, and a staff void (`/ch-void`) deletes the
+> contract's photos.
 
 **Vector.** §7.4's four factors authenticate the claim, not the image; §9.9 describes the photo's storage shape, not its provenance; and §10.1's escaping rule names player-supplied text, which an implementer will not read as covering an image URL. So the proof-of-death artifact is an arbitrary attacker-supplied string that is pushed instantly to a named player's phone and persisted in their Ledger — a griefer with one legitimate kill can deliver any image on the internet to the creator.
 
@@ -841,7 +850,7 @@ Severity is the damage if the rule is absent, not the difficulty of the fix.
 
 **Vector.** §6.3 says only "stores the past 10 completed contracts", so the implementer silently decides whether anonymity survives completion and whether a hitman's photo of the victim's corpse renders in the victim's own app. §9.9's reference-not-blob rule means the image lives on a media host behind an unguessable but publicly fetchable URL, and evicting the eleventh ledger row deletes nothing — with no index, deletion is impossible even for an owner who wants it.
 
-**Rule.** State the scope of §4's guarantee explicitly rather than letting the ledger define it by omission: where a contract was anonymous, the ledger row stores an opaque contract id and the display label only — no citizen id and no name is *written*, not written-and-hidden — and the opaque id is visible and copyable so a player can still raise a support ticket. A hitman-captured photo is never rendered in the target's view; the target's history shows contract id, outcome, timestamp and, subject to anonymity, the counterparty. Maintain a photo index mapping an opaque handle to `{contract id, slot, owner (the creator), kind, link or file, state, created_at, opened_at}`; without it deletion is impossible in principle, so it is required even where expiry is off. It names no hitman, because it is shown to nobody but its owner. The creator's ledger row carries the handle; the hitman's and the target's rows carry no photo at all, so nothing of it stays in the app of the hitman who took it. Viewing is an explicit request, never the ledger being read: the creator opens it once, and then saves it to their phone's Photos or deletes it, and closing it any other way deletes it. A handle that is not the caller's is answered exactly as one that does not exist. A photo is deleted when it is left open for `Config.Completion.PhotoOpenSeconds`, on ledger eviction, when staff void its contract, and after `Config.Ledger.PhotoRetentionDays` whatever became of it, with the ledger row surviving and saying what became of the photo, or nothing once it is gone, rather than a broken image. Deleting a photo held on an image host forgets its link: lb-phone gives a resource no way to delete the file there, and the README says so. `Config.Ledger.StorePhotos = false` keeps the ledger and drops images entirely. A hard-coded ceiling caps ledger depth so the §8 config value cannot turn a ten-entry trophy room into a dossier.
+**Rule.** State the scope of §4's guarantee explicitly rather than letting the ledger define it by omission: where a contract was anonymous, the ledger row stores an opaque contract id and the display label only — no citizen id and no name is *written*, not written-and-hidden — and the opaque id is visible and copyable so a player can still raise a support ticket. A hitman-captured photo is never rendered in the target's view; the target's history shows contract id, outcome, timestamp and, subject to anonymity, the counterparty. Maintain a photo index mapping an opaque handle to `{contract id, slot, owner (the creator), kind, link or file, state, created_at, opened_at}`; without it deletion is impossible in principle, so it is required even where expiry is off. It names no hitman, because it is shown to nobody but its owner. The creator's ledger row carries the handle; the hitman's and the target's rows carry no photo at all, so nothing of it stays in the app of the hitman who took it. Viewing is an explicit request, never the ledger being read: the creator opens it once, and then saves it to their phone's Photos or deletes it, and closing it any other way deletes it. A handle that is not the caller's is answered exactly as one that does not exist. A photo is deleted when it is left open for `Config.Completion.PhotoOpenSeconds`, on ledger eviction, when staff void its contract, and after `Config.Ledger.PhotoRetentionDays` whatever became of it, with the ledger row surviving and saying what became of the photo, or nothing once it is gone, rather than a broken image. Deleting a photo kept on this server removes its file, on every one of those paths, and each start removes any photo file no record names (a crash between writing the file and its record, say); the file is sent to the creator's phone alone, as a latent event, only when they open it. Deleting a photo held on an image host forgets its link: lb-phone gives a resource no way to delete the file there, and the README says so. `Config.Ledger.StorePhotos = false` keeps the ledger and drops images entirely. A hard-coded ceiling caps ledger depth so the §8 config value cannot turn a ten-entry trophy room into a dossier.
 
 *Config:* `Config.Ledger.Depth, Config.Ledger.MaxDepthHardCap, Config.Ledger.StorePhotos, Config.Ledger.PhotoRetentionDays, Config.Completion.PhotoOpenSeconds, Config.Completion.PhotoStorage`
 
@@ -1156,6 +1165,7 @@ Every `config.lua` entry implied by §8, §10 and §15, as one list. Defaults be
 - Config.Ledger.PhotoRetentionDays — with the photo index; row survives the photo
 - Config.Completion.PhotoOpenSeconds — an opened photo not saved or deleted by then is deleted
 - Config.Completion.PhotoStorage — 'server' or 'host'; only the creator ever sees the photo, once
+- Config.Completion.PhotoMaxSide, Config.Completion.PhotoMaxBytes — 'server' storage: how far the app shrinks a photo, and the most the server keeps
 - Config.Retention.PurgeOnCharacterDelete — releases pending escrow first, then purges identity
 - Config.Retention.PurgeOnBan = 'delayed' — preserves evidence for appeals
 - Config.Database.DebounceMs — non-financial writes only

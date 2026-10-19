@@ -282,6 +282,88 @@ end
 --- Photo URLs are stored, so they are bounded to what the column holds.
 Util.MAX_URL_LENGTH = 512
 
+--------------------------------------------------------------------------
+-- Base64
+--------------------------------------------------------------------------
+--
+-- A kill photo kept on this server arrives from the page as base64 and goes
+-- back to the client's page the same way, and the server's Lua has no
+-- decoder or encoder of its own (no library, no native). Each photo is
+-- decoded once, when it is sent, and encoded once, when it is opened: some
+-- tens of milliseconds for a few hundred kilobytes.
+
+local B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+local B64_BYTE, B64_VALUE = {}, {}
+for i = 1, #B64 do
+    B64_BYTE[i - 1] = B64:byte(i)
+    B64_VALUE[B64:byte(i)] = i - 1
+end
+local PAD = ('='):byte()
+
+--- Bytes from base64, or nil for anything that is not strict base64:
+--- whole groups of four, the 64 characters and nothing else, '=' only as
+--- the padding at the very end. Strict, because this reads what a client
+--- sent, and a decoder that skips what it does not know decodes something
+--- other than what was checked.
+---@param text any
+---@return string|nil bytes
+function Util.fromBase64(text)
+    if type(text) ~= 'string' or #text % 4 ~= 0 then return nil end
+    local byte, char = string.byte, string.char
+    local len = #text
+    local out, n = {}, 0
+    for i = 1, len, 4 do
+        local a, b, c, d = byte(text, i, i + 3)
+        local va, vb, vc, vd = B64_VALUE[a], B64_VALUE[b], B64_VALUE[c], B64_VALUE[d]
+        if not va or not vb then return nil end
+        if vd then
+            if not vc then return nil end
+            local v = (va << 18) | (vb << 12) | (vc << 6) | vd
+            n = n + 1
+            out[n] = char(v >> 16, (v >> 8) & 255, v & 255)
+        elseif d ~= PAD or i + 3 ~= len then
+            return nil
+        elseif vc then
+            n = n + 1
+            out[n] = char(((va << 2) | (vb >> 4)) & 255, ((vb << 4) | (vc >> 2)) & 255)
+        elseif c == PAD then
+            n = n + 1
+            out[n] = char(((va << 2) | (vb >> 4)) & 255)
+        else
+            return nil
+        end
+    end
+    return table.concat(out)
+end
+
+--- Base64 of any bytes, NULs and all.
+---@param bytes string
+---@return string|nil
+function Util.toBase64(bytes)
+    if type(bytes) ~= 'string' then return nil end
+    local byte, char = string.byte, string.char
+    local len = #bytes
+    local out, n = {}, 0
+    for i = 1, len - 2, 3 do
+        local a, b, c = byte(bytes, i, i + 2)
+        local v = (a << 16) | (b << 8) | c
+        n = n + 1
+        out[n] = char(B64_BYTE[v >> 18], B64_BYTE[(v >> 12) & 63],
+            B64_BYTE[(v >> 6) & 63], B64_BYTE[v & 63])
+    end
+    local rest = len % 3
+    if rest == 1 then
+        local a = byte(bytes, len)
+        out[n + 1] = char(B64_BYTE[a >> 2], B64_BYTE[(a & 3) << 4], PAD, PAD)
+    elseif rest == 2 then
+        local a, b = byte(bytes, len - 1, len)
+        local v = (a << 8) | b
+        out[n + 1] = char(B64_BYTE[v >> 10], B64_BYTE[(v >> 4) & 63],
+            B64_BYTE[(v & 15) << 2], PAD)
+    end
+    return table.concat(out)
+end
+
 --- Deterministic shallow copy; used so stored records are never aliased by
 --- callers that might mutate them.
 function Util.copy(tbl)

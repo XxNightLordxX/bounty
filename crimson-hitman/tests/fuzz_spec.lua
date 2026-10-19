@@ -79,6 +79,11 @@ local function payloads()
         { kind = 'cancel', payload = 'not a table' },
         { url = 'javascript:alert(1)' },
         { url = string.rep('h', 100000) },
+        -- A kill photo sent to be kept on the server.
+        { image = 'data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9IngoKSIvPg==' },
+        { image = 'data:image/png;base64,' .. string.rep('A', 200000) },
+        { image = { 'not a string' } },
+        { image = 'data:image/jpeg;base64,/9j/\0' },
         { thread = { 'not a handle' } },
         cyclic(),
         deep(500),

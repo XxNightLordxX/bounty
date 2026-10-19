@@ -68,6 +68,13 @@ function Natives.install()
         local h = Env.events['local:' .. name]
         if h then h(...) end
     end
+    -- The same event, sent in pieces at `bps` bytes a second. Recorded with
+    -- the others, marked, so a test can tell a photo sent latent from one
+    -- pushed through an ordinary event, which is the whole difference.
+    _G.TriggerLatentClientEvent = function(name, target, bps, ...)
+        table.insert(Env.clientEvents,
+            { name = name, target = target, args = { ... }, latent = true, bps = bps })
+    end
 
     -- Staff commands. Registered handlers are kept so a test can run one
     -- exactly as a console or a player would, and the ACE answer is a
@@ -148,15 +155,90 @@ function Natives.install()
     -- Virtual resource filesystem for the json backend.
     Natives.files = {}
     _G.LoadResourceFile = function(_, file) return Natives.files[file] end
-    _G.SaveResourceFile = function(_, file, data)
+    _G.SaveResourceFile = function(_, file, data, length)
         -- A seam for asserting on which files a write actually touches,
         -- which is the whole claim the sharded store makes.
         if Natives.saveFile then Natives.saveFile(file, data) end
         -- A write into a directory that does not exist goes nowhere and
         -- says nothing, which is what FiveM does rather than raising.
         if Natives.blocked and Natives.blocked[file] then return false end
+        -- The length, as FiveM reads it: -1 (or 0) is "up to the first NUL
+        -- byte", which is right for JSON and cuts a picture short at its
+        -- fifth byte. Ignoring it here let a photo written with -1 pass.
+        if type(data) == 'string' then
+            if not length or length <= 0 then
+                local nul = data:find('\0', 1, true)
+                if nul then data = data:sub(1, nul - 1) end
+            else
+                data = data:sub(1, length)
+            end
+        end
         Natives.files[file] = data
         return true
+    end
+
+    -- The resource's own folder on disk, and the few things the server's
+    -- Lua does with it directly: os.remove, os.createdir and io.readdir,
+    -- which FiveM resolves to the resource when the path is inside it.
+    -- Answered from the same virtual files as SaveResourceFile, so a file
+    -- written there and removed here is gone from both. A path outside the
+    -- resource is refused, as FiveM refuses one without a filesystem
+    -- permission: no test has any business deleting a real file.
+    _G.GetResourcePath = function() return Natives.RESOURCE_ROOT end
+    local function inResource(path)
+        local root = Natives.RESOURCE_ROOT .. '/'
+        if type(path) ~= 'string' or path:sub(1, #root) ~= root then return nil end
+        return path:sub(#root + 1)
+    end
+    os.remove = function(path)
+        local file = inResource(path)
+        if not file then return nil, tostring(path) .. ': Permission denied', 13 end
+        Natives.calls.removed = Natives.calls.removed or {}
+        table.insert(Natives.calls.removed, file)
+        if Natives.files[file] == nil then return nil, tostring(path) .. ': Permission denied', 13 end
+        Natives.files[file] = nil
+        return true
+    end
+    os.createdir = function(path)
+        local dir = inResource(path)
+        if not dir then return nil, tostring(path) .. ': Failed to create directory', 1 end
+        dir = dir:gsub('/+$', '')
+        if Natives.dirs[dir] then return nil, path .. ': Directory already exists.', 1 end
+        Natives.dirs[dir] = true
+        return true
+    end
+    -- What FiveM hands back: an object whose lines() walks the names in
+    -- the folder, sorted here so a test reads them in a fixed order.
+    io.readdir = function(path)
+        local dir = inResource(path)
+        if not dir then return nil, tostring(path) end
+        dir = dir:gsub('/+$', '') .. '/'
+        local names = {}
+        for file in pairs(Natives.files) do
+            if file:sub(1, #dir) == dir and not file:sub(#dir + 1):find('/', 1, true) then
+                names[#names + 1] = file:sub(#dir + 1)
+            end
+        end
+        table.sort(names)
+        return {
+            lines = function()
+                local i = 0
+                return function()
+                    i = i + 1
+                    return names[i]
+                end
+            end,
+            close = function() return true end,
+        }
+    end
+    -- And io.open, which the json store's audit log uses to add to a file
+    -- in that folder: refused, as it was before the folder had a path
+    -- here, so the store writes the whole file instead. A test of the
+    -- append puts its own in place (store_write_spec).
+    local realOpen = io.open
+    io.open = function(path, mode)
+        if inResource(path) then return nil, tostring(path) .. ': not in the harness' end
+        return realOpen(path, mode)
     end
 
     -- Server convars, as server.cfg's `set` lines leave them. Unset answers
@@ -367,6 +449,11 @@ end
 
 --- Files a write must not land in, so a missing directory can be modelled.
 Natives.blocked = {}
+
+--- Where the resource lives on the fake disk, and the folders os.createdir
+--- has made in it.
+Natives.RESOURCE_ROOT = '/srv/resources/crimson-hitman'
+Natives.dirs = {}
 
 --- Server convars by name. Empty, as a server.cfg that sets none leaves
 --- them; cleared in place for every stack, like the resource states.
