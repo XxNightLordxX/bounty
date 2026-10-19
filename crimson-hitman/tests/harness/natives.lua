@@ -319,13 +319,15 @@ local DEFAULT_RESOURCE_STATES = {
     ['sc-blackmarket'] = 'started',
 }
 
---- lb-phone's configuration, as GetConfig returns it. The shape here is the
---- real one: an Upload table whose values are URLs, sometimes nested.
+--- lb-phone's configuration, as GetConfig returns it: the media allowlist
+--- keys it actually has (config/config.lua in lbphone/files), with its
+--- shipped values. It once stood in an Upload table of URLs lb-phone does
+--- not have, which is how a stock install refusing every kill photo passed
+--- here.
 Natives.phoneConfig = {
-    Upload = {
-        url = 'https://cdn.fivemanage.com/upload',
-        images = { url = 'https://api.fivemanage.com/api/image' },
-    },
+    UploadMethod = { Video = 'Fivemanage', Image = 'Fivemanage', Audio = 'Fivemanage' },
+    UploadWhitelistedHostnames = { 'r2.qbox.re' },
+    UploadWhitelistedDomains = { 'fivemanage.com', 'fmfile.com', 'amazonaws.com' },
 }
 
 --- ox_inventory matches a removal against slot metadata: nil means "any

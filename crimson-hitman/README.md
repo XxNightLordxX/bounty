@@ -26,6 +26,7 @@ are created automatically on first start. Nothing to import either way.
 
 | Setting | Why it matters |
 |---|---|
+| `Config.Completion.ExtraPhotoHosts` | Kill photos are accepted only from image hosts lb-phone itself allows uploads from, plus these. Ships with Fivemanage (`fivemanage.com`, `fmfile.com`), lb-phone's default uploader. If `/ch-diag` shows `photo hosts: 0`, or kill photos are refused with "not on this server's allow list", add your phone's upload host here (a bare domain, no `https://`). lb-phone's camera upload must work first |
 | `Config.Database.Mode` | `json` (as shipped; no database at all), `mysql` (oxmysql), `memory` (testing only — nothing survives a restart) |
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who cannot open the app. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit |
 | `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry |

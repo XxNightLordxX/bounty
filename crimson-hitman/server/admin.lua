@@ -670,8 +670,9 @@ function Admin.diagnose(source, subjectId)
         say(('photo hosts: %d%s'):format(#hosts,
             #hosts > 0 and (' (' .. table.concat(hosts, ', ') .. ')') or ''))
         if #hosts == 0 then
-            say('  -> no upload host is allowed: every kill photo will be refused. Check '
-                .. 'lb-phone\'s upload config or set Config.Completion.ExtraPhotoHosts')
+            say('  -> no upload host is allowed: every kill photo will be refused. Add the '
+                .. 'phone\'s image host to Config.Completion.ExtraPhotoHosts (for Fivemanage: '
+                .. 'fivemanage.com, fmfile.com)')
         end
     end
 

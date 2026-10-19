@@ -1157,13 +1157,13 @@ describe('photo host allowlist', function()
         local phone = Natives.phoneConfig
 
         withConfig({ { Config.Completion, 'ExtraPhotoHosts', {} } }, function()
-            Natives.phoneConfig = { Upload = { url = 'https://old.example/upload' } }
+            Natives.phoneConfig = { UploadWhitelistedDomains = { 'old.example' } }
             s.photo.loadAllowedHosts()
             truthy(s.photo.hostAllowed('https://old.example/x.png'), 'the old provider')
             falsy(s.photo.hostAllowed('https://new.example/x.png'), 'not yet the new one')
 
             -- The owner switches provider without restarting this resource.
-            Natives.phoneConfig = { Upload = { url = 'https://new.example/upload' } }
+            Natives.phoneConfig = { UploadWhitelistedDomains = { 'new.example' } }
             s.photo.loadAllowedHosts()
             truthy(s.photo.hostAllowed('https://new.example/x.png'), 'the new provider')
             falsy(s.photo.hostAllowed('https://old.example/x.png'), 'and not the old one')
@@ -1177,7 +1177,7 @@ describe('photo host allowlist', function()
         local phone = Natives.phoneConfig
 
         withConfig({ { Config.Completion, 'ExtraPhotoHosts', { 'cdn.fivemanage.com' } } }, function()
-            Natives.phoneConfig = { Upload = { url = 'https://other.example/upload' } }
+            Natives.phoneConfig = { UploadWhitelistedDomains = { 'other.example' } }
             s.photo.loadAllowedHosts()
             truthy(s.photo.hostAllowed('https://cdn.fivemanage.com/x.png'),
                 'an operator-set host is not swept away by a refresh')
@@ -1191,7 +1191,7 @@ describe('photo host allowlist', function()
         local phone = Natives.phoneConfig
 
         withConfig({ { Config.Completion, 'ExtraPhotoHosts', {} } }, function()
-            Natives.phoneConfig = { Upload = { url = 'https://old.example/upload' } }
+            Natives.phoneConfig = { UploadWhitelistedDomains = { 'old.example' } }
             s.photo.loadAllowedHosts()
             eq(#s.photo.allowedHosts(), 1)
 
@@ -1203,6 +1203,51 @@ describe('photo host allowlist', function()
             truthy(s.photo.hostsChangedAt, 'the change is recorded')
         end)
 
+        Natives.phoneConfig = phone
+    end)
+
+    it('accepts a kill photo from a stock lb-phone with the shipped config', function()
+        -- lb-phone has no Upload table: what it allows lives in
+        -- UploadWhitelistedDomains / UploadWhitelistedHostnames. Reading the
+        -- table it does not have, a stock install refused every kill photo.
+        local s = newStack()
+        s.photo.loadAllowedHosts()
+        for _, url in ipairs({ 'https://r2.fivemanage.com/abc123/image.webp',
+                               'https://fmfile.com/abc123/image.webp',
+                               'https://r2.qbox.re/abc/image.png' }) do
+            truthy(s.photo.hostAllowed(url), url .. ' was refused on a stock install')
+        end
+        falsy(s.photo.hostAllowed('https://my-bucket.s3.amazonaws.com/x.png'),
+            'anybody\'s own cloud bucket passed as an image host')
+        falsy(s.photo.hostAllowed('https://evil.r2.qbox.re/x.png'),
+            'a hostname lb-phone matches whole matched its subdomains')
+        falsy(s.photo.hostAllowed('https://fivemanage.com.evil.example/x.png'))
+    end)
+
+    it('reads an extra host however it is written', function()
+        local s = newStack()
+        local phone = Natives.phoneConfig
+        withConfig({ { Config.Completion, 'ExtraPhotoHosts',
+                { 'https://CDN.Example.com/', '*.pics.example', 'img.example:443' } } }, function()
+            Natives.phoneConfig = {}
+            s.photo.loadAllowedHosts()
+            truthy(s.photo.hostAllowed('https://cdn.example.com/a.png'), 'a URL with a scheme and slash')
+            truthy(s.photo.hostAllowed('https://up.pics.example/a.png'), 'a *. wildcard')
+            truthy(s.photo.hostAllowed('https://img.example/a.png'), 'a host with a port')
+        end)
+        Natives.phoneConfig = phone
+    end)
+
+    it('matches lb-phone\'s wildcard hostnames one label deep', function()
+        local s = newStack()
+        local phone = Natives.phoneConfig
+        withConfig({ { Config.Completion, 'ExtraPhotoHosts', {} } }, function()
+            Natives.phoneConfig = { UploadWhitelistedHostnames = { 'cdn-*.media.example' } }
+            s.photo.loadAllowedHosts()
+            truthy(s.photo.hostAllowed('https://cdn-eu.media.example/a.png'))
+            falsy(s.photo.hostAllowed('https://x.cdn-eu.media.example/a.png'), 'two labels deep')
+            falsy(s.photo.hostAllowed('https://media.example/a.png'), 'the parent')
+        end)
         Natives.phoneConfig = phone
     end)
 

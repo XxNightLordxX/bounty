@@ -376,10 +376,13 @@ Config.Completion = {
     --- the target pressing respawn. The kill genuinely happened, the hitman
     --- is still at the recorded scene, and the window is short.
     ProofWindowSeconds = 60,
-    --- A photo URL is accepted only from the host lb-phone uploads to.
-    --- Populated at boot from lb-phone's own upload config; entries here are
-    --- added to that set.
-    ExtraPhotoHosts = {},
+    --- A kill photo's URL is accepted only from a host lb-phone itself takes
+    --- uploads from (UploadWhitelistedDomains / UploadWhitelistedHostnames
+    --- in lb-phone's config), plus these. Bare domains, no https:// and no
+    --- path: each also covers its subdomains. Shipped with Fivemanage,
+    --- lb-phone's default uploader; add your own if the phone uploads
+    --- elsewhere. /ch-diag lists what is allowed.
+    ExtraPhotoHosts = { 'fivemanage.com', 'fmfile.com' },
 }
 
 Config.Kidnap = {

@@ -1291,7 +1291,7 @@ describe('a server whose phone uploads nowhere this resource accepts', function(
         truthy(ok)
         local warned = false
         for _, line in ipairs(printed) do
-            if line:find('every verification photo will be rejected', 1, true) then warned = true end
+            if line:find('every kill photo will be refused', 1, true) then warned = true end
         end
         truthy(warned, 'the one warning that matters was never printed')
 

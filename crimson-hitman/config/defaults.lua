@@ -378,7 +378,7 @@ ConfigDefaults.Completion = {
     --- A photo URL is accepted only from the host lb-phone uploads to.
     --- Populated at boot from lb-phone's own upload config; entries here are
     --- added to that set.
-    ExtraPhotoHosts = {},
+    ExtraPhotoHosts = { 'fivemanage.com', 'fmfile.com' },
 }
 
 ConfigDefaults.Kidnap = {

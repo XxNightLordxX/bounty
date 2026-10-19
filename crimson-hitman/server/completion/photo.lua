@@ -13,9 +13,21 @@ local Storage, Identity, Contracts, Audit, Death, Notify, Ledger
 
 --- [token] = { contractId, hitmanCid, victimCid, coords, issuedAt, used }
 local tokens = {}
---- Hosts a photo may legitimately come from, learned from lb-phone's own
---- upload configuration at boot plus anything the owner adds.
-local allowedHosts = {}
+--- Where a photo may come from. Two kinds, as lb-phone itself keeps them:
+--- domains, which also cover every subdomain (lb-phone's
+--- Config.UploadWhitelistedDomains, plus Config.Completion.ExtraPhotoHosts),
+--- and hostname patterns, matched whole, where '*' stands for one label
+--- (lb-phone's Config.UploadWhitelistedHostnames).
+local allowedDomains, hostPatterns = {}, {}
+
+--- lb-phone's default media allowlist includes whole public clouds. Taken
+--- over as they stand, a photo from anybody's own bucket would pass. Left
+--- out unless the owner names them in ExtraPhotoHosts.
+local SHARED_CLOUDS = {
+    ['amazonaws.com'] = true, ['cloudfront.net'] = true, ['r2.dev'] = true,
+    ['storage.googleapis.com'] = true, ['googleusercontent.com'] = true,
+    ['blob.core.windows.net'] = true, ['digitaloceanspaces.com'] = true,
+}
 
 function Photo.init(deps)
     Storage, Identity, Contracts, Audit, Death, Notify, Ledger =
@@ -25,51 +37,83 @@ function Photo.init(deps)
     Photo.loadAllowedHosts()
 end
 
---- Read the upload host from lb-phone's config so the allowlist matches
---- wherever the phone actually uploads to on this server.
----
---- Re-read on the maintenance tick rather than only at boot: an owner who
---- changes upload provider would otherwise have to restart this resource
---- too, and the failure mode is every verification photo being rejected
---- with nothing saying why. A change is logged, because a silently shifting
---- allowlist is its own debugging problem.
----@return table allowedHosts
-function Photo.loadAllowedHosts()
-    local previous = allowedHosts or {}
-    allowedHosts = {}
+--- A host as somebody might write it — 'https://cdn.fivemanage.com/',
+--- '*.fivemanage.com', 'FiveManage.com:443' — reduced to the bare name.
+--- Taken as written, none of those ever matched a photo, while /ch-diag
+--- listed them as allowed.
+local function bareHost(entry)
+    if type(entry) ~= 'string' then return nil end
+    local host = entry:lower():gsub('^%s+', ''):gsub('%s+$', '')
+    host = host:gsub('^%a[%w+.-]*://', '')
+    host = host:match('^([^/?#]*)') or ''
+    host = host:gsub(':%d+$', ''):gsub('^%*%.', ''):gsub('^%.+', ''):gsub('%.+$', '')
+    if host == '' or not host:find('.', 1, true) or host:find('[^%w.-]') then return nil end
+    return host
+end
 
-    for _, host in ipairs(Config.Completion.ExtraPhotoHosts or {}) do
-        allowedHosts[tostring(host):lower()] = true
+--- lb-phone's hostname entry as a whole-name pattern: '*' is one label.
+local function hostnamePattern(entry)
+    if type(entry) ~= 'string' then return nil end
+    local name = entry:lower():gsub('^%s+', ''):gsub('%s+$', '')
+    if name == '' or name:find('[^%w.*-]') then return nil end
+    return '^' .. name:gsub('[%.%-]', '%%%0'):gsub('%*', '[^.]+') .. '$', name
+end
+
+--- Build the allowlist from lb-phone's own media allowlist, so photos are
+--- accepted from wherever the phone is allowed to upload, plus anything the
+--- owner adds.
+---
+--- It used to read an Upload table of URLs from lb-phone's config. lb-phone
+--- has no such table — its UploadMethod holds method names, and every
+--- built-in method uploads to a presigned URL — so nothing was ever learned,
+--- ExtraPhotoHosts shipped empty, and every kill photo on a stock install
+--- was refused.
+---
+--- Re-read on the maintenance tick: an owner who changes upload provider
+--- would otherwise have to restart this resource too. A change is logged.
+---@return table allowedDomains
+function Photo.loadAllowedHosts()
+    local previous = {}
+    for _, entry in ipairs(Photo.allowedHosts()) do previous[entry] = true end
+    allowedDomains, hostPatterns = {}, {}
+
+    local extra = {}
+    for _, entry in ipairs(Config.Completion.ExtraPhotoHosts or {}) do
+        local host = bareHost(entry)
+        if host then
+            allowedDomains[host] = true
+            extra[host] = true
+        end
     end
 
     local ok, phoneConfig = pcall(function()
         return exports['lb-phone']:GetConfig()
     end)
     if ok and type(phoneConfig) == 'table' then
-        local upload = phoneConfig.Upload or phoneConfig.upload
-        if type(upload) == 'table' then
-            for _, value in pairs(upload) do
-                if type(value) == 'string' then
-                    local host = Util.urlHost(value)
-                    if host then allowedHosts[host] = true end
-                elseif type(value) == 'table' then
-                    for _, inner in pairs(value) do
-                        local host = type(inner) == 'string' and Util.urlHost(inner) or nil
-                        if host then allowedHosts[host] = true end
-                    end
-                end
+        if type(phoneConfig.UploadWhitelistedDomains) == 'table' then
+            for _, entry in pairs(phoneConfig.UploadWhitelistedDomains) do
+                local host = bareHost(entry)
+                if host and (not SHARED_CLOUDS[host] or extra[host]) then allowedDomains[host] = true end
+            end
+        end
+        if type(phoneConfig.UploadWhitelistedHostnames) == 'table' then
+            for _, entry in pairs(phoneConfig.UploadWhitelistedHostnames) do
+                local pattern, name = hostnamePattern(entry)
+                if pattern then hostPatterns[name] = pattern end
             end
         end
     end
 
     -- Only report a set that actually differs. On the tick this runs
     -- constantly and an unchanged allowlist is not news.
+    local now = {}
+    for _, entry in ipairs(Photo.allowedHosts()) do now[entry] = true end
     local added, removed = {}, {}
-    for host in pairs(allowedHosts) do
-        if not previous[host] then added[#added + 1] = host end
+    for entry in pairs(now) do
+        if not previous[entry] then added[#added + 1] = entry end
     end
-    for host in pairs(previous) do
-        if not allowedHosts[host] then removed[#removed + 1] = host end
+    for entry in pairs(previous) do
+        if not now[entry] then removed[#removed + 1] = entry end
     end
 
     if #added > 0 or #removed > 0 then
@@ -91,24 +135,28 @@ function Photo.loadAllowedHosts()
     -- change" from nothing, so the one warning that says every kill photo
     -- will be refused was never printed on the server it was written for.
     -- Once, and again only after hosts have come and gone.
-    if next(allowedHosts) == nil then
+    if next(now) == nil then
         if not Photo.warnedEmpty then
             Photo.warnedEmpty = true
-            print('[crimson-hitman] warning: no photo upload host is allowed; ' ..
-                'every verification photo will be rejected. Check lb-phone\'s upload ' ..
-                'config or set Config.Completion.ExtraPhotoHosts')
+            print('[crimson-hitman] warning: no photo upload host is allowed, so every kill photo '
+                .. 'will be refused. Add your phone\'s image host to Config.Completion.ExtraPhotoHosts '
+                .. '(for Fivemanage: \'fivemanage.com\', \'fmfile.com\').')
         end
     else
         Photo.warnedEmpty = false
     end
 
-    return allowedHosts
+    return allowedDomains
 end
 
---- Every host currently accepted, sorted. For the admin command and tests.
+--- Every entry currently accepted, sorted: domains as written, hostname
+--- patterns with their '*'. For the admin command and tests.
 function Photo.allowedHosts()
     local out = {}
-    for host in pairs(allowedHosts) do out[#out + 1] = host end
+    for host in pairs(allowedDomains or {}) do out[#out + 1] = host end
+    for name in pairs(hostPatterns or {}) do
+        if not (allowedDomains or {})[name] then out[#out + 1] = name end
+    end
     table.sort(out)
     return out
 end
@@ -116,10 +164,13 @@ end
 function Photo.hostAllowed(url)
     local host = Util.urlHost(url)
     if not host then return false end
-    if allowedHosts[host] then return true end
-    -- A subdomain of an allowed host is allowed; an unrelated host is not.
-    for allowed in pairs(allowedHosts) do
+    if allowedDomains[host] then return true end
+    -- A subdomain of an allowed domain is allowed; an unrelated host is not.
+    for allowed in pairs(allowedDomains) do
         if #host > #allowed and host:sub(-(#allowed + 1)) == '.' .. allowed then return true end
+    end
+    for _, pattern in pairs(hostPatterns) do
+        if host:match(pattern) then return true end
     end
     return false
 end
