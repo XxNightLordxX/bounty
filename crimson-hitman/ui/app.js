@@ -1664,6 +1664,8 @@
 
     // The grace budget is one allowance for the whole countdown, not one per
     // break, so what is left of it is the number that actually matters.
+    // Said as what happens when it is gone: "1.8s of slack left" left a
+    // hitman to work out for themselves that zero means the handover fails.
     if (progress.graceTotal > 0) {
       var left = Math.max(0, progress.graceLeft || 0);
       var grace = el('div', 'bar grace');
@@ -1675,8 +1677,9 @@
       wrap.appendChild(el('div', 'label' + (progress.breaking ? ' warn' : ''),
         progress.breaking
           ? (BREAKING[progress.breaking] || 'Hold position')
-              + ' — ' + (left / 1000).toFixed(1) + 's of slack left'
-          : (left / 1000).toFixed(1) + 's of slack left'));
+              + ' — handover fails in ' + (left / 1000).toFixed(1) + 's'
+          : (left / 1000).toFixed(1) + 's of leeway left — the handover '
+              + 'fails if it runs out'));
     } else if (progress.breaking) {
       wrap.appendChild(el('div', 'label warn',
         BREAKING[progress.breaking] || 'Hold position'));
@@ -3074,7 +3077,9 @@
     } else {
       what = itemLabel(line.item) + ' ×' + (line.quantity || 1);
     }
-    var text = what + ' — ' + (line.portion === 'bonus' ? 'bonus' : 'base');
+    // Named the way the Place form names it, so "bonus" is not left to
+    // mean whichever bonus the reader guesses.
+    var text = what + ' — ' + (line.portion === 'bonus' ? 'kidnapping bonus' : 'base');
     if ((Number(slots) || 1) > 1) {
       text = 'Payout ' + (Number(line.slot) || 1) + ': ' + text;
     }
@@ -3615,7 +3620,22 @@
         state.thread = { contract: contract, thread: thread,
                          messages: asList(r.data), draft: keep };
         state.tab = 'thread';
+
+        /* Opened on the latest message, with the compose box under it. The
+           thread is drawn oldest first and nothing ever moved the scroll,
+           so thirty messages in, the player landed on the first one with
+           the newest and the Send box four screens below. A re-read follows
+           the conversation down only if the player was already at the
+           bottom of it: one scrolled up to read something older is left
+           there. The view is measured before the redraw, which keeps the
+           position the player had. */
+        var view = document.getElementById('view');
+        var atBottom = !view || !reread
+          || (view.scrollHeight - view.scrollTop - view.clientHeight < 80);
         render();
+        if (view && atBottom && state.tab === 'thread' && !state.dialog) {
+          view.scrollTop = view.scrollHeight;
+        }
       });
   }
 
@@ -3979,15 +3999,26 @@
     back.onclick = function () { navigated(); state.tab = 'mine'; render(); };
     row.appendChild(back);
 
-    /* Who this thread is with. Every message is signed with an alias, but
-       the thread itself was never named — so a creator with several
-       operatives could not tell which of them they were writing to. */
+    /* Who this thread is with, and which contract it is about. Every
+       message is signed with an alias, but the thread itself was never
+       named — so a creator with several operatives could not tell which of
+       them they were writing to. And a hitman holding two contracts from
+       anonymous clients got two threads both headed "With The client",
+       with nothing to say which job either was, so a message could go to
+       the wrong one. The target names the contract; the line under it
+       names the other party. Each is one line and cuts off rather than
+       wrapping, so a long name cannot push Back and Call apart. */
     var withWhom = t.thread && t.thread.alias
       ? t.thread.alias + (t.thread.name ? ' (' + t.thread.name + ')' : '')
-      : (t.contract.role === 'hitman' ? 'The client' : null);
-    if (withWhom) {
-      row.appendChild(el('div', 'hint', 'With ' + withWhom));
+      : (t.contract.role === 'hitman' ? 'the client' : null);
+    var about = el('div', 'hint');
+    if (t.contract.targetName) {
+      about.appendChild(el('div', 'about', t.contract.targetName));
     }
+    if (withWhom) {
+      about.appendChild(el('div', 'with', 'with ' + withWhom));
+    }
+    row.appendChild(about);
 
     // The server has always had a call path and nothing reached it, so the
     // whole feature was unreachable from the phone.
@@ -4017,6 +4048,10 @@
       msg.appendChild(el('div', null, m.body));
       thread.appendChild(msg);
     });
+    // A new thread was a header and a text box with nothing between them.
+    if (!t.messages.length) {
+      thread.appendChild(el('div', 'hint', 'No messages yet.'));
+    }
     view.appendChild(thread);
 
     /* The compose box.
@@ -4075,8 +4110,9 @@
     // list lands in it.
     if (state.walletFailed) {
       var failed = el('div', 'card');
-      failed.appendChild(el('div', 'hint', state.walletFailed
-        + ' Money still works; items and weapons need another look.'));
+      failed.appendChild(el('div', 'hint', state.walletFailed.text
+        + ' Money still works; items and weapons need another look.'
+        + (state.walletFailed.code ? ' (code: ' + state.walletFailed.code + ')' : '')));
       var again = el('button', 'ghost ico i-refresh', 'Try again');
       again.onclick = function () {
         state.walletFailed = null; state.walletPending = false; render();
@@ -4117,10 +4153,13 @@
             // are carrying" is true of a rate limit, a crashed handler and
             // a refused gate alike, and a player reporting it to an admin
             // was passing on a shrug — which cost days of guessing at a
-            // fault the server could have named in one word.
+            // fault the server could have named in one word. Labelled and
+            // put last, after the sentence, so it reads as something to
+            // quote rather than as part of what the player is being told.
             state.walletFailed = (r.err === 'rate_limited')
-              ? 'Reading your pockets too fast. Try again in a moment.'
-              : 'Could not read what you are carrying (' + (r.err || 'no reply') + ').';
+              ? { text: 'Reading your pockets too fast. Try again in a moment.' }
+              : { text: 'Could not read what you are carrying.',
+                  code: r.err || 'no reply' };
           }
           redraw();
         });

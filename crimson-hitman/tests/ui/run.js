@@ -1209,7 +1209,8 @@ async function main() {
     it('shows the countdown and the slack while the hold is good', function () {
       const text = holding.view.textContent;
       truthy(text.indexOf('12s of 30s') !== -1, 'the countdown: ' + text);
-      truthy(text.indexOf('3.0s of slack left') !== -1, 'the grace budget: ' + text);
+      truthy(text.indexOf('3.0s of leeway left — the handover fails if it runs out') !== -1,
+        'the grace budget, and what happens when it is gone: ' + text);
     });
 
     it('does not warn while nothing is breaking', function () {
@@ -1233,7 +1234,7 @@ async function main() {
         'the reason, not the code: ' + text);
       falsy(text.indexOf('creator_too_far') !== -1,
         'a raw reason code must not reach the player: ' + text);
-      truthy(text.indexOf('0.9s of slack left') !== -1,
+      truthy(text.indexOf('The client is too far away — handover fails in 0.9s') !== -1,
         'and what is left of the allowance: ' + text);
     });
 
@@ -1266,7 +1267,8 @@ async function main() {
     it('renders a countdown with no grace budget at all', function () {
       truthy(none.view.textContent.indexOf('5s of 30s') !== -1,
         'a server configured with no slack must still render: ' + none.view.textContent);
-      falsy(none.view.textContent.indexOf('slack left') !== -1,
+      falsy(none.view.textContent.indexOf('leeway left') !== -1
+        || none.view.textContent.indexOf('handover fails in') !== -1,
         'and must not offer a budget it does not have');
     });
   })();
@@ -5861,7 +5863,7 @@ async function main() {
       });
 
       it('says who the thread is with', function () {
-        truthy(app.view.textContent.indexOf('With Operative #2 (Rook Ash)') !== -1,
+        truthy(app.view.textContent.indexOf('with Operative #2 (Rook Ash)') !== -1,
           'every message is signed but the thread was never named: '
           + app.view.textContent);
       });
@@ -7298,6 +7300,43 @@ async function main() {
         const box = composeOnScreen(app);
         truthy(box, 'still in the thread');
         falsy(app.document.activeElement === box, 'the keyboard came up on its own');
+      });
+    })();
+
+    /* A thread opens on its latest message, and follows the conversation
+       down only for a player who is already at the bottom of it. The shim
+       has no layout, so the view's measurements are set by hand. */
+    await (async function aThreadOpensOnTheLatestMessage() {
+      const app = openApp({ ok: true, data: [{ alias: 'The client', body: 'hello' }] });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      app.view.scrollTop = 0; app.view.scrollHeight = 2700; app.view.clientHeight = 640;
+      click(app, 'Message');
+      await settle(); await settle();
+      it('scrolls to the newest message and the compose box', function () {
+        eq(app.view.scrollTop, 2700, 'the thread opened on its oldest message');
+      });
+      it('names the contract and who the thread is with', function () {
+        const text = app.view.textContent;
+        truthy(text.indexOf('Dana Reyes') !== -1 && text.indexOf('with the client') !== -1,
+          'two threads from anonymous clients looked exactly alike: ' + text.slice(0, 120));
+      });
+
+      // Scrolled up to read something older: a reply must not yank them down.
+      app.view.scrollTop = 300; app.view.scrollHeight = 2800;
+      app.sandbox.window._message({ data: { type: 'push', reason: 'message' } });
+      for (let i = 0; i < 4; i++) { await settle(); }
+      it('leaves a player reading older messages where they are', function () {
+        eq(app.view.scrollTop, 300);
+      });
+
+      // At the bottom: the reply is followed down.
+      app.view.scrollTop = 2200; app.view.scrollHeight = 2900;
+      app.sandbox.window._message({ data: { type: 'push', reason: 'message' } });
+      for (let i = 0; i < 4; i++) { await settle(); }
+      it('follows a reply down for a player at the bottom', function () {
+        eq(app.view.scrollTop, 2900);
       });
     })();
   })();
