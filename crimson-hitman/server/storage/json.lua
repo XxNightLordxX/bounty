@@ -5,6 +5,8 @@
 --- starting with empty escrow. Writes are not atomic: each file is rewritten
 --- in place (see writeFile), so a crash mid-write can tear one. A torn index
 --- halts the boot too, and store.json.prev holds the one the last start read.
+--- The audit log is not in the index: it is a file per day, added to rather
+--- than rewritten (see writeAudit).
 
 local Util = require_shared('util')
 
@@ -43,6 +45,22 @@ local shardIds = {}
 --- the index no longer names them.
 local quarantined = {}
 
+--- The audit log, one file per day (UTC), kept out of the index.
+---
+--- It used to be a field of the index, and the index is rewritten whole on
+--- every financial write. With a month of rows that was several megabytes
+--- encoded and written, and read back, for every coin moved: a single kill
+--- payout wrote store.json a dozen times. So the log is its own files now,
+--- written on the flush and at close, and a money write never touches it.
+---
+--- `lines` is each day's rows, encoded once as they are written: what its
+--- file holds, or will. `onDisk` is how many of them are in the file, so a
+--- flush adds only the rest. `rewrite` marks a file to write whole: one
+--- that ended torn, or an add that failed part-way. `named` is the days an
+--- index on disk lists, since there is no directory listing native and the
+--- index is the only record of which files exist.
+local auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {} }
+
 --- What could not be loaded, for the boot report and ch-diag.
 ---@return table[] entries
 function JsonStore.quarantined()
@@ -55,6 +73,31 @@ end
 
 local function path()
     return directory() .. '/store.json'
+end
+
+--- The UTC day a row belongs to, as its file names it.
+local function auditDay(ts)
+    return os.date('!%Y-%m-%d', math.floor(tonumber(ts) or os.time()))
+end
+
+--- Only a day this store would name: it read the name from the index, and
+--- the index is a file anybody can edit.
+local function isAuditDay(day)
+    return type(day) == 'string' and day:match('^%d%d%d%d%-%d%d%-%d%d$') ~= nil
+end
+
+--- In data/ itself rather than a directory of its own: SaveResourceFile
+--- cannot create one, and an upgraded server would not have it.
+local function auditPath(day)
+    return directory() .. '/audit-' .. day .. '.jsonl'
+end
+
+--- The oldest moment a kept row may be from, or nil when the log is kept
+--- forever. 0 keeps it, as the retention settings beside it do.
+local function auditCutoff()
+    local days = tonumber(Config.Audit.RetentionDays) or 0
+    if days <= 0 then return nil end
+    return os.time() - (days * 86400)
 end
 
 --- Contract ids are minted by nextId as a fixed prefix and digits, so they
@@ -142,9 +185,7 @@ local mismatches = 0
 --- retried once — but a write the engine confirmed is never thrown away on
 --- the strength of a read that may be cached, buffered, or simply behind.
 ---@return boolean written
-local function writeFile(target, value)
-    local encoded = json.encode(value)
-
+local function writeRaw(target, encoded)
     local wrote = SaveResourceFile(resource, target, encoded, -1)
     if wrote == false then
         print(('[crimson-hitman] could not write %s. Check that the directory exists '
@@ -177,9 +218,76 @@ local function writeFile(target, value)
     return true
 end
 
+local function writeFile(target, value)
+    return writeRaw(target, json.encode(value))
+end
+
 --- How many writes have read back differently. Reported by the diagnosis,
 --- since the warning above stops after the third.
 function JsonStore.readBackMismatches() return mismatches end
+
+--- Add lines to the end of a file, leaving what is already there alone.
+---
+--- SaveResourceFile cannot append, so this goes through the resource's own
+--- folder, as the prune's unlink does. Binary mode, so a Windows host does
+--- not turn each newline into two characters. nil where that folder is not
+--- known: the caller writes the whole file instead.
+---@return boolean|nil written
+local function appendFile(target, lines, from)
+    local base = GetResourcePath and GetResourcePath(resource)
+    if not base or base == '' or not (io and io.open) then return nil end
+    local handle = io.open(base .. '/' .. target, 'ab')
+    if not handle then return false end
+    local ok = handle:write(table.concat(lines, '\n', from) .. '\n')
+    handle:close()
+    return ok ~= nil
+end
+
+--- One day's audit file: its rows, encoded and decoded, and whether it
+--- ended cleanly. A line that will not parse is the tail of a write a
+--- crash cut short; the rows before it are kept, and the file is marked to
+--- be written whole so the next row is not added onto the torn one.
+local function readAuditDay(day)
+    local file = auditPath(day)
+    -- Twice, as a shard is, before believing it is empty.
+    local raw = LoadResourceFile(resource, file)
+    if not raw or raw == '' then raw = LoadResourceFile(resource, file) end
+
+    local lines, rows, bad = {}, {}, 0
+    if not raw or raw == '' then return lines, rows, true end
+    for line in raw:gmatch('[^\n]+') do
+        line = line:gsub('\r$', '')
+        local ok, row = pcall(json.decode, line)
+        if ok and type(row) == 'table' then
+            lines[#lines + 1], rows[#rows + 1] = line, row
+        else
+            bad = bad + 1
+        end
+    end
+    if bad > 0 then
+        print(('[crimson-hitman] %d line(s) of %s could not be read and were left out; '
+            .. 'the rest of that day\'s audit log is kept.'):format(bad, file))
+    end
+    return lines, rows, bad == 0 and raw:sub(-1) == '\n'
+end
+
+--- Shard and audit files a prune is waiting to remove until the index
+--- without them is safely on disk (JsonStore.prune, dropAuditDay).
+local pendingUnlinks = {}
+
+--- Remove them, once an index that no longer names them has been written.
+--- Any index written after the prune qualifies, since the prune already
+--- took them off it. Only the prune used to do this, and it returned early
+--- when it found nothing new to prune, so an index write that failed once
+--- left the files on disk for good.
+local function unlinkPending()
+    if #pendingUnlinks == 0 then return end
+    local base = GetResourcePath and GetResourcePath(resource)
+    if base and base ~= '' then
+        for i = 1, #pendingUnlinks do os.remove(base .. '/' .. pendingUnlinks[i]) end
+    end
+    pendingUnlinks = {}
+end
 
 --- Everything the index file holds: the sequence, which contracts own a
 --- shard, and the small tables that are not per-contract.
@@ -225,9 +333,145 @@ local function buildIndex()
 
     -- Everything that is not per-contract. Small, and rewritten whole.
     index.ledger, index.pending = db.ledger, db.pending
-    index.audit, index.stats = db.audit, db.stats
-    index.reveals = db.reveals
+    index.stats, index.reveals = db.stats, db.reveals
+
+    -- Not the audit log itself, which is files of its own: only which days
+    -- have one, since nothing else records that.
+    index.auditDays = {}
+    for day in pairs(auditLog.lines) do index.auditDays[#index.auditDays + 1] = day end
+    table.sort(index.auditDays)
     return index
+end
+
+--- Write the index, and then what waited on it: every day it lists may
+--- now have its file written, and every file it no longer lists may go.
+local function writeIndex()
+    if not writeFile(path(), buildIndex()) then return false end
+    for day in pairs(auditLog.lines) do auditLog.named[day] = true end
+    unlinkPending()
+    return true
+end
+
+--- Write the audit rows that are not on disk yet.
+---
+--- Only a day an index on disk already names. Written first, a crash before
+--- the index left a file nothing would ever read; named first, the worst a
+--- crash leaves is a name with no file, which reads back as an empty day.
+---@return boolean ok
+local function saveAudit()
+    local ok = true
+    for day, lines in pairs(auditLog.lines) do
+        local done = auditLog.onDisk[day] or 0
+        if auditLog.named[day] and (#lines > done or auditLog.rewrite[day]) then
+            local file = auditPath(day)
+            -- Added to where it can be, so a busy day is not rewritten whole
+            -- every flush; written whole the first time, and where the add
+            -- failed or the file ended torn.
+            local wrote
+            if done > 0 and not auditLog.rewrite[day] then
+                wrote = appendFile(file, lines, done + 1)
+            end
+            if not wrote then
+                wrote = writeRaw(file, #lines > 0 and (table.concat(lines, '\n') .. '\n') or '')
+            end
+            if wrote then
+                auditLog.onDisk[day], auditLog.rewrite[day] = #lines, nil
+            else
+                ok = false
+            end
+        end
+    end
+    return ok
+end
+
+--- A whole day past the retention age: off the index, and its file removed
+--- once an index without it is on disk, as a pruned contract's is.
+local function dropAuditDay(day)
+    auditLog.lines[day], auditLog.onDisk[day] = nil, nil
+    auditLog.rewrite[day], auditLog.named[day] = nil, nil
+    pendingUnlinks[#pendingUnlinks + 1] = auditPath(day)
+    indexDirty, dirty = true, true
+end
+
+--- Read the audit log back, moving one an older version kept in the index
+--- out of it first.
+---
+--- The move writes each day's file before anything writes an index without
+--- the rows, so a start interrupted part-way still has them in store.json
+--- and simply moves them again. A day whose file already holds at least as
+--- many rows as the index has for it was written by that earlier attempt,
+--- or since, and is kept as it is, so a second move adds nothing twice.
+local function loadAudit(decoded)
+    auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {} }
+    local rowsByDay = {}
+    local cutoff = auditCutoff()
+    local cutoffDay = cutoff and auditDay(cutoff)
+
+    local named = type(decoded.auditDays) == 'table' and decoded.auditDays or {}
+    for i = 1, #named do
+        local day = named[i]
+        if isAuditDay(day) and not auditLog.lines[day] then
+            local lines, rows, clean = readAuditDay(day)
+            auditLog.lines[day], auditLog.onDisk[day] = lines, #lines
+            auditLog.rewrite[day] = (not clean) or nil
+            auditLog.named[day] = true
+            rowsByDay[day] = rows
+        end
+    end
+
+    local legacy = type(decoded.audit) == 'table' and decoded.audit or {}
+    if #legacy > 0 then
+        local moving, moved = {}, 0
+        for i = 1, #legacy do
+            local row = legacy[i]
+            local encoded, line = pcall(json.encode, row)
+            local day = type(row) == 'table' and encoded and auditDay(row.ts)
+            -- A day already past the retention age would only be written to
+            -- be deleted.
+            if day and not (cutoffDay and day < cutoffDay) then
+                moving[day] = moving[day] or { lines = {}, rows = {} }
+                moving[day].lines[#moving[day].lines + 1] = line
+                moving[day].rows[#moving[day].rows + 1] = row
+            end
+        end
+        for day, set in pairs(moving) do
+            local lines, rows, clean = auditLog.lines[day], rowsByDay[day], not auditLog.rewrite[day]
+            if not lines then lines, rows, clean = readAuditDay(day) end
+            if #lines < #set.lines then
+                lines, rows, clean = set.lines, set.rows, true
+                if not writeRaw(auditPath(day), table.concat(lines, '\n') .. '\n') then
+                    error(('[crimson-hitman] cannot write %s while moving the audit log out of %s. '
+                        .. 'Refusing to start: %s still holds it, unchanged, and the move is tried '
+                        .. 'again on the next start.'):format(auditPath(day), path(), path()))
+                end
+            end
+            auditLog.lines[day], auditLog.onDisk[day] = lines, #lines
+            auditLog.rewrite[day] = (not clean) or nil
+            rowsByDay[day] = rows
+            moved = moved + #set.lines
+        end
+        print(('[crimson-hitman] moved %d audit row(s) out of %s into one file per day '
+            .. '(%s/audit-<day>.jsonl).'):format(moved, path(), directory()))
+    end
+
+    -- Oldest first, as they were written, and the retention age applied as
+    -- the writes apply it.
+    local days = {}
+    for day in pairs(auditLog.lines) do days[#days + 1] = day end
+    table.sort(days)
+    db.audit = {}
+    for _, day in ipairs(days) do
+        if cutoffDay and day < cutoffDay then
+            dropAuditDay(day)
+        else
+            local rows = rowsByDay[day] or {}
+            for i = 1, #rows do
+                if not cutoff or (tonumber(rows[i].ts) or 0) >= cutoff then
+                    db.audit[#db.audit + 1] = rows[i]
+                end
+            end
+        end
+    end
 end
 
 --- Confirm the store's directories are actually writable.
@@ -244,7 +488,7 @@ function JsonStore.assertWritable()
     -- The index is the probe: writing it proves data/ is writable and leaves
     -- the store in exactly the state a flush would, rather than dropping a
     -- stray file next to it.
-    if not writeFile(path(), buildIndex()) then
+    if not writeIndex() then
         error(('[crimson-hitman] cannot write %s. Create the directory %s and make it ' ..
                'writable by the server, or switch Config.Database.Mode away from json. ' ..
                'Refusing to start: escrow taken from players would not be recorded.')
@@ -296,6 +540,7 @@ function JsonStore.open()
 
         db = json.decode(json.encode(EMPTY))
         dirtyShards, shardIds, quarantined, indexDirty = {}, {}, {}, true
+        auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {} }
         JsonStore.save(true)
         JsonStore.assertWritable()
         return true
@@ -311,12 +556,19 @@ function JsonStore.open()
     db = json.decode(json.encode(EMPTY))
     dirtyShards, shardIds, quarantined = {}, {}, {}
     for key, value in pairs(decoded) do
-        if key ~= 'contractIds' then db[key] = value end
+        -- The audit log is read from its own files, below.
+        if key ~= 'contractIds' and key ~= 'audit' and key ~= 'auditDays' then db[key] = value end
     end
     for key, value in pairs(EMPTY) do
         if db[key] == nil then db[key] = type(value) == 'table' and {} or value end
     end
     seq = tonumber(db.seq) or 0
+
+    -- Before either layout below writes an index: one that still carries the
+    -- audit log has to have it on disk elsewhere first.
+    if type(decoded.contractIds) == 'table' or type(decoded.contracts) == 'table' then
+        loadAudit(decoded)
+    end
 
     if type(decoded.contractIds) == 'table' then
         -- The index as this start found it, so a later start that finds it
@@ -424,24 +676,9 @@ end
 --- `force` writes every dirty shard; an ordinary flush writes at most
 --- MaxDirtyShardsPerFlush of them and leaves the rest for the next one, so a
 --- burst of activity cannot turn one flush into an unbounded stall.
---- Shard files a prune is waiting to remove until the index without them
---- is safely on disk (JsonStore.prune).
-local pendingUnlinks = {}
-
---- Remove them, once an index that no longer names them has been written.
---- Any index written after the prune qualifies, since the prune already
---- took them off it. Only the prune used to do this, and it returned early
---- when it found nothing new to prune, so an index write that failed once
---- left the files on disk for good.
-local function unlinkPending()
-    if #pendingUnlinks == 0 then return end
-    local base = GetResourcePath and GetResourcePath(resource)
-    if base and base ~= '' then
-        for i = 1, #pendingUnlinks do os.remove(base .. '/' .. pendingUnlinks[i]) end
-    end
-    pendingUnlinks = {}
-end
-
+---
+--- Not the audit log: a financial write calls this, and the log waits for
+--- the flush (JsonStore.flush, JsonStore.close).
 function JsonStore.save(force)
     if not db then return false end
     if not force and not dirty then return false end
@@ -472,11 +709,8 @@ function JsonStore.save(force)
     local indexOk = true
     if indexDirty or force then
         db.seq = seq
-        indexOk = writeFile(path(), buildIndex())
-        if indexOk then
-            indexDirty = false
-            unlinkPending()
-        end
+        indexOk = writeIndex()
+        if indexOk then indexDirty = false end
     end
 
     if not next(dirtyShards) and not indexDirty then
@@ -491,7 +725,7 @@ end
 --- Mark the store dirty.
 ---
 --- `contractId` names which shard changed; without one the change is in the
---- index (the ledger, a pending payout, an audit row). Financial writes
+--- index (the ledger, a pending payout, a stat). Financial writes
 --- flush immediately; everything else rides the debounce (§10.2).
 local function touch(financial, contractId)
     dirty = true
@@ -603,9 +837,8 @@ function JsonStore.prune()
     -- store.json naming a file that was gone, and the contract was
     -- quarantined as missing, with its warning, on every boot after.
     if #pendingUnlinks > 0 then
-        if writeFile(path(), buildIndex()) then
+        if writeIndex() then
             indexDirty = false
-            unlinkPending()
         else
             indexDirty = true
         end
@@ -614,8 +847,20 @@ function JsonStore.prune()
     return true
 end
 
-function JsonStore.flush() return JsonStore.save(false) end
-function JsonStore.close() return JsonStore.save(true) end
+--- The audit log is written here and at close, and nowhere else: the queue
+--- in server/audit.lua already holds rows until the tick, and a coin moving
+--- is no reason to write the log.
+function JsonStore.flush()
+    local ok = JsonStore.save(false)
+    local logged = saveAudit()
+    return ok and logged
+end
+
+function JsonStore.close()
+    local ok = JsonStore.save(true)
+    local logged = saveAudit()
+    return ok and logged
+end
 
 --- What one buyer's informant purchases on one contract have bought; see the
 --- memory backend. Financial: it is the record of a fee that is never given
@@ -647,9 +892,9 @@ end
 
 --- When this process was last known to be running.
 ---
---- A file of its own rather than a field in the index: the index carries
---- the whole audit log and is rewritten only when something in it changed,
---- and this changes on every tick.
+--- A file of its own rather than a field in the index: the index is
+--- rewritten only when something in it changed, and this changes on every
+--- tick.
 local function heartbeatPath()
     return directory() .. '/heartbeat.json'
 end
@@ -1211,17 +1456,40 @@ function JsonStore.readStats(cid)
     return db.stats[cid] or { cid = cid, completed = 0, failed = 0, placed = 0, survived = 0 }
 end
 
+--- Into its day's file, on the next flush; see auditLog.
+---
+--- Encoded here, once. The file is these lines, so a flush adds them as
+--- they are, and a row that will not encode is refused now rather than
+--- failing every write after it.
 function JsonStore.writeAudit(entry)
+    local line = json.encode(entry)
     db.audit[#db.audit + 1] = entry
+
+    local day = auditDay(entry.ts)
+    local lines = auditLog.lines[day]
+    if not lines then
+        lines = {}
+        auditLog.lines[day], auditLog.onDisk[day] = lines, 0
+        -- A new day is a new name in the index, which goes to disk before
+        -- the day's file does (saveAudit).
+        indexDirty, dirty = true, true
+    end
+    lines[#lines + 1] = line
+
     -- 0 keeps it, as the retention settings beside it do. Read as a number
     -- of days, 0 made the cutoff now, and every row older than the current
     -- second went, including the ones /ch-stuck is built from.
-    local days = tonumber(Config.Audit.RetentionDays) or 0
-    if days > 0 then
-        local cutoff = os.time() - (days * 86400)
+    local cutoff = auditCutoff()
+    if cutoff then
         while db.audit[1] and db.audit[1].ts < cutoff do table.remove(db.audit, 1) end
+        -- A file goes once the whole of its day is past the age. The day
+        -- the cutoff falls in keeps its older rows on disk until then; a
+        -- start reads them back and leaves them out.
+        local cutoffDay = auditDay(cutoff)
+        for kept in pairs(auditLog.lines) do
+            if kept < cutoffDay then dropAuditDay(kept) end
+        end
     end
-    touch(false)
     return true
 end
 

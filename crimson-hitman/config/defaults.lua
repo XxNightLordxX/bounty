@@ -679,6 +679,8 @@ ConfigDefaults.Audit = {
     LogReasonText = true,
     FlushIntervalMs = 10000,
     MaxQueueSize = 5000,
+    --- In json mode the log is one file per day in the data directory, and a
+    --- day's file is deleted once the whole day is older than this.
     RetentionDays = 30,   -- 0 keeps the audit log forever
     ContractRetentionDays = 30,
     ContractsPrunedPerTick = 200,

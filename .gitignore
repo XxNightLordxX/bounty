@@ -4,6 +4,7 @@
 crimson-hitman/data/store.json*
 crimson-hitman/data/contracts/*.json
 crimson-hitman/data/contracts/.writable
+crimson-hitman/data/audit-*.jsonl
 
 # Throwaway probes. A one-off spec plus a copy of the runner with its suite
 # list narrowed to that spec is how a question about this code gets asked:

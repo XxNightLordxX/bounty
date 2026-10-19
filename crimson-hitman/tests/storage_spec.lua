@@ -1940,3 +1940,133 @@ describe('audit retention', function()
         end
     end)
 end)
+
+--- The json audit log lives in files of its own, one per day, rather than
+--- in the index that every financial write rewrites whole.
+describe('the json audit log', function()
+    local function reopen()
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        local store = require('crimson-hitman.server.storage.json')
+        store.open()
+        return store
+    end
+
+    local function fresh()
+        Natives.files = {}
+        return reopen()
+    end
+
+    local function day(ts) return os.date('!%Y-%m-%d', ts) end
+    local function file(ts) return 'data/audit-' .. day(ts) .. '.jsonl' end
+
+    local function actions(rows)
+        local out = {}
+        for i = 1, #rows do out[i] = rows[i].action end
+        return table.concat(out, ',')
+    end
+
+    local function row(action, ts, contractId)
+        return { ts = ts or os.time(), kind = 'financial', action = action,
+                 contract_id = contractId, detail = { line = (contractId or 'x') .. ':1' } }
+    end
+
+    it('keeps the log out of the index and reads it back after a restart', function()
+        local store = fresh()
+        local yesterday = os.time() - 86400
+        store.writeAudit(row('first', yesterday, 'ct1'))
+        store.writeAudit(row('second', nil, 'ct2'))
+        store.writeAudit(row('release_interrupted', nil, 'ct1'))
+        store.close()
+
+        local index = json.decode(Natives.files['data/store.json'])
+        eq(index.audit, nil, 'the index must not carry the log')
+        eq(table.concat(index.auditDays, ','), day(yesterday) .. ',' .. day(os.time()),
+            'only which days have a file')
+        truthy((Natives.files[file(yesterday)] or ''):find('"first"', 1, true), 'a file per day')
+        truthy((Natives.files[file(os.time())] or ''):find('"second"', 1, true))
+
+        local reopened = reopen()
+        eq(actions(reopened.readAudit()), 'first,second,release_interrupted',
+            'every row back, oldest first')
+        eq(actions(reopened.auditForContract('ct1', 10)), 'first,release_interrupted')
+        eq(reopened.auditByAction('release_interrupted', 10)[1].detail.line, 'ct1:1',
+            'with its detail a table, as /ch-stuck reads it')
+    end)
+
+    it('moves a log an older version kept in the index, once', function()
+        local old = os.time() - 2 * 86400
+        local legacy = {
+            seq = 3, contractIds = {}, ledger = {}, pending = {}, stats = {}, reveals = {},
+            audit = { row('a', old, 'ct1'), row('b', old + 60, 'ct1'), row('c', nil, 'ct2') },
+        }
+        Natives.files = { ['data/store.json'] = json.encode(legacy) }
+
+        local store = reopen()
+        eq(actions(store.readAudit()), 'a,b,c', 'nothing lost in the move')
+        eq(json.decode(Natives.files['data/store.json']).audit, nil, 'and the index is without it')
+        truthy(Natives.files[file(old)], 'each day has its file')
+        truthy(Natives.files[file(os.time())])
+
+        -- The index this start read, audit and all, is what store.json.prev
+        -- holds. Restored, the move runs again and adds nothing twice.
+        store.writeAudit(row('d', nil, 'ct2'))
+        store.close()
+        Natives.files['data/store.json'] = Natives.files['data/store.json.prev']
+        eq(actions(reopen().readAudit()), 'a,b,c,d', 'a second move duplicates nothing')
+    end)
+
+    it('finishes a move a crash cut short, without doubling anything', function()
+        local old = os.time() - 2 * 86400
+        local rows = { row('a', old, 'ct1'), row('b', old + 60, 'ct1'), row('c', nil, 'ct2') }
+        Natives.files = {
+            ['data/store.json'] = json.encode({ seq = 3, contractIds = {}, audit = rows }),
+            -- The first day landed whole; today's was cut off mid-line.
+            [file(old)] = json.encode(rows[1]) .. '\n' .. json.encode(rows[2]) .. '\n',
+            [file(os.time())] = json.encode(rows[3]):sub(1, 12),
+        }
+
+        local store = reopen()
+        eq(actions(store.readAudit()), 'a,b,c', 'every row exactly once')
+        local today = Natives.files[file(os.time())]
+        truthy(today:find('"c"', 1, true) and today:sub(-1) == '\n',
+            'the torn file is written again whole: ' .. today)
+    end)
+
+    it('deletes a whole day past the retention age, and leaves out older rows', function()
+        local removed = {}
+        local realRemove, realPath = os.remove, _G.GetResourcePath
+        _G.GetResourcePath = function() return '/srv/resources/crimson-hitman' end
+        os.remove = function(target) removed[#removed + 1] = target return true end
+
+        local savedDays = Config.Audit.RetentionDays
+        local ok, err = pcall(function()
+            Config.Audit.RetentionDays = 0
+            local store = fresh()
+            local old = os.time() - 40 * 86400
+            store.writeAudit(row('old', old))
+            store.writeAudit(row('new'))
+            store.flush()
+            truthy(Natives.files[file(old)], 'kept while the log is kept forever')
+
+            Config.Audit.RetentionDays = 30
+            store.writeAudit(row('newer'))
+            store.flush()
+            eq(actions(store.readAudit()), 'new,newer', 'the old row is pruned')
+            local index = json.decode(Natives.files['data/store.json'])
+            eq(table.concat(index.auditDays, ','), day(os.time()), 'its day is off the index')
+            eq(removed[1], '/srv/resources/crimson-hitman/' .. file(old),
+                'and its file is removed through the resource folder')
+
+            -- A start applies the age too: the day the cutoff falls in keeps
+            -- its file, and its rows before the cutoff are not read back.
+            local edge = os.time() - 30 * 86400
+            store.writeAudit(row('past', edge - 60))
+            store.writeAudit(row('inside', edge + 60))
+            store.close()
+            eq(actions(reopen().readAudit()), 'inside,new,newer', 'read back within the age')
+        end)
+        os.remove, _G.GetResourcePath = realRemove, realPath
+        Config.Audit.RetentionDays = savedDays
+        if not ok then error(err, 0) end
+    end)
+end)
