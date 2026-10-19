@@ -362,11 +362,23 @@ end)
 --- An unsolicited nudge for an open app: something the player is looking at
 --- changed. Forwarded as a message rather than a notification, because the
 --- app refreshes on this and the phone should not buzz for it.
+---
+--- With the contracts it is about, when it names them, so the page re-reads
+--- only those. Without, the page re-reads everything.
 RegisterNetEvent('crimson-hitman:push', function(data)
+    local ids
+    if type(data) == 'table' and type(data.ids) == 'table' then
+        ids = {}
+        for i = 1, #data.ids do
+            if type(data.ids[i]) == 'string' then ids[#ids + 1] = data.ids[i] end
+        end
+        if #ids == 0 then ids = nil end
+    end
     phone('SendCustomAppMessage', function()
         exports['lb-phone']:SendCustomAppMessage('crimson-hitman', {
             type = 'push',
             reason = type(data) == 'table' and tostring(data.reason or '') or '',
+            ids = ids,
         })
     end)
 end)

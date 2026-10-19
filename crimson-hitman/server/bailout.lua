@@ -171,7 +171,12 @@ function Bailout.buy(actor, contractId)
         account = 'cash'
         paid = Util.charge(actor.player, 'cash', amount)
     end
-    if not paid then return false, CH.ERR.INSUFFICIENT end
+    -- With how much, and that it is whole from either account, so the page
+    -- names the figure the server asked for (§14.18).
+    if not paid then
+        return false, CH.ERR.INSUFFICIENT,
+            { part = 'buyout', need = amount, account = 'bank_or_cash' }
+    end
 
     Audit.financial('bailout_paid', actor.cid, contractId, { amount = amount })
 

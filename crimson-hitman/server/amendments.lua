@@ -44,11 +44,13 @@ end
 --- expiry left the proposer's panel waiting on an answer that had come; an
 --- improvement left a hitman's card showing the old terms. The target is
 --- never among them: a push to them would say something had changed on a
---- contract they are not told exists.
+--- contract they are not told exists. Each push names the contract, which
+--- every participant already has: the client placed it and each hitman
+--- took it (Notify.push).
 local function pushOthers(contract, actorCid, reason)
     if not contract then return end
     for cid in pairs(participants(contract)) do
-        if cid ~= actorCid then Notify.push(cid, reason) end
+        if cid ~= actorCid then Notify.push(cid, reason, contract.id) end
     end
 end
 
@@ -644,7 +646,7 @@ function Amendments.propose(actor, contractId, kind, payload)
         if cid ~= actor.cid then
             Notify.toCitizen(cid, 'Contract change proposed',
                 'The other party has proposed a change to a contract you hold.')
-            Notify.push(cid, 'proposal')
+            Notify.push(cid, 'proposal', contractId)
         end
     end
 
@@ -1075,7 +1077,7 @@ applyUnlocked = function(proposal)
     local people = participants(contract)
     for cid in pairs(people) do
         Notify.toCitizen(cid, 'Contract amended', 'A contract you hold has been changed by agreement.')
-        Notify.push(cid, 'amended')
+        Notify.push(cid, 'amended', proposal.contract_id)
     end
 
     return true

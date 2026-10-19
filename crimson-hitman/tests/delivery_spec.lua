@@ -480,3 +480,77 @@ describe('the other party\'s open page', function()
         truthy(pushesTo(1) >= 1, 'the client card still showed an operative on it')
     end)
 end)
+
+describe('a push names the contract it is about', function()
+    --- Every push made an open Mine tab re-read every contract's proposals:
+    --- three placed and three taken were nine reads from the bucket the
+    --- board, Mine and the ledger share. A push names its contract now, to
+    --- the people who already have that id, so the page re-reads that one.
+    local function pushes(source)
+        local out = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:push' and event.target == source then
+                out[#out + 1] = event.args[1]
+            end
+        end
+        return out
+    end
+
+    local function ready()
+        local s = newStack()
+        local f = fixture(s)
+        for _, cid in ipairs({ 'CREATOR1', 'TARGET01', 'HITMAN01' }) do s.notify.clearPush(cid) end
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 1000 } },
+        })
+        Env.clientEvents = {}
+        return s, f, c
+    end
+
+    it('names it to the client and the hitman on an acceptance', function()
+        local s, f, c = ready()
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local toClient, toHitman = pushes(1), pushes(3)
+        eq(#toClient, 1)
+        eq(toClient[1].ids and toClient[1].ids[1], c.id)
+        eq(toHitman[1] and toHitman[1].ids and toHitman[1].ids[1], c.id)
+    end)
+
+    it('never names it to the target', function()
+        local s, f, c = ready()
+        truthy(s.contracts.cancel(f.creator, c.id))
+        local toTarget = pushes(2)
+        eq(#toTarget, 1, 'the target is still nudged when it ends')
+        eq(toTarget[1].ids, nil,
+            'the push told the target which contract, which only the projection may')
+        eq(pushes(1)[1].ids[1], c.id, 'and the client still gets its own')
+    end)
+
+    it('names every contract a held burst was about', function()
+        local s = ready()
+        truthy(s.notify.push('CREATOR1', 'a', 'ct1'))
+        s.notify.push('CREATOR1', 'proposal', 'ct3')
+        s.notify.push('CREATOR1', 'amended', 'ct2')
+        -- A message names none and needs none: the page re-reads the thread.
+        s.notify.push('CREATOR1', 'message')
+        Env.advance(2)
+        local got = pushes(1)
+        eq(#got, 2)
+        eq(got[1].ids[1], 'ct1')
+        eq(table.concat(got[2].ids or {}, ','), 'ct2,ct3',
+            'the held push stands for both, so it has to name both')
+        eq(got[2].reason, 'amended')
+    end)
+
+    it('names none once anything in the burst named none', function()
+        local s = ready()
+        truthy(s.notify.push('CREATOR1', 'a', 'ct1'))
+        s.notify.push('CREATOR1', 'proposal', 'ct2')
+        s.notify.push('CREATOR1', 'settled')
+        Env.advance(2)
+        local got = pushes(1)
+        eq(#got, 2)
+        eq(got[2].ids, nil, 'a page told only ct2 would not re-read what the other one changed')
+    end)
+end)

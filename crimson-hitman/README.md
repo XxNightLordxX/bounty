@@ -84,13 +84,16 @@ terms you were not shown. You can take it up again later, staking again; the wai
 between payouts on one contract (`Config.Limits.SlotCooldownSeconds`) carries
 over, so walking away is not a way round it. Where the server charges for
 hitman anonymity and you cannot cover it, the acceptance is refused rather
-than made under your name. An exclusive contract you hold without going near
+than made under your name. A refusal for money says which charge you were
+short for (the stake, taken whole from your bank or whole from your cash, or
+the fee), how much and from where. An exclusive contract you hold without going near
 the target for `Config.Limits.ExclusiveIdleReleaseSeconds` (counted only while
 the client and the target are both in the city) goes back on the board with
 your stake returned, and is not yours to take again. So does one you hold
 near the target without ever making an attempt on them — no hit landed, no
 handover armed — for `Config.Limits.ExclusiveAttemptWindowSeconds`. The
-deadline pauses the same way. Both follow the target alone when the client is anonymous, because
+accept dialog names both windows, and so does your card under Mine while you
+hold it. The deadline pauses the same way. Both follow the target alone when the client is anonymous, because
 a clock that stops while they are away tells everyone watching it when they
 logged off. A target serving a prison sentence counts as away too, so the
 deadline stops for the sentence and moves on by the time served, and an

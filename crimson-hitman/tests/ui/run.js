@@ -7663,6 +7663,141 @@ async function main() {
     });
   })();
 
+  /* What the server says was missing, worded from its figures; Accept held
+     until the refresh after it lands; the exclusive windows on the card;
+     a push re-reading only the contracts it names; and Close. */
+  await (async function refusalDataAndHolds() {
+    const board = JSON.parse(JSON.stringify(BOARD));
+    board.data.contracts[0].penaltyAmount = 5000;
+    board.data.settings.anonymityFees = { creator: 0, hitman: 1000, account: 'bank' };
+    let acceptReply = { ok: false, err: 'insufficient_funds',
+      data: { part: 'fee', need: 1500, account: 'cash' } };
+    const app = boot({ list: board, mine: MINE, ledger: LEDGER,
+      accept: function () { return acceptReply; } });
+    await settle(); await settle();
+    click(app, 'Accept contract');
+    it('dismisses a choice with Close, not a second Cancel', function () {
+      const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('Close') !== -1 && labels.indexOf('Cancel') === -1, labels.join(' | '));
+    });
+    click(app, 'Anonymously');
+    await settle(); await settle();
+    it('names only the fee, at the server\'s figure and account, when that is what is short', function () {
+      const said = app.notice();
+      truthy(said.indexOf('Anonymity costs $1,500 from your cash') !== -1, said);
+      eq(said.indexOf('stake'), -1, said);
+    });
+
+    acceptReply = { ok: false, err: 'limit_reached', data: { max: 3 } };
+    click(app, 'Accept contract');
+    click(app, 'Under my name');
+    await settle(); await settle();
+    it('says how many contracts a hitman may hold', function () {
+      truthy(app.notice().indexOf('already working 3 contracts, the most this server allows')
+        !== -1, app.notice());
+    });
+
+    /* Held through the refresh. The reply landed, the key cleared, and the
+       board still had the card as it was: Accept came back live under the
+       notice saying it was taken. */
+    let lists = 0;
+    let releaseList;
+    const taken = JSON.parse(JSON.stringify(board));
+    taken.data.contracts[0].role = 'hitman';
+    const held = boot({ list: function () {
+      lists += 1;
+      if (lists === 1) { return board; }
+      return new Promise(function (r) { releaseList = r; });
+    }, mine: MINE, ledger: LEDGER, accept: { ok: true, data: { myAnonymous: false } } });
+    await settle(); await settle();
+    click(held, 'Accept contract');
+    click(held, 'Under my name');
+    await settle(); await settle(); await settle();
+    it('keeps Accept disabled until the refresh after it lands', function () {
+      truthy(held.notice().indexOf('Contract accepted') !== -1, held.notice());
+      const busy = held.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Accepting…';
+      });
+      eq(busy.length, 1, held.view.textContent);
+      truthy(busy[0].disabled);
+    });
+    releaseList(taken);
+    await settle(); await settle(); await settle();
+    it('lets it go once the board shows the contract taken', function () {
+      const labels = held.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      eq(labels.indexOf('Accepting…'), -1, labels.join(' | '));
+      eq(labels.indexOf('Accept contract'), -1, labels.join(' | '));
+    });
+
+    const target = { id: 'ct00000002', reason: 'x', mode: 'exclusive', state: 'active',
+      reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+      hitmenActive: 0, targetName: 'You', role: 'target',
+      bailoutAmount: 90000, bailoutAvailable: true };
+    const broke = boot({ list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [target] } },
+      ledger: LEDGER, bailout: { ok: false, err: 'insufficient_funds',
+        data: { part: 'buyout', need: 95000, account: 'bank_or_cash' } } });
+    await settle(); await settle();
+    tab(broke, 'onme');
+    await settle(); await settle();
+    click(broke, 'Buy out — $90,000');
+    click(broke, 'Pay $90,000');
+    await settle(); await settle();
+    it('names the price the server asked, not the one on the card', function () {
+      truthy(broke.notice().indexOf('$95,000') !== -1, broke.notice());
+    });
+
+    // The windows, on the card the hitman looks at while they work it.
+    const mine = { id: 'ct00000003', reason: 'x', mode: 'exclusive', state: 'accepted',
+      reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+      hitmenActive: 1, targetName: 'Dana Reyes', role: 'hitman', myAlias: 'Operative #1' };
+    const working = boot({ list: { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: { exclusiveIdleMinutes: 30, exclusiveAttemptMinutes: 120 } } },
+      mine: { ok: true, data: { created: [], accepted: [mine], onMe: [] } },
+      ledger: LEDGER, amendments: { ok: true, data: [] } });
+    await settle(); await settle();
+    tab(working, 'mine');
+    await settle(); await settle();
+    it('reminds a hitman on their card what takes an exclusive back', function () {
+      truthy(working.view.textContent.indexOf('Exclusive: go 30 minutes without getting near '
+        + 'the target, or 2h without making an attempt on them') !== -1, working.view.textContent);
+    });
+
+    // A push naming one contract re-reads that one's proposals, not every card's.
+    const own = [1, 2, 3].map(function (i) {
+      return { id: 'ct0000001' + i, reason: 'x', mode: 'competitive', state: 'active',
+        reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+        hitmenActive: 0, targetName: 'Dana ' + i, role: 'creator', hitmen: [] };
+    });
+    const asked = [];
+    const pushed = boot({ list: BOARD, ledger: LEDGER,
+      mine: { ok: true, data: { created: own, accepted: [], onMe: [] } },
+      amendments: function (body) { asked.push(body.id); return { ok: true, data: [] }; } });
+    await settle(); await settle(); await settle();
+    tab(pushed, 'mine');
+    await settle(); await settle(); await settle();
+    function pushNow(data) {
+      asked.length = 0;
+      pushed.sandbox.window._message({ data: Object.assign({ type: 'push' }, data) });
+      const due = pushed.timers.filter(function (t) { return t.ms === 250 && !t.cleared; });
+      due[due.length - 1].fn();
+    }
+    pushNow({ reason: 'proposal', ids: ['ct00000012'] });
+    await settle(); await settle(); await settle();
+    it('re-reads only the contract a push names', function () {
+      eq(JSON.stringify(asked), JSON.stringify(['ct00000012']));
+    });
+    pushNow({ reason: 'settled' });
+    await settle(); await settle(); await settle();
+    it('re-reads every contract when a push names none', function () {
+      eq(JSON.stringify(asked.slice().sort()),
+        JSON.stringify(['ct00000011', 'ct00000012', 'ct00000013']));
+    });
+    drewCleanly(app); drewCleanly(held); drewCleanly(broke); drewCleanly(working); drewCleanly(pushed);
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

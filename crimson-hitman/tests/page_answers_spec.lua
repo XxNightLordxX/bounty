@@ -254,3 +254,88 @@ describe('asking about a handover while it is being paid', function()
         eq(after.outcome, 'paid')
     end)
 end)
+
+describe('a refusal that says what was missing', function()
+    --- "You do not have that." named neither the amount nor the account
+    --- (§14.18: "naming the shortfall"), and a limit said "too many" with no
+    --- number. The reply carries both now, and the page words them.
+    local function staked(s, f, stake)
+        local c = placed(s, f, { mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = stake })
+        eq(c.penalty_amount, stake, 'the stake must survive the clamp')
+        return c
+    end
+
+    it('names the stake, taken whole from one account', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = staked(s, f, 2000)
+        local money = Env.players[3].PlayerData.money
+        money.bank, money.cash = 1500, 1500
+        local reply = call('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 2000 })
+        falsy(reply.ok)
+        eq(reply.err, CH.ERR.INSUFFICIENT)
+        eq(reply.data and reply.data.part, 'stake')
+        eq(reply.data.need, 2000)
+        eq(reply.data.account, 'bank_or_cash')
+    end)
+
+    it('names the anonymity fee and its account when that is what is short', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Anonymity.HitmanFee = 1000
+        Config.Anonymity.FeeAccount = 'bank'
+        local c = staked(s, f, 2000)
+        local money = Env.players[3].PlayerData.money
+        money.bank, money.cash = 500, 5000
+        local reply = call('accept', 3, { id = c.id, anonymous = true, penaltyAmount = 2000 })
+        eq(reply.err, CH.ERR.INSUFFICIENT)
+        eq(reply.data and reply.data.part, 'fee')
+        eq(reply.data.need, 1000)
+        eq(reply.data.account, 'bank')
+    end)
+
+    it('names the buyout price', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = placed(s, f, { bailoutAmount = 15000 })
+        local price = s.storage.readContract(c.id).bailout_amount
+        truthy(price > 1, 'a buyout to be short of')
+        local money = Env.players[2].PlayerData.money
+        money.bank, money.cash = price - 1, price - 1
+        local reply = call('bailout', 2, { id = c.id })
+        eq(reply.err, CH.ERR.INSUFFICIENT)
+        eq(reply.data and reply.data.part, 'buyout')
+        eq(reply.data.need, price)
+        eq(reply.data.account, 'bank_or_cash')
+        eq(money.bank + money.cash, 2 * (price - 1), 'and nothing was taken')
+    end)
+
+    it('says how many contracts a hitman may hold', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Limits.MaxAcceptedPerHitman = 1
+        Env.addPlayer({ source = 11, citizenid = 'TGT00001', license = 'license:t1' })
+        local first = placed(s, f, { mode = CH.MODE.COMPETITIVE })
+        local second = placed(s, f, { targetCid = 'TGT00001', mode = CH.MODE.COMPETITIVE })
+        truthy(call('accept', 3, { id = first.id, anonymous = false, penaltyAmount = 0 }).ok)
+        Env.advance(30)
+        local reply = call('accept', 3, { id = second.id, anonymous = false, penaltyAmount = 0 })
+        eq(reply.err, CH.ERR.LIMIT_REACHED)
+        eq(reply.data and reply.data.max, 1)
+    end)
+
+    it('says how many contracts a client may have out', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Limits.MaxActiveContractsPerCreator = 1
+        Env.addPlayer({ source = 11, citizenid = 'TGT00001', license = 'license:t1' })
+        placed(s, f)
+        local none, err, refusal = s.contracts.create(f.creator, {
+            targetCid = 'TGT00001', reason = 'x', reward = { baseline = { cash = 1000 } },
+        })
+        falsy(none)
+        eq(err, CH.ERR.LIMIT_REACHED)
+        eq(refusal and refusal.max, 1, 'the create handler passes this on as the reply data')
+    end)
+end)

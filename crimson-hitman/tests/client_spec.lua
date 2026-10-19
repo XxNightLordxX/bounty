@@ -86,6 +86,20 @@ describe('the client on an ordinary phone', function()
         truthy(sent, 'the page must be told')
         eq(sent.type, 'push')
         eq(sent.reason, 'contract_taken')
+        eq(sent.ids, nil, 'a push that names none is passed on naming none')
+    end)
+
+    it('forwards the contracts a push names', function()
+        Env.reset()
+        Client.boot()
+        truthy(Client.fire('crimson-hitman:push', { reason = 'proposal', ids = { 'ct00000002', 7 } }))
+
+        local sent
+        for _, call in ipairs(Client.phone) do
+            if call.call == 'SendCustomAppMessage' then sent = call.message end
+        end
+        eq(sent and sent.ids and #sent.ids, 1, 'only the ids that are ids')
+        eq(sent.ids[1], 'ct00000002')
     end)
 
     it('raises a notification', function()

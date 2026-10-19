@@ -259,6 +259,7 @@ end
 --- a single coin moves (§13.1, §12.5).
 ---@return boolean ok
 ---@return string|nil err
+---@return table|nil refusal what the page is told beyond the code
 function Contracts.canCreate(actor, targetActor)
     if not targetActor then return false, CH.ERR.NOT_FOUND end
 
@@ -352,7 +353,10 @@ function Contracts.canCreate(actor, targetActor)
         end
     end
 
-    if byCreator >= Config.Limits.MaxActiveContractsPerCreator then return false, CH.ERR.LIMIT_REACHED end
+    -- With the number, so the page can say it rather than "too many".
+    if byCreator >= Config.Limits.MaxActiveContractsPerCreator then
+        return false, CH.ERR.LIMIT_REACHED, { max = Config.Limits.MaxActiveContractsPerCreator }
+    end
     if byTarget >= Config.Limits.MaxActiveContractsPerTarget then
         return false, CH.ERR.TARGET_HAS_ENOUGH
     end
@@ -689,8 +693,8 @@ Contracts.reasonFor = reasonFor
 
 function Contracts.create(actor, req)
     local targetActor = Identity.byCitizenId(req.targetCid)
-    local ok, err = Contracts.canCreate(actor, targetActor)
-    if not ok then return nil, err end
+    local ok, err, refusal = Contracts.canCreate(actor, targetActor)
+    if not ok then return nil, err, refusal end
 
     local reason, reasonErr = reasonFor(actor, req)
     if reasonErr then return nil, reasonErr end
@@ -857,12 +861,22 @@ local function stakeTimeRefusal(contract, shown)
     return nil
 end
 
+--- What an acceptance was short of, sent with insufficient_funds so the
+--- page names it (§14.18: "naming the shortfall"): which charge, how much,
+--- and from where. The stake's account is 'bank_or_cash' because it is
+--- taken whole from one or the other, never split between them.
+local function shortfall(part, need, account)
+    return { part = part, need = need, account = account }
+end
+
 --- Accept a contract. Conditional write: in exclusive mode the ACTIVE →
 --- ACCEPTED transition is what reserves it, so two hitmen racing produce
 --- exactly one winner (§14.34).
 ---@param opts table|nil { disclosed = n } the stake the page had on screen
 ---@return boolean ok
 ---@return string|nil err
+---@return table|nil refusal on insufficient_funds what was short, and on
+--- limit_reached the most a hitman may hold; on success, their hitman row
 local function acceptUnlocked(actor, contractId, anonymous, opts)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
@@ -966,7 +980,9 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     end
 
     local held = Storage.countHitmanContracts(actor.cid, LIVE_STATES)
-    if held >= Config.Limits.MaxAcceptedPerHitman then return false, CH.ERR.LIMIT_REACHED end
+    if held >= Config.Limits.MaxAcceptedPerHitman then
+        return false, CH.ERR.LIMIT_REACHED, { max = Config.Limits.MaxAcceptedPerHitman }
+    end
 
     local existing = Storage.readHitmen(contractId)
     local activeCount = 0
@@ -1036,12 +1052,14 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         cash = actor.player.Functions.GetMoney('cash') or 0,
     }
     if fee > 0 then
-        if (left[feeAccount] or 0) < fee then return false, CH.ERR.INSUFFICIENT end
+        if (left[feeAccount] or 0) < fee then
+            return false, CH.ERR.INSUFFICIENT, shortfall('fee', fee, feeAccount)
+        end
         left[feeAccount] = left[feeAccount] - fee
     end
     local stakeAccount = left.bank >= stake and 'bank' or 'cash'
     if stake > 0 and (left[stakeAccount] or 0) < stake then
-        return false, CH.ERR.INSUFFICIENT
+        return false, CH.ERR.INSUFFICIENT, shortfall('stake', stake, 'bank_or_cash')
     end
 
     local hitmanId = previous and previous.id
@@ -1073,6 +1091,9 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     local advanced = false
     -- The lines the stake went into, once the take has returned them.
     local stakeIds
+    -- What a refusal for money inside the awaits below was short of: the
+    -- balance that passed the check above moved before it was taken.
+    local short
 
     --- Take this acceptance back: the stake home, then the row as it was,
     --- then the reservation. In that order, so a crash part-way leaves a
@@ -1150,7 +1171,9 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
                 unwind('stake_failed')
                 -- A contract busy with another take is not the hitman being
                 -- short of money.
-                return false, takeErr == CH.ERR.LOCKED and CH.ERR.LOCKED or CH.ERR.INSUFFICIENT
+                if takeErr == CH.ERR.LOCKED then return false, CH.ERR.LOCKED end
+                short = shortfall('stake', stake, 'bank_or_cash')
+                return false, CH.ERR.INSUFFICIENT
             end
             Audit.financial('stake_taken', actor.cid, contractId, { amount = stake })
         end
@@ -1225,6 +1248,7 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         if fee > 0 and not Util.charge(actor.player, feeAccount, fee) then
             unwind('anonymity_fee_failed')
             Audit.rejected('anonymity_fee_failed', actor.cid, contractId, { amount = fee })
+            short = shortfall('fee', fee, feeAccount)
             return false, CH.ERR.INSUFFICIENT
         end
         return true, nil, state
@@ -1237,7 +1261,7 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         if not pcall(unwind, 'accept_error') then stuckJoins[contractId] = true end
         error(ok, 0)
     end
-    if not ok then return false, err end
+    if not ok then return false, err, short end
 
     -- Competitive: advanced only now, with this hitman's stake and row in
     -- place. A no-op when somebody else already advanced it.
@@ -1484,8 +1508,8 @@ function Contracts.abandon(actor, contractId)
     for _, row in ipairs(Storage.readHitmen(contractId) or {}) do
         if holds(row) and row.hitman_cid ~= actor.cid then others[#others + 1] = row.hitman_cid end
     end
-    Notify.push(after.creator_cid, 'abandoned')
-    for i = 1, #others do Notify.push(others[i], 'abandoned') end
+    Notify.push(after.creator_cid, 'abandoned', contractId)
+    for i = 1, #others do Notify.push(others[i], 'abandoned', contractId) end
     -- And the phone told: the client gained a stake, or their contract
     -- went back on the board, with nothing to say why.
     -- The stake read before the release: one the client is offline for is

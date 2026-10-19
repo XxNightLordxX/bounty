@@ -1013,20 +1013,28 @@ describe('app pushes', function()
         eq(#pushesTo(1), 1, 'and the client who paid')
     end)
 
-    it('carries no contract data at all', function()
+    it('carries no contract data but which contract', function()
+        -- The id alone, so the page re-reads that contract's proposals and
+        -- not every one; everything else is read through the projections.
         local s, f, c = seeded({ accept = false })
         Env.clientEvents = {}
         truthy(s.contracts.accept(f.hitman, c.id, false))
 
+        local seen = 0
         for _, event in ipairs(Env.clientEvents) do
             if event.name == 'crimson-hitman:push' then
+                seen = seen + 1
                 local payload = event.args[1] or {}
-                local keys = {}
-                for key in pairs(payload) do keys[#keys + 1] = key end
-                eq(#keys, 1, 'a push carries a reason and nothing else')
-                eq(keys[1], 'reason')
+                for key in pairs(payload) do
+                    truthy(key == 'reason' or key == 'ids',
+                        'a push carries a reason and which contracts, nothing else: ' .. key)
+                end
+                eq(type(payload.reason), 'string')
+                eq(#(payload.ids or {}), 1)
+                eq(payload.ids[1], c.id)
             end
         end
+        truthy(seen > 0, 'nothing was pushed to look at')
     end)
 
     it('holds a burst to one push per player', function()

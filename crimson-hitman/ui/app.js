@@ -821,7 +821,9 @@
       }
     });
 
-    var cancel = el('button', 'ghost', 'Cancel');
+    // "Close", not "Cancel": one of the choices this dismisses is "Cancel
+    // the contract", and the two sat a thumb apart with the same word.
+    var cancel = el('button', 'ghost', 'Close');
     cancel.onclick = closeDialog;
     if (annotated) {
       var cancelBlock = el('div', 'choice');
@@ -1468,6 +1470,8 @@
       // notice that is gone in seconds.
       var firstJob = howToFinish(contract);
       if (firstJob) { row.appendChild(firstJob); }
+      var held = exclusiveReminder(contract);
+      if (held) { row.appendChild(held); }
 
       // Opening a thread is a round trip that changes nothing on screen
       // until it lands, so the button read as dead and got tapped again.
@@ -1859,17 +1863,31 @@
      taken. A hitman first learned it from the board once it had barred
      them from the contract for good. Each window the server has switched
      off is left out, and with both off there is nothing to say. */
-  function exclusiveRule(contract) {
-    if (contract.mode !== 'exclusive') { return ''; }
+  function exclusiveWindows(contract) {
+    if (contract.mode !== 'exclusive') { return []; }
     var idle = Number(settings().exclusiveIdleMinutes) || 0;
     var attempt = Number(settings().exclusiveAttemptMinutes) || 0;
     var ways = [];
     if (idle > 0) { ways.push(durationText(idle) + ' without getting near the target'); }
     if (attempt > 0) { ways.push(durationText(attempt) + ' without making an attempt on them'); }
+    return ways;
+  }
+
+  function exclusiveRule(contract) {
+    var ways = exclusiveWindows(contract);
     if (!ways.length) { return ''; }
     return ' Exclusive: if you go ' + ways.join(', or ') + ', it goes back on the '
       + 'board and you cannot take it again'
       + (Number(contract.penaltyAmount) > 0 ? ' (your stake comes back)' : '') + '.';
+  }
+
+  /* The same rule, on the hitman's own card under Mine: where they look
+     while they work it, and an hour after the dialog that said it. */
+  function exclusiveReminder(contract) {
+    var ways = exclusiveWindows(contract);
+    if (!ways.length) { return null; }
+    return el('div', 'hint', 'Exclusive: go ' + ways.join(', or ')
+      + ', and it goes back on the board and is not yours to take again.');
   }
 
   function acceptContract(contract) {
@@ -1901,24 +1919,36 @@
             refresh();
           }
           // How much, and from where (§14.18: "naming the shortfall").
-          // Not which charge failed — it can be the fee alone — but both,
-          // and that the stake is never split between bank and cash.
+          // The server says which charge it was short for and the figure it
+          // asked; without that (an older server) both are named, since it
+          // can be the fee alone, and that the stake is never split between
+          // bank and cash.
+          var short = r.data || {};
           var stake = contract.penaltyAmount || 0;
           var fee = anonymous ? anonymityFee('hitman') : 0;
+          var from = feeAccount;
+          if (short.part === 'stake' && Number(short.need) > 0) { stake = Number(short.need); }
+          if (short.part === 'fee' && Number(short.need) > 0) {
+            fee = Number(short.need);
+            if (short.account === 'bank' || short.account === 'cash') { from = short.account; }
+          }
           if (r.err === 'insufficient_funds' && (stake > 0 || fee > 0)) {
-            return say(stake > 0
+            return say(stake > 0 && short.part !== 'fee'
               ? 'You need ' + money(stake) + ' in your bank or in your cash for the '
                 + 'stake \u2014 it is not split between them'
-                + (fee > 0 ? ', plus ' + money(fee) + ' in your ' + feeAccount
+                + (fee > 0 ? ', plus ' + money(fee) + ' in your ' + from
                   + ' for anonymity' : '') + '.'
-              : 'Anonymity costs ' + money(fee) + ' from your ' + feeAccount
+              : 'Anonymity costs ' + money(fee) + ' from your ' + from
                 + ', and it does not hold that much.');
           }
           // Holding as many as the server allows. The shared wording said
           // "too many", with no number and nothing to do about it.
           if (r.err === 'limit_reached') {
-            return say('You are already working as many contracts as this server '
-              + 'allows. Finish one under Mine before you take another.');
+            var most = Number(r.data && r.data.max);
+            return say('You are already working '
+              + (most > 0 ? most + ' contract' + (most === 1 ? '' : 's')
+                + ', the most this server allows' : 'as many contracts as this server allows')
+              + '. Finish one under Mine before you take another.');
           }
           return fail(r);
         }
@@ -1930,7 +1960,10 @@
         say(recorded ? 'Contract accepted, anonymously.'
           : anonymous ? 'Contract accepted under your name: the client already knows you on this one.'
           : 'Contract accepted.', 'ok');
-        refresh();
+        // Held until the refresh lands, not just the reply: the board still
+        // has the card as it was, and Accept came back live on it for one
+        // round trip, under the notice saying it was taken.
+        return refresh();
       });
       });
     }
@@ -2277,8 +2310,11 @@
           once('bailout:' + contract.id, function () {
             return post('bailout', { id: contract.id }).then(function (r) {
               if (!r.ok) {
+                // The figure the server asked for, when it says: the price
+                // can have been re-set under the dialog.
                 if (r.err === 'insufficient_funds') {
-                  return say('Your bank or your cash has to cover the full ' + amount
+                  var need = Number(r.data && r.data.need) > 0 ? money(r.data.need) : amount;
+                  return say('Your bank or your cash has to cover the full ' + need
                     + ' on its own \u2014 it is never split. Move it into one '
                     + 'account and try again.');
                 }
@@ -2292,7 +2328,9 @@
                 ? 'Paid. It closes in ' + (waited || 'a moment')
                   + '. You are still a target until then.'
                 : 'Paid. Contract closed.', 'ok');
-              refresh();
+              // Held until the card is read again, so Buy out does not come
+              // back live on a contract that is paid for.
+              return refresh();
             });
           });
         }, { yes: 'Pay ' + amount });
@@ -5248,8 +5286,11 @@
         // characters. "You are holding too many contracts" was said to a
         // client holding none.
         if (r.err === 'limit_reached') {
-          return say('You already have as many contracts out as this server '
-            + 'allows, counting the ones placed from your other characters. '
+          var most = Number(r.data && r.data.max);
+          return say('You already have '
+            + (most > 0 ? most + ' contract' + (most === 1 ? '' : 's')
+              + ' out, the most this server allows' : 'as many contracts out as this server allows')
+            + ', counting the ones placed from your other characters. '
             + 'Wait for one to close, or withdraw one nobody has taken yet '
             + 'under Mine.');
         }
@@ -5863,17 +5904,18 @@
     return function () { return loadSeq[section] === mine; };
   }
 
+  /* Returns a promise that settles once all three reads have landed, so an
+     action can hold its button until the screen shows what it did. */
   function refresh() {
     var boardIsCurrent = newestLoad('board');
-    post('list', { page: state.boardPage || 1 }).then(function (r) {
+    var board = post('list', { page: state.boardPage || 1 }).then(function (r) {
       if (!boardIsCurrent()) { return; }
       if (!loadResult('board', r)) { return; }
       // The board shrank under the page being looked at: back to its last.
       var pages = Number(r.data && r.data.pages) || 1;
       if ((state.boardPage || 1) > pages) {
         state.boardPage = pages;
-        refresh();
-        return;
+        return refresh();
       }
       // The Place form shows the server's settings, which come with the
       // board, and nothing else of it.
@@ -5885,7 +5927,7 @@
 
     var mineIsCurrent = newestLoad('mine');
     var mineAsked = loadSeq.mine;
-    post('mine', {}).then(function (r) {
+    var mine = post('mine', {}).then(function (r) {
       if (!mineIsCurrent()) { return; }
       var opening = !state.loaded.mine;
       if (!loadResult('mine', r)) { return; }
@@ -5913,12 +5955,13 @@
       });
     });
     var ledgerIsCurrent = newestLoad('ledger');
-    post('ledger', {}).then(function (r) {
+    var ledger = post('ledger', {}).then(function (r) {
       if (!ledgerIsCurrent()) { return; }
       if (!loadResult('ledger', r)) { return; }
       state.ledger = r.data;
       redrawOffPlace();
     });
+    return Promise.all([board, mine, ledger]);
   }
 
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
@@ -5996,8 +6039,20 @@
          time, on a feature that needs both parties to see it.
       
          Cleared here and nowhere else: a push is exactly the signal that
-         the cache is stale, and it is the only one. */
-      state.proposals = {};
+         the cache is stale, and it is the only one.
+
+         Only for the contracts the push names, when it names any. Every
+         push cleared them all, and with Mine open each one re-read every
+         card's proposals: three placed and three taken were nine reads
+         from the bucket the board, Mine and the ledger share. A push that
+         names none — from an older server, or one standing for a burst
+         where something named none — still clears everything. */
+      var named = data.ids && typeof data.ids === 'object' ? asList(data.ids) : [];
+      if (named.length) {
+        named.forEach(function (id) { delete state.proposals[id]; });
+      } else {
+        state.proposals = {};
+      }
 
       /* And an open thread is re-read.
       

@@ -25,7 +25,9 @@ local WAITING_CAP = 10
 --- contract does not become a burst of refreshes.
 local lastPush = {}
 
---- [cid] = the reason for a push held back by the floor, waiting to go.
+--- [cid] = the push held back by the floor, waiting to go: the reason it
+--- will carry, and the contracts the pushes it stands for were about.
+--- { reason = string, ids = { [contractId] = true }, all = boolean }
 local trailing = {}
 
 --- [cid] = os.time() before which that target's paranoid alert is not sent
@@ -93,16 +95,23 @@ end
 -- exponential storm — so nothing sending a push meant a creator watching
 -- their own contract never saw it get accepted.
 --
--- A push carries no contract data, only a reason. The app re-reads through
--- the normal projections, so a push can never become a channel that leaks
--- what a projection would have withheld.
+-- A push carries no contract data, only a reason and which contracts it is
+-- about. The app re-reads through the normal projections, so a push can
+-- never become a channel that leaks what a projection would have withheld.
+--
+-- The ids are so the page re-reads only those contracts' proposals: every
+-- push re-read every one, three placed and three taken were nine reads from
+-- the bucket the board, Mine and the ledger share, and a few acceptances in
+-- a row ran an open Mine tab into its own rate limit. An id goes only to a
+-- player who already has it — the client who placed the contract, and a
+-- hitman who took it — and never to the target (Notify.pushParties), who is
+-- not told which contract, or that one exists, by anything but the
+-- projection they are shown.
 
-
---- Nudge one player's open app.
----@param cid string
----@param reason string what changed, for the app's own logging
----@return boolean sent
-function Notify.push(cid, reason)
+--- Send it now, or hold it behind the floor.
+---@param ids table<string, boolean> the contracts it is about
+---@param all boolean about something that names no contract
+local function deliver(cid, reason, ids, all)
     if not cid or not Config.Notifications.PushEnabled then return false end
 
     local now = os.time()
@@ -116,21 +125,28 @@ function Notify.push(cid, reason)
         -- happened to change. One push goes once the floor has passed, so a
         -- burst still costs one refresh after the first, and the last word
         -- is always seen.
-        if not trailing[cid] then
+        local held = trailing[cid]
+        if not held then
+            held = { reason = reason, ids = {}, all = false }
+            trailing[cid] = held
             SetTimeout(math.max(1, floor - (now - last)) * 1000, function()
-                local held = trailing[cid]
+                local due = trailing[cid]
                 trailing[cid] = nil
                 -- Due by now: the timer waits out the rest of the floor.
-                if held then Notify.push(cid, held) end
+                if due then deliver(cid, due.reason, due.ids, due.all) end
             end)
-        end
         -- A message re-reads only the thread on the page, and anything else
         -- re-reads the thread as well. So a message held behind an
         -- acceptance must not take its place: the creator's card never
         -- showed the new operative.
-        if not (reason == 'message' and trailing[cid] and trailing[cid] ~= 'message') then
-            trailing[cid] = reason
+        elseif not (reason == 'message' and held.reason ~= 'message') then
+            held.reason = reason
         end
+        -- One push stands for the whole burst, so it is about every
+        -- contract any of them was about, and about everything once any of
+        -- them named none.
+        for id in pairs(ids) do held.ids[id] = true end
+        held.all = held.all or all
         return false
     end
 
@@ -138,8 +154,35 @@ function Notify.push(cid, reason)
     if not actor then return false end
 
     lastPush[cid] = now
-    TriggerClientEvent('crimson-hitman:push', actor.source, { reason = reason })
+    local payload = { reason = reason }
+    -- No ids is "everything": the page re-reads every contract's
+    -- proposals, as it did before pushes named any.
+    if not all then
+        local list = {}
+        for id in pairs(ids) do list[#list + 1] = id end
+        if #list > 0 then
+            table.sort(list)
+            payload.ids = list
+        end
+    end
+    TriggerClientEvent('crimson-hitman:push', actor.source, payload)
     return true
+end
+
+--- Nudge one player's open app.
+---
+--- contractId is the contract it is about, and only for a player who
+--- already knows that contract's id. Left out, the page re-reads every
+--- contract; a message names none and needs none, since the page re-reads
+--- only the open thread for it.
+---@param cid string
+---@param reason string what changed, for the app's own logging
+---@param contractId string|nil
+---@return boolean sent
+function Notify.push(cid, reason, contractId)
+    local ids = {}
+    if contractId then ids[contractId] = true end
+    return deliver(cid, reason, ids, contractId == nil and reason ~= 'message')
 end
 
 --- Nudge every party to a contract. Used on the four transitions that change
@@ -151,15 +194,18 @@ function Notify.pushParties(contract, hitmanCids, reason)
     if not contract then return 0 end
 
     local seen, sent = {}, 0
-    local function nudge(cid)
+    local function nudge(cid, contractId)
         if not cid or seen[cid] then return end
         seen[cid] = true
-        if Notify.push(cid, reason) then sent = sent + 1 end
+        if Notify.push(cid, reason, contractId) then sent = sent + 1 end
     end
 
-    nudge(contract.creator_cid)
+    -- The target's push names no contract. Their page re-reads everything,
+    -- as every push used to make it, and learns nothing from the push that
+    -- the projection it reads does not already show them.
+    nudge(contract.creator_cid, contract.id)
     nudge(contract.target_cid)
-    for i = 1, #(hitmanCids or {}) do nudge(hitmanCids[i]) end
+    for i = 1, #(hitmanCids or {}) do nudge(hitmanCids[i], contract.id) end
 
     return sent
 end
@@ -232,8 +278,8 @@ function Notify.contractAccepted(contract, hitmanRecord, activeHitmen)
     -- Mine tab has a contract in it that was not there a moment ago. The
     -- target is deliberately not pushed: they are not told a contract exists
     -- unless the paranoid alert or an advisory tells them.
-    Notify.push(contract.creator_cid, 'accepted')
-    Notify.push(hitmanRecord.hitman_cid, 'accepted')
+    Notify.push(contract.creator_cid, 'accepted', contract.id)
+    Notify.push(hitmanRecord.hitman_cid, 'accepted', contract.id)
 end
 
 --- Tell the creator their contract was fulfilled.

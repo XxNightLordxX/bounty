@@ -239,7 +239,10 @@ local function handler(name, action, fn)
         -- never used for anything else.
         local rid = tonumber(payload.__rid)
 
-        local ok, result, resultErr = pcall(fn, actor, payload)
+        -- A refusal may say more than its code: what the player was short of
+        -- and how much, or the most the server allows. Returned third, as
+        -- `false, err, data`, and only by the handlers that build it.
+        local ok, result, resultErr, refusalData = pcall(fn, actor, payload)
         if not ok then
             deps.audit.rejected('error_' .. name, actor.cid, nil, { error = tostring(result) })
 
@@ -266,12 +269,14 @@ local function handler(name, action, fn)
         -- to slow down.
         if not succeeded and action then deps.ratelimit.refund(actor, action) end
 
-        return App.reply(src, name, succeeded, resultErr, result, rid)
+        return App.reply(src, name, succeeded, resultErr,
+            succeeded and result or refusalData, rid)
     end)
 end
 
 --- Send a result back to one client. Payloads are built by the projection
---- module, so nothing leaks here that the viewer may not see.
+--- module, so nothing leaks here that the viewer may not see. A refusal's
+--- data is built by its handler from the asker's own figures alone.
 function App.reply(src, name, ok, err, data, rid)
     TriggerClientEvent('crimson-hitman:result', src, {
         event = name, ok = ok and true or false, err = err, data = data, rid = rid,
@@ -562,7 +567,7 @@ function App.register()
             return false, CH.ERR.NOT_FOUND
         end
 
-        local contract, err = deps.contracts.create(actor, {
+        local contract, err, refusal = deps.contracts.create(actor, {
             targetCid     = targetCid,
             reason        = payload.reason,
             reasonPreset  = payload.reasonPreset,
@@ -573,7 +578,7 @@ function App.register()
             penaltyAmount = payload.penaltyAmount,
             anonymous     = payload.anonymous,
         })
-        if not contract then return false, err end
+        if not contract then return false, err, refusal end
         return deps.projection.contract(contract, actor.cid)
     end)
 
@@ -586,10 +591,13 @@ function App.register()
             return false, CH.ERR.TERMS_CHANGED
         end
 
-        local ok, err = deps.contracts.accept(actor, payload.id, payload.anonymous,
+        -- The third is what a refusal says beyond its code: what the hitman
+        -- was short of, or how many they may hold. Never on success, where
+        -- it is their hitman row.
+        local ok, err, refusal = deps.contracts.accept(actor, payload.id, payload.anonymous,
             { checkDisclosure = true, disclosed = payload.penaltyAmount,
               shownDeadline = tonumber(payload.deadline) })
-        if not ok then return false, err end
+        if not ok then return false, err, refusal end
         local contract = deps.storage.readContract(Util.toId(payload.id))
         return deps.projection.contract(contract, actor.cid)
     end)
@@ -757,12 +765,14 @@ function App.register()
     -- Target counter-play ----------------------------------------------
 
     handler('bailout', 'bailout', function(actor, payload)
-        local ok, err, queued = deps.bailout.buy(actor, payload.id)
-        if not ok then return false, err end
+        -- The third is whether it was queued, or on a refusal what the
+        -- target was short of.
+        local ok, err, third = deps.bailout.buy(actor, payload.id)
+        if not ok then return false, err, third end
         -- Whether it closed now or waits on a hitman, so the page can say
         -- which: "closed" while somebody can still finish it is the target
         -- walking into the open thinking they are safe.
-        return { queued = queued == true }
+        return { queued = third == true }
     end)
 
     handler('informant', 'informant', function(actor, payload)
