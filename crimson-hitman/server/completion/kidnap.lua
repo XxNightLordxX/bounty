@@ -58,8 +58,9 @@ function Kidnap.isCoerced(hitmanSource, targetSource)
     end
 
     -- Optional hook for a server's own rope / ziptie resource.
+    -- A resource name; GetResourceState takes nothing else.
     local provider = Config.Kidnap.RestraintProvider
-    if provider and GetResourceState(provider) == 'started' then
+    if type(provider) == 'string' and GetResourceState(provider) == 'started' then
         local ok, restrained = pcall(function()
             return exports[provider]:IsRestrained(targetSource)
         end)

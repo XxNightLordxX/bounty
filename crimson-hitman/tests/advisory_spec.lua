@@ -24,6 +24,14 @@ local function countNotifications(match)
     return n
 end
 
+local function countParanoid()
+    local n = 0
+    for _, note in ipairs(Natives.calls.notifications) do
+        if tostring(note.content):find('eyes on you') then n = n + 1 end
+    end
+    return n
+end
+
 describe('threat advisory', function()
     it('does not fire for an ordinary civilian target', function()
         local s, f = seeded()
@@ -129,16 +137,41 @@ describe('threat advisory', function()
             'count escalates with each acceptance')
     end)
 
+    it('tells officers about a new operative on a contract another walked away from', function()
+        -- Keyed by the running count, B taking it up after A left was a
+        -- count of one, already announced, and nobody heard of B at all.
+        local s, f = seeded(leoJob('trooper'))
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 1000 } },
+        })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        Natives.calls.notifications = {}
+
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd' })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        eq(countNotifications('THREAT ADVISORY — ACTIVE'), 3, 'two officers plus the target')
+    end)
+
     it('sends the target a paranoid alert only when they are not protected', function()
         local s, f = seeded()
         s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
-        local found = false
-        for _, note in ipairs(Natives.calls.notifications) do
-            if tostring(note.content):find('eyes on you') then found = true end
-        end
-        truthy(found, 'civilian target gets the paranoid alert')
+        eq(countParanoid(), 0, 'not at the second it was placed, which dates the client')
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        eq(countParanoid(), 1, 'civilian target gets the paranoid alert')
+
+        -- A second contract inside the cooldown is not a second alert, so
+        -- the alerts do not count the people paying.
+        Env.addPlayer({ source = 5, citizenid = 'CREATOR2', license = 'license:eee',
+            cash = 100000 })
+        truthy(s.contracts.create(s.identity.resolve(5), {
+            targetCid = 'TARGET01', reason = 'y', reward = { baseline = { cash = 1000 } },
+        }))
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        eq(countParanoid(), 1, 'one alert per cooldown')
     end)
 
     it('refuses the contract entirely when protected targets are disallowed', function()
@@ -241,6 +274,7 @@ describe('with the advisory switched off', function()
         s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         local found = false
         for _, note in ipairs(Natives.calls.notifications) do
             if tostring(note.content):find('eyes on you') then found = true end
@@ -408,6 +442,7 @@ describe('an advisory switched off at one stage', function()
 
     it('gives the officer the paranoid alert when the posting bulletin is off', function()
         placed(false)
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         local found = false
         for _, note in ipairs(Natives.calls.notifications) do
             if tostring(note.content):find('eyes on you') then found = true end

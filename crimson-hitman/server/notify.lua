@@ -28,11 +28,16 @@ local lastPush = {}
 --- [cid] = the reason for a push held back by the floor, waiting to go.
 local trailing = {}
 
+--- [cid] = os.time() before which that target's paranoid alert is not sent
+--- again (Config.Notifications.ParanoidCooldownMinutes).
+local paranoidUntil = {}
+
 function Notify.init(deps)
     Identity = deps.identity
     budgets, advisorySent = {}, {}
     lastPush, trailing = {}, {}
     waiting = {}
+    paranoidUntil = {}
 end
 
 local function withinBudget(cid)
@@ -167,13 +172,40 @@ function Notify.contractCreated(contract, targetActor)
     -- An officer is told by the posting bulletin instead, unless none goes.
     if Config.Notifications.ParanoidAlert
         and (not contract.target_protected or not Notify.advises('posted')) then
-        Notify.toCitizen(contract.target_cid, 'Unsettling',
-            'You feel eyes on you. A price has been put on your head.')
+        Notify.paranoid(contract.target_cid)
     end
 
     if contract.target_protected then
         Notify.advisory(contract, 'posted', targetActor)
     end
+end
+
+--- The target's alert, some minutes after the placement and once per
+--- cooldown (§14.40).
+---
+--- It went the second the contract was placed, so the one person never
+--- told who the client is, and the most eager to find out, learned to the
+--- second when they were online and acting. Everything else dates a
+--- placement only roughly (Util.roundClock). And it went once per
+--- contract, so the count of alerts was the count of people paying.
+---@param targetCid string
+function Notify.paranoid(targetCid)
+    local now = os.time()
+    if (paranoidUntil[targetCid] or 0) > now then return end
+    paranoidUntil[targetCid] = now
+        + math.max(0, (tonumber(Config.Notifications.ParanoidCooldownMinutes) or 0) * 60)
+
+    local jitter = type(Config.Notifications.ParanoidAlertJitter) == 'table'
+        and Config.Notifications.ParanoidAlertJitter or {}
+    local low = math.max(0, math.floor(tonumber(jitter.min) or 0))
+    local high = math.max(low, math.floor(tonumber(jitter.max) or 0))
+
+    local function send()
+        Notify.toCitizen(targetCid, 'Unsettling',
+            'You feel eyes on you. A price has been put on your head.')
+    end
+    if high <= 0 then return send() end
+    SetTimeout(math.random(low, high) * 1000, send)
 end
 
 function Notify.contractAccepted(contract, hitmanRecord, activeHitmen)
@@ -186,7 +218,7 @@ function Notify.contractAccepted(contract, hitmanRecord, activeHitmen)
     -- enforcement can judge the scale of the threat and not just its
     -- existence. The per-contract hitman cap bounds the total (§7.5).
     if contract.target_protected then
-        Notify.advisory(contract, 'accepted', activeHitmen)
+        Notify.advisory(contract, 'accepted', activeHitmen, hitmanRecord.hitman_cid)
     end
 
     -- The creator's own card now shows one more operative, and the hitman's
@@ -448,12 +480,18 @@ end
 --- Whether officers are told at this stage; see Util.advises.
 Notify.advises = Util.advises
 
-function Notify.advisory(contract, stage, activeHitmen)
+---@param operative string|nil the hitman whose acceptance this is
+function Notify.advisory(contract, stage, activeHitmen, operative)
     if not Notify.advises(stage) then return end
 
-    -- One advisory per contract per stage; acceptances are keyed by count so
-    -- each new operative raises exactly one bulletin.
-    local key = contract.id .. ':' .. stage .. ':' .. tostring(activeHitmen or 0)
+    -- One advisory per contract per stage, and on acceptance one per
+    -- operative. Keyed by the running count, a new operative taking up a
+    -- contract another had walked away from brought the count back to one
+    -- already announced, and no officer, not the officer named, and not the
+    -- MDT heard that somebody new was hunting them. One who walks away and
+    -- comes back is not news twice.
+    local key = contract.id .. ':' .. stage .. ':'
+        .. tostring(operative or activeHitmen or 0)
     if advisorySent[key] then return end
     advisorySent[key] = true
 
@@ -518,6 +556,9 @@ function Notify.clearPlayer(cid)
     budgets[cid] = nil
     lastPush[cid] = nil
     trailing[cid] = nil
+    -- A cooldown still running is kept: relogging must not buy a second
+    -- alert, and with it a count.
+    if (paranoidUntil[cid] or 0) <= os.time() then paranoidUntil[cid] = nil end
 end
 
 function Notify.clearContract(contractId, contract)

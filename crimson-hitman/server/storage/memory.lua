@@ -425,8 +425,24 @@ function Memory.readOpenAmendments(contractId)
     return out
 end
 
+--- Drop a thread's oldest messages past Config.Relay.MaxMessagesPerThread,
+--- as the other backends do.
+local function pruneThread(m)
+    local keep = tonumber(Config.Relay.MaxMessagesPerThread) or 0
+    if keep <= 0 then return end
+    local seen = 0
+    for i = #db.messages, 1, -1 do
+        local row = db.messages[i]
+        if row.contract_id == m.contract_id and row.thread_id == m.thread_id then
+            seen = seen + 1
+            if seen > keep then table.remove(db.messages, i) end
+        end
+    end
+end
+
 function Memory.writeMessage(m)
     db.messages[#db.messages + 1] = m
+    pruneThread(m)
     return true
 end
 function Memory.readMessages(contractId, threadId)

@@ -52,7 +52,8 @@ describe('storage conformance', function()
     it('round-trips every field of a contract in every backend', function()
         local full = {
             id = 'ctfull01', creator_cid = 'CREATOR1', creator_account = 'license:aaa',
-            creator_name = 'Vic Marlowe', target_cid = 'TARGET01', target_name = 'Dana Reyes',
+            creator_name = 'Vic Marlowe', target_cid = 'TARGET01', target_account = 'license:bbb',
+            target_name = 'Dana Reyes',
             target_protected = true, target_job = 'trooper', reason = 'Unpaid debt',
             mode = CH.MODE.COMPETITIVE, state = CH.STATE.ACTIVE, anon_creator = true,
             bonus_percent = 50, bailout_amount = 15000, penalty_amount = 10000,
@@ -83,6 +84,30 @@ describe('storage conformance', function()
                 end
             end
         end
+    end)
+
+    --- A thread was never trimmed, and every read sends the whole of it to
+    --- a phone: a message a second for a contract's life was tens of
+    --- megabytes on every read, and the json shard rewrote all of it on
+    --- every message.
+    it('keeps only the newest messages of a thread in every backend', function()
+        withConfig({ { Config.Relay, 'MaxMessagesPerThread', 3 } }, function()
+            for _, b in ipairs(backends()) do
+                for i = 1, 5 do
+                    b.store.writeMessage({ contract_id = 'ct1', thread_id = 't1',
+                        from_cid = 'A', from_alias = 'Client', body = 'm' .. i, sent_at = i })
+                end
+                b.store.writeMessage({ contract_id = 'ct1', thread_id = 't2',
+                    from_cid = 'B', from_alias = 'Client', body = 'other', sent_at = 6 })
+
+                local rows = b.store.readMessages('ct1', 't1')
+                eq(#rows, 3, b.name .. ': the thread kept every message')
+                eq(rows[1].body, 'm3', b.name .. ': the oldest go first')
+                eq(rows[3].body, 'm5', b.name .. ': the newest stay, in order')
+                eq(#b.store.readMessages('ct1', 't2'), 1,
+                    b.name .. ': another thread is not touched')
+            end
+        end)
     end)
 
     it('round-trips a contract in every backend', function()

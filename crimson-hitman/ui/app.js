@@ -1718,20 +1718,15 @@
     var waits = settings().relistWaits || {};
     var any = Number(waits.anyMinutes) || 0;
     var same = Number(waits.sameTargetMinutes) || 0;
-    var everyone = Number(waits.everyoneMinutes) || 0;
     var name = contract.targetName || 'them';
     var mine = [];
     if (any > 0) { mine.push('any new contract for ' + durationText(any)); }
     if (same > 0) { mine.push('one on ' + name + ' for ' + durationText(same)); }
-    var parts = [];
-    if (mine.length) {
-      parts.push('After this you cannot place ' + mine.join(', or '));
-    }
-    if (everyone > 0) {
-      parts.push((parts.length ? 'and nobody else' : 'After this nobody')
-        + ' can list ' + (parts.length ? 'them' : name) + ' for ' + durationText(everyone));
-    }
-    return parts.length ? parts.join(', ') + '.' : null;
+    /* Only the creator's own: withdrawing one nobody took up starts no
+       wait on the target for anybody else. */
+    return mine.length
+      ? 'After this you cannot place ' + mine.join(', or ') + '.'
+      : null;
   }
 
   function cancelContract(contract) {

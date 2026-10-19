@@ -1077,6 +1077,19 @@ end
 
 function JsonStore.writeMessage(m)
     db.messages[#db.messages + 1] = m
+    -- Pruned to the newest Config.Relay.MaxMessagesPerThread, so the
+    -- contract's file — rewritten whole on every message — stays small.
+    local keep = tonumber(Config.Relay.MaxMessagesPerThread) or 0
+    if keep > 0 then
+        local seen = 0
+        for i = #db.messages, 1, -1 do
+            local row = db.messages[i]
+            if row.contract_id == m.contract_id and row.thread_id == m.thread_id then
+                seen = seen + 1
+                if seen > keep then table.remove(db.messages, i) end
+            end
+        end
+    end
     touch(false, m.contract_id)
     return true
 end

@@ -147,6 +147,8 @@ local DEFAULTS = {
     --- on a phone that cannot mask was dialled from their own number.
     Relay = {
         RequireMaskingForAnonymous = true,
+        -- Absent, a thread kept every message ever sent to it.
+        MaxMessagesPerThread = 100,
     },
     --- Owed deliveries tried per pass. Read inside the login timer, where a
     --- nil is a comparison that throws with nobody to see it.
@@ -168,6 +170,9 @@ local DEFAULTS = {
         MaxPerRecipientPerMinute = 6,
         MaxPerRecipientPerHour = 40,
         PushEnabled = true,
+        -- Absent, the alert went the second the contract was placed.
+        ParanoidAlertJitter = { min = 60, max = 600 },
+        ParanoidCooldownMinutes = 30,
     },
     --- Read on the create path, where a nil cooldown is a comparison
     --- against nil rather than no cooldown.
@@ -575,6 +580,24 @@ local function validateConfig()
         Config.Immunity.PlaytimeProvider = nil
     end
 
+    -- The restraint provider is a resource name, which is what the coercion
+    -- check hands GetResourceState and exports[]. The startup report read it
+    -- as a table, the shape the playtime provider takes: written as the
+    -- config comment says it was never reported, and written as a table it
+    -- reached GetResourceState, which takes a string, on every coercion
+    -- check. A table carrying a resource is taken as its name; anything else
+    -- is dropped with a word.
+    local restraint = Config.Kidnap.RestraintProvider
+    if type(restraint) == 'table' and type(restraint.resource) == 'string'
+        and restraint.resource ~= '' then
+        Config.Kidnap.RestraintProvider = restraint.resource
+    elseif restraint ~= nil and not (type(restraint) == 'string' and restraint ~= '') then
+        warn[#warn + 1] = ('Kidnap.RestraintProvider has to be the name of a resource '
+            .. 'exposing IsRestrained(playerId); it is %s, so it is ignored')
+            :format(type(restraint) == 'string' and 'empty' or ('a ' .. type(restraint)))
+        Config.Kidnap.RestraintProvider = nil
+    end
+
     if (tonumber(Config.Immunity.MinTargetPlaytimeHours) or 0) > 0
         and not (Config.Immunity.PlaytimeProvider and Config.Immunity.PlaytimeProvider.resource) then
         warn[#warn + 1] = ('Immunity.MinTargetPlaytimeHours is %d but no PlaytimeProvider is set; ' ..
@@ -654,8 +677,8 @@ local function optionalIntegrations()
         add(provider.resource, 'true-death checks for eliminations', false)
     end
 
-    add(Config.Kidnap.RestraintProvider and Config.Kidnap.RestraintProvider.resource,
-        'custom restraint detection for handovers')
+    -- A resource name (validateConfig takes a table down to one).
+    add(Config.Kidnap.RestraintProvider, 'custom restraint detection for handovers')
     add(Config.Immunity.PlaytimeProvider and Config.Immunity.PlaytimeProvider.resource,
         'playtime for the new-player immunity rule')
 

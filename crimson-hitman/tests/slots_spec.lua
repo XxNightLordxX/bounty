@@ -246,6 +246,44 @@ describe('escrow lines always carry a valid payout slot', function()
         end
     end)
 
+    it('hands an anonymous client\'s weapon over without the client\'s name on it', function()
+        -- ox_inventory keeps the owner's name in `registered`, and the
+        -- hitman's game holds the metadata of everything they carry.
+        local function placed()
+            local s = newStack()
+            local f = fixture(s, { creatorInventory = {
+                { name = 'WEAPON_PISTOL', count = 1, slot = 3,
+                  metadata = { serial = 'ABC123', ammo = 12, registered = 'Vic Marlowe' } },
+            } })
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', anonymous = true,
+                reward = { baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } },
+            })
+            truthy(c)
+            return s, f, c
+        end
+        local function pistolOf(src)
+            for _, slot in ipairs(Env.players[src]._inventory) do
+                if slot.name == 'WEAPON_PISTOL' then return slot end
+            end
+        end
+
+        local s, f, c = placed()
+        s.contracts.accept(f.hitman, c.id, false)
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        local got = pistolOf(3)
+        truthy(got, 'the hitman must receive the weapon')
+        eq(got.metadata.serial, 'ABC123', 'with its serial intact')
+        truthy(got.metadata.registered ~= 'Vic Marlowe',
+            'the hitman holds a weapon registered to the anonymous client')
+
+        -- Withdrawn instead: back to the client exactly as it was.
+        s, f, c = placed()
+        truthy(s.contracts.cancel(f.creator, c.id))
+        local back = pistolOf(1)
+        eq(back and back.metadata.registered, 'Vic Marlowe', 'a refund is the weapon as it was')
+    end)
+
     it('never strands a line on any completed multi-slot contract', function()
         local s = newStack()
         local f = fixture(s)

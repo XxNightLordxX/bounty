@@ -203,7 +203,11 @@ function Comms.read(actor, contractId, threadHandle)
 
     local rows = Storage.readMessages(contractId, ctx.threadId)
     local out = {}
-    for i = 1, #rows do
+    -- The newest only, whatever the store holds: a thread written before
+    -- the stores were bounded is pruned only by its next message.
+    local keep = tonumber(Config.Relay.MaxMessagesPerThread) or 0
+    local first = (keep > 0 and #rows > keep) and (#rows - keep + 1) or 1
+    for i = first, #rows do
         out[#out + 1] = {
             alias = rows[i].from_alias,
             body  = rows[i].body,

@@ -974,6 +974,30 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
     return result.settled > 0, result
 end
 
+--- The metadata a weapon is handed over with.
+---
+--- ox_inventory writes the owner's character name into a weapon's
+--- `registered`, and keeps it wherever the weapon goes. A weapon an
+--- anonymous client put up reached the hitman registered to the client by
+--- name, in inventory data their own game holds. Paid to anyone but the
+--- client it goes unregistered — false, which ox_inventory leaves as it is
+--- rather than writing the new holder's name in. The serial and everything
+--- else go with it unchanged, and the stored snapshot is not touched, so a
+--- refund is the weapon exactly as it was taken. A contract that can no
+--- longer be read is treated as anonymous.
+---@return table|nil metadata
+local function handedOver(recipientCid, line)
+    local meta = line.metadata
+    if type(meta) ~= 'table' or type(meta.registered) ~= 'string' then return meta end
+    local contract = line.contract_id and Storage.readContract(line.contract_id)
+    if contract and (not contract.anon_creator or contract.creator_cid == recipientCid) then
+        return meta
+    end
+    local copy = Util.copy(meta)
+    copy.registered = false
+    return copy
+end
+
 --- Hand a single escrow line to a player. Returns false when it cannot be
 --- delivered right now — never destroys the property to force success.
 ---@return boolean
@@ -1013,8 +1037,10 @@ function Escrow.deliver(recipientCid, line)
     elseif line.source == CH.SOURCE.WEAPON then
         if not exports.ox_inventory:CanCarryItem(src, line.item, 1) then return false end
         -- The snapshot goes back exactly as it was taken: serial, attachments
-        -- and durability all restored (§9.4).
-        return exports.ox_inventory:AddItem(src, line.item, 1, line.metadata) and true or false
+        -- and durability all restored (§9.4). Bar the name of an anonymous
+        -- client, to anybody else (handedOver).
+        return exports.ox_inventory:AddItem(src, line.item, 1, handedOver(recipientCid, line))
+            and true or false
     end
 
     return false

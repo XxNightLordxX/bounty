@@ -1735,6 +1735,7 @@ do
         ['crimson_contracts.creator_account'] = 'the account behind the creator, fixed with them',
         ['crimson_contracts.creator_name']    = 'their name as it was when they placed it',
         ['crimson_contracts.target_cid']      = 'who it names; re-targeting is a new contract',
+        ['crimson_contracts.target_account']  = 'the account behind the target, read when it was placed',
         ['crimson_contracts.target_name']     = 'their name as it was when it was placed',
         ['crimson_contracts.target_protected'] = 'judged once, at creation, against the rules then',
         ['crimson_contracts.target_job']      = 'the same: what they were doing when it was placed',

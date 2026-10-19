@@ -236,6 +236,20 @@ end
 -- Eligibility
 --------------------------------------------------------------------------
 
+--- Whether anybody ever took a contract up: holds it, or walked away from
+--- it or was released from it. An acceptance that never completed
+--- ('refused', or a 'joining' left behind) did not.
+---@param contractId string
+---@return boolean
+local function everTakenUp(contractId)
+    local hitmen = Storage.readHitmen(contractId) or {}
+    for i = 1, #hitmen do
+        local state = hitmen[i].state
+        if state ~= 'refused' and state ~= 'joining' then return true end
+    end
+    return false
+end
+
 --- All the reasons a contract may not be created, checked server-side before
 --- a single coin moves (§13.1, §12.5).
 ---@return boolean ok
@@ -300,7 +314,14 @@ function Contracts.canCreate(actor, targetActor)
                 local cooldown = (c.state == CH.STATE.BAILED_OUT)
                     and Config.Immunity.AfterBailoutSeconds
                     or Config.Limits.TargetCooldownAfterResolveSeconds
-                if since < cooldown then
+                -- Except a withdrawal nobody ever took up, which cost the
+                -- target nothing to earn a breather for. It started one for
+                -- everybody all the same, so a friend could shield them from
+                -- every contract with a $1 one withdrawn at once, free and
+                -- refunded, as often as they liked. The creator who withdrew
+                -- still waits on this target (below), and on any (§12.4).
+                if since < cooldown and not (c.state == CH.STATE.CANCELLED
+                    and not everTakenUp(c.id)) then
                     return false, CH.ERR.TARGET_RECENTLY_ON
                 end
                 -- Its own code. This is a policy wait of hours, and sharing
@@ -668,6 +689,11 @@ function Contracts.create(actor, req)
         creator_account = actor.account,
         creator_name  = actor.name,
         target_cid    = targetActor.cid,
+        -- The account behind the target, while they are here to read it
+        -- from. Their other characters may not take this contract, and by
+        -- the time one asks, this one is offline: qbx_core lets one
+        -- character per licence in at once.
+        target_account = targetActor.account,
         target_name   = targetActor.name,
         target_protected = protectingJob ~= nil,
         -- The job that makes them an officer, where one does: the advisory
@@ -849,8 +875,16 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         if Identity.sameAccount(contract.creator_account, actor.account) then
             return false, CH.ERR.SAME_ACCOUNT
         end
-        local targetActor = Identity.byCitizenId(contract.target_cid)
-        if targetActor and Identity.sameAccount(targetActor.account, actor.account) then
+        -- As stored when it was placed. Looked up online only, it was
+        -- never found: the character asking is the one online on that
+        -- licence, so the target's own other character took the contract.
+        -- The lookup stays for a contract placed before it was stored.
+        local targetAccount = contract.target_account
+        if not targetAccount then
+            local targetActor = Identity.byCitizenId(contract.target_cid)
+            targetAccount = targetActor and targetActor.account
+        end
+        if Identity.sameAccount(targetAccount, actor.account) then
             return false, CH.ERR.SAME_ACCOUNT
         end
     end

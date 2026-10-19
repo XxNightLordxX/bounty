@@ -253,7 +253,7 @@ function Bridges.install(modules)
         scheduleReady(src)
     end)
 
-    AddEventHandler('qbx_core:server:playerLoaded', function(player)
+    local function loaded(player)
         -- Type-checked, not merely truth-checked. `player and
         -- player.PlayerData` throws for a number or a boolean, and again one
         -- level down for a PlayerData that is not a table — and an event
@@ -265,7 +265,19 @@ function Bridges.install(modules)
         remember(src)
         Bridges.tellAccess(src)
         scheduleReady(src)
-    end)
+    end
+
+    -- The trusted login: a local event, so no client can raise it. qbx_core
+    -- announces a character it has loaded as QBCore:Server:PlayerLoaded,
+    -- with the player object, at the end of CreatePlayer. This listened
+    -- only for qbx_core:server:playerLoaded, which qbx_core has never
+    -- fired, so on a stock server no session was ever watched beginning:
+    -- the new-player session floor never applied, and a contract could be
+    -- placed and paid on somebody seconds after they walked in. Kept under
+    -- the other name too, for a build that fires it; remember() never
+    -- restarts a session, so hearing one login twice changes nothing.
+    AddEventHandler('QBCore:Server:PlayerLoaded', loaded)
+    AddEventHandler('qbx_core:server:playerLoaded', loaded)
 
     -- Whether this player may have the app at all.
     --
@@ -297,6 +309,8 @@ function Bridges.install(modules)
         -- and asks again, rather than being handed the app on a job nobody
         -- has read yet.
         if not actor then return end
+        -- Known from here on, whichever way they arrived (see refreshAccess).
+        connected[src] = actor.cid
 
         local allowed = Config.HideAppFromBlockedJobs == false
             or not modules.identity.isBarred(actor)
@@ -330,6 +344,15 @@ function Bridges.install(modules)
                 seen[src] = true
                 local ok, actor = pcall(modules.identity.resolve, src)
                 if ok and actor then
+                    -- Everyone online is remembered here too, not only on
+                    -- the load events. After a restart of this resource
+                    -- nobody fires those until they relog, and a player
+                    -- the framework had already let go of when their
+                    -- playerDropped arrived was never cleaned up and never
+                    -- paused a clock: the deadline ran on while they were
+                    -- away and the contract expired the moment they came
+                    -- back, their hitman's stake with it.
+                    connected[src] = actor.cid
                     local allowed = Config.HideAppFromBlockedJobs == false
                         or not modules.identity.isBarred(actor)
                     if lastAccess[src] ~= allowed then
@@ -360,12 +383,16 @@ function Bridges.install(modules)
     end)
 
     -- A player who takes a barred job loses the app, and one who leaves it
-    -- gets it back, without waiting for a reconnect. qbx_core fires this
-    -- whenever a job is set.
-    AddEventHandler('qbx_core:server:onSetJob', function(src)
+    -- gets it back, without waiting for a reconnect. qbx_core fires
+    -- QBCore:Server:OnJobUpdate (source, job) whenever a job is set; the
+    -- other name is one it has never fired, kept for a build that does.
+    -- The maintenance tick (refreshAccess) catches whatever both miss.
+    local function jobChanged(src)
         local id = tonumber(src)
         if id then tellAccess(id) end
-    end)
+    end
+    AddEventHandler('QBCore:Server:OnJobUpdate', jobChanged)
+    AddEventHandler('qbx_core:server:onSetJob', jobChanged)
 
     -- A player's own client is the only one that can reliably render their
     -- headshot, so the image arrives from them and is bounded on arrival.
@@ -396,6 +423,11 @@ function Bridges.install(modules)
         end
         connected[src] = nil
         readying[src] = nil
+        -- Somebody left, whoever they were: the expiry pass looks again.
+        -- Without a citizen id onPlayerDropped stops before saying so, and
+        -- the pass waited up to MaxDeadlineSkipSeconds to notice the clock
+        -- should have stopped.
+        if not cid and modules.scheduler then modules.scheduler.presenceChanged() end
         Bridges.onPlayerDropped(modules, cid)
     end)
 

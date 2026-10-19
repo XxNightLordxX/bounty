@@ -399,7 +399,8 @@ ConfigDefaults.Kidnap = {
         passengerOfHitman = true,   -- target is in the hitman's vehicle
     },
     --- Optional resource exposing IsRestrained(playerId) for custom rope /
-    --- ziptie scripts. Leave nil if unused.
+    --- ziptie scripts, by its name: RestraintProvider = 'my_ropes'. Leave
+    --- nil if unused.
     RestraintProvider  = nil,
 }
 
@@ -493,10 +494,10 @@ ConfigDefaults.Advisory = {
     --- Warn the creator before escrow is taken, and the hitman before they
     --- accept, that the target is law enforcement. The listing also carries a
     --- permanent flag. Nobody puts a hit on a cop by accident.
-    --- Advisories fire when the contract is posted and again on every
-    --- acceptance, each carrying the running count of operatives, so one
-    --- contract raises at most Limits.MaxHitmenPerContract acceptance
-    --- bulletins on every officer's phone. The dispatch entry for
+    --- Advisories fire when the contract is posted and again when each
+    --- operative accepts, carrying the running count, so one contract raises
+    --- one acceptance bulletin per operative who takes it up. One who walks
+    --- away and comes back raises no second. The dispatch entry for
     --- acceptances shares one id per contract.
     OnCreate = true,
     OnAccept = true,
@@ -523,6 +524,11 @@ ConfigDefaults.Reason = {
 ConfigDefaults.Relay = {
     Enabled = true,
     MaxLength = 200,
+    --- The newest messages a thread keeps; older ones go as new ones
+    --- arrive. Every read sends the whole thread to a phone, and a thread
+    --- could otherwise grow for a contract's whole life — a message a
+    --- second for two days is tens of megabytes on every read.
+    MaxMessagesPerThread = 100,
     AllowMaskedCalls = true,
 
     --- An override for the export that places a call. Leave it nil.
@@ -603,6 +609,13 @@ ConfigDefaults.Ledger = {
 
 ConfigDefaults.Notifications = {
     ParanoidAlert = true,
+    --- Seconds the target's alert waits after the contract is placed, drawn
+    --- at random between these two, so it does not date the placement to
+    --- the second for somebody who paid to stay unnamed (§14.40).
+    ParanoidAlertJitter = { min = 60, max = 600 },
+    --- And at most one per target in this many minutes, however many
+    --- contracts are placed on them, so neither do the alerts count them.
+    ParanoidCooldownMinutes = 30,
     MaxPerRecipientPerMinute = 6,
     MaxPerRecipientPerHour = 40,
 

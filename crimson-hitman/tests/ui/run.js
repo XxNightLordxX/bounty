@@ -6786,8 +6786,7 @@ async function main() {
     await (async function untakenCancelIsWithdraw() {
       const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [] });
       const app = boot({
-        list: boardWith({ relistWaits: { anyMinutes: 5, sameTargetMinutes: 120,
-          everyoneMinutes: 30 } }),
+        list: boardWith({ relistWaits: { anyMinutes: 5, sameTargetMinutes: 120 } }),
         ledger: LEDGER,
         mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
         amendments: { ok: true, data: [] },
@@ -6807,7 +6806,7 @@ async function main() {
         const text = app.view.textContent;
         truthy(text.indexOf('any new contract for 5 minutes') !== -1
           && text.indexOf('one on Dana Reyes for 2h') !== -1
-          && text.indexOf('nobody else can list them for 30 minutes') !== -1, text);
+          && text.indexOf('nobody else') === -1, text);
       });
       click(app, 'Withdraw it');
       await settle(); await settle();

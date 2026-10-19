@@ -386,13 +386,14 @@ local function buildListing(viewerCid, page)
             -- The waits a withdrawal starts, for the dialog that asks first.
             -- A creator withdrawing to fix the reward found them out only
             -- when placing it again was refused. On the same person it is
-            -- whichever of the two waits ends later.
+            -- whichever of the two waits ends later. Nobody else waits:
+            -- withdrawing a contract nobody took up starts no wait on the
+            -- target for anyone but its creator (Contracts.canCreate).
             relistWaits = {
                 anyMinutes = math.floor((Config.Amendments.CancelCooldownSeconds or 0) / 60),
                 sameTargetMinutes = math.floor(math.max(
                     Config.Limits.SameCreatorSameTargetCooldownSeconds or 0,
                     Config.Limits.TargetCooldownAfterResolveSeconds or 0) / 60),
-                everyoneMinutes = math.floor((Config.Limits.TargetCooldownAfterResolveSeconds or 0) / 60),
             },
             -- Whether changes can be proposed at all. Absent, the page drew
             -- Propose change on every card of a server with amendments off,

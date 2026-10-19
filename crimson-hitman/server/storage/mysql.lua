@@ -16,6 +16,9 @@ local SCHEMA = {
         creator_account VARCHAR(64),
         creator_name VARCHAR(64),
         target_cid VARCHAR(32) NOT NULL,
+        -- Added to existing databases by migrate; NULL on older rows, which
+        -- are checked against the target online instead.
+        target_account VARCHAR(64),
         target_name VARCHAR(64),
         target_protected TINYINT(1) DEFAULT 0,
         target_job VARCHAR(32),
@@ -355,13 +358,13 @@ end
 function MySQLStore.writeContract(c)
     MySQL.query.await([[
         INSERT INTO crimson_contracts
-            (id, creator_cid, creator_account, creator_name, target_cid, target_name,
-             target_protected, target_job, reason, mode, state, anon_creator, bonus_percent,
+            (id, creator_cid, creator_account, creator_name, target_cid, target_account,
+             target_name, target_protected, target_job, reason, mode, state, anon_creator, bonus_percent,
              bailout_amount, penalty_amount, payout_slots, slots_claimed, next_slot,
              created_at, deadline_at, expires_at, paused_ms, paused_since,
              bailout_queued_at, bailout_paid_by, bailout_paid_amount, bailout_paid_account,
              bailout_attempts, resolved_at, resolution)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         -- Every column a caller can change after creation has to be in this
         -- list. Two were missing, and both were invisible in memory and json
         -- mode, which is where the tests ran.
@@ -400,8 +403,8 @@ function MySQLStore.writeContract(c)
             -- it read before a buyout was paid cannot erase the buyout.
             resolved_at = VALUES(resolved_at), resolution = VALUES(resolution)
     ]], {
-        c.id, c.creator_cid, c.creator_account, c.creator_name, c.target_cid, c.target_name,
-        c.target_protected and 1 or 0, c.target_job, c.reason, c.mode, c.state,
+        c.id, c.creator_cid, c.creator_account, c.creator_name, c.target_cid, c.target_account,
+        c.target_name, c.target_protected and 1 or 0, c.target_job, c.reason, c.mode, c.state,
         c.anon_creator and 1 or 0, c.bonus_percent or 0, c.bailout_amount or 0,
         c.penalty_amount or 0, c.payout_slots or 1, c.slots_claimed or 0, c.next_slot or 1,
         c.created_at, c.deadline_at, c.expires_at, c.paused_ms or 0, c.paused_since,
@@ -934,6 +937,19 @@ function MySQLStore.writeMessage(m)
         INSERT INTO crimson_messages (contract_id, thread_id, from_cid, from_alias, body, sent_at)
         VALUES (?,?,?,?,?,?)
     ]], { m.contract_id, m.thread_id, m.from_cid, m.from_alias, m.body, m.sent_at })
+    -- Only the newest Config.Relay.MaxMessagesPerThread stay, as the
+    -- ledger keeps its depth.
+    local keep = tonumber(Config.Relay.MaxMessagesPerThread) or 0
+    if keep > 0 then
+        MySQL.query.await([[
+            DELETE FROM crimson_messages WHERE thread_id = ? AND contract_id = ? AND id NOT IN (
+                SELECT id FROM (
+                    SELECT id FROM crimson_messages WHERE thread_id = ? AND contract_id = ?
+                    ORDER BY id DESC LIMIT ?
+                ) keep
+            )
+        ]], { m.thread_id, m.contract_id, m.thread_id, m.contract_id, keep })
+    end
     return true
 end
 

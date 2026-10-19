@@ -570,6 +570,19 @@ local function pruneLedger(params)
     return {}
 end
 
+local function pruneMessages(params)
+    local thread, contract, keep = params[1], params[2], tonumber(params[5]) or 100
+    local mine = {}
+    for _, row in pairs(Exec.tables.crimson_messages or {}) do
+        if row.thread_id == thread and row.contract_id == contract then mine[#mine + 1] = row end
+    end
+    sortRows(mine, { 'id' }, true)
+    for i = keep + 1, #mine do
+        Exec.tables.crimson_messages[mine[i].id] = nil
+    end
+    return {}
+end
+
 --------------------------------------------------------------------------
 
 function Exec.reset()
@@ -592,6 +605,9 @@ function Exec.run(sql, params)
         return pruneLedger(params)
     end
     if flat:find('^DELETE FROM crimson_ledger') then return pruneLedger(params) end
+    if flat:find('^DELETE FROM crimson_messages') and flat:find('NOT IN') then
+        return pruneMessages(params)
+    end
     if flat:find('^SELECT c%.%* FROM crimson_contracts') then
         return contractsInvolving(params)
     end

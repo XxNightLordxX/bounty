@@ -1236,7 +1236,9 @@ describe('the framework events this resource listens for', function()
         wired()
         for _, name in ipairs({
             'QBCore:Server:OnPlayerLoaded',      -- a net event on some builds
+            'local:QBCore:Server:PlayerLoaded',  -- what qbx_core fires on login
             'local:qbx_core:server:playerLoaded',
+            'local:QBCore:Server:OnJobUpdate',   -- and on a job change
             'local:qbx_core:server:onSetJob',
             'local:playerDropped',
             'local:QBCore:Server:OnPlayerUnload',
@@ -1327,7 +1329,7 @@ describe('the framework events this resource listens for', function()
     it('tells a player their access when their job changes', function()
         local s = wired()
         Env.clientEvents = {}
-        truthy(fire('local:qbx_core:server:onSetJob', nil, 3))
+        truthy(fire('local:QBCore:Server:OnJobUpdate', nil, 3, { name = 'unemployed' }))
 
         local told = {}
         for _, event in ipairs(Env.clientEvents) do
@@ -1344,6 +1346,30 @@ describe('the framework events this resource listens for', function()
         -- Resolving them afterwards is what a naive cleanup would do, and by
         -- this point the framework may already have discarded them.
         truthy(true)
+    end)
+
+    it('cleans up after, and pauses the clock for, a player online across a restart', function()
+        -- Nobody fires a load event for a player already in the city when
+        -- the resource starts. If the framework has let them go by the time
+        -- their playerDropped arrives, they were nobody: nothing cleaned
+        -- up, and no clock stopped, so the contract on them expired the
+        -- moment they came back, their hitman's stake with it.
+        local s = newStack()
+        fixture(s)
+        local marked = 0
+        s.scheduler = { presenceChanged = function() marked = marked + 1 end,
+                        contractsChanged = function() end }
+        s.bridges.install(s)
+        s.bridges.refreshAccess()
+        local ended
+        local endSession = s.identity.endSession
+        s.identity.endSession = function(cid) ended = cid return endSession(cid) end
+
+        Env.removePlayer(2)
+        truthy(fire('local:playerDropped', 2))
+        s.identity.endSession = endSession
+        truthy(marked > 0, 'the expiry pass was not told somebody left')
+        eq(ended, 'TARGET01', 'and nothing of theirs was cleaned up')
     end)
 
     it('survives a loaded event carrying nothing usable', function()

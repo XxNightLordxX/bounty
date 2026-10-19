@@ -120,10 +120,14 @@ describe('a client-fired login event', function()
         s.bridges.install(s)
         -- Disconnect and reconnect: the drop ends the session, the arrival
         -- is noticed, and the login event confirms it.
+        -- In the order stock qbx_core sends them: the server's own login
+        -- event, then the client's. The first was never listened for, and
+        -- the floor applied only where a test fired a name qbx_core never
+        -- has.
         truthy(fire('local:playerDropped', 2))
         s.identity.resolve(2)
+        truthy(fire('local:QBCore:Server:PlayerLoaded', nil, { PlayerData = { source = 2 } }))
         truthy(fire('QBCore:Server:OnPlayerLoaded', 2))
-        truthy(fire('local:qbx_core:server:playerLoaded', nil, { PlayerData = { source = 2 } }))
         local immune, why = s.contracts.isImmune(s.identity.resolve(2))
         truthy(immune, 'a player who has just walked in is not fair game')
         eq(why, CH.ERR.TARGET_JUST_ON)

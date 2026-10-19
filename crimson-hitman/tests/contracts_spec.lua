@@ -222,6 +222,22 @@ describe('acceptance', function()
         eq(err, CH.ERR.SAME_ACCOUNT)
     end)
 
+    it('refuses the target\'s other character once the target has logged off', function()
+        -- One character per licence is online at once, so the target's alt
+        -- only ever asks while the target is away. Looked up online, the
+        -- target was never found and the alt took the contract on them.
+        -- (The board lists no contract whose target is away, so it is the
+        -- accept itself, sent by id, that has to refuse.)
+        local s, f, c = seeded()
+        Env.removePlayer(2)
+        Env.addPlayer({ source = 12, citizenid = 'TGTALT01', license = 'license:bbb',
+            firstname = 'Alt', lastname = 'Reyes' })
+        local alt = s.identity.resolve(12)
+        local ok, err = s.contracts.accept(alt, c.id, false)
+        falsy(ok, 'the target\'s own alt took the contract on them')
+        eq(err, CH.ERR.SAME_ACCOUNT)
+    end)
+
     it('allows exactly one hitman on an exclusive contract', function()
         local s, f, c = seeded(CH.MODE.EXCLUSIVE)
         truthy(s.contracts.accept(f.hitman, c.id, false))
@@ -719,6 +735,29 @@ describe('post-respawn immunity', function()
         Env.advance(Config.Immunity.PostRespawnSeconds + 10)
         truthy(s.contracts.claimSlot(c.id, 'HITMAN02', CH.FULFILMENT.ELIMINATION),
             'and claimable again once they have had a moment on their feet')
+    end)
+
+    it('starts no wait for everyone when a contract nobody took up is withdrawn', function()
+        -- A friend's $1 contract, withdrawn at once and refunded, shut every
+        -- other creator out of the target for half an hour, as often as the
+        -- friend liked.
+        local s = newStack()
+        local f = fixture(s)
+        Env.addPlayer({ source = 5, citizenid = 'FRIEND02', license = 'license:eee',
+            cash = 100 })
+        local friend = s.identity.resolve(5)
+        local shield = s.contracts.create(friend, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1 } },
+        })
+        truthy(shield)
+        truthy(s.contracts.cancel(friend, shield.id))
+
+        truthy(s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } },
+        }), 'a withdrawal shielded the target from everybody')
+        falsy(s.contracts.create(friend, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1 } },
+        }), 'the one who withdrew still waits')
     end)
 
     it('gives a target who bought their way out a longer breather', function()
