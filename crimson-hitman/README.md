@@ -174,12 +174,17 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
 
 All work from the server console. In game they need the `crimson.admin` ACE
 (`add_ace group.admin crimson.admin allow`). `Config.Admin.ExtraAces` also opens
-the read-only ones (`ch-diag`, `ch-timeline`, `ch-stuck`); `ch-void` and
+the read-only ones (`ch-diag`, `ch-timeline`, `ch-stuck`, `ch-contracts`); `ch-void` and
 `ch-settle` always need `crimson.admin` itself, and `ch-whois` `crimson.identity`.
+
+The `<contract>` the commands take is the contract's id. Players see it as the
+**Ref** at the foot of each card on their Mine and On Me tabs and on each Ledger
+entry, and `/ch-contracts` lists it for any player.
 
 | Command | What it does |
 |---|---|
 | `/ch-diag [player id]` | Why the app is not showing something: runs the app's own reads as that player and says what each answered, plus the last faults their phone reported |
+| `/ch-contracts <player id\|citizen id>` | A player's contracts, newest first, closed ones included while they are kept: each id, its state, their role and the target. Lists the ids for `/ch-timeline`, `/ch-void` and `/ch-whois`. Contracts they placed or took anonymously are left out unless you also hold `crimson.identity` |
 | `/ch-timeline <contract>` | One contract's state, escrow lines and audit trail |
 | `/ch-whois <contract>` | Who is really behind an anonymous creator or hitman. Needs `crimson.identity`, a separate ACE |
 | `/ch-void <contract> [reason]` | Close a contract and return its escrow to the creator |

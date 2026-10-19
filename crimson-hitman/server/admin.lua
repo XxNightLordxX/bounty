@@ -201,6 +201,73 @@ function Admin.interrupted(src)
     return out
 end
 
+--- How many of a player's contracts one listing shows. Newest first, so a
+--- dispute is almost always in the first few.
+local CONTRACT_LIST_ROWS = 15
+
+--- A player's contracts, newest first, with the ids the other commands take.
+---
+--- Nothing in game showed a contract id, and every command that settles a
+--- dispute — timeline, void, whois — starts from one. Closed contracts are
+--- included while they are kept, because the disputes staff hear most are
+--- about contracts that vanished: expired, voided or bought out.
+---
+--- A list of the contracts somebody placed or took would unmask every one
+--- they did anonymously, which is what whois is separately gated for. Staff
+--- without that permission see the player's anonymous parts left out, and
+--- nothing to say anything was.
+---@param src number|nil who is asking
+---@param subject number|string a player id, or a citizen id for somebody offline
+---@return table[]|nil rows { id, state, role, target, created_at, resolution }
+---@return string|nil err
+function Admin.contractsOf(src, subject)
+    local cid
+    local playerId = tonumber(subject)
+    if playerId then
+        local actor = Identity.resolve(playerId)
+        if not actor then return nil, CH.ERR.NOT_FOUND end
+        cid = actor.cid
+    elseif type(subject) == 'string' and #subject <= 64 and subject:match('^[%w_%-]+$') then
+        cid = subject
+    else
+        return nil, CH.ERR.INVALID_INPUT
+    end
+
+    local canIdentify = src == nil or src == 0
+        or Admin.allowed(src, Config.Admin.IdentityAce, true)
+    local out = {}
+    for _, contract in ipairs(Storage.contractsInvolving(cid) or {}) do
+        local role, anonymous
+        if contract.target_cid == cid then
+            role, anonymous = 'target', false
+        elseif contract.creator_cid == cid then
+            role, anonymous = 'client', contract.anon_creator == true
+        else
+            local row = Storage.readHitman(contract.id, cid)
+            role, anonymous = 'hitman', row ~= nil and row.anon == true
+        end
+        if canIdentify or not anonymous then
+            out[#out + 1] = {
+                id = contract.id, state = contract.state, role = role,
+                anonymous = anonymous, target = contract.target_name,
+                created_at = contract.created_at, resolution = contract.resolution,
+            }
+        end
+    end
+
+    table.sort(out, function(a, b)
+        if (a.created_at or 0) ~= (b.created_at or 0) then
+            return (a.created_at or 0) > (b.created_at or 0)
+        end
+        return a.id > b.id
+    end)
+    for i = #out, CONTRACT_LIST_ROWS + 1, -1 do out[i] = nil end
+
+    Audit.staff(canIdentify and 'admin_contracts_identified' or 'admin_contracts',
+        callerCid(src), nil, { subject = cid, rows = #out })
+    return out
+end
+
 --- A party to a contract by role, for staff who may not see who they are.
 function Admin.partyRole(contract, cid)
     if not cid then return '(nobody)' end

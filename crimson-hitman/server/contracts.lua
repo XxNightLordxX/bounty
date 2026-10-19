@@ -130,32 +130,84 @@ local function stakeForfeits(hitman, contract)
     return true
 end
 
+--- What each hitman has staked and still has held, by citizen id. Read
+--- before anything settles the stakes, because settling empties the lines
+--- a notice has to name the figure from.
+---@param contractId string
+---@return table<string, integer>
+local function heldStakes(contractId)
+    local out = {}
+    for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
+        if line.portion == CH.PORTION.STAKE and line.staker
+            and line.state == CH.ESCROW_STATE.HELD then
+            out[line.staker] = (out[line.staker] or 0) + (line.amount or 0)
+        end
+    end
+    return out
+end
+
+--- How many of a contract's lines are owed to someone and not yet in their
+--- hands: a refund their pockets had no room for, or one queued while they
+--- were away. It arrives later, so "everything has been returned" is untrue
+--- in exactly that case.
+---@return integer
+local function owedTo(contractId, cid)
+    local owed = 0
+    for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
+        if line.owed_to == cid and line.state ~= CH.ESCROW_STATE.SETTLED then
+            owed = owed + 1
+        end
+    end
+    return owed
+end
+
+---@return table[] outcomes one per hitman still on the contract:
+--- { cid, stake, forfeited, owed }, for the notice that tells them
 local function settleStakes(contractId, creatorCid, forfeit, contract)
+    local stakes = heldStakes(contractId)
+    local outcomes = {}
     local hitmen = Storage.readHitmen(contractId)
     for i = 1, #hitmen do
         local hitman = hitmen[i]
         local toCreator = forfeit and stakeForfeits(hitman, contract)
-        Escrow.release(contractId,
+        local _, result = Escrow.release(contractId,
             toCreator and creatorCid or hitman.hitman_cid,
             { portion = CH.PORTION.STAKE, staker = hitman.hitman_cid },
             toCreator and 'penalty_forfeited' or 'stake_returned')
+        -- Only a hitman still on it is told it ended. One who walked away
+        -- or was released already heard about it then.
+        if hitman.state == 'active' then
+            outcomes[#outcomes + 1] = {
+                cid = hitman.hitman_cid,
+                stake = stakes[hitman.hitman_cid] or 0,
+                forfeited = toCreator and true or false,
+                owed = result and (result.pending or 0) > 0 or false,
+            }
+        end
     end
+    return outcomes
 end
 
 --- Everything that must happen exactly once when a contract ends, whichever
 --- path got it there. Routing every terminal transition through here is what
 --- stops a new path forgetting a step — the completion path already did.
+---
+--- The ending is passed in rather than read back from storage: the last
+--- slot's claim runs this while the contract still says COMPLETING, and
+--- only moves it to COMPLETED afterwards.
 ---@param contractId string
 ---@param contract table
 ---@param forfeitStakes boolean
-local function finalise(contractId, contract, forfeitStakes)
+---@param ending string the terminal CH.STATE this contract is ending in
+---@param winnerCid string|nil on a completion, the hitman who finished it
+local function finalise(contractId, contract, forfeitStakes, ending, winnerCid)
     -- Read before the stakes settle, while the hitman records still say who
     -- was on this contract: they are who needs their card to change.
     local hitmanCids = {}
     local hitmen = Storage.readHitmen(contractId)
     for i = 1, #hitmen do hitmanCids[#hitmanCids + 1] = hitmen[i].hitman_cid end
 
-    settleStakes(contractId, contract.creator_cid, forfeitStakes, contract)
+    local stakes = settleStakes(contractId, contract.creator_cid, forfeitStakes, contract)
 
     -- Anything still held — a top-up on a slot nobody claimed, an odd line
     -- from an amendment, the unpaid bonus on an elimination — goes back to
@@ -165,7 +217,15 @@ local function finalise(contractId, contract, forfeitStakes)
     -- Everyone whose card just changed. Read from storage rather than the
     -- caller's copy, so the state the app fetches is the settled one.
     local settled = Storage.readContract(contractId)
-    Notify.pushParties(settled or contract, hitmanCids, (settled or contract).state)
+    Notify.pushParties(settled or contract, hitmanCids, ending)
+
+    -- A push only moves an app that is already open. An expiry took a
+    -- hitman's stake, and a buyout or a rival's kill took their contract,
+    -- with nothing on the phone to say so (§11.4).
+    Notify.contractEnded(settled or contract, ending, stakes, {
+        winnerCid = winnerCid,
+        creatorOwed = ending == CH.STATE.EXPIRED and owedTo(contractId, contract.creator_cid) or 0,
+    })
 
     Notify.clearContract(contractId, settled or contract)
     if Contracts.onResolved then Contracts.onResolved(contractId) end
@@ -1173,6 +1233,7 @@ function Contracts.abandon(actor, contractId)
 
     -- Walking away from an accepted contract forfeits the stake to the
     -- creator. That is what the penalty is for.
+    local stake = heldStakes(contractId)[actor.cid] or 0
     local forfeited = Escrow.release(contractId, contract.creator_cid,
         { portion = CH.PORTION.STAKE, staker = actor.cid }, 'penalty_forfeited')
     if forfeited then
@@ -1222,6 +1283,11 @@ function Contracts.abandon(actor, contractId)
     end
     Notify.push(after.creator_cid, 'abandoned')
     for i = 1, #others do Notify.push(others[i], 'abandoned') end
+    -- And the phone told: the client gained a stake, or their contract
+    -- went back on the board, with nothing to say why.
+    -- The stake read before the release: one the client is offline for is
+    -- owed to them rather than settled, and is still theirs.
+    Notify.hitmanLeft(after, stake, #others)
 
     Audit.action('contract_abandoned', actor.cid, contractId, {})
     return true
@@ -1677,7 +1743,7 @@ function Contracts.claimSlot(contractId, hitmanCid, fulfilment, opts)
         -- Last slot: the contract is finished for everyone. Every other
         -- hitman's stake comes back and any unclaimed escrow returns to the
         -- creator, while the contract is still non-terminal and reachable.
-        finalise(contractId, contract, false)
+        finalise(contractId, contract, false, CH.STATE.COMPLETED, hitmanCid)
 
         contract.resolved_at = os.time()
         contract.resolution = 'completed'
@@ -1773,12 +1839,7 @@ function Contracts.cancel(actor, contractId)
     -- "everything you put up has been returned" is untrue in exactly that
     -- case, and it is the case where a player counts their money, finds it
     -- short, and reports it stolen.
-    local owed = 0
-    for _, line in ipairs(Storage.readEscrow(contractId)) do
-        if line.owed_to == actor.cid and line.state ~= CH.ESCROW_STATE.SETTLED then
-            owed = owed + 1
-        end
-    end
+    local owed = owedTo(contractId, actor.cid)
 
     Notify.toCitizen(actor.cid, 'Contract withdrawn', owed > 0
         and ('Nobody had taken it. Most of what you put up is back; %d thing(s) '
@@ -2224,7 +2285,7 @@ function Contracts.resolve(contractId, terminal, recipientCid, filter, reason, o
     -- An expiry is the hitman failing, so the creator keeps their stake.
     local forfeit = terminal == CH.STATE.EXPIRED
     if forfeit and opts and opts.forfeit == false then forfeit = false end
-    finalise(contractId, contract, forfeit)
+    finalise(contractId, contract, forfeit, terminal)
 
     return true, result
 end

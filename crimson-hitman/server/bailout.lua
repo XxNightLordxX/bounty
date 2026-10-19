@@ -133,8 +133,12 @@ function Bailout.buy(actor, contractId)
     -- instant, so a hitman cannot be rug-pulled mid-delivery (§14.17).
     local hitmen = Storage.readHitmen(contractId)
     local engaged = false
+    local engagedCids = {}
     for i = 1, #hitmen do
-        if hitmen[i].state == 'active' then engaged = true end
+        if hitmen[i].state == 'active' then
+            engaged = true
+            engagedCids[#engagedCids + 1] = hitmen[i].hitman_cid
+        end
     end
 
     if engaged and Config.Bailout.ProcessingDelaySeconds > 0 then
@@ -154,6 +158,8 @@ function Bailout.buy(actor, contractId)
 
         Notify.toCitizen(contract.creator_cid, 'Contract challenged',
             'Your target is buying out the contract. It closes shortly.')
+        -- And the operatives, whom the delay is for.
+        Notify.buyoutQueued(contract, engagedCids, Config.Bailout.ProcessingDelaySeconds)
         return true, nil
     end
 

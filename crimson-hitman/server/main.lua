@@ -101,6 +101,7 @@ local DEFAULTS = {
             stuck    = 'ch-stuck',
             settle   = 'ch-settle',
             whois    = 'ch-whois',
+            contracts = 'ch-contracts',
             diagnose = 'ch-diag',
         },
     },

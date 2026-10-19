@@ -12,6 +12,15 @@ local Identity
 local budgets = {}
 local advisorySent = {}
 
+--- [cid] = { { title, content, opts }, ... } kept for a player who was
+--- offline when one of their contracts ended. See tellOrKeep.
+local waiting = {}
+
+--- How many a player can have waiting. Enough for every contract they could
+--- be on; past it the oldest goes, so the table stays bounded however long
+--- somebody stays away.
+local WAITING_CAP = 10
+
 --- [cid] = os.time() of the last push, so a burst of state changes on one
 --- contract does not become a burst of refreshes.
 local lastPush = {}
@@ -23,6 +32,7 @@ function Notify.init(deps)
     Identity = deps.identity
     budgets, advisorySent = {}, {}
     lastPush, trailing = {}, {}
+    waiting = {}
 end
 
 local function withinBudget(cid)
@@ -203,14 +213,209 @@ function Notify.contractCompleted(contract, hitmanRecord, photoRef)
     -- A receipt, so outside the budget (§14.40). Relay messages spend the
     -- same budget, so five from the hitman in the minute before the kill
     -- used to mean the creator never heard it had been done.
-    Notify.toCitizen(contract.creator_cid, 'Contract fulfilled',
-        hasPhoto
-            and 'Your contract was fulfilled. The verification photograph is '
-                .. 'in your archive.'
-            or  'Your contract was fulfilled by live delivery. There is no '
-                .. 'photograph — the target was handed over in person.',
+    -- The photograph is where the app shows it, on the Ledger tab, and only
+    -- while the ledger keeps photographs: with StorePhotos off, pointing
+    -- there sent the client looking for a picture that was never kept.
+    local body
+    if not hasPhoto then
+        body = 'Your contract was fulfilled by live delivery. There is no '
+            .. 'photograph — the target was handed over in person.'
+    elseif Config.Ledger and Config.Ledger.StorePhotos then
+        body = 'Your contract was fulfilled. The verification photograph is '
+            .. 'on your Ledger tab.'
+    else
+        body = 'Your contract was fulfilled.'
+    end
+    Notify.toCitizen(contract.creator_cid, 'Contract fulfilled', body,
         { bypassBudget = true })
     local _ = hitmanRecord
+end
+
+--------------------------------------------------------------------------
+-- Endings (§11.4, §14.8)
+--------------------------------------------------------------------------
+--
+-- Every ending used to send only a push, which moves an app that is already
+-- open and nothing else. A hitman with the phone in their pocket saw their
+-- stake leave their bank and the contract vanish from Mine with nothing
+-- anywhere to say why.
+--
+-- These are receipts — they say where a stake or a refund went — so they
+-- sit outside the budget, as the completion and buyout receipts do (§14.40).
+-- Parties another path already tells are left to it: the creator of a
+-- cancelled, voided, bought-out or fulfilled contract, and the hitman who
+-- fulfilled it.
+
+--- Send now, or keep it for the player's next login.
+---
+--- An ending is the notice most likely to find its player away: a lifetime
+--- expiry runs through every pause, so it lands while the target — and as
+--- often as not the hitman — is out of the city, and toCitizen drops a
+--- notice for somebody who is not here. Both parties are to be told on next
+--- login (§14.8). Kept in memory: a restart loses the notice but not the
+--- money it describes, which is in escrow and handed over by the login
+--- retry under its own "Outstanding payment".
+local function tellOrKeep(cid, title, content, opts)
+    if not cid then return false end
+    if Identity.byCitizenId(cid) then return Notify.toCitizen(cid, title, content, opts) end
+    local list = waiting[cid] or {}
+    if #list >= WAITING_CAP then table.remove(list, 1) end
+    list[#list + 1] = { title = title, content = content, opts = opts }
+    waiting[cid] = list
+    return false
+end
+
+--- Hand a player what was kept for them while they were away. Called from
+--- Bridges.onPlayerReady, once they can receive it.
+---@return integer delivered
+function Notify.deliverWaiting(cid)
+    local list = cid and waiting[cid]
+    if not list then return 0 end
+    waiting[cid] = nil
+    for i = 1, #list do
+        Notify.toCitizen(cid, list[i].title, list[i].content, list[i].opts)
+    end
+    return #list
+end
+
+local function dollars(amount)
+    return ('$%d'):format(math.floor(tonumber(amount) or 0))
+end
+
+--- The sentence that ends a hitman's notice: where their stake went. Left
+--- out when they had none.
+local function stakeSentence(outcome)
+    if (outcome.stake or 0) <= 0 then return '' end
+    if outcome.forfeited then
+        return (' Your %s stake went to the client.'):format(dollars(outcome.stake))
+    end
+    if outcome.owed then
+        return (' Your %s stake is held for you and is handed back as soon as '
+            .. 'you can take it.'):format(dollars(outcome.stake))
+    end
+    return (' Your %s stake has been returned.'):format(dollars(outcome.stake))
+end
+
+--- What a hitman still on the contract is told, by how it ended. nil for an
+--- ending that already reaches them some other way.
+local function hitmanNotice(contract, ending, outcome)
+    local target = contract.target_name or 'your target'
+    if ending == CH.STATE.EXPIRED then
+        return 'Contract expired', outcome.forfeited
+            and ('The deadline on your contract on %s passed.'):format(target)
+            or  ('Your contract on %s ran out before it could be finished.'):format(target)
+    elseif ending == CH.STATE.BAILED_OUT then
+        return 'Contract closed', ('%s bought their way out of your contract.'):format(target)
+    elseif ending == CH.STATE.VOIDED then
+        return 'Contract closed', ('Staff closed your contract on %s.'):format(target)
+    elseif ending == CH.STATE.COMPLETED then
+        return 'Contract closed', ('Another operative finished the contract on %s.'):format(target)
+    end
+    -- CANCELLED: with a hitman on it, only by an amendment they agreed to.
+    return nil
+end
+
+--- Whether the target was ever told this contract existed — by the paranoid
+--- alert, or as an officer by their own advisory. Mirrors contractCreated.
+local function targetWasTold(contract)
+    if contract.target_protected and Notify.advises('posted') then
+        return Config.Advisory.AlwaysAlertTarget == true
+    end
+    return Config.Notifications.ParanoidAlert == true
+end
+
+--- Tell everyone a contract's ending left uninformed.
+---@param contract table
+---@param ending string the terminal CH.STATE
+---@param outcomes table[] { cid, stake, forfeited, owed } per hitman still on it
+---@param opts table|nil { winnerCid = string, creatorOwed = integer }
+function Notify.contractEnded(contract, ending, outcomes, opts)
+    if not contract then return end
+    opts = opts or {}
+
+    local forfeitedTotal, forfeitedCount = 0, 0
+    for _, outcome in ipairs(outcomes or {}) do
+        if outcome.forfeited and (outcome.stake or 0) > 0 then
+            forfeitedTotal = forfeitedTotal + outcome.stake
+            forfeitedCount = forfeitedCount + 1
+        end
+        -- The hitman who finished it has the result in front of them.
+        if outcome.cid ~= opts.winnerCid then
+            local title, body = hitmanNotice(contract, ending, outcome)
+            if title then
+                tellOrKeep(outcome.cid, title, body .. stakeSentence(outcome),
+                    { bypassBudget = true })
+            end
+        end
+    end
+
+    if ending ~= CH.STATE.EXPIRED then return end
+
+    -- Only an expiry is new to the creator: cancel, void, buyout and
+    -- completion each tell them already.
+    local owed = opts.creatorOwed or 0
+    local body = ('Nobody finished your contract on %s in time.')
+        :format(contract.target_name or 'your target')
+    body = body .. (owed > 0
+        and (' What you put up is coming back: %d thing(s) could not be handed '
+             .. 'over yet and arrive as soon as you can take them.'):format(owed)
+        or ' Everything you put up has been returned.')
+    if forfeitedCount == 1 then
+        body = body .. (" The operative's %s stake is yours."):format(dollars(forfeitedTotal))
+    elseif forfeitedCount > 1 then
+        body = body .. (" The operatives' stakes, %s in all, are yours."):format(dollars(forfeitedTotal))
+    end
+    tellOrKeep(contract.creator_cid, 'Contract expired', body, { bypassBudget = true })
+
+    -- The target only when they were told there was a price on their head
+    -- at all. Anyone else would learn of a contract from its ending. Worded
+    -- as one price, because it may not have been the only one.
+    if targetWasTold(contract) then
+        Notify.toCitizen(contract.target_cid, 'Breathing room',
+            'A price on your head has lapsed.')
+    end
+end
+
+--- Tell the client an operative walked away from their contract.
+---@param contract table as it stands after they left
+---@param stake integer what the operative had staked, now the client's
+---@param remaining integer operatives still on it
+function Notify.hitmanLeft(contract, stake, remaining)
+    if not contract then return end
+    local body = ('An operative left your contract on %s.')
+        :format(contract.target_name or 'your target')
+    if (stake or 0) > 0 then
+        body = body .. (' Their %s stake is yours.'):format(dollars(stake))
+    end
+    if remaining > 0 then
+        body = body .. (' %d operative%s still on it.')
+            :format(remaining, remaining == 1 and ' is' or 's are')
+    elseif contract.state == CH.STATE.ACTIVE then
+        body = body .. ' It is back on the board.'
+    end
+    -- A receipt only when money moved; otherwise it spends the budget like
+    -- any other news.
+    tellOrKeep(contract.creator_cid, 'Operative walked away', body,
+        { bypassBudget = (stake or 0) > 0 })
+end
+
+--- Warn the operatives on a contract that its target has paid to close it.
+--- The processing delay exists so they can finish first (§14.17), which a
+--- hitman who never hears of it cannot do. Spends the budget, as the
+--- client's own "Contract challenged" does.
+---@param contract table
+---@param hitmanCids string[]
+---@param seconds integer the processing delay
+function Notify.buyoutQueued(contract, hitmanCids, seconds)
+    if not contract then return end
+    seconds = math.floor(tonumber(seconds) or 0)
+    local wait = seconds >= 120 and ('%d minutes'):format(seconds // 60)
+        or ('%d seconds'):format(seconds)
+    local body = ('%s is buying their way out of your contract. It closes in %s '
+        .. 'unless you finish it first.'):format(contract.target_name or 'Your target', wait)
+    for i = 1, #(hitmanCids or {}) do
+        Notify.toCitizen(hitmanCids[i], 'Contract challenged', body)
+    end
 end
 
 --------------------------------------------------------------------------

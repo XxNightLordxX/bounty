@@ -54,6 +54,8 @@ function Bridges.onPlayerReady(modules, src)
                 :format(delivered, delivered == 1 and ' has' or 's have'),
             { bypassBudget = true })
     end
+    -- And what happened to their contracts while they were away.
+    modules.notify.deliverWaiting(actor.cid)
     return delivered
 end
 
@@ -528,6 +530,34 @@ function Bridges.installCommands(modules)
                 os.date('%H:%M:%S', row.ts), row.kind, row.action))
         end
     end)
+
+    -- Where the id every other command takes comes from. Read-only, so the
+    -- same gate as the timeline; who is behind an anonymous part is
+    -- Admin.contractsOf's to withhold.
+    if names.contracts then
+        command(names.contracts, Config.Admin.Ace, function(src, args)
+            if not args[1] then
+                return reply(src, ('Usage: /%s <player id|citizen id>'):format(names.contracts))
+            end
+            local rows, err = Admin.contractsOf(src, args[1])
+            if not rows then
+                return reply(src, err == CH.ERR.NOT_FOUND
+                    and 'Nobody with that player id is online. Give their citizen id instead.'
+                    or  'Give a player id or a citizen id.')
+            end
+            if #rows == 0 then return reply(src, 'No contracts on record for them.') end
+
+            for i = 1, #rows do
+                local row = rows[i]
+                reply(src, ('%s  %-10s %-6s%s  on %s  %s%s'):format(
+                    row.id, row.state, row.role, row.anonymous and ' (anon)' or '',
+                    tostring(row.target or '?'),
+                    row.created_at and os.date('%Y-%m-%d %H:%M', row.created_at) or '',
+                    row.resolution and ('  (resolved: ' .. tostring(row.resolution) .. ')') or ''))
+            end
+            reply(src, ('Details: /%s <id>'):format(names.timeline))
+        end)
+    end
 
     command(names.void, Config.Admin.Ace, function(src, args)
         local reason = table.concat(args, ' ', math.min(2, #args + 1))

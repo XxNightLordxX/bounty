@@ -754,6 +754,20 @@ input:focus, select:focus, textarea:focus {
 
 .hint { font-size: var(--t-sm); color: var(--ink-faint); margin-top: 0.35rem; line-height: 1.45; }
 
+/* A contract's reference, for quoting to staff. Quiet, because players
+   need it once in a blue moon, and selectable, because they need it exact. */
+.ref {
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+  margin-top: 0.5rem;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  -webkit-user-select: text;
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+.ref-hint { text-align: center; margin: 0.5rem 0 0.25rem; }
+
 /* A card that only explains — a refusal, a wait — and offers a way on.
    The words lead, and the button sits under them across the card. */
 .card > .hint:first-child { margin-top: 0; }

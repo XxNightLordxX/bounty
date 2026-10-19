@@ -725,7 +725,7 @@ ConfigDefaults.Admin = {
     --- need before they have set anything up.
     ---
     --- Anything here is accepted as well, for the read-only commands only
-    --- (diag, timeline, stuck). Void, settle and whois move money or unmask
+    --- (diag, timeline, stuck, contracts). Void, settle and whois move money or unmask
     --- an anonymous party, so they need the named ACE itself. `command` is
     --- the ACE most admin groups already carry.
     ExtraAces = { 'command' },
@@ -737,6 +737,8 @@ ConfigDefaults.Admin = {
         stuck    = 'ch-stuck',
         settle   = 'ch-settle',
         whois    = 'ch-whois',
+        --- Lists a player's contracts with the ids the commands above take.
+        contracts = 'ch-contracts',
         --- Reports why the app is not showing something. Runs the same
         --- reads the app does and says what each one answered.
         diagnose = 'ch-diag',

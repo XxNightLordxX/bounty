@@ -1159,7 +1159,24 @@
     }
 
     node.appendChild(actionsFor(contract, context));
+    // Only on the player's own cards: a dispute is about a contract they
+    // are in, and the board is a listing, not a case file.
+    if (context === 'mine' || context === 'onme') { appendRef(node, contract.id); }
     return node;
+  }
+
+  /* The contract's reference, small, muted and selectable, for quoting to
+     staff. Every staff command — the timeline, a void, who was behind it —
+     starts from a contract id, and nothing on screen ever showed one, so
+     "my contract on Dana is stuck" could only be answered from the
+     database. */
+  function appendRef(node, id) {
+    if (id) { node.appendChild(el('div', 'ref', 'Ref ' + id)); }
+  }
+
+  // Said once under a list of referenced cards rather than on every card.
+  function refHint() {
+    return el('div', 'hint ref-hint', 'Quote the Ref to staff if something goes wrong.');
   }
 
   // "2 items and a weapon", or nothing when a payout is money only.
@@ -2970,6 +2987,7 @@
       created.forEach(function (c) { view.appendChild(card(c, 'mine')); });
     }
     if (!any) view.appendChild(el('div', 'empty', 'Nothing active.'));
+    else view.appendChild(refHint());
   }
 
   function viewOnMe(view) {
@@ -2990,6 +3008,7 @@
     }
     view.appendChild(el('div', 'notice', 'There is a price on your head.'));
     rows.forEach(function (c) { view.appendChild(card(c, 'onme')); });
+    view.appendChild(refHint());
   }
 
   function viewLedger(view) {
@@ -3067,9 +3086,11 @@
         frame.appendChild(img);
         node.appendChild(frame);
       }
+      appendRef(node, row.contract_id);
       view.appendChild(node);
     });
 
+    view.appendChild(refHint());
     view.appendChild(buildStamp());
   }
 

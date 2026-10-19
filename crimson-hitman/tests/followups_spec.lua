@@ -1008,3 +1008,115 @@ describe('a handover tick that throws part-way through', function()
         local _ = f
     end)
 end)
+
+describe('endings reach the phone, not only an open app', function()
+    --- Every phone notification one player was sent, by server id.
+    local function told(src)
+        local out = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:notify' and event.target == src then
+                out[#out + 1] = event.args[1]
+            end
+        end
+        return out
+    end
+
+    local function staked(mode)
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = mode or CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } }, penaltyAmount = 2000,
+        })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.clientEvents = {}
+        return s, f, c
+    end
+
+    it('tells the hitman their stake went at expiry, and the client it is theirs', function()
+        local s, _, c = staked()
+        truthy(s.contracts.resolve(c.id, CH.STATE.EXPIRED, 'CREATOR1', nil, 'expired'))
+        local hitman, creator = told(3), told(1)
+        eq(#hitman, 1)
+        eq(hitman[1].title, 'Contract expired')
+        truthy(hitman[1].content:find('$2000 stake went to the client', 1, true), hitman[1].content)
+        eq(#creator, 1)
+        truthy(creator[1].content:find("operative's $2000 stake is yours", 1, true), creator[1].content)
+    end)
+
+    it('keeps the notice for a hitman who was offline and gives it at login', function()
+        local s, _, c = staked()
+        Env.removePlayer(3)
+        truthy(s.contracts.resolve(c.id, CH.STATE.EXPIRED, 'CREATOR1', nil, 'expired'))
+        eq(#told(3), 0, 'nobody there to tell')
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN01', license = 'license:ccc',
+            firstname = 'Rook', lastname = 'Ash' })
+        s.bridges.onPlayerReady(s, 3)
+        local titles = {}
+        for _, note in ipairs(told(3)) do titles[note.title] = true end
+        truthy(titles['Contract expired'], 'told on next login')
+    end)
+
+    it('tells the hitman, and not the client twice, when staff void it', function()
+        local s, _, c = staked()
+        truthy(s.admin.void(0, c.id, 'test'))
+        eq(#told(1), 1, 'the client keeps the one notice void already sends')
+        local hitman = told(3)
+        eq(#hitman, 1)
+        truthy(hitman[1].content:find('Staff closed your contract', 1, true))
+        truthy(hitman[1].content:find('$2000 stake has been returned', 1, true))
+    end)
+
+    it('tells a competitive loser, not the winner, and says completed', function()
+        local s, _, c = staked(CH.MODE.COMPETITIVE)
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+            cash = 5000, bank = 50000, firstname = 'Sol', lastname = 'Vane' })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        Env.clientEvents = {}
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        local loser = told(4)
+        eq(#loser, 1)
+        truthy(loser[1].content:find('Another operative finished', 1, true))
+        for _, note in ipairs(told(3)) do
+            truthy(note.title ~= 'Contract closed', 'the winner has the result already')
+        end
+    end)
+
+    it('tells the client an operative walked away and the stake is theirs', function()
+        local s, f, c = staked()
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        local creator = told(1)
+        eq(#creator, 1)
+        eq(creator[1].title, 'Operative walked away')
+        truthy(creator[1].content:find('Their $2000 stake is yours. It is back on the board.', 1, true),
+            creator[1].content)
+    end)
+end)
+
+describe('/ch-contracts', function()
+    it('lists ids, and leaves anonymous parts to staff who may unmask', function()
+        local s = newStack()
+        local f = fixture(s)
+        local open = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } } })
+        Env.time = Env.time + 60
+        local anon = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'y', anonymous = true,
+            reward = { baseline = { cash = 5000 } } })
+        truthy(open and anon, 'both placed')
+
+        Env.aces[7] = { command = true }
+        Env.addPlayer({ source = 7, citizenid = 'STAFF001', license = 'license:st' })
+        local rows = s.admin.contractsOf(7, 1)
+        eq(#rows, 1, 'the anonymous one is not shown to them')
+        eq(rows[1].id, open.id)
+        eq(rows[1].role, 'client')
+
+        Env.aces[7] = { command = true, ['crimson.identity'] = true }
+        rows = s.admin.contractsOf(7, 'CREATOR1')
+        eq(#rows, 2)
+        eq(rows[1].id, anon.id, 'newest first')
+        eq(#s.admin.contractsOf(0, 2), 2, 'and both are listed under the target')
+    end)
+end)
