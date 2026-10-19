@@ -1695,3 +1695,160 @@ describe('two withdrawals from one collection at once', function()
         truthy(s.escrow.moneyValue(c.id) > 0, 'the live collection still pays something')
     end)
 end)
+
+describe('a stake paid out while the client lowers it', function()
+    --- The release read the stake and then claimed it, an await apart on
+    --- mysql. A cut landing in between lowered the stake and paid the
+    --- difference, and the release then paid the stake at the figure it had
+    --- read: 2,000 and 1,500 out of a 2,000 stake.
+    it('pays the stake as it stands, not as it was read', function()
+        local s, f, c = staked(newCopyingStack, 2000, CH.MODE.EXCLUSIVE)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local stakeId = stakeLines(s, c.id)[1].id
+        local afterStake = money(3)
+        local real, fired, cut = s.storage.claimEscrowLine, false, nil
+        s.storage.claimEscrowLine = function(id, expected, next_)
+            if id == stakeId and expected == CH.ESCROW_STATE.HELD and not fired then
+                fired = true
+                cut = s.amendments.improve(f.creator, c.id, CH.AMENDMENT.LOWER_PENALTY,
+                    { amount = 500 })
+            end
+            return real(id, expected, next_)
+        end
+        local ok, err = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
+        s.storage.claimEscrowLine = real
+        truthy(ok, tostring(err))
+        truthy(cut, 'the cut did not land in the gap')
+        eq(money(3) - afterStake, 20000 + 2000,
+            'the stake was paid at its old figure on top of the difference')
+    end)
+end)
+
+describe('RACE F8b: the stake is repriced behind the handler\'s own read', function()
+    --- On a real database the handler's read can answer with the row as it
+    --- was while a raise commits behind it. The page and the handler then
+    --- agree on 1,000, and only the check against the acceptance's own read
+    --- stands between the hitman and a 15,000 stake.
+    it('refuses the acceptance and charges nothing', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 20000 } }, penaltyAmount = 1000,
+        })
+        truthy(c)
+        local realRead, fired = s.storage.readContract, false
+        s.storage.readContract = function(id)
+            if fired then return realRead(id) end
+            fired = true
+            -- The handler's read: the row as it stood, a copy as a database
+            -- hands back, with the raise committed behind it.
+            local snapshot = {}
+            for k, v in pairs(realRead(id)) do snapshot[k] = v end
+            local p = s.amendments.propose(f.creator, c.id,
+                CH.AMENDMENT.RAISE_PENALTY, { amount = 15000 })
+            eq(p and p.outcome, 'applied', 'the raise did not apply')
+            return snapshot
+        end
+        local before = money(3)
+        local result, err = s.app.handlers.accept(f.hitman, { id = c.id, penaltyAmount = 1000 })
+        s.storage.readContract = realRead
+        eq(realRead(c.id).penalty_amount, 15000)
+        falsy(result, 'accepted on a stake that was not on screen')
+        eq(err, CH.ERR.TERMS_CHANGED)
+        eq(money(3), before, 'charged a stake the hitman was never shown')
+    end)
+end)
+
+describe('RACE F22: one hitman\'s two claims at once', function()
+    --- The second claim passes its checks before the first pays, then takes
+    --- the lock after it. Only the re-read under the lock stands between one
+    --- kill and two collections.
+    it('pays one collection and refuses the other', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 5000 } }, { baseline = { cash = 3000 } } } },
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local before = money(3)
+        local real, fired, other = s.storage.compareSetContractState, false, nil
+        s.storage.compareSetContractState = function(id, expected, next_)
+            if not fired and next_ == CH.STATE.COMPLETING then
+                fired = true
+                other = table.pack(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+            end
+            return real(id, expected, next_)
+        end
+        local ok, err = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
+        s.storage.compareSetContractState = real
+        truthy(other and other[1], 'the other claim did not pay')
+        falsy(ok, 'one kill collected twice')
+        eq(err, CH.ERR.SLOT_COOLDOWN)
+        eq(money(3) - before, 5000)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'left holding the contract')
+    end)
+end)
+
+describe('a stake settled while it is being cut', function()
+    --- The owed half is written before the stake is lowered, and walking away
+    --- is not serialised with the cut. The guarded lowering is all that stops
+    --- the difference being paid on top of a forfeit of the whole stake.
+    it('voids the owed half rather than pay it as well', function()
+        local s, f, c = staked(newStack, 4000)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local function held()
+            local total = 0
+            for _, l in ipairs(s.storage.readEscrow(c.id)) do
+                if l.state == CH.ESCROW_STATE.HELD and (l.source == 'cash' or l.source == 'bank') then
+                    total = total + (l.amount or 0)
+                end
+            end
+            return total
+        end
+        local opening = money(1) + money(3) + held()
+        local real, walked = s.storage.setEscrowAmount, false
+        s.storage.setEscrowAmount = function(...)
+            if not walked then
+                walked = true
+                truthy(s.contracts.abandon(f.hitman, c.id), 'the walk-away did not land')
+            end
+            return real(...)
+        end
+        s.amendments.improve(f.creator, c.id, CH.AMENDMENT.LOWER_PENALTY, { amount = 1000 })
+        s.storage.setEscrowAmount = real
+        truthy(walked)
+        eq(money(1) + money(3) + held(), opening, 'the difference was paid on top of the forfeit')
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CH.PORTION.OWED then
+                falsy(l.state == CH.ESCROW_STATE.HELD and (l.amount or 0) > 0, 'the owed half is still live')
+            end
+        end
+    end)
+end)
+
+describe('a stake forfeited to a client who could not be paid', function()
+    --- The forfeit stays held, owed to the client, under the hitman's name as
+    --- staker. A hitman who takes the contract up again and is then cut must
+    --- get the difference on the stake they put up again, and nothing from
+    --- the one they lost.
+    it('is left out of a cut to the stake put up again', function()
+        local s, f, c = staked(newStack, 2000)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.removePlayer(1)
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        local forfeit = stakeLines(s, c.id)[1]
+        eq(forfeit.owed_to, 'CREATOR1', 'the forfeit was not left owed to the client')
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local before = money(3)
+        truthy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.LOWER_PENALTY, { amount = 500 }))
+        eq(money(3) - before, 1500, 'the client\'s forfeit was cut as well')
+        local line = s.storage.readEscrowLine(forfeit.id)
+        eq(line.amount, 2000)
+        eq(line.owed_to, 'CREATOR1')
+        eq(line.state, CH.ESCROW_STATE.HELD)
+    end)
+end)

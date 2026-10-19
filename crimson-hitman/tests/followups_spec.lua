@@ -853,6 +853,106 @@ describe('an escrow write that raises', function()
         falsy(s.storage.readContract(c.id).state == CH.STATE.COMPLETING, 'the contract is stuck')
         eq(Env.players[3].PlayerData.money.bank - hitmanBefore, 5000, 'and the hitman was paid')
     end)
+
+    it('names what it charged when the read after it raises too', function()
+        -- The same outage refuses the read that decides whether the write
+        -- landed. Refunding then pays a copy that did land back twice, so it
+        -- is not refunded blind, but the raise used to leave with the money
+        -- taken and nothing to say what or where.
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 10000
+        local realWrite, realRead = s.storage.writeEscrow, s.storage.readEscrow
+        local down = false
+        s.storage.writeEscrow = function() down = true error('mysql: connection lost', 0) end
+        s.storage.readEscrow = function(...)
+            if down then error('mysql: connection lost', 0) end
+            return realRead(...)
+        end
+        local ran = pcall(s.contracts.create, f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { bank = 5000 } } })
+        s.storage.writeEscrow, s.storage.readEscrow = realWrite, realRead
+        truthy(down, 'the write was reached')
+        falsy(ran, 'told the creator it was placed')
+        s.audit.flush()
+        local named
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'escrow_take_unverified' then named = row end
+        end
+        truthy(named, 'nothing tells staff what was taken')
+        local line = named.detail.lines[1]
+        eq(line.source, 'bank')
+        eq(line.amount, 5000)
+        truthy(line.id, 'and under which id to look for it')
+    end)
+
+    it('keeps a hitman\'s stake whole when a read after the charge raises', function()
+        -- The ids were read after the stake was charged, and a read that
+        -- raised there kept the stake with no line for it.
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 20000 } }, penaltyAmount = 2000 })
+        truthy(c)
+        local before = money(3)
+        local realRead = s.storage.readEscrow
+        local raised = false
+        s.storage.readEscrow = function(...)
+            if not raised and money(3) < before then
+                raised = true
+                error('mysql: connection lost', 0)
+            end
+            return realRead(...)
+        end
+        pcall(s.contracts.accept, f.hitman, c.id, false)
+        s.storage.readEscrow = realRead
+        truthy(raised, 'no read came after the charge')
+        local held = 0
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CH.PORTION.STAKE and l.state == CH.ESCROW_STATE.HELD then
+                held = held + l.amount
+            end
+        end
+        eq(money(3) + held, before, 'the stake was taken with nothing held for it')
+    end)
+end)
+
+describe('a contract write that raises', function()
+    --- Escrow is taken first and the contract written after it. Every
+    --- backend answers that write true or raises, so the refund behind a
+    --- false never ran, and a raise left the reward in lines nothing owns.
+    it('gives the creator their money back', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 10000
+        local real = s.storage.writeContract
+        s.storage.writeContract = function() error('mysql: connection lost', 0) end
+        local ran, c = pcall(s.contracts.create, f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { bank = 5000 } } })
+        s.storage.writeContract = real
+        truthy(ran, 'the raise escaped: ' .. tostring(c))
+        falsy(c, 'placed with no contract stored')
+        eq(Env.players[1].PlayerData.money.bank, 10000, 'the reward went into lines nothing owns')
+    end)
+
+    it('keeps a contract that landed before the error', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 10000
+        local real = s.storage.writeContract
+        local raised = false
+        s.storage.writeContract = function(...)
+            real(...)
+            if not raised then raised = true error('connection lost', 0) end
+            return true
+        end
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { bank = 5000 } } })
+        s.storage.writeContract = real
+        truthy(c, 'a stored contract was refunded under its hitmen')
+        eq(Env.players[1].PlayerData.money.bank, 5000, 'charged once, and not refunded')
+        eq(#s.storage.readEscrow(c.id), 1)
+    end)
 end)
 
 describe('a claim that stalls between the lines of its marks', function()

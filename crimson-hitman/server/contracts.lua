@@ -709,15 +709,29 @@ function Contracts.create(actor, req)
     -- Escrow is taken before the contract is persisted, so a failure leaves
     -- no row behind at all rather than a cancelled shell that still counts
     -- against the creator's cooldowns.
-    local took
-    took, err = Escrow.take(actor, contract.id, lines)
-    if not took then
-        -- Put the anonymity fee back: nothing else was charged.
+    local ran, took
+    ran, took, err = pcall(Escrow.take, actor, contract.id, lines)
+    if not ran or not took then
+        -- Put the anonymity fee back: nothing else was charged. A take
+        -- that raises places no contract either, and the fee used to go
+        -- with the raise.
         refundAnonymityFee(actor, contract.id, contract.anon_creator)
+        if not ran then error(took, 0) end
         return nil, err
     end
 
-    if not Storage.writeContract(contract) then
+    -- A write that raised may or may not have landed, as for the escrow
+    -- (Escrow.take): what the store holds decides. Every backend answers
+    -- true or raises, so the branch below was dead, and a dropped
+    -- connection here left the reward in lines no contract, recovery or
+    -- refund would ever reach. A read that raises too decides nothing, and
+    -- the row says where the reward is.
+    local wrote, stored = pcall(Storage.writeContract, contract)
+    if not wrote then
+        Audit.financial('contract_write_failed', actor.cid, contract.id, { error = tostring(stored) })
+        stored = Storage.readContract(contract.id) ~= nil
+    end
+    if not stored then
         -- The contract could not be stored, so everything taken comes back:
         -- the escrow, and the anonymity fee charged before it.
         Escrow.release(contract.id, actor.cid, nil, 'contract_write_failed')

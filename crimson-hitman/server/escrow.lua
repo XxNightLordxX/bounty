@@ -620,6 +620,37 @@ takeUnlocked = function(actor, contractId, lines)
         end
     end
 
+    -- Ids are allocated after whatever the contract already holds, so a
+    -- later top-up (§12.1) appends rather than overwriting the original
+    -- lines. A caller-supplied id is respected if it is already unique.
+    --
+    -- Before anything is charged: the read yields on mysql and raises on a
+    -- dropped connection, and one that raised after the charge kept the
+    -- creator's reward, or a hitman's stake, with nothing written for it and
+    -- nothing put back.
+    local existing = Storage.readEscrow(contractId)
+    local used = {}
+    for i = 1, #existing do used[existing[i].id] = true end
+
+    local records = {}
+    local nextIndex = #existing
+    for i = 1, #lines do
+        local line = Util.copy(lines[i])
+        line.contract_id = contractId
+        line.state = CH.ESCROW_STATE.HELD
+        line.slot = line.slot or 1
+
+        if not line.id or used[line.id] then
+            repeat
+                nextIndex = nextIndex + 1
+                line.id = contractId .. ':' .. tostring(nextIndex)
+            until not used[line.id]
+        end
+        used[line.id] = true
+
+        records[#records + 1] = line
+    end
+
     for i = 1, #lines do
         local line = lines[i]
         local ok = false
@@ -660,32 +691,6 @@ takeUnlocked = function(actor, contractId, lines)
         taken[#taken + 1] = line
     end
 
-    -- Ids are allocated after whatever the contract already holds, so a
-    -- later top-up (§12.1) appends rather than overwriting the original
-    -- lines. A caller-supplied id is respected if it is already unique.
-    local existing = Storage.readEscrow(contractId)
-    local used = {}
-    for i = 1, #existing do used[existing[i].id] = true end
-
-    local records = {}
-    local nextIndex = #existing
-    for i = 1, #lines do
-        local line = Util.copy(lines[i])
-        line.contract_id = contractId
-        line.state = CH.ESCROW_STATE.HELD
-        line.slot = line.slot or 1
-
-        if not line.id or used[line.id] then
-            repeat
-                nextIndex = nextIndex + 1
-                line.id = contractId .. ':' .. tostring(nextIndex)
-            until not used[line.id]
-        end
-        used[line.id] = true
-
-        records[#records + 1] = line
-    end
-
     -- A write that failed may or may not have landed — a connection can drop
     -- after the commit, which a single statement reports by raising and a
     -- transaction by answering false — so it is not refunded blind: that
@@ -696,8 +701,27 @@ takeUnlocked = function(actor, contractId, lines)
     if not wrote or not ok then
         Audit.rejected('escrow_write_failed', actor.cid, contractId,
             { error = not wrote and tostring(ok) or nil })
+        local read, rows = pcall(Storage.readEscrow, contractId)
+        if not read then
+            -- Nothing says whether it landed: the store that refused the
+            -- write is refusing the read too. Refunded blind, a copy that
+            -- did land is paid back a second time (above; a stake by
+            -- Contracts.recoverJoining), so the raise goes on to the caller
+            -- as before — but no longer with nothing to say what was taken.
+            -- The row names every line, so staff can return one the store
+            -- does not have.
+            local charged = {}
+            for i = 1, #records do
+                local r = records[i]
+                charged[i] = { id = r.id, source = r.source, amount = r.amount,
+                    item = r.item, quantity = r.quantity }
+            end
+            Audit.financial('escrow_take_unverified', actor.cid, contractId,
+                { lines = charged, error = tostring(rows) })
+            error(rows, 0)
+        end
         local present = {}
-        for _, line in ipairs(Storage.readEscrow(contractId) or {}) do present[line.id] = true end
+        for _, line in ipairs(rows or {}) do present[line.id] = true end
         local any = false
         for i = 1, #records do
             if present[records[i].id] then any = true end
@@ -718,25 +742,35 @@ takeUnlocked = function(actor, contractId, lines)
     -- ours. One that is not means the id was taken in between: the whole
     -- take is rolled back and the caller can try again, which is far
     -- better than a creator charged for escrow that does not exist.
-    local stored = {}
-    for _, line in ipairs(Storage.readEscrow(contractId)) do stored[line.id] = line end
+    --
+    -- A read-back that raises is not a collision. The lines are stored —
+    -- the write said so, or the read above saw them — and `taking` keeps a
+    -- second take off these ids, so they are kept rather than refunded on
+    -- top of being held.
+    local read, rows = pcall(Storage.readEscrow, contractId)
+    if read then
+        local stored = {}
+        for _, line in ipairs(rows or {}) do stored[line.id] = line end
 
-    for i = 1, #records do
-        local mine = records[i]
-        local found = stored[mine.id]
-        if not found
-            or found.source ~= mine.source
-            or found.portion ~= mine.portion
-            -- Whose it is, too: two stakes of the same figure agree on
-            -- everything else.
-            or found.staker ~= mine.staker
-            or found.item ~= mine.item
-            or (found.amount or 0) ~= (mine.amount or 0)
-            or (found.quantity or 0) ~= (mine.quantity or 0) then
-            Audit.rejected('escrow_id_collision', actor.cid, contractId, { line = mine.id })
-            rollback()
-            return false, CH.ERR.LOCKED
+        for i = 1, #records do
+            local mine = records[i]
+            local found = stored[mine.id]
+            if not found
+                or found.source ~= mine.source
+                or found.portion ~= mine.portion
+                -- Whose it is, too: two stakes of the same figure agree on
+                -- everything else.
+                or found.staker ~= mine.staker
+                or found.item ~= mine.item
+                or (found.amount or 0) ~= (mine.amount or 0)
+                or (found.quantity or 0) ~= (mine.quantity or 0) then
+                Audit.rejected('escrow_id_collision', actor.cid, contractId, { line = mine.id })
+                rollback()
+                return false, CH.ERR.LOCKED
+            end
         end
+    else
+        Audit.rejected('escrow_readback_failed', actor.cid, contractId, { error = tostring(rows) })
     end
 
     Audit.financial('escrow_taken', actor.cid, contractId, { lines = #records })
@@ -845,6 +879,23 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
             -- Compare-and-set: only a line still `held` may be claimed, and
             -- the claim is what authorises moving the funds.
             local claimed = Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING)
+
+            -- And paid as it stands now it is ours, not as it was read. The
+            -- read above is an await before the claim on mysql, and a stake
+            -- lowered in between (Escrow.reduceStake, guarded on `held`)
+            -- was paid at its old figure on top of the difference the cut
+            -- had already paid out: 2,000 + 1,500 from a 2,000 stake. Once
+            -- it is `releasing` nothing else can change it.
+            if claimed then
+                line = Storage.readEscrowLine(line.id) or line
+                if line.owed_to and line.owed_to ~= recipientCid
+                    and not (filter and (filter.line or filter.lines)) then
+                    -- Owed to somebody else in the same window: theirs.
+                    Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD)
+                    claimed = false
+                end
+            end
+
             if not claimed then
                 result.skipped = result.skipped + 1
             elseif guard and not guard(line) then

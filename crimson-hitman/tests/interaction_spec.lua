@@ -696,7 +696,14 @@ describe('additive improvements apply without approval', function()
         for _ = 1, 5 do
             local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.RAISE_PENALTY,
                 { amount = 10000 })
-            if proposal then s.amendments.respond(f.hitman, proposal.id, true) end
+            truthy(proposal, 'the raise was never put to the hitman')
+            local was = s.storage.readContract(c.id).penalty_amount
+            local _, _, outcome = s.amendments.respond(f.hitman, proposal.id, true)
+            -- Conservation alone still holds when the raise is applied, so
+            -- the rule is asserted itself: a penalty is only real if it was
+            -- staked, and this hitman staked the old one.
+            eq(outcome, 'failed', 'a raise applied over a stake nobody put up')
+            eq(s.storage.readContract(c.id).penalty_amount, was, 'the figure moved off the stake')
             s.amendments.improve(f.creator, c.id, CH.AMENDMENT.LOWER_PENALTY, { amount = 1 })
         end
 

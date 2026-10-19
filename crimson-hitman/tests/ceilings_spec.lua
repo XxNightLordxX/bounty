@@ -70,6 +70,26 @@ describe('the escrow line ceiling', function()
         truthy(ok, tostring(err))
         eq(s.storage.readContract(c.id).bonus_percent, 50)
     end)
+
+    it('holds the contract value ceiling when the bonus is raised', function()
+        -- This path builds its lines itself rather than through validate, so
+        -- one comparison is all that bounds what the raise adds.
+        local s = newStack()
+        local f = fixture(s, { creatorCash = 400000, creatorBank = 900000 })
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 250000, bank = 500000 } }, bonusPercent = 10,
+        })
+        truthy(c, 'the fixture contract must exist')
+        local m = Env.players[1].PlayerData.money
+        local before = m.cash + m.bank
+        local ok, err = s.amendments.improve(f.creator, c.id,
+            CH.AMENDMENT.RAISE_BONUS, { percent = 50 })
+        falsy(ok, 'raised past ' .. Config.MaxContractValue)
+        eq(err, CH.ERR.INVALID_REWARD)
+        eq(m.cash + m.bank, before, 'charged for a raise that was refused')
+        eq(s.storage.readContract(c.id).bonus_percent, 10)
+    end)
 end)
 
 describe('a buyout premium with nowhere to go', function()
