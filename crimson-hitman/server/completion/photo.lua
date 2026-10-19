@@ -181,6 +181,39 @@ end
 
 local counter = 0
 
+--- How long a hit of this hitman's counts as recent, for telling them their
+--- target is down rather than dead. Roughly a last stand: a hit older than
+--- that is not what put them on the ground now.
+local DOWNED_HIT_SECONDS = 300
+
+--- Whether this hitman's target is down but not dead, asked of a hitman
+--- with no kill to prove. Right after downing the target is the commonest
+--- moment to tap Verify kill, and a downed target never opens a kill, so
+--- the answer was "take the target down" to somebody who just had.
+---
+--- Answered only to a hitman on the contract who is within weapon range of
+--- the target or hit them lately. Anyone else would have a remote "is my
+--- target down right now" check, which tracking refuses to be.
+local function downedInReach(actor, contractId)
+    local contract = Storage.readContract(contractId)
+    if not contract or contract.state ~= CH.STATE.ACCEPTED or not contract.target_cid then
+        return false
+    end
+    local hitman = Storage.readHitman(contractId, actor.cid)
+    if not hitman or hitman.state ~= 'active' then return false end
+
+    local victim = Identity.byCitizenId(contract.target_cid)
+    if not victim then return false end
+    local _, down, known = Identity.deathState(victim.source)
+    if not (known and down) or Identity.isTrulyDead(victim.source) then return false end
+
+    local hitAt = Death.lastHit(actor.cid, contract.target_cid)
+    if hitAt and os.time() - hitAt <= DOWNED_HIT_SECONDS then return true end
+    local range = Config.Completion.MaxWeaponRange
+    return Util.dist2(GetEntityCoords(GetPlayerPed(actor.source)),
+        GetEntityCoords(GetPlayerPed(victim.source))) <= range * range
+end
+
 --- Issue a capture token for a pending completion. One live token per
 --- hitman-contract pair: requesting another invalidates the first, so a
 --- hitman cannot bank tokens for later.
@@ -194,7 +227,10 @@ function Photo.issue(actor, contractId)
     -- any moment other than standing over a body the server saw this hitman
     -- put there, and it needs to say so.
     local record = Death.getPending(contractId, actor.cid)
-    if not record then return nil, CH.ERR.NO_KILL_TO_VERIFY end
+    if not record then
+        if downedInReach(actor, contractId) then return nil, CH.ERR.PHOTO_STILL_DOWN end
+        return nil, CH.ERR.NO_KILL_TO_VERIFY
+    end
 
     for token, existing in pairs(tokens) do
         if existing.contractId == contractId and existing.hitmanCid == actor.cid then
@@ -266,7 +302,15 @@ function Photo.submit(actor, rawToken, rawUrl)
     if Util.monotonicMs() - record.issuedAt > (Config.Completion.PhotoTokenLifetimeSeconds * 1000)
         or (record.expiresAt and Util.monotonicMs() > record.expiresAt) then
         tokens[token] = nil
-        return false, CH.ERR.TOKEN_INVALID
+        -- A token is never good past the kill it proves, so an expired one
+        -- usually means the kill has lapsed too, and "take the photo again"
+        -- sent the hitman back for a kill that could no longer be claimed.
+        -- Only a newer kill of theirs standing in its place still can.
+        if Death.getPending(record.contractId, actor.cid) then
+            return false, CH.ERR.TOKEN_INVALID
+        end
+        Audit.rejected('photo_proof_expired', actor.cid, record.contractId, {})
+        return false, CH.ERR.PROOF_EXPIRED
     end
 
     if type(rawUrl) ~= 'string' or #rawUrl > Util.MAX_URL_LENGTH or not Photo.hostAllowed(rawUrl) then

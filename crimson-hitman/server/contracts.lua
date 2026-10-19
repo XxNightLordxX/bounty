@@ -1630,10 +1630,13 @@ function Contracts.claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- Eligibility is re-checked here, not just at creation: a multi-slot
     -- contract is claimed repeatedly over time, and the target's post-respawn
     -- protection has to hold for every claim (§14.39).
+    --
+    -- Which rule, as creation already says: the page told a hitman over a
+    -- target who had just logged in that the target had just got up.
     local targetActor = Identity.byCitizenId(contract.target_cid)
-    if targetActor and Contracts.isImmune(targetActor, opts) then
-        return false, CH.ERR.TARGET_PROTECTED
-    end
+    local immune, why = false, nil
+    if targetActor then immune, why = Contracts.isImmune(targetActor, opts) end
+    if immune then return false, why or CH.ERR.TARGET_PROTECTED end
 
     -- Take the contract's lock for the duration of the settlement, so the
     -- slot cannot be claimed twice (§14.3).

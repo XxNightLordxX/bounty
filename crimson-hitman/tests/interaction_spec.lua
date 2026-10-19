@@ -2928,7 +2928,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         local ok, err = s.contracts.claimSlot(c.id, 'HITMAN02', CH.FULFILMENT.ELIMINATION,
             { deathAt = rekill.at })
         falsy(ok, 'a target killed again seconds after getting up paid out')
-        eq(err, CH.ERR.TARGET_PROTECTED)
+        eq(err, CH.ERR.TARGET_JUST_UP)
     end)
 
     it('settles a revive cut short when the re-kill is reported before the watch looks', function()
@@ -2954,7 +2954,7 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         local ok, err = s.contracts.claimSlot(c.id, 'HITMAN02', CH.FULFILMENT.ELIMINATION,
             { deathAt = rekill.at })
         falsy(ok, 'paid before the watch had looked')
-        eq(err, CH.ERR.TARGET_PROTECTED)
+        eq(err, CH.ERR.TARGET_JUST_UP)
     end)
 
     local function medic(opts)

@@ -174,9 +174,14 @@ function Kidnap.arm(contractId, hitmanCid)
     -- Immunity is checked here, not only at the end. The claim would be
     -- refused either way, and finding out after thirty seconds of holding
     -- someone is a waste of the hitman's time.
-    if targetActor and Contracts.isImmune(targetActor,
-        { fulfilment = CH.FULFILMENT.KIDNAPPING }) then
-        return false, 'target_protected'
+    --
+    -- Which rule, too. A live delivery is exempt from the post-respawn one,
+    -- so a refusal here is never that, and "they only just got up" was the
+    -- one thing it could not be.
+    if targetActor then
+        local immune, why = Contracts.isImmune(targetActor,
+            { fulfilment = CH.FULFILMENT.KIDNAPPING })
+        if immune then return false, why or CH.ERR.TARGET_PROTECTED end
     end
 
     active[key(contractId, hitmanCid)] = {
@@ -253,8 +258,14 @@ local REFUSED_WORDS = {
     [CH.ERR.ALREADY_SETTLED] = 'Every payout on this contract had already been '
         .. 'collected by the time the handover finished.',
     [CH.ERR.BAD_STATE] = 'The contract closed before the handover finished.',
-    [CH.ERR.TARGET_PROTECTED] = 'The target was still protected after '
-        .. 'getting back up, so the handover does not count.',
+    -- A live delivery skips the post-respawn rule, so getting back up is
+    -- never the reason here: only being new to the session or the city.
+    [CH.ERR.TARGET_JUST_ON] = 'The target had only just come into the city, '
+        .. 'so the handover does not count.',
+    [CH.ERR.TARGET_TOO_NEW] = 'The target is too new to the city to be '
+        .. 'taken yet, so the handover does not count.',
+    [CH.ERR.TARGET_PROTECTED] = 'The target was protected from contracts, '
+        .. 'so the handover does not count.',
     [CH.ERR.NOT_PARTICIPANT] = 'You are no longer on this contract.',
     [CH.ERR.LOCKED] = 'Another payout on this contract was being settled at '
         .. 'the same moment, and it got there first.',

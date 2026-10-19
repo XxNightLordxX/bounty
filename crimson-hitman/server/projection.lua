@@ -291,6 +291,13 @@ local function buildListing(viewerCid, page)
             -- and Threads on a server with the relay switched off, and every
             -- message was refused.
             relay = Config.Relay.Enabled == true,
+            -- How close a handover has to be and how long it is held, for
+            -- the line that tells a new hitman how to deliver alive. Each
+            -- rule was otherwise learned from a refusal.
+            kidnap = {
+                radius = Config.Kidnap.Radius,
+                seconds = Config.Kidnap.CountdownSeconds,
+            },
             -- Whether officers are really told, at each stage. A contract on
             -- an officer is marked whatever this says, and the page's warnings
             -- said "their department has been advised" on a server that

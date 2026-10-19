@@ -4425,7 +4425,8 @@ async function main() {
       ['target_not_conscious', 'conscious'],
       ['creator_too_far', 'client'],
       ['target_too_far', 'close'],
-      ['target_protected', 'just got up'],
+      ['target_just_on', 'come into the city'],
+      ['target_protected', 'protected'],
       ['party_offline', 'online'],
       ['limit_reached', 'in progress'],
     ];
@@ -5417,8 +5418,8 @@ async function main() {
         .filter(function (n) { return n.tagName === 'BUTTON'; })
         .map(function (n) { return n.textContent; });
 
-      it('says the camera is open rather than looking untouched', function () {
-        truthy(labels.some(function (l) { return l.indexOf('Camera open') !== -1; }),
+      it('says it is verifying rather than looking untouched', function () {
+        truthy(labels.some(function (l) { return l.indexOf('Verifying') !== -1; }),
           'the screen did not change at all for the whole round trip: '
           + labels.join(' | '));
       });
@@ -5429,7 +5430,7 @@ async function main() {
         }).length;
         // The button is disabled, so a player tapping it again does nothing.
         const button = app.view.all().filter(function (n) {
-          return n.tagName === 'BUTTON' && n.textContent.indexOf('Camera open') !== -1;
+          return n.tagName === 'BUTTON' && n.textContent.indexOf('Verifying') !== -1;
         })[0];
         truthy(button.disabled, 'the button stayed live through the upload');
         const after = app.sent.filter(function (x) {
@@ -5445,7 +5446,7 @@ async function main() {
         const again = app.view.all()
           .filter(function (n) { return n.tagName === 'BUTTON'; })
           .map(function (n) { return n.textContent; });
-        falsy(again.some(function (l) { return l.indexOf('Camera open') !== -1; }),
+        falsy(again.some(function (l) { return l.indexOf('Verifying') !== -1; }),
           'a button left disabled is worse than one that could be tapped twice');
       });
     })();
@@ -5996,7 +5997,7 @@ async function main() {
     await (async function protectedOnTheKillPath() {
       const app = boot({
         mine: job,
-        takeVerificationPhoto: { ok: false, err: 'target_protected' }
+        takeVerificationPhoto: { ok: false, err: 'target_just_up' }
       });
       await settle(); await settle();
       tab(app, 'mine');
@@ -6011,9 +6012,9 @@ async function main() {
         // standing over a body they just photographed has done.
         falsy(said.indexOf('cannot be listed') !== -1,
           'a hitman was told about a rule for listing contracts: ' + said);
-        truthy(said.indexOf('just got up') !== -1, said);
-        truthy(said.indexOf('try again') !== -1,
-          'and that the kill is not lost: ' + said);
+        truthy(said.indexOf('just got back up') !== -1, said);
+        truthy(said.indexOf('does not count yet') !== -1,
+          'and that the kill may still count: ' + said);
       });
     })();
 

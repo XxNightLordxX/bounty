@@ -179,7 +179,7 @@ describe('proof tokens across a timer wrap', function()
         rawTimer(250 + (Config.Completion.PhotoTokenLifetimeSeconds * 1000) + 1000)
         local ok, err = s.photo.submit(f.hitman, token, 'https://cdn.fivemanage.com/p.png')
         falsy(ok, 'a stale token must not be accepted because the clock wrapped')
-        eq(err, CH.ERR.TOKEN_INVALID)
+        eq(err, CH.ERR.PROOF_EXPIRED)
     end)
 
     it('still accepts a token submitted within its lifetime after a wrap', function()

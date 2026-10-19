@@ -227,6 +227,11 @@ CH.ERR = {
     NOT_PARTICIPANT  = 'not_participant',
     ALREADY_SETTLED  = 'already_settled',
     TOKEN_INVALID    = 'token_invalid',
+    --- The time to prove a kill ran out before the photo arrived. Its own
+    --- code because a token never outlives its kill: told to take the photo
+    --- again, as TOKEN_INVALID tells them, the hitman went back for a kill
+    --- that was already gone.
+    PROOF_EXPIRED    = 'proof_expired',
     PHOTO_REJECTED   = 'photo_rejected',
 
     --- Why a photo was rejected. One code covered four unrelated causes —

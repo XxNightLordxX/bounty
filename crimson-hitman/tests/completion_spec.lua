@@ -126,6 +126,22 @@ describe('capture tokens', function()
         eq(err, CH.ERR.NO_KILL_TO_VERIFY)
     end)
 
+    it('tells a hitman who only downed the target to finish them, and nobody far off', function()
+        local s, f, c = seeded()
+        eq(killTarget(s, { downedOnly = true }), 0)
+        local token, err = s.photo.issue(f.hitman, c.id)
+        falsy(token)
+        eq(err, CH.ERR.PHOTO_STILL_DOWN, 'told to take down a target they just had')
+
+        -- Far off and not lately in the fight: the same tap would be a
+        -- remote check on whether the target is down.
+        Env.players[3]._coords = { x = 5000.0, y = 0.0, z = 30.0 }
+        Env.advance(301)
+        token, err = s.photo.issue(f.hitman, c.id)
+        falsy(token)
+        eq(err, CH.ERR.NO_KILL_TO_VERIFY)
+    end)
+
     it('replaces the previous token, so tokens cannot be banked', function()
         local s, f, c = seeded()
         killTarget(s)
@@ -255,7 +271,8 @@ describe('photo verification', function()
         eq(s.death.getPending(c.id, 'HITMAN01'), nil, 'the kill lapsed')
         local ok, err = s.photo.submit(f.hitman, token, 'https://cdn.fivemanage.com/p.png')
         falsy(ok, 'paid for a kill six lifetimes old')
-        truthy(err == CH.ERR.PHOTO_REVIVED or err == CH.ERR.TOKEN_INVALID, tostring(err))
+        truthy(err == CH.ERR.PHOTO_REVIVED or err == CH.ERR.TOKEN_INVALID
+            or err == CH.ERR.PROOF_EXPIRED, tostring(err))
     end)
 
     it('holds the kill for a token asked for at the end of its window', function()
@@ -285,7 +302,8 @@ describe('photo verification', function()
         Env.advance(30)
         local ok, err = s.photo.submit(f.hitman, token, 'https://cdn.fivemanage.com/p.png')
         falsy(ok)
-        eq(err, CH.ERR.TOKEN_INVALID, 'told the target was revived: ' .. tostring(err))
+        -- The kill went with the token, so "take the photo again" is not it.
+        eq(err, CH.ERR.PROOF_EXPIRED, 'told the target was revived: ' .. tostring(err))
     end)
 
     it('tells a hitman a target shocked back to last stand is still down', function()

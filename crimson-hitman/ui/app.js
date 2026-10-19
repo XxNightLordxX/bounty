@@ -447,12 +447,23 @@
     already_settled: 'That contract is closed.',
     // The rules are on the server and the numbers are configurable, so the
     // words carry what the settings say rather than figures hardcoded here.
-    no_kill_to_verify: 'No kill on this contract is waiting for proof. Take '
-      + 'the target down, then photograph them where they fell \u2014 within '
-      + 'a few metres, and before they are back on their feet for long.',
+    // "Take the target down" was said to a hitman who just had: a downed
+    // target is not a kill, and nothing told them to finish the job. The
+    // last line covers the second the server waits for the finishing shot.
+    no_kill_to_verify: 'No kill on this contract is waiting for proof. Down is '
+      + 'not dead: if they are on the ground, finish them. Then photograph the '
+      + 'body from a few metres away, soon after the kill. If you only just '
+      + 'finished them, give it a second and try again.',
     // Not a fault. The poller stops on this and says the handover ended.
     no_handover: 'That handover is not running.',
-    token_invalid: 'Verification expired. Take the photo again.',
+    // A token outlived by a newer kill, replaced by a second tap, or lost to
+    // a restart: in every case the body can still be photographed.
+    token_invalid: 'That verification is no longer valid. Take a new photo of '
+      + 'the body now.',
+    // The other side of what "expired" used to cover. A token never outlives
+    // its kill, so this one is final, and saying "take it again" was not.
+    proof_expired: 'The time to verify this kill ran out before the photo '
+      + 'arrived. Nothing was sent for it, and this kill can no longer be claimed.',
     photo_rejected: 'The photo was not accepted.',
     photo_too_far: 'You are too far from the body. Stand over them and take it again.',
     photo_revived: 'They were brought back before you sent the photo, so this is '
@@ -737,6 +748,21 @@
     row.appendChild(no);
     panel.appendChild(row);
 
+    view.appendChild(panel);
+  }
+
+  // A proof photograph at full size, opened from the ledger.
+  function renderPhoto(view) {
+    var panel = el('div', 'card dialog photo-view');
+    var img = document.createElement('img');
+    img.src = state.dialog.src;
+    img.alt = 'Verification photograph';
+    panel.appendChild(img);
+    var row = el('div', 'row');
+    var close = el('button', 'ghost', 'Close');
+    close.onclick = closeDialog;
+    row.appendChild(close);
+    panel.appendChild(row);
     view.appendChild(panel);
   }
 
@@ -1269,13 +1295,22 @@
       // the photo already being uploaded was taken against, and spent a
       // second of the three attempts the rate limit allows — so a hitman
       // could burn their whole allowance before seeing a single answer.
+      //
+      // "Verifying", not "Camera open": the label lasts the whole request,
+      // and the camera is shut while the photo uploads and is checked.
       row.appendChild(actionButton('primary', 'Verify kill',
-        'photo:' + contract.id, 'Camera open\u2026',
+        'photo:' + contract.id, 'Verifying\u2026',
         function () { return verifyKill(contract); }));
 
       row.appendChild(actionButton(null, 'Deliver alive',
-        'kidnap:' + contract.id, 'Arming\u2026',
+        'kidnap:' + contract.id, 'Starting handover\u2026',
         function () { return armKidnap(contract); }));
+
+      // How each one is done, for a hitman who has never finished a
+      // contract. Every rule was only learned by tapping and failing, in a
+      // notice that is gone in seconds.
+      var firstJob = howToFinish(contract);
+      if (firstJob) { row.appendChild(firstJob); }
 
       // Opening a thread is a round trip that changes nothing on screen
       // until it lands, so the button read as dead and got tapped again.
@@ -1698,6 +1733,31 @@
     chooseAnonymity();
   }
 
+  /* The rules of finishing, shown until the hitman has finished one. Their
+     record comes with the ledger, which loads with every refresh; until it
+     has, nothing is drawn rather than a line that vanishes a moment later. */
+  function howToFinish(contract) {
+    var record = state.ledger && state.ledger.record;
+    if (!record || record.completed !== 0) { return null; }
+    var kidnap = settings().kidnap || {};
+    var text = 'Kill: a downed target is not dead. Finish them, then stand over '
+      + 'the body and tap Verify kill to photograph it before they are revived. '
+      + 'Alive: restrain them or get them into your vehicle, bring them '
+      + (kidnap.radius ? 'within ' + kidnap.radius + ' m of' : 'to')
+      + ' the client, tap Deliver alive and hold '
+      + (kidnap.seconds ? 'for ' + kidnap.seconds + 's.' : 'until it finishes.');
+    // Nobody can be met who cannot be found.
+    if (contract.creatorAnonymous && settings().relay !== false) {
+      text += ' Your client is anonymous. Use Message to agree where to meet '
+        + 'before you grab them.';
+    }
+    return el('div', 'hint', text);
+  }
+
+  /* Which contracts last answered Verify kill with no kill at all. The rate
+     limit's reassurance that "the kill is still yours" is untrue for those. */
+  var noKillOn = {};
+
   function verifyKill(contract) {
     // Returned, so `once` knows when the camera and the upload are done.
     return post('takeVerificationPhoto', { id: contract.id }).then(function (r) {
@@ -1712,12 +1772,26 @@
            fulfilment route, already words the same code correctly for a
            player in the field. This one did not.
 
-           invalid_reward likewise belongs to the Place form. */
+           invalid_reward likewise belongs to the Place form.
+
+           The two protection rules are worded for the kill too. One sentence
+           said "they only just got up" to a hitman over a target who had just
+           logged in, and promised a retry the hold on the kill can outlast. */
+        var noKill = noKillOn[contract.id];
+        noKillOn[contract.id] = r.err === 'no_kill_to_verify'
+          || (noKill && r.err === 'rate_limited');
         var here = {
-          target_protected: 'They only just got up. The kill does not count '
-            + 'while they are protected \u2014 wait a moment and try again.',
+          target_just_up: 'They had only just got back up when you killed them, '
+            + 'so the kill does not count yet. It counts only if they are still '
+            + 'lying dead when that protection runs out.',
+          target_just_on: 'They had only just come into the city, so the kill '
+            + 'does not count yet. It counts only if they are still lying dead '
+            + 'when that protection runs out \u2014 usually a few minutes.',
+          target_protected: 'They are protected right now, so the kill does not '
+            + 'count.',
           rate_limited: 'Too many attempts just now. Wait a few seconds and '
-            + 'photograph them again; the kill is still yours to claim.'
+            + (noKill ? 'try again.'
+              : 'photograph them again; the kill is still yours to claim.')
         };
         if (here[r.err]) { return say(here[r.err]); }
         return fail(r);
@@ -1746,7 +1820,12 @@
           not_coerced: 'The target must be restrained or in your vehicle.',
           creator_too_far: 'Get the target to the client.',
           target_too_far: 'Keep the target close.',
-          target_protected: 'Leave them a moment — they only just got up.',
+          // A live delivery skips the rule about getting back up, so that is
+          // never why; it said so to hitmen holding somebody fresh in town.
+          target_just_on: 'They have only just come into the city. A handover '
+            + 'will not count until they have been here a few minutes.',
+          target_protected: 'They are protected from contracts right now, so a '
+            + 'handover will not count.',
           party_offline: 'Everyone has to be online for a handover.',
           limit_reached: 'Too many handovers in progress. Try shortly.'
         };
@@ -1874,7 +1953,9 @@
         bad_state: 'The contract closed before the handover finished.',
         locked: 'Another payout on this contract was being settled at the same '
           + 'moment, and it got there first.',
-        target_protected: 'They had only just got back up, so the handover '
+        target_just_on: 'They had only just come into the city, so the '
+          + 'handover does not count.',
+        target_protected: 'They were protected from contracts, so the handover '
           + 'does not count.'
       };
       return say('The handover finished but was not paid. '
@@ -3110,14 +3191,31 @@
         img.src = row.photo_ref;
         img.alt = 'Verification photograph';
         img.loading = 'lazy';
+        // A thumbnail, so a tap shows the whole photograph: for the client
+        // who paid, it is the only evidence the job was done. lb-phone's
+        // own viewer where the phone offers one to custom apps, else ours.
+        var caption = el('div', 'hint proof-caption', 'Tap to view full size');
         img.onerror = function () {
           frame.classList.toggle('is-missing', true);
           if (img.parentNode) { frame.removeChild(img); }
+          if (caption.parentNode) { caption.parentNode.removeChild(caption); }
           frame.appendChild(el('span', 'hint',
             'The proof photograph is no longer on its host.'));
         };
+        frame.onclick = function () {
+          // Nothing to enlarge once the host has failed it.
+          if (frame.classList.contains('is-missing')) { return; }
+          var phone = window.components;
+          if (phone && typeof phone.setFullscreenImage === 'function') {
+            phone.setFullscreenImage(row.photo_ref);
+          } else {
+            state.dialog = { kind: 'photo', src: row.photo_ref };
+            render();
+          }
+        };
         frame.appendChild(img);
         node.appendChild(frame);
+        node.appendChild(caption);
       }
       appendRef(node, row.contract_id);
       view.appendChild(node);
@@ -3415,7 +3513,8 @@
       terms.appendChild(el('div', 'hint',
         'Paid on top of a payout when the target is delivered alive. It is '
         + 'taken from you now with the rest, and comes back if nobody earns it. '
-        + 'Set 0 for none.'));
+        + 'Set 0 for none. Delivered alive means brought to you: you have to be '
+        + 'there in person for the handover.'));
     }
     // Not on a server without buyouts, where the figure was taken and then
     // quietly set to nothing.
@@ -4480,6 +4579,8 @@
         renderFields(view);
       } else if (state.dialog.kind === 'reward') {
         renderRewardEditor(view);
+      } else if (state.dialog.kind === 'photo') {
+        renderPhoto(view);
       } else {
         renderDialog(view);
       }

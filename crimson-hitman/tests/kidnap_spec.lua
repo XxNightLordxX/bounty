@@ -250,7 +250,7 @@ describe('a protected target is refused up front', function()
         -- what the rule is for and it has to keep working.
         local ok, err = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
         falsy(ok, 'a kill claim on somebody who just respawned must still be refused')
-        eq(err, CH.ERR.TARGET_PROTECTED)
+        eq(err, CH.ERR.TARGET_JUST_UP)
     end)
 
     --- The check at arming exists so a hitman does not hold somebody for
@@ -272,7 +272,8 @@ describe('a protected target is refused up front', function()
         s.identity.sessionMinutes = realSession
 
         falsy(ok, 'thirty seconds of holding someone should not end in a refusal')
-        eq(reason, 'target_protected')
+        -- Which rule, not "they only just got up", which a delivery skips.
+        eq(reason, CH.ERR.TARGET_JUST_ON)
     end)
 end)
 

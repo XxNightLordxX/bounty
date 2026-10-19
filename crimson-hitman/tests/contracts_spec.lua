@@ -714,7 +714,7 @@ describe('post-respawn immunity', function()
 
         local ok, err = s.contracts.claimSlot(c.id, 'HITMAN02', CH.FULFILMENT.ELIMINATION)
         falsy(ok, 'a multi-slot contract must not become respawn camping')
-        eq(err, CH.ERR.TARGET_PROTECTED)
+        eq(err, CH.ERR.TARGET_JUST_UP)
 
         Env.advance(Config.Immunity.PostRespawnSeconds + 10)
         truthy(s.contracts.claimSlot(c.id, 'HITMAN02', CH.FULFILMENT.ELIMINATION),
