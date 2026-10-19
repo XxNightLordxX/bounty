@@ -192,7 +192,8 @@ function _G.newCopyingStack()
     stack.contracts.init({ storage = copying, escrow = stack.escrow, identity = stack.identity,
                            audit = stack.audit, notify = stack.notify,
                            progression = stack.progression, death = stack.death })
-    stack.ledger.init(copying)
+    stack.photos.init({ storage = copying, audit = stack.audit })
+    stack.ledger.init({ storage = copying, photos = stack.photos, notify = stack.notify })
     stack.bailout.init({ storage = copying, identity = stack.identity,
                          contracts = stack.contracts, escrow = stack.escrow,
                          audit = stack.audit, notify = stack.notify, kidnap = stack.kidnap })
@@ -241,6 +242,7 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.identity'] = nil
     package.loaded['crimson-hitman.server.ratelimit'] = nil
     package.loaded['crimson-hitman.server.ledger'] = nil
+    package.loaded['crimson-hitman.server.photos'] = nil
     package.loaded['crimson-hitman.server.completion.death'] = nil
     package.loaded['crimson-hitman.server.completion.photo'] = nil
     package.loaded['crimson-hitman.server.completion.kidnap'] = nil
@@ -263,6 +265,7 @@ function _G.newStack()
     local contracts = require('crimson-hitman.server.contracts')
     local ratelimit = require('crimson-hitman.server.ratelimit')
     local ledger    = require('crimson-hitman.server.ledger')
+    local photos     = require('crimson-hitman.server.photos')
     local death     = require('crimson-hitman.server.completion.death')
     local photo     = require('crimson-hitman.server.completion.photo')
     local kidnap    = require('crimson-hitman.server.completion.kidnap')
@@ -287,7 +290,8 @@ function _G.newStack()
         audit = audit, notify = notify, progression = progression, death = death,
     })
 
-    ledger.init(storage)
+    photos.init({ storage = storage, audit = audit })
+    ledger.init({ storage = storage, photos = photos, notify = notify })
     death.init({ storage = storage, identity = identity, contracts = contracts, audit = audit })
     photo.init({
         storage = storage, identity = identity, contracts = contracts, audit = audit,
@@ -321,6 +325,7 @@ function _G.newStack()
         death = death, photo = photo, kidnap = kidnap, bailout = bailout,
         informant = informant, amendments = amendments, comms = comms,
         projection = projection, mugshot = mugshot, progression = progression,
+        photos = photos,
         -- The app module itself: admin reads its handler table to run the
         -- real handlers in a diagnosis, and requiring it there instead
         -- hands back a second copy of the module under a different path.
@@ -335,6 +340,7 @@ function _G.newStack()
         escrow = escrow, contracts = contracts, ratelimit = ratelimit,
         ledger = ledger, death = death, photo = photo, bridges = bridges,
         mugshot = mugshot, progression = progression, app = app, admin = admin,
+        photos = photos,
     }
 end
 
@@ -371,7 +377,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

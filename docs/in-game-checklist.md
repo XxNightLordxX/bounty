@@ -58,8 +58,17 @@ A staff account that can adjust money and spawn items makes this much faster.
 
 - [ ] Hitman kills target with a firearm → hitman can request the camera
 - [ ] Photographing the body pays the base reward and closes that payout
-- [ ] The creator receives the completion notification **with the photo**
-- [ ] The photo appears in the creator's Ledger tab
+- [ ] The creator's completion notification says the photo is waiting under
+      Ledger and can be seen once (it carries no photo itself)
+- [ ] The creator's Ledger row has **View photo**; the hitman's and the
+      target's rows have no photo, and nothing new is in the hitman's Photos app
+- [ ] View photo shows it full-screen with **Save to Photos** and **Delete**;
+      Save puts it in the phone's Photos app and the row then reads
+      "Photo saved to your phone"
+- [ ] Opening it again is refused; switching tab while it is open deletes it
+      and the row reads "Photo deleted"
+- [ ] A photo left open (phone closed mid-view) is deleted after
+      `Config.Completion.PhotoOpenSeconds`
 - [ ] **Downing** the target without killing them does **not** allow a claim
 - [ ] A target who is revived before the photo invalidates the claim
 - [ ] A kill by someone who never accepted pays nobody

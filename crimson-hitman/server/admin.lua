@@ -16,7 +16,7 @@ local Util = require_shared('util')
 local Admin = {}
 
 local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit, Death, Photo
-local Informant, Kidnap, Mugshot
+local Informant, Kidnap, Mugshot, Photos
 
 function Admin.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
@@ -27,6 +27,8 @@ function Admin.init(deps)
     -- And the photo allowlist, which the diagnosis reports: an empty one
     -- refuses every kill photo, and nothing else on the report said so.
     Photo = deps.photo
+    -- The kill photos kept for clients, which a staff void deletes.
+    Photos = deps.photos
 
     -- Taken from the wiring like every other collaborator, rather than
     -- required here. `require('server.app')` and the path the rest of the
@@ -343,6 +345,12 @@ function Admin.void(src, contractId, reason)
 
     Audit.financial('admin_void', callerCid(src), contractId,
         { reason = Util.sanitizeText(reason, 120) or 'none given' })
+
+    -- A collection paid before the void left its kill photo waiting for the
+    -- client. A contract staff had to close is not one whose photo should
+    -- sit there for the retention days, so it goes now, as if the client
+    -- had deleted it; one they already saved is on their phone, not here.
+    if Photos then Photos.forgetContract(contractId) end
 
     Notify.toCitizen(contract.creator_cid, 'Contract voided',
         'Staff closed your contract. Your escrow has been returned.',
@@ -837,7 +845,8 @@ function Admin.diagnose(source, subjectId)
     -- report agreed the server was fine while every action a player took
     -- was being refused by a rule nobody could see.
     local buckets = { 'load', 'search', 'wallet', 'create', 'accept', 'amend',
-                      'informant', 'bailout', 'photo', 'photoSubmit', 'message',
+                      'informant', 'bailout', 'photo', 'photoSubmit', 'photoView',
+                      'photoDecide', 'message',
                       'progress', 'death', 'mugshot', 'image', 'diagnostic' }
     local parts, missing = {}, 0
     for i = 1, #buckets do

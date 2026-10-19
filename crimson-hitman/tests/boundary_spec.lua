@@ -284,7 +284,7 @@ describe('the notification budget', function()
         truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
         -- As the photo route sends it once the claim has paid.
         s.notify.contractCompleted(s.storage.readContract(c.id), f.hitman,
-            'https://cdn.fivemanage.com/p.png')
+            { photo = 'ph00000000aa' })
         truthy(told('Contract fulfilled'), 'the receipt was lost to the budget')
     end)
 

@@ -481,6 +481,14 @@
       + 'try again in a moment; if they were brought back, the kill does not count.',
     photo_bad_host: 'That image host is not on this server\u2019s allow list. '
       + 'An admin sets which hosts the camera may upload to.',
+    /* One answer for a photo already seen, one left open too long, and a
+       handle that was never this player's: the server will not say which,
+       so neither does the page. */
+    photo_gone: 'That photo is gone. Each one can be opened once, and it is '
+      + 'deleted unless it was saved to your Photos.',
+    // Neither lb-phone's own save nor the client's fallback took it.
+    save_unavailable: 'This phone could not save the photo. It is still open: '
+      + 'try again, or delete it.',
     bad_state: 'Not right now.',
 
     /* The six ways a buyout is refused. They shared bad_state — "Not right
@@ -767,17 +775,138 @@
     view.appendChild(panel);
   }
 
-  // A proof photograph at full size, opened from the ledger.
-  function renderPhoto(view) {
+  /* ---------- the kill photo, seen once ----------
+
+     The client's photo of the job, opened on purpose from their Ledger row
+     and shown once. The server spends the view as it hands the photo over
+     (openPhoto), so this dialog is the only time the page holds it: Save to
+     Photos puts it in the phone's own gallery, Delete lets it go, and the
+     server is told which. Closing it any other way — another tab, a redraw
+     that lost it — is a Delete, and the server is told that too
+     (letGoOfProof). A phone closed mid-view tells nobody, and the server
+     deletes it once Config.Completion.PhotoOpenSeconds have passed. */
+
+  /* The photo this page has open and has not yet answered for, by handle.
+     Kept off state.dialog so that losing the dialog is something draw() can
+     notice: it compares this against what it is about to draw. */
+  var proofShown = null;
+
+  // What the client's Ledger row says once the photo is no longer waiting.
+  var PROOF_WORDS = {
+    saved: 'Photo saved to your phone',
+    deleted: 'Photo deleted',
+    // Opened and never answered for: this page was closed while it was up.
+    // The server deletes it when the time to decide runs out.
+    open: 'Photo opened and not saved. It is being deleted.'
+  };
+
+  /* Set the row's state here as well as on the server, so the Ledger says
+     what happened the moment the dialog closes rather than after the next
+     refresh. */
+  function markProof(handle, photoState) {
+    asList(state.ledger && state.ledger.entries).forEach(function (row) {
+      if (row.photo && row.photo.handle === handle) { row.photo.state = photoState; }
+    });
+  }
+
+  function openProof(handle) {
+    return post('openPhoto', { handle: handle }).then(function (r) {
+      if (!r.ok || !r.data || typeof r.data.url !== 'string') {
+        fail(r);
+        // Whatever it was, it is not waiting to be opened any more.
+        if (r.err === 'photo_gone') { markProof(handle, 'deleted'); redraw(); }
+        return;
+      }
+      markProof(handle, 'open');
+      proofShown = { handle: handle };
+      state.dialog = { kind: 'proof', handle: handle, src: r.data.url };
+      render();
+    });
+  }
+
+  /* Tell the server what became of the open photo, and close it here.
+
+     Closed whatever the answer: a photo the server has already let go of
+     (left open too long) cannot be shown again either way. */
+  function decideProof(handle, choice) {
+    proofShown = null;
+    if (state.dialog && state.dialog.kind === 'proof' && state.dialog.handle === handle) {
+      state.dialog = null;
+    }
+    markProof(handle, choice === 'save' ? 'saved' : 'deleted');
+    render();
+    return post('photoDecision', { handle: handle, choice: choice }).then(function (r) {
+      if (!r.ok) {
+        // Deleting one the server had already let go of is not news.
+        if (!(choice === 'delete' && r.err === 'photo_gone')) { fail(r); }
+        markProof(handle, 'deleted');
+        redraw();
+      }
+      return r;
+    });
+  }
+
+  /* Into the phone's own Photos, then tell the server.
+
+     lb-phone's components.saveToGallery where the phone gives it to custom
+     apps; otherwise the client saves it with lb-phone's export, for the
+     photo the server opened for this player and nothing else. Only once
+     the phone has it is the server told 'save' — it forgets the photo the
+     moment it hears that. */
+  function saveProof(d) {
+    var phone = window.components;
+    var saving;
+    if (phone && typeof phone.saveToGallery === 'function') {
+      saving = new Promise(function (resolve) { resolve(phone.saveToGallery(d.src)); });
+    } else {
+      saving = post('saveToPhotos', { handle: d.handle }).then(function (r) {
+        if (!r.ok) { throw r; }
+        return r;
+      });
+    }
+    return saving.then(function () {
+      return decideProof(d.handle, 'save').then(function (r) {
+        if (r.ok) { say('Saved to your Photos.', 'ok'); }
+      });
+    }, function () {
+      // Still open: the server has not been told anything, so the photo is
+      // still theirs to save again or delete.
+      fail({ err: 'save_unavailable' });
+    });
+  }
+
+  /* The open photo was closed some way other than its own two buttons.
+     That is a Delete, and the server is told, rather than the photo being
+     left open on the server until it times out. */
+  function letGoOfProof() {
+    if (!proofShown) { return; }
+    var d = state.dialog;
+    if (d && d.kind === 'proof' && d.handle === proofShown.handle) { return; }
+    var handle = proofShown.handle;
+    proofShown = null;
+    markProof(handle, 'deleted');
+    post('photoDecision', { handle: handle, choice: 'delete' });
+  }
+
+  function renderProof(view) {
+    var d = state.dialog;
     var panel = el('div', 'card dialog photo-view');
+    panel.appendChild(el('div', 'target', 'Proof of the kill'));
+    panel.appendChild(el('div', 'reason', 'You can see this once. Save it to Photos to '
+      + 'keep it \u2014 it is deleted when you close this.'));
+
+    var frame = el('div', 'photo-frame');
     var img = document.createElement('img');
-    img.src = state.dialog.src;
+    img.src = d.src;
     img.alt = 'Verification photograph';
-    panel.appendChild(img);
+    frame.appendChild(img);
+    panel.appendChild(frame);
+
     var row = el('div', 'row');
-    var close = el('button', 'ghost', 'Close');
-    close.onclick = closeDialog;
-    row.appendChild(close);
+    row.appendChild(actionButton('primary', 'Save to Photos', 'proof-save:' + d.handle,
+      'Saving\u2026', function () { return saveProof(d); }));
+    row.appendChild(actionButton('ghost is-destructive', 'Delete', 'proof-delete:' + d.handle,
+      'Deleting\u2026', function () { return decideProof(d.handle, 'delete'); }));
     panel.appendChild(row);
     view.appendChild(panel);
   }
@@ -4026,50 +4155,14 @@
       var closedAgo = agoText(row.resolved_at);
       if (closedAgo) { meta.appendChild(chip(closedAgo, 'plain', 'i-clock')); }
       node.appendChild(meta);
-      if (row.photo_ref) {
-        /* Bounded, and it says what it is while it loads.
-        
-           This was `width: 100%` and nothing else, pointed at a
-           full-resolution photograph on somebody else's CDN. A 1080x1920
-           shot rendered 590px tall inside a card 721px tall, on a viewport
-           of 720 — one history entry taller than the whole screen. Ten
-           entries meant ten simultaneous requests to a remote host and a
-           list that reflowed under the player's thumb as each one landed,
-           because nothing reserved the space.
-        
-           A fixed box, the image fitted inside it, the space held from the
-           first paint, and a host that does not answer leaves a caption
-           rather than a broken-image glyph and a card that shrinks. */
-        var frame = el('div', 'proof');
-        var img = document.createElement('img');
-        img.src = row.photo_ref;
-        img.alt = 'Verification photograph';
-        img.loading = 'lazy';
-        // A thumbnail, so a tap shows the whole photograph: for the client
-        // who paid, it is the only evidence the job was done. lb-phone's
-        // own viewer where the phone offers one to custom apps, else ours.
-        var caption = el('div', 'hint proof-caption', 'Tap to view full size');
-        img.onerror = function () {
-          frame.classList.toggle('is-missing', true);
-          if (img.parentNode) { frame.removeChild(img); }
-          if (caption.parentNode) { caption.parentNode.removeChild(caption); }
-          frame.appendChild(el('span', 'hint',
-            'The proof photograph is no longer on its host.'));
-        };
-        frame.onclick = function () {
-          // Nothing to enlarge once the host has failed it.
-          if (frame.classList.contains('is-missing')) { return; }
-          var phone = window.components;
-          if (phone && typeof phone.setFullscreenImage === 'function') {
-            phone.setFullscreenImage(row.photo_ref);
-          } else {
-            state.dialog = { kind: 'photo', src: row.photo_ref };
-            render();
-          }
-        };
-        frame.appendChild(img);
-        node.appendChild(frame);
-        node.appendChild(caption);
+      /* The kill photo, on the client's own row only, and never drawn in
+         the list. This was a thumbnail of the photo's link on any row that
+         had one — the hitman's own included — so the photograph of a body
+         was on screen whenever the Ledger was, loaded from somebody else's
+         host on every refresh. Now there is a button, and the photo is
+         opened on purpose, once. */
+      if (row.role === 'creator' && row.photo && typeof row.photo === 'object') {
+        node.appendChild(proofLine(row.photo));
       }
       appendRef(node, row.contract_id);
       view.appendChild(node);
@@ -4077,6 +4170,22 @@
 
     view.appendChild(refHint());
     view.appendChild(buildStamp());
+  }
+
+  /* What a client's ledger row says about its kill photo: a button while
+     it waits to be seen, and afterwards which of the two things they did
+     with it. Nothing at all once it is gone. */
+  function proofLine(photo) {
+    var line = el('div', 'proof-line');
+    if (photo.state === 'pending') {
+      line.appendChild(actionButton('ghost ico i-camera', 'View photo',
+        'proof:' + photo.handle, 'Opening\u2026',
+        function () { return openProof(photo.handle); }));
+      line.appendChild(el('div', 'hint', 'You can see it once.'));
+    } else if (PROOF_WORDS[photo.state]) {
+      line.appendChild(el('div', 'hint', PROOF_WORDS[photo.state]));
+    }
+    return line;
   }
 
   // The icon beside the part a player played in a closed contract.
@@ -5809,6 +5918,10 @@
   }
 
   function draw() {
+    // Before anything is drawn: a kill photo whose dialog is no longer the
+    // one on screen was closed some other way, and that is a Delete.
+    letGoOfProof();
+
     var view = document.getElementById('view');
     view.innerHTML = '';
     clockChips = [];
@@ -5825,8 +5938,8 @@
         renderFields(view);
       } else if (state.dialog.kind === 'reward') {
         renderRewardEditor(view);
-      } else if (state.dialog.kind === 'photo') {
-        renderPhoto(view);
+      } else if (state.dialog.kind === 'proof') {
+        renderProof(view);
       } else {
         renderDialog(view);
       }

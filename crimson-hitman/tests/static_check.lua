@@ -208,10 +208,17 @@ local uiSrc = read('crimson-hitman/ui/app.js') or ''
 local clientSrc = read('crimson-hitman/client/main.lua') or ''
 local appSrc = read('crimson-hitman/server/app.lua') or ''
 
-local clientEvents, serverHandlers = {}, {}
+-- Two kinds of NUI callback. The UI_EVENTS list is forwarded to the server
+-- event of the same name and needs a handler there. A callback the client
+-- registers by name of its own (the camera, saving a photo to the phone)
+-- is answered by the client, whatever it asks the server along the way.
+local clientEvents, forwarded, serverHandlers = {}, {}, {}
 
 for list in clientSrc:gmatch('local UI_EVENTS = {(.-)}') do
-    for name in list:gmatch("'([%w_]+)'") do clientEvents[name] = true end
+    for name in list:gmatch("'([%w_]+)'") do
+        clientEvents[name] = true
+        forwarded[name] = true
+    end
 end
 for name in clientSrc:gmatch("RegisterNUICallback%('crimson:([%w_]+)'") do
     clientEvents[name] = true
@@ -222,9 +229,17 @@ for name in uiSrc:gmatch("post%('([%w_]+)'") do
     if not clientEvents[name] then
         failures[#failures + 1] =
             ('ui/app.js calls "%s", which the client bridge does not forward'):format(name)
-    elseif not serverHandlers[name] and name ~= 'takeVerificationPhoto' then
+    elseif forwarded[name] and not serverHandlers[name] then
         failures[#failures + 1] =
             ('ui/app.js calls "%s", which no server handler answers'):format(name)
+    end
+end
+
+-- And what the client asks the server for itself, from inside those.
+for name in clientSrc:gmatch("App%.request%('([%w_]+)'") do
+    if not serverHandlers[name] then
+        failures[#failures + 1] =
+            ('client/main.lua asks the server for "%s", which no handler answers'):format(name)
     end
 end
 

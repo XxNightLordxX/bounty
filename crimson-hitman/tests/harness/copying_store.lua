@@ -26,6 +26,8 @@ return function(inner)
         readEscrowLine = true, readHitmen = true, readHitman = true,
         readAmendment = true, readOpenAmendments = true, readMessages = true,
         readLedger = true, readPending = true, readAudit = true,
+        readPhoto = true, photosOf = true, photosForContract = true,
+        photosOpenedBefore = true, photosCreatedBefore = true,
     }
 
     for name, fn in pairs(inner) do

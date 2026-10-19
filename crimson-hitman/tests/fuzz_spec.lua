@@ -11,6 +11,7 @@ local HANDLERS = {
     'armKidnap', 'kidnapProgress', 'bailout', 'informant', 'addEscrow',
     'improve', 'amendments', 'propose', 'respondAmendment',
     'threads', 'readThread', 'sendMessage', 'requestCall', 'muteThread',
+    'openPhoto', 'photoDecision',
 }
 
 --- A table that is its own child. Anything walking it without a depth guard

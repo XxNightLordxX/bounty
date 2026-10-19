@@ -800,6 +800,10 @@ describe('what this file leaves out', function()
         endCall = 'hanging up twice: the second finds no call and says so',
         requestPhotoToken = 'a second token deliberately invalidates the '
             .. 'first, so a hitman cannot bank them',
+        openPhoto = 'a photo opens once; the second ask is refused as gone, '
+            .. 'which photos_spec checks',
+        photoDecision = 'a photo is decided on once; the second is refused as '
+            .. 'gone and changes nothing, which photos_spec checks',
         -- Reads. Repeating a read is the definition of harmless.
         list = true, mine = true, ledger = true, searchTargets = true,
         browseTargets = true, mugshotImage = true, rewardOptions = true,

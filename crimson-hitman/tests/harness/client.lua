@@ -63,6 +63,12 @@ local function defaultExports()
             Client.cameraCallback = cb
             return nil
         end,
+        -- lb-phone's own: SaveToGallery(link), which returns nothing. The
+        -- fallback for a page whose phone gives custom apps no
+        -- components.saveToGallery.
+        SaveToGallery = function(_, link)
+            table.insert(Client.phone, { call = 'SaveToGallery', link = link })
+        end,
     }
 end
 

@@ -408,9 +408,13 @@ function Photo.submit(actor, rawToken, rawUrl)
 
     Death.clearPending(record.contractId, actor.cid)
 
+    -- The link goes to the client's photo record and nowhere else: not to
+    -- the hitman's ledger row, and not back to the hitman's page, which is
+    -- answered with the claim's result alone.
     local contract = Storage.readContract(record.contractId)
-    Ledger.record(contract, actor.cid, rawUrl, CH.FULFILMENT.ELIMINATION, result)
-    Notify.contractCompleted(contract, actor, rawUrl, result)
+    local handle = Ledger.record(contract, actor.cid, { kind = 'url', url = rawUrl },
+        CH.FULFILMENT.ELIMINATION, result)
+    Notify.contractCompleted(contract, actor, { photo = handle }, result)
 
     return true, nil, result
 end

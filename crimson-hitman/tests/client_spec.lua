@@ -516,7 +516,7 @@ describe('the camera, on a phone that dies mid-upload', function()
         eq(bare, 0, 'a camera was opened with no options at all')
     end)
 
-    it('does not upload the shot to the players own gallery by default', function()
+    it('never leaves the shot in the hitmans own gallery', function()
         Env.reset()
         Client.boot()
         Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
@@ -527,10 +527,82 @@ describe('the camera, on a phone that dies mid-upload', function()
             if call.call == 'SetCameraComponent' then spec = call.spec end
         end
         truthy(spec, 'the camera should have been configured')
-        falsy(spec.saveToGallery,
-            'a second upload of the same image, inside the operation that '
-            .. 'already uploads it, and a photograph of a body left in the '
-            .. 'hitmen gallery')
+        -- false, not absent: lb-phone saves to the gallery unless told not
+        -- to, and there is no setting that turns this back on.
+        eq(spec.saveToGallery, false,
+            'the photo is the client alone; a copy on the phone that took it is '
+            .. 'a photograph of a body left in the hitmans gallery')
+    end)
+end)
+
+describe('saving the client their kill photo', function()
+    local URL = 'https://cdn.fivemanage.com/proof.png'
+
+    --- The server's answer to the page opening a photo, as it reaches the
+    --- client: through the result event, like every reply.
+    local function opened(handle, url)
+        Client.nuiCall('crimson:openPhoto', { handle = handle })
+        local asked = Client.toServer[#Client.toServer]
+        eq(asked.name, 'crimson-hitman:openPhoto', 'the page asks the server')
+        Client.fire('crimson-hitman:result', {
+            rid = asked.args[1].__rid, event = 'openPhoto', ok = true,
+            data = { handle = handle, url = url },
+        })
+    end
+
+    local function saves()
+        local out = {}
+        for _, call in ipairs(Client.phone) do
+            if call.call == 'SaveToGallery' then out[#out + 1] = call.link end
+        end
+        return out
+    end
+
+    it('saves the photo the server opened for this player', function()
+        Env.reset()
+        Client.boot()
+        opened('ph00000000aa', URL)
+        local _, answer = Client.nuiCall('crimson:saveToPhotos', { handle = 'ph00000000aa' })
+        truthy(answer and answer.ok, 'the save has to go through')
+        eq(saves()[1], URL, 'the link the server handed over, and no other')
+    end)
+
+    it('saves nothing the server did not open for this player', function()
+        Env.reset()
+        Client.boot()
+        -- An NUI endpoint is addressable from any frame the phone draws, so
+        -- what arrives here may not be from this page.
+        local _, answer = Client.nuiCall('crimson:saveToPhotos',
+            { handle = 'ph00000000aa', url = 'https://elsewhere.example/x.png' })
+        falsy(answer.ok, 'nothing is open')
+        eq(#saves(), 0)
+
+        opened('ph00000000aa', URL)
+        _, answer = Client.nuiCall('crimson:saveToPhotos', { handle = 'ph00000000bb' })
+        falsy(answer.ok, 'another handle is not the open photo')
+        eq(#saves(), 0)
+    end)
+
+    it('forgets the link once the server has the decision', function()
+        Env.reset()
+        Client.boot()
+        opened('ph00000000aa', URL)
+        Client.fire('crimson-hitman:result', { event = 'photoDecision', ok = true,
+            data = { handle = 'ph00000000aa', state = 'deleted' } })
+        local _, answer = Client.nuiCall('crimson:saveToPhotos', { handle = 'ph00000000aa' })
+        falsy(answer.ok, 'a deleted photo cannot be saved from here afterwards')
+        eq(#saves(), 0)
+    end)
+
+    it('answers on a phone without the export rather than leaving the page waiting', function()
+        Env.reset()
+        Client.boot({ without = { 'SaveToGallery' } })
+        opened('ph00000000aa', URL)
+        local answered, answer = Client.nuiCall('crimson:saveToPhotos', { handle = 'ph00000000aa' })
+        truthy(answered, 'answered')
+        falsy(answer.ok)
+        eq(answer.err, 'save_unavailable')
+        eq(Client.answerCount, 1)
     end)
 end)
 

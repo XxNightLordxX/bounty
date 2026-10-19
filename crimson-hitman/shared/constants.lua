@@ -81,6 +81,12 @@ CH.MODE = { EXCLUSIVE = 'exclusive', COMPETITIVE = 'competitive' }
 
 CH.FULFILMENT = { ELIMINATION = 'elimination', KIDNAPPING = 'kidnapping' }
 
+--- Where a kill photograph kept for a contract's client stands (§14.43).
+--- PENDING until the client opens it, OPEN while they are looking at it,
+--- and then SAVED to their phone or DELETED. The last two keep no image:
+--- they are what lets the Ledger say which happened.
+CH.PHOTO = { PENDING = 'pending', OPEN = 'open', SAVED = 'saved', DELETED = 'deleted' }
+
 CH.AMENDMENT = {
     ADD_ESCROW       = 'add_escrow',
     RAISE_BONUS      = 'raise_bonus',
@@ -245,6 +251,11 @@ CH.ERR = {
     PHOTO_STILL_DOWN = 'photo_still_down',
     PHOTO_NOT_DEAD   = 'photo_not_dead',
     PHOTO_BAD_HOST   = 'photo_bad_host',
+    --- A kill photograph that cannot be opened or decided on. One code for
+    --- a handle that was never minted, one that belongs to somebody else,
+    --- and one already seen: told apart, the answer would say whether a
+    --- handle names somebody else's photograph.
+    PHOTO_GONE       = 'photo_gone',
     LOCKED           = 'locked',
     -- Something else is being done to the same contract, or by the same
     -- player, in this instant; or the resource is still starting. Nothing

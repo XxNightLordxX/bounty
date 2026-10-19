@@ -184,6 +184,31 @@ local SCHEMA = {
         muted_at INT NOT NULL,
         INDEX idx_mute_contract (contract_id)
     )]],
+    -- Kill photos kept for a contract's client (§14.43), by handle: the
+    -- ledger row the client is shown carries the handle and never the
+    -- link. No hitman column, on purpose: the record goes to nobody but
+    -- the client. `url` is a link on an image host ('host' storage); `file`,
+    -- `mime` and `size` describe a photo kept on this server. Created on an
+    -- existing database by the CREATE TABLE IF NOT EXISTS at the next start.
+    [[CREATE TABLE IF NOT EXISTS crimson_photos (
+        id VARCHAR(32) PRIMARY KEY,
+        contract_id VARCHAR(32) NOT NULL,
+        slot INT DEFAULT 1,
+        owner_cid VARCHAR(32) NOT NULL,
+        kind VARCHAR(8) NOT NULL,
+        url VARCHAR(512),
+        file VARCHAR(96),
+        mime VARCHAR(32),
+        size INT,
+        state VARCHAR(16) NOT NULL,
+        created_at INT NOT NULL,
+        opened_at INT,
+        saved_link VARCHAR(512),
+        INDEX idx_photo_owner (owner_cid),
+        INDEX idx_photo_contract (contract_id),
+        INDEX idx_photo_open (state, opened_at),
+        INDEX idx_photo_created (created_at)
+    )]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
     -- nobody could play.
@@ -1235,6 +1260,74 @@ function MySQLStore.setMute(contractId, threadId, cid, muted, at)
     else
         MySQL.query.await('DELETE FROM crimson_mutes WHERE id = ?', { id })
     end
+    return true
+end
+
+--- Kill photos kept for a contract's client; see the memory backend. Every
+--- state change is one guarded UPDATE, so two requests racing to open the
+--- same photo cannot both be shown it.
+function MySQLStore.writePhoto(r)
+    MySQL.query.await([[
+        INSERT INTO crimson_photos
+            (id, contract_id, slot, owner_cid, kind, url, file, mime, size, state,
+             created_at, opened_at, saved_link)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ]], {
+        r.id, r.contract_id, r.slot or 1, r.owner_cid, r.kind, r.url, r.file, r.mime,
+        r.size, r.state, r.created_at, r.opened_at, r.saved_link,
+    })
+    return true
+end
+
+function MySQLStore.readPhoto(id)
+    local rows = MySQL.query.await('SELECT * FROM crimson_photos WHERE id = ?', { id }) or {}
+    return rows[1]
+end
+
+function MySQLStore.photosOf(ownerCid)
+    return MySQL.query.await(
+        'SELECT * FROM crimson_photos WHERE owner_cid = ? ORDER BY created_at',
+        { ownerCid }) or {}
+end
+
+function MySQLStore.photosForContract(contractId)
+    return MySQL.query.await(
+        'SELECT * FROM crimson_photos WHERE contract_id = ? ORDER BY created_at',
+        { contractId }) or {}
+end
+
+function MySQLStore.photosOpenedBefore(cutoff, limit)
+    return MySQL.query.await([[
+        SELECT * FROM crimson_photos WHERE state = 'open' AND opened_at < ?
+        ORDER BY created_at LIMIT ?
+    ]], { cutoff, limit or 200 }) or {}
+end
+
+function MySQLStore.photosCreatedBefore(cutoff, limit)
+    return MySQL.query.await(
+        'SELECT * FROM crimson_photos WHERE created_at < ? ORDER BY created_at LIMIT ?',
+        { cutoff, limit or 200 }) or {}
+end
+
+function MySQLStore.openPhoto(id, at)
+    local affected = MySQL.update.await(
+        "UPDATE crimson_photos SET state = 'open', opened_at = ? WHERE id = ? AND state = 'pending'",
+        { at, id })
+    return (tonumber(affected) or 0) > 0
+end
+
+--- The link and the file name are cleared in the same statement that moves
+--- the state, so no row is ever closed and still pointing at an image.
+function MySQLStore.closePhoto(id, expected, next_, savedLink)
+    local affected = MySQL.update.await([[
+        UPDATE crimson_photos SET state = ?, url = NULL, file = NULL, saved_link = ?
+        WHERE id = ? AND state = ?
+    ]], { next_, savedLink, id, expected })
+    return (tonumber(affected) or 0) > 0
+end
+
+function MySQLStore.deletePhoto(id)
+    MySQL.query.await('DELETE FROM crimson_photos WHERE id = ?', { id })
     return true
 end
 

@@ -89,6 +89,11 @@ local DEFAULTS = {
         load   = { per = 10, burst = 20 },
         search = { per = 10, burst = 15 },
         wallet = { per = 10, burst = 8 },
+        -- The kill photo's one view, which no config before it names. The
+        -- fallback rule would answer, but the one view deserves the
+        -- allowance it was built against, as the three above do.
+        photoView   = { per = 10, burst = 5 },
+        photoDecide = { per = 5, burst = 5 },
     },
     --- The names the admin commands register under. Indexed directly while
     --- registering them, so a config carrying an Admin section without this
@@ -119,6 +124,11 @@ local DEFAULTS = {
     Completion = {
         RequireObservedDamage = true,
         RejectLastStand = true,
+        --- Where kill photos are kept, and how long one stays open. Absent
+        --- on a config from before the client's one view existed; the
+        --- storage is checked below, the open time read by the tick.
+        PhotoStorage = 'server',
+        PhotoOpenSeconds = 600,
         --- A list, so filled whole or not at all: see isRecord.
         DeathStateProviders = {
             { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
@@ -485,6 +495,28 @@ local function validateConfig()
         Config.Audit.FlushIntervalMs = flushMs
     end
 
+    -- Where kill photos are kept. A misspelling is not a third place: it
+    -- is read as the default, and said so, rather than left to fail the
+    -- first time somebody photographs a body.
+    local photoStorage = Config.Completion.PhotoStorage
+    if photoStorage ~= 'server' and photoStorage ~= 'host' then
+        warn[#warn + 1] = ('Completion.PhotoStorage is %s; it has to be \'server\' or '
+            .. '\'host\'. Using \'server\'.'):format(type(photoStorage) == 'string'
+                and ('"' .. photoStorage .. '"') or tostring(photoStorage))
+        Config.Completion.PhotoStorage = 'server'
+    end
+
+    -- How long an opened kill photo waits for Save or Delete. Read on every
+    -- tick; zero or less would delete a photo the moment it was opened.
+    local openFor = tonumber(Config.Completion.PhotoOpenSeconds)
+    if not openFor or openFor <= 0 then
+        warn[#warn + 1] = ('Completion.PhotoOpenSeconds is %s, not a number of seconds above '
+            .. 'zero; using 600.'):format(tostring(Config.Completion.PhotoOpenSeconds))
+        Config.Completion.PhotoOpenSeconds = 600
+    else
+        Config.Completion.PhotoOpenSeconds = openFor
+    end
+
     if Config.Audit.MaxQueueSize < 1 then
         warn[#warn + 1] = 'Audit.MaxQueueSize is below 1; the queue holds at least one row.'
     end
@@ -774,6 +806,7 @@ function StartCrimsonHitman()
     local escrow     = require('server.escrow')
     local contracts  = require('server.contracts')
     local ledger     = require('server.ledger')
+    local photos     = require('server.photos')
     local death      = require('server.completion.death')
     local photo      = require('server.completion.photo')
     local kidnap     = require('server.completion.kidnap')
@@ -794,7 +827,8 @@ function StartCrimsonHitman()
     contracts.init({ storage = Storage, escrow = escrow, identity = identity,
                      audit = audit, notify = notify, progression = progression,
                      death = death })
-    ledger.init(Storage)
+    photos.init({ storage = Storage, audit = audit })
+    ledger.init({ storage = Storage, photos = photos, notify = notify })
     death.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit })
     photo.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
                  death = death, notify = notify, ledger = ledger })
@@ -818,7 +852,7 @@ function StartCrimsonHitman()
         death = death, photo = photo, kidnap = kidnap, bailout = bailout,
         informant = informant, amendments = amendments, comms = comms,
         projection = projection, mugshot = mugshot, progression = progression,
-        app = app, admin = admin,
+        app = app, admin = admin, photos = photos,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -1108,6 +1142,9 @@ function Tick()
     job('ratelimit.sweep', modules.ratelimit.sweep)
     if Storage.prune then job('storage.prune', Storage.prune) end
     job('ledger.forgetOldPhotos', modules.ledger.forgetOldPhotos)
+    -- A kill photo opened and never saved or deleted: the phone closed
+    -- mid-view. It goes as if the client had chosen Delete.
+    job('photos.expire', modules.photos.expire)
     local app = require('server.app')
     -- Who may have the app on their phone. Recomputed here rather than
     -- trusted to a job-change event whose name has differed across

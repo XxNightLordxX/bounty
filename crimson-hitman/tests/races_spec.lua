@@ -300,7 +300,8 @@ function _G.mysqlStack()
     stack.contracts.init({ storage = store, escrow = stack.escrow, identity = stack.identity,
                            audit = stack.audit, notify = stack.notify,
                            progression = stack.progression, death = stack.death })
-    stack.ledger.init(store)
+    stack.photos.init({ storage = store, audit = stack.audit })
+    stack.ledger.init({ storage = store, photos = stack.photos, notify = stack.notify })
     stack.bailout.init({ storage = store, identity = stack.identity,
                          contracts = stack.contracts, escrow = stack.escrow,
                          audit = stack.audit, notify = stack.notify, kidnap = stack.kidnap })

@@ -149,6 +149,48 @@ describe('starting on a config that predates a setting', function()
         resetConfig()
     end)
 
+    --- Where kill photos are kept, and how long one stays open: added to
+    --- a Completion section every operator already has.
+    it('fills and checks the kill photo settings', function()
+        local said = {}
+        local realPrint = _G.print
+        _G.print = function(...)
+            local parts = {}
+            for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+            said[#said + 1] = table.concat(parts, ' ')
+        end
+
+        boot(function()
+            Config.Completion.PhotoStorage = nil
+            Config.Completion.PhotoOpenSeconds = nil
+            Config.Cooldowns.photoView = nil
+            Config.Cooldowns.photoDecide = nil
+        end)
+        eq(Config.Completion.PhotoStorage, 'server', 'absent is the default, not a third place')
+        eq(Config.Completion.PhotoOpenSeconds, 600)
+        truthy(Config.Cooldowns.photoView and Config.Cooldowns.photoDecide,
+            'the one view gets the allowance it was built against')
+        resetConfig()
+
+        said = {}
+        boot(function()
+            Config.Completion.PhotoStorage = 'cloud'
+            Config.Completion.PhotoOpenSeconds = 0
+        end)
+        _G.print = realPrint
+        eq(Config.Completion.PhotoStorage, 'server', 'a misspelling is read as the default')
+        eq(Config.Completion.PhotoOpenSeconds, 600,
+            'zero would delete a photo the moment it was opened')
+        local told = table.concat(said, ' | ')
+        truthy(told:find('PhotoStorage', 1, true), 'and the operator is told: ' .. told)
+        truthy(told:find('PhotoOpenSeconds', 1, true), told)
+        resetConfig()
+
+        boot(function() Config.Completion.PhotoStorage = 'host' end)
+        eq(Config.Completion.PhotoStorage, 'host', 'the other place is left alone')
+        resetConfig()
+    end)
+
     it('fills the failure-stake ceilings on a config that never had them', function()
         -- Config.Penalty is a whole new section, so the section fill covers
         -- it — but Contracts.clampPenalty indexes MaxAmount on every

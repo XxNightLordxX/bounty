@@ -9,8 +9,9 @@ every write fails silently — escrow would be taken from players and never
 recorded, and a restart would lose it. The resource refuses to start in json
 mode rather than run that way, and the message names this directory.
 
-`store.json` holds the index — the sequence, the ledger, pending payouts
-and the stats. `contracts/<id>.json` holds one contract each, with its
+`store.json` holds the index — the sequence, the ledger, pending payouts,
+the stats and the kill photo records (a handle, a state and at most a link
+each, never an image). `contracts/<id>.json` holds one contract each, with its
 escrow, hitmen, amendments and messages, so a write touches only the
 contract that changed.
 

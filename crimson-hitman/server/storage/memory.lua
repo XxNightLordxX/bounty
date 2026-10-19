@@ -11,7 +11,8 @@ local db
 function Memory.open()
     db = {
         contracts = {}, escrow = {}, hitmen = {}, amendments = {},
-        messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {}, seq = 0,
+        messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {},
+        photos = {}, seq = 0,
     }
     return true
 end
@@ -529,6 +530,86 @@ function Memory.readLedger(cid, depth)
         end
     end
     return out
+end
+
+--------------------------------------------------------------------------
+-- Kill photos kept for a contract's client (§14.43)
+--------------------------------------------------------------------------
+--
+-- One record per photo, by its handle. What the client may do with one is
+-- Photos's business. The store's part is that a record's state moves
+-- only from the state the caller expected, so two requests racing to open
+-- the same photo cannot both be shown it, and a photo saved in the same
+-- instant it timed out is one or the other, never both.
+
+function Memory.writePhoto(record)
+    local row = {}
+    for k, v in pairs(record) do row[k] = v end
+    db.photos[row.id] = row
+    return true
+end
+
+function Memory.readPhoto(id)
+    return db.photos[id]
+end
+
+--- Records matching `keep`, oldest first, at most `limit` of them.
+local function photosWhere(keep, limit)
+    local out = {}
+    for _, row in pairs(db.photos) do
+        if keep(row) then out[#out + 1] = row end
+    end
+    table.sort(out, function(a, b)
+        if (a.created_at or 0) ~= (b.created_at or 0) then
+            return (a.created_at or 0) < (b.created_at or 0)
+        end
+        return a.id < b.id
+    end)
+    if limit and #out > limit then
+        for i = #out, limit + 1, -1 do out[i] = nil end
+    end
+    return out
+end
+
+function Memory.photosOf(ownerCid)
+    return photosWhere(function(row) return row.owner_cid == ownerCid end)
+end
+
+function Memory.photosForContract(contractId)
+    return photosWhere(function(row) return row.contract_id == contractId end)
+end
+
+--- Opened before the cutoff and still waiting for Save or Delete.
+function Memory.photosOpenedBefore(cutoff, limit)
+    return photosWhere(function(row)
+        return row.state == CH.PHOTO.OPEN and (row.opened_at or 0) < cutoff
+    end, limit)
+end
+
+function Memory.photosCreatedBefore(cutoff, limit)
+    return photosWhere(function(row) return (row.created_at or 0) < cutoff end, limit)
+end
+
+--- Pending to open, once.
+function Memory.openPhoto(id, at)
+    local row = db.photos[id]
+    if not row or row.state ~= CH.PHOTO.PENDING then return false end
+    row.state, row.opened_at = CH.PHOTO.OPEN, at
+    return true
+end
+
+--- From the expected state to a closed one, keeping no image: the link and
+--- the file name go with the state change, in the same step.
+function Memory.closePhoto(id, expected, next_, savedLink)
+    local row = db.photos[id]
+    if not row or row.state ~= expected then return false end
+    row.state, row.url, row.file, row.saved_link = next_, nil, nil, savedLink
+    return true
+end
+
+function Memory.deletePhoto(id)
+    db.photos[id] = nil
+    return true
 end
 
 function Memory.queuePending(cid, contractId, lineId)

@@ -334,6 +334,24 @@ function App.request(event, payload, cb)
     TriggerServerEvent('crimson-hitman:' .. event, payload)
 end
 
+--- The kill photo this player has open, if any: { handle, url }.
+---
+--- Learnt from the server's own answer to openPhoto, so the Save to Photos
+--- fallback below saves the link the server handed this player for the
+--- photo they are looking at and nothing else. An NUI endpoint is
+--- addressable from any frame the phone draws, and one that saved whatever
+--- link it was given would put anything at all into the player's gallery.
+local shownPhoto
+
+local function notePhoto(result)
+    if result.event == 'openPhoto' and result.ok and type(result.data) == 'table'
+        and type(result.data.handle) == 'string' and type(result.data.url) == 'string' then
+        shownPhoto = { handle = result.data.handle, url = result.data.url }
+    elseif result.event == 'photoDecision' and result.ok then
+        shownPhoto = nil
+    end
+end
+
 RegisterNetEvent('crimson-hitman:result', function(result)
     -- Type-checked like the notify and push handlers beside it. Net event
     -- names are a server-wide namespace: this resource's server always
@@ -343,6 +361,8 @@ RegisterNetEvent('crimson-hitman:result', function(result)
     -- either, and the waiting request was freed fifteen seconds later with
     -- 'timeout' on a call the server had actually answered.
     if type(result) ~= 'table' then return end
+
+    notePhoto(result)
 
     local cb = result.rid and pending[result.rid]
     if cb then
@@ -429,6 +449,8 @@ local UI_EVENTS = {
     'addEscrow', 'rewardBreakdown', 'withdrawReward',
     'improve', 'propose', 'respondAmendment', 'amendments',
     'threads', 'readThread', 'sendMessage', 'requestCall', 'endCall', 'muteThread',
+    -- The client's one look at a kill photo, and what they did with it.
+    'openPhoto', 'photoDecision',
     -- The page telling the server it broke. Through the same gate as
     -- everything else: it is an NUI endpoint like any other and is
     -- addressable from any frame the phone draws.
@@ -440,6 +462,25 @@ for _, event in ipairs(UI_EVENTS) do
         App.request(event, data, function(result) cb(result) end)
     end)
 end
+
+--- Save the kill photo the player has open to their phone's Photos.
+---
+--- The page saves it itself where lb-phone gives custom apps
+--- components.saveToGallery; this is for a build that does not, through
+--- lb-phone's client export. Only the photo the server opened for this
+--- player (notePhoto), and only while it is open: the page sends a handle,
+--- never a link.
+RegisterNUICallback('crimson:saveToPhotos', function(data, cb)
+    local handle = type(data) == 'table' and data.handle or nil
+    if not shownPhoto or type(handle) ~= 'string' or handle ~= shownPhoto.handle then
+        return cb({ ok = false, err = 'photo_gone' })
+    end
+    local url = shownPhoto.url
+    local saved = phone('SaveToGallery', function()
+        exports['lb-phone']:SaveToGallery(url)
+    end)
+    cb({ ok = saved, err = (not saved) and 'save_unavailable' or nil })
+end)
 
 --------------------------------------------------------------------------
 -- Death and revive reporting
@@ -803,12 +844,14 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
                     toggleFlash = true, flipCamera = true, takePhoto = true,
                     takeVideo = false, takeLandscapePhoto = false,
                 },
-                -- Saving the shot to the player's own gallery is a second
-                -- upload of a photograph of a body, done inside the same
-                -- operation, and it is the step this crashes in on some
-                -- builds. It is also evidence of a crime sitting in the
-                -- hitman's phone. Off unless an operator asks for it.
-                saveToGallery = Config.Completion.SavePhotoToGallery == true,
+                -- Never saved to the hitman's own gallery. The photo is
+                -- the client's alone, to see once; a copy in the phone
+                -- that took it is evidence of a crime the hitman carries
+                -- around, and a second upload of a photograph of a body,
+                -- done inside the same operation, is the step this crashed
+                -- in on some builds. Written out rather than left off,
+                -- because lb-phone saves to the gallery unless told not to.
+                saveToGallery = false,
                 cb = onShot,
             }, onShot)
         end)

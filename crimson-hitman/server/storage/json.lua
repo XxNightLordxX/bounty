@@ -18,7 +18,7 @@ local resource = GetCurrentResourceName and GetCurrentResourceName() or 'crimson
 local EMPTY = {
     contracts = {}, escrow = {}, hitmen = {}, amendments = {},
     messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, reveals = {}, mutes = {},
-    seq = 0,
+    photos = {}, seq = 0,
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -360,6 +360,10 @@ local function buildIndex()
     -- Everything that is not per-contract. Small, and rewritten whole.
     index.ledger, index.pending = db.ledger, db.pending
     index.stats, index.reveals = db.stats, db.reveals
+    -- The kill photo records: a handle, a state and at most a link each,
+    -- never the image itself, so they stay small here with the ledger
+    -- rows that name them.
+    index.photos = db.photos
 
     -- Not the audit log itself, which is files of its own: only which days
     -- have one, since nothing else records that.
@@ -1466,6 +1470,86 @@ function JsonStore.readLedger(cid, depth)
         end
     end
     return out
+end
+
+--------------------------------------------------------------------------
+-- Kill photos kept for a contract's client; see the memory backend.
+--------------------------------------------------------------------------
+--
+-- In the index beside the ledger rows that name them. A change of state is
+-- written at once, as a financial write is: a photo the client chose to
+-- delete, or one they have already seen, must not come back as unseen
+-- because the process stopped before the next flush.
+
+function JsonStore.writePhoto(record)
+    local row = {}
+    for k, v in pairs(record) do row[k] = v end
+    db.photos[row.id] = row
+    touch(false)
+    return true
+end
+
+function JsonStore.readPhoto(id)
+    return db.photos[id]
+end
+
+--- Records matching `keep`, oldest first, at most `limit` of them.
+local function photosWhere(keep, limit)
+    local out = {}
+    for _, row in pairs(db.photos) do
+        if keep(row) then out[#out + 1] = row end
+    end
+    table.sort(out, function(a, b)
+        if (a.created_at or 0) ~= (b.created_at or 0) then
+            return (a.created_at or 0) < (b.created_at or 0)
+        end
+        return tostring(a.id) < tostring(b.id)
+    end)
+    if limit and #out > limit then
+        for i = #out, limit + 1, -1 do out[i] = nil end
+    end
+    return out
+end
+
+function JsonStore.photosOf(ownerCid)
+    return photosWhere(function(row) return row.owner_cid == ownerCid end)
+end
+
+function JsonStore.photosForContract(contractId)
+    return photosWhere(function(row) return row.contract_id == contractId end)
+end
+
+function JsonStore.photosOpenedBefore(cutoff, limit)
+    return photosWhere(function(row)
+        return row.state == CH.PHOTO.OPEN and (tonumber(row.opened_at) or 0) < cutoff
+    end, limit)
+end
+
+function JsonStore.photosCreatedBefore(cutoff, limit)
+    return photosWhere(function(row) return (tonumber(row.created_at) or 0) < cutoff end, limit)
+end
+
+function JsonStore.openPhoto(id, at)
+    local row = db.photos[id]
+    if not row or row.state ~= CH.PHOTO.PENDING then return false end
+    row.state, row.opened_at = CH.PHOTO.OPEN, at
+    touch(true)
+    return true
+end
+
+function JsonStore.closePhoto(id, expected, next_, savedLink)
+    local row = db.photos[id]
+    if not row or row.state ~= expected then return false end
+    row.state, row.url, row.file, row.saved_link = next_, nil, nil, savedLink
+    touch(true)
+    return true
+end
+
+function JsonStore.deletePhoto(id)
+    if db.photos[id] == nil then return true end
+    db.photos[id] = nil
+    touch(true)
+    return true
 end
 
 function JsonStore.queuePending(cid, contractId, lineId)

@@ -344,9 +344,12 @@ function App.register()
         }
     end)
 
+    -- The rows as the page is shown them (Ledger.entries), not as stored:
+    -- a stored row carries cids and, on the client's own row, the handle of
+    -- a photo, which crosses only as { handle, state }.
     handler('ledger', 'load', function(actor)
         return {
-            entries = deps.ledger.read(actor.cid),
+            entries = deps.ledger.entries(actor.cid),
             record  = deps.progression.record(actor.cid),
         }
     end)
@@ -715,6 +718,28 @@ function App.register()
     handler('submitPhoto', 'photoSubmit', function(actor, payload)
         local ok, err, result = deps.photo.submit(actor, payload.token, payload.url)
         if not ok then return false, err end
+        return result
+    end)
+
+    -- The client's one look at a kill photo, asked for by handle from the
+    -- Ledger. Asked for, and never inferred from the ledger being read: the
+    -- page reads the ledger on every refresh.
+    --
+    -- Owner only and once only (Photos.open). A handle that is not the
+    -- caller's is answered exactly as one that does not exist.
+    handler('openPhoto', 'photoView', function(actor, payload)
+        local view, err = deps.photos.open(actor, payload.handle)
+        if not view then return false, err end
+        return view
+    end)
+
+    -- Save or Delete, for the photo the client has open. Its own looser
+    -- bucket, as a photo submission has: this answers a question the server
+    -- itself put on the client's screen, and refused, a photo they had just
+    -- saved to their phone was recorded as deleted when it timed out.
+    handler('photoDecision', 'photoDecide', function(actor, payload)
+        local result, err = deps.photos.decide(actor, payload.handle, payload.choice)
+        if not result then return false, err end
         return result
     end)
 

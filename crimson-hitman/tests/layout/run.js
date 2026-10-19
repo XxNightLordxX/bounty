@@ -154,15 +154,22 @@ function serverStub() {
       deadline: Math.floor(Date.now() / 1000) + 7200
     }] } },
     ledger: { ok: true, data: { entries: [{
-      // A full-resolution photograph on somebody else's host, which is what
-      // a proof reference actually is. Unbounded this made one history
-      // entry taller than the whole viewport.
-      target_name: 'Dana Reyes', reason: 'Unpaid debt', role: 'hitman',
+      // The client's row, with their kill photo waiting to be opened. Only
+      // the client's row ever carries one.
+      contract_id: 'ct00000001',
+      target_name: 'Dana Reyes', reason: 'Unpaid debt', role: 'creator',
       fulfilment: 'elimination', resolved_at: 1700000000,
-      photo_ref: 'data:image/svg+xml;base64,' + btoa(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920"></svg>')
+      photo: { handle: 'ph00000000aa', state: 'pending' }
     }],
       record: { completed: 0, placed: 0, survived: 0, standing: 'Unproven' } } },
+    // A full-resolution portrait photograph, which is what a phone camera
+    // hands over. Unbounded, one of these once made a history entry taller
+    // than the whole viewport.
+    openPhoto: { ok: true, data: { handle: 'ph00000000aa',
+      url: 'data:image/svg+xml;base64,' + btoa(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920">'
+        + '<rect width="1080" height="1920" fill="#555"/></svg>') } },
+    photoDecision: { ok: true, data: { handle: 'ph00000000aa', state: 'deleted' } },
     rewardOptions: { ok: true, data: { cash: 100000, bank: 50000, dirty: 2000,
       items: [{ name: 'lockpick', label: 'Lockpick', count: 5 }],
       weapons: [{ name: 'WEAPON_PISTOL', label: 'Pistol', slot: 3, serial: 'C123' }],
@@ -693,7 +700,8 @@ async function main() {
                    ['mine', 'Buy informant data'],
                    ['mine', 'Extend deadline'],
                    ['mine', 'Edit'],
-                   ['mine', 'Withdraw']];
+                   ['mine', 'Withdraw'],
+                   ['ledger', 'View photo']];
 
     for (const [tab, press] of steps) {
       await p2.click(`[data-tab="${tab}"]`);
@@ -764,23 +772,78 @@ async function main() {
   await page.click('[data-tab="ledger"]');
   await page.waitForTimeout(300);
 
-  const proof = await page.evaluate(function () {
-    const frame = document.querySelector('.proof');
-    if (!frame) { return null; }
-    const card = frame.closest('.card');
+  const ledgerCard = await page.evaluate(function () {
+    const card = document.querySelector('.proof-line');
+    if (!card) { return null; }
     return {
-      frameH: Math.round(frame.getBoundingClientRect().height),
-      cardH: Math.round(card.getBoundingClientRect().height),
+      cardH: Math.round(card.closest('.card').getBoundingClientRect().height),
+      viewportH: window.innerHeight,
+      images: document.querySelectorAll('#view img').length
+    };
+  });
+
+  it('keeps the photo out of the history list', function () {
+    truthy(ledgerCard, 'no photo line rendered, so this measures nothing');
+    truthy(ledgerCard.images === 0, 'a photo was drawn in the list: ' + ledgerCard.images);
+    truthy(ledgerCard.cardH < ledgerCard.viewportH * 0.5,
+      'one ledger card is ' + ledgerCard.cardH + 'px tall on a '
+      + ledgerCard.viewportH + 'px screen');
+  });
+
+  await page.evaluate(function () {
+    const b = Array.prototype.slice.call(document.querySelectorAll('button'))
+      .filter(function (n) { return n.textContent === 'View photo'; })[0];
+    if (b) { b.click(); }
+  });
+  await page.waitForTimeout(300);
+
+  /* The one look at a kill photo, at phone size. It is shown once, so it
+     has to be shown properly: the photo as large as the screen allows,
+     whole rather than cropped, and both buttons on screen however tall the
+     photo is — a Save button under the tab bar is a photo that is lost. */
+  const oneView = await page.evaluate(function () {
+    const panel = document.querySelector('.dialog.photo-view');
+    if (!panel) { return null; }
+    const img = panel.querySelector('img');
+    const frame = panel.querySelector('.photo-frame');
+    const nav = document.querySelector('.tabs').getBoundingClientRect();
+    const buttons = Array.prototype.slice.call(panel.querySelectorAll('button'));
+    const ir = img.getBoundingClientRect();
+    const fr = frame.getBoundingClientRect();
+    return {
+      buried: buttons.filter(function (b) {
+        return b.getBoundingClientRect().bottom > nav.top + 1;
+      }).map(function (b) { return b.textContent; }),
+      labels: buttons.map(function (b) { return b.textContent; }),
+      shortest: Math.min.apply(Math, buttons.map(function (b) {
+        return b.getBoundingClientRect().height;
+      })),
+      imgH: Math.round(ir.height), imgW: Math.round(ir.width),
+      inFrame: ir.top >= fr.top - 1 && ir.bottom <= fr.bottom + 1
+        && ir.left >= fr.left - 1 && ir.right <= fr.right + 1,
       viewportH: window.innerHeight
     };
   });
 
-  it('never lets one history entry fill the screen', function () {
-    truthy(proof, 'no proof photograph rendered, so this measures nothing');
-    truthy(proof.cardH < proof.viewportH * 0.7,
-      'a 1080x1920 photograph made one ledger card ' + proof.cardH + 'px tall '
-      + 'on a ' + proof.viewportH + 'px screen, so the entry above it and the '
-      + 'entry below it are both off screen');
+  it('opens the photo in a dialog of its own', function () {
+    truthy(oneView, 'the View photo button did not open anything, so this measures nothing');
+    truthy(oneView.labels.indexOf('Save to Photos') !== -1 && oneView.labels.indexOf('Delete') !== -1,
+      'both choices: ' + JSON.stringify(oneView.labels));
+  });
+
+  it('keeps Save to Photos and Delete on screen above the tab bar', function () {
+    truthy(oneView && oneView.buried.length === 0,
+      'behind the tab bar: ' + JSON.stringify(oneView && oneView.buried));
+    atLeast(oneView ? oneView.shortest : 0, 36, 'shortest button in the photo dialog');
+  });
+
+  it('shows the photo whole and large', function () {
+    truthy(oneView && oneView.inFrame, 'the photo spills out of its frame: ' + JSON.stringify(oneView));
+    atLeast(oneView ? oneView.imgH : 0, Math.round((oneView ? oneView.viewportH : 0) * 0.4),
+      'a photo the client sees once is drawn ' + (oneView && oneView.imgH) + 'px tall');
+    // Portrait in, portrait out: contained, not stretched or cropped.
+    truthy(oneView && oneView.imgW < oneView.imgH,
+      'the 9:16 photo is drawn ' + (oneView && oneView.imgW) + 'x' + (oneView && oneView.imgH));
   });
 
   await page.click('[data-tab="onme"]');

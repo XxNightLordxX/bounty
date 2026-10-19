@@ -17,7 +17,8 @@ local function mysqlStack()
     s.progression.init({ storage = store, identity = s.identity, audit = s.audit })
     s.contracts.init({ storage = store, escrow = s.escrow, identity = s.identity,
         audit = s.audit, notify = s.notify, progression = s.progression, death = s.death })
-    s.ledger.init(store)
+    s.photos.init({ storage = store, audit = s.audit })
+    s.ledger.init({ storage = store, photos = s.photos, notify = s.notify })
     s.bailout.init({ storage = store, identity = s.identity,
         contracts = s.contracts, escrow = s.escrow, audit = s.audit, notify = s.notify })
     s.death.init({ storage = store, identity = s.identity, contracts = s.contracts, audit = s.audit })

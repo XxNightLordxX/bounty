@@ -261,6 +261,13 @@ Config.Cooldowns = {
     --- to bill `photo` and one verification therefore cost two attempts —
     --- with the second charged after the photograph had been taken.
     photoSubmit = { per = 15, burst = 5 },
+    --- Opening a kill photo from the Ledger. Each photo opens once, so this
+    --- only has to stop somebody trying handles.
+    photoView = { per = 10, burst = 5 },
+    --- Saving or deleting the photo just opened. Separate and looser, as
+    --- submitting one is: refused, a photo the client had already saved to
+    --- their phone was recorded as deleted when it timed out.
+    photoDecide = { per = 5, burst = 5 },
     --- Death and revive reports are client-driven and each one walks the
     --- contract table, so they are throttled like everything else.
     death     = { per = 5,  burst = 4 },
@@ -301,14 +308,20 @@ Config.Immunity = {
 --------------------------------------------------------------------------
 
 Config.Completion = {
-    --- Save the verification photo to the hitman's own phone gallery.
+    --- Where kill photos are kept: 'server' (the default) or 'host'.
     ---
-    --- Off by default. It is a second upload of the same image, made inside
-    --- the operation that already uploads it once — and on some lb-phone
-    --- builds that is where the phone dies mid-upload. It also leaves a
-    --- photograph of a body in the hitman's gallery, which is evidence of a
-    --- crime they are carrying around.
-    SavePhotoToGallery = false,
+    --- 'server' keeps the photo on this server, so no image host is
+    --- involved at all. 'host' uses lb-phone's own camera, which uploads
+    --- the photo to the image host lb-phone is set up with (Fivemanage, for
+    --- instance), and this resource keeps only the link. Deleting a photo
+    --- then only makes the app forget the link: the file stays on the host,
+    --- because lb-phone gives a resource no way to delete it.
+    ---
+    --- Either way the photo never stays on the hitman's phone, and the
+    --- client who placed the contract can open it once (see
+    --- PhotoOpenSeconds and Config.Ledger). Anything else is read as
+    --- 'server', with a warning at startup.
+    PhotoStorage = 'server',
 
     --- Elimination requires a genuine death. A player who is merely downed
     --- or bleeding out is not a kill, and this is re-checked when the proof
@@ -361,6 +374,11 @@ Config.Completion = {
     MaxWeaponRange      = 250.0,
     PhotoRadius         = 5.0,
     PhotoTokenLifetimeSeconds = 120,
+    --- How long the client may look at a kill photo once they open it.
+    --- They see it once, with a Save to Photos button and a Delete button;
+    --- a photo still open after this many seconds without either (the
+    --- phone closed mid-view, say) is deleted as if they had tapped Delete.
+    PhotoOpenSeconds = 600,
     --- How long after a death the proof is still accepted even if the target
     --- is back on their feet.
     ---
@@ -596,16 +614,20 @@ Config.Informant = {
 Config.Ledger = {
     Depth = 10,
     MaxDepthHardCap = 25,
+    --- Whether a kill photo is kept for the client who placed the contract.
+    --- Only they ever see it: never the hitman, never the target. Off, the
+    --- client is told their contract was fulfilled and there is no photo to
+    --- open.
     StorePhotos = true,
-    ShowPhotoToTarget = false,
-    --- How long a verification photo stays attached to a ledger row (§14.43).
+    --- How long a kill photo the client has not opened is kept (§14.43).
     ---
-    --- The row itself is kept — a record of what somebody finished is the
-    --- point of the ledger — but the photo is the most sensitive thing this
-    --- resource stores and was held for the life of the row, which on a
-    --- depth-ten ledger can be months. Only the reference is dropped; the
-    --- image lives wherever the phone uploaded it, which is not this
-    --- resource's to delete. Zero keeps them forever.
+    --- The ledger row stays — a record of what somebody finished is the
+    --- point of the ledger — but a photo of somebody's corpse is the most
+    --- sensitive thing this resource stores. Past this age it is forgotten
+    --- whatever became of it, and an unopened one is deleted. On 'host'
+    --- storage that forgets the link; the file stays on the image host,
+    --- which is not this resource's to delete. Zero keeps an unopened photo
+    --- until its ledger row goes.
     PhotoRetentionDays = 7,
 }
 

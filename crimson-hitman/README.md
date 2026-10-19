@@ -26,6 +26,7 @@ are created automatically on first start. Nothing to import either way.
 
 | Setting | Why it matters |
 |---|---|
+| `Config.Completion.PhotoStorage` | Where kill photos are kept: `'server'` (as shipped) keeps them on this server, and `'host'` uses lb-phone's own camera and the image host it uploads to, keeping only the link. Either way only the client who placed the contract sees the photo, once (see *The kill photo* below) |
 | `Config.Completion.ExtraPhotoHosts` | Kill photos are accepted only from image hosts lb-phone itself allows uploads from, plus these. Ships with Fivemanage (`fivemanage.com`, `fmfile.com`), lb-phone's default uploader. If `/ch-diag` shows `photo hosts: 0`, or kill photos are refused with "not on this server's allow list", add your phone's upload host here (a bare domain, no `https://`). lb-phone's camera upload must work first |
 | `Config.Database.Mode` | `json` (as shipped; no database at all), `mysql` (oxmysql), `memory` (testing only — nothing survives a restart) |
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who cannot open the app. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit |
@@ -129,6 +130,27 @@ A kill waits for its photograph for at most two photo-token lifetimes, however
 many tokens are asked for. Or take them alive to the client and hold them there
 for thirty seconds for baseline plus bonus.
 
+**The kill photo.** The photo is the client's alone, and they get to see it
+once. Nothing of it stays on the hitman's phone: the camera never saves it to
+their gallery, their page is never sent the link, and their Ledger row has no
+photo. The client is told it is waiting under Ledger. Their row there has a
+**View photo** button, and tapping it opens the photo full-screen with **Save to
+Photos** and **Delete**. Save puts it in the phone's own Photos app; anything
+else deletes it, including closing it another way, such as switching tab.
+Afterwards the row says which of the two happened. Reading the Ledger does not
+count as a view; only tapping the button does. A photo is also deleted if:
+
+- it is left open for `Config.Completion.PhotoOpenSeconds` (10 minutes), as
+  when the phone is closed while it is open;
+- it is never opened within `Config.Ledger.PhotoRetentionDays` (7 days);
+- its row is pushed off the client's ledger (`Config.Ledger.Depth`);
+- staff void the contract with `/ch-void`.
+
+With `Config.Ledger.StorePhotos = false` no photo is kept at all. On `'host'`
+storage (`Config.Completion.PhotoStorage`), deleting a photo only makes the
+app forget its link. The file stays on the image host (Fivemanage, say),
+because lb-phone gives a resource no way to delete it.
+
 **Counter-play.** A target can see the price on their head and buy it out.
 Players the app is closed to — law enforcement and EMS — do the same with
 `/cleanse` (lists what is on them) and `/cleanse <id>` (buys one out). Either
@@ -208,7 +230,7 @@ entry, and `/ch-contracts` lists it for any player.
 | `/ch-contracts <player id\|citizen id>` | A player's contracts, newest first, closed ones included while they are kept: each id, its state, their role and the target. Lists the ids for `/ch-timeline`, `/ch-void` and `/ch-whois`. Contracts they placed or took anonymously are left out unless you also hold `crimson.identity` |
 | `/ch-timeline <contract>` | One contract's state, escrow lines and audit trail |
 | `/ch-whois <contract>` | Who is really behind an anonymous creator or hitman. Needs `crimson.identity`, a separate ACE |
-| `/ch-void <contract> [reason]` | Close a contract and return its escrow to the creator |
+| `/ch-void <contract> [reason]` | Close a contract and return its escrow to the creator. Any kill photo from it that the creator has not yet saved is deleted |
 | `/ch-stuck` | Escrow lines that were mid-payment when the server stopped, including one being handed back from a contract that was never placed. Who each was paying is shown as a role (the client, an operative) unless you also hold `crimson.identity`. Also lists held lines of a contract that was never placed which do not say whose they are (written by an older version) |
 | `/ch-settle <line> pay\|return [citizenid]` | Finish one of those by hand. `pay` goes to whom the interrupted payment was for; `return` goes to whoever put the line up, so a hitman's stake goes back to that hitman. A line that does not say whose it is needs `return <citizenid>` once you know who put it up; the citizen id is refused on any other line. A player who is offline gets it at their next login, and the command says so |
 | `/hitmanadmin timers` | Test servers: bring every wait and cooldown forward. Deadlines are only ever moved later, never earlier. `crimson.admin` itself only — the extra ACEs do not open it — and audited |

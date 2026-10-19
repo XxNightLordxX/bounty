@@ -475,6 +475,45 @@ MATRIX.submitPhoto = {
     why = 'a photo token is bound to the hitman it was issued to',
 }
 
+-- The client's kill photo -----------------------------------------------
+
+--- The held contract's kill, photographed by its hitman: a photo waiting
+--- for the client. Its handle is read out of the store and handed to every
+--- role, because the question is whether a handle somebody else was given
+--- is any use to you.
+local function photographed(w)
+    eliminate(w)
+    Config.Completion.ExtraPhotoHosts = { 'cdn.fivemanage.com' }
+    w.s.photo.loadAllowedHosts()
+    local token = w.s.photo.issue(w.who.hitman, w.held.id)
+    truthy(token, 'the arrangement has to produce a token')
+    truthy(w.s.photo.submit(w.who.hitman, token, 'https://cdn.fivemanage.com/p.png'),
+        'the arrangement has to leave a photo waiting for the client')
+    w.photo = w.s.storage.readLedger(CAST.creator.cid, 10)[1].photo_ref
+    truthy(w.photo, 'the client row has to name the photo')
+end
+
+MATRIX.openPhoto = {
+    arrange = photographed,
+    payload = function(w) return { handle = w.photo } end,
+    -- photo_gone, the code a handle that was never minted gets: telling a
+    -- photo that is not yours from one that does not exist would say whose
+    -- handle it is.
+    expect = only('creator', CH.ERR.PHOTO_GONE),
+    why = 'a kill photo is the client alone, once; anyone else holding its '
+       .. 'handle is answered as if it named nothing',
+}
+
+MATRIX.photoDecision = {
+    arrange = function(w)
+        photographed(w)
+        truthy(w.s.photos.open(w.who.creator, w.photo), 'the client has it open')
+    end,
+    payload = function(w) return { handle = w.photo, choice = 'delete' } end,
+    expect = only('creator', CH.ERR.PHOTO_GONE),
+    why = 'saving or deleting the photo is the client decision, about the photo they have open',
+}
+
 MATRIX.armKidnap = {
     arrange = assembleForHandover,
     payload = function(w, role, contract) return { id = contract.id } end,

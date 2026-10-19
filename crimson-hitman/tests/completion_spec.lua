@@ -391,7 +391,12 @@ describe('photo verification', function()
         eq(#s.ledger.read('CREATOR1'), 1, 'creator archive')
         eq(#s.ledger.read('HITMAN01'), 1, 'hitman archive')
         eq(#s.ledger.read('TARGET01'), 1, 'target archive')
-        truthy(s.ledger.read('CREATOR1')[1].photo_ref, 'creator sees the proof')
+        local ref = s.ledger.read('CREATOR1')[1].photo_ref
+        truthy(ref, 'the creator has the proof to open')
+        falsy(tostring(ref):find('fivemanage', 1, true),
+            'as a handle, not the link: the link stays on the server until they open it')
+        falsy(s.ledger.read('HITMAN01')[1].photo_ref,
+            'the hitman is not kept the photo of the body they photographed')
         falsy(s.ledger.read('TARGET01')[1].photo_ref, 'the target is not shown their own corpse')
     end)
 end)

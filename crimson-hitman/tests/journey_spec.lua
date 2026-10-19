@@ -282,6 +282,17 @@ describe('proving the kill', function()
         -- client/main.lua:493 — App.request('submitPhoto', { token, url })
         ok('submitPhoto', 3, { token = issued.token,
                                url = 'https://cdn.fivemanage.com/p.png' })
+
+        -- The client finds it on their Ledger row and opens it, once.
+        -- ui/app.js refresh — post('ledger', {})
+        local ledger = ok('ledger', 1, {})
+        local photo = ledger.entries[1] and ledger.entries[1].photo
+        truthy(photo and photo.handle, 'the client row has to offer the photo')
+        -- ui/app.js openProof — post('openPhoto', { handle })
+        local view = ok('openPhoto', 1, { handle = photo.handle })
+        eq(view.url, 'https://cdn.fivemanage.com/p.png')
+        -- ui/app.js decideProof — post('photoDecision', { handle, choice })
+        ok('photoDecision', 1, { handle = photo.handle, choice = 'save' })
     end)
 
     it('serves the face the card asks for, by the handle it was given', function()
@@ -312,7 +323,6 @@ describe('what this suite really covered', function()
         -- Read paths, exercised to an ok in their own specs.
         list           = 'projection_spec and the ui suite',
         mine           = 'projection_spec and the ui suite',
-        ledger         = 'projection_spec',
         searchTargets  = 'config_drift_spec',
         browseTargets  = 'config_drift_spec',
         rewardOptions  = 'config_drift_spec, against the real ox_inventory shape',

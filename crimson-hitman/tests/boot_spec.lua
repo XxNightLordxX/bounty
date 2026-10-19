@@ -286,6 +286,7 @@ describe('a maintenance job that throws', function()
             { 'death',      'sweep' },
             { 'ratelimit',  'sweep' },
             { 'ledger',     'forgetOldPhotos' },
+            { 'photos',     'expire' },
         }
 
         for i = 1, #JOBS do

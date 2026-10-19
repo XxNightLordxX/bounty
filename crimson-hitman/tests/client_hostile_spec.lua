@@ -450,6 +450,7 @@ describe('replies arriving in a runtime that does not keep order', function()
             'informant', 'addEscrow', 'rewardBreakdown', 'withdrawReward',
             'improve', 'propose', 'respondAmendment', 'amendments',
             'threads', 'readThread', 'sendMessage', 'requestCall', 'muteThread',
+            'openPhoto', 'photoDecision',
         }
         local seen = {}
         for _, name in ipairs(names) do

@@ -504,8 +504,14 @@ async function main() {
         record: { completed: 7, failed: 1, placed: 2, survived: 1, rate: 87, standing: 'Known' },
         entries: [{
           contract_id: 'ct00000001', target_name: 'Dana Reyes', reason: 'Unpaid debt',
-          role: 'creator', fulfilment: 'elimination',
-          photo_ref: 'https://cdn.fivemanage.com/proof.png', resolved_at: 1700000000
+          role: 'creator', fulfilment: 'elimination', resolved_at: 1700000000,
+          photo: { handle: 'ph00000000aa', state: 'pending' }
+        }, {
+          // A hitman's own row. The server sends no photo on it; one that
+          // somehow arrived must still not be offered.
+          contract_id: 'ct00000002', target_name: 'Pia Nolan', reason: 'Owed',
+          role: 'hitman', fulfilment: 'elimination', resolved_at: 1700000000,
+          photo: { handle: 'ph00000000bb', state: 'pending' }
         }]
       } }
     });
@@ -525,11 +531,207 @@ async function main() {
       truthy(text.indexOf('7 completed') !== -1, 'counters: ' + text);
     });
 
-    it('renders the proof photo from the archive', function () {
+    it('offers the client their photo to open, and draws none in the list', function () {
       const images = app.view.all().filter(function (n) { return n.tagName === 'IMG'; });
-      eq(images.length, 1, 'the verification photo should be on screen');
-      eq(images[0].src, 'https://cdn.fivemanage.com/proof.png');
+      eq(images.length, 0, 'the photo of a body is not on screen until it is asked for');
+      const buttons = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'View photo';
+      });
+      eq(buttons.length, 1, 'one button, on the client row and not on the hitman row');
+      truthy(app.view.textContent.indexOf('once') !== -1,
+        'and it says it can be seen once: ' + app.view.textContent);
     });
+
+    it('never asks for the photo just because the ledger was read', function () {
+      falsy(app.sent.some(function (r) { return r.name === 'openPhoto'; }),
+        'the ledger is read on every refresh; a view spent that way was never seen');
+    });
+  })();
+
+  /* The one look at a kill photo: opened on purpose, saved or deleted, and
+     deleted however else it is closed. */
+  function photoLedger(state) {
+    return { ok: true, data: {
+      record: { completed: 0, placed: 1, survived: 0, standing: 'Unproven' },
+      entries: [{
+        contract_id: 'ct00000001', target_name: 'Dana Reyes', reason: 'Unpaid debt',
+        role: 'creator', fulfilment: 'elimination', resolved_at: 1700000000,
+        photo: { handle: 'ph00000000aa', state: state || 'pending' }
+      }]
+    } };
+  }
+
+  async function openedPhoto(extra) {
+    // The server's side of it, so a refresh reads back what the page did.
+    let photoState = 'pending';
+    const answers = Object.assign({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: MINE,
+      ledger: function () { return photoLedger(photoState); },
+      openPhoto: function () {
+        photoState = 'open';
+        return { ok: true, data: { handle: 'ph00000000aa',
+          url: 'https://cdn.fivemanage.com/proof.png' } };
+      },
+      photoDecision: function (body) {
+        photoState = body.choice === 'save' ? 'saved' : 'deleted';
+        return { ok: true, data: { handle: body.handle, state: photoState } };
+      }
+    }, extra || {});
+    const app = boot(answers);
+    await settle(); await settle();
+    tab(app, 'ledger');
+    click(app, 'View photo');
+    await settle(); await settle();
+    return app;
+  }
+
+  function decisions(app) {
+    return app.sent.filter(function (r) { return r.name === 'photoDecision'; })
+      .map(function (r) { return r.body.choice; });
+  }
+
+  await (async function photoOpensOnce() {
+    const app = await openedPhoto();
+
+    it('opens the photo by its handle when asked', function () {
+      const asked = app.sent.filter(function (r) { return r.name === 'openPhoto'; });
+      eq(asked.length, 1);
+      eq(asked[0].body.handle, 'ph00000000aa');
+    });
+
+    it('shows it whole, with the two choices and what they mean', function () {
+      drewCleanly(app, 'the photo');
+      const images = app.view.all().filter(function (n) { return n.tagName === 'IMG'; });
+      eq(images.length, 1, 'the photo is on screen');
+      eq(images[0].src, 'https://cdn.fivemanage.com/proof.png');
+      const text = app.view.textContent;
+      truthy(text.indexOf('You can see this once') !== -1, text);
+      truthy(text.indexOf('Save to Photos') !== -1 && text.indexOf('Delete') !== -1, text);
+    });
+
+    // Another tab, the way a player leaves a screen.
+    tab(app, 'board');
+    await settle(); await settle();
+
+    it('counts closing it any other way as Delete, and tells the server', function () {
+      eq(decisions(app).join(','), 'delete');
+      const images = app.view.all().filter(function (n) { return n.tagName === 'IMG'; });
+      eq(images.length, 0, 'and the photo is gone from the page');
+    });
+
+    tab(app, 'ledger');
+    await settle();
+    it('says on the row that it was deleted', function () {
+      truthy(app.view.textContent.indexOf('Photo deleted') !== -1, app.view.textContent);
+      falsy(app.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'View photo';
+      }), 'nothing left to open');
+      eq(decisions(app).length, 1, 'told once, not on every redraw');
+    });
+  })();
+
+  await (async function photoDeleted() {
+    const app = await openedPhoto();
+    click(app, 'Delete');
+    await settle(); await settle();
+    it('deletes it when asked to', function () {
+      eq(decisions(app).join(','), 'delete');
+      truthy(app.view.textContent.indexOf('Photo deleted') !== -1, app.view.textContent);
+    });
+  })();
+
+  await (async function photoSavedThroughThePhone() {
+    const app = await openedPhoto();
+    const gallery = [];
+    app.sandbox.window.components = {
+      saveToGallery: function (url) { gallery.push(url); return Promise.resolve(42); }
+    };
+    click(app, 'Save to Photos');
+    await settle(); await settle(); await settle();
+
+    it('saves it into the phone with lb-phone and then tells the server', function () {
+      eq(gallery.join(','), 'https://cdn.fivemanage.com/proof.png');
+      eq(decisions(app).join(','), 'save');
+      falsy(app.sent.some(function (r) { return r.name === 'saveToPhotos'; }),
+        'no fallback needed where the phone gives the app its own save');
+    });
+
+    it('says it was saved', function () {
+      truthy(app.view.textContent.indexOf('Photo saved to your phone') !== -1,
+        app.view.textContent);
+    });
+  })();
+
+  await (async function photoSavedThroughTheClient() {
+    let fallback = null;
+    const app = await openedPhoto({
+      saveToPhotos: function (body) { fallback = body; return { ok: true }; }
+    });
+    click(app, 'Save to Photos');
+    await settle(); await settle(); await settle();
+
+    it('falls back to the client where the phone gives the app no save', function () {
+      truthy(fallback, 'the client was not asked');
+      eq(fallback.handle, 'ph00000000aa');
+      falsy('url' in fallback, 'the page names the photo; the client knows its link');
+      eq(decisions(app).join(','), 'save');
+    });
+  })();
+
+  await (async function photoSaveFails() {
+    const app = await openedPhoto({
+      saveToPhotos: { ok: false, err: 'save_unavailable' }
+    });
+    click(app, 'Save to Photos');
+    await settle(); await settle(); await settle();
+
+    it('keeps the photo open when it could not be saved, and tells nobody it was', function () {
+      eq(decisions(app).length, 0, 'not saved, so not reported saved, and not deleted either');
+      const images = app.view.all().filter(function (n) { return n.tagName === 'IMG'; });
+      eq(images.length, 1, 'still there to save again or delete');
+      truthy(app.notice().indexOf('could not save') !== -1, app.notice());
+    });
+  })();
+
+  await (async function photoAlreadyGone() {
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: MINE,
+      ledger: photoLedger(),
+      openPhoto: { ok: false, err: 'photo_gone' }
+    });
+    await settle(); await settle();
+    tab(app, 'ledger');
+    click(app, 'View photo');
+    await settle(); await settle();
+
+    it('says a photo is gone rather than opening an empty dialog', function () {
+      drewCleanly(app, 'a refused photo');
+      truthy(app.notice().indexOf('That photo is gone') !== -1, app.notice());
+      eq(app.view.all().filter(function (n) { return n.tagName === 'IMG'; }).length, 0);
+      eq(decisions(app).length, 0);
+    });
+  })();
+
+  await (async function photoRowsAfterwards() {
+    const words = { saved: 'Photo saved to your phone', deleted: 'Photo deleted',
+                    open: 'Photo opened and not saved' };
+    for (const photoState of Object.keys(words)) {
+      const app = boot({
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        mine: MINE,
+        ledger: photoLedger(photoState)
+      });
+      await settle(); await settle();
+      tab(app, 'ledger');
+      it('says what became of a ' + photoState + ' photo, with nothing to open', function () {
+        truthy(app.view.textContent.indexOf(words[photoState]) !== -1, app.view.textContent);
+        falsy(app.view.all().some(function (n) {
+          return n.tagName === 'BUTTON' && n.textContent === 'View photo';
+        }));
+      });
+    }
   })();
 
   await (async function lawEnforcementWarning() {

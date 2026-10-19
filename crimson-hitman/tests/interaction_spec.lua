@@ -1747,9 +1747,12 @@ describe('a handover cannot be retried in a loop', function()
 end)
 
 describe('a photo is not kept forever', function()
+    --- The client's row carries the photo's handle; the hitman's carries
+    --- nothing, so it is the client's row these read.
     local function recorded(s, f, c)
-        s.ledger.record(s.storage.readContract(c.id), 'HITMAN01',
-                        'https://cdn.fivemanage.com/proof.png', CH.FULFILMENT.ELIMINATION, {})
+        return s.ledger.record(s.storage.readContract(c.id), 'HITMAN01',
+            { kind = 'url', url = 'https://cdn.fivemanage.com/proof.png' },
+            CH.FULFILMENT.ELIMINATION, {})
     end
 
     it('drops the reference once the window has passed', function()
@@ -1759,16 +1762,18 @@ describe('a photo is not kept forever', function()
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 1000 } },
         })
-        recorded(s, f, c)
+        local handle = recorded(s, f, c)
 
-        truthy(s.storage.readLedger('HITMAN01', 10)[1].photo_ref, 'kept at first')
+        eq(s.storage.readLedger('CREATOR1', 10)[1].photo_ref, handle, 'kept at first')
+        truthy(s.storage.readPhoto(handle), 'and the photo with it')
 
         Env.time = Env.time + (Config.Ledger.PhotoRetentionDays * 86400) + 1
         truthy(s.ledger.forgetOldPhotos() > 0, 'something was forgotten')
 
-        local row = s.storage.readLedger('HITMAN01', 10)[1]
+        local row = s.storage.readLedger('CREATOR1', 10)[1]
         truthy(row, 'the row itself stays — the record is the point of the ledger')
         falsy(row.photo_ref, 'but the photo of somebody\'s corpse does not')
+        falsy(s.storage.readPhoto(handle), 'never opened, so it is deleted')
     end)
 
     it('keeps a photo inside the window', function()
@@ -1778,11 +1783,12 @@ describe('a photo is not kept forever', function()
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 1000 } },
         })
-        recorded(s, f, c)
+        local handle = recorded(s, f, c)
 
         Env.time = Env.time + 60
         eq(s.ledger.forgetOldPhotos(), 0)
-        truthy(s.storage.readLedger('HITMAN01', 10)[1].photo_ref)
+        eq(s.storage.readLedger('CREATOR1', 10)[1].photo_ref, handle)
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.PENDING, 'still waiting to be seen')
     end)
 
     it('keeps them forever when the window is zero', function()
@@ -1792,12 +1798,13 @@ describe('a photo is not kept forever', function()
             targetCid = 'TARGET01', reason = 'x',
             reward = { baseline = { cash = 1000 } },
         })
-        recorded(s, f, c)
+        local handle = recorded(s, f, c)
 
         withConfig({ { Config.Ledger, 'PhotoRetentionDays', 0 } }, function()
             Env.time = Env.time + (365 * 86400)
             eq(s.ledger.forgetOldPhotos(), 0, 'an operator who asks for that gets it')
-            truthy(s.storage.readLedger('HITMAN01', 10)[1].photo_ref)
+            eq(s.storage.readLedger('CREATOR1', 10)[1].photo_ref, handle)
+            truthy(s.storage.readPhoto(handle))
         end)
     end)
 

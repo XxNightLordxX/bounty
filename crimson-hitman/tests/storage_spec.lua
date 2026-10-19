@@ -283,6 +283,55 @@ describe('storage conformance', function()
         end
     end)
 
+    --- A kill photo kept for a contract's client (§14.43): its state moves
+    --- only from the state it is expected to be in, and closing it leaves
+    --- no link behind, in every backend alike.
+    it('keeps a kill photo record and its one view in every backend', function()
+        for _, b in ipairs(backends()) do
+            local store = b.store
+            store.writePhoto({ id = 'ph00000000aa', contract_id = 'ct1', slot = 2,
+                owner_cid = 'CREATOR1', kind = 'url', url = 'https://cdn.fivemanage.com/a.png',
+                state = CH.PHOTO.PENDING, created_at = 1000 })
+            store.writePhoto({ id = 'ph00000000bb', contract_id = 'ct2', slot = 1,
+                owner_cid = 'CREATOR2', kind = 'url', url = 'https://cdn.fivemanage.com/b.png',
+                state = CH.PHOTO.PENDING, created_at = 2000 })
+
+            local read = store.readPhoto('ph00000000aa')
+            truthy(read, b.name .. ': written and read back')
+            eq(read.owner_cid, 'CREATOR1', b.name)
+            eq(read.slot, 2, b.name)
+            eq(read.url, 'https://cdn.fivemanage.com/a.png', b.name)
+            falsy(store.readPhoto('ph00000000zz'), b.name .. ': an unknown handle reads as nothing')
+
+            eq(#store.photosOf('CREATOR1'), 1, b.name .. ': by owner')
+            eq(#store.photosForContract('ct2'), 1, b.name .. ': by contract')
+            eq(#store.photosCreatedBefore(1500, 10), 1, b.name .. ': by age')
+
+            truthy(store.openPhoto('ph00000000aa', 1100), b.name .. ': opened')
+            falsy(store.openPhoto('ph00000000aa', 1101), b.name .. ': and only once')
+            eq(store.readPhoto('ph00000000aa').state, CH.PHOTO.OPEN, b.name)
+            eq(store.readPhoto('ph00000000aa').opened_at, 1100, b.name)
+            eq(#store.photosOpenedBefore(1200, 10), 1, b.name .. ': open too long')
+            eq(#store.photosOpenedBefore(1050, 10), 0, b.name .. ': not yet')
+
+            falsy(store.closePhoto('ph00000000bb', CH.PHOTO.OPEN, CH.PHOTO.SAVED),
+                b.name .. ': a photo nobody opened cannot be closed as seen')
+            truthy(store.closePhoto('ph00000000aa', CH.PHOTO.OPEN, CH.PHOTO.SAVED),
+                b.name .. ': closed')
+            falsy(store.closePhoto('ph00000000aa', CH.PHOTO.OPEN, CH.PHOTO.DELETED),
+                b.name .. ': and not closed again the other way')
+            local closed = store.readPhoto('ph00000000aa')
+            eq(closed.state, CH.PHOTO.SAVED, b.name)
+            falsy(closed.url, b.name .. ': no link left behind')
+            eq(#store.photosOpenedBefore(5000, 10), 0, b.name .. ': no longer open')
+
+            store.deletePhoto('ph00000000aa')
+            falsy(store.readPhoto('ph00000000aa'), b.name .. ': deleted')
+            eq(#store.photosOf('CREATOR1'), 0, b.name)
+            truthy(store.readPhoto('ph00000000bb'), b.name .. ': and nothing else')
+        end
+    end)
+
     --- A thread mute (§11.4): one per thread and person, the same when
     --- written twice, and gone on unmute.
     it('keeps a thread mute per thread and person in every backend', function()
@@ -674,7 +723,8 @@ describe('copy-on-read semantics', function()
         stack.escrow.init(copying, stack.audit)
         stack.contracts.init({ storage = copying, escrow = stack.escrow,
             identity = stack.identity, audit = stack.audit, notify = stack.notify })
-        stack.ledger.init(copying)
+        stack.photos.init({ storage = copying, audit = stack.audit })
+        stack.ledger.init({ storage = copying, photos = stack.photos, notify = stack.notify })
         stack.projection.init({ storage = copying, identity = stack.identity,
             escrow = stack.escrow, kidnap = stack.kidnap })
         stack.bailout.init({ storage = copying, identity = stack.identity,
@@ -1598,6 +1648,16 @@ describe('every mysql statement is executable', function()
             function() m.writeAudit({ ts=1, kind='financial', action='x', actor_cid='A', contract_id='c1', detail={} }) end,
             function() m.readAudit(10) end,
             function() m.auditForContract('c1', 10) end,
+            function() m.forgetLedgerPhotos(10) end,
+            function() m.writePhoto({ id='ph1', contract_id='c1', slot=1, owner_cid='A', kind='url', url='https://x/y.png', state='pending', created_at=1 }) end,
+            function() m.readPhoto('ph1') end,
+            function() m.photosOf('A') end,
+            function() m.photosForContract('c1') end,
+            function() m.photosCreatedBefore(10, 5) end,
+            function() m.openPhoto('ph1', 2) end,
+            function() m.photosOpenedBefore(10, 5) end,
+            function() m.closePhoto('ph1', 'open', 'deleted', nil) end,
+            function() m.deletePhoto('ph1') end,
             function() m.prune() end,
             function() m.migrate() end,
         }

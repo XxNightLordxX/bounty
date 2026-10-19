@@ -158,7 +158,7 @@ A config option allowing contract payouts to be distributed via the server's **d
 *Design intent:* fits the criminal aesthetic and pushes players into existing money-laundering mechanics.
 
 ### 6.3 Proof of Death Archive — The Hitman's Ledger
-An app tab (**History / Ledger**) storing the **past 10 completed contracts**. Opening a completed contract shows the verification photo taken by the hitman.
+An app tab (**History / Ledger**) storing the **past 10 completed contracts**. The client who placed a contract can open the verification photo from its row **once**, and then save it to their phone's Photos or delete it (§14.43). Nobody else is ever shown it: not the hitman who took it, and not the target.
 
 *Design intent:* persistent progression and a "trophy room" of successful hits and survivals with a minimal database footprint.
 
@@ -182,7 +182,7 @@ The refresh is **event-driven** — hooked to appearance/outfit change events, u
 |---|---|---|
 | Creator Alert | "Your contract on [Target] has been accepted by an operative." | Respects hitman anonymity. |
 | Target Paranoid Alert | "You feel eyes on you. A price has been put on your head." | Toggleable in config. |
-| Completion Alert | "Contract Fulfilled. Verification photo attached. Check your archives." | Sent to creator with photo. |
+| Completion Alert | "Your contract was fulfilled. The photo is waiting under Ledger. You can see it once: save it to your Photos to keep it." | Sent to creator. Carries no photo itself; with no photo kept it says only that the contract was fulfilled. |
 
 ### 7.4 Contract Acceptance & Payout Security
 
@@ -194,7 +194,7 @@ A hitman must **explicitly accept** the contract via the phone app to participat
 - Payout triggers **only** if the target is killed specifically by a player who accepted the contract.
 - To claim, the hitman must stand near the dead target and take a **verification photo** using the lb-phone camera.
 - The script confirms completion only if the target player's entity is within a short radius of the hitman at capture time.
-- On verification: the photo is transmitted instantly to the creator's app as proof of death, **baseline rewards** are released, and the contract closes for all hitmen.
+- On verification: the photo is kept for the creator, who is told it is waiting under Ledger and can open it once (§14.43); **baseline rewards** are released, and the contract closes for all hitmen. Nothing of the photo stays on the hitman's phone.
 - **No payout** if the target dies by local elements, suicide, or a player who did not accept the contract.
 - **The target must be genuinely dead, not downed.** A player in a downed / bleeding-out / last-stand state is *not* a completed elimination: the server requires the QBox death state (`isdead`), and explicitly rejects `inlaststand`. A hitman who downs a target and photographs them mid-bleedout gets nothing until the target actually dies. This is re-checked at photo submission, not only at the death report — a target revived between the two invalidates the pending completion, once the proof window after the death has passed.
 
@@ -304,7 +304,7 @@ Completion takes a lock on the contract before any funds move. A contract can tr
 Every escrow, payout, refund, bailout, and penalty is written to an admin-readable log with amounts, sources, both parties, and timestamp. This is the only way to adjudicate a player dispute after the fact.
 
 ### 9.9 Persistence footprint
-Active contracts plus the last 10 completed contracts per player. Verification photos are stored as lb-phone image references, not blobs. Storage backend is selectable per §10 without changing any of these rules.
+Active contracts plus the last 10 completed contracts per player. A verification photo is a record of its own, kept for the creator alone until they have seen it once (§14.43); a ledger row carries its handle, never the image or its link. Storage backend is selectable per §10 without changing any of these rules.
 
 ### 9.10 Contract state machine
 `draft → active → accepted → (completed | bailed_out | expired | cancelled)`, with `hidden` as a display flag orthogonal to state (§7.1). No transition skips escrow resolution.
@@ -630,9 +630,17 @@ Severity is the damage if the rule is absent, not the difficulty of the fix.
 
 #### 14.20 The verification photo is obtained from the camera flow, never from the payload
 
+> **As built.** The photo is bound to a server-issued capture token, the
+> recorded death scene and an allowlist of image hosts (§14.35, §14.36);
+> lb-phone exposes no server-side upload result to bind it to instead. It
+> is no longer pushed to anybody: the creator opens it once from their
+> Ledger (§14.43). `Config.Ledger.StorePhotos = false` is the "no image
+> moves" mode, and there is no purge command: the creator deletes their
+> own photo, and a staff void (`/ch-void`) deletes the contract's photos.
+
 **Vector.** §7.4's four factors authenticate the claim, not the image; §9.9 describes the photo's storage shape, not its provenance; and §10.1's escaping rule names player-supplied text, which an implementer will not read as covering an image URL. So the proof-of-death artifact is an arbitrary attacker-supplied string that is pushed instantly to a named player's phone and persisted in their Ledger — a griefer with one legitimate kill can deliver any image on the internet to the creator.
 
-**Rule.** Add a fifth factor to §7.4. The server obtains the image reference from lb-phone's server-side upload result for the capture session it opened, scoped to the resolved hitman's `source`; any reference field present in the payload is discarded, never validated. Before storing, the server verifies the reference's host is in `Config.Photo.AllowedHosts` — literals in config, never client input — that it is a fresh upload by that hitman's own phone created after the capture token was issued and within `Config.Photo.MaxAgeSeconds`, and that it does not already appear on any contract this resource stores. The server stores its own resolved id, not the client's string, escapes it at the render boundary on the same rule as the contract reason, and writes the reference plus a SHA-256 of it, the hitman's citizen id and the contract id to the audit log. Where the gallery-ownership export is unavailable, fall back to the host allowlist and log a version warning at startup. `Config.Photo.Enabled = false` is a supported mode in which the contract completes on the remaining factors and no image moves at all, and an ACE-gated admin command purges a photo from every ledger row and from pending-completion state by contract id, documented as removing it from the game and not from the media host.
+**Rule.** Add a fifth factor to §7.4. The server obtains the image reference from lb-phone's server-side upload result for the capture session it opened, scoped to the resolved hitman's `source`; any reference field present in the payload is discarded, never validated. Before storing, the server verifies the reference's host is in `Config.Photo.AllowedHosts` — literals in config, never client input — that it is a fresh upload by that hitman's own phone created after the capture token was issued and within `Config.Photo.MaxAgeSeconds`, and that it does not already appear on any contract this resource stores. The server stores its own resolved id, not the client's string, escapes it at the render boundary on the same rule as the contract reason, and writes the reference plus a SHA-256 of it, the hitman's citizen id and the contract id to the audit log. Where the gallery-ownership export is unavailable, fall back to the host allowlist and log a version warning at startup. `Config.Photo.Enabled = false` is a supported mode in which the contract completes on the remaining factors and no image moves at all, and a staff void of the contract deletes its photos, documented as removing them from the game and not from the media host.
 
 *Config:* `Config.Photo.Enabled, Config.Photo.AllowedHosts, Config.Photo.RequireGalleryOwnership, Config.Photo.MaxAgeSeconds, Config.Photo.LogHashToAudit, Config.Admin.PurgePhotoCommand`
 
@@ -833,9 +841,9 @@ Severity is the damage if the rule is absent, not the difficulty of the fix.
 
 **Vector.** §6.3 says only "stores the past 10 completed contracts", so the implementer silently decides whether anonymity survives completion and whether a hitman's photo of the victim's corpse renders in the victim's own app. §9.9's reference-not-blob rule means the image lives on a media host behind an unguessable but publicly fetchable URL, and evicting the eleventh ledger row deletes nothing — with no index, deletion is impossible even for an owner who wants it.
 
-**Rule.** State the scope of §4's guarantee explicitly rather than letting the ledger define it by omission: where a contract was anonymous, the ledger row stores an opaque contract id and the display label only — no citizen id and no name is *written*, not written-and-hidden — and the opaque id is visible and copyable so a player can still raise a support ticket. A hitman-captured photo is never rendered in the target's view; the target's history shows contract id, outcome, timestamp and, subject to anonymity, the counterparty. Maintain a photo index mapping reference to `{contract id, target, hitman, created_at, expires_at}`; without it deletion is impossible in principle, so it is required even where expiry is off. A photo is deleted on ledger eviction and after `Config.Ledger.PhotoRetentionDays`, whichever comes first, with the ledger row surviving and showing "photo expired" rather than a broken image; deletion invokes the configured host's delete API where one exists, and the storage adapter declares whether it supports deletion so a startup warning names the host when retention is unenforceable there. `Config.Ledger.StorePhotos = false` keeps the ledger and drops images entirely. A hard-coded ceiling caps ledger depth so the §8 config value cannot turn a ten-entry trophy room into a dossier.
+**Rule.** State the scope of §4's guarantee explicitly rather than letting the ledger define it by omission: where a contract was anonymous, the ledger row stores an opaque contract id and the display label only — no citizen id and no name is *written*, not written-and-hidden — and the opaque id is visible and copyable so a player can still raise a support ticket. A hitman-captured photo is never rendered in the target's view; the target's history shows contract id, outcome, timestamp and, subject to anonymity, the counterparty. Maintain a photo index mapping an opaque handle to `{contract id, slot, owner (the creator), kind, link or file, state, created_at, opened_at}`; without it deletion is impossible in principle, so it is required even where expiry is off. It names no hitman, because it is shown to nobody but its owner. The creator's ledger row carries the handle; the hitman's and the target's rows carry no photo at all, so nothing of it stays in the app of the hitman who took it. Viewing is an explicit request, never the ledger being read: the creator opens it once, and then saves it to their phone's Photos or deletes it, and closing it any other way deletes it. A handle that is not the caller's is answered exactly as one that does not exist. A photo is deleted when it is left open for `Config.Completion.PhotoOpenSeconds`, on ledger eviction, when staff void its contract, and after `Config.Ledger.PhotoRetentionDays` whatever became of it, with the ledger row surviving and saying what became of the photo, or nothing once it is gone, rather than a broken image. Deleting a photo held on an image host forgets its link: lb-phone gives a resource no way to delete the file there, and the README says so. `Config.Ledger.StorePhotos = false` keeps the ledger and drops images entirely. A hard-coded ceiling caps ledger depth so the §8 config value cannot turn a ten-entry trophy room into a dossier.
 
-*Config:* `Config.Ledger.Depth, Config.Ledger.MaxDepthHardCap, Config.Ledger.StorePhotos, Config.Ledger.ShowPhotoToTarget, Config.Ledger.PhotoRetentionDays`
+*Config:* `Config.Ledger.Depth, Config.Ledger.MaxDepthHardCap, Config.Ledger.StorePhotos, Config.Ledger.PhotoRetentionDays, Config.Completion.PhotoOpenSeconds, Config.Completion.PhotoStorage`
 
 #### 14.44 The log's write path, distribution, retention and purge are bounded
 
@@ -1138,15 +1146,16 @@ Every `config.lua` entry implied by §8, §10 and §15, as one list. Defaults be
 - Config.Reports.Enabled — report action on listings, ledger entries and completion alerts
 - Config.Reports.Webhook — report destination
 - Config.Admin.VoidContractCommand — ACE-gated void with full refund
-- Config.Admin.PurgePhotoCommand — removes a photo from every ledger row by contract id
+- Config.Admin.PurgePhotoCommand — not built: the creator deletes their own photo, and the void command deletes a contract's photos
 - Config.Admin.CreateBanCommand — bars a citizenid from creating contracts
 - Config.Admin.ProtectPlayerCommand — untargetable flag; logged and expiring
 - Config.Admin.DumpContractCommand — one contract's full timeline in order
 - Config.Ledger.Depth — configured history depth
 - Config.Ledger.MaxDepthHardCap — hard ceiling the config value cannot exceed
 - Config.Ledger.StorePhotos — false keeps the ledger and drops images
-- Config.Ledger.ShowPhotoToTarget = false — hitman photos never render in the target's view
 - Config.Ledger.PhotoRetentionDays — with the photo index; row survives the photo
+- Config.Completion.PhotoOpenSeconds — an opened photo not saved or deleted by then is deleted
+- Config.Completion.PhotoStorage — 'server' or 'host'; only the creator ever sees the photo, once
 - Config.Retention.PurgeOnCharacterDelete — releases pending escrow first, then purges identity
 - Config.Retention.PurgeOnBan = 'delayed' — preserves evidence for appeals
 - Config.Database.DebounceMs — non-financial writes only

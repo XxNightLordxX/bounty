@@ -23,7 +23,7 @@ Read directly from the uploaded server resources, not assumed:
 | Police/EMS jobs | `police, sheriff, leo, trooper, sasp, bcso, fib, ranger, doj, lawyer, ambulance`; job **types** `leo`, `police` | The spec's 5-name blacklist is insufficient — see §2 decision |
 | Mugshots | `MugShotBase64` → `exports.MugShotBase64:GetMugShotBase64(ped, transparent)` | Client-side render source for §7.2 |
 | Word filter | lb-phone `exports["lb-phone"]:ContainsBlacklistedWord(source, text)` | Reused for contract reason and relay messages (§14.30) |
-| Photo capture | `SetCameraComponent(options)` returns the photo URL. lb-phone's docs put the callback in `options.cb`; builds seen in the wild take it as a **second argument** instead and only return the URL when there is none. The client passes it both ways and uses the return value too, taking whichever arrives first. A non-table `options` opens a camera with defaults, so there is no "reset" call. `SaveToGallery(link)` | Camera flow for §7.4 / §14.20 |
+| Photo capture | `SetCameraComponent(options)` returns the photo URL. lb-phone's docs put the callback in `options.cb`; builds seen in the wild take it as a **second argument** instead and only return the URL when there is none. The client passes it both ways and uses the return value too, taking whichever arrives first. A non-table `options` opens a camera with defaults, so there is no "reset" call. `saveToGallery = false` always (it defaults to true): the hitman's phone keeps no copy. `SaveToGallery(link)` is the client's Save to Photos fallback where the page has no `components.saveToGallery` | Camera flow for §7.4 / §14.20 |
 | Notifications | `exports["lb-phone"]:SendNotification{ app, title, content }` | §7.3 alerts |
 
 ## 2. Decisions taken (owner delegated these)
@@ -64,6 +64,7 @@ crimson-hitman/
     completion/
       death.lua           victim-sourced reports + corroboration (§14.2)
       photo.lua           capture tokens, host allowlist (§14.20, §14.35)
+    photos.lua            the client's kill photo: one view, then saved or deleted (§14.43)
       kidnap.lua          single shared tick, arm gate, grace budget (§14.23-14.25)
     projection.lua        per-recipient payload building (§14.4)
     app.lua               lb-phone registration, callbacks
@@ -86,7 +87,8 @@ crimson-hitman/
 `hitmen` — contract_id, hitman_cid, hitman_account, alias, anon, accepted_at, stake_amount, state.
 `amendments` — contract_id, proposer, kind, diff_json, expires_at, approvals_json, outcome.
 `messages` — contract_id, thread_id, from_alias, body, sent_at.
-`ledger` — cid, contract_id, role, photo_ref, summary_json, resolved_at.
+`ledger` — cid, contract_id, role, photo_ref (the client's row only: a photo handle), summary_json, resolved_at.
+`photos` — id (the handle), contract_id, slot, owner_cid (the client), kind, url | file, mime, size, state (`pending|open|saved|deleted`), created_at, opened_at, saved_link. No hitman column.
 `audit` — ts, actor_cid, action, contract_id, detail_json.
 
 Same shape in all three persistence modes (§10.4).

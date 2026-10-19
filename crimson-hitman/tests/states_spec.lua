@@ -325,6 +325,9 @@ describe('the grid covers the whole action surface', function()
         respondAmendment = true,  -- needs an open proposal
         readThread = true, sendMessage = true, requestCall = true,
         endCall = true,           -- names no contract: the caller's own call
+        -- A kill photo has states of its own, not the contract's, and they
+        -- are walked in photos_spec.
+        openPhoto = true, photoDecision = true,
     }
 
     it('has a row for every contract action app.lua registers', function()

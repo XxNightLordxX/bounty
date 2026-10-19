@@ -284,31 +284,38 @@ end
 
 --- Tell the creator their contract was fulfilled.
 ---
---- The photograph is mentioned only when there is one. This took photoRef and
---- never read it: the body was a single hardcoded string promising a
---- verification photo, and the live-delivery route passes nil because a
---- handover has no photograph to take. So the creator of every delivery was
---- sent to an archive row with nothing attached — which reads as the archive
---- having lost the picture rather than as there never having been one.
+--- The photo is mentioned only when one was kept. This once took the photo
+--- and never read it: the body was a single hardcoded string promising a
+--- verification photo, and the live-delivery route has no photograph to
+--- take. So the creator of every delivery was sent to an archive row with
+--- nothing attached — which reads as the archive having lost the picture
+--- rather than as there never having been one.
+---
+--- And it says how the photo works now, because it is the one thing the
+--- client cannot learn by looking: it can be seen once. "It is on your
+--- Ledger tab" read as a picture that would be there whenever they cared to
+--- look, and the client who opened it to glance at it and closed it lost it.
 ---@param contract table
 ---@param hitmanRecord table|nil
----@param photoRef string|nil the proof image, where the route produced one
+---@param proof table|nil nil for a live delivery; for a kill, { photo = handle }, the handle nil when no photo was kept
 ---@param result table|nil the claim's own answer (Contracts.claimSlot)
-function Notify.contractCompleted(contract, hitmanRecord, photoRef, result)
-    local hasPhoto = type(photoRef) == 'string' and photoRef ~= ''
+function Notify.contractCompleted(contract, hitmanRecord, proof, result)
+    local delivered = type(proof) ~= 'table'
+    local kept = not delivered and type(proof.photo) == 'string' and proof.photo ~= ''
+    local waiting = 'The photo is waiting under Ledger. You can see it once: save it to '
+        .. 'your Photos to keep it.'
     -- A receipt, so outside the budget (§14.40). Relay messages spend the
     -- same budget, so five from the hitman in the minute before the kill
     -- used to mean the creator never heard it had been done.
-    -- The photograph is where the app shows it, on the Ledger tab, and only
-    -- while the ledger keeps photographs: with StorePhotos off, pointing
-    -- there sent the client looking for a picture that was never kept.
+    -- The photo is mentioned only while there is one: with StorePhotos off,
+    -- pointing at the Ledger sent the client looking for a picture that was
+    -- never kept.
     local body
-    if not hasPhoto then
+    if delivered then
         body = 'Your contract was fulfilled by live delivery. There is no '
             .. 'photograph — the target was handed over in person.'
-    elseif Config.Ledger and Config.Ledger.StorePhotos then
-        body = 'Your contract was fulfilled. The verification photograph is '
-            .. 'on your Ledger tab.'
+    elseif kept then
+        body = 'Your contract was fulfilled. ' .. waiting
     else
         body = 'Your contract was fulfilled.'
     end
@@ -322,10 +329,8 @@ function Notify.contractCompleted(contract, hitmanRecord, photoRef, result)
         title = 'Collection paid'
         body = ('Collection %d of %d on your contract was paid%s.'):format(
             tonumber(result.slot) or 1, tonumber(contract.payout_slots) or 1,
-            hasPhoto and '' or ' by live delivery')
-        if hasPhoto and Config.Ledger and Config.Ledger.StorePhotos then
-            body = body .. ' The verification photograph is on your Ledger tab.'
-        end
+            delivered and ' by live delivery' or '')
+        if kept then body = body .. ' ' .. waiting end
         body = body .. (' It is still running, with %d more to collect.')
             :format(tonumber(result.remaining) or 0)
     end
