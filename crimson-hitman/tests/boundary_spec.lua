@@ -416,8 +416,14 @@ describe('the escrow line id sequence with nothing left to mint', function()
         local c = boughtOutByAnAbsentCreator(s, f)
 
         -- The exists predicate mintId consults, answering the way it does
-        -- when every id the sequence offers already belongs to a line.
-        s.storage.readEscrowLine = function() return { id = 'owe00000001' } end
+        -- when every id the sequence offers already belongs to a line. Only
+        -- those ids: every other line still reads as itself, as on a real
+        -- store.
+        local realRead = s.storage.readEscrowLine
+        s.storage.readEscrowLine = function(id)
+            if tostring(id):sub(1, 3) == 'owe' then return { id = id } end
+            return realRead(id)
+        end
 
         local before = accounted(s.storage)
         s.bailout.buy(f.target, c.id)

@@ -104,8 +104,13 @@ describe('a buyout premium with nowhere to go', function()
     --- player's money in flight. Contracts.create refuses before it charges
     --- anyone; Contracts.accept releases the stake.
     local function exhausted(s)
-        -- Every id on offer is taken.
-        s.storage.readEscrowLine = function() return { id = 'owe00000001' } end
+        -- Every id on offer is taken. Only the ids the sequence offers:
+        -- every other line still reads as itself, as on a real store.
+        local realRead = s.storage.readEscrowLine
+        s.storage.readEscrowLine = function(id)
+            if tostring(id):sub(1, 3) == 'owe' then return { id = id } end
+            return realRead(id)
+        end
     end
 
     local function worth(s)
