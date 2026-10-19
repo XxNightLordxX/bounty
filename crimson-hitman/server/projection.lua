@@ -116,6 +116,17 @@ function Projection.contract(contract, viewerCid)
         end)() or nil,
         targetProtected = contract.target_protected or false,
         deadline      = contract.deadline_at,
+        -- The clock as the server reads it, the same sum stakeTimeRefusal
+        -- makes. deadline_at stands still while a contract is paused and is
+        -- pushed on when the pause ends, so a page counting down to it
+        -- alone ran through every pause and could tell a hitman their
+        -- stake was gone on a contract that was not running at all. For an
+        -- anonymous client the pause follows the target alone (§14.32), so
+        -- whether it is stopped says nothing about the client.
+        secondsLeft   = contract.deadline_at
+            and math.max(0, contract.deadline_at - (contract.paused_since or os.time()))
+            or nil,
+        clockStopped  = contract.paused_since ~= nil,
         role          = role,
         -- What accepting costs, to everyone who can see the contract.
         --
@@ -277,6 +288,9 @@ local function buildListing(viewerCid, page)
             warnHitman  = Config.Advisory.WarnHitman ~= false,
             flagListing = Config.Advisory.FlagListing ~= false,
             minQueryLength = Config.Targeting.MinQueryLength,
+            -- Under this much time a staked hitman's card says the stake is
+            -- at risk: the same window acceptance refuses to open inside.
+            stakeWindowMinutes = Config.Penalty.MinWindowMinutes,
             -- Which ways of browsing the app should offer, rather than
             -- offering a button that always comes back empty.
             allowBrowseAll = Config.Targeting.AllowBrowseAll == true,
@@ -536,7 +550,8 @@ Projection.ALLOWED_KEYS = {
         id = true, reason = true, mode = true, state = true, reward = true,
         bonusPercent = true, slots = true, slotsClaimed = true, currentSlot = true,
         hitmenActive = true, hitmenMax = true, targetName = true,
-        targetProtected = true, deadline = true, role = true,
+        targetProtected = true, deadline = true, secondsLeft = true,
+        clockStopped = true, role = true,
         targetImageId = true, penaltyAmount = true,
         creatorName = true, creatorAnonymous = true,
     },

@@ -45,6 +45,11 @@ end
 local CONDITIONAL = {
     -- Written by the page from its own kidnapProgress polling.
     kidnapProgress = 'the page fills this in, not the projection',
+    -- Stamped by the page as the reply lands, to count the clock down from.
+    clockReadAt = 'the page fills this in, not the projection',
+    -- Who the hitman is on it, drawn on their own card. Nobody else is one.
+    myAlias     = 'hitman-only',
+    myAnonymous = 'hitman-only',
     -- Only to a viewer who can never take the contract, with the reason.
     -- Its absence is what lets the board draw Accept.
     barred = 'public viewers only, and only when acceptance would be refused',

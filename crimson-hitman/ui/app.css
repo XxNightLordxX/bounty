@@ -440,6 +440,13 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* A contract paying goods and no money is stamped with the kind of payout,
+   a word rather than a figure. */
+.reward .amount.is-goods {
+  font-family: inherit;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 /* The bonus is money too, so it stays in the crimson family — softened,
    because it is the conditional half of the offer, not the headline. */
 .reward .bonus {
@@ -812,26 +819,35 @@ input:focus, select:focus, textarea:focus {
 /* What the creator has to spend, read from their own pockets: three
    figures on a strip, not three pills. */
 .funds { padding: 0.75rem 0.4rem; }
+/* A figure is never broken. Each cell was an equal share of the strip and
+   its figure could break anywhere, so a bank balance of $98,765,432 at
+   360px read "$98,765,43" over a lone "2" — two figures, or one ten times
+   smaller. Cells now size to their figure, the figure shrinks a little on
+   a narrow phone, and a cell that still does not fit moves to a row of its
+   own whole. The dividers are drawn off each cell's left edge and the strip
+   clips them, so the cell that starts a row carries none. */
 .stats {
-  display: flex; flex-wrap: wrap;
+  display: flex; flex-wrap: wrap; row-gap: 0.6rem;
+  overflow: hidden;
 }
 .stat {
-  flex: 1 1 0; min-width: 4.5rem;
+  flex: 1 1 auto; min-width: 4.5rem;
   display: flex; flex-direction: column; align-items: center; gap: 0.15rem;
   padding: 0.1rem 0.5rem;
   text-align: center;
+  box-shadow: -1px 0 0 var(--line-soft);
 }
-.stat + .stat { border-left: 1px solid var(--line-soft); }
 .stat-value {
   font-family: var(--f-figure);
   font-size: 1.35rem; font-weight: 700; line-height: 1.1;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 .stat-label { font-size: var(--t-xs); color: var(--ink-faint); font-weight: 600; letter-spacing: 0.02em; }
 /* A balance is a smaller figure under its caption. */
-.stat.is-balance .stat-value { font-size: var(--t-md); }
+.stat.is-balance .stat-value { font-size: clamp(0.8rem, 3.9vw, var(--t-md)); }
+.record .stat-value { font-size: clamp(1.1rem, 5.6vw, 1.35rem); }
 
 /* ---------- target picker ----------
    A list of people you can put a contract on. It opens showing the city

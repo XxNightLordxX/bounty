@@ -1044,7 +1044,10 @@
      space, so read as text it is still exactly "7 completed". */
   function tally(value, label) {
     var cell = el('div', 'stat');
-    cell.appendChild(el('span', 'stat-value', value));
+    // Grouped like every money figure: "1234 completed" was the one count
+    // on the page set without a separator.
+    cell.appendChild(el('span', 'stat-value',
+      typeof value === 'number' ? value.toLocaleString('en-US') : value));
     cell.appendChild(el('span', 'stat-label', ' ' + label));
     return cell;
   }
@@ -1096,7 +1099,17 @@
     var paid = contract.reward || {};
 
     var reward = el('div', 'reward');
-    reward.appendChild(el('div', 'amount', money(paid.baseline)));
+    // Goods are not priced — nobody can defend a number for a kitted rifle —
+    // so a contract paying them and no money at all was stamped "$0" in the
+    // loudest type on the card, with what it actually pays in small print
+    // under it, and read as worthless or broken. The stamp says what kind
+    // of payout it is instead, and the goods note below still lists it.
+    var stamp = money(paid.baseline);
+    var g = paid.goods || {};
+    if (!(Number(paid.baseline) > 0) && (Number(g.items) || 0) + (Number(g.weapons) || 0) > 0) {
+      stamp = Number(g.weapons) > 0 ? 'Weapons' : 'Goods';
+    }
+    reward.appendChild(el('div', 'amount' + (stamp.charAt(0) === '$' ? '' : ' is-goods'), stamp));
     if (paid.bonus > 0) {
       reward.appendChild(el('div', 'bonus', '+' + money(paid.bonus) + ' alive'));
     }
@@ -1113,15 +1126,22 @@
     // are not worth the same: black money sells for a fraction of its face
     // value. A hitman looking at "$250,000" could be looking at a quarter of
     // a million black_money items with no way to tell.
-    var dirtyPart = (paid.sources && paid.sources.dirty || 0)
-      + (paid.bonusSources && paid.bonusSources.dirty || 0);
-    if (dirtyPart > 0) {
-      notes.appendChild(el('div', 'hint ico i-coin',
-        money(dirtyPart) + ' of it is black money'));
-    }
+    //
+    // Each portion on its own. The base's and the bonus's black money were
+    // added together and set under the base figure as "of it", so a
+    // $150,000 base with $50,000 of black money, plus a bonus holding
+    // $25,000 more, read as half the headline. A kill pays the base alone.
+    var dirtyBase = Number(paid.sources && paid.sources.dirty) || 0;
+    var dirtyBonus = Number(paid.bonusSources && paid.bonusSources.dirty) || 0;
+    var dirtyText = dirtyBase > 0 && dirtyBonus > 0
+      ? money(dirtyBase) + ' of this is black money, and ' + money(dirtyBonus)
+        + ' of the alive bonus'
+      : dirtyBase > 0 ? money(dirtyBase) + ' of this is black money'
+      : dirtyBonus > 0 ? money(dirtyBonus) + ' of the alive bonus is black money'
+      : null;
+    if (dirtyText) { notes.appendChild(el('div', 'hint ico i-coin', dirtyText)); }
 
-    // Goods are not priced — nobody can defend a number for a kitted rifle —
-    // but a contract paying one and nothing else read as $0.
+    // The names of the goods, which the stamp above only gives the kind of.
     var goods = goodsLine(paid.goods);
     if (goods) { notes.appendChild(el('div', 'goods ico i-box', goods)); }
     var bonusGoods = goodsLine(paid.bonusGoods);
@@ -1131,17 +1151,13 @@
     if (notes.children.length) { node.appendChild(notes); }
 
     var meta = el('div', 'meta');
-    meta.appendChild(chip(contract.mode === 'competitive' ? 'Competitive' : 'Exclusive',
-      null, contract.mode === 'competitive' ? 'i-flag' : 'i-lock'));
+    var mine = contract.role === 'creator';
+    var collected = Number(contract.slotsClaimed) || 0;
 
-    if (contract.slots > 1) {
-      meta.appendChild(chip(
-        'Slot ' + contract.currentSlot + ' of ' + contract.slots, 'slots', 'i-layers'));
-    }
-    if (contract.hitmenActive > 0) {
-      // Against the cap on a competitive contract, so a hitman can see
-      // whether there is room before they tap Accept and are refused. The
-      // server has always sent hitmenMax and the page never read it.
+    // Against the cap on a competitive contract, so a hitman can see
+    // whether there is room before they tap Accept and are refused. The
+    // server has always sent hitmenMax and the page never read it.
+    function crowdChip() {
       var crowd = contract.mode === 'competitive' && contract.hitmenMax
         ? contract.hitmenActive + ' of ' + contract.hitmenMax + ' operatives'
         : contract.hitmenActive
@@ -1149,7 +1165,50 @@
       var full = contract.mode === 'competitive'
         && contract.hitmenMax
         && contract.hitmenActive >= contract.hitmenMax;
-      meta.appendChild(chip(full ? crowd + ' — full' : crowd, full ? 'warn' : 'hot', 'i-users'));
+      return chip(full ? crowd + ' — full' : crowd, full ? 'warn' : 'hot', 'i-users');
+    }
+
+    // What a client opens Mine to find out, first: is anyone on it. An
+    // untaken contract showed its mode and the client's own name and
+    // nothing else, so "nobody has taken it" had to be read from an
+    // absence.
+    if (mine) {
+      meta.appendChild(contract.hitmenActive > 0 ? crowdChip()
+        : chip((collected > 0 ? 'Open again' : 'Open') + ' — no hitman yet', null, 'i-users'));
+    }
+
+    // How long is left, on every card. It was only ever said inside a
+    // dialog, so a staked hitman could not see when their stake would go,
+    // a client when their contract would lapse, or a target how long they
+    // had to stay alive.
+    var clock = clockChip(contract);
+    if (clock) { meta.appendChild(clock); }
+
+    meta.appendChild(chip(contract.mode === 'competitive' ? 'Competitive' : 'Exclusive',
+      null, contract.mode === 'competitive' ? 'i-flag' : 'i-lock'));
+
+    // "Payout", the Place form's word for it. "Slot 1 of 3" told the
+    // client nothing about how many had been collected.
+    if (contract.slots > 1) {
+      meta.appendChild(chip(mine
+        ? collected + ' of ' + contract.slots + ' payouts collected'
+        : 'Payout ' + contract.currentSlot + ' of ' + contract.slots, 'slots', 'i-layers'));
+    }
+
+    if (contract.role === 'hitman') {
+      // Who they are on it, in place of a count that included them: a red
+      // "1 operative" on their own card read as a rival, and nothing said
+      // whether they had taken it anonymously or what alias the client sees.
+      // The cap is left off — it only matters before accepting.
+      meta.appendChild(chip('You' + (contract.myAlias ? ': ' + contract.myAlias : '')
+        + (contract.myAnonymous ? ' · anonymous' : ' · client sees your name'),
+        null, 'i-user'));
+      var rivals = (Number(contract.hitmenActive) || 0) - 1;
+      if (rivals > 0) {
+        meta.appendChild(chip('+' + rivals + (rivals === 1 ? ' rival' : ' rivals'), 'hot', 'i-users'));
+      }
+    } else if (!mine && contract.hitmenActive > 0) {
+      meta.appendChild(crowdChip());
     }
     if (contract.role === 'creator') {
       // Through asList, like every other list from the server. The projection
@@ -1172,8 +1231,13 @@
       meta.appendChild(chip(money(contract.penaltyAmount) + ' stake', 'warn', 'i-coin'));
     }
     // Only when there is something to say: a row carrying neither drew an
-    // empty pill.
-    if (contract.creatorAnonymous || contract.creatorName) {
+    // empty pill. On the client's own card their own name is noise, but
+    // whether they placed it anonymously is the one confirmation they get
+    // of that choice.
+    if (mine) {
+      meta.appendChild(chip(contract.creatorAnonymous ? 'Placed anonymously'
+        : 'Placed under your name', null, 'i-briefcase'));
+    } else if (contract.creatorAnonymous || contract.creatorName) {
       meta.appendChild(chip(contract.creatorAnonymous ? 'Anonymous client' : contract.creatorName,
         null, 'i-briefcase'));
     }
@@ -2066,12 +2130,17 @@
       // A slot, never an amount: the server gives back a whole unclaimed
       // collection. Describing it as money was describing a payload the
       // server has never accepted.
-      return 'Give back collection ' + ((p && p.slot) || '?')
+      return 'Give back payout ' + ((p && p.slot) || '?')
         + ', returning what funds it to the client';
     },
-    shorten_deadline: function (p) {
+    // With the before and after, which is what the hitman is agreeing to.
+    shorten_deadline: function (p, contract) {
+      var by = p && p.seconds ? Math.round(p.seconds / 60) : 0;
+      var now = contract ? minutesLeft(contract) : null;
       return 'Shorten the deadline'
-        + (p && p.seconds ? ' by ' + Math.round(p.seconds / 60) + ' minutes' : '');
+        + (by ? ' by ' + durationText(by) : '')
+        + (by && now !== null && now > by
+          ? ' (from ' + durationText(now) + ' left to ' + durationText(now - by) + ')' : '');
     },
     raise_penalty: function (p) {
       return 'Raise the failure stake' + (p && p.amount ? ' to ' + money(p.amount) : '');
@@ -2100,11 +2169,11 @@
     }
   };
 
-  function describeAmendment(proposal) {
+  function describeAmendment(proposal, contract) {
     var describe = AMENDMENT[proposal.kind];
     // An unknown kind is still shown, because a proposal nobody can read is
     // a proposal nobody can refuse.
-    return describe ? describe(proposal.payload) : 'A change to this contract';
+    return describe ? describe(proposal.payload, contract) : 'A change to this contract';
   }
 
   function loadProposals(contract) {
@@ -2161,7 +2230,7 @@
     var box = el('div', 'proposals');
     open.forEach(function (proposal) {
       var item = el('div', 'proposal');
-      item.appendChild(el('div', 'what', describeAmendment(proposal)));
+      item.appendChild(el('div', 'what', describeAmendment(proposal, contract)));
       item.appendChild(el('div', 'who',
         proposal.mine ? 'Your proposal' : proposal.proposer + ' proposed this'));
 
@@ -2211,11 +2280,95 @@
     return (Number(reward.baseline) || 0) + (Number(reward.bonus) || 0);
   }
 
+  /* Seconds left on the clock, or null when there is no deadline to read.
+
+     From the server's own reading, counted down from when it arrived. The
+     deadline alone is wrong twice over: it stands still while the contract
+     is paused and jumps on when the pause ends, so a countdown to it ran
+     straight through every pause; and it is the server's clock compared
+     with this machine's, which need not agree. A stopped clock is not
+     counted down at all. The deadline is the fallback for a reply that
+     carries no reading. */
+  function secondsLeftOf(contract) {
+    var read = contract.secondsLeft;
+    if (read === undefined || read === null || isNaN(Number(read))) {
+      if (!contract.deadline) { return null; }
+      return contract.deadline - Math.floor(Date.now() / 1000);
+    }
+    if (contract.clockStopped || !contract.clockReadAt) { return Number(read); }
+    return Number(read) - Math.floor((Date.now() - contract.clockReadAt) / 1000);
+  }
+
   /* Minutes left on the clock, or null when there is no deadline to read. */
   function minutesLeft(contract) {
-    if (!contract.deadline) { return null; }
-    var seconds = contract.deadline - Math.floor(Date.now() / 1000);
+    var seconds = secondsLeftOf(contract);
+    if (seconds === null) { return null; }
     return seconds > 0 ? Math.floor(seconds / 60) : 0;
+  }
+
+  /* When each contract's clock was read, so its card can count down from
+     there. Stamped as the reply lands, not as the card is drawn: a card is
+     redrawn many times from the same reply. */
+  function stampClocks(list) {
+    var at = Date.now();
+    asList(list).forEach(function (c) { if (c && typeof c === 'object') { c.clockReadAt = at; } });
+  }
+
+  /* The time left, in the words of whoever is reading it.
+
+     Never "out of time". The server resolves a contract whose clock is
+     running within moments of its deadline, so a card still on screen at
+     zero is one the server has not got to yet or one whose reading has gone
+     stale here — and telling a staked hitman their stake was gone on a
+     contract that was still alive is worse than saying nothing. */
+  function clockWords(contract) {
+    var seconds = secondsLeftOf(contract);
+    if (seconds === null) { return null; }
+    if (seconds <= 0) { return { text: 'Due now', warn: true }; }
+    var left = durationText(Math.ceil(seconds / 60));
+    if (contract.clockStopped) {
+      return { text: 'Clock stopped · ' + left + ' left', warn: false };
+    }
+    var close = seconds < (Number(settings().stakeWindowMinutes) || 30) * 60;
+    if (contract.role === 'creator') { return { text: 'Runs out in ' + left, warn: close }; }
+    if (contract.role === 'target') { return { text: 'Lapses in ' + left, warn: close }; }
+    if (contract.role === 'hitman' && contract.penaltyAmount > 0 && close) {
+      return { text: left + ' left · stake at risk', warn: true };
+    }
+    return { text: left + ' left', warn: close };
+  }
+
+  /* The clock chips on screen, rewritten in place every half minute while
+     there are any. Redrawing the view to move them would reset the scroll
+     and rebuild whatever the player had open; draw() empties the list and
+     starts or stops the ticker, so it runs only while a card is showing. */
+  var clockChips = [];
+  var clockTimer = null;
+
+  function paintClock(node, contract) {
+    var words = clockWords(contract);
+    if (!words) { return; }
+    node.textContent = words.text;
+    node.className = 'chip' + (words.warn ? ' warn' : '') + ' ico i-clock';
+  }
+
+  function clockChip(contract) {
+    if (!clockWords(contract)) { return null; }
+    var node = chip('', null, 'i-clock');
+    paintClock(node, contract);
+    clockChips.push({ node: node, contract: contract });
+    return node;
+  }
+
+  function syncClockTicker() {
+    if (clockChips.length && !clockTimer) {
+      clockTimer = setInterval(function () {
+        clockChips.forEach(function (c) { paintClock(c.node, c.contract); });
+      }, 30000);
+    } else if (!clockChips.length && clockTimer) {
+      clearInterval(clockTimer);
+      clockTimer = null;
+    }
   }
 
   /* "runs out in 2h", or what to say instead when there is no clock. The
@@ -2243,7 +2396,7 @@
   function durationText(minutes) {
     if (minutes === null || minutes === undefined) { return 'no set deadline'; }
     if (minutes <= 0) { return 'no time left'; }
-    if (minutes < 60) { return minutes + ' minutes'; }
+    if (minutes < 60) { return minutes + (minutes === 1 ? ' minute' : ' minutes'); }
     var hours = Math.floor(minutes / 60);
     var rest = minutes % 60;
     return hours + 'h' + (rest ? ' ' + rest + 'm' : '');
@@ -2327,15 +2480,15 @@
            asked. */
         label: 'Give back the last payout',
         note: spare > 0
-          ? 'Collection ' + total + ' of ' + total + ', leaving ' + (total - 1) + '.'
+          ? 'Payout ' + total + ' of ' + total + ', leaving ' + (total - 1) + '.'
           : 'Nothing after the one being competed for.',
         skip: spare <= 0,
         run: function () {
-          ask('Give back collection ' + total + ' of ' + total + '?',
+          ask('Give back payout ' + total + ' of ' + total + '?',
             (hitman
-              ? 'You are offering to give up the last collection still to '
+              ? 'You are offering to give up the last payout still to '
                 + 'come. What is on the table now is untouched.'
-              : 'This returns the last collection to you. The one being '
+              : 'This returns the last payout to you. The one being '
                 + 'competed for now is untouched.')
               + ' ' + (total - 1) + ' would remain.',
             function () {
@@ -2370,7 +2523,7 @@
       // choices is about, and it should not disappear because the option
       // that happened to carry it does not apply here.
       detail: 'Pays ' + money(pot) + ', ' + runsOut(left)
-        + (total > 1 ? ', ' + total + ' collections' : '')
+        + (total > 1 ? ', ' + total + ' payouts' : '')
         + (!hitman && !(Number(contract.hitmenActive) > 0)
           // Nobody holds it, so there is nobody to wait for.
           ? '. Nobody has taken it, so this applies as soon as you confirm.'
@@ -2532,7 +2685,7 @@
     }
     var text = what + ' — ' + (line.portion === 'bonus' ? 'bonus' : 'base');
     if ((Number(slots) || 1) > 1) {
-      text = 'Collection ' + (Number(line.slot) || 1) + ': ' + text;
+      text = 'Payout ' + (Number(line.slot) || 1) + ': ' + text;
     }
     return text;
   }
@@ -2693,7 +2846,7 @@
            rule nobody had told them, with no hint that Withdraw does what
            they were trying to do. */
         if (r.err === 'invalid_reward') {
-          return say('A collection has to keep something in it. To take the '
+          return say('A payout has to keep something in it. To take the '
             + 'whole reward back, use Withdraw \u2014 that closes the contract '
             + 'and returns everything.');
         }
@@ -4567,12 +4720,14 @@
   function draw() {
     var view = document.getElementById('view');
     view.innerHTML = '';
+    clockChips = [];
 
     // A dialog is drawn alone, as a sheet at the foot of the view; the view
     // carries the seal behind it while one is open.
     view.classList.toggle('has-dialog', !!state.dialog);
 
     if (state.dialog) {
+      syncClockTicker();
       if (state.dialog.kind === 'choice') {
         renderChoice(view);
       } else if (state.dialog.kind === 'fields') {
@@ -4591,6 +4746,7 @@
       board: viewBoard, mine: viewMine, place: viewPlace,
       onme: viewOnMe, ledger: viewLedger, thread: viewThread
     })[state.tab](view);
+    syncClockTicker();
 
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
       // A thread is opened from Mine and goes back to it, so Mine stays lit
@@ -4688,6 +4844,7 @@
         return;
       }
       state.board = r.data;
+      stampClocks(r.data.contracts);
       redraw();
     });
 
@@ -4696,6 +4853,7 @@
       if (!mineIsCurrent()) { return; }
       if (!loadResult('mine', r)) { return; }
       state.mine = r.data;
+      [r.data.created, r.data.accepted, r.data.onMe].forEach(stampClocks);
       redraw();
       // Only for contracts this player is actually party to, and only for
       // ones not already loaded: most contracts have no open proposal and

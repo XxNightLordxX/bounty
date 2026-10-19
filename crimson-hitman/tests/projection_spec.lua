@@ -100,6 +100,22 @@ describe('projection', function()
         eq(s.escrow.moneyValue(c.id), 7500)
     end)
 
+    -- The page counts down from this, not from the deadline: deadline_at
+    -- stands still through a pause and is pushed on after it.
+    it('sends the clock as the server reads it, and says when it is stopped', function()
+        local s, f, c = seeded({ accept = true })
+        local now = os.time()
+        s.storage.setDeadline(c.id, nil, now + 2400)
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
+        truthy(math.abs(row.secondsLeft - 2400) <= 1, 'running: ' .. tostring(row.secondsLeft))
+        eq(row.clockStopped, false)
+
+        truthy(s.storage.startPause(c.id, now - 600))
+        row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
+        eq(row.secondsLeft, 3000, 'a stopped clock has what it had when it stopped')
+        eq(row.clockStopped, true)
+    end)
+
     it('does not list a contract to its own target', function()
         local s, f, c = seeded()
         eq(#s.projection.listing('TARGET01').contracts, 0, 'the target sees it in their own tab instead')

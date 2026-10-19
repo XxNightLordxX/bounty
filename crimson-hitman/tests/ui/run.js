@@ -2513,13 +2513,13 @@ async function main() {
     } } });
     it('names the collection each line pays out of', function () {
       const shown = threeAlike.view.textContent;
-      truthy(shown.indexOf('Collection 3:') !== -1 && shown.indexOf('Collection 1:') !== -1,
+      truthy(shown.indexOf('Payout 3:') !== -1 && shown.indexOf('Payout 1:') !== -1,
         'three identical rows and no way to tell which is which: ' + shown);
     });
 
     const oneOnly = await openEditor();
     it('does not number the lines of a contract that pays once', function () {
-      falsy(oneOnly.view.textContent.indexOf('Collection 1:') !== -1,
+      falsy(oneOnly.view.textContent.indexOf('Payout 1:') !== -1,
         oneOnly.view.textContent);
     });
 
@@ -3212,7 +3212,7 @@ async function main() {
     it('does not ask which collection, because only the last can go', function () {
       falsy(multi.document.getElementById('dialog-value'),
         'a number box offers choices the server refuses');
-      truthy(multi.view.textContent.indexOf('collection 3 of 3') !== -1,
+      truthy(multi.view.textContent.indexOf('payout 3 of 3') !== -1,
         'the one that goes has to be named: ' + multi.view.textContent);
     });
 
@@ -4704,7 +4704,7 @@ async function main() {
    * produced, or nothing, and nobody would know. */
   await (async function amendmentWords() {
     const KINDS = [
-      ['reduce_reward', { slot: 2 }, 'collection'],
+      ['reduce_reward', { slot: 2 }, 'give back payout'],
       ['shorten_deadline', { seconds: 600 }, 'deadline'],
       ['raise_penalty', { amount: 2500 }, 'failure stake'],
       ['change_mode', { mode: 'competitive' }, 'ompetitive'],
@@ -5584,7 +5584,7 @@ async function main() {
     click(app, 'Deliver alive');
     await settle(); await settle();
 
-    const ticker = app.timers.filter(function (t) { return t.repeating; })[0];
+    const ticker = app.timers.filter(function (t) { return t.repeating && t.ms === 1000; })[0];
     it('starts a countdown to watch', function () {
       truthy(ticker, 'nothing is polling, so this measures nothing');
     });
@@ -7056,6 +7056,104 @@ async function main() {
         falsy(app.document.activeElement === box, 'the keyboard came up on its own');
       });
     })();
+  })();
+
+  /* The time left, on the card, from the server's own reading.
+
+     No card showed it: a staked hitman could not see when their stake
+     would go. And a countdown to the deadline alone runs through a pause,
+     so the reading has to say when the clock is stopped, and a card at zero
+     must never say the time has run out on a contract still alive. */
+  await (async function cardsShowTheClock() {
+    const board = JSON.parse(JSON.stringify(BOARD));
+    board.data.contracts[0].secondsLeft = 5400;
+    const mine = { ok: true, data: {
+      created: [{
+        id: 'ct00000002', reason: 'Debt', mode: 'exclusive', state: 'active',
+        reward: { baseline: 0, goods: { items: 1, weapons: 0, labels: ['Gold Bar'] } },
+        slots: 3, slotsClaimed: 1, currentSlot: 2, hitmenActive: 0,
+        targetName: 'Bo Renn', role: 'creator', creatorAnonymous: true,
+        secondsLeft: 600, clockStopped: true
+      }],
+      accepted: [{
+        id: 'ct00000003', reason: 'Debt', mode: 'competitive', state: 'accepted',
+        reward: { baseline: 10000 }, slots: 1, currentSlot: 1,
+        hitmenActive: 3, hitmenMax: 5, targetName: 'Rico Alvarez', role: 'hitman',
+        penaltyAmount: 10000, myAlias: 'Operative #1', myAnonymous: true,
+        secondsLeft: 1200
+      }, {
+        id: 'ct00000004', reason: 'Debt', mode: 'exclusive', state: 'accepted',
+        reward: { baseline: 2000 }, slots: 1, currentSlot: 1, hitmenActive: 1,
+        targetName: 'Sam Hale', role: 'hitman', penaltyAmount: 500,
+        myAlias: 'Operative #2', myAnonymous: false, secondsLeft: 0,
+        deadline: Math.floor(Date.now() / 1000) - 3600
+      }],
+      onMe: []
+    } };
+    const app = boot({ list: board, mine: mine, ledger: LEDGER });
+    await settle(); await settle();
+
+    it('shows the time left on a board card', function () {
+      truthy(app.view.textContent.indexOf('1h 30m left') !== -1, app.view.textContent);
+    });
+
+    tab(app, 'mine');
+    await settle(); await settle();
+    const shown = app.view.textContent;
+
+    it('says a paused clock is stopped rather than counting it down', function () {
+      truthy(shown.indexOf('Clock stopped · 10 minutes left') !== -1, shown);
+    });
+    it('tells a staked hitman their stake is at risk when time is short', function () {
+      truthy(shown.indexOf('20 minutes left · stake at risk') !== -1, shown);
+    });
+    it('never says a live contract is out of time', function () {
+      falsy(/out of time/i.test(shown), shown);
+      truthy(shown.indexOf('Due now') !== -1, shown);
+    });
+    it('says who the hitman is on it, and counts only the others', function () {
+      truthy(shown.indexOf('You: Operative #1 · anonymous') !== -1, shown);
+      truthy(shown.indexOf('+2 rivals') !== -1, shown);
+      truthy(shown.indexOf('You: Operative #2 · client sees your name') !== -1, shown);
+      falsy(shown.indexOf('1 operative') !== -1, 'their own card counted them: ' + shown);
+    });
+    it('tells a client where their contract stands', function () {
+      truthy(shown.indexOf('Open again — no hitman yet') !== -1, shown);
+      truthy(shown.indexOf('1 of 3 payouts collected') !== -1, shown);
+      truthy(shown.indexOf('Placed anonymously') !== -1, shown);
+    });
+    it('stamps a goods-only payout with what it pays, not $0', function () {
+      falsy(shown.indexOf('$0') !== -1, shown);
+      truthy(shown.indexOf('Goods') !== -1, shown);
+    });
+
+    const ticker = app.timers.filter(function (t) { return t.repeating && t.ms === 30000; })[0];
+    it('keeps the clocks moving while cards are on screen', function () {
+      truthy(ticker && !ticker.cleared, 'nothing moves the clocks on');
+      ticker.fn();
+      truthy(app.view.textContent.indexOf('Clock stopped · 10 minutes left') !== -1,
+        app.view.textContent);
+    });
+
+    tab(app, 'ledger');
+    await settle(); await settle();
+    it('stops the clock ticker when no card is showing', function () {
+      truthy(ticker.cleared, 'the ticker ran on behind the ledger');
+    });
+  })();
+
+  /* Black money said portion by portion, not summed under the base. */
+  await (async function blackMoneyByPortion() {
+    const board = JSON.parse(JSON.stringify(BOARD));
+    board.data.contracts[0].reward = { baseline: 150000, bonus: 75000,
+      sources: { cash: 100000, dirty: 50000 }, bonusSources: { cash: 50000, dirty: 25000 } };
+    const app = boot({ list: board, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    it('says how much of the base and of the bonus is black money', function () {
+      truthy(app.view.textContent.indexOf('$50,000 of this is black money, and $25,000 of the alive bonus') !== -1,
+        app.view.textContent);
+      falsy(app.view.textContent.indexOf('$75,000 of it') !== -1, app.view.textContent);
+    });
   })();
 
   console.log('');
