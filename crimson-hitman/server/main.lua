@@ -133,6 +133,9 @@ local DEFAULTS = {
         --- configs, and read on every photo sent; checked below.
         PhotoMaxSide = 1280,
         PhotoMaxBytes = 600000,
+        -- PhotoPublicUrl and KeptPhotoDays are absent too, and nothing is
+        -- filled for them: absent is their default (web_baseUrl; kept until
+        -- deleted). Checked below.
         --- A list, so filled whole or not at all: see isRecord.
         DeathStateProviders = {
             { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
@@ -537,6 +540,41 @@ local function validateConfig()
         Config.Completion.PhotoOpenSeconds = 600
     else
         Config.Completion.PhotoOpenSeconds = openFor
+    end
+
+    -- The public address photos kept on this server are saved to a phone's
+    -- Photos from. Unset is the default (web_baseUrl is used); anything
+    -- else must be an https:// address the phone can load, and one that is
+    -- not is dropped here, with the reason, rather than handed to phones as
+    -- links that lead nowhere.
+    local publicUrl = Config.Completion.PhotoPublicUrl
+    if publicUrl ~= nil and publicUrl ~= '' then
+        local checked = require('server.photos').checkBase(publicUrl)
+        if not checked then
+            warn[#warn + 1] = ('Completion.PhotoPublicUrl is %s; it has to be an https:// '
+                .. 'address such as \'https://photos.example.com/crimson-hitman\', with no '
+                .. 'query. Ignoring it.'):format(type(publicUrl) == 'string'
+                    and ('"' .. publicUrl .. '"') or tostring(publicUrl))
+            Config.Completion.PhotoPublicUrl = nil
+        else
+            Config.Completion.PhotoPublicUrl = checked
+        end
+    end
+
+    -- How long a photo kept in the app lasts. Unset keeps it until its
+    -- owner deletes it; a number of days must be above zero, since zero
+    -- would delete every kept photo on the next tick.
+    local keptDays = Config.Completion.KeptPhotoDays
+    if keptDays ~= nil then
+        local days = tonumber(keptDays)
+        if not days or days ~= days or days <= 0 then
+            warn[#warn + 1] = ('Completion.KeptPhotoDays is %s, not a number of days above '
+                .. 'zero; photos kept in the app are kept until their owner deletes them.')
+                :format(tostring(keptDays))
+            Config.Completion.KeptPhotoDays = nil
+        else
+            Config.Completion.KeptPhotoDays = days
+        end
     end
 
     if Config.Audit.MaxQueueSize < 1 then
@@ -1177,6 +1215,9 @@ function Tick()
     -- A kill photo opened and never saved or deleted: the phone closed
     -- mid-view. It goes as if the client had chosen Delete.
     job('photos.expire', modules.photos.expire)
+    -- A photo kept in the app past Config.Completion.KeptPhotoDays, where
+    -- that is set.
+    job('photos.forgetKept', modules.photos.forgetKept)
     local app = require('server.app')
     -- Who may have the app on their phone. Recomputed here rather than
     -- trusted to a job-change event whose name has differed across

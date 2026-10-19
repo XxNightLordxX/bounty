@@ -233,8 +233,8 @@ describe('the one look', function()
         eq(s.storage.readPhoto(handle).state, CH.PHOTO.PENDING)
 
         truthy(call('openPhoto', 1, { handle = handle }).ok)
-        eq(call('photoDecision', 1, { handle = handle, choice = 'keep' }).err,
-            CH.ERR.INVALID_INPUT, 'save or delete, nothing else')
+        eq(call('photoDecision', 1, { handle = handle, choice = 'archive' }).err,
+            CH.ERR.INVALID_INPUT, 'save, delete, keep or link, nothing else')
         truthy(call('photoDecision', 1, { handle = handle, choice = 'delete' }).ok)
         eq(call('photoDecision', 1, { handle = handle, choice = 'save' }).err,
             CH.ERR.PHOTO_GONE, 'a deleted photo is not saved after all')
@@ -261,6 +261,118 @@ describe('the one look', function()
         local src = read_file('crimson-hitman/server/main.lua')
         truthy(src:find("job%('photos%.expire', modules%.photos%.expire%)"),
             'nothing else would ever delete a photo the phone closed on')
+    end)
+end)
+
+describe('a photo kept for the client in the app, from an image host', function()
+    --- A host photo the phone would not save (the gallery refused it): the
+    --- link is kept on the record, and nothing is downloaded.
+    local function kept()
+        local s, f, c, handle = photographed()
+        truthy(call('openPhoto', 1, { handle = handle }).ok)
+        local reply = call('photoDecision', 1, { handle = handle, choice = 'keep' })
+        truthy(reply and reply.ok, tostring(reply and reply.err))
+        eq(reply.data.state, CH.PHOTO.KEPT)
+        return s, f, c, handle
+    end
+
+    it('keeps the link, and offers it again as often as the client likes', function()
+        local s, _, _, handle = kept()
+        local record = s.storage.readPhoto(handle)
+        eq(record.state, CH.PHOTO.KEPT)
+        eq(record.url, URL, 'the link stays; nothing is downloaded')
+        eq(call('ledger', 1, {}).data.entries[1].photo.state, CH.PHOTO.KEPT)
+        for _ = 1, 3 do
+            local again = call('openPhoto', 1, { handle = handle })
+            truthy(again and again.ok, 'a kept photo opens again')
+            eq(again.data.url, URL)
+            eq(again.data.kept, true, 'and says it is kept')
+        end
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.KEPT, 'opening it spends nothing')
+    end)
+
+    it('is still the client\'s alone', function()
+        local _, _, _, handle = kept()
+        for _, src in ipairs({ 2, 3 }) do
+            local theirs = call('openPhoto', src, { handle = handle })
+            local unknown = call('openPhoto', src, { handle = 'ph0000000000zz' })
+            eq(theirs.err, unknown.err, 'source ' .. src)
+            eq(theirs.data, unknown.data)
+            eq(call('photoDecision', src, { handle = handle, choice = 'delete' }).err,
+                CH.ERR.PHOTO_GONE)
+        end
+    end)
+
+    it('is deleted when the client deletes it, and only then', function()
+        local s, _, _, handle = kept()
+        eq(call('photoDecision', 1, { handle = handle, choice = 'save' }).err, CH.ERR.PHOTO_GONE,
+            'a kept photo is opened and deleted, nothing else')
+        eq(call('photoDecision', 1, { handle = handle, choice = 'keep' }).err, CH.ERR.PHOTO_GONE)
+        truthy(call('photoDecision', 1, { handle = handle, choice = 'delete' }).ok)
+        local record = s.storage.readPhoto(handle)
+        eq(record.state, CH.PHOTO.DELETED)
+        falsy(record.url, 'no link left behind')
+        falsy(call('openPhoto', 1, { handle = handle }).ok)
+    end)
+
+    it('cannot be kept before it is opened, or kept twice', function()
+        local s, _, _, handle = photographed()
+        eq(call('photoDecision', 1, { handle = handle, choice = 'keep' }).err, CH.ERR.PHOTO_GONE,
+            'keeping a photo nobody looked at is not a look')
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.PENDING)
+    end)
+
+    it('outlives the open-photo expiry, the retention and its ledger row', function()
+        local s, _, _, handle = kept()
+        Env.advance(Config.Completion.PhotoOpenSeconds + 5)
+        eq(s.photos.expire(), 0)
+        Env.advance(Config.Ledger.PhotoRetentionDays * 86400 + 1)
+        s.ledger.forgetOldPhotos()
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.KEPT, 'not the retention\'s')
+
+        local depth = math.min(Config.Ledger.Depth, Config.Ledger.MaxDepthHardCap)
+        for i = 1, depth do
+            Env.advance(1)
+            s.ledger.record({ id = 'cx' .. i, creator_cid = 'OTHER001', target_cid = 'TARGET99',
+                target_name = 'Somebody' }, 'CREATOR1', nil, CH.FULFILMENT.KIDNAPPING, { slot = 1 })
+        end
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.KEPT, 'nor pushed out with its row')
+        local ledger = call('ledger', 1, {})
+        for _, row in ipairs(ledger.data.entries) do falsy(row.photo, 'no row names it now') end
+        eq(#ledger.data.kept, 1, 'so the Ledger lists it on its own')
+        eq(ledger.data.kept[1].handle, handle)
+        eq(ledger.data.kept[1].state, CH.PHOTO.KEPT)
+        falsy(flat(ledger.data.kept):find('fivemanage', 1, true), 'by handle, never by link')
+        eq(#call('ledger', 3, {}).data.kept, 0, 'and to nobody else')
+    end)
+
+    it('goes after Config.Completion.KeptPhotoDays, where that is set', function()
+        local s, _, _, handle = kept()
+        Env.advance(400 * 86400)
+        eq(s.photos.forgetKept(), 0, 'unset: kept until the client deletes it')
+        Config.Completion.KeptPhotoDays = 500
+        eq(s.photos.forgetKept(), 0, 'not before its time')
+        Env.advance(101 * 86400)
+        eq(s.photos.forgetKept(), 1)
+        local record = s.storage.readPhoto(handle)
+        eq(record.state, CH.PHOTO.DELETED)
+        falsy(record.url)
+    end)
+
+    it('runs the kept-photo limit on the maintenance tick', function()
+        local src = read_file('crimson-hitman/server/main.lua')
+        truthy(src:find("job%('photos%.forgetKept', modules%.photos%.forgetKept%)"),
+            'nothing else would ever apply KeptPhotoDays')
+    end)
+
+    it('is deleted when staff void the contract', function()
+        local s, _, c, handle = photographed({
+            reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } } } } })
+        truthy(call('openPhoto', 1, { handle = handle }).ok)
+        truthy(call('photoDecision', 1, { handle = handle, choice = 'keep' }).ok)
+        truthy(s.admin.void(0, c.id, 'abuse'))
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.DELETED,
+            'a voided contract leaves no photo held in the app')
     end)
 end)
 

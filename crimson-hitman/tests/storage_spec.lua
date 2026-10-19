@@ -360,6 +360,70 @@ describe('storage conformance', function()
         end
     end)
 
+    --- A photo kept on this server can be served to its client's phone
+    --- under a name of its own, and kept for them in the app. Every
+    --- backend finds it by that name, moves its state only from the one
+    --- expected, keeps its file through a save by link, and leaves both
+    --- kinds out of what the retention may forget.
+    it('keeps a served or kept photo, and finds it by its served name, in every backend', function()
+        for _, b in ipairs(backends()) do
+            local store = b.store
+            for i, id in ipairs({ 'ph00000000dd', 'ph00000000ee', 'ph00000000ff' }) do
+                store.writePhoto({ id = id, contract_id = 'ct' .. i, slot = 1,
+                    owner_cid = 'CREATOR1', kind = 'file', file = 'data/photos/' .. id .. '.webp',
+                    mime = 'image/webp', size = 1000 * i,
+                    state = CH.PHOTO.PENDING, created_at = 1000 })
+                truthy(store.openPhoto(id, 1100), b.name)
+            end
+
+            -- Served: a name and a link, state unmoved, then saved by link.
+            falsy(store.publishPhoto('ph00000000dd', CH.PHOTO.PENDING, 'Zk3_q-9xWb2LmT0cRf8aNd',
+                'https://x.example/p/a.webp', '555-1'), b.name .. ': only from the state expected')
+            truthy(store.publishPhoto('ph00000000dd', CH.PHOTO.OPEN, 'Zk3_q-9xWb2LmT0cRf8aNd',
+                'https://x.example/p/a.webp', '555-1'), b.name)
+            local served = store.readPhotoByPublic('Zk3_q-9xWb2LmT0cRf8aNd')
+            truthy(served, b.name .. ': found by its served name')
+            eq(served.id, 'ph00000000dd', b.name)
+            eq(served.state, CH.PHOTO.OPEN, b.name .. ': still open until the phone has it')
+            eq(served.saved_link, 'https://x.example/p/a.webp', b.name)
+            eq(served.saved_phone, '555-1', b.name)
+            falsy(store.readPhotoByPublic('ph00000000dd'), b.name .. ': not by its handle')
+            falsy(store.readPhotoByPublic('nothing-by-this-name'), b.name)
+            truthy(store.movePhoto('ph00000000dd', CH.PHOTO.OPEN, CH.PHOTO.SAVED), b.name)
+            falsy(store.movePhoto('ph00000000dd', CH.PHOTO.OPEN, CH.PHOTO.DELETED), b.name)
+            eq(store.readPhoto('ph00000000dd').file, 'data/photos/ph00000000dd.webp',
+                b.name .. ': saved by link, the file stays')
+
+            -- Kept in the app, its file moved.
+            truthy(store.keepPhoto('ph00000000ee', CH.PHOTO.OPEN,
+                'data/photos/kept/ph00000000ee.webp'), b.name)
+            falsy(store.keepPhoto('ph00000000ee', CH.PHOTO.OPEN, nil), b.name .. ': once')
+            local kept = store.readPhoto('ph00000000ee')
+            eq(kept.state, CH.PHOTO.KEPT, b.name)
+            eq(kept.file, 'data/photos/kept/ph00000000ee.webp', b.name)
+            eq(#store.photosOpenedBefore(5000, 10, CH.PHOTO.KEPT), 1, b.name .. ': kept, by age')
+            eq(#store.photosOpenedBefore(1050, 10, CH.PHOTO.KEPT), 0, b.name)
+
+            -- Neither is the retention's.
+            local old = store.photosCreatedBefore(5000, 10)
+            eq(#old, 1, b.name .. ': only the photo that is neither kept nor served')
+            eq(old[1].id, 'ph00000000ff', b.name)
+
+            local totals = store.photoTotals()
+            eq(totals[CH.PHOTO.SAVED].count, 1, b.name)
+            eq(totals[CH.PHOTO.SAVED].bytes, 1000, b.name)
+            eq(totals[CH.PHOTO.KEPT].bytes, 2000, b.name)
+            eq(totals[CH.PHOTO.OPEN].count, 1, b.name)
+
+            -- Closing lets go of the served name with the file.
+            truthy(store.closePhoto('ph00000000dd', CH.PHOTO.SAVED, CH.PHOTO.DELETED), b.name)
+            local closed = store.readPhoto('ph00000000dd')
+            falsy(closed.public_id, b.name .. ': not served again')
+            falsy(closed.saved_link or closed.saved_phone or closed.file, b.name)
+            falsy(store.readPhotoByPublic('Zk3_q-9xWb2LmT0cRf8aNd'), b.name)
+        end
+    end)
+
     --- A thread mute (§11.4): one per thread and person, the same when
     --- written twice, and gone on unmute.
     it('keeps a thread mute per thread and person in every backend', function()
@@ -1685,6 +1749,13 @@ describe('every mysql statement is executable', function()
             function() m.openPhoto('ph1', 2) end,
             function() m.photosOpenedBefore(10, 5) end,
             function() m.closePhoto('ph1', 'open', 'deleted', nil) end,
+            function() m.publishPhoto('ph1', 'open', 'Zk3_q-9xWb2LmT0cRf8aNd', 'https://x/p/a.webp', '555-1') end,
+            function() m.readPhotoByPublic('Zk3_q-9xWb2LmT0cRf8aNd') end,
+            function() m.movePhoto('ph1', 'open', 'saved') end,
+            function() m.keepPhoto('ph1', 'open', 'data/photos/kept/ph1.webp') end,
+            function() m.keepPhoto('ph1', 'open', nil) end,
+            function() m.photosOpenedBefore(10, 5, 'kept') end,
+            function() m.photoTotals() end,
             function() m.deletePhoto('ph1') end,
             function() m.prune() end,
             function() m.migrate() end,

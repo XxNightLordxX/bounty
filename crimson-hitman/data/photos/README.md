@@ -10,3 +10,11 @@ client who placed the contract, once. They are deleted when the client
 deletes the photo, leaves it open too long, never opens it, or it is
 otherwise let go of, and each start removes any file no photo record names.
 Files this resource did not name (this one, for instance) are left alone.
+
+Two kinds stay longer, on purpose. A photo the client saved to their phone's
+Photos through a link this server serves (`/crimson-hitman/p/<name>`) stays
+here for as long as their Photos keeps it. A photo their phone could not
+take at all is kept for them in the app, and moves to `kept/` (or, where
+that folder cannot be made, gets a `kept-` name here) until they delete it,
+or `Config.Completion.KeptPhotoDays` runs out. `/ch-diag` says how many of
+each there are and how much space they take.

@@ -188,8 +188,13 @@ local SCHEMA = {
     -- ledger row the client is shown carries the handle and never the
     -- link. No hitman column, on purpose: the record goes to nobody but
     -- the client. `url` is a link on an image host ('host' storage); `file`,
-    -- `mime` and `size` describe a photo kept on this server. Created on an
-    -- existing database by the CREATE TABLE IF NOT EXISTS at the next start.
+    -- `mime` and `size` describe a photo kept on this server. `public_id`
+    -- is the unguessable name a photo kept on this server is served under
+    -- once its client saves it to their phone's Photos, `saved_link` the
+    -- link that makes, and `saved_phone` the phone number it was saved
+    -- from, so a factory reset of that phone lets it go. Created on an
+    -- existing database by the CREATE TABLE IF NOT EXISTS at the next start;
+    -- a column added since is added by migrate().
     [[CREATE TABLE IF NOT EXISTS crimson_photos (
         id VARCHAR(32) PRIMARY KEY,
         contract_id VARCHAR(32) NOT NULL,
@@ -204,10 +209,13 @@ local SCHEMA = {
         created_at INT NOT NULL,
         opened_at INT,
         saved_link VARCHAR(512),
+        public_id VARCHAR(48),
+        saved_phone VARCHAR(32),
         INDEX idx_photo_owner (owner_cid),
         INDEX idx_photo_contract (contract_id),
         INDEX idx_photo_open (state, opened_at),
-        INDEX idx_photo_created (created_at)
+        INDEX idx_photo_created (created_at),
+        INDEX idx_photo_public (public_id)
     )]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
@@ -1296,17 +1304,41 @@ function MySQLStore.photosForContract(contractId)
         { contractId }) or {}
 end
 
-function MySQLStore.photosOpenedBefore(cutoff, limit)
+function MySQLStore.photosOpenedBefore(cutoff, limit, state)
     return MySQL.query.await([[
-        SELECT * FROM crimson_photos WHERE state = 'open' AND opened_at < ?
+        SELECT * FROM crimson_photos WHERE state = ? AND opened_at < ?
         ORDER BY created_at LIMIT ?
-    ]], { cutoff, limit or 200 }) or {}
+    ]], { state or 'open', cutoff, limit or 200 }) or {}
+end
+
+function MySQLStore.readPhotoByPublic(publicId)
+    if type(publicId) ~= 'string' then return nil end
+    local rows = MySQL.query.await('SELECT * FROM crimson_photos WHERE public_id = ?',
+        { publicId }) or {}
+    return rows[1]
+end
+
+--- Summed here rather than in SQL: it is for /ch-diag, and the photos that
+--- hold a file at all are the few waiting, kept or served.
+function MySQLStore.photoTotals()
+    local rows = MySQL.query.await(
+        'SELECT state, size FROM crimson_photos WHERE file IS NOT NULL') or {}
+    local out = {}
+    for i = 1, #rows do
+        local total = out[rows[i].state] or { count = 0, bytes = 0 }
+        total.count = total.count + 1
+        total.bytes = total.bytes + (tonumber(rows[i].size) or 0)
+        out[rows[i].state] = total
+    end
+    return out
 end
 
 function MySQLStore.photosCreatedBefore(cutoff, limit)
-    return MySQL.query.await(
-        'SELECT * FROM crimson_photos WHERE created_at < ? ORDER BY created_at LIMIT ?',
-        { cutoff, limit or 200 }) or {}
+    return MySQL.query.await([[
+        SELECT * FROM crimson_photos
+        WHERE created_at < ? AND state <> 'kept' AND public_id IS NULL
+        ORDER BY created_at LIMIT ?
+    ]], { cutoff, limit or 200 }) or {}
 end
 
 function MySQLStore.openPhoto(id, at)
@@ -1320,9 +1352,44 @@ end
 --- the state, so no row is ever closed and still pointing at an image.
 function MySQLStore.closePhoto(id, expected, next_, savedLink)
     local affected = MySQL.update.await([[
-        UPDATE crimson_photos SET state = ?, url = NULL, file = NULL, saved_link = ?
+        UPDATE crimson_photos SET state = ?, url = NULL, file = NULL, saved_link = ?,
+            public_id = NULL, saved_phone = NULL
         WHERE id = ? AND state = ?
     ]], { next_, savedLink, id, expected })
+    return (tonumber(affected) or 0) > 0
+end
+
+function MySQLStore.publishPhoto(id, expected, publicId, link, phone)
+    local affected = MySQL.update.await([[
+        UPDATE crimson_photos SET public_id = ?, saved_link = ?, saved_phone = ?
+        WHERE id = ? AND state = ? AND file IS NOT NULL
+    ]], { publicId, link, phone, id, expected })
+    return (tonumber(affected) or 0) > 0
+end
+
+function MySQLStore.movePhoto(id, expected, next_)
+    local affected = MySQL.update.await(
+        'UPDATE crimson_photos SET state = ? WHERE id = ? AND state = ?',
+        { next_, id, expected })
+    return (tonumber(affected) or 0) > 0
+end
+
+--- The file stays as it is when none is given: a kept link has none.
+function MySQLStore.keepPhoto(id, expected, file)
+    local affected
+    if file then
+        affected = MySQL.update.await([[
+            UPDATE crimson_photos SET state = 'kept', file = ?,
+                public_id = NULL, saved_link = NULL, saved_phone = NULL
+            WHERE id = ? AND state = ?
+        ]], { file, id, expected })
+    else
+        affected = MySQL.update.await([[
+            UPDATE crimson_photos SET state = 'kept',
+                public_id = NULL, saved_link = NULL, saved_phone = NULL
+            WHERE id = ? AND state = ?
+        ]], { id, expected })
+    end
     return (tonumber(affected) or 0) > 0
 end
 

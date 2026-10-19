@@ -83,9 +83,17 @@ CH.FULFILMENT = { ELIMINATION = 'elimination', KIDNAPPING = 'kidnapping' }
 
 --- Where a kill photograph kept for a contract's client stands (§14.43).
 --- PENDING until the client opens it, OPEN while they are looking at it,
---- and then SAVED to their phone or DELETED. The last two keep no image:
---- they are what lets the Ledger say which happened.
-CH.PHOTO = { PENDING = 'pending', OPEN = 'open', SAVED = 'saved', DELETED = 'deleted' }
+--- and then SAVED to their phone, KEPT for them in this app, or DELETED.
+---
+--- DELETED keeps no image, and neither does SAVED, with one exception: a
+--- photo kept on this server and saved to the phone's Photos through a
+--- link this server serves, whose file stays for as long as the phone's
+--- gallery holds the link. KEPT is the last resort for a phone that cannot
+--- take the photo at all: its owner opens it again whenever they like, and
+--- it is deleted when they say so.
+CH.PHOTO = {
+    PENDING = 'pending', OPEN = 'open', SAVED = 'saved', KEPT = 'kept', DELETED = 'deleted',
+}
 
 --- The kinds of picture a kill photo kept on this server may be
 --- (Config.Completion.PhotoStorage = 'server'), and the file extension
@@ -270,6 +278,12 @@ CH.ERR = {
     --- and one already seen: told apart, the answer would say whether a
     --- handle names somebody else's photograph.
     PHOTO_GONE       = 'photo_gone',
+    --- The client asked for a link to save their photo to the phone's
+    --- Photos with, and this server has none to give: no public address
+    --- (Config.Completion.PhotoPublicUrl or web_baseUrl), or no source of
+    --- unguessable names. The photo is still open; the page offers to keep
+    --- it in the app instead.
+    PHOTO_NO_LINK    = 'photo_no_link',
     LOCKED           = 'locked',
     -- Something else is being done to the same contract, or by the same
     -- player, in this instant; or the resource is still starting. Nothing

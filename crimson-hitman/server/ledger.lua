@@ -92,6 +92,11 @@ end
 ---
 --- On 'host' storage only the link is forgotten: the image lives wherever
 --- lb-phone uploaded it, which is not this resource's to delete.
+---
+--- A photo kept for its client in the app, or in their phone's Photos
+--- through a link this server serves, is not the retention's to forget
+--- (Photos.forgetBefore). Its row may lose the reference all the same; the
+--- Ledger then lists it on its own (Ledger.entries).
 ---@return integer forgotten ledger references dropped
 ---@return integer photos photo records forgotten
 function Ledger.forgetOldPhotos()
@@ -119,11 +124,22 @@ end
 --- the client's own row, for a photo that is theirs. A link on a row from
 --- before the client's one view existed is not a handle, matches no
 --- record, and is never sent.
+---
+--- And, second, the photos kept for them in the app whose row is no longer
+--- among these: pushed off by newer rows, or stripped of its photo by the
+--- retention. A kept photo outlives its row (Photos.evict), and this is
+--- the only place its owner could find it again. { handle, state,
+--- taken_at } each, newest first.
 ---@param cid string
----@return table[]
+---@return table[] entries
+---@return table[] kept
 function Ledger.entries(cid)
     local rows = Ledger.read(cid) or {}
-    local states
+    -- Every photo of theirs, read once a refresh, and not only for a
+    -- ledger that names one: a photo kept in the app can outlive its row.
+    -- One indexed read by owner on mysql.
+    local photos = Photos and Photos.ofOwner(cid) or {}
+    local named = {}
     local out = {}
     for i = 1, #rows do
         local row = rows[i]
@@ -136,16 +152,28 @@ function Ledger.entries(cid)
             resolved_at = row.resolved_at,
             role        = row.role,
         }
-        if row.role == 'creator' and type(row.photo_ref) == 'string' and Photos then
-            -- Read once, and only for a ledger that names a photo at all:
-            -- this runs on every refresh of every page.
-            states = states or Photos.statesOf(cid)
-            local state = states[row.photo_ref]
-            if state then entry.photo = { handle = row.photo_ref, state = state } end
+        local record = row.role == 'creator' and type(row.photo_ref) == 'string'
+            and photos[row.photo_ref] or nil
+        if record then
+            entry.photo = { handle = row.photo_ref, state = record.state }
+            named[row.photo_ref] = true
         end
         out[#out + 1] = entry
     end
-    return out
+
+    local kept = {}
+    for handle, record in pairs(photos) do
+        if record.state == CH.PHOTO.KEPT and not named[handle] then
+            kept[#kept + 1] = { handle = handle, state = record.state,
+                                taken_at = tonumber(record.created_at) }
+        end
+    end
+    table.sort(kept, function(a, b)
+        local at, bt = a.taken_at or 0, b.taken_at or 0
+        if at ~= bt then return at > bt end
+        return a.handle < b.handle
+    end)
+    return out, kept
 end
 
 return Ledger

@@ -327,7 +327,37 @@ Config.Completion = {
     --- client who placed the contract can open it once (see
     --- PhotoOpenSeconds and Config.Ledger). Anything else is read as
     --- 'server', with a warning at startup. /ch-diag says which is in use.
+    ---
+    --- On 'server', Save to Photos needs a link, because lb-phone's Photos
+    --- keeps links, not pictures. This server serves the photo itself when
+    --- it has a public https address (PhotoPublicUrl, or web_baseUrl).
+    --- Without one, the app uses lb-phone's own upload if the phone has
+    --- one; failing both, the photo is kept for the client in this app
+    --- instead (KeptPhotoDays).
     PhotoStorage = 'server',
+    --- 'server' storage only: the public https address that serves photos
+    --- the client saves to their phone's Photos, with no image host. Set it
+    --- to the address that reaches this resource over https, such as
+    --- 'https://photos.example.com/crimson-hitman' (a photo is then
+    --- https://photos.example.com/crimson-hitman/p/<name>.webp). Left unset,
+    --- the server's web_baseUrl is used instead: 'https://<web_baseUrl>/
+    --- crimson-hitman'. Cfx.re's own *.users.cfx.re addresses stopped
+    --- working on 30 June 2026; Qbox's free Nucleus replacement gives you
+    --- one (set web_baseUrl "<name>.server.qbox.re" in server.cfg), or put
+    --- your own https proxy in front of the server.
+    ---
+    --- Whichever it is, add its host name to Config.UploadWhitelistedHostnames
+    --- in lb-phone's config, or the phone may refuse to save the photo.
+    --- /ch-diag says which address is used and whether lb-phone allows it.
+    --- With no address at all, the app uses lb-phone's own upload, or keeps
+    --- the photo in the app.
+    PhotoPublicUrl = nil,
+    --- How many days a photo kept for its client in this app (because
+    --- their phone could not save it) lasts before it is deleted, counted
+    --- from when it was kept. Unset, it stays until they delete it
+    --- themselves. /ch-diag says how many are kept and how much disk they
+    --- take.
+    KeptPhotoDays = nil,
     --- 'server' storage only: how big a kill photo may be. The app shrinks
     --- the photo until its longest side is at most PhotoMaxSide pixels
     --- (320 to 4096) and it weighs at most PhotoMaxBytes bytes (50000 to
@@ -390,7 +420,8 @@ Config.Completion = {
     PhotoRadius         = 5.0,
     PhotoTokenLifetimeSeconds = 120,
     --- How long the client may look at a kill photo once they open it.
-    --- They see it once, with a Save to Photos button and a Delete button;
+    --- They see it once, with a Save to Photos button (or Save, to keep it
+    --- in the app, where their phone cannot take it) and a Delete button;
     --- a photo still open after this many seconds without either (the
     --- phone closed mid-view, say) is deleted as if they had tapped Delete.
     PhotoOpenSeconds = 600,
@@ -644,6 +675,11 @@ Config.Ledger = {
     --- link; the file stays on the image host, which is not this
     --- resource's to delete. Zero keeps an unopened photo until its
     --- ledger row goes.
+    ---
+    --- Not a photo the client chose to keep in the app (see
+    --- Config.Completion.KeptPhotoDays), nor one in their phone's Photos
+    --- through a link this server serves, which goes when they delete it
+    --- there. Neither goes with its ledger row either.
     PhotoRetentionDays = 7,
 }
 

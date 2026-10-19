@@ -493,3 +493,457 @@ describe('the image host allowlist, only where photos come from a host', functio
         truthy(said:find('photo hosts:', 1, true), said)
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Save to Photos, for a photo kept on this server
+--------------------------------------------------------------------------
+--
+-- lb-phone's Photos keeps links of at most 500 characters, never pictures.
+-- With a public https address this server serves the photo itself, under
+-- a new name nobody can guess, for as long as the client's Photos keeps
+-- it. Without one the page uses lb-phone's own upload, and failing that
+-- the photo is kept for the client in this app.
+
+local QBOX = 'chatty.server.qbox.re'
+
+--- Opened by its client, on a server with a public address.
+local function opened(opts)
+    opts = opts or {}
+    local s, f, c, handle, file = photographed(opts)
+    if opts.web ~= false then Natives.convars.web_baseUrl = opts.web or QBOX end
+    s.bridges.install(s)
+    local reply = call('openPhoto', 1, { handle = handle })
+    truthy(reply and reply.ok, tostring(reply and reply.err))
+    return s, f, c, handle, file, reply
+end
+
+--- The link the client's page is handed to save, and the name in it.
+local function linked(opts)
+    local s, f, c, handle, file = opened(opts)
+    local reply = call('photoDecision', 1, { handle = handle, choice = 'link' })
+    truthy(reply and reply.ok, 'a link: ' .. tostring(reply and reply.err))
+    local link = reply.data.link
+    local name = link:match('/p/([%w_-]+)%.jpg$')
+    truthy(name, 'a link to the photo: ' .. tostring(link))
+    return s, f, c, handle, file, link, name
+end
+
+--- Saved to the client's Photos by that link.
+local function savedByLink(opts)
+    local s, f, c, handle, file, link, name = linked(opts)
+    local reply = call('photoDecision', 1, { handle = handle, choice = 'save' })
+    truthy(reply and reply.ok, tostring(reply and reply.err))
+    return s, f, c, handle, file, link, name
+end
+
+describe('a link for the phone\'s Photos, served by this server', function()
+    it('says when it can give one', function()
+        local _, _, _, _, _, reply = opened()
+        eq(reply.data.link, true, 'with a public address')
+        local _, _, _, _, _, without = opened({ web = false })
+        falsy(without.data.link, 'and without one, says nothing of a link')
+    end)
+
+    it('names it anew, with 128 bits from the server\'s own cryptographic source', function()
+        local s, _, _, handle, file, link, name = linked()
+        eq(link, 'https://' .. QBOX .. '/crimson-hitman/p/' .. name .. '.jpg')
+        eq(#name, 22, 'a bcrypt salt is 22 characters: 128 bits')
+        truthy(name:match('^[%w_-]+$'), 'safe in a link and in a lookup: ' .. name)
+        falsy(name:find(handle, 1, true), 'nothing to do with the handle the page knows it by')
+        truthy((Natives.calls.passwordHashes or 0) >= 1, 'drawn from GetPasswordHash')
+        local record = s.storage.readPhoto(handle)
+        eq(record.public_id, name)
+        eq(record.saved_link, link)
+        eq(record.saved_phone, '555-1', 'the phone it is saved from, for a factory reset')
+        eq(record.state, CH.PHOTO.OPEN, 'still open until the page says the phone has it')
+        eq(record.file, file, 'the file is where it was; only the record knows the name')
+        truthy(#link <= 500, 'inside lb-phone\'s 500 characters')
+    end)
+
+    it('is never a name two saves share', function()
+        local seen = {}
+        for _ = 1, 5 do
+            local _, _, _, _, _, _, name = linked()
+            falsy(seen[name], 'the same name twice: ' .. name)
+            seen[name] = true
+        end
+    end)
+
+    it('gives the same link when asked again', function()
+        local _, _, _, handle, _, link = linked()
+        local again = call('photoDecision', 1, { handle = handle, choice = 'link' })
+        eq(again.data.link, link)
+    end)
+
+    it('uses Config.Completion.PhotoPublicUrl over web_baseUrl', function()
+        local s, _, _, handle = opened()
+        Config.Completion.PhotoPublicUrl = 'https://photos.example.com/hits'
+        local reply = call('photoDecision', 1, { handle = handle, choice = 'link' })
+        truthy(reply.data.link:find('^https://photos%.example%.com/hits/p/[%w_-]+%.jpg$'),
+            reply.data.link)
+    end)
+
+    it('gives none without a public address, a usable one, or a source of secret names', function()
+        local cases = {
+            { 'no address', function() Natives.convars.web_baseUrl = nil end },
+            { 'a users.cfx.re address, switched off by Cfx.re',
+              function() Natives.convars.web_baseUrl = 'abc123-xyz.users.cfx.re' end },
+            { 'a bare IP address', function() Natives.convars.web_baseUrl = '203.0.113.7:30120' end },
+            { 'an http address', function()
+                Natives.convars.web_baseUrl = nil
+                Config.Completion.PhotoPublicUrl = 'http://photos.example.com/x'
+            end },
+        }
+        for _, case in ipairs(cases) do
+            local s, _, _, handle = opened()
+            case[2]()
+            local reply = call('photoDecision', 1, { handle = handle, choice = 'link' })
+            falsy(reply.ok, case[1])
+            eq(reply.err, CH.ERR.PHOTO_NO_LINK, case[1])
+            local record = s.storage.readPhoto(handle)
+            eq(record.state, CH.PHOTO.OPEN, case[1] .. ': still open, to keep or delete')
+            falsy(record.public_id, case[1])
+        end
+
+        local s, _, _, handle = opened()
+        local real = _G.GetPasswordHash
+        _G.GetPasswordHash = nil
+        falsy(s.photos.linkable(), 'never math.random in its place')
+        local reply = call('photoDecision', 1, { handle = handle, choice = 'link' })
+        _G.GetPasswordHash = real
+        eq(reply.err, CH.ERR.PHOTO_NO_LINK)
+        falsy(s.storage.readPhoto(handle).public_id)
+    end)
+
+    it('keeps the file once the phone has the link, and serves it', function()
+        local s, _, _, handle, file, _, name = savedByLink()
+        local record = s.storage.readPhoto(handle)
+        eq(record.state, CH.PHOTO.SAVED)
+        eq(Natives.files[file], JPEG, 'the phone\'s Photos loads it from here')
+        local got = Natives.httpRequest('GET', '/p/' .. name .. '.jpg')
+        eq(got.status, 200)
+        eq(got.body, JPEG)
+    end)
+
+    it('deletes the file at once when the phone saved it some other way', function()
+        -- lb-phone's own upload: the gallery points at lb-phone's host, and
+        -- this server's copy has nothing left to do.
+        local s, _, _, handle, file = opened({ web = false })
+        truthy(call('photoDecision', 1, { handle = handle, choice = 'save' }).ok)
+        eq(Natives.files[file], nil)
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.SAVED)
+    end)
+
+    it('lets the link go with the photo when it is left open', function()
+        local s, _, _, _, file, _, name = linked()
+        Env.advance(Config.Completion.PhotoOpenSeconds + 5)
+        eq(s.photos.expire(), 1, 'a page that took the link and never said: still the open timeout')
+        eq(Natives.files[file], nil)
+        eq(Natives.httpRequest('GET', '/p/' .. name .. '.jpg').status, 404)
+    end)
+
+    it('lets the link go when the client deletes it instead', function()
+        local _, _, _, handle, file, _, name = linked()
+        truthy(call('photoDecision', 1, { handle = handle, choice = 'delete' }).ok)
+        eq(Natives.files[file], nil)
+        eq(Natives.httpRequest('GET', '/p/' .. name .. '.jpg').status, 404)
+    end)
+
+    it('is not the retention\'s, nor the ledger\'s, to take from the client\'s Photos', function()
+        local s, _, _, handle, file, _, name = savedByLink()
+        Env.advance(Config.Ledger.PhotoRetentionDays * 86400 + 1)
+        s.ledger.forgetOldPhotos()
+        local depth = math.min(Config.Ledger.Depth, Config.Ledger.MaxDepthHardCap)
+        for i = 1, depth do
+            Env.advance(1)
+            s.ledger.record({ id = 'cx' .. i, creator_cid = 'OTHER001', target_cid = 'TARGET99',
+                target_name = 'Somebody' }, 'CREATOR1', nil, CH.FULFILMENT.KIDNAPPING, { slot = 1 })
+        end
+        truthy(s.storage.readPhoto(handle), 'still in their Photos, so still here')
+        eq(Natives.files[file], JPEG)
+        eq(Natives.httpRequest('GET', '/p/' .. name .. '.jpg').status, 200)
+    end)
+end)
+
+describe('serving a saved photo over HTTP', function()
+    it('answers a GET for the name with the photo, and nothing that would keep it', function()
+        local _, _, _, _, _, _, name = savedByLink()
+        truthy(Natives.httpHandler, 'the handler is installed with the bridges')
+        local got = Natives.httpRequest('GET', '/p/' .. name .. '.jpg')
+        eq(got.status, 200)
+        eq(got.body, JPEG, 'whole, NULs and all')
+        eq(got.headers['Content-Type'], 'image/jpeg')
+        eq(got.headers['Cache-Control'], 'no-store')
+        eq(got.headers['X-Content-Type-Options'], 'nosniff')
+        for header, value in pairs(got.headers) do
+            eq(type(value), 'string', header .. ': FiveM throws on a header that is not a string')
+        end
+        eq(Natives.httpRequest('GET', '/p/' .. name .. '.jpg?w=200').status, 200,
+            'a query string is dropped, not read')
+    end)
+
+    it('answers 404 to anything else, the same way every time', function()
+        local _, _, _, handle, file, _, name = savedByLink()
+        local reads = {}
+        local realLoad = _G.LoadResourceFile
+        _G.LoadResourceFile = function(res, path)
+            reads[#reads + 1] = path
+            return realLoad(res, path)
+        end
+        local refused = {
+            { 'POST', '/p/' .. name .. '.jpg' },
+            { 'HEAD', '/p/' .. name .. '.jpg' },
+            { 'PUT', '/p/' .. name .. '.jpg' },
+            { 'DELETE', '/p/' .. name .. '.jpg' },
+            { 'GET', '/p/' .. name .. '.png' },
+            { 'GET', '/p/' .. name },
+            { 'GET', '/p/' .. name .. 'x.jpg' },
+            { 'GET', '/p/' .. handle .. '.jpg' },
+            { 'GET', '/p/Zk3_q-9xWb2LmT0cRf8aNd.jpg' },
+            { 'GET', '/' .. file },
+            { 'GET', '/p/../../server/main.lua' },
+            { 'GET', '/p/..%2F..%2Fconfig%2Fconfig.lua' },
+            { 'GET', '/p/' .. name .. '.jpg/../../fxmanifest.lua' },
+            { 'GET', '/p/%2e%2e/' .. name .. '.jpg' },
+            { 'GET', '/../data/photos/' .. handle .. '.jpg' },
+            { 'GET', '//p/' .. name .. '.jpg' },
+            { 'GET', '/p/' .. ('a'):rep(300) .. '.jpg' },
+            { 'GET', '' },
+            { 'GET', '/' },
+        }
+        for _, req in ipairs(refused) do
+            local got = Natives.httpRequest(req[1], req[2])
+            eq(got.status, 404, req[1] .. ' ' .. req[2])
+            eq(got.body, 'Not found.', req[1] .. ' ' .. req[2])
+            truthy(got.sent, 'answered, not left hanging: ' .. req[2])
+        end
+        _G.LoadResourceFile = realLoad
+        eq(#reads, 0, 'no refused request reads a file: ' .. table.concat(reads, ', '))
+    end)
+
+    it('does not serve a photo by name before it is linked, or after it is let go', function()
+        local s, _, _, handle, file = opened()
+        eq(Natives.httpRequest('GET', '/p/' .. handle .. '.jpg').status, 404,
+            'a photo waiting or open is not served by its handle')
+        truthy(call('photoDecision', 1, { handle = handle, choice = 'link' }).ok)
+        local name = s.storage.readPhoto(handle).public_id
+        truthy(call('photoDecision', 1, { handle = handle, choice = 'keep' }).ok)
+        eq(Natives.httpRequest('GET', '/p/' .. name .. '.jpg').status, 404,
+            'kept in the app instead: the link it was given goes')
+        truthy(Natives.files['data/photos/kept/' .. handle .. '.jpg'], 'the photo itself stays')
+        eq(Natives.files[file], nil)
+    end)
+
+    it('survives a request it cannot read', function()
+        savedByLink()
+        for _, req in ipairs({ { 'GET', 42 }, { nil, '/p/x.jpg' }, { 'GET', nil } }) do
+            local ok, got = pcall(Natives.httpRequest, req[1], req[2])
+            truthy(ok, tostring(got))
+            eq(got.status, 404)
+        end
+    end)
+end)
+
+describe('a photo deleted from the client\'s Photos', function()
+    it('takes the file and its link with it', function()
+        local s, _, _, handle, file, link, name = savedByLink()
+        eq(Env.events['lb-phone:deletedFromGallery'], nil,
+            'never a net event: a client cannot say a photo was deleted')
+        TriggerEvent('lb-phone:deletedFromGallery', 1, '555-1', link)
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.DELETED)
+        eq(Natives.files[file], nil)
+        eq(Natives.httpRequest('GET', '/p/' .. name .. '.jpg').status, 404)
+        falsy(s.storage.readPhoto(handle).public_id)
+    end)
+
+    it('only when its own client deleted it', function()
+        local s, _, _, handle, file, link = savedByLink()
+        -- Somebody the link was passed on to, deleting their copy.
+        TriggerEvent('lb-phone:deletedFromGallery', 3, '555-3', link)
+        TriggerEvent('lb-phone:deletedFromGallery', 2, '555-2', link)
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.SAVED)
+        eq(Natives.files[file], JPEG)
+    end)
+
+    it('ignores any other link, and anything that is not one', function()
+        local s, _, _, handle, file, link = savedByLink()
+        for _, other in ipairs({ 'https://cdn.fivemanage.com/x.png',
+                                 link:gsub('/p/[%w_-]+', '/p/Zk3_q-9xWb2LmT0cRf8aNd'),
+                                 'https://' .. QBOX .. '/crimson-hitman/p/' .. handle .. '.jpg',
+                                 42, {}, ('x'):rep(5000) }) do
+            TriggerEvent('lb-phone:deletedFromGallery', 1, '555-1', other)
+        end
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.SAVED)
+        eq(Natives.files[file], JPEG)
+    end)
+
+    it('takes everything saved from a phone that is factory reset, and nothing else', function()
+        local s, _, _, handle, file = savedByLink()
+        TriggerEvent('lb-phone:factoryReset', 1, '555-9')
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.SAVED, 'another phone of theirs')
+        TriggerEvent('lb-phone:factoryReset', 3, '555-1')
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.SAVED, 'not theirs to reset')
+        TriggerEvent('lb-phone:factoryReset', 1, '555-1')
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.DELETED)
+        eq(Natives.files[file], nil)
+    end)
+end)
+
+describe('a photo kept for the client in the app, on this server', function()
+    local function kept(opts)
+        local s, f, c, handle, file = opened(opts)
+        local reply = call('photoDecision', 1, { handle = handle, choice = 'keep' })
+        truthy(reply and reply.ok, tostring(reply and reply.err))
+        return s, f, c, handle, file
+    end
+
+    it('moves its file into data/photos/kept/', function()
+        local s, _, _, handle, file = kept({ web = false })
+        local record = s.storage.readPhoto(handle)
+        eq(record.state, CH.PHOTO.KEPT)
+        eq(record.file, 'data/photos/kept/' .. handle .. '.jpg')
+        eq(Natives.files[record.file], JPEG, 'moved whole')
+        eq(Natives.files[file], nil, 'and not left where it was')
+        truthy(Natives.dirs['data/photos/kept'], 'the folder made first')
+    end)
+
+    it('keeps it beside the others where the kept folder cannot be made', function()
+        local realCreate = os.createdir
+        os.createdir = function(path)
+            if path:find('/kept$') then return nil, path .. ': Failed to create directory', 1 end
+            return realCreate(path)
+        end
+        local ok, err = pcall(function()
+            local s, _, _, handle = kept({ web = false })
+            local record = s.storage.readPhoto(handle)
+            eq(record.file, 'data/photos/kept-' .. handle .. '.jpg')
+            eq(Natives.files[record.file], JPEG)
+        end)
+        os.createdir = realCreate
+        truthy(ok, tostring(err))
+    end)
+
+    it('keeps it where it is where the server cannot move files', function()
+        Natives.renameRefused = true
+        local ok, err = pcall(function()
+            local s, _, _, handle, file = kept({ web = false })
+            local record = s.storage.readPhoto(handle)
+            eq(record.state, CH.PHOTO.KEPT)
+            eq(record.file, file, 'still kept, under the name it had')
+            eq(Natives.files[file], JPEG)
+        end)
+        Natives.renameRefused = nil
+        truthy(ok, tostring(err))
+    end)
+
+    it('opens again and again, sent each time as the first time, and says it is kept', function()
+        local s, _, _, handle = kept({ web = false })
+        for _ = 1, 3 do
+            local reply, events = call('openPhoto', 1, { handle = handle })
+            truthy(reply and reply.ok, tostring(reply and reply.err))
+            eq(reply.data.kept, true)
+            local sent = latentTo(events, 'crimson-hitman:photoImage')
+            eq(#sent, 1, 'sent latent, to the client')
+            eq(sent[1].target, 1)
+            eq(Util.fromBase64(sent[1].args[1].src:sub(24)), JPEG)
+        end
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.KEPT)
+        for _, src in ipairs({ 2, 3 }) do
+            local reply, events = call('openPhoto', src, { handle = handle })
+            eq(reply.err, CH.ERR.PHOTO_GONE, 'source ' .. src)
+            eq(#latentTo(events, 'crimson-hitman:photoImage'), 0)
+        end
+    end)
+
+    it('is removed when the client deletes it', function()
+        local s, _, _, handle = kept({ web = false })
+        local keptFile = s.storage.readPhoto(handle).file
+        truthy(call('photoDecision', 1, { handle = handle, choice = 'delete' }).ok)
+        eq(Natives.files[keptFile], nil)
+        eq(s.storage.readPhoto(handle).state, CH.PHOTO.DELETED)
+    end)
+
+    it('outlives the expiry, the retention and its row, and goes after KeptPhotoDays', function()
+        local s, _, _, handle = kept({ web = false })
+        local keptFile = s.storage.readPhoto(handle).file
+        Env.advance(Config.Ledger.PhotoRetentionDays * 86400 + 1)
+        s.photos.expire()
+        s.ledger.forgetOldPhotos()
+        eq(Natives.files[keptFile], JPEG, 'not the retention\'s')
+        Config.Completion.KeptPhotoDays = 30
+        Env.advance(31 * 86400)
+        eq(s.photos.forgetKept(), 1)
+        eq(Natives.files[keptFile], nil)
+    end)
+
+    it('is kept by the start\'s sweep, wherever it was kept', function()
+        local s, _, _, handle = kept({ web = false })
+        local keptFile = s.storage.readPhoto(handle).file
+        Natives.files['data/photos/kept/ph0000000orphan.webp'] = WEBP
+        Natives.files['data/photos/kept-ph000000orphan2.webp'] = WEBP
+        eq(s.photos.sweepFiles(), 2, 'kept files no record names are swept like any other')
+        eq(Natives.files[keptFile], JPEG, 'the kept photo is not')
+        eq(Natives.files['data/photos/kept/ph0000000orphan.webp'], nil)
+        eq(Natives.files['data/photos/kept-ph000000orphan2.webp'], nil)
+    end)
+
+    it('says in /ch-diag how many are kept and how much disk they take', function()
+        local s = kept({ web = false })
+        local said = table.concat(s.admin.diagnose(1) or {}, '\n')
+        truthy(said:find('1 kept in the app', 1, true), said)
+        truthy(said:find('photos on disk:', 1, true), said)
+    end)
+end)
+
+describe('what /ch-diag says about saving photos kept on this server', function()
+    local function diag(s)
+        return table.concat(s.admin.diagnose(1) or {}, '\n')
+    end
+
+    it('names the address photos are served from, and whether lb-phone takes it', function()
+        local s = newStack()
+        fixture(s)
+        Config.Completion.PhotoStorage = 'server'
+        Natives.convars.web_baseUrl = 'r2.qbox.re'
+        local said = diag(s)
+        truthy(said:find('photo links: https://r2.qbox.re/crimson-hitman/p/... (from web_baseUrl)',
+            1, true), said)
+        truthy(said:find('allow list takes r2.qbox.re: yes', 1, true), said)
+
+        Natives.convars.web_baseUrl = QBOX
+        said = diag(s)
+        truthy(said:find('does NOT take ' .. QBOX, 1, true), said)
+        truthy(said:find('UploadWhitelistedHostnames', 1, true), 'and says where to add it: ' .. said)
+    end)
+
+    it('says so when there is no address, and what happens instead', function()
+        local s = newStack()
+        fixture(s)
+        Config.Completion.PhotoStorage = 'server'
+        local said = diag(s)
+        truthy(said:find('photo links: none (web_baseUrl is not set)', 1, true), said)
+        truthy(said:find('kept in the app', 1, true), said)
+        truthy(said:find('server.qbox.re', 1, true), 'the Nucleus replacement is named: ' .. said)
+    end)
+
+    it('takes lb-phone\'s own allow list as lb-phone reads it', function()
+        local s = newStack()
+        local real = Natives.phoneConfig
+        local ok, err = pcall(function()
+            Natives.phoneConfig = { UploadWhitelistedHostnames = { '*.server.qbox.re' },
+                                    UploadWhitelistedDomains = { 'example.com' } }
+            truthy(s.photos.galleryAllows('https://chatty.server.qbox.re/c/p/x.webp'), 'a * label')
+            falsy(s.photos.galleryAllows('https://a.b.server.qbox.re/c/p/x.webp'), '* is one label')
+            truthy(s.photos.galleryAllows('https://photos.example.com/c/p/x.webp'), 'a subdomain')
+            truthy(s.photos.galleryAllows('https://example.com/c/p/x.webp'), 'the domain')
+            falsy(s.photos.galleryAllows('https://example.com:8443/c/p/x.webp'),
+                'lb-phone reads the port as part of the host')
+            falsy(s.photos.galleryAllows('https://badexample.com/c/p/x.webp'))
+            Natives.phoneConfig = {}
+            truthy(s.photos.galleryAllows('https://anything.example/c/p/x.webp'),
+                'with both lists empty lb-phone takes any link')
+        end)
+        Natives.phoneConfig = real
+        truthy(ok, tostring(err))
+    end)
+end)

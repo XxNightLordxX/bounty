@@ -1519,14 +1519,39 @@ function JsonStore.photosForContract(contractId)
     return photosWhere(function(row) return row.contract_id == contractId end)
 end
 
-function JsonStore.photosOpenedBefore(cutoff, limit)
+function JsonStore.photosOpenedBefore(cutoff, limit, state)
+    state = state or CH.PHOTO.OPEN
     return photosWhere(function(row)
-        return row.state == CH.PHOTO.OPEN and (tonumber(row.opened_at) or 0) < cutoff
+        return row.state == state and (tonumber(row.opened_at) or 0) < cutoff
     end, limit)
 end
 
+function JsonStore.readPhotoByPublic(publicId)
+    if type(publicId) ~= 'string' then return nil end
+    for _, row in pairs(db.photos) do
+        if row.public_id == publicId then return row end
+    end
+    return nil
+end
+
+function JsonStore.photoTotals()
+    local out = {}
+    for _, row in pairs(db.photos) do
+        if row.file then
+            local total = out[row.state] or { count = 0, bytes = 0 }
+            total.count = total.count + 1
+            total.bytes = total.bytes + (tonumber(row.size) or 0)
+            out[row.state] = total
+        end
+    end
+    return out
+end
+
 function JsonStore.photosCreatedBefore(cutoff, limit)
-    return photosWhere(function(row) return (tonumber(row.created_at) or 0) < cutoff end, limit)
+    return photosWhere(function(row)
+        return (tonumber(row.created_at) or 0) < cutoff and row.state ~= CH.PHOTO.KEPT
+            and row.public_id == nil
+    end, limit)
 end
 
 function JsonStore.openPhoto(id, at)
@@ -1541,6 +1566,32 @@ function JsonStore.closePhoto(id, expected, next_, savedLink)
     local row = db.photos[id]
     if not row or row.state ~= expected then return false end
     row.state, row.url, row.file, row.saved_link = next_, nil, nil, savedLink
+    row.public_id, row.saved_phone = nil, nil
+    touch(true)
+    return true
+end
+
+function JsonStore.publishPhoto(id, expected, publicId, link, phone)
+    local row = db.photos[id]
+    if not row or row.state ~= expected or not row.file then return false end
+    row.public_id, row.saved_link, row.saved_phone = publicId, link, phone
+    touch(true)
+    return true
+end
+
+function JsonStore.movePhoto(id, expected, next_)
+    local row = db.photos[id]
+    if not row or row.state ~= expected then return false end
+    row.state = next_
+    touch(true)
+    return true
+end
+
+function JsonStore.keepPhoto(id, expected, file)
+    local row = db.photos[id]
+    if not row or row.state ~= expected then return false end
+    row.state, row.public_id, row.saved_link, row.saved_phone = CH.PHOTO.KEPT, nil, nil, nil
+    if file then row.file = file end
     touch(true)
     return true
 end

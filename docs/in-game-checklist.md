@@ -72,15 +72,62 @@ A staff account that can adjust money and spawn items makes this much faster.
       target's rows have no photo, and nothing new is in the hitman's Photos app
 - [ ] View photo shows it full-screen with **Save to Photos** and **Delete**;
       on `'host'` storage Save puts it in the phone's Photos app and the row
-      then reads "Photo saved to your phone"; on `'server'` storage Save says
-      it cannot go into Photos and the photo stays open
+      then reads "Photo saved to your phone"
 - [ ] Opening it again is refused; switching tab while it is open deletes it
       and the row reads "Photo deleted"; on `'server'` storage its file is
       gone from `data/photos/`
 - [ ] A photo left open (phone closed mid-view) is deleted after
       `Config.Completion.PhotoOpenSeconds`
-- [ ] A stray file put in `data/photos/` (named like the others) is removed
-      at the next resource start, and the waiting photos are not
+- [ ] A stray file put in `data/photos/` or `data/photos/kept/` (named like
+      the others) is removed at the next resource start, and the waiting and
+      kept photos are not
+
+### Save to Photos on `'server'` storage
+
+Run these three times: with a public address, with none but a phone that
+uploads, and with neither. Restart the resource between them.
+
+- [ ] **With a public address.** Set `web_baseUrl` (Qbox Nucleus: `set
+      web_baseUrl "<name>.server.qbox.re"` in `server.cfg`) or
+      `Config.Completion.PhotoPublicUrl`, and add that host to lb-phone's
+      `Config.UploadWhitelistedHostnames`. `/ch-diag <id>` shows
+      `photo links: https://<host>/crimson-hitman/p/...` and
+      `lb-phone's upload allow list takes <host>: yes`
+- [ ] Remove the host from lb-phone's list and restart lb-phone: `/ch-diag`
+      now says the list does NOT take it, and names the line to add. Put it back
+- [ ] Save to Photos on a fresh kill photo: the phone's **Photos** app has the
+      photo, it loads there, and the row reads "Photo saved to your phone".
+      The file is still in `data/photos/`, and `/ch-diag` counts it under
+      "served to phones' Photos"
+- [ ] The photo opens in a desktop browser at its link (the newest `link`
+      in lb-phone's `phone_photos` table); the same link with `.png` instead
+      of `.webp`/`.jpg`, with the name changed by one letter, or with `/p/../`
+      in it answers "Not found."; a `curl -X POST` of the real link answers
+      "Not found." too
+- [ ] Delete the photo from the phone's Photos app: its file is gone from
+      `data/photos/` within a second, and the link answers "Not found."
+- [ ] Save another, then factory reset that phone (Settings): its file is
+      gone too
+- [ ] **With no address, on a phone whose lb-phone has an upload method**
+      (Fivemanage or the like): `/ch-diag` shows `photo links: none (...)`.
+      Save to Photos uploads it, the phone's Photos has it, and its file is
+      gone from `data/photos/` at once
+- [ ] **With neither** (no address, and lb-phone's upload not working): the
+      dialog's button reads **Save**, with "Your phone can't take it, so it is
+      kept for you in this app". Save keeps it: the row reads "Kept for you
+      in this app" and still has **View photo**, and the file is in
+      `data/photos/kept/`
+- [ ] A kept photo opens again as often as you like, with **Delete** and
+      **Close**; Close keeps it, Delete removes it and its file
+- [ ] When a save to Photos fails (take the host off lb-phone's list and
+      try), the dialog says the phone could not save it and offers **Keep it
+      in the app instead**; that keeps it as above
+- [ ] Push the row of a kept photo off the Ledger (complete more contracts
+      than `Config.Ledger.Depth`): the photo is listed on its own under
+      **Photos kept in this app**, and still opens
+- [ ] `/ch-diag` reports how many photos are kept in the app and how much
+      space they take; with `Config.Completion.KeptPhotoDays = 1` a kept
+      photo is gone a day after it was kept
 - [ ] **Downing** the target without killing them does **not** allow a claim
 - [ ] A target who is revived before the photo invalidates the claim
 - [ ] A kill by someone who never accepted pays nobody

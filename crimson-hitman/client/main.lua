@@ -357,17 +357,23 @@ end
 
 --- The kill photo this player has open, if any: { handle, url }.
 ---
---- Learnt from the server's own answer to openPhoto, so the Save to Photos
---- fallback below saves the link the server handed this player for the
---- photo they are looking at and nothing else. An NUI endpoint is
---- addressable from any frame the phone draws, and one that saved whatever
---- link it was given would put anything at all into the player's gallery.
+--- Learnt from the server's own answers, so the Save to Photos fallback
+--- below saves the link the server handed this player for the photo they
+--- are looking at and nothing else: the image host's link from openPhoto,
+--- or, for a photo kept on the server, the link it serves the photo under
+--- from photoDecision's 'link'. An NUI endpoint is addressable from any
+--- frame the phone draws, and one that saved whatever link it was given
+--- would put anything at all into the player's gallery.
 local shownPhoto
 
 local function notePhoto(result)
-    if result.event == 'openPhoto' and result.ok and type(result.data) == 'table'
-        and type(result.data.handle) == 'string' and type(result.data.url) == 'string' then
-        shownPhoto = { handle = result.data.handle, url = result.data.url }
+    local data = type(result.data) == 'table' and result.data or nil
+    if result.event == 'openPhoto' and result.ok and data
+        and type(data.handle) == 'string' and type(data.url) == 'string' then
+        shownPhoto = { handle = data.handle, url = data.url }
+    elseif result.event == 'photoDecision' and result.ok and data
+        and type(data.handle) == 'string' and type(data.link) == 'string' then
+        shownPhoto = { handle = data.handle, url = data.link }
     elseif result.event == 'photoDecision' and result.ok then
         shownPhoto = nil
     end
@@ -505,7 +511,21 @@ local photoWaiting = {}
 --- A photo that came before the reply that names it: { handle, src }.
 local photoArrived
 
-local function awaitPhoto(handle, cb)
+--- The page's answer once the photo is here: the picture, with what the
+--- server said about saving it (`link`: it can serve it to the phone's
+--- Photos; `kept`: it is kept in the app and opens again).
+local function arrivedFor(handle, src, said)
+    return { ok = true, event = 'openPhoto', data = {
+        handle = handle, src = src,
+        link = said.link == true or nil, kept = said.kept == true or nil,
+    } }
+end
+
+local function awaitPhoto(handle, rawCb, said)
+    local function cb(result)
+        if result.ok then result = arrivedFor(handle, result.data.src, said) end
+        return rawCb(result)
+    end
     if photoArrived and photoArrived.handle == handle then
         local src = photoArrived.src
         photoArrived = nil
@@ -547,7 +567,7 @@ for _, event in ipairs(UI_EVENTS) do
         App.request(event, data, function(result)
             if event == 'openPhoto' and result.ok and type(result.data) == 'table'
                 and result.data.latent and type(result.data.handle) == 'string' then
-                return awaitPhoto(result.data.handle, cb)
+                return awaitPhoto(result.data.handle, cb, result.data)
             end
             cb(result)
         end)
@@ -558,8 +578,8 @@ end
 ---
 --- The page saves it itself where lb-phone gives custom apps
 --- components.saveToGallery; this is for a build that does not, through
---- lb-phone's client export. Only the photo the server opened for this
---- player (notePhoto), and only while it is open: the page sends a handle,
+--- lb-phone's client export. Only the link the server handed this player
+--- for the photo they have open (notePhoto): the page sends a handle,
 --- never a link.
 RegisterNUICallback('crimson:saveToPhotos', function(data, cb)
     local handle = type(data) == 'table' and data.handle or nil

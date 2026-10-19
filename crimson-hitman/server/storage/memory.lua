@@ -579,15 +579,48 @@ function Memory.photosForContract(contractId)
     return photosWhere(function(row) return row.contract_id == contractId end)
 end
 
---- Opened before the cutoff and still waiting for Save or Delete.
-function Memory.photosOpenedBefore(cutoff, limit)
+--- Opened before the cutoff and still in `state`: open by default, which
+--- is a photo still waiting for Save or Delete; kept, for the photos kept
+--- in the app longer than Config.Completion.KeptPhotoDays.
+function Memory.photosOpenedBefore(cutoff, limit, state)
+    state = state or CH.PHOTO.OPEN
     return photosWhere(function(row)
-        return row.state == CH.PHOTO.OPEN and (row.opened_at or 0) < cutoff
+        return row.state == state and (row.opened_at or 0) < cutoff
     end, limit)
 end
 
+--- The photo a link this server serves names, by the unguessable name in
+--- the link (Photos.publish).
+function Memory.readPhotoByPublic(publicId)
+    if type(publicId) ~= 'string' then return nil end
+    for _, row in pairs(db.photos) do
+        if row.public_id == publicId then return row end
+    end
+    return nil
+end
+
+--- How many photos each state holds a file for, and how many bytes: what
+--- /ch-diag tells an owner about the disk these take.
+function Memory.photoTotals()
+    local out = {}
+    for _, row in pairs(db.photos) do
+        if row.file then
+            local total = out[row.state] or { count = 0, bytes = 0 }
+            total.count = total.count + 1
+            total.bytes = total.bytes + (tonumber(row.size) or 0)
+            out[row.state] = total
+        end
+    end
+    return out
+end
+
+--- Kept before the cutoff, and the retention's to forget: not kept in the
+--- app, and not served to a phone's Photos (Photos.forgetBefore).
 function Memory.photosCreatedBefore(cutoff, limit)
-    return photosWhere(function(row) return (row.created_at or 0) < cutoff end, limit)
+    return photosWhere(function(row)
+        return (row.created_at or 0) < cutoff and row.state ~= CH.PHOTO.KEPT
+            and row.public_id == nil
+    end, limit)
 end
 
 --- Pending to open, once.
@@ -598,12 +631,42 @@ function Memory.openPhoto(id, at)
     return true
 end
 
---- From the expected state to a closed one, keeping no image: the link and
---- the file name go with the state change, in the same step.
+--- From the expected state to a closed one, keeping no image: the link,
+--- the file name and any link this server served it under go with the
+--- state change, in the same step.
 function Memory.closePhoto(id, expected, next_, savedLink)
     local row = db.photos[id]
     if not row or row.state ~= expected then return false end
     row.state, row.url, row.file, row.saved_link = next_, nil, nil, savedLink
+    row.public_id, row.saved_phone = nil, nil
+    return true
+end
+
+--- Give a photo kept on this server a link it is served under, without
+--- moving its state: the client's phone is still to save it.
+function Memory.publishPhoto(id, expected, publicId, link, phone)
+    local row = db.photos[id]
+    if not row or row.state ~= expected or not row.file then return false end
+    row.public_id, row.saved_link, row.saved_phone = publicId, link, phone
+    return true
+end
+
+--- From the expected state to the next, and nothing else changed: a photo
+--- saved to the phone through the link this server serves keeps its file.
+function Memory.movePhoto(id, expected, next_)
+    local row = db.photos[id]
+    if not row or row.state ~= expected then return false end
+    row.state = next_
+    return true
+end
+
+--- Kept in the app: its file where it now lives (nil for a link, which
+--- stays), and no link served for it any more.
+function Memory.keepPhoto(id, expected, file)
+    local row = db.photos[id]
+    if not row or row.state ~= expected then return false end
+    row.state, row.public_id, row.saved_link, row.saved_phone = CH.PHOTO.KEPT, nil, nil, nil
+    if file then row.file = file end
     return true
 end
 

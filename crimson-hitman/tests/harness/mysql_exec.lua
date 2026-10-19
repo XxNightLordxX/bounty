@@ -422,9 +422,17 @@ local function update(sql, params)
                 end
 
                 local value = assignment.literal
-                if value == nil then value = params[assignment.index] end
+                local bound = value == nil
+                if bound then value = params[assignment.index] end
 
-                if type(value) == 'string' and value:upper() == 'NULL' then
+                if bound and value == nil then
+                    -- `col = ?` bound to nil is NULL on a real database, as
+                    -- it is in an INSERT above. Skipping it left a column a
+                    -- statement meant to clear holding its old value here
+                    -- alone: a kill photo's served link outlived the close
+                    -- that took its file.
+                    row[assignment.column] = nil
+                elseif type(value) == 'string' and value:upper() == 'NULL' then
                     -- A real database stores a NULL and oxmysql hands it back
                     -- as nil. Storing the string 'NULL' would make a column
                     -- that was cleared look like one holding the word.

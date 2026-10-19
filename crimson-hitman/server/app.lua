@@ -353,10 +353,13 @@ function App.register()
 
     -- The rows as the page is shown them (Ledger.entries), not as stored:
     -- a stored row carries cids and, on the client's own row, the handle of
-    -- a photo, which crosses only as { handle, state }.
+    -- a photo, which crosses only as { handle, state }. With the photos
+    -- kept for them in the app whose row is gone, as the same.
     handler('ledger', 'load', function(actor)
+        local entries, kept = deps.ledger.entries(actor.cid)
         return {
-            entries = deps.ledger.entries(actor.cid),
+            entries = entries,
+            kept    = kept,
             record  = deps.progression.record(actor.cid),
         }
     end)
@@ -756,21 +759,28 @@ function App.register()
     -- reply only says it is on its way: every reply is also handed to the
     -- open app as a message, and a picture of a body has no business being
     -- passed around twice.
+    --
+    -- The reply also says how it may be saved: `link` where this server can
+    -- serve it to the phone's Photos itself, `kept` for one kept in the
+    -- app, which opens as often as its owner likes.
     handler('openPhoto', 'photoView', function(actor, payload)
         local view, err = deps.photos.open(actor, payload.handle)
         if not view then return false, err end
         if view.image then
             TriggerLatentClientEvent('crimson-hitman:photoImage', actor.source, App.PHOTO_BPS,
                 { handle = view.handle, src = view.image })
-            return { handle = view.handle, latent = true }
+            return { handle = view.handle, latent = true, link = view.link, kept = view.kept }
         end
         return view
     end)
 
-    -- Save or Delete, for the photo the client has open. Its own looser
-    -- bucket, as a photo submission has: this answers a question the server
-    -- itself put on the client's screen, and refused, a photo they had just
-    -- saved to their phone was recorded as deleted when it timed out.
+    -- What the client did with the photo they have open: save, delete or
+    -- keep it in the app, or ask for the link this server serves it under,
+    -- to save it with (Photos.decide). Its own looser bucket, as a photo
+    -- submission has: this answers a question the server itself put on the
+    -- client's screen, and refused, a photo they had just saved to their
+    -- phone was recorded as deleted when it timed out. A save by link is two
+    -- of these.
     handler('photoDecision', 'photoDecide', function(actor, payload)
         local result, err = deps.photos.decide(actor, payload.handle, payload.choice)
         if not result then return false, err end

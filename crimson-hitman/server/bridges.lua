@@ -465,6 +465,40 @@ function Bridges.install(modules)
         unload(src or source)
     end)
 
+    -- Kill photos kept on this server and saved to a client's Photos
+    -- through a link this server serves (Photos.publish). lb-phone raises
+    -- these itself, with TriggerEvent: the player, their phone number and,
+    -- for a deletion, the link. Plain handlers, never RegisterNetEvent, so
+    -- a client cannot raise them here: the player and the link come from the
+    -- phone resource, not from somebody who wants a photo gone. Each lets go
+    -- of the file and its link, for the photo's own client only.
+    AddEventHandler('lb-phone:deletedFromGallery', function(phoneSource, _, link)
+        if not modules.photos then return end
+        local actor = modules.identity.resolve(phoneSource)
+        if actor then modules.photos.galleryDeleted(actor, link) end
+    end)
+    AddEventHandler('lb-phone:factoryReset', function(phoneSource, phoneNumber)
+        if not modules.photos then return end
+        local actor = modules.identity.resolve(phoneSource)
+        if actor then modules.photos.phoneReset(actor, phoneNumber) end
+    end)
+
+    -- The links themselves: GET /<this resource>/p/<name>.<ext>, read-only
+    -- (Photos.serveHttp). One handler a resource, and this resource answers
+    -- nothing else over HTTP. A throw is answered as not found rather than
+    -- left hanging.
+    if type(SetHttpHandler) == 'function' and modules.photos then
+        SetHttpHandler(function(req, res)
+            local ok = pcall(modules.photos.serveHttp, req, res)
+            if not ok then
+                pcall(function()
+                    res.writeHead(404, { ['Content-Type'] = 'text/plain; charset=utf-8' })
+                    res.send('Not found.')
+                end)
+            end
+        end)
+    end
+
     Bridges.installCommands(modules)
     return true
 end

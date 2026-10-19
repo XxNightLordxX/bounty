@@ -550,6 +550,12 @@ async function main() {
 
   /* The one look at a kill photo: opened on purpose, saved or deleted, and
      deleted however else it is closed. */
+
+  // A photo the server keeps, as it reaches the page, and the link a
+  // server that serves its own photos hands over for one.
+  const KEPT = 'data:image/webp;base64,UklGRgAAAABXRUJQ';
+  const SERVED = 'https://chatty.server.qbox.re/crimson-hitman/p/Zk3_q-9xWb2LmT0cRf8aNd.webp';
+
   function photoLedger(state) {
     return { ok: true, data: {
       record: { completed: 0, placed: 1, survived: 0, standing: 'Unproven' },
@@ -561,7 +567,10 @@ async function main() {
     } };
   }
 
-  async function openedPhoto(extra) {
+  /* Booted with the photo opened from the Ledger. `phone` is what lb-phone
+     gives the page (window.components), in place before the photo opens,
+     as it is on a real phone: the dialog offers what the phone can do. */
+  async function openedPhoto(extra, phone) {
     // The server's side of it, so a refresh reads back what the page did.
     let photoState = 'pending';
     const answers = Object.assign({
@@ -574,11 +583,18 @@ async function main() {
           url: 'https://cdn.fivemanage.com/proof.png' } };
       },
       photoDecision: function (body) {
-        photoState = body.choice === 'save' ? 'saved' : 'deleted';
+        // The link a server that serves its own photos hands over, with
+        // the photo still open until the phone has it.
+        if (body.choice === 'link') {
+          return { ok: true, data: { handle: body.handle, state: 'open', link: SERVED } };
+        }
+        photoState = body.choice === 'save' ? 'saved'
+          : body.choice === 'keep' ? 'kept' : 'deleted';
         return { ok: true, data: { handle: body.handle, state: photoState } };
       }
     }, extra || {});
     const app = boot(answers);
+    if (phone) { phone(app.sandbox.window); }
     await settle(); await settle();
     tab(app, 'ledger');
     click(app, 'View photo');
@@ -689,8 +705,26 @@ async function main() {
     it('keeps the photo open when it could not be saved, and tells nobody it was', function () {
       eq(decisions(app).length, 0, 'not saved, so not reported saved, and not deleted either');
       const images = app.view.all().filter(function (n) { return n.tagName === 'IMG'; });
-      eq(images.length, 1, 'still there to save again or delete');
+      eq(images.length, 1, 'still there to keep or delete');
       truthy(app.notice().indexOf('could not save') !== -1, app.notice());
+    });
+
+    it('offers to keep it in the app instead, rather than losing it', function () {
+      const labels = app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+      truthy(labels.indexOf('Keep it in the app instead') !== -1, labels.join(','));
+      truthy(labels.indexOf('Delete') !== -1, labels.join(','));
+      eq(labels.indexOf('Save to Photos'), -1, 'the phone has already said no');
+    });
+
+    click(app, 'Keep it in the app instead');
+    await settle(); await settle();
+    it('keeps it when asked, and the row offers it again', function () {
+      eq(decisions(app).join(','), 'keep');
+      truthy(app.view.textContent.indexOf('Kept for you in this app') !== -1, app.view.textContent);
+      truthy(app.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'View photo';
+      }), 'a kept photo opens again');
     });
   })();
 
@@ -735,42 +769,230 @@ async function main() {
   })();
 
   /* A photo kept on the server reaches the page as the photo itself, a
-     data URI, which the client held the request for. */
-  const KEPT = 'data:image/webp;base64,UklGRgAAAABXRUJQ';
+     data URI, which the client held the request for. lb-phone's Photos
+     keeps links, so the page gets one of three ways: from the server,
+     which serves the photo itself; from lb-phone's own upload; or not at
+     all, and the photo is kept in the app instead. */
+  function images(app) {
+    return app.view.all().filter(function (n) { return n.tagName === 'IMG'; });
+  }
+  function labels(app) {
+    return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+      .map(function (n) { return n.textContent; });
+  }
 
-  await (async function photoKeptOnTheServer() {
+  await (async function photoServedByLink() {
     const gallery = [];
     const app = await openedPhoto({
-      openPhoto: { ok: true, data: { handle: 'ph00000000aa', src: KEPT } }
+      openPhoto: { ok: true, data: { handle: 'ph00000000aa', src: KEPT, link: true } }
     });
     app.sandbox.window.components = {
       saveToGallery: function (url) { gallery.push(url); return Promise.resolve(42); }
     };
 
     it('shows a photo the server keeps, as it was sent', function () {
-      drewCleanly(app, 'a kept photo');
-      const images = app.view.all().filter(function (n) { return n.tagName === 'IMG'; });
-      eq(images.length, 1);
-      eq(images[0].src, KEPT);
+      drewCleanly(app, 'a photo kept on the server');
+      eq(images(app).length, 1);
+      eq(images(app)[0].src, KEPT);
       truthy(app.view.textContent.indexOf('You can see this once') !== -1);
     });
 
     click(app, 'Save to Photos');
-    await settle(); await settle();
+    await settle(); await settle(); await settle(); await settle();
 
-    it('does not hand the phone\'s Photos a picture it cannot keep', function () {
-      eq(gallery.length, 0, 'lb-phone\'s gallery keeps links of 500 characters at most');
-      eq(decisions(app).length, 0, 'not reported saved: the server would delete the only copy');
-      falsy(app.sent.some(function (r) { return r.name === 'saveToPhotos'; }));
-      truthy(app.notice().indexOf('kept on the server') !== -1, app.notice());
-      eq(app.view.all().filter(function (n) { return n.tagName === 'IMG'; }).length, 1,
-        'still open, to look at and delete');
+    it('asks the server for its link, saves that, then says it is saved', function () {
+      eq(decisions(app).join(','), 'link,save');
+      eq(gallery.join(','), SERVED, 'the link the server serves, and never the picture');
+      truthy(app.view.textContent.indexOf('Photo saved to your phone') !== -1, app.view.textContent);
+    });
+  })();
+
+  await (async function photoLinkRefused() {
+    const app = await openedPhoto({
+      openPhoto: { ok: true, data: { handle: 'ph00000000aa', src: KEPT, link: true } },
+      photoDecision: function (body) {
+        if (body.choice === 'link') { return { ok: false, err: 'photo_no_link' }; }
+        return { ok: true, data: { handle: body.handle, state: body.choice === 'keep' ? 'kept' : 'deleted' } };
+      }
+    });
+    app.sandbox.window.components = {
+      saveToGallery: function () { throw new Error('nothing should reach the gallery'); }
+    };
+    click(app, 'Save to Photos');
+    await settle(); await settle(); await settle();
+
+    it('says the server had no link, and offers to keep it instead', function () {
+      truthy(app.notice().indexOf('could not give your phone a link') !== -1, app.notice());
+      truthy(labels(app).indexOf('Keep it in the app instead') !== -1, labels(app).join(','));
+      eq(images(app).length, 1, 'still open');
+      eq(decisions(app).join(','), 'link', 'asked, and nothing decided');
+    });
+  })();
+
+  /* No link from the server: lb-phone's own upload, where the phone has
+     one. It takes a Blob, made here from the data URI. */
+  function blobWindow(window) {
+    window.atob = function (text) { return Buffer.from(text, 'base64').toString('binary'); };
+    window.Blob = function (parts, options) {
+      this.parts = parts;
+      this.type = options && options.type;
+      this.size = parts.reduce(function (n, p) { return n + p.length; }, 0);
+    };
+  }
+
+  await (async function photoUploadedByThePhone() {
+    const uploads = [], gallery = [];
+    const app = await openedPhoto({
+      openPhoto: { ok: true, data: { handle: 'ph00000000aa', src: KEPT } }
+    }, function (window) {
+      blobWindow(window);
+      window.components = {
+        uploadMedia: function (kind, blob) {
+          uploads.push({ kind: kind, blob: blob });
+          return Promise.resolve('https://r2.qbox.re/abc123.webp');
+        },
+        saveToGallery: function (url) { gallery.push(url); return Promise.resolve(7); }
+      };
+    });
+    click(app, 'Save to Photos');
+    await settle(); await settle(); await settle(); await settle();
+
+    it('uploads it with lb-phone, saves the upload, then tells the server', function () {
+      eq(uploads.length, 1);
+      eq(uploads[0].kind, 'Image');
+      eq(uploads[0].blob.type, 'image/webp', 'the picture as the server sent it');
+      eq(uploads[0].blob.size, Buffer.from(KEPT.split(',')[1], 'base64').length);
+      eq(gallery.join(','), 'https://r2.qbox.re/abc123.webp');
+      eq(decisions(app).join(','), 'save', 'no link asked of a server that has none');
+      truthy(app.view.textContent.indexOf('Photo saved to your phone') !== -1, app.view.textContent);
+    });
+  })();
+
+  await (async function photoUploadFails() {
+    const app = await openedPhoto({
+      openPhoto: { ok: true, data: { handle: 'ph00000000aa', src: KEPT } }
+    }, function (window) {
+      blobWindow(window);
+      window.components = {
+        uploadMedia: function () { return Promise.reject(new Error('no upload method')); },
+        saveToGallery: function () { throw new Error('nothing to save'); }
+      };
+    });
+    click(app, 'Save to Photos');
+    await settle(); await settle(); await settle();
+
+    it('keeps the photo open and offers to keep it in the app when the upload fails', function () {
+      eq(decisions(app).length, 0);
+      eq(images(app).length, 1);
+      truthy(labels(app).indexOf('Keep it in the app instead') !== -1, labels(app).join(','));
+    });
+  })();
+
+  await (async function photoNoRouteAtAll() {
+    // A phone that saves links, and has no upload of its own to make one.
+    const app = await openedPhoto({
+      openPhoto: { ok: true, data: { handle: 'ph00000000aa', src: KEPT } }
+    }, function (window) {
+      window.components = { saveToGallery: function () { throw new Error('no link to save'); } };
     });
 
+    it('says the phone cannot take it, and offers Save to keep it in the app', function () {
+      drewCleanly(app, 'a photo nothing can save');
+      eq(labels(app).indexOf('Save to Photos'), -1, 'not offered where it cannot work');
+      truthy(labels(app).indexOf('Save') !== -1 && labels(app).indexOf('Delete') !== -1,
+        labels(app).join(','));
+      truthy(app.view.textContent.indexOf('can’t take it, so it is kept for you in this app') !== -1,
+        app.view.textContent);
+    });
+
+    click(app, 'Save');
+    await settle(); await settle();
+    it('keeps it in the app', function () {
+      eq(decisions(app).join(','), 'keep');
+      truthy(app.notice().indexOf('Kept in this app') !== -1, app.notice());
+      truthy(app.view.textContent.indexOf('Kept for you in this app') !== -1, app.view.textContent);
+    });
+  })();
+
+  await (async function photoNoRouteClosedElsewhere() {
+    const app = await openedPhoto({
+      openPhoto: { ok: true, data: { handle: 'ph00000000aa', src: KEPT } }
+    });
     tab(app, 'board');
     await settle(); await settle();
     it('counts closing it any other way as Delete here too', function () {
       eq(decisions(app).join(','), 'delete');
+    });
+  })();
+
+  await (async function photoKeptOpensAgain() {
+    let opened = 0;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: MINE,
+      ledger: photoLedger('kept'),
+      openPhoto: function () {
+        opened++;
+        return { ok: true, data: { handle: 'ph00000000aa', src: KEPT, kept: true } };
+      },
+      photoDecision: function (body) {
+        return { ok: true, data: { handle: body.handle, state: 'deleted' } };
+      }
+    });
+    await settle(); await settle();
+    tab(app, 'ledger');
+
+    it('offers a kept photo to open again', function () {
+      truthy(app.view.textContent.indexOf('Kept for you in this app') !== -1, app.view.textContent);
+    });
+
+    click(app, 'View photo');
+    await settle(); await settle();
+    it('shows it with Delete and Close, and nothing that spends a look', function () {
+      drewCleanly(app, 'a kept photo');
+      eq(images(app).length, 1);
+      eq(labels(app).join(','), 'Delete,Close');
+      truthy(app.view.textContent.indexOf('Kept for you in this app') !== -1, app.view.textContent);
+    });
+
+    click(app, 'Close');
+    await settle(); await settle();
+    tab(app, 'board');
+    await settle();
+    it('closes without deleting it', function () {
+      eq(decisions(app).length, 0, 'closing a kept photo is not a Delete');
+    });
+
+    tab(app, 'ledger');
+    click(app, 'View photo');
+    await settle(); await settle();
+    click(app, 'Delete');
+    await settle(); await settle();
+    it('opens again as often as asked, and deletes it when told to', function () {
+      eq(opened, 2);
+      eq(decisions(app).join(','), 'delete');
+      truthy(app.view.textContent.indexOf('Photo deleted') !== -1, app.view.textContent);
+    });
+  })();
+
+  await (async function keptWithoutItsRow() {
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: MINE,
+      ledger: { ok: true, data: {
+        record: { completed: 0, placed: 1, survived: 0, standing: 'Unproven' },
+        entries: [],
+        kept: [{ handle: 'ph00000000cc', state: 'kept', taken_at: Math.floor(Date.now() / 1000) - 3 * 86400 }]
+      } }
+    });
+    await settle(); await settle();
+    tab(app, 'ledger');
+    it('lists a kept photo whose row has gone, so it can still be found', function () {
+      drewCleanly(app, 'the kept list');
+      truthy(app.view.textContent.indexOf('Photos kept in this app') !== -1, app.view.textContent);
+      truthy(app.view.textContent.indexOf('Taken 3 days ago') !== -1, app.view.textContent);
+      eq(app.view.textContent.indexOf('No history yet'), -1, 'it is not an empty ledger');
+      truthy(labels(app).indexOf('View photo') !== -1, labels(app).join(','));
     });
   })();
 

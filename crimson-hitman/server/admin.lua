@@ -837,6 +837,63 @@ function Admin.diagnose(source, subjectId)
         say('photo storage: server (taken in the app and kept in data/photos; no image '
             .. 'host is used)')
     end
+    -- How a photo kept on this server reaches the client's phone's Photos,
+    -- which keeps links, never pictures. A link this server serves needs a
+    -- public https address and lb-phone's own allow list to take it; with
+    -- neither, the page uses lb-phone's upload if the phone has one, and
+    -- otherwise keeps the photo in the app. Each line says which, so "my
+    -- client could not save the photo" has an answer here.
+    if storage == 'server' and Photos and Photos.publicBase then
+        local base, from = Photos.publicBase()
+        if base and type(GetPasswordHash) ~= 'function' then
+            say(('photo links: none (this server build has no GetPasswordHash, so it cannot '
+                .. 'make a link nobody can guess; %s is not used)'):format(base))
+        elseif base then
+            say(('photo links: %s/p/... (from %s)'):format(base, from))
+            local allowed, host = Photos.galleryAllows(base .. '/p/x.webp')
+            if allowed == true then
+                say(('  lb-phone\'s upload allow list takes %s: yes'):format(host))
+            elseif allowed == nil then
+                say(('  could not read lb-phone\'s config to check that it takes %s. Make sure '
+                    .. 'it is in Config.UploadWhitelistedHostnames in lb-phone\'s config.')
+                    :format(host))
+            else
+                say(('  -> lb-phone\'s upload allow list does NOT take %s, so phones may refuse '
+                    .. 'to save these photos. Add "%s" to Config.UploadWhitelistedHostnames in '
+                    .. 'lb-phone\'s config.'):format(host, host))
+            end
+        else
+            say(('photo links: none (%s)'):format(tostring(from)))
+            say('  -> photos saved to Photos go through lb-phone\'s own upload if the phone '
+                .. 'has one, and are kept in the app if not. To serve them from this server '
+                .. 'with no image host, set Config.Completion.PhotoPublicUrl or web_baseUrl '
+                .. '(Qbox Nucleus: set web_baseUrl "<name>.server.qbox.re").')
+        end
+    end
+    -- What the photos on disk come to: an owner who never hears from the
+    -- kept ones would otherwise only find them by looking at the folder.
+    if Photos and Photos.totals then
+        local okTotals, totals = pcall(Photos.totals)
+        okTotals = okTotals and type(totals) == 'table'
+        if okTotals and (storage == 'server'
+                or totals.waiting.count + totals.kept.count + totals.served.count > 0) then
+            local function size(bytes)
+                return ('%.1f MB'):format((tonumber(bytes) or 0) / 1048576)
+            end
+            say(('photos on disk: %d waiting (%s), %d kept in the app (%s), %d served to '
+                .. 'phones\' Photos (%s)'):format(
+                totals.waiting.count, size(totals.waiting.bytes),
+                totals.kept.count, size(totals.kept.bytes),
+                totals.served.count, size(totals.served.bytes)))
+            if Config.Completion.KeptPhotoDays then
+                say(('  kept photos are deleted after %s day(s) (Config.Completion.KeptPhotoDays)')
+                    :format(tostring(Config.Completion.KeptPhotoDays)))
+            elseif totals.kept.count > 0 then
+                say('  kept photos stay until their owner deletes them; '
+                    .. 'Config.Completion.KeptPhotoDays puts a limit on that')
+            end
+        end
+    end
     if storage == 'host' and Photo and Photo.allowedHosts then
         local okHosts, hosts = pcall(Photo.allowedHosts)
         hosts = okHosts and type(hosts) == 'table' and hosts or {}

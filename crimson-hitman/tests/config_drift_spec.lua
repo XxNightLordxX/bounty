@@ -211,6 +211,48 @@ describe('starting on a config that predates a setting', function()
         resetConfig()
     end)
 
+    --- Where photos saved to a phone are served from, and how long one kept
+    --- in the app lasts. Both are unset as shipped, and unset is a real
+    --- setting: web_baseUrl, and kept until deleted.
+    it('checks where photos are served from and how long kept ones last', function()
+        local said = {}
+        local realPrint = _G.print
+        _G.print = function(...)
+            local parts = {}
+            for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+            said[#said + 1] = table.concat(parts, ' ')
+        end
+
+        boot(function() end)
+        eq(Config.Completion.PhotoPublicUrl, nil, 'unset: web_baseUrl is used')
+        eq(Config.Completion.KeptPhotoDays, nil, 'unset: kept until its owner deletes it')
+        resetConfig()
+
+        boot(function()
+            Config.Completion.PhotoPublicUrl = 'https://photos.example.com/crimson-hitman/'
+            Config.Completion.KeptPhotoDays = '30'
+        end)
+        eq(Config.Completion.PhotoPublicUrl, 'https://photos.example.com/crimson-hitman',
+            'taken, without the slash that would double in every link')
+        eq(Config.Completion.KeptPhotoDays, 30)
+        resetConfig()
+
+        said = {}
+        boot(function()
+            Config.Completion.PhotoPublicUrl = 'http://203.0.113.7:30120/crimson-hitman'
+            Config.Completion.KeptPhotoDays = 0
+        end)
+        _G.print = realPrint
+        eq(Config.Completion.PhotoPublicUrl, nil,
+            'not https: a phone would be handed links its Photos cannot load')
+        eq(Config.Completion.KeptPhotoDays, nil,
+            'zero would delete every kept photo on the next tick')
+        local told = table.concat(said, ' | ')
+        truthy(told:find('PhotoPublicUrl', 1, true), 'and the operator is told: ' .. told)
+        truthy(told:find('KeptPhotoDays', 1, true), told)
+        resetConfig()
+    end)
+
     it('fills the failure-stake ceilings on a config that never had them', function()
         -- Config.Penalty is a whole new section, so the section fill covers
         -- it — but Contracts.clampPenalty indexes MaxAmount on every

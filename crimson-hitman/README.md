@@ -28,6 +28,8 @@ are created automatically on first start. Nothing to import either way.
 |---|---|
 | `Config.Completion.PhotoStorage` | Where kill photos are kept. `'server'` (as shipped) needs no image host: the hitman takes the photo in the app's own viewfinder and it is kept as a file in `crimson-hitman/data/photos/`, which the server must be able to write to. `'host'` uses lb-phone's own camera and the image host it uploads to, keeping only the link. Either way only the client who placed the contract sees the photo, once (see *The kill photo* below). `/ch-diag` says which is in use |
 | `Config.Completion.PhotoMaxSide` / `PhotoMaxBytes` | `'server'` storage only: the app shrinks each kill photo until its longest side is at most this many pixels (1280) and it weighs at most this many bytes (600000), and the server refuses anything bigger |
+| `Config.Completion.PhotoPublicUrl` | `'server'` storage only: the public **https** address this server serves photos from when a client saves one to their phone's Photos, such as `'https://photos.example.com/crimson-hitman'`. Unset (as shipped), the server's `web_baseUrl` is used. Add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. See *No image host?* below; `/ch-diag` says which address is used and whether lb-phone takes it |
+| `Config.Completion.KeptPhotoDays` | How many days a photo kept for its client in the app (because their phone could not save it) lasts. Unset (as shipped), it stays until they delete it. `/ch-diag` says how many are kept and how much disk they take |
 | `Config.Completion.ExtraPhotoHosts` | `'host'` storage only. Kill photos are accepted only from image hosts lb-phone itself allows uploads from, plus these. Ships with Fivemanage (`fivemanage.com`, `fmfile.com`), lb-phone's default uploader. If `/ch-diag` shows `photo hosts: 0`, or kill photos are refused with "not on this server's allow list", add your phone's upload host here (a bare domain, no `https://`). lb-phone's camera upload must work first |
 | `Config.Database.Mode` | `json` (as shipped; no database at all), `mysql` (oxmysql), `memory` (testing only — nothing survives a restart) |
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who cannot open the app. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit |
@@ -141,25 +143,39 @@ it the moment it is sent; on `'host'` storage the camera never saves it to
 their gallery and their page is never sent the link. Either way their Ledger
 row has no photo. The client is told it is waiting under Ledger. Their row
 there has a **View photo** button, and tapping it opens the photo full-screen
-with **Save to Photos** and **Delete**. On `'host'` storage Save puts it in
-the phone's own Photos app (on `'server'` storage, see below); anything else
-deletes it, including closing it another way, such as switching tab.
-Afterwards the row says which of the two happened. Reading the Ledger does not
-count as a view; only tapping the button does. A photo is also deleted if:
+with **Save to Photos** and **Delete**. Save to Photos puts it in the phone's
+own Photos app (how, on `'server'` storage, is under *No image host?* below);
+anything else deletes it, including closing it another way, such as
+switching tab. Afterwards the row says which happened. Reading the Ledger
+does not count as a view; only tapping the button does.
+
+Where the phone cannot take the photo, it is not lost: the button reads
+**Save** and keeps it for the client in this app instead ("Your phone can't
+take it, so it is kept for you in this app"). The same happens if the phone
+refuses it when asked: the dialog then offers **Keep it in the app instead**.
+A kept photo stays on the client's Ledger row with **View photo**, opens as
+often as they like, and is deleted when they tap **Delete** there, or after
+`Config.Completion.KeptPhotoDays` if that is set. It outlives its row: once
+the row has been pushed off the Ledger, the photo is listed on its own under
+**Photos kept in this app**. On `'host'` storage a kept photo is its link; on
+`'server'` storage its file moves to `data/photos/kept/`.
+
+A photo still waiting, or open, is also deleted if:
 
 - it is left open for `Config.Completion.PhotoOpenSeconds` (10 minutes), as
   when the phone is closed while it is open;
 - it is never opened within `Config.Ledger.PhotoRetentionDays` (7 days);
 - its row is pushed off the client's ledger (`Config.Ledger.Depth`);
-- staff void the contract with `/ch-void`.
+- staff void the contract with `/ch-void` (which deletes a kept one too).
 
 With `Config.Ledger.StorePhotos = false` no photo is kept at all. On
 `'server'` storage every one of these deletes the photo's file from
-`data/photos/`, and each start removes any file there that no photo still
-names (left by a crash, say; this needs a server build with `io.readdir`).
-On `'host'` storage (`Config.Completion.PhotoStorage`), deleting a photo only
-makes the app forget its link. The file stays on the image host (Fivemanage,
-say), because lb-phone gives a resource no way to delete it.
+`data/photos/`, and each start removes any file there (or in `kept/`) that no
+photo still names (left by a crash, say; this needs a server build with
+`io.readdir`). On `'host'` storage (`Config.Completion.PhotoStorage`),
+deleting a photo only makes the app forget its link. The file stays on the
+image host (Fivemanage, say), because lb-phone gives a resource no way to
+delete it.
 
 **No image host? Use `PhotoStorage = 'server'`** (the shipped setting). The
 photo is taken in the app with lb-phone's own game camera, sent to this
@@ -167,10 +183,36 @@ server over a latent event, checked (a webp, jpeg or png of at most
 `PhotoMaxBytes`, and really what it says it is) and kept as a file in
 `crimson-hitman/data/photos/`. When the client opens it, it is sent to their
 phone alone. Nothing about it depends on Fivemanage or any other upload
-service, and the host allowlist is not used. A photo kept on the server is
-not put into the client's phone **Photos** app, whose gallery stores only
-links: **Save to Photos** says so, and the client looks at it in the app and
-deletes it there.
+service, and the host allowlist is not used.
+
+lb-phone's Photos app keeps a link to each photo, never the picture, so
+**Save to Photos** needs a link. In order:
+
+1. **This server serves it.** With a public **https** address, the server
+   gives the photo a new name nobody can guess (128 bits from the server's
+   own cryptographic random source) and serves it read-only at
+   `https://<address>/p/<name>.webp`; the client's Photos keeps that link.
+   The file stays for as long as their Photos does: deleting it there
+   (`lb-phone:deletedFromGallery`), or factory resetting the phone it was
+   saved from (`lb-phone:factoryReset`), deletes it here too. The address is
+   `Config.Completion.PhotoPublicUrl`, or else `https://<web_baseUrl>/crimson-hitman`.
+   Cfx.re's own `*.users.cfx.re` addresses stopped working on 30 June 2026;
+   Qbox's free **Nucleus** replacement gives you one (`set web_baseUrl
+   "<name>.server.qbox.re"` in `server.cfg`), or put your own https proxy in
+   front of the server and set `PhotoPublicUrl` to it. **Add the host name to
+   lb-phone's `Config.UploadWhitelistedHostnames`** (for Nucleus,
+   `"<name>.server.qbox.re"`, or `"*.server.qbox.re"`), or the phone may
+   refuse to save it.
+2. **lb-phone uploads it.** With no address, the app hands the photo to
+   lb-phone's own upload (whatever `Config.UploadMethod` the phone uses),
+   saves that link, and the server deletes its copy at once.
+3. **Kept in the app.** With neither, the photo is kept for the client in
+   this app, as above.
+
+`/ch-diag` says which: the address it serves photos from (or why there is
+none), whether lb-phone's `UploadWhitelistedHostnames` / `Domains` take it,
+and how many photos are on disk, kept in the app and served to phones, and
+how much space they take.
 
 **Counter-play.** A target can see the price on their head and buy it out.
 Players the app is closed to — law enforcement and EMS — do the same with
@@ -251,7 +293,7 @@ entry, and `/ch-contracts` lists it for any player.
 | `/ch-contracts <player id\|citizen id>` | A player's contracts, newest first, closed ones included while they are kept: each id, its state, their role and the target. Lists the ids for `/ch-timeline`, `/ch-void` and `/ch-whois`. Contracts they placed or took anonymously are left out unless you also hold `crimson.identity` |
 | `/ch-timeline <contract>` | One contract's state, escrow lines and audit trail |
 | `/ch-whois <contract>` | Who is really behind an anonymous creator or hitman. Needs `crimson.identity`, a separate ACE |
-| `/ch-void <contract> [reason]` | Close a contract and return its escrow to the creator. Any kill photo from it that the creator has not yet saved is deleted |
+| `/ch-void <contract> [reason]` | Close a contract and return its escrow to the creator. Any kill photo from it that the creator has not saved to their phone is deleted, including one kept for them in the app |
 | `/ch-stuck` | Escrow lines that were mid-payment when the server stopped, including one being handed back from a contract that was never placed. Who each was paying is shown as a role (the client, an operative) unless you also hold `crimson.identity`. Also lists held lines of a contract that was never placed which do not say whose they are (written by an older version) |
 | `/ch-settle <line> pay\|return [citizenid]` | Finish one of those by hand. `pay` goes to whom the interrupted payment was for; `return` goes to whoever put the line up, so a hitman's stake goes back to that hitman. A line that does not say whose it is needs `return <citizenid>` once you know who put it up; the citizen id is refused on any other line. A player who is offline gets it at their next login, and the command says so |
 | `/hitmanadmin timers` | Test servers: bring every wait and cooldown forward. Deadlines are only ever moved later, never earlier. `crimson.admin` itself only — the extra ACEs do not open it — and audited |

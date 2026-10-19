@@ -34,10 +34,15 @@ server_scripts {
     'server/main.lua',
 }
 
--- Kill photos are not served from here. On 'server' photo storage (the
--- default) they are written to data/photos/ by the server, which must be
--- able to write there, and reach the client's phone as a latent event when
--- they open one; they are never one of the page's files.
+-- Kill photos are never one of the page's files. On 'server' photo storage
+-- (the default) they are written to data/photos/ by the server, which must
+-- be able to write there, and reach the client's phone as a latent event
+-- when they open one. A photo the client saves to their phone's Photos is
+-- served read-only by this resource's own HTTP handler (SetHttpHandler, in
+-- server/bridges.lua) at https://<public address>/crimson-hitman/p/<name>,
+-- for as long as their Photos keeps it. That needs a public https address
+-- (Config.Completion.PhotoPublicUrl, or web_baseUrl) and that host in
+-- lb-phone's Config.UploadWhitelistedHostnames; /ch-diag checks both.
 files {
     'ui/index.html',
     'ui/app.css',

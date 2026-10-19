@@ -594,6 +594,31 @@ describe('saving the client their kill photo', function()
         eq(#saves(), 0)
     end)
 
+    it('saves the link the server serves a photo it keeps under, once it hands it over', function()
+        Env.reset()
+        Client.boot()
+        local SERVED = 'https://chatty.server.qbox.re/crimson-hitman/p/Zk3_q-9xWb2LmT0cRf8aNd.webp'
+        -- A photo kept on the server opens as a picture, with no link.
+        Client.nuiCall('crimson:openPhoto', { handle = 'ph00000000aa' })
+        local asked = Client.toServer[#Client.toServer]
+        Client.fire('crimson-hitman:result', { rid = asked.args[1].__rid, event = 'openPhoto',
+            ok = true, data = { handle = 'ph00000000aa', latent = true, link = true } })
+        local _, answer = Client.nuiCall('crimson:saveToPhotos', { handle = 'ph00000000aa' })
+        falsy(answer.ok, 'no link yet: nothing to save')
+
+        Client.fire('crimson-hitman:result', { event = 'photoDecision', ok = true,
+            data = { handle = 'ph00000000aa', state = 'open', link = SERVED } })
+        _, answer = Client.nuiCall('crimson:saveToPhotos', { handle = 'ph00000000aa' })
+        truthy(answer and answer.ok, 'the served link is saved')
+        eq(saves()[1], SERVED)
+
+        Client.fire('crimson-hitman:result', { event = 'photoDecision', ok = true,
+            data = { handle = 'ph00000000aa', state = 'saved' } })
+        _, answer = Client.nuiCall('crimson:saveToPhotos', { handle = 'ph00000000aa' })
+        falsy(answer.ok, 'and forgotten once the server has the decision')
+        eq(#saves(), 1)
+    end)
+
     it('answers on a phone without the export rather than leaving the page waiting', function()
         Env.reset()
         Client.boot({ without = { 'SaveToGallery' } })
@@ -811,6 +836,33 @@ describe('a kill photo kept on the server, on its way to the client', function()
                     'the photo is passed around once, not mirrored to the page as well')
             end
         end
+    end)
+
+    it('tells the page how the photo may be saved, as the server said', function()
+        Env.reset()
+        Client.boot()
+        local asked = openAsked('ph00000000aa')
+        Client.fire('crimson-hitman:result', {
+            rid = asked.args[1].__rid, event = 'openPhoto', ok = true,
+            data = { handle = 'ph00000000aa', latent = true, link = true },
+        })
+        Client.fire('crimson-hitman:photoImage', { handle = 'ph00000000aa', src = SRC })
+        truthy(Client.answered and Client.answer.ok)
+        eq(Client.answer.data.link, true, 'the server can serve it to the phone\'s Photos')
+        falsy(Client.answer.data.kept)
+
+        Env.reset()
+        Client.boot()
+        asked = openAsked('ph00000000bb')
+        Client.fire('crimson-hitman:photoImage', { handle = 'ph00000000bb', src = SRC })
+        Client.fire('crimson-hitman:result', {
+            rid = asked.args[1].__rid, event = 'openPhoto', ok = true,
+            data = { handle = 'ph00000000bb', latent = true, kept = true },
+        })
+        truthy(Client.answered and Client.answer.ok)
+        eq(Client.answer.data.kept, true, 'a photo kept in the app, arrived ahead of its reply')
+        eq(Client.answer.data.src, SRC)
+        falsy(Client.answer.data.link)
     end)
 
     it('takes a photo that came before the reply naming it', function()

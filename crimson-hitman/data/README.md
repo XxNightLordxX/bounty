@@ -32,9 +32,12 @@ Nothing above is needed in `mysql` or `memory` mode.
 database mode: one file each, named for the photo's own handle
 (`ph….webp`, `.jpg` or `.png`), written when a kill is verified and deleted
 when the client deletes it, leaves it open too long, never opens it, or it
-is otherwise let go of. The server must be able to write here; it creates
-the folder if it can, and the folder ships with this resource for a server
-build that cannot. Each start removes any photo file no record names. Back
+is otherwise let go of. One saved to the client's phone through a link this
+server serves stays while their Photos keeps it, and one kept for them in
+the app moves to `photos/kept/` until they delete it. The server must be
+able to write here; it creates the folders if it can, and `photos/` ships
+with this resource for a server build that cannot. Each start removes any
+photo file no record names. Back
 it up with the rest of `data/` only if you mean to keep photos across a
 restore; in `memory` mode every photo is forgotten at a restart, and the
 files go with it at the next start.

@@ -485,13 +485,14 @@
        handle that was never this player's: the server will not say which,
        so neither does the page. */
     photo_gone: 'That photo is gone. Each one can be opened once, and it is '
-      + 'deleted unless it was saved to your Photos.',
-    // Neither lb-phone's own save nor the client's fallback took it.
-    save_unavailable: 'This phone could not save the photo. It is still open: '
-      + 'try again, or delete it.',
-    // A photo kept on this server, which the phone's Photos cannot hold.
-    save_not_offered: 'This photo is kept on the server and cannot go into '
-      + 'your phone\u2019s Photos. It is still open: look at it, then delete it.',
+      + 'deleted unless it was saved to your Photos or kept in this app.',
+    // The phone did not take it: lb-phone's own save, the client's
+    // fallback or lb-phone's upload refused, or none of them was there.
+    save_unavailable: 'This phone could not save the photo to Photos. It is still '
+      + 'open: keep it in this app instead, or delete it.',
+    // The server has no public address to serve the photo from after all.
+    photo_no_link: 'This server could not give your phone a link to save the photo '
+      + 'with. It is still open: keep it in this app instead, or delete it.',
     // The server opened it and it never reached this phone. The one look
     // was spent all the same, so it is gone.
     photo_no_answer: 'The photo did not reach your phone, and it could be '
@@ -798,11 +799,18 @@
      server is told which. Closing it any other way — another tab, a redraw
      that lost it — is a Delete, and the server is told that too
      (letGoOfProof). A phone closed mid-view tells nobody, and the server
-     deletes it once Config.Completion.PhotoOpenSeconds have passed. */
+     deletes it once Config.Completion.PhotoOpenSeconds have passed.
+
+     The phone's Photos keeps links, never pictures, so how a photo gets
+     there depends on what it is (saveRoute). One the phone cannot take at
+     all — or that it refused when asked — is kept for the client in this
+     app instead, which opens it again whenever they like until they delete
+     it. Nothing is lost because a phone could not save it. */
 
   /* The photo this page has open and has not yet answered for, by handle.
      Kept off state.dialog so that losing the dialog is something draw() can
-     notice: it compares this against what it is about to draw. */
+     notice: it compares this against what it is about to draw. A photo kept
+     in the app is not one of these: closing it only closes it. */
   var proofShown = null;
 
   // What the client's Ledger row says once the photo is no longer waiting.
@@ -814,12 +822,16 @@
     open: 'Photo opened and not saved. It is being deleted.'
   };
 
-  /* Set the row's state here as well as on the server, so the Ledger says
+  /* Set the photo's state here as well as on the server, so the Ledger says
      what happened the moment the dialog closes rather than after the next
-     refresh. */
+     refresh: on its row, or in the list of photos kept in the app. */
   function markProof(handle, photoState) {
-    asList(state.ledger && state.ledger.entries).forEach(function (row) {
+    var ledger = state.ledger || {};
+    asList(ledger.entries).forEach(function (row) {
       if (row.photo && row.photo.handle === handle) { row.photo.state = photoState; }
+    });
+    asList(ledger.kept).forEach(function (photo) {
+      if (photo && photo.handle === handle) { photo.state = photoState; }
     });
   }
 
@@ -843,11 +855,72 @@
         }
         return;
       }
-      markProof(handle, 'open');
-      proofShown = { handle: handle };
-      state.dialog = { kind: 'proof', handle: handle, src: src };
+      var kept = r.data.kept === true;
+      if (!kept) {
+        markProof(handle, 'open');
+        proofShown = { handle: handle };
+      }
+      state.dialog = {
+        kind: 'proof', handle: handle, src: src, kept: kept,
+        // This server can serve the photo to the phone's Photos itself.
+        link: r.data.link === true
+      };
       render();
     });
+  }
+
+  /* How the open photo can go into the phone's Photos, or null where it
+     cannot.
+
+       'gallery'  it is on an image host, and its link is handed over;
+       'link'     the server keeps it and can serve it: it is asked for the
+                  link, which is handed over;
+       'upload'   the server keeps it and cannot serve it: lb-phone uploads
+                  it wherever the phone uploads its own photos, and that
+                  link is handed over. */
+  function saveRoute(d) {
+    if (!/^data:/.test(d.src)) { return 'gallery'; }
+    if (d.link) { return 'link'; }
+    var phone = window.components;
+    if (phone && typeof phone.uploadMedia === 'function'
+        && typeof phone.saveToGallery === 'function') {
+      return 'upload';
+    }
+    return null;
+  }
+
+  /* Into the phone's Photos by link: lb-phone's components.saveToGallery
+     where the phone gives it to custom apps, otherwise the client's save
+     with lb-phone's export, which saves only the link the server handed
+     this player for this photo. Settles once the phone has it; an answer
+     of false is the phone saying no. */
+  function toGallery(handle, url) {
+    var phone = window.components;
+    if (phone && typeof phone.saveToGallery === 'function') {
+      return new Promise(function (resolve) { resolve(phone.saveToGallery(url)); })
+        .then(function (id) {
+          if (id === false) { throw { err: 'save_unavailable' }; }
+          return id;
+        });
+    }
+    // The client's refusal is about this phone, never the photo itself:
+    // whatever it says, the photo is still open on the server.
+    return post('saveToPhotos', { handle: handle }).then(function (r) {
+      if (!r.ok) { throw { err: 'save_unavailable' }; }
+      return r;
+    });
+  }
+
+  // The data URI the server sent, as the Blob lb-phone's upload takes.
+  function blobOf(src) {
+    var parts = /^data:([^;,]+);base64,(.*)$/.exec(src);
+    if (!parts || typeof window.atob !== 'function' || typeof window.Blob !== 'function') {
+      throw { err: 'save_unavailable' };
+    }
+    var binary = window.atob(parts[2]);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+    return new window.Blob([bytes], { type: parts[1] });
   }
 
   /* Tell the server what became of the open photo, and close it here.
@@ -859,7 +932,7 @@
     if (state.dialog && state.dialog.kind === 'proof' && state.dialog.handle === handle) {
       state.dialog = null;
     }
-    markProof(handle, choice === 'save' ? 'saved' : 'deleted');
+    markProof(handle, choice === 'save' ? 'saved' : choice === 'keep' ? 'kept' : 'deleted');
     render();
     return post('photoDecision', { handle: handle, choice: choice }).then(function (r) {
       if (!r.ok) {
@@ -872,47 +945,62 @@
     });
   }
 
-  /* Into the phone's own Photos, then tell the server.
+  /* Into the phone's own Photos, by whichever route this photo has, then
+     tell the server. Only once the phone has it is the server told 'save':
+     it lets go of its own copy the moment it hears that, unless the phone
+     saved the link the server serves it under.
 
-     lb-phone's components.saveToGallery where the phone gives it to custom
-     apps; otherwise the client saves it with lb-phone's export, for the
-     photo the server opened for this player and nothing else. Only once
-     the phone has it is the server told 'save' — it forgets the photo the
-     moment it hears that. */
-  function saveProof(d) {
-    // A photo the server keeps itself arrives as a data URI, and lb-phone's
-    // gallery keeps links of at most 500 characters. Handed one, it would
-    // either refuse or keep a broken entry while the server, told 'save',
-    // deleted the only copy. So it is not handed over: the photo stays
-    // open, to look at and then delete.
-    if (/^data:/.test(d.src)) {
-      fail({ err: 'save_not_offered' });
-      return Promise.resolve();
-    }
-    var phone = window.components;
+     Refused anywhere along the way, the photo stays open and nothing is
+     reported: the dialog offers to keep it in the app instead. */
+  function saveProof(d, route) {
     var saving;
-    if (phone && typeof phone.saveToGallery === 'function') {
-      saving = new Promise(function (resolve) { resolve(phone.saveToGallery(d.src)); });
+    if (route === 'gallery') {
+      saving = toGallery(d.handle, d.src);
+    } else if (route === 'link') {
+      saving = post('photoDecision', { handle: d.handle, choice: 'link' }).then(function (r) {
+        if (!r.ok || !r.data || typeof r.data.link !== 'string') { throw r; }
+        return toGallery(d.handle, r.data.link);
+      });
     } else {
-      saving = post('saveToPhotos', { handle: d.handle }).then(function (r) {
-        if (!r.ok) { throw r; }
-        return r;
+      saving = new Promise(function (resolve) {
+        resolve(window.components.uploadMedia('Image', blobOf(d.src)));
+      }).then(function (url) {
+        if (typeof url !== 'string' || !url) { throw { err: 'save_unavailable' }; }
+        return toGallery(d.handle, url);
       });
     }
     return saving.then(function () {
       return decideProof(d.handle, 'save').then(function (r) {
         if (r.ok) { say('Saved to your Photos.', 'ok'); }
       });
-    }, function () {
-      // Still open: the server has not been told anything, so the photo is
-      // still theirs to save again or delete.
-      fail({ err: 'save_unavailable' });
+    }, function (r) {
+      // Left open too long while the phone was busy: it is gone, and
+      // there is nothing left to keep.
+      if (r && r.err === 'photo_gone') {
+        proofShown = null;
+        state.dialog = null;
+        markProof(d.handle, 'deleted');
+        fail(r);
+        render();
+        return;
+      }
+      fail({ err: r && r.err === 'photo_no_link' ? 'photo_no_link' : 'save_unavailable' });
+      if (state.dialog && state.dialog.kind === 'proof' && state.dialog.handle === d.handle) {
+        state.dialog.failed = true;
+        render();
+      }
     });
   }
 
-  /* The open photo was closed some way other than its own two buttons.
-     That is a Delete, and the server is told, rather than the photo being
-     left open on the server until it times out. */
+  function keepProof(d) {
+    return decideProof(d.handle, 'keep').then(function (r) {
+      if (r.ok) { say('Kept in this app. Open it again from your Ledger.', 'ok'); }
+    });
+  }
+
+  /* The open photo was closed some way other than its own buttons. That is
+     a Delete, and the server is told, rather than the photo being left open
+     on the server until it times out. */
   function letGoOfProof() {
     if (!proofShown) { return; }
     var d = state.dialog;
@@ -925,10 +1013,20 @@
 
   function renderProof(view) {
     var d = state.dialog;
+    var route = d.kept || d.failed ? null : saveRoute(d);
     var panel = el('div', 'card dialog photo-view');
     panel.appendChild(el('div', 'target', 'Proof of the kill'));
-    panel.appendChild(el('div', 'reason', 'You can see this once. Save it to Photos to '
-      + 'keep it \u2014 it is deleted when you close this.'));
+    panel.appendChild(el('div', 'reason', d.kept
+      ? 'Kept for you in this app. Open it again from your Ledger whenever you like, '
+        + 'until you delete it.'
+      : d.failed
+        ? 'Your phone could not save it to Photos. Keep it in this app instead, or '
+          + 'delete it \u2014 it is deleted when you close this.'
+        : route
+          ? 'You can see this once. Save it to Photos to keep it \u2014 it is deleted '
+            + 'when you close this.'
+          : 'You can see this once. Your phone can\u2019t take it, so it is kept for you '
+            + 'in this app. Tap Save to keep it \u2014 it is deleted when you close this.'));
 
     var frame = el('div', 'photo-frame');
     var img = document.createElement('img');
@@ -938,10 +1036,26 @@
     panel.appendChild(frame);
 
     var row = el('div', 'row');
-    row.appendChild(actionButton('primary', 'Save to Photos', 'proof-save:' + d.handle,
-      'Saving\u2026', function () { return saveProof(d); }));
-    row.appendChild(actionButton('ghost is-destructive', 'Delete', 'proof-delete:' + d.handle,
-      'Deleting\u2026', function () { return decideProof(d.handle, 'delete'); }));
+    if (d.kept) {
+      row.appendChild(actionButton('ghost is-destructive', 'Delete', 'proof-delete:' + d.handle,
+        'Deleting\u2026', function () { return decideProof(d.handle, 'delete'); }));
+      var close = el('button', 'ghost', 'Close');
+      close.onclick = closeDialog;
+      row.appendChild(close);
+    } else {
+      if (d.failed) {
+        row.appendChild(actionButton('primary', 'Keep it in the app instead',
+          'proof-keep:' + d.handle, 'Keeping\u2026', function () { return keepProof(d); }));
+      } else if (route) {
+        row.appendChild(actionButton('primary', 'Save to Photos', 'proof-save:' + d.handle,
+          'Saving\u2026', function () { return saveProof(d, route); }));
+      } else {
+        row.appendChild(actionButton('primary', 'Save', 'proof-keep:' + d.handle,
+          'Saving\u2026', function () { return keepProof(d); }));
+      }
+      row.appendChild(actionButton('ghost is-destructive', 'Delete', 'proof-delete:' + d.handle,
+        'Deleting\u2026', function () { return decideProof(d.handle, 'delete'); }));
+    }
     panel.appendChild(row);
     view.appendChild(panel);
   }
@@ -4364,7 +4478,14 @@
       view.appendChild(card);
     }
 
-    if (!rows.length) {
+    /* Photos kept for this client in the app whose ledger row is gone:
+       pushed off by newer rows, or past the days a row keeps its photo. A
+       kept photo outlives its row, and this is where its owner finds it. */
+    var kept = asList(data.kept).filter(function (photo) {
+      return photo && typeof photo === 'object' && photo.state === 'kept';
+    });
+
+    if (!rows.length && !kept.length) {
       view.appendChild(el('div', 'empty', 'No history yet.'));
       view.appendChild(buildStamp());
       return;
@@ -4401,20 +4522,33 @@
       view.appendChild(node);
     });
 
-    view.appendChild(refHint());
+    if (kept.length) {
+      view.appendChild(el('h3', 'section', 'Photos kept in this app'));
+      kept.forEach(function (photo) {
+        var node = el('div', 'card');
+        node.appendChild(el('div', 'target', 'Kill photo'));
+        var taken = agoText(photo.taken_at);
+        if (taken) { node.appendChild(el('div', 'reason', 'Taken ' + taken.toLowerCase())); }
+        node.appendChild(proofLine(photo));
+        view.appendChild(node);
+      });
+    }
+
+    if (rows.length) { view.appendChild(refHint()); }
     view.appendChild(buildStamp());
   }
 
   /* What a client's ledger row says about its kill photo: a button while
-     it waits to be seen, and afterwards which of the two things they did
-     with it. Nothing at all once it is gone. */
+     it waits to be seen, or while it is kept for them in the app, and
+     otherwise what they did with it. Nothing at all once it is gone. */
   function proofLine(photo) {
     var line = el('div', 'proof-line');
-    if (photo.state === 'pending') {
+    if (photo.state === 'pending' || photo.state === 'kept') {
       line.appendChild(actionButton('ghost ico i-camera', 'View photo',
         'proof:' + photo.handle, 'Opening\u2026',
         function () { return openProof(photo.handle); }));
-      line.appendChild(el('div', 'hint', 'You can see it once.'));
+      line.appendChild(el('div', 'hint', photo.state === 'kept'
+        ? 'Kept for you in this app.' : 'You can see it once.'));
     } else if (PROOF_WORDS[photo.state]) {
       line.appendChild(el('div', 'hint', PROOF_WORDS[photo.state]));
     }

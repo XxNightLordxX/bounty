@@ -161,11 +161,16 @@ function serverStub() {
       fulfilment: 'elimination', resolved_at: 1700000000,
       photo: { handle: 'ph00000000aa', state: 'pending' }
     }],
+      // A photo kept for the client in the app whose row has gone: listed
+      // on its own under the history.
+      kept: [{ handle: 'ph00000000bb', state: 'kept',
+               taken_at: Math.floor(Date.now() / 1000) - 3 * 86400 }],
       record: { completed: 0, placed: 0, survived: 0, standing: 'Unproven' } } },
     // A full-resolution portrait photograph, which is what a phone camera
     // hands over. Unbounded, one of these once made a history entry taller
-    // than the whole viewport.
-    openPhoto: { ok: true, data: { handle: 'ph00000000aa',
+    // than the whole viewport. Kept on the server, which can serve it to the
+    // phone's Photos (link), so the dialog offers Save to Photos.
+    openPhoto: { ok: true, data: { handle: 'ph00000000aa', link: true,
       url: 'data:image/svg+xml;base64,' + btoa(
         '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920">'
         + '<rect width="1080" height="1920" fill="#555"/></svg>') } },
@@ -847,6 +852,63 @@ async function main() {
     // Portrait in, portrait out: contained, not stretched or cropped.
     truthy(oneView && oneView.imgW < oneView.imgH,
       'the 9:16 photo is drawn ' + (oneView && oneView.imgW) + 'x' + (oneView && oneView.imgH));
+  });
+
+  /* The same dialog once the phone has refused the photo: the longest
+     label it carries, "Keep it in the app instead", beside Delete. Both on
+     screen and whole at phone size, the smallest included, or a photo the
+     phone could not take is a photo that is lost. The fixture hands back
+     no link, so the save fails as a phone refusing it would. */
+  const refusedViews = [];
+  for (const [w, h] of [[280, 560], [390, 720]]) {
+    const rp = await browser.newPage({ viewport: { width: w, height: h } });
+    await rp.addInitScript(serverStub);
+    await rp.goto('file://' + UI);
+    await rp.waitForTimeout(250);
+    await rp.click('[data-tab="ledger"]');
+    await rp.waitForTimeout(200);
+    for (const label of ['View photo', 'Save to Photos']) {
+      await rp.evaluate(function (text) {
+        const b = Array.prototype.slice.call(document.querySelectorAll('button'))
+          .filter(function (n) { return n.textContent === text; })[0];
+        if (b) { b.click(); }
+      }, label);
+      await rp.waitForTimeout(250);
+    }
+    refusedViews.push(await rp.evaluate(function (size) {
+      const panel = document.querySelector('.dialog.photo-view');
+      if (!panel) { return { size: size, missing: true }; }
+      const nav = document.querySelector('.tabs').getBoundingClientRect();
+      const box = panel.getBoundingClientRect();
+      const buttons = Array.prototype.slice.call(panel.querySelectorAll('button'));
+      return {
+        size: size,
+        labels: buttons.map(function (b) { return b.textContent; }),
+        buried: buttons.filter(function (b) {
+          return b.getBoundingClientRect().bottom > nav.top + 1;
+        }).map(function (b) { return b.textContent; }),
+        clipped: buttons.filter(function (b) {
+          const r = b.getBoundingClientRect();
+          return b.scrollWidth > b.clientWidth + 1 || r.right > box.right + 1
+            || r.left < box.left - 1;
+        }).map(function (b) { return b.textContent; }),
+        shortest: Math.min.apply(Math, buttons.map(function (b) {
+          return b.getBoundingClientRect().height;
+        }))
+      };
+    }, w + 'x' + h));
+    await rp.close();
+  }
+
+  it('offers to keep a photo the phone refused, on screen and whole', function () {
+    refusedViews.forEach(function (v) {
+      truthy(!v.missing, v.size + ': the dialog closed when the save failed, so this measures nothing');
+      truthy(v.labels.indexOf('Keep it in the app instead') !== -1
+        && v.labels.indexOf('Delete') !== -1, v.size + ': ' + JSON.stringify(v.labels));
+      truthy(v.buried.length === 0, v.size + ' behind the tab bar: ' + JSON.stringify(v.buried));
+      truthy(v.clipped.length === 0, v.size + ' cut off: ' + JSON.stringify(v.clipped));
+      atLeast(v.shortest, 36, v.size + ': shortest button in the refused photo dialog');
+    });
   });
 
   await page.click('[data-tab="onme"]');

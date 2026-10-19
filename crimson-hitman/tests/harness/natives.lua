@@ -199,6 +199,30 @@ function Natives.install()
         Natives.files[file] = nil
         return true
     end
+    -- A file moved to another name inside the resource. Refused, as the
+    -- operating system refuses it, where there is no such file or the
+    -- folder it is moving into does not exist: one os.createdir made, or
+    -- one some file is already in. Natives.renameRefused models a server
+    -- whose rename fails all the same.
+    os.rename = function(from, to)
+        local source, target = inResource(from), inResource(to)
+        if not source or not target or Natives.renameRefused
+            or Natives.files[source] == nil then
+            return nil, tostring(from) .. ' -> ' .. tostring(to) .. ': Permission denied', 13
+        end
+        local folder = target:match('^(.*)/[^/]+$') or ''
+        local exists = Natives.dirs[folder] == true
+        for file in pairs(Natives.files) do
+            if not exists and file:match('^(.*)/[^/]+$') == folder then exists = true end
+        end
+        if not exists then
+            return nil, tostring(from) .. ' -> ' .. tostring(to) .. ': Permission denied', 13
+        end
+        Natives.calls.renamed = Natives.calls.renamed or {}
+        table.insert(Natives.calls.renamed, { from = source, to = target })
+        Natives.files[target], Natives.files[source] = Natives.files[source], nil
+        return true
+    end
     os.createdir = function(path)
         local dir = inResource(path)
         if not dir then return nil, tostring(path) .. ': Failed to create directory', 1 end
@@ -247,6 +271,26 @@ function Natives.install()
         local value = Natives.convars[name]
         if value == nil then return default end
         return value
+    end
+
+    -- The resource's one HTTP handler, kept so a test can send it a request
+    -- the way FXServer does: a table with method and path, and a response
+    -- that records what was written (Natives.httpRequest).
+    _G.SetHttpHandler = function(handler) Natives.httpHandler = handler end
+
+    -- bcrypt as FXServer's GetPasswordHash makes it: '$2a$11$', a 22
+    -- character salt drawn at random from bcrypt's own alphabet (which has
+    -- '.' and '/' in it), and 31 characters of hash. Different every call,
+    -- as the real salt is. A test takes it away to model a build without it.
+    local BCRYPT = './ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+    _G.GetPasswordHash = function(password)
+        Natives.calls.passwordHashes = (Natives.calls.passwordHashes or 0) + 1
+        local out = {}
+        for i = 1, 53 do
+            local k = math.random(1, #BCRYPT)
+            out[i] = BCRYPT:sub(k, k)
+        end
+        return '$2a$11$' .. table.concat(out)
     end
 
     Natives.calls.http = {}
@@ -454,6 +498,27 @@ Natives.blocked = {}
 --- has made in it.
 Natives.RESOURCE_ROOT = '/srv/resources/crimson-hitman'
 Natives.dirs = {}
+
+--- Send the resource's HTTP handler one request, as FXServer would, and
+--- hand back what it answered: { status, headers, body, sent }.
+---@param method string
+---@param path string the part after /crimson-hitman, starting with '/'
+function Natives.httpRequest(method, path)
+    local answer = { sent = false }
+    local res = {
+        writeHead = function(status, headers)
+            answer.status, answer.headers = status, headers or {}
+        end,
+        write = function(data) answer.body = (answer.body or '') .. tostring(data) end,
+        send = function(data)
+            if data ~= nil then answer.body = (answer.body or '') .. tostring(data) end
+            answer.sent = true
+        end,
+    }
+    if not Natives.httpHandler then return nil end
+    Natives.httpHandler({ method = method, path = path, headers = {}, address = '127.0.0.1' }, res)
+    return answer
+end
 
 --- Server convars by name. Empty, as a server.cfg that sets none leaves
 --- them; cleared in place for every stack, like the resource states.
