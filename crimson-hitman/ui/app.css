@@ -1028,6 +1028,9 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
   letter-spacing: 0.02em; margin-top: 0.25rem;
 }
 .proposal .hint { margin-top: 0.35rem; }
+/* What agreeing costs the reader, in the colour the card's own "stake at
+   risk" clock uses, so it is not read past on the way to Agree. */
+.proposal .hint.is-warn { color: var(--crimson-bright); }
 .proposal .row { margin-top: 0.6rem; }
 /* Agreeing is the note's own action, not the card's: brass, like the note
    it is written on, so a card never carries two crimson buttons. */
@@ -1083,8 +1086,8 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
    wraps under them and takes the line, rather than three labels being
    crushed into thirds. */
 .dialog > .row > button { flex: 1 1 8rem; }
-/* The reward editor has three. Taking back gets a line to itself, under
-   Add money and Done, whether or not it is lit yet: it is quiet until
+/* The reward editor has three or four. Taking back gets a line to itself,
+   under Add to it and Done, whether or not it is lit yet: it is quiet until
    something is ticked, and moving it when it lights would put a different
    button under the player's thumb. */
 .dialog > .row.editor-actions > .take-back { flex-basis: 100%; order: 1; }

@@ -200,7 +200,10 @@ describe('a target who has already paid to get out', function()
 
         local before = Env.players[2].PlayerData.money.cash
                      + Env.players[2].PlayerData.money.bank
-        truthy(s.bailout.buy(f.target, c.id), 'the buyout is paid for')
+        local paid, _, queued = s.bailout.buy(f.target, c.id)
+        truthy(paid, 'the buyout is paid for')
+        -- Said to the page, which told the target "it closes shortly" either way.
+        eq(queued, true, 'a buyout under a hitman reports that it waits')
         truthy(Env.players[2].PlayerData.money.cash
                + Env.players[2].PlayerData.money.bank < before,
                'and the premium has actually left')
@@ -214,6 +217,10 @@ describe('a target who has already paid to get out', function()
         eq(view.bailoutPaid, true,
             'the projection carried no sign that it was paid for, so the page '
             .. 'drew the same button at the same price')
+        -- And how long the hitman still has, on the server's clock.
+        eq(view.bailoutSecondsLeft, 120, 'the whole delay is still to run')
+        Env.advance(50)
+        eq(((s.projection.onMe(f.target.cid) or {})[1] or {}).bailoutSecondsLeft, 70)
         local _ = c
     end)
 

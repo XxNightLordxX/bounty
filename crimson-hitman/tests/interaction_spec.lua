@@ -381,6 +381,17 @@ describe('amendments', function()
         eq(outcome, 'expired')
     end)
 
+    -- Both sides are told when it lapses, on the server's clock: neither
+    -- was, and one left unanswered simply vanished.
+    it('tells each party how long a proposal has left', function()
+        local s, f, c = seeded()
+        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE, { seconds = 60 })
+        local seen = (s.amendments.openFor(f.hitman, c.id) or {})[1]
+        truthy(seen, 'the hitman sees it')
+        eq(seen.secondsLeft, proposal.expires_at - os.time())
+        truthy(seen.secondsLeft >= Config.Amendments.ProposalExpirySeconds, 'the whole window is left')
+    end)
+
     it('never allows the target to be changed', function()
         local s, f, c = seeded()
         local proposal, err = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_REASON,

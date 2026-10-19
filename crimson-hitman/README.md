@@ -65,9 +65,13 @@ home as the same property, the same weapon with the same serial. A payout's
 base reward cannot be emptied, because a payout that pays nothing is not a
 contract. The moment somebody accepts, the client can only add to it on their
 own: the hitman took it as written, and escrow exists so it cannot be pulled
-out from under them. Anything else — a shorter deadline, giving back the last
-payout, cancelling — is proposed in the app and happens only if the other side
-agrees.
+out from under them. Adding — money, items, weapons, a bigger kidnapping
+bonus, a longer deadline — and lowering or removing the stake apply at once,
+from Change reward and Extend deadline. Anything else — a shorter deadline,
+giving back the last payout, a new reason, switching between one hitman and
+several, raising the stake (only while nobody holds it), cancelling — is
+proposed in the app and happens only if the other side agrees; a proposal
+nobody answers lapses after `Config.Amendments.ProposalExpirySeconds`.
 
 **Taking one.** Accept from the board, anonymously if you like. More hitmen
 may accept than there are payouts; the first to fulfil are paid. If the

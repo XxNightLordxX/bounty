@@ -540,8 +540,13 @@
      Every action gated behind one would silently do nothing, which is
      indistinguishable from the player declining. These render in-page. */
 
-  function ask(question, detail, onYes) {
-    state.dialog = { kind: 'confirm', question: question, detail: detail, onYes: onYes };
+  /* `labels` may carry { yes, no } to name the two buttons. "Yes" and
+     "Cancel" under "Withdraw this contract?" left Cancel reading as the
+     button that cancels the contract, and a payment's button is better
+     named by what it pays. */
+  function ask(question, detail, onYes, labels) {
+    state.dialog = { kind: 'confirm', question: question, detail: detail, onYes: onYes,
+                     labels: labels || {} };
     render();
   }
 
@@ -570,10 +575,10 @@
      handler is given a plain object keyed by id. Editing a contract needs
      a reason and a deadline together, and asking for them in two dialogs
      one after another is two chances to abandon halfway. */
-  function askFields(question, detail, fields, onValues) {
+  function askFields(question, detail, fields, onValues, confirmLabel) {
     state.dialog = {
       kind: 'fields', question: question, detail: detail,
-      fields: fields, onValues: onValues
+      fields: fields, onValues: onValues, confirmLabel: confirmLabel
     };
     render();
   }
@@ -638,6 +643,8 @@
         if (input.type === 'number') { input.max = spec.max; } else { input.maxLength = spec.max; }
       }
       if (spec.min !== undefined) { input.min = spec.min; }
+      // What an empty box means, where empty is an answer of its own.
+      if (spec.placeholder) { input.placeholder = spec.placeholder; }
       nodes[spec.id] = input;
       panel.appendChild(labelled(spec.label, input));
     });
@@ -724,8 +731,9 @@
     }
 
     var row = el('div', 'row');
+    var named = d.labels || {};
     var yes = el('button', 'primary', d.kind === 'number'
-      ? ((d.opts && d.opts.confirm) || 'Confirm') : 'Yes');
+      ? ((d.opts && d.opts.confirm) || 'Confirm') : (named.yes || 'Yes'));
     yes.onclick = function () {
       var handler = d.onYes, valueHandler = d.onValue;
       var value = input ? parseInt(input.value, 10) : null;
@@ -750,7 +758,7 @@
       if (handler) handler();
       if (valueHandler && value && value > 0) valueHandler(value);
     };
-    var no = el('button', 'ghost', 'Cancel');
+    var no = el('button', 'ghost', named.no || 'Cancel');
     no.onclick = closeDialog;
     row.appendChild(yes);
     row.appendChild(no);
@@ -1597,10 +1605,14 @@
       // Already paid for, and closing once the delay runs out. Drawn before
       // the buy button so a player who has paid is not offered the same
       // price again on a card identical to the one before their money left.
+      // Not "your money is already gone": it comes back if a hitman
+      // finishes it first, and until then they still can.
       if (contract.bailoutPaid) {
+        var still = buyoutWait(secondsLeftOf({ secondsLeft: contract.bailoutSecondsLeft,
+          clockReadAt: contract.clockReadAt }));
         row.appendChild(el('div', 'hint',
-          'You have paid to close this. A hitman is engaged, so it is not '
-          + 'instant \u2014 it closes shortly and your money is already gone.'));
+          'Paid. A hitman still has ' + (still || 'a moment') + ' to finish this '
+          + '\u2014 stay out of sight. If they do, your money comes back.'));
       } else if (contract.bailoutAvailable) {
         var buyoutKey = 'bailout:' + contract.id;
         var buyoutLabel = 'Buy out \u2014 ' + money(contract.bailoutAmount);
@@ -1693,10 +1705,39 @@
     redraw();
   }
 
+  /* What withdrawing starts, in a sentence; null when it starts nothing.
+
+     The dialog said only "This cannot be undone.", and a creator who
+     withdrew to fix the reward or the deadline — both changeable in place —
+     found out about the waits when placing it again was refused. Each wait
+     the server has switched off is left out. */
+  function relistWaitText(contract) {
+    var waits = settings().relistWaits || {};
+    var any = Number(waits.anyMinutes) || 0;
+    var same = Number(waits.sameTargetMinutes) || 0;
+    var everyone = Number(waits.everyoneMinutes) || 0;
+    var name = contract.targetName || 'them';
+    var mine = [];
+    if (any > 0) { mine.push('any new contract for ' + durationText(any)); }
+    if (same > 0) { mine.push('one on ' + name + ' for ' + durationText(same)); }
+    var parts = [];
+    if (mine.length) {
+      parts.push('After this you cannot place ' + mine.join(', or '));
+    }
+    if (everyone > 0) {
+      parts.push((parts.length ? 'and nobody else' : 'After this nobody')
+        + ' can list ' + (parts.length ? 'them' : name) + ' for ' + durationText(everyone));
+    }
+    return parts.length ? parts.join(', ') + '.' : null;
+  }
+
   function cancelContract(contract) {
+    var waits = relistWaitText(contract);
     ask('Withdraw this contract?',
-      'Nobody has taken it, so everything you put up comes back to you. '
-        + 'This cannot be undone.',
+      'Nobody has taken it, so everything you put up comes back to you.'
+        + (waits ? ' ' + waits : '')
+        + ' To change what it pays or when it runs out, use Change reward or '
+        + 'Edit instead.',
       function () {
         post('cancel', { id: contract.id }).then(function (r) {
           if (!r.ok) { return takenOr(r); }
@@ -1712,20 +1753,21 @@
             : 'Contract withdrawn. Everything you put up has been returned.', 'ok');
           refresh();
         });
-      });
+      }, { yes: 'Withdraw it', no: 'Keep it' });
   }
 
   /* Change a contract nobody has taken. What it pays is not edited here —
      moving escrow is money in and out of a pocket, and that has its own
      screen behind "Change reward", which can both add and take back. */
-  function editContract(contract) {
-    /* The same reason control the Place form draws, for the same reason.
-     *
-     * This dialog asked for free text whatever the server took, and always
-     * sent it. On a preset server that was refused as invalid_input; on a
-     * server storing no reason at all it made the whole edit fail, so the
-     * deadline it came with could never be changed either. The rules are
-     * the operator's and apply to both ways in. */
+  /* The same reason control the Place form draws, for the same reason.
+
+     The Edit dialog asked for free text whatever the server took, and
+     always sent it. On a preset server that was refused as invalid_input;
+     on a server storing no reason at all it made the whole edit fail, so
+     the deadline it came with could never be changed either. The rules are
+     the operator's and apply to every way in: Edit, and proposing a new
+     reason once somebody holds the contract. */
+  function reasonFields(contract) {
     var mode = settings().reasonMode || 'freetext';
     var presets = asList(settings().reasonPresets);
     var fields = [];
@@ -1748,6 +1790,11 @@
                     value: contract.reason || '',
                     max: settings().reasonMaxLength || 140 });
     }
+    return fields;
+  }
+
+  function editContract(contract) {
+    var fields = reasonFields(contract);
 
     /* The deadline as it stands, not a fixed three hours.
 
@@ -1755,28 +1802,37 @@
        opened Edit to fix a word in the reason also moved the deadline to
        three hours from now — cutting a contract with a day left down to
        three hours, with nothing on screen saying the deadline had been
-       touched. It opens on what is left, and is sent only if changed. */
+       touched.
+
+       Empty while a deadline is running, saying what empty keeps. It
+       opened on the time left rounded up to whole hours and sent it only if
+       touched, so nine minutes left read "1", a creator took that for "an
+       hour from now", saved, and the contract lapsed nine minutes later
+       under "Contract updated.". The box no longer shows a figure Save
+       ignores: whatever is in it is sent. */
     var left = minutesLeft(contract);
-    // With no deadline running there is nothing to preserve: the figure in
-    // the box is only a suggestion, and Save means it.
+    // With no deadline running there is nothing to keep: the figure in the
+    // box is only a suggestion, and Save means it.
     var suggested = left === null || left <= 0;
-    var hoursNow = suggested ? 3 : Math.min(48, Math.max(1, Math.ceil(left / 60)));
-    fields.push({ id: 'hours', label: 'Hours from now to the deadline',
-                  type: 'number', value: hoursNow, min: 1, max: 48 });
+    fields.push({
+      id: 'hours',
+      label: suggested ? 'Hours from now to the deadline'
+                       : 'New deadline, in hours from now (optional)',
+      type: 'number', value: suggested ? 3 : '', min: 1, max: 48,
+      placeholder: suggested ? '' : 'Leave empty to keep ' + durationText(left)
+    });
 
     askFields('Edit this contract',
-      'Only while nobody has taken it. To change what it pays, use Change '
-        + 'reward.'
-        + (suggested ? '' : ' It currently runs out in ' + durationText(left) + '.'),
+      // Where everything else about it is changed, since this is where a
+      // creator looks first.
+      'Only while nobody has taken it. To change what it pays or lower the '
+        + 'stake, use Change reward.'
+        + (settings().amendments !== false
+          ? ' To raise the stake or change how many hitmen can take it, use '
+            + 'Propose change.' : ''),
       fields,
-      function (values, touched) {
-        // Sent when the player edited the box, whatever it says. Compared
-        // with the figure it opened on instead — the time left rounded UP
-        // to whole hours — a contract with ten minutes left opened on 1,
-        // and a creator who kept 1 meaning "an hour from now" had their
-        // Save accepted with the deadline left at ten minutes.
-        var seconds = (values.hours && (suggested || (touched && touched.hours)))
-          ? values.hours * 3600 : 0;
+      function (values) {
+        var seconds = values.hours > 0 ? values.hours * 3600 : 0;
         // A picker left on no choice is no change, not the first preset.
         var preset = parseInt(values.reasonPreset, 10) || 0;
         if (!seconds && values.reason === undefined && !preset) {
@@ -1798,6 +1854,23 @@
           refresh();
         });
       });
+  }
+
+  /* The rule that takes an exclusive contract back, said before it is
+     taken. A hitman first learned it from the board once it had barred
+     them from the contract for good. Each window the server has switched
+     off is left out, and with both off there is nothing to say. */
+  function exclusiveRule(contract) {
+    if (contract.mode !== 'exclusive') { return ''; }
+    var idle = Number(settings().exclusiveIdleMinutes) || 0;
+    var attempt = Number(settings().exclusiveAttemptMinutes) || 0;
+    var ways = [];
+    if (idle > 0) { ways.push(durationText(idle) + ' without getting near the target'); }
+    if (attempt > 0) { ways.push(durationText(attempt) + ' without making an attempt on them'); }
+    if (!ways.length) { return ''; }
+    return ' Exclusive: if you go ' + ways.join(', or ') + ', it goes back on the '
+      + 'board and you cannot take it again'
+      + (Number(contract.penaltyAmount) > 0 ? ' (your stake comes back)' : '') + '.';
   }
 
   function acceptContract(contract) {
@@ -1884,7 +1957,8 @@
           // nothing on the dialog said when it was.
           + (minutesLeft(contract) !== null && minutesLeft(contract) > 0
             ? ' It runs out in ' + durationText(minutesLeft(contract)) + '.'
-            : ''),
+            : '')
+          + exclusiveRule(contract),
         options: [
           { label: 'Anonymously', primary: true, run: function () { take(true); } },
           { label: 'Under my name', run: function () { take(false); } }
@@ -2156,16 +2230,35 @@
       + 'try again in a minute.');
   }
 
+  /* "about 2 minutes", for the wait a hitman on the contract still has;
+     null on a server that does not make them wait. */
+  function buyoutWait(seconds) {
+    if (!(seconds > 0)) { return null; }
+    return seconds < 60 ? 'under a minute'
+      : 'about ' + durationText(Math.ceil(seconds / 60));
+  }
+
   function bailout(contract) {
     var amount = money(contract.bailoutAmount);
-    // Which pocket it comes from, said before they agree: the server takes
-    // the whole of it from the bank, or the whole of it from cash, and never
-    // splits it — so $50,000 in each fails a $90,000 buyout, and nothing
-    // said why.
+    /* Which pocket it comes from, said before they agree: the server takes
+       the whole of it from the bank, or the whole of it from cash, and never
+       splits it — so $50,000 in each fails a $90,000 buyout, and nothing
+       said why.
+
+       And when it closes. With a hitman already on it the buyout waits out
+       a delay, the contract stays live, and a hitman who finishes it first
+       is paid while the target's money comes back. "Close this contract"
+       read as safe at once. Not "it closes now" otherwise: a hitman may take
+       it between this dialog and the tap, and the reply says which. */
+    var wait = buyoutWait(Number(settings().buyoutDelaySeconds) || 0);
     ask('Pay ' + amount + ' to close this contract?',
-        'The client gets their money back along with your payment. It is taken '
-          + 'whole from your bank, or whole from your cash if the bank is short '
-          + '\u2014 never split between them.',
+        'The client gets their money back along with your payment. It is paid in '
+          + 'full from your bank, or from your cash if the bank cannot cover it '
+          + '\u2014 never split between them. '
+          + (wait && Number(contract.hitmenActive) > 0
+            ? 'A hitman is already on you and gets ' + wait + ' more to finish it. '
+              + 'If they do, your ' + amount + ' comes back.'
+            : 'If nobody has taken it yet, it closes at once.'),
         function () {
           // Through `once`, so the button is disabled for the round trip: up
           // to half a million, and a second tap sent a second request.
@@ -2173,17 +2266,24 @@
             return post('bailout', { id: contract.id }).then(function (r) {
               if (!r.ok) {
                 if (r.err === 'insufficient_funds') {
-                  return say('The buyout is ' + amount + ', taken whole from your bank '
-                    + 'or whole from your cash. Neither holds that much \u2014 move it '
-                    + 'into one account and try again.');
+                  return say('Your bank or your cash has to cover the full ' + amount
+                    + ' on its own \u2014 it is never split. Move it into one '
+                    + 'account and try again.');
                 }
                 return fail(r);
               }
-              say('Paid. The contract closes shortly.', 'ok');
+              // From the reply, not from the card: a hitman may have taken
+              // it since the dialog opened.
+              var queued = !!(r.data && r.data.queued);
+              var waited = buyoutWait(Number(settings().buyoutDelaySeconds) || 0);
+              say(queued
+                ? 'Paid. It closes in ' + (waited || 'a moment')
+                  + '. You are still a target until then.'
+                : 'Paid. Contract closed.', 'ok');
               refresh();
             });
           });
-        });
+        }, { yes: 'Pay ' + amount });
   }
 
   /* Buy informant data, disabled while a purchase is in flight: the one
@@ -2347,6 +2447,8 @@
     post('amendments', { id: contract.id }).then(function (r) {
       if (!r.ok) { return fail(r); }
       state.proposals[contract.id] = asList(r.data);
+      // Counted down from when this landed, as the cards' clocks are.
+      stampClocks(state.proposals[contract.id]);
       // One per contract on the page. Redrawing for each meant a screen of
       // five contracts redrew five times, on top of the three from the
       // refresh that asked for them.
@@ -2388,6 +2490,18 @@
     });
   }
 
+  /* "Lapses in 4 minutes", or null with no reading. A proposal lapses
+     unanswered after a few minutes and neither side was told: the
+     proposer saw "Waiting on 1 other party." until it silently went. */
+  function lapsesIn(proposal) {
+    var read = Number(proposal.secondsLeft);
+    if (proposal.secondsLeft === undefined || proposal.secondsLeft === null || isNaN(read)) {
+      return null;
+    }
+    var seconds = read - Math.floor((Date.now() - (proposal.clockReadAt || Date.now())) / 1000);
+    return 'Lapses in ' + durationText(Math.max(1, Math.ceil(seconds / 60)));
+  }
+
   // The panel under a card: everything currently on the table, and the two
   // buttons that answer it.
   function proposalPanel(contract) {
@@ -2401,6 +2515,15 @@
       item.appendChild(el('div', 'who',
         proposal.mine ? 'Your proposal' : proposal.proposer + ' proposed this'));
 
+      // What a shorter clock costs the hitman being asked, said where they
+      // answer it. Agree is one tap and applies at once.
+      if (proposal.kind === 'shorten_deadline' && contract.role === 'hitman'
+          && Number(contract.penaltyAmount) > 0) {
+        item.appendChild(el('div', 'hint is-warn', 'Your ' + money(contract.penaltyAmount)
+          + ' stake goes to the client if you have not finished by then.'));
+      }
+      var lapses = lapsesIn(proposal);
+
       var waiting = Number(proposal.waiting) || 0;
       if ((proposal.mine || proposal.answered) && waiting === 0) {
         /* Nobody else has to agree, so it is this player's answer that
@@ -2410,7 +2533,8 @@
            it sat until it lapsed, held the contract's one open slot
            meanwhile, and was then put to the next hitman to accept. */
         item.appendChild(el('div', 'hint',
-          'Nobody else is on this contract to agree, so it is yours to apply.'));
+          'Nobody else is on this contract to agree, so it is yours to apply.'
+          + (lapses ? ' ' + lapses + ' if you do not.' : '')));
         var applyRow = el('div', 'row');
         applyRow.appendChild(actionButton('primary', 'Apply it',
           'amend:' + proposal.id, 'Sending…',
@@ -2418,8 +2542,10 @@
         item.appendChild(applyRow);
       } else if (proposal.mine || proposal.answered) {
         item.appendChild(el('div', 'hint', 'Waiting on ' + waiting
-              + (waiting === 1 ? ' other party.' : ' other parties.')));
+              + (waiting === 1 ? ' other party.' : ' other parties.')
+              + (lapses ? ' ' + lapses + ' if nobody answers.' : '')));
       } else {
+        if (lapses) { item.appendChild(el('div', 'hint', lapses + ' if you do not answer.')); }
         // Both keyed on the proposal, so answering it disables BOTH — a
         // second tap on either used to send a second answer, and the reply
         // to that one reports the change that actually applied as "Gone."
@@ -2437,14 +2563,6 @@
     });
 
     return box;
-  }
-
-  // Propose a change that needs the other party's agreement, as opposed to
-  // `improve`, which applies at once because it can only help them.
-  /* What a contract pays right now, as a number. */
-  function rewardTotal(contract) {
-    var reward = contract.reward || {};
-    return (Number(reward.baseline) || 0) + (Number(reward.bonus) || 0);
   }
 
   /* Seconds left on the clock, or null when there is no deadline to read.
@@ -2582,9 +2700,28 @@
     // Nobody holds it: there is nobody to agree, and the creator's own
     // confirmation applies it (sendProposal). Said so, rather than "if the
     // operative agrees" about an operative who does not exist.
-    var untaken = !hitman && !(Number(contract.hitmenActive) > 0);
-    var pot = rewardTotal(contract);
+    var active = Number(contract.hitmenActive) || 0;
+    var untaken = !hitman && active === 0;
     var left = minutesLeft(contract);
+
+    // What a kill pays, with the bonus apart, as the card shows it. Added
+    // together, a hitman was told "Pays $75,000" on a contract whose kill
+    // pays $50,000.
+    var reward = contract.reward || {};
+    var pays = money(Number(reward.baseline) || 0)
+      + (Number(reward.bonus) > 0 ? ' (+' + money(Number(reward.bonus)) + ' if alive)' : '');
+
+    // The most a stake can be, as Contracts.clampPenalty holds it: offered
+    // above that, the server applies the ceiling instead of the figure typed.
+    var ceiling = settings().stakeCeiling || {};
+    var stakeMost = Number(ceiling.amount) || 0;
+    if (ceiling.fraction) {
+      stakeMost = Math.min(stakeMost,
+        Math.floor((Number(contract.valueHeld) || 0) * Number(ceiling.fraction)));
+    }
+    var stakeNow = Number(contract.penaltyAmount) || 0;
+    var exclusiveNow = contract.mode === 'exclusive';
+    var reasonOn = (settings().reasonMode || 'freetext') !== 'off';
 
     // Payouts still to come after the one being competed for. Only those can
     // be given back, so only those are worth offering.
@@ -2663,6 +2800,76 @@
             });
         }
       },
+      /* The changes the server has applied on agreement since the first
+         commit and nothing here could ask for. Each is offered only where
+         the server can take it, and only to the client. */
+      {
+        // No note: the label says it, and the dialog it opens says the rest.
+        // A note here pushed this dialog's own Cancel off a small screen.
+        label: exclusiveNow ? 'Open it to other hitmen' : 'Make it one hitman only',
+        // Exclusive with two on it is a contract its own rules forbid, and
+        // the server refuses it after everybody has agreed.
+        skip: hitman || (!exclusiveNow && active > 1),
+        run: function () {
+          var mode = exclusiveNow ? 'competitive' : 'exclusive';
+          ask(exclusiveNow ? 'Open it to other hitmen?' : 'Make it one hitman only?',
+            (exclusiveNow
+              ? 'Several hitmen can then take it at once, and the first to finish is paid. '
+              : 'Only one hitman can then be on it at a time. ')
+              + (untaken ? 'Nobody has taken it, so this applies at once.'
+                : 'The operative on it has to agree first.'),
+            function () { sendProposal(contract, 'change_mode', { mode: mode }); },
+            { yes: untaken ? 'Change it' : 'Propose' });
+        }
+      },
+      {
+        // Unheld, Edit already changes it directly.
+        label: 'Change the reason',
+        skip: hitman || untaken || !reasonOn,
+        run: function () {
+          askFields('Change the reason',
+            'The operative has to agree first.',
+            reasonFields(contract),
+            function (values) {
+              var preset = parseInt(values.reasonPreset, 10) || 0;
+              sendProposal(contract, 'change_reason', {
+                reason: values.reason,
+                reasonPreset: preset > 0 ? preset : undefined
+              });
+            }, 'Propose');
+        }
+      },
+      {
+        // Only while nobody holds it: a hitman staked the figure they took
+        // it at, and the server refuses to change it under them. Unheld, it
+        // applies on this confirm, and the next hitman stakes the new one.
+        label: stakeNow > 0 ? 'Raise the stake' : 'Ask for a stake',
+        note: stakeNow > 0
+          ? 'Now ' + money(stakeNow) + '. To lower it, use Change reward.'
+          : 'Nobody has to put anything up to take it now.',
+        skip: hitman || !untaken || stakeMost <= stakeNow,
+        run: function () {
+          askNumber(stakeNow > 0 ? 'Raise the stake' : 'Ask for a stake',
+            'What a hitman puts up when they accept, returned when they finish '
+              + 'and yours if they walk away or run out of time. Nobody has '
+              + 'taken it, so this applies at once.',
+            function (amount) {
+              sendProposal(contract, 'raise_penalty', { amount: amount });
+            },
+            {
+              label: 'Stake ($)',
+              value: Math.min(stakeMost, stakeNow + 1000), min: stakeNow + 1, max: stakeMost,
+              confirm: 'Set it',
+              hint: function (value) {
+                if (!value || value <= stakeNow || value > stakeMost) {
+                  return 'Between ' + money(stakeNow + 1) + ' and ' + money(stakeMost)
+                    + ', the most this contract can ask.';
+                }
+                return 'A hitman would stake ' + money(value) + ' to take it.';
+              }
+            });
+        }
+      },
       {
         label: hitman ? 'Call it off' : 'Cancel the contract',
         // Not "hand it back": agreed, this closes the whole contract for
@@ -2674,9 +2881,15 @@
             + 'and your stake comes back to you. To leave on your own, use '
             + 'Abandon.'
           : (untaken
-            ? 'Nobody has taken it, so it closes now and what you put up comes back.'
+            ? 'Nobody has taken it, so this is Withdraw, which asks first.'
             : 'Close it and take back what you put up, if the operative agrees.'),
         run: function () {
+          /* Untaken, through Withdraw itself. Sent as a proposal it closed
+             the contract on this one tap — the server applies the creator's
+             own proposal at once — with no confirmation, a reply that never
+             mentioned the refund, and no word of anything that did not fit
+             and is owed. Withdraw asks first and says both. */
+          if (untaken) { return cancelContract(contract); }
           sendProposal(contract, hitman ? 'withdraw' : 'cancel', {});
         }
       }
@@ -2689,13 +2902,18 @@
       // contract pays and how long is left is what every one of these
       // choices is about, and it should not disappear because the option
       // that happened to carry it does not apply here.
-      detail: 'Pays ' + money(pot) + ', ' + runsOut(left)
+      detail: 'Pays ' + pays + ', ' + runsOut(left)
         + (total > 1 ? ', ' + total + ' payouts' : '')
-        + (!hitman && !(Number(contract.hitmenActive) > 0)
+        + (untaken
           // Nobody holds it, so there is nobody to wait for.
           ? '. Nobody has taken it, so this applies as soon as you confirm.'
           : '. Nothing happens until '
-            + (hitman ? 'the client' : 'the operative') + ' agrees.'),
+            + (hitman ? 'the client' : 'the operative') + ' agrees.')
+        // More time and more money are the client's to give, at once, and
+        // a hitman looking here for them found only ways to make it worse.
+        + (hitman && settings().relay !== false
+          ? ' For more time or money, message the client.'
+          : ''),
       // An option the server would refuse whatever the player enters is not
       // an option; it is a button that wastes their time and reads as a
       // fault. Dropped rather than drawn.
@@ -2719,6 +2937,12 @@
             + 'has moved on since you opened it. Look again.',
           bad_state: 'This contract cannot be changed right now.'
         };
+        // A new reason is refused for its words — too long, too many
+        // digits, a banned pattern — not because the contract moved on.
+        if (kind === 'change_reason') {
+          reasons.invalid_input = 'This server will not take that reason. '
+            + 'Word it differently.';
+        }
         if (reasons[r.err]) {
           if (r.err === 'invalid_input') { refresh(); }
           return say(reasons[r.err]);
@@ -2978,15 +3202,28 @@
     // Adding is offered from the same screen whether or not taking back is
     // allowed: a contract somebody is working can still be sweetened, and
     // that is exactly when a creator wants to. First in the row, and "Add
-    // money" rather than "Add cash": the next step offers bank and dirty
-    // money too.
-    var add = el('button', 'ghost ico i-plus', 'Add money');
+    // to it" rather than "Add money": the next step offers bank and dirty
+    // money, goods and the kidnapping bonus too.
+    var add = el('button', 'ghost ico i-plus', 'Add to it');
     add.onclick = function () {
       var contract = edit.contract;
       state.dialog = null; state.reward = null;
       addEscrow(contract);
     };
     row.appendChild(add);
+
+    // Lowering the stake applies at once, like adding: it can only help
+    // whoever takes it. The server has done it since the first commit and
+    // nothing here asked for it.
+    if (Number(edit.contract.penaltyAmount) > 0) {
+      var lower = el('button', 'ghost', 'Lower the stake');
+      lower.onclick = function () {
+        var contract = edit.contract;
+        state.dialog = null; state.reward = null;
+        lowerStake(contract);
+      };
+      row.appendChild(lower);
+    }
 
     if (edit.data && !edit.pending && takeable) {
       take = el('button', 'primary take-back', 'Take back what I ticked');
@@ -3074,8 +3311,107 @@
       return caps[source + 'Enabled'] !== false && (Number(wallet[source]) || 0) > 0;
     });
 
-    if (!usable.length) {
+    /* Goods, and the kidnapping bonus, beside money. The server has taken
+       items and weapons onto a contract already out there, and raised the
+       bonus on one, since the first commit; this offered money alone, so
+       the only way to put a rifle on a live contract was to withdraw it
+       and place it again. */
+    var items = (caps.itemsEnabled === false) ? [] : asList(wallet.items);
+    var weapons = (caps.weaponsEnabled === false) ? [] : asList(wallet.weapons);
+    var bonusNow = Number(contract.bonusPercent) || 0;
+    var bonusCap = Number(caps.bonusPercent) || 0;
+    var base = Number((contract.reward || {}).baseline) || 0;
+    // The bonus is a share of the money base, so with none there is nothing
+    // to take a share of, and the server refuses.
+    var bonusRoom = bonusCap > bonusNow && base > 0;
+
+    if (!usable.length && !items.length && !weapons.length && !bonusRoom) {
       return say('You have nothing this server takes as a reward.');
+    }
+
+    // Every top-up lands the same way, whatever it is made of.
+    function send(reward, tooMuch) {
+      post('addEscrow', { id: contract.id, reward: reward }).then(function (r) {
+        if (!r.ok && r.err === 'invalid_reward') { return say(tooMuch); }
+        if (!r.ok) return fail(r);
+        say('Added to the reward.', 'ok');
+        state.wallet = null;
+        refresh();
+      });
+    }
+
+    function addItem() {
+      askFields('Add an item to the reward',
+        'Taken from you now and held with the rest.',
+        [
+          { id: 'item', label: 'Item', type: 'select', value: items[0].name,
+            options: items.map(function (item) {
+              return { value: item.name, label: item.label + '  \u00b7  ' + item.count + ' held' };
+            }) },
+          { id: 'count', label: 'How many', type: 'number', value: 1, min: 1 }
+        ],
+        function (values) {
+          var held = 0;
+          items.forEach(function (item) { if (item.name === values.item) { held = item.count; } });
+          if (!values.count || values.count < 1 || values.count > held) {
+            return say('You hold ' + held + ' of those.');
+          }
+          send({ baseline: { items: [{ name: values.item, count: values.count }] } },
+            'This contract cannot carry that: it is already holding as much as it can.');
+        }, 'Add');
+    }
+
+    function addWeapon() {
+      askFields('Add a weapon to the reward',
+        'Taken from you now and held with the rest. The hitman gets this one, '
+          + 'serial and all.',
+        [{ id: 'weapon', label: 'Weapon', type: 'select', value: String(weapons[0].slot),
+           options: weapons.map(function (weapon) {
+             return { value: String(weapon.slot),
+                      label: weapon.label + (weapon.serial ? '  #' + weapon.serial : '') };
+           }) }],
+        function (values) {
+          var found = null;
+          weapons.forEach(function (weapon) {
+            if (String(weapon.slot) === String(values.weapon)) { found = weapon; }
+          });
+          if (!found) { return say('That weapon is no longer in your pockets.'); }
+          send({ baseline: { weapons: [{ name: found.name, slot: found.slot }] } },
+            'This contract cannot carry that: it is already holding as much as it can.');
+        }, 'Add');
+    }
+
+    function raiseBonus() {
+      var later = Math.max(0, (Number(contract.slots) || 1) - (Number(contract.currentSlot) || 1));
+      askNumber('Raise the kidnapping bonus',
+        'Paid on top for delivering them alive. The extra is taken from you now '
+          + 'and applies at once.',
+        function (percent) {
+          post('improve', { id: contract.id, kind: 'raise_bonus',
+                            payload: { percent: percent } }).then(function (r) {
+            if (!r.ok && r.err === 'invalid_reward') {
+              return say('That bonus would take this contract past what this server '
+                + 'allows, or there is no money left in it to work a bonus out from.');
+            }
+            if (!r.ok) return fail(r);
+            say('Kidnapping bonus raised to ' + percent + '%.', 'ok');
+            state.wallet = null;
+            refresh();
+          });
+        },
+        {
+          label: 'Bonus (%)',
+          value: Math.min(bonusCap, bonusNow + 10), min: bonusNow + 1, max: bonusCap,
+          confirm: 'Raise',
+          hint: function (value) {
+            if (!value || value <= bonusNow || value > bonusCap) {
+              return 'Now ' + bonusNow + '%. Between ' + (bonusNow + 1) + ' and '
+                + bonusCap + '.';
+            }
+            return 'Now ' + bonusNow + '%. About ' + money(Math.floor(base * (value - bonusNow) / 100))
+              + ' more from you' + (later > 0 ? ', and the same share of each later payout.' : '.');
+          }
+        });
     }
 
     function amountFrom(source) {
@@ -3095,16 +3431,8 @@
         function (value) {
           var reward = { baseline: {} };
           reward.baseline[source] = value;
-          post('addEscrow', { id: contract.id, reward: reward }).then(function (r) {
-            if (!r.ok && r.err === 'invalid_reward') {
-              return say('That would take this contract past the most one contract '
-                + 'may be worth on this server.');
-            }
-            if (!r.ok) return fail(r);
-            say('Added to the reward.', 'ok');
-            state.wallet = null;
-            refresh();
-          });
+          send(reward, 'That would take this contract past the most one contract '
+            + 'may be worth on this server.');
         },
         {
           label: 'How much',
@@ -3120,20 +3448,78 @@
         });
     }
 
-    // One source, straight to the amount. More than one, ask which first.
-    if (usable.length === 1) { return amountFrom(usable[0]); }
+    var options = usable.map(function (source) {
+      return {
+        label: SOURCE_LABELS[source] || source,
+        note: 'You hold ' + money(wallet[source]) + '.',
+        run: function () { amountFrom(source); }
+      };
+    });
+    if (items.length) {
+      options.push({ label: 'Items', note: 'Something from your pockets.', run: addItem });
+    }
+    if (weapons.length) {
+      options.push({ label: 'Weapons', note: 'You carry ' + weapons.length
+        + (weapons.length === 1 ? ' weapon.' : ' weapons.'), run: addWeapon });
+    }
+    if (bonusRoom) {
+      options.push({ label: 'Kidnapping bonus', note: 'Now ' + bonusNow
+        + '%, paid on top for delivering them alive.', run: raiseBonus });
+    }
+
+    // One thing to add, straight to it. More than one, ask which first.
+    if (options.length === 1) { return options[0].run(); }
 
     state.dialog = {
       kind: 'choice',
       question: 'Add to the reward',
       detail: 'Taken from you now and held with the rest.',
-      options: usable.map(function (source) {
-        return {
-          label: SOURCE_LABELS[source] || source,
-          note: 'You hold ' + money(wallet[source]) + '.',
-          run: function () { amountFrom(source); }
-        };
-      })
+      options: options
+    };
+    render();
+  }
+
+  /* Lower the stake a hitman puts up, or take it off. Applies at once:
+     it can only help whoever is on it, and anyone who already staked the
+     old figure gets the difference back. */
+  function lowerStake(contract) {
+    var now = Number(contract.penaltyAmount) || 0;
+    var detail = 'Now ' + money(now) + '. This applies at once'
+      + (Number(contract.hitmenActive) > 0
+        ? ', and anyone already staked gets the difference back.' : '.');
+
+    function send(amount) {
+      post('improve', { id: contract.id, kind: 'lower_penalty',
+                        payload: { amount: amount } }).then(function (r) {
+        if (!r.ok) return fail(r);
+        say(amount > 0 ? 'Stake lowered to ' + money(amount) + '.' : 'Stake removed.', 'ok');
+        refresh();
+      });
+    }
+
+    state.dialog = {
+      kind: 'choice',
+      question: 'Lower the stake',
+      detail: detail,
+      options: [
+        {
+          label: 'Lower it', note: 'To a smaller figure.', skip: now <= 1,
+          run: function () {
+            askNumber('Lower the stake', detail, send, {
+              label: 'New stake ($)', value: Math.max(1, Math.floor(now / 2)),
+              min: 1, max: now - 1, confirm: 'Lower',
+              hint: function (value) {
+                if (!value || value < 1 || value >= now) {
+                  return 'Between ' + money(1) + ' and ' + money(now - 1) + '.';
+                }
+                return 'A hitman would stake ' + money(value) + ' to take it.';
+              }
+            });
+          }
+        },
+        { label: 'Remove it', note: 'Nobody has to put anything up to take it.',
+          run: function () { send(0); } }
+      ].filter(function (option) { return !option.skip; })
     };
     render();
   }

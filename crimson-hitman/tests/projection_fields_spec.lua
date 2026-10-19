@@ -63,6 +63,8 @@ local CONDITIONAL = {
     -- Target-only, and only once they have actually paid. Its absence is how
     -- the card knows to offer the buy button instead.
     bailoutPaid      = 'target-only, and only after the premium has been taken',
+    -- How long the hitman on it still has, for that same paid card.
+    bailoutSecondsLeft = 'target-only, and only while a paid buyout waits out its delay',
     -- The viewer's own informant answer, so only once they have bought one.
     informantAnswer  = 'creator or target, and only after buying informant data',
     -- Exactly one of these two, never both: when the creator chose anonymity

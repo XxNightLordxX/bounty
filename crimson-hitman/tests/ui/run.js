@@ -459,7 +459,7 @@ async function main() {
     it('has a buyout button', function () { eq(buy.length, 1); });
 
     buy[0].onclick();
-    click(app, 'Yes');
+    click(app, 'Pay $15,000');
     await settle();
     it('sends the buyout for the right contract', function () {
       truthy(boughtOut, 'nothing was sent');
@@ -618,7 +618,7 @@ async function main() {
       falsy(bought);
     });
 
-    click(app, 'Yes');
+    click(app, 'Pay $15,000');
     await settle();
     it('sends the buyout once confirmed', function () {
       truthy(bought, 'the buyout must reach the server');
@@ -2555,7 +2555,7 @@ async function main() {
         .filter(function (n) { return n.tagName === 'BUTTON'; })
         .map(function (n) { return n.textContent; });
       falsy(labels.indexOf('Take back what I ticked') !== -1, labels.join(' | '));
-      truthy(labels.indexOf('Add money') !== -1, 'adding is still offered: ' + labels.join(' | '));
+      truthy(labels.indexOf('Add to it') !== -1, 'adding is still offered: ' + labels.join(' | '));
     });
 
     /* Taken while the editor was open: the server says so, and the page
@@ -2700,7 +2700,7 @@ async function main() {
     it('still offers to add, which is the half that is allowed', function () {
       const labels = held.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
         .map(function (n) { return n.textContent; });
-      truthy(labels.indexOf('Add money') !== -1,
+      truthy(labels.indexOf('Add to it') !== -1,
         'adding is allowed while somebody works it: ' + labels.join(' | '));
     });
 
@@ -3173,7 +3173,7 @@ async function main() {
     await settle(); await settle();
     click(own, 'Change reward');
     await settle(); await settle();
-    click(own, 'Add money');
+    click(own, 'Add to it');
     await settle();
 
     it('offers every source a creator actually holds when adding', function () {
@@ -3238,7 +3238,9 @@ async function main() {
 
     it('says what each proposal would do before one is chosen', function () {
       const text = app.view.textContent;
-      truthy(text.indexOf('$7,500') !== -1,
+      // What a kill pays, with the bonus apart: added together it told a
+      // hitman $7,500 for a kill that pays $5,000.
+      truthy(text.indexOf('Pays $5,000 (+$2,500 if alive)') !== -1,
         'the reward has to be stated, or "reduce it" is unanswerable: ' + text);
       truthy(text.indexOf('2h') !== -1,
         'and the time left, for the same reason: ' + text);
@@ -5369,7 +5371,7 @@ async function main() {
 
       click(app, 'Buy out — $15,000');
       await settle();
-      click(app, 'Yes');
+      click(app, 'Pay $15,000');
       await settle(); await settle();
 
       const said = app.notice();
@@ -6656,8 +6658,10 @@ async function main() {
       tab(app, 'mine'); await settle(); await settle();
       click(app, 'Edit');
 
-      it('opens the deadline on what is left, not on three hours', function () {
-        eq(app.document.getElementById('dialog-hours').value, '20');
+      it('opens the deadline empty, saying empty keeps what is left', function () {
+        const box = app.document.getElementById('dialog-hours');
+        eq(box.value, '');
+        truthy(/keep 20h/.test(box.placeholder), box.placeholder);
       });
 
       const reason = app.document.getElementById('dialog-reason');
@@ -6672,10 +6676,10 @@ async function main() {
       });
     })();
 
-    /* Ten minutes left opens the box on 1 — rounded up — and a creator who
-       types 1, meaning an hour from now, was not sent: the figure matched
-       the one it opened on, the Save went through as "Contract updated."
-       and the deadline stayed at ten minutes. */
+    /* Ten minutes left opened the box on 1 — rounded up — and Save sent it
+       only if touched, so a creator who read "1" as an hour from now saved,
+       was told "Contract updated." and the deadline stayed at ten minutes.
+       The box opens empty now, and whatever is typed in it is sent. */
     await (async function editSetsTheRoundedFigure() {
       let revised = null;
       const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [],
@@ -6689,11 +6693,11 @@ async function main() {
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
       click(app, 'Edit');
-      it('says exactly how long is left, beside the rounded box', function () {
-        truthy(/10 min/.test(app.view.textContent), app.view.textContent);
-      });
       const hours = app.document.getElementById('dialog-hours');
-      eq(hours.value, '1');
+      it('shows no figure Save would ignore, and says exactly how long is left', function () {
+        eq(hours.value, '');
+        truthy(/10 min/.test(hours.placeholder), hours.placeholder);
+      });
       hours.value = '1'; hours.oninput();
       click(app, 'Save'); await settle();
       it('sends the deadline the creator typed, even the figure it opened on', function () {
@@ -6770,6 +6774,166 @@ async function main() {
       });
       it('and says it is done', function () {
         truthy(app.notice().indexOf('in effect') !== -1, app.notice());
+      });
+    })();
+
+    /* "Cancel the contract" on a contract nobody holds closed it on one
+       tap: the server applies the creator's own proposal at once, with no
+       confirmation and nothing said of the refund or the waits. It hands
+       off to Withdraw, which asks first and names the waits. */
+    await (async function untakenCancelIsWithdraw() {
+      const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [] });
+      const app = boot({
+        list: boardWith({ relistWaits: { anyMinutes: 5, sameTargetMinutes: 120,
+          everyoneMinutes: 30 } }),
+        ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        propose: { ok: true, data: { outcome: 'applied' } },
+        cancel: { ok: true, data: { queued: 0 } }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Propose change');
+      click(app, 'Cancel the contract');
+      await settle();
+      it('asks first, as Withdraw does, and sends nothing yet', function () {
+        truthy(buttonLabels(app).indexOf('Withdraw it') !== -1, buttonLabels(app).join(' | '));
+        eq(app.sent.filter(function (x) { return x.name === 'propose' || x.name === 'cancel'; }).length, 0);
+      });
+      it('names the waits withdrawing starts', function () {
+        const text = app.view.textContent;
+        truthy(text.indexOf('any new contract for 5 minutes') !== -1
+          && text.indexOf('one on Dana Reyes for 2h') !== -1
+          && text.indexOf('nobody else can list them for 30 minutes') !== -1, text);
+      });
+      click(app, 'Withdraw it');
+      await settle(); await settle();
+      it('withdraws through the withdraw request, not a proposal', function () {
+        eq(app.sent.filter(function (x) { return x.name === 'cancel'; }).length, 1);
+        eq(app.sent.filter(function (x) { return x.name === 'propose'; }).length, 0);
+      });
+    })();
+
+    /* A staked hitman asked to agree to a shorter clock was told neither
+       what missing it costs nor that the proposal lapses. */
+    await (async function proposalSaysCostAndLapse() {
+      const card = placedCard({ role: 'hitman', hitmen: undefined, myAlias: 'Operative #1',
+        mode: 'exclusive', penaltyAmount: 10000, deadline: nowSeconds() + 40 * 60,
+        secondsLeft: 40 * 60 });
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [card], onMe: [] } },
+        amendments: { ok: true, data: [{ id: 'am00000003', kind: 'shorten_deadline',
+          payload: { seconds: 1800 }, proposer: 'The client', mine: false,
+          answered: false, waiting: 1, secondsLeft: 240 }] }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      it('says the stake goes if the shorter clock is missed', function () {
+        truthy(app.view.textContent.indexOf('Your $10,000 stake goes to the client') !== -1,
+          app.view.textContent);
+      });
+      it('says when the proposal lapses', function () {
+        truthy(app.view.textContent.indexOf('Lapses in 4 minutes if you do not answer') !== -1,
+          app.view.textContent);
+      });
+    })();
+
+    /* Mode, reason and stake: the server has changed them on agreement
+       since the first commit and nothing here could ask. Each is offered
+       only where the server can take it. */
+    await (async function heldContractOffersModeAndReason() {
+      let proposed = null;
+      const card = placedCard({ mode: 'exclusive', penaltyAmount: 2000, valueHeld: 5000 });
+      const app = boot({
+        list: boardWith({ reasonMode: 'freetext', stakeCeiling: { amount: 100000, fraction: 2 } }),
+        ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        propose: function (body) { proposed = body; return { ok: true, data: { outcome: 'open' } }; }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Propose change');
+      it('offers the mode switch and a new reason, but no stake raise under a hitman', function () {
+        const labels = buttonLabels(app);
+        truthy(labels.indexOf('Open it to other hitmen') !== -1, labels.join(' | '));
+        truthy(labels.indexOf('Change the reason') !== -1, labels.join(' | '));
+        falsy(labels.indexOf('Raise the stake') !== -1, labels.join(' | '));
+      });
+      click(app, 'Open it to other hitmen');
+      click(app, 'Propose');
+      await settle(); await settle();
+      it('proposes the mode the server reads', function () {
+        truthy(proposed, 'nothing was proposed');
+        eq(proposed.kind, 'change_mode');
+        eq(proposed.payload.mode, 'competitive');
+      });
+    })();
+
+    // And the immediate ones, from Change reward: the stake lowered or
+    // removed, and the kidnapping bonus raised.
+    await (async function rewardScreenImprovesTerms() {
+      const improved = [];
+      const card = placedCard({ penaltyAmount: 5000, bonusPercent: 10,
+        reward: { baseline: 5000, bonus: 500 } });
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        rewardBreakdown: { ok: true, data: { editable: false, slots: 1, currentSlot: 1,
+          lines: [{ slot: 1, portion: 'baseline', source: 'cash', amount: 5000 }] } },
+        rewardOptions: { ok: true, data: { cash: 0, bank: 0, dirty: 0, items: [], weapons: [],
+          caps: { bonusPercent: 50 } } },
+        improve: function (body) { improved.push(body); return { ok: true, data: true }; }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Change reward'); await settle(); await settle();
+      click(app, 'Lower the stake');
+      click(app, 'Remove it');
+      await settle(); await settle();
+      it('removes the stake through improve, at once', function () {
+        eq(improved.length, 1);
+        eq(improved[0].kind, 'lower_penalty');
+        eq(improved[0].payload.amount, 0);
+      });
+      click(app, 'Change reward'); await settle(); await settle();
+      click(app, 'Add to it'); await settle(); await settle();
+      // The bonus is the one thing this wallet can add, so it opens on it.
+      click(app, 'Raise'); await settle(); await settle();
+      it('raises the kidnapping bonus through improve', function () {
+        eq(improved.length, 2);
+        eq(improved[1].kind, 'raise_bonus');
+        eq(improved[1].payload.percent, 20);
+      });
+    })();
+
+    /* A buyout paid with a hitman on it waits out the delay, and the
+       target was told "closes shortly" and "your money is already gone". */
+    await (async function buyoutSaysItWaits() {
+      const target = { id: 'ct00000002', reason: 'x', mode: 'exclusive', state: 'accepted',
+        reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+        hitmenActive: 1, targetName: 'You', role: 'target',
+        bailoutAmount: 90000, bailoutAvailable: true };
+      const app = boot({
+        list: boardWith({ buyoutDelaySeconds: 120 }), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [target] } },
+        bailout: { ok: true, data: { queued: true } }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'onme'); await settle(); await settle();
+      click(app, 'Buy out — $90,000');
+      it('says a hitman on it still has time, and the money comes back', function () {
+        const text = app.view.textContent;
+        truthy(text.indexOf('about 2 minutes more to finish it') !== -1
+          && text.indexOf('your $90,000 comes back') !== -1, text);
+      });
+      click(app, 'Pay $90,000');
+      await settle(); await settle();
+      it('says they are still a target once paid', function () {
+        truthy(app.notice().indexOf('still a target') !== -1, app.notice());
       });
     })();
 
@@ -6894,7 +7058,7 @@ async function main() {
       });
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
-      click(app, 'Withdraw'); click(app, 'Yes'); await settle(); await settle();
+      click(app, 'Withdraw'); click(app, 'Withdraw it'); await settle(); await settle();
       it('does not say everything came back when some of it is waiting', function () {
         falsy(app.notice().indexOf('Everything you put up has been returned') !== -1,
           app.notice());
@@ -7384,11 +7548,11 @@ async function main() {
     it('says before paying that a buyout is never split', function () {
       truthy(broke.view.textContent.indexOf('never split') !== -1, broke.view.textContent);
     });
-    click(broke, 'Yes');
+    click(broke, 'Pay $90,000');
     await settle(); await settle();
     it('says a buyout short of money is taken whole from one account', function () {
       truthy(broke.notice().indexOf('$90,000') !== -1
-        && broke.notice().indexOf('whole from your cash') !== -1, broke.notice());
+        && broke.notice().indexOf('never split') !== -1, broke.notice());
     });
   })();
 

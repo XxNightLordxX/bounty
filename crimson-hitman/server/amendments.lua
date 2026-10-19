@@ -722,6 +722,11 @@ function Amendments.openFor(actor, contractId)
             answered  = proposal.approvals[actor.cid] == true,
             waiting   = waiting,
             expires   = proposal.expires_at,
+            -- How long it has left, on the server's clock rather than the
+            -- phone's. Neither side was told a proposal lapses at all, so
+            -- one left unanswered simply vanished. No new disclosure: it is
+            -- the expiry above, read against now.
+            secondsLeft = math.max(0, (proposal.expires_at or 0) - os.time()),
         }
     end
 

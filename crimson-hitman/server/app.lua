@@ -757,9 +757,12 @@ function App.register()
     -- Target counter-play ----------------------------------------------
 
     handler('bailout', 'bailout', function(actor, payload)
-        local ok, err = deps.bailout.buy(actor, payload.id)
+        local ok, err, queued = deps.bailout.buy(actor, payload.id)
         if not ok then return false, err end
-        return true
+        -- Whether it closed now or waits on a hitman, so the page can say
+        -- which: "closed" while somebody can still finish it is the target
+        -- walking into the open thinking they are safe.
+        return { queued = queued == true }
     end)
 
     handler('informant', 'informant', function(actor, payload)

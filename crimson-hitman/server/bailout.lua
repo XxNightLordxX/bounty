@@ -81,6 +81,7 @@ end
 --- Pay the premium and close the contract.
 ---@return boolean ok
 ---@return string|nil err
+---@return boolean|nil queued paid, but waiting out the delay with a hitman on it
 local settleUnlocked, deliver
 
 function Bailout.buy(actor, contractId)
@@ -160,7 +161,9 @@ function Bailout.buy(actor, contractId)
             'Your target is buying out the contract. It closes shortly.')
         -- And the operatives, whom the delay is for.
         Notify.buyoutQueued(contract, engagedCids, Config.Bailout.ProcessingDelaySeconds)
-        return true, nil
+        -- Said to the page, which told the target "Paid. The contract
+        -- closes shortly." either way — and they are still a target here.
+        return true, nil, true
     end
 
     -- Recorded before it is settled, as a buyout already due. The target

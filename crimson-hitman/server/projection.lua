@@ -244,6 +244,14 @@ function Projection.contract(contract, viewerCid)
         -- went through from one that did not, and the only thing they can do
         -- about it is pay again.
         out.bailoutPaid = contract.bailout_queued_at ~= nil or nil
+        -- And how long the hitman on it still has, on the server's clock as
+        -- the deadline is. "It closes shortly and your money is already
+        -- gone" was wrong on both counts: it stays live for the delay, and
+        -- the money comes back if a hitman finishes it first.
+        if contract.bailout_queued_at then
+            out.bailoutSecondsLeft = math.max(0, contract.bailout_queued_at
+                + (Config.Bailout.ProcessingDelaySeconds or 0) - os.time())
+        end
         out.informantAnswer = informantAnswer(contract.id, viewerCid)
     end
 
@@ -303,6 +311,13 @@ local function buildListing(viewerCid, page)
             -- Under this much time a staked hitman's card says the stake is
             -- at risk: the same window acceptance refuses to open inside.
             stakeWindowMinutes = Config.Penalty.MinWindowMinutes,
+            -- The ceiling a stake is held to (Contracts.clampPenalty), so
+            -- raising one offers only figures that will stand rather than
+            -- applying a lower one than the creator typed.
+            stakeCeiling = {
+                amount = Config.Penalty.MaxAmount or 0,
+                fraction = Config.Penalty.MaxFractionOfEscrow,
+            },
             -- Which ways of browsing the app should offer, rather than
             -- offering a button that always comes back empty.
             allowBrowseAll = Config.Targeting.AllowBrowseAll == true,
@@ -345,6 +360,29 @@ local function buildListing(viewerCid, page)
             -- Whether this server runs buyouts at all, so the page can tell
             -- "the client offered none" from "there are none here".
             buyouts = Config.Bailout.Enabled == true,
+            -- How long a buyout paid while a hitman is on the contract waits
+            -- before it closes. The confirmation said "close this contract"
+            -- and the target read it as safe at once, when a hitman had two
+            -- more minutes to finish it.
+            buyoutDelaySeconds = Config.Bailout.ProcessingDelaySeconds or 0,
+            -- The two ways an exclusive hold is taken back, each only when
+            -- it is on. Nothing said so until the hitman had been barred
+            -- from the contract for good.
+            exclusiveIdleMinutes = (Config.Limits.ExclusiveIdleReleaseSeconds or 0) > 0
+                and math.floor(Config.Limits.ExclusiveIdleReleaseSeconds / 60) or nil,
+            exclusiveAttemptMinutes = (Config.Limits.ExclusiveAttemptWindowSeconds or 0) > 0
+                and math.floor(Config.Limits.ExclusiveAttemptWindowSeconds / 60) or nil,
+            -- The waits a withdrawal starts, for the dialog that asks first.
+            -- A creator withdrawing to fix the reward found them out only
+            -- when placing it again was refused. On the same person it is
+            -- whichever of the two waits ends later.
+            relistWaits = {
+                anyMinutes = math.floor((Config.Amendments.CancelCooldownSeconds or 0) / 60),
+                sameTargetMinutes = math.floor(math.max(
+                    Config.Limits.SameCreatorSameTargetCooldownSeconds or 0,
+                    Config.Limits.TargetCooldownAfterResolveSeconds or 0) / 60),
+                everyoneMinutes = math.floor((Config.Limits.TargetCooldownAfterResolveSeconds or 0) / 60),
+            },
             -- Whether changes can be proposed at all. Absent, the page drew
             -- Propose change on every card of a server with amendments off,
             -- and every proposal was refused.
@@ -584,7 +622,7 @@ Projection.ALLOWED_KEYS = {
                 informantAnswer = true },
     hitman  = { myAlias = true, myAnonymous = true, myClaims = true, kidnapProgress = true },
     target  = { bailoutAmount = true, bailoutAvailable = true,
-                bailoutPaid = true, informantAnswer = true },
+                bailoutPaid = true, bailoutSecondsLeft = true, informantAnswer = true },
     public  = { barred = true },
 }
 

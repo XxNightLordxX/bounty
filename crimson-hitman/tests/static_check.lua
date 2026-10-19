@@ -1557,8 +1557,12 @@ do
     for kind, body in uiSrc:gmatch("sendProposal%([%w_.]+,%s*'([%w_]+)'%s*,%s*(%b{})") do
         record(kind, body)
     end
-    for kind, body in uiSrc:gmatch("kind:%s*'([%w_]+)'%s*,%s*payload:%s*(%b{})") do
-        record(kind, body)
+    -- Not the ones posted to 'improve'. Those apply at once and are read by
+    -- improveUnlocked, not sanitize, which has never had a branch for
+    -- raise_bonus because nobody proposes it.
+    for at, kind, body in uiSrc:gmatch("()kind:%s*'([%w_]+)'%s*,%s*payload:%s*(%b{})") do
+        local before = uiSrc:sub(math.max(1, at - 120), at)
+        if not before:find("post%('improve'") then record(kind, body) end
     end
 
     -- What sanitize reads, by kind. Each branch runs to the next one.
