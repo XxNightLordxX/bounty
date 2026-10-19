@@ -644,6 +644,19 @@ CreateThread(function()
     end
 end)
 
+-- A new character starts with a watcher that has seen nothing. /relog keeps
+-- this resource running, so the last character's death carried over: the
+-- next one, alive, was "up after a death" and reported a revive the server
+-- had no death for, which goes to the staff webhook as a probe.
+local function forgetDeath()
+    reportedDead, wasDown, diedSinceUp = false, false, false
+    upFor, notDeadFor = 0, 0
+    engineDeathAt, engineKiller = nil, nil
+    lethalBy, lethalByAt = nil, nil
+end
+RegisterNetEvent('QBCore:Client:OnPlayerUnload', forgetDeath)
+RegisterNetEvent('qbx_core:client:playerLoggedOut', forgetDeath)
+
 --------------------------------------------------------------------------
 -- Verification photo (§7.4)
 --------------------------------------------------------------------------

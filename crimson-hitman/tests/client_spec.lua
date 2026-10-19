@@ -1531,6 +1531,20 @@ describe('reporting your own death', function()
         eq(reported('iRevived'), 1, 'and up for real later')
     end)
 
+    it('does not carry a death over to the next character', function()
+        -- /relog while dead, then an alive character: reported as a revive
+        -- the server never saw a death for, and posted to staff as a probe.
+        watching()
+        local meta = underMedical()
+        meta.isdead = true
+        Client.ticks(2)
+        eq(reported('iDied'), 1)
+        Client.fire('qbx_core:client:playerLoggedOut')
+        meta.isdead = false
+        Client.ticks(10)
+        eq(reported('iRevived'), 0, 'the new character reported a revive')
+    end)
+
     it('reports a second death after a defibrillator, and one revive', function()
         -- Shocked back to last stand, then finished on the ground. The one
         -- death report stayed spent until they stood up, so the hitman who

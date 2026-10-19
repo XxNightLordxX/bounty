@@ -288,6 +288,32 @@ describe('photo verification', function()
         truthy(ok, 'the first token outlived its own kill: ' .. tostring(err))
     end)
 
+    it('keeps the token good when a target still dead reports the death again', function()
+        local s, f, c = seeded()
+        killTarget(s)
+        local token = s.photo.issue(f.hitman, c.id)
+        Env.advance(5)
+        s.death.onVictimReport(2)                     -- the same death, resent
+        local ok, err = s.photo.submit(f.hitman, token, 'https://cdn.fivemanage.com/p.png')
+        truthy(ok, 'the resent report made the token stale: ' .. tostring(err))
+    end)
+
+    it('takes the photograph where the body lies, not where the hit landed', function()
+        -- Shot at the wheel; the car coasted on sixty metres.
+        local s, f, c = seeded()
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 140
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2]._coords = { x = 160.0, y = 100.0, z = 30.0 }
+        Env.players[3]._coords = { x = 161.0, y = 100.0, z = 30.0 }
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2), 1)
+        local token = s.photo.issue(f.hitman, c.id)
+        local ok, err = s.photo.submit(f.hitman, token, 'https://cdn.fivemanage.com/p.png')
+        truthy(ok, 'told to photograph the road the body left: ' .. tostring(err))
+    end)
+
     it('says a token asked for late has expired, not that the target was revived', function()
         -- The second token outlived the kill it proved, and the photograph
         -- was refused as a revive with the body still on the ground.
@@ -472,6 +498,17 @@ describe('damage observation is actually wired', function()
         Env.players[2]._health = 120
         Env.advance(0.5)
         truthy(s.death.recordFor('TARGET01', 'HITMAN01'), 'the sample erased the hit')
+    end)
+
+    it('does not queue a hit another resource cancelled', function()
+        local s = wiredStack()
+        local f, c = placed(s)
+        Env.eventCanceled = true          -- an anti-cheat refused it
+        shoot(3)
+        Env.eventCanceled = nil
+        Env.players[2]._health = 150      -- a fall, in the second after
+        Env.advance(2)
+        falsy(s.death.recordFor('TARGET01', 'HITMAN01'), 'a cancelled hit was credited')
     end)
 
     it('credits one drop to one hit, the one the victim\'s game names', function()

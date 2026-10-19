@@ -129,6 +129,8 @@ function Natives.install()
         local p = Env.players[ped - 1000]
         return p and p._vehicle or 0
     end
+    -- What another resource's handler did to the event now being handled.
+    _G.WasEventCanceled = function() return Env.eventCanceled == true end
     _G.GetPedInVehicleSeat = function(veh, seat)
         for src, p in pairs(Env.players) do
             if p._vehicle == veh and p._seat == seat then return 1000 + src end

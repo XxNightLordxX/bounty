@@ -110,6 +110,11 @@ local downHits = {}
 --- [cid] = true while a check of their waiting hits is scheduled.
 local polling = {}
 
+--- [cid] = Util.monotonicMs() the server last read them as not dead: up, or
+--- in last stand. A death report with nothing of the kind since the kill it
+--- would open is the same death told again (see Death.attributeDeath).
+local aliveAt = {}
+
 --- [cid] = a death report waiting on its hits to be checked, so a victim
 --- who leaves meanwhile is attributed with what is known rather than not
 --- at all.
@@ -159,6 +164,7 @@ function Death.init(deps)
     upSince, reviveClaims, lastHitAt = {}, {}, {}
     defibAt, lastUp, inflight, credited = {}, {}, {}, {}
     lethalAt, deferred, downHits, polling = {}, {}, {}, {}
+    aliveAt = {}
 end
 
 --------------------------------------------------------------------------
@@ -204,6 +210,20 @@ Death.MAX_WAITING_PER_ATTACKER = 24
 --- their death report.
 Death.DOWN_HIT_KEEP_MS = 10000
 
+--- A hit that landed while they were up ended that time up: if it was over
+--- before the damage was seen, it was a revive cut short all the same. True
+--- whoever fired, so it holds for a drop nobody is credited with, too.
+local function cutShort(cid, hit)
+    if not hit.up then return end
+    lastHitAt[cid] = math.max(lastHitAt[cid] or -math.huge, hit.at)
+    local since = lastUp[cid]
+    if since and hit.at > since and seenDead[cid] then
+        lastUp[cid] = nil
+        Death.onRevived(cid, since)
+        if Identity.isTrulyDead(hit.source) then Death.markDead(cid) end
+    end
+end
+
 --- Put a corroborated hit on the record.
 local function credit(cid, hit, lost, reading)
     credited[cid] = reading
@@ -230,17 +250,7 @@ local function credit(cid, hit, lost, reading)
         damage = lost,
     }
 
-    if hit.up then
-        lastHitAt[cid] = math.max(lastHitAt[cid] or -math.huge, hit.at)
-        -- The time up it ended was over before its damage was seen: a revive
-        -- cut short all the same.
-        local since = lastUp[cid]
-        if since and hit.at > since and seenDead[cid] then
-            lastUp[cid] = nil
-            Death.onRevived(cid, since)
-            if Identity.isTrulyDead(hit.source) then Death.markDead(cid) end
-        end
-    end
+    cutShort(cid, hit)
 
     -- Keep the window small: old damage cannot corroborate a later death.
     Death.prune(cid)
@@ -339,8 +349,12 @@ local function checkHits(cid)
         elseif ambiguous then
             -- Nobody's for certain. Consumed, so no later check hands it to
             -- one of them; the hits stay waiting, and a finishing one is
-            -- still kept for the victim's report to name.
+            -- still kept for the victim's report to name. Whoever fired, a
+            -- hit that landed on them standing ended that time up: left
+            -- unrecorded, a second shooter's event beside the real one kept
+            -- the kill the revive undid and lifted the revive's protection.
             credited[cid] = reading
+            for _, k in ipairs(candidates) do cutShort(cid, list[k]) end
             Audit.rejected('damage_ambiguous', nil, nil, { victim = cid })
         else
             -- Damage the victim's game puts down to somebody none of the
@@ -443,6 +457,7 @@ function Death.recordDamage(attackerSource, victimSource, weaponHash)
     end
 
     local dead, down, known = Identity.deathState(victimSource)
+    if known and not dead then aliveAt[victim.cid] = Util.monotonicMs() end
     local hit = {
         attackerCid = attacker.cid,
         attackerSource = attackerSource,
@@ -646,6 +661,7 @@ function Death.watchTargets(contracts)
                 -- And up for a while, not for one reading, or put down
                 -- again by a hit: see REVIVE_CONFIRM_MS.
                 local dead, lastStand, resolved = Identity.deathState(target.source)
+                if resolved and not dead then aliveAt[target.cid] = Util.monotonicMs() end
                 if resolved and not dead and not lastStand and Death.wasSeenDead(target.cid) then
                     local at = Util.monotonicMs()
                     -- Killed where they stood: the ped is dead and the
@@ -972,13 +988,25 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
                 hit = Death.lastAttackerAmong(victim.cid, active)
             end
 
-            if hit then
+            -- The same death told again: never seen anything but dead since
+            -- this hitman's kill opened. Replaced, its new time made the
+            -- photo token in the hitman's hand stale, and a dead target
+            -- resending the report could keep doing so.
+            local same = hit and Death.getPending(contract.id, hit.attackerCid)
+            if same and (aliveAt[victim.cid] or -math.huge) > same.at then same = nil end
+
+            if same then
+                opened = opened + 1
+            elseif hit then
                 pending[contract.id .. ':' .. hit.attackerCid] = {
                     contractId = contract.id,
                     hitmanCid  = hit.attackerCid,
                     victimCid  = victim.cid,
                     at         = reportedAt or Util.monotonicMs(),
-                    coords     = hit.coords,
+                    -- Where the body is, which the photograph is taken
+                    -- beside: the hit may have landed on a moving car, or
+                    -- the body been dragged since.
+                    coords     = victimCoords or hit.coords,
                     weapon     = hit.weapon,
                 }
                 Audit.action('death_attributed', hit.attackerCid, contract.id, {
@@ -1122,6 +1150,7 @@ function Death.onRevived(cid, since)
     -- From when they stood up, not from when that was confirmed: the
     -- protection a revive gives starts with the revive.
     respawnedAt[cid] = os.time() - math.floor((now - since) / 1000)
+    aliveAt[cid] = now
     -- One death, one revive. A second claim has to wait for a second death.
     seenDead[cid] = nil
     upSince[cid] = nil
@@ -1266,6 +1295,7 @@ function Death.clearPlayer(cid)
     lethalAt[cid] = nil
     downHits[cid] = nil
     polling[cid] = nil
+    aliveAt[cid] = nil
     for key, record in pairs(pending) do
         if record.hitmanCid == cid then pending[key] = nil end
     end

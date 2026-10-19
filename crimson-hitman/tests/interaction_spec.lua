@@ -3094,6 +3094,63 @@ describe('the moment a defibrillator leaves between dead and last stand', functi
         truthy(s.death.sinceRespawn('TARGET01'), 'the revive went unrecorded')
     end)
 
+    it('counts a revive cut short by a drop nobody can be credited with', function()
+        -- Two hitmen's hits wait on the one drop that put them down, and
+        -- nothing says whose landed: nobody is paid for it, and it ended
+        -- their time up all the same.
+        local s, f, c, meta = downed()
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:h2',
+            cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        Env.players[4]._coords = { x = 102.0, y = 100.0, z = 30.0 }
+        meta.isdead = false
+        Env.players[2]._health = 200
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(1)
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(0.5)
+        s.death.recordDamage(3, 2, 123456)
+        s.death.recordDamage(4, 2, 123456)
+        Env.players[2]._health = 150
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(0.5)
+        falsy(s.death.recordFor('TARGET01', 'HITMAN02'), 'the drop was guessed at')
+        falsy(s.death.getPending(c.id, 'HITMAN01'), 'the kill the revive undid still pays')
+        truthy(s.death.sinceRespawn('TARGET01'), 'the revive went unrecorded')
+    end)
+
+    it('keeps a revive\'s protection when a friend\'s hit waits beside the hitman\'s', function()
+        -- The second shooter is on no contract. Unrecorded, the revive's
+        -- protection was gone, and the hitman's re-kill seconds later paid.
+        local s, f, c, meta = downed()
+        Env.addPlayer({ source = 4, citizenid = 'FRIEND01', license = 'license:f1',
+            coords = { x = 102.0, y = 100.0, z = 30.0 } })
+        meta.isdead = false
+        Env.players[2]._health = 200
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(1)
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(0.5)
+        s.death.recordDamage(3, 2, 123456)
+        s.death.recordDamage(4, 2, 123456)
+        Env.players[2]._health = 150
+        meta.inlaststand = true
+        s.death.watchTargets(s.storage.allContracts())
+        Env.advance(1.5)                              -- the waiting hits lapse
+
+        Env.players[2]._health = Env.players[2]._health - 30
+        s.death.recordDamage(3, 2, 123456)
+        meta.inlaststand, meta.isdead = false, true
+        truthy(s.death.onVictimReport(2, 3) >= 1, 'the re-kill is attributed')
+        local rekill = s.death.getPending(c.id, 'HITMAN01')
+        truthy(rekill)
+        local ok, err = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION,
+            { deathAt = rekill.at })
+        falsy(ok, 'a target killed again seconds after getting up paid out')
+        eq(err, CH.ERR.TARGET_JUST_UP)
+    end)
+
     it('does not read a defibrillator\'s gap as a death where they stood', function()
         -- A medical resource that leaves the ped dead through the gap.
         local s, f, c, meta = downed()
