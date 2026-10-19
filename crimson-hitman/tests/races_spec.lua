@@ -75,9 +75,9 @@ describe('RACE F1: two hitmen accept a competitive contract at once', function()
 end)
 
 describe('RACE F2: a contract resolves while a hitman is mid-accept', function()
-    -- A cancel lands before the hitman's row exists: once it does, somebody
-    -- is on the contract and the client can no longer cancel it outright.
-    -- A buyout lands inside the stake itself, after the row.
+    -- A staff void lands before the hitman's row exists. The client's own
+    -- cancel no longer can: it waits on the key the acceptance holds and is
+    -- refused as busy. A buyout lands inside the stake itself, after the row.
     local function run(which, fee)
         local s = newStack()
         local f = fixture(s)
@@ -90,8 +90,8 @@ describe('RACE F2: a contract resolves while a hitman is mid-accept', function()
         truthy(c)
         local function land()
             local ok, err
-            if which == 'cancel' then
-                ok, err = s.contracts.cancel(f.creator, c.id)
+            if which == 'void' then
+                ok, err = s.admin.void(0, c.id, 'raced')
             else
                 ok, err = s.bailout.buy(f.target, c.id)
             end
@@ -100,11 +100,11 @@ describe('RACE F2: a contract resolves while a hitman is mid-accept', function()
         local realWrite, realCount = s.storage.writeEscrow, s.storage.countHitmanContracts
         local fired = false
         s.storage.countHitmanContracts = function(...)
-            if which == 'cancel' and not fired then fired = true land() end
+            if which == 'void' and not fired then fired = true land() end
             return realCount(...)
         end
         s.storage.writeEscrow = function(contractId, lines)
-            if which ~= 'cancel' and not fired and lines[1]
+            if which ~= 'void' and not fired and lines[1]
                 and lines[1].portion == CH.PORTION.STAKE then
                 fired = true
                 land()
@@ -123,14 +123,14 @@ describe('RACE F2: a contract resolves while a hitman is mid-accept', function()
         print('  hitman money', money(3), '(started 10000)')
         return money(3)
     end
-    it('gives the stake back when the creator cancels mid-accept', function()
-        eq(run('cancel'), 10000, 'the stake was left held on a cancelled contract')
+    it('gives the stake back when staff void it mid-accept', function()
+        eq(run('void'), 10000, 'the stake was left held on a voided contract')
     end)
     it('gives the stake back when the target buys out mid-accept', function()
         eq(run('bailout'), 10000, 'the stake was left held on a bought-out contract')
     end)
     it('gives the anonymity fee back with the stake', function()
-        eq(run('cancel', 1500), 10000, 'the fee for anonymity on a contract '
+        eq(run('void', 1500), 10000, 'the fee for anonymity on a contract '
             .. 'the hitman never got was kept')
     end)
 
@@ -1850,5 +1850,78 @@ describe('a stake forfeited to a client who could not be paid', function()
         eq(line.amount, 2000)
         eq(line.owed_to, 'CREATOR1')
         eq(line.state, CH.ESCROW_STATE.HELD)
+    end)
+end)
+
+describe('RACE: an acceptance lands while the creator cancels', function()
+    it('does not leave a hitman on a cancelled contract', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } }, penaltyAmount = 1000,
+        })
+        truthy(c)
+        -- The accept runs in the await of cancel's "is anybody on it" read.
+        local realRead = s.storage.readHitmen
+        local armed, accepted = true, nil
+        s.storage.readHitmen = function(...)
+            local rows = realRead(...)
+            if armed then
+                armed = false
+                accepted = s.contracts.accept(f.hitman, c.id, false) or false
+            end
+            return rows
+        end
+        local cancelled = s.contracts.cancel(f.creator, c.id)
+        s.storage.readHitmen = realRead
+        truthy(accepted ~= nil, 'the acceptance never landed')
+        falsy(cancelled and accepted, 'both were told they had it')
+        if s.storage.readContract(c.id).state == CH.STATE.CANCELLED then
+            local h = s.storage.readHitman(c.id, 'HITMAN01')
+            falsy(h and h.state == 'active', 'left on a cancelled contract')
+            eq(money(3), 10000, 'with their stake gone')
+        end
+    end)
+end)
+
+describe('RACE: one photo token sent twice at once', function()
+    it('pays one collection for one kill, with no slot cooldown', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Limits.SlotCooldownSeconds = 0
+        Config.Completion.ExtraPhotoHosts = { 'cdn.fivemanage.com' }
+        s.photo.loadAllowedHosts()
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 1000 } },
+                                 { baseline = { cash = 1000 } } } },
+        })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 140
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2), 1)
+        local token = s.photo.issue(f.hitman, c.id)
+        truthy(token)
+
+        local before = money(3)
+        local url = 'https://cdn.fivemanage.com/p.png'
+        -- The second send runs in the await of the first one's claim.
+        local realClaim = s.contracts.claimSlot
+        local second
+        s.contracts.claimSlot = function(...)
+            if second == nil then
+                second = false
+                second = s.photo.submit(f.hitman, token, url) or false
+            end
+            return realClaim(...)
+        end
+        local first = s.photo.submit(f.hitman, token, url)
+        s.contracts.claimSlot = realClaim
+        truthy(first or second, 'neither send was paid')
+        eq(money(3) - before, 1000, 'one kill paid two collections')
     end)
 end)

@@ -84,6 +84,37 @@ end
 ---@return boolean|nil queued paid, but waiting out the delay with a hitman on it
 local settleUnlocked, deliver
 
+--- Hand back a premium nothing of this buyout recorded, rather than let it
+--- vanish.
+local function handBack(cid, contractId, amount, account, why)
+    if not deliver(cid, contractId, amount, account, 'bailout_refund') then
+        Audit.financial('bailout_refund_stranded', cid, contractId,
+            { amount = amount, account = account, reason = why })
+    end
+end
+
+--- Write a paid buyout onto the contract. The target has been charged by
+--- now, and this record is the only thing that will settle or refund it.
+---
+--- A write that raised (a dropped connection on mysql) left the premium in
+--- no pocket, no line and no queue. It may or may not have landed, as for
+--- a placed contract (Contracts.create), so the store decides: there, it is
+--- recorded; not there, the premium goes back and the error goes on. A read
+--- that raises too decides nothing, and handing back a record that landed
+--- would refund a buyout the tick then settles, so that raises with the
+--- bailout_paid row saying what was taken.
+local function recordPaid(contractId, fields)
+    local wrote, err = pcall(Storage.setBailoutQueue, contractId, fields)
+    if wrote then return end
+    local payer = fields.bailout_paid_by
+    Audit.financial('bailout_record_failed', payer, contractId,
+        { amount = fields.bailout_paid_amount, error = tostring(err) })
+    local stored = Storage.readContract(contractId)
+    if stored and stored.bailout_queued_at and stored.bailout_paid_by == payer then return end
+    handBack(payer, contractId, fields.bailout_paid_amount, fields.bailout_paid_account, 'unrecorded')
+    error(err, 0)
+end
+
 function Bailout.buy(actor, contractId)
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
@@ -111,6 +142,20 @@ function Bailout.buy(actor, contractId)
 
     local amount = contract.bailout_amount
 
+    -- With a hitman already engaged, the buyout is queued rather than
+    -- instant, so a hitman cannot be rug-pulled mid-delivery (§14.17).
+    -- Read before the charge: a read that raised after it kept the premium
+    -- with nothing recorded for it.
+    local hitmen = Storage.readHitmen(contractId)
+    local engaged = false
+    local engagedCids = {}
+    for i = 1, #hitmen do
+        if hitmen[i].state == 'active' then
+            engaged = true
+            engagedCids[#engagedCids + 1] = hitmen[i].hitman_cid
+        end
+    end
+
     -- Debit first: the premium is taken before any state changes, so a
     -- failure here leaves the contract exactly as it was.
     -- Which account paid is remembered, so a refund goes back where it came
@@ -130,18 +175,6 @@ function Bailout.buy(actor, contractId)
 
     Audit.financial('bailout_paid', actor.cid, contractId, { amount = amount })
 
-    -- With a hitman already engaged, the buyout is queued rather than
-    -- instant, so a hitman cannot be rug-pulled mid-delivery (§14.17).
-    local hitmen = Storage.readHitmen(contractId)
-    local engaged = false
-    local engagedCids = {}
-    for i = 1, #hitmen do
-        if hitmen[i].state == 'active' then
-            engaged = true
-            engagedCids[#engagedCids + 1] = hitmen[i].hitman_cid
-        end
-    end
-
     if engaged and Config.Bailout.ProcessingDelaySeconds > 0 then
         -- Persisted, not held in memory: the target's money is already gone,
         -- so a restart inside the delay window must still settle.
@@ -149,7 +182,7 @@ function Bailout.buy(actor, contractId)
         -- already gone at this point, and a writeContract from any other
         -- handler holding an older copy of this row used to erase the queue
         -- on top of it: premium charged, nothing left to settle or refund it.
-        Storage.setBailoutQueue(contract.id, {
+        recordPaid(contract.id, {
             bailout_queued_at = os.time(),
             bailout_paid_by = actor.cid,
             bailout_paid_amount = amount,
@@ -175,7 +208,7 @@ function Bailout.buy(actor, contractId)
     -- Under the settle lock from the record on, so the tick cannot settle
     -- it too in between (Bailout.settle).
     local settled, why = Contracts.serialized({ 'settle:' .. tostring(contractId) }, function()
-        Storage.setBailoutQueue(contract.id, {
+        recordPaid(contract.id, {
             bailout_queued_at = os.time() - (Config.Bailout.ProcessingDelaySeconds or 0),
             bailout_paid_by = actor.cid,
             bailout_paid_amount = amount,
@@ -187,10 +220,7 @@ function Bailout.buy(actor, contractId)
     -- Another settle of this contract was running: nothing of this buyout
     -- was recorded, so the charge goes back rather than vanish.
     if not settled and why == CH.ERR.BUSY then
-        if not deliver(actor.cid, contractId, amount, account, 'bailout_refund') then
-            Audit.financial('bailout_refund_stranded', actor.cid, contractId,
-                { amount = amount, account = account, reason = why })
-        end
+        handBack(actor.cid, contractId, amount, account, why)
     end
     return settled, why
 end
@@ -222,9 +252,20 @@ function Bailout.premiumLineId(contractId)
     return 'prem:' .. contractId
 end
 
---- Owe the creator the premium and hand it over. Idempotent: see settle.
-local function payPremium(contract, amount, account)
-    local id = Bailout.premiumLineId(contract.id)
+--- The id of a refunded buyout's line: the contract's, and the moment that
+--- buyout was recorded. A retry of one refund lands on its own line; a
+--- later buyout of the same contract (the first refunded because a claim
+--- held it) is recorded at a later moment and gets its own.
+---@param contractId string
+---@param queuedAt integer|nil the buyout's bailout_queued_at
+---@return string
+function Bailout.refundLineId(contractId, queuedAt)
+    return ('refund:%s-%d'):format(contractId, math.floor(tonumber(queuedAt) or 0))
+end
+
+--- Owe one party a buyout's money under an id that comes from the contract,
+--- and hand it over. Idempotent: see settle.
+local function payOwed(contract, id, cid, amount, account, reason)
     local existing = Storage.readEscrowLine(id)
     if not (existing and existing.id == id) then
         Storage.writeEscrow(contract.id, { {
@@ -232,17 +273,17 @@ local function payPremium(contract, amount, account)
             contract_id = contract.id,
             slot = 0,
             portion = CH.PORTION.OWED,
-            owed_to = contract.creator_cid,
+            owed_to = cid,
             source = account == 'cash' and 'cash' or 'bank',
             amount = amount,
             state = CH.ESCROW_STATE.HELD,
         } })
-        Storage.queuePending(contract.creator_cid, contract.id, id)
-        if Escrow and Escrow.noteWaiting then Escrow.noteWaiting(contract.creator_cid, true) end
+        Storage.queuePending(cid, contract.id, id)
+        if Escrow and Escrow.noteWaiting then Escrow.noteWaiting(cid, true) end
     end
     local line = Storage.readEscrowLine(id)
     if line and line.id == id and line.state == CH.ESCROW_STATE.HELD and Escrow then
-        Escrow.release(contract.id, contract.creator_cid, { line = id }, 'bailout_premium')
+        Escrow.release(contract.id, cid, { line = id }, reason)
     end
 end
 
@@ -310,19 +351,16 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
 
         -- The contract resolved some other way first (a hitman completed it
         -- during the delay). Refund the premium to the account it came from;
-        -- if the target is offline, it is owed rather than lost.
-        -- A refusal is the same situation as being offline: the money has
-        -- not been delivered. AddMoney returns false for an account
-        -- qbx_core will not credit, and a server with a balance ceiling
-        -- refuses on exactly the payouts that matter most.
-        if not deliver(targetCid, contractId, amount, account, 'bailout_refund') then
-            -- Nowhere to put it and nobody to hand it to. Audited under its
-            -- own name, with everything a server owner needs to place it by
-            -- hand: the alternative is a player who paid for a buyout,
-            -- never got it, and has no way to find out why.
-            Audit.financial('bailout_refund_stranded', targetCid, contractId,
-                { amount = amount, account = account, reason = err })
-        end
+        -- if the target is offline, or the framework refuses the credit, it
+        -- is owed rather than lost.
+        --
+        -- Once, the way the premium is paid: an owed line under an id from
+        -- this buyout, cleared from the queue only after. Credited straight
+        -- to the target, a queue clear that raised left the record for the
+        -- next tick, which refunded it again, on every tick the clear kept
+        -- failing. Now a retry finds the line and its state.
+        payOwed(contract, Bailout.refundLineId(contractId, contract.bailout_queued_at),
+            targetCid, amount, account, 'bailout_refund')
         Audit.financial('bailout_refunded', targetCid, contractId, { amount = amount, reason = err })
         Bailout.clearQueue(contractId)
         return false, err
@@ -338,7 +376,8 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
     -- premium was paid again. Written under the contract's own id, the
     -- second write lands on the first line and changes nothing, and the
     -- line's state says whether it was handed over.
-    payPremium(contract, amount, account)
+    payOwed(contract, Bailout.premiumLineId(contract.id), contract.creator_cid,
+        amount, account, 'bailout_premium')
 
     Audit.financial('bailout_settled', targetCid, contractId, { amount = amount })
     Notify.toCitizen(contract.creator_cid, 'Contract closed',

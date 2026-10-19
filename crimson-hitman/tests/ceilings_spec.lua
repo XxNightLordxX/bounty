@@ -410,6 +410,36 @@ describe('the failure stake', function()
             ('the contract is worth %d and asks the next hitman for %d'):format(worth, after.penalty_amount))
     end)
 
+    it('never rises when a collection is given back after a top-up', function()
+        -- A top-up re-prices nothing, so the buyout sits under the floor of
+        -- what is held. Giving back a collection re-clamped it UP to that
+        -- floor, and the target, shown 10,000, was charged 65,000.
+        local s = newCopyingStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { slots = {
+                { baseline = { cash = 5000 } },
+                { baseline = { cash = 5000 } },
+            } },
+            bailoutAmount = 10000,
+        })
+        truthy(c)
+        eq(c.bailout_amount, 10000)
+        truthy(s.amendments.addEscrow(f.creator, c.id, { baseline = { bank = 60000 } }))
+
+        local proposal = s.amendments.propose(f.creator, c.id,
+            CH.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+        truthy(proposal)
+        eq(proposal.outcome, 'applied', tostring(proposal.error))
+        eq(s.storage.readContract(c.id).bailout_amount, 10000, 'the buyout was raised')
+
+        local before = Env.players[2].PlayerData.money.bank + Env.players[2].PlayerData.money.cash
+        truthy(s.bailout.buy(f.target, c.id))
+        eq(before - (Env.players[2].PlayerData.money.bank + Env.players[2].PlayerData.money.cash),
+            10000, 'the target paid more than the price they were shown')
+    end)
+
     --- §3.6: "A hitman who cannot cover it cannot accept the contract, and
     --- is told so." §14.18: "The required stake is shown prominently on the
     --- listing before the accept button." The figure reached the creator

@@ -1220,3 +1220,81 @@ describe('/ch-contracts', function()
         eq(#s.admin.contractsOf(0, 2), 2, 'and both are listed under the target')
     end)
 end)
+
+describe('a buyout whose queue write raises', function()
+    --- The target is charged first, and the queue record is the only thing
+    --- that settles or refunds it. A write that raised kept the premium in
+    --- no pocket, line or queue; a clear that raised after a refund left the
+    --- record for the next tick, which refunded it again.
+    local function placed(s, f, engaged)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } },
+            bailoutAmount = 5000 })
+        truthy(c)
+        if engaged then truthy(s.contracts.accept(f.hitman, c.id, false)) end
+        return c
+    end
+
+    for _, engaged in ipairs({ true, false }) do
+        it(('hands the premium back when nothing was written (%s)')
+            :format(engaged and 'queued' or 'instant'), function()
+            local s = newStack()
+            local f = fixture(s)
+            local c = placed(s, f, engaged)
+            local before = money(2)
+            local real = s.storage.setBailoutQueue
+            s.storage.setBailoutQueue = function() error('mysql: connection lost', 0) end
+            local ran = pcall(s.bailout.buy, f.target, c.id)
+            s.storage.setBailoutQueue = real
+            falsy(ran, 'told the target it was paid')
+            eq(money(2), before, 'the premium went with the raise')
+            falsy(s.storage.readContract(c.id).bailout_queued_at)
+            eq(s.storage.readContract(c.id).state, engaged and CH.STATE.ACCEPTED or CH.STATE.ACTIVE)
+        end)
+    end
+
+    it('keeps a record that landed before the error', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = placed(s, f, true)
+        local before = money(2)
+        local real = s.storage.setBailoutQueue
+        s.storage.setBailoutQueue = function(...)
+            real(...)
+            error('connection lost', 0)
+        end
+        local ok = s.bailout.buy(f.target, c.id)
+        s.storage.setBailoutQueue = real
+        truthy(ok, 'a recorded buyout was refused')
+        eq(before - money(2), 5000, 'charged once, and not refunded')
+        truthy(s.storage.readContract(c.id).bailout_queued_at, 'and it is still queued')
+    end)
+
+    it('refunds once when the clear after a refund raises', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = placed(s, f, true)
+        local before = money(2)
+        truthy(s.bailout.buy(f.target, c.id))
+        -- The hitman finishes it during the delay, so the buyout is refunded.
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
+
+        local real = s.storage.setBailoutQueue
+        local raised = false
+        s.storage.setBailoutQueue = function(id, fields)
+            if fields == nil and not raised then
+                raised = true
+                error('mysql: lock wait timeout', 0)
+            end
+            return real(id, fields)
+        end
+        pcall(s.bailout.processQueue)
+        s.storage.setBailoutQueue = real
+        truthy(raised, 'the clear was reached')
+        s.bailout.processQueue()
+        s.bailout.processQueue()
+        eq(money(2), before, 'the refund was paid more than once')
+        falsy(s.storage.readContract(c.id).bailout_queued_at)
+    end)
+end)

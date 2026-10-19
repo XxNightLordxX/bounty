@@ -1835,10 +1835,7 @@ end
 ---@param contractId string
 ---@return boolean ok
 ---@return string|nil err
-function Contracts.cancel(actor, contractId)
-    contractId = Util.toId(contractId)
-    if not contractId then return false, CH.ERR.INVALID_INPUT end
-
+local function cancelUnlocked(actor, contractId)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
@@ -1865,6 +1862,16 @@ function Contracts.cancel(actor, contractId)
         or 'Nobody had taken it, so everything you put up has been returned.',
         { bypassBudget = true })
     return true, nil, { owed = owed }
+end
+
+--- One at a time with an acceptance, on the key acceptance holds. Whether
+--- anybody holds it is a read, an await on mysql, and an acceptance landing
+--- there was told the contract was theirs and then had it cancelled under
+--- them, left on a cancelled contract with any fee they paid for it kept.
+function Contracts.cancel(actor, contractId)
+    contractId = Util.toId(contractId)
+    if not contractId then return false, CH.ERR.INVALID_INPUT end
+    return Contracts.serialized({ 'contract:' .. contractId }, cancelUnlocked, actor, contractId)
 end
 
 --- Change a contract nobody has taken.
@@ -2231,6 +2238,12 @@ function Contracts.reclampToEscrow(contractId, actorCid)
 
     if (contract.bailout_amount or 0) > 0 then
         local clamped = Contracts.clampBailout(contract.bailout_amount, held)
+        -- Down only. clampBailout also lifts a price to its floor, and a
+        -- price under the floor here is one a top-up left behind (addEscrow
+        -- re-prices nothing). Lifted, giving back one collection after a
+        -- top-up raised the buyout from 10,000 to 65,000 under a target
+        -- already looking at 10,000, who was then charged 65,000.
+        if clamped > contract.bailout_amount then clamped = contract.bailout_amount end
         if clamped ~= contract.bailout_amount then
             contract.bailout_amount = clamped
             changed = true

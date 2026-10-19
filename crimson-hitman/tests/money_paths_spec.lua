@@ -192,11 +192,12 @@ describe('taking a stake on a contract that closes during the acceptance', funct
         })
         local before = worth(3)
         local ok, err
-        -- Store call 3 is before the hitman's row exists, so the cancel goes
-        -- through; the acceptance is then reserving a cancelled contract.
+        -- Store call 3 is before the hitman's row exists, so a staff void
+        -- goes through (the client's own cancel waits on the key the
+        -- acceptance holds); the acceptance is then reserving a closed one.
         interleaveAt(s, 3, function() ok, err = s.contracts.accept(f.hitman, c.id, false) end,
-            function() s.contracts.cancel(f.creator, c.id) end)
-        eq(s.storage.readContract(c.id).state, CH.STATE.CANCELLED)
+            function() s.admin.void(0, c.id, 'raced') end)
+        eq(s.storage.readContract(c.id).state, CH.STATE.VOIDED)
         falsy(ok, 'accepting a contract that closed underneath is not an acceptance')
         eq(err, CH.ERR.ALREADY_SETTLED)
         eq(worth(3), before, 'and the stake is back where it came from')

@@ -385,9 +385,18 @@ function Photo.submit(actor, rawToken, rawUrl)
     -- The token is spent only once the slot is actually claimed. Burning it
     -- first meant a transient refusal — a lock held elsewhere, a cooldown —
     -- destroyed the proof of a kill the server itself had attributed.
-    local ok, err, result = Contracts.claimSlot(
+    --
+    -- But one claim on it at a time. The claim awaits on mysql, and the same
+    -- token sent again in that gap passed every check above and claimed
+    -- too: with no slot cooldown, one kill paid one collection per send.
+    if record.used then return false, CH.ERR.TOKEN_INVALID end
+    if record.claiming then return false, CH.ERR.BUSY end
+    record.claiming = true
+    local ran, ok, err, result = pcall(Contracts.claimSlot,
         record.contractId, actor.cid, CH.FULFILMENT.ELIMINATION,
         { deathAt = record.diedAt })
+    record.claiming = nil
+    if not ran then error(ok, 0) end
 
     if not ok then
         Audit.rejected('photo_claim_failed', actor.cid, record.contractId, { reason = err })
