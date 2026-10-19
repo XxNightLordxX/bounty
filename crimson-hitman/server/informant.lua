@@ -219,10 +219,21 @@ end
 --- free re-ask would be. The paid answer used to exist only in a notice that
 --- cleared itself after four seconds, and a buyer who looked away had paid
 --- the premium for a name they could no longer read.
+---
+--- Only inside the reroll lock, the window in which buying again gives the
+--- same answer anyway. Kept on the card for the contract's life, it went on
+--- reading "Informant: <name>" long after that operative had walked away
+--- and somebody else had taken it, and a target acting on it watched the
+--- wrong person. Bounded by time alone: asking whether that hitman is still
+--- on it would make the card a free presence and departure oracle.
 ---@return table|nil answer { name } or { description }
 function Informant.answerFor(contractId, cid)
     local record = recordFor(contractId, cid)
-    return record and record.answer or nil
+    if not record then return nil end
+    if (os.time() - record.at) >= (Config.Informant.RerollLockMinutes or 0) * 60 then
+        return nil
+    end
+    return record.answer
 end
 
 --- What the buyer is shown.

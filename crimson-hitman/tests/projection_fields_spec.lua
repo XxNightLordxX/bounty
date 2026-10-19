@@ -47,6 +47,8 @@ local CONDITIONAL = {
     kidnapProgress = 'the page fills this in, not the projection',
     -- Stamped by the page as the reply lands, to count the clock down from.
     clockReadAt = 'the page fills this in, not the projection',
+    -- Never on the target's card: a named client's absence is what stops it.
+    clockStopped = 'every role but the target',
     -- Who the hitman is on it, drawn on their own card. Nobody else is one.
     myAlias     = 'hitman-only',
     myAnonymous = 'hitman-only',
@@ -65,8 +67,9 @@ local CONDITIONAL = {
     bailoutPaid      = 'target-only, and only after the premium has been taken',
     -- How long the hitman on it still has, for that same paid card.
     bailoutSecondsLeft = 'target-only, and only while a paid buyout waits out its delay',
-    -- The viewer's own informant answer, so only once they have bought one.
-    informantAnswer  = 'creator or target, and only after buying informant data',
+    -- The viewer's own informant answer, so only once they have bought one,
+    -- and only while the reroll lock lasts.
+    informantAnswer  = 'creator or target, and only inside the reroll lock after buying',
     -- Exactly one of these two, never both: when the creator chose anonymity
     -- no key carrying their name exists on the payload at all.
     creatorAnonymous = 'present only when the creator chose anonymity',

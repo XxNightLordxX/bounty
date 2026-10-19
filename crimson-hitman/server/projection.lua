@@ -132,7 +132,8 @@ function Projection.contract(contract, viewerCid)
         -- alone ran through every pause and could tell a hitman their
         -- stake was gone on a contract that was not running at all. For an
         -- anonymous client the pause follows the target alone (§14.32), so
-        -- whether it is stopped says nothing about the client.
+        -- whether it is stopped says nothing about the client. The target's
+        -- own card is read differently, below.
         secondsLeft   = contract.deadline_at
             and math.max(0, contract.deadline_at - (contract.paused_since or os.time()))
             or nil,
@@ -227,6 +228,16 @@ function Projection.contract(contract, viewerCid)
             out.kidnapProgress = Kidnap.progress(contract.id, viewerCid)
         end
     elseif role == 'target' then
+        -- The target is in the city to read this, and knows whether they
+        -- are in prison, so a stopped clock on their card could only mean a
+        -- named client had logged off: their session, live, to the one
+        -- person most keen to know who the client is. So the target's clock
+        -- is read from the deadline as if it were always running, the same
+        -- for every contract on them whether the client is named or not —
+        -- keying it on that would tell them which.
+        out.clockStopped = nil
+        out.secondsLeft = contract.deadline_at
+            and math.max(0, contract.deadline_at - os.time()) or nil
         out.bailoutAmount = contract.bailout_amount
         -- Both questions, not one. A price stored before the owner switched
         -- buyouts off stays on the row, and the switch was read only when

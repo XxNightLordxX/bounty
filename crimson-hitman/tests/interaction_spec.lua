@@ -1435,6 +1435,35 @@ describe('masked calls', function()
             end)
         end)
 
+        it('reaches CreateCall afresh after lb-phone restarts', function()
+            withCreateCall(42, function(made)
+                local s, f, c = threaded()
+                truthy(s.comms.requestCall(f.hitman, c.id, nil))
+                eq(#made, 1)
+                -- A restart empties the export proxy's cache, so what the
+                -- first probe returned no longer reaches the phone.
+                local after = 0
+                phone.CreateCall = function() after = after + 1 return 43 end
+                local ok, _, result = s.comms.requestCall(f.hitman, c.id, nil)
+                truthy(ok)
+                eq(result.placed, true)
+                eq(after, 1, 'the call went to the export kept from before the restart')
+                return s
+            end)
+        end)
+
+        it('does not say a named party was told when they are not here', function()
+            withCreateCall(42, function()
+                local s, f, c = threaded()
+                Env.removePlayer(1)
+                local ok, _, result = s.comms.requestCall(f.hitman, c.id, nil)
+                truthy(ok)
+                eq(result.placed, false)
+                eq(result.reason, 'unreachable')
+                return s
+            end)
+        end)
+
         it('leaves an override in charge when one is set', function()
             withCreateCall(42, function(made)
                 local s, f, c = threaded()

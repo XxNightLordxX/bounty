@@ -670,7 +670,7 @@ describe('informant data across a restart', function()
                 'the repeat read the hitman afresh and said whether they were here')
         end)
 
-        it(mode .. ': the answer stays on the buyer\'s card, and only theirs', function()
+        it(mode .. ': the answer stays on the buyer\'s card for the lock, and only theirs', function()
             -- It lived only in a notice that cleared itself in four seconds,
             -- on the one purchase that is never refunded.
             local _, s = boot(mode)
@@ -689,6 +689,12 @@ describe('informant data across a restart', function()
             eq(row.informantAnswer, 'Rook Ash', 'the stored answer, after a restart')
             local theirs = s2.projection.contract(s2.storage.readContract(c.id), 'CREATOR1')
             eq(theirs.informantAnswer, nil, 'the client bought nothing and is told nothing')
+
+            -- Only while a repeat purchase would give it anyway: after the
+            -- lock that operative may be long gone, and the card said not.
+            Env.advance(Config.Informant.RerollLockMinutes * 60)
+            row = s2.projection.contract(s2.storage.readContract(c.id), 'TARGET01')
+            eq(row.informantAnswer, nil, 'a stale name stayed on the card after the lock')
         end)
 
         it(mode .. ': the ceiling still counts what was bought before', function()

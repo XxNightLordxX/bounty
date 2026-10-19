@@ -114,6 +114,12 @@ describe('projection', function()
         row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
         eq(row.secondsLeft, 3000, 'a stopped clock has what it had when it stopped')
         eq(row.clockStopped, true)
+
+        -- Never to the target: online and free, a stop there could only be
+        -- a named client logging off.
+        row = s.projection.contract(s.storage.readContract(c.id), 'TARGET01')
+        eq(row.clockStopped, nil, 'the target was told the clock had stopped')
+        truthy(math.abs(row.secondsLeft - 2400) <= 1, 'read as running: ' .. tostring(row.secondsLeft))
     end)
 
     it('does not list a contract to its own target', function()

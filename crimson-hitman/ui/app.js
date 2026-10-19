@@ -3686,7 +3686,8 @@
     no_calls: 'They have been told you want to talk. This server cannot '
       + 'place calls, so use messages.',
     not_placed: 'The call could not be placed, so they have been told you '
-      + 'want to talk. Use messages.'
+      + 'want to talk. Use messages.',
+    unreachable: 'They could not be reached. Use messages.'
   };
 
   function requestCall() {
@@ -4022,7 +4023,15 @@
 
     // The server has always had a call path and nothing reached it, so the
     // whole feature was unreachable from the phone.
-    if (settings().calls) {
+    //
+    // Not when both sides are anonymous: neither can be rung and the server
+    // sends nothing, so the button could only say calls were off. A
+    // creator's thread names the operative only when they chose to be seen.
+    var bothAnonymous = t.contract.creatorAnonymous === true
+      && (t.contract.role === 'hitman'
+        ? t.contract.myAnonymous === true
+        : !!(t.thread && !t.thread.name));
+    if (settings().calls && !bothAnonymous) {
       if (state.call === threadKey(t.contract, t.thread)) {
         // lb-phone draws no call screen for a call placed from here — its
         // CreateCall is built for payphones — so this is the only way the
@@ -4307,15 +4316,32 @@
     // gets the server's default, and nothing here said what that was, so a
     // client expecting a day-long contract who never opened Edit had it
     // lapse after three hours.
-    terms.appendChild(el('div', 'hint',
-      'It runs for ' + durationText(Number(settings().defaultDeadlineMinutes) || 180)
-      + ' while the target is in the city, then lapses and what you put up comes '
-      + 'back. Extend it at any time from Mine \u2192 Extend deadline.'));
+    //
+    // And while whom: a named client's clock also stops while they are
+    // away, an anonymous one's follows the target alone (§14.32), so it
+    // follows the checkbox. The lifetime runs through every stop, and no
+    // extension goes past it.
+    function clockHint() {
+      var ceiling = Number(settings().deadlineMaxMinutes) || 0;
+      return 'It runs for ' + durationText(Number(settings().defaultDeadlineMinutes) || 180)
+        + (state.draft.anon === true
+          ? ' while the target is in the city'
+          : ' while you and the target are both in the city')
+        + ', then lapses and what you put up comes back. Extend it from Mine '
+        + '\u2192 Extend deadline'
+        + (ceiling > 0 ? ', up to ' + durationText(ceiling) + ' after you place it.' : '.');
+    }
+    var clock = el('div', 'hint', clockHint());
+    terms.appendChild(clock);
 
     var anon = document.createElement('input');
     anon.type = 'checkbox'; anon.id = 'anon';
     anon.checked = state.draft.anon === true;
-    anon.onclick = function () { state.draft.anon = anon.checked; showPlaceTotal(); };
+    anon.onclick = function () {
+      state.draft.anon = anon.checked;
+      clock.textContent = clockHint();
+      showPlaceTotal();
+    };
     // A label, so the words toggle it too. The box on its own is a twenty
     // pixel target on a phone screen, which is a coin toss.
     var toggle = document.createElement('label');

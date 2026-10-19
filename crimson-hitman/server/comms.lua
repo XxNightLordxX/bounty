@@ -327,11 +327,21 @@ function Comms.requestCall(actor, contractId, threadHandle)
     end
 
     if reason ~= 'both_anonymous' then
-        Notify.toCitizen(recipient,
+        local told = Notify.toCitizen(recipient,
             placed and 'Incoming call' or 'Call request',
             placed
                 and ('%s is calling you about a contract.'):format(ctx.alias)
                 or  ('%s wants to speak with you about a contract.'):format(ctx.alias))
+
+        -- A named party who was not told either: logged off, or past their
+        -- notice budget. The page said "they have been told you want to
+        -- talk" all the same. Their presence is no secret (above), so this
+        -- says only what a ringing phone would have. Never for an anonymous
+        -- party, whose "asked to call you back" must read the same either
+        -- way.
+        if reason and not otherAnon and not told then
+            reason = 'unreachable'
+        end
 
         Audit.action(placed and 'call_placed' or 'call_requested', actor.cid, contractId,
             { anonymous = otherAnon or selfAnon })
@@ -381,33 +391,13 @@ end
 --- function (actor, number, anonymous, alias) -> placed. `false` means
 --- probed and not available, distinct from `nil` for not yet probed — a
 --- phone without the export must not be re-probed per call.
+---
+--- What is remembered is which export to use, never the export itself.
+--- FiveM's export proxy keeps the resource's callback in a cache it empties
+--- when that resource stops, and only indexing the export again refills it:
+--- a function kept from the first probe threw on every call after lb-phone
+--- restarted, while the Call button stayed drawn, until this resource did.
 local callPlacer = nil
-
---- An owner's own export, named in Config.Relay.CallExport and called as
---- (callerSource, number, anonymous). Many exports return nothing at all,
---- so only an explicit false counts as a refusal here.
-local function overridePlacer(fn)
-    return function(actor, number, anonymous)
-        local ok, result = pcall(fn, nil, actor.source, number, anonymous == true)
-        return ok and result ~= false
-    end
-end
-
---- lb-phone's own documented export:
----   CreateCall(caller, calleeNumber, options) -> callId, or nil on failure
---- The caller table's phoneNumber is what the callee's phone shows, so the
---- caller's alias goes there and their real number is never read at all
---- (§11.3: the alias is the caller name). The callId is the only proof a
---- call started: nil is a call that did not, however quietly it failed.
-local function lbPhonePlacer(createCall)
-    return function(actor, number, anonymous, alias)
-        local ok, callId = pcall(createCall, nil,
-            { source = actor.source, phoneNumber = alias or 'Unknown' },
-            number,
-            { requirePhone = true, hideNumber = anonymous == true })
-        return ok and callId ~= nil and callId ~= false
-    end
-end
 
 --- Resolve an export to a function, or nil. lb-phone ships its server code
 --- escrowed, so whether an export exists is probed, never assumed: indexing
@@ -420,14 +410,43 @@ local function resolveExport(resource, name)
     return fn
 end
 
+--- An owner's own export, named in Config.Relay.CallExport and called as
+--- (callerSource, number, anonymous). Many exports return nothing at all,
+--- so only an explicit false counts as a refusal here.
+local function overridePlacer(resource, name)
+    return function(actor, number, anonymous)
+        local fn = resolveExport(resource, name)
+        if not fn then return false end
+        local ok, result = pcall(fn, nil, actor.source, number, anonymous == true)
+        return ok and result ~= false
+    end
+end
+
+--- lb-phone's own documented export:
+---   CreateCall(caller, calleeNumber, options) -> callId, or nil on failure
+--- The caller table's phoneNumber is what the callee's phone shows, so the
+--- caller's alias goes there and their real number is never read at all
+--- (§11.3: the alias is the caller name). The callId is the only proof a
+--- call started: nil is a call that did not, however quietly it failed.
+local function lbPhonePlacer()
+    return function(actor, number, anonymous, alias)
+        local createCall = resolveExport('lb-phone', 'CreateCall')
+        if not createCall then return false end
+        local ok, callId = pcall(createCall, nil,
+            { source = actor.source, phoneNumber = alias or 'Unknown' },
+            number,
+            { requirePhone = true, hideNumber = anonymous == true })
+        return ok and callId ~= nil and callId ~= false
+    end
+end
+
 local function findPlacer()
     -- An owner's override wins outright. One that does not resolve leaves
     -- calls as requests rather than quietly using an export they chose not
     -- to.
     local spec = Config.Relay.CallExport
     if spec and spec.resource and spec.export then
-        local fn = resolveExport(spec.resource, spec.export)
-        if not fn then
+        if not resolveExport(spec.resource, spec.export) then
             if GetResourceState(spec.resource) == 'started' then
                 print(('[crimson-hitman] warning: Relay.CallExport names %s:%s, which this build ' ..
                        'does not export; call requests will be notifications only')
@@ -435,11 +454,10 @@ local function findPlacer()
             end
             return nil
         end
-        return overridePlacer(fn)
+        return overridePlacer(spec.resource, spec.export)
     end
 
-    local createCall = resolveExport('lb-phone', 'CreateCall')
-    return createCall and lbPhonePlacer(createCall) or nil
+    return resolveExport('lb-phone', 'CreateCall') and lbPhonePlacer() or nil
 end
 
 --- Whether this server can place a call at all, and how.
