@@ -692,6 +692,10 @@ local CUSTOM = {
     -- contract; it can only let go of the caller's own send, of the photo
     -- named (server_photos_spec has the whole of it).
     photoArrived = 'a photo reported as arrived',
+    -- A client's word about its own player's mask, for the nearby list.
+    -- Names no contract and nobody; it is kept against the caller's own
+    -- server id (anonymity_spec has what it does to the list).
+    maskState = 'a mask reported by its own client',
 }
 
 -- Registered in bridges.lua, which is how three events any player on the
@@ -715,6 +719,9 @@ MATRIX.pageError = { custom = true,
 MATRIX.photoArrived = { custom = true,
     why = 'lets go of the caller own photo on its way, and of nobody else' }
 
+MATRIX.maskState = { custom = true,
+    why = 'says whether the caller wears a mask, and nothing about anybody else' }
+
 describe('a photo reported as arrived', function()
     --- Fired by the client's photoImage handler when a kill photo lands, so
     --- the server may send the next. A net event any player can fire with
@@ -732,6 +739,44 @@ describe('a photo reported as arrived', function()
                 eq(#Env.clientEvents, 0, role .. ' was answered')
             end
         end
+    end)
+end)
+
+describe('a mask reported by its own client', function()
+    --- Sent by the client when its player's mask goes on or comes off. A
+    --- net event any player can fire with anything in it: it answers
+    --- nobody and cannot throw, and anything but a yes or no is refused.
+    it('answers nobody, whoever fires it and with whatever', function()
+        world()
+        for _, role in ipairs(ROLES) do
+            for _, sent in ipairs({ true, false, 'false', 0, {}, { source = 1, masked = false } }) do
+                Env.clientEvents = {}
+                _G.source = CAST[role].source
+                local ok, err = pcall(Env.events['crimson-hitman:maskState'], sent)
+                local okNil, errNil = pcall(Env.events['crimson-hitman:maskState'])
+                _G.source = nil
+                truthy(ok, role .. ': ' .. tostring(err))
+                truthy(okNil, role .. ' with nothing: ' .. tostring(errNil))
+                eq(#Env.clientEvents, 0, role .. ' was answered')
+            end
+        end
+    end)
+
+    --- Our client only ever sends a boolean, so anything else is somebody
+    --- probing: written down for staff, once a window rather than once a
+    --- message, so a flood of them cannot fill the log.
+    it('writes a malformed one down, once', function()
+        local w = world()
+        _G.source = CAST.stranger.source
+        for _ = 1, 5 do Env.events['crimson-hitman:maskState']({ source = 1, masked = false }) end
+        _G.source = nil
+        w.s.audit.flush()
+        local rows = {}
+        for _, row in ipairs(w.s.storage.readAudit()) do
+            if row.action == 'mask_bad_format' then rows[#rows + 1] = row end
+        end
+        eq(#rows, 1, 'one row for five')
+        eq(rows[1].detail.source, CAST.stranger.source, 'naming the source that sent it')
     end)
 end)
 

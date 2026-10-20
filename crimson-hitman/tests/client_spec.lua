@@ -2283,3 +2283,92 @@ describe('reporting your own death', function()
         if not ok then error(err, 0) end
     end)
 end)
+
+--- Whether the player wears a mask, which only their own game can see.
+---
+--- The nearby list leaves masked people off, and the server has no way to
+--- read clothes: GetPedDrawableVariation is a client native. The client
+--- reads its own ped and says, when the answer changes; the server counts
+--- one that has said nothing as masked.
+describe('saying whether you wear a mask', function()
+    local function watching()
+        Env.reset()
+        Natives.resetResourceStates()
+        require('crimson-hitman.shared.util').resetMonotonic()
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN01', license = 'license:ccc',
+            firstname = 'Rook', lastname = 'Ash' })
+        Client.boot()
+        Client.ped = 1003
+        Client.dead = false
+        return Client
+    end
+
+    --- Every mask report sent, in order.
+    local function said()
+        local out = {}
+        for _, call in ipairs(Client.toServer) do
+            if call.name == 'crimson-hitman:maskState' then out[#out + 1] = call.args[1] end
+        end
+        return out
+    end
+
+    local NEARBY_ON = { { Config.Targeting, 'AllowNearby', true } }
+
+    it('says nothing while the nearby list is off, as shipped', function()
+        watching()
+        Client.ticks(3)
+        eq(#said(), 0, 'nothing reads it, so nothing is sent')
+    end)
+
+    it('says once what the game shows, and again only when it changes', function()
+        watching()
+        withConfig(NEARBY_ON, function()
+            Client.ticks(3)
+            eq(#said(), 1, 'one report for three looks')
+            eq(said()[1], false, 'bare face: the mask component draws nothing')
+
+            Client.drawables = { [1] = 52 }
+            Client.ticks(3)
+            eq(#said(), 2, 'the mask going on is said once')
+            eq(said()[2], true)
+
+            Client.drawables = nil
+            Client.ticks(2)
+            eq(#said(), 3)
+            eq(said()[3], false, 'and coming off')
+        end)
+    end)
+
+    it('says it again for the next character after a logout', function()
+        watching()
+        withConfig(NEARBY_ON, function()
+            Client.ticks(2)
+            eq(#said(), 1)
+            -- The server forgets it at logout; the selector says nothing.
+            Client.state.isLoggedIn = false
+            Client.ticks(3)
+            eq(#said(), 1, 'nothing is said with no character loaded')
+            Client.state.isLoggedIn = true
+            Client.ticks(2)
+            eq(#said(), 2, 'the new character says it, unchanged as it is')
+            eq(said()[2], false)
+        end)
+    end)
+
+    it('counts a mask it cannot read as worn', function()
+        watching()
+        withConfig(NEARBY_ON, function()
+            Client.drawableThrows = true
+            Client.ticks(2)
+            eq(#said(), 1)
+            eq(said()[1], true, 'an unreadable mask is not a bare face')
+        end)
+    end)
+
+    it('leaves the clothing native behind on no server', function()
+        watching()
+        withConfig(NEARBY_ON, function() Client.ticks(2) end)
+        eq(_G.GetPedDrawableVariation, nil,
+            'a client-only native left as a global is one every server spec after this could call')
+    end)
+end)

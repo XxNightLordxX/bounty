@@ -686,8 +686,6 @@ do
         ['Audit.droppedCount']         = 'how many audit rows the queue shed at capacity',
         ['Bailout.queuedCount']        = 'how many buyouts are waiting out their delay',
         ['Bridges.accessMemoSize']     = 'that the access memo does not grow without bound',
-        ['Comms.resetCallCache']       = 'a masked-call cache a test needs to start empty',
-        ['Comms.resetMaskingCache']    = 'the same, for the alias mapping',
         ['Mugshot.get']                = 'the stored image, without going through a handle',
         ['Notify.clearPush']           = 'the push cooldown, so a test can send twice',
         ['Photo.tokenCount']           = 'how many photo tokens are outstanding',
@@ -1914,6 +1912,98 @@ do
             .. 'should and does not — which is a contract ending in the wrong '
             .. 'state, with whatever that state\'s cooldowns and wording bring '
             .. 'with it — or the transition should not be declared.'):format(name)
+    end
+end
+
+--------------------------------------------------------------------------
+-- 31. A BOOL native's answer is never compared with true
+--------------------------------------------------------------------------
+--
+-- FXServer hands a BOOL native's answer to Lua as the integer 1 or false,
+-- never true, unless the manifest opts into fxv2, and fxmanifest.lua does
+-- not. `IsPlayerAceAllowed(src, ace) == true` was therefore false for
+-- everybody: it refused every staff command in game, and passed here while
+-- the stub answered true. Read a BOOL native for truth, or normalise it
+-- with `== 1 or == true` where a real boolean has to leave the function.
+--
+-- No list of BOOL natives is kept, because the shape is wrong for every
+-- native: the others answer numbers, strings, vectors or tables, none of
+-- them true either. A native here is a bare capitalised name called as a
+-- function that this resource does not define, as a global anywhere or a
+-- local in that file; `Storage.readMute(...) == true` and the like are
+-- the resource's own. GetStateBagValue alone is let through: it hands back
+-- whatever was stored, and true can be.
+
+do
+    local ANSWERS_ANYTHING = { GetStateBagValue = true }
+
+    --- Comments blanked, newlines kept, so a line number still points at
+    --- the line, and prose about `== true` is not code.
+    local function code(text)
+        text = text:gsub('(%-%-%[(=*)%[.-%]%2%])', function(whole)
+            return (whole:gsub('[^\n]', ''))
+        end)
+        return (text:gsub('%-%-[^\n]*', ''))
+    end
+
+    --- Every `Name(...) == true` / `~= true`, and `true == Name(...)`,
+    --- where Name is not one of `defined`: { line, name } each.
+    local function comparedWithTrue(text, defined)
+        local out = {}
+        local function lineAt(pos)
+            local _, n = text:sub(1, pos):gsub('\n', '')
+            return n + 1
+        end
+        local function native(pos, name)
+            local before = pos > 1 and text:sub(pos - 1, pos - 1) or ''
+            return not before:find('[%w_%.:]') and not defined[name]
+                and not ANSWERS_ANYTHING[name]
+        end
+        for pos, name in text:gmatch('()(%u[%w_]*)%s*%b()%s*[~=]=%s*true%f[^%w_]') do
+            if native(pos, name) then out[#out + 1] = { line = lineAt(pos), name = name } end
+        end
+        for pos, name in text:gmatch('%f[%w_]true%s*[~=]=%s*()(%u[%w_]*)%s*%b()') do
+            if native(pos, name) then out[#out + 1] = { line = lineAt(pos), name = name } end
+        end
+        return out
+    end
+
+    -- What the resource defines itself: global functions and assignments
+    -- anywhere, and each file's own locals.
+    local globals, sources = {}, {}
+    for _, path in ipairs(files) do
+        local text = code(read(path) or '')
+        sources[path] = text
+        for name in text:gmatch('%f[%w_]function%s+(%u[%w_]*)%s*%(') do globals[name] = true end
+        for name in ('\n' .. text):gmatch('\n(%u[%w_]*)%s*=[^=]') do globals[name] = true end
+    end
+
+    -- The same anti-vacuity guard as checks 28 to 30: a pattern that stops
+    -- matching reports a clean tree.
+    local probe = comparedWithTrue(code(table.concat({
+        'if IsPlayerAceAllowed(src, (\'crimson.%s\'):format(x)) == true then end',
+        'local gone = true ~= DoesEntityExist(ped) -- == true',
+        'local mine = Util.isReady() == true or IsReady() == true',
+        '-- IsEntityDead(ped) == true',
+    }, '\n')), { IsReady = true })
+    if #probe ~= 2 or probe[1].name ~= 'IsPlayerAceAllowed' or probe[2].name ~= 'DoesEntityExist' then
+        failures[#failures + 1] =
+            'the BOOL-native check no longer finds `IsPlayerAceAllowed(...) == true` and '
+            .. '`true ~= DoesEntityExist(...)` alone in its own sample, so a clean run of it '
+            .. 'means nothing'
+    end
+
+    for _, path in ipairs(files) do
+        local text = sources[path]
+        local defined = setmetatable({}, { __index = globals })
+        for name in text:gmatch('local%s+function%s+(%u[%w_]*)') do defined[name] = true end
+        for name in text:gmatch('local%s+(%u[%w_]*)') do defined[name] = true end
+        for _, hit in ipairs(comparedWithTrue(text, defined)) do
+            failures[#failures + 1] =
+                ('%s:%d compares %s(...) with true. FXServer answers a BOOL native with 1 '
+                 .. 'or false, never true, so in game this comes out the same every time; '
+                 .. 'test it for truth instead.'):format(path, hit.line, hit.name)
+        end
     end
 end
 

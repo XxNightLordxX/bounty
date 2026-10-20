@@ -149,6 +149,28 @@ function Env.removePlayer(src)
     Env.players[src] = nil
 end
 
+--- Every player's client saying whether they wear a mask, as each one does
+--- once its character is loaded and the nearby list is on (client/main.lua):
+--- what their own game shows, `_masked` on the fixture. The server cannot
+--- see clothes, so a player whose client has said nothing is left off the
+--- nearby list; `_silent` on the fixture is a client that has not said.
+function Env.reportMasks()
+    local report = Env.events['crimson-hitman:maskState']
+    assert(report, 'no handler for crimson-hitman:maskState')
+    local srcs = {}
+    for src in pairs(Env.players) do srcs[#srcs + 1] = src end
+    table.sort(srcs)
+    for _, src in ipairs(srcs) do
+        local p = Env.players[src]
+        if not p._silent then
+            local was = _G.source
+            _G.source = src
+            report(p._masked == true)
+            _G.source = was
+        end
+    end
+end
+
 function Env.reset()
     Env.time = 1700000000
     Env.gameTimer = 0

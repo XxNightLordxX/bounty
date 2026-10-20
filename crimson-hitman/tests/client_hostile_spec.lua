@@ -514,3 +514,52 @@ describe('a runtime that hands the client the wrong type', function()
         end
     end)
 end)
+
+--------------------------------------------------------------------------
+-- BOOL natives, as the game answers them
+--------------------------------------------------------------------------
+
+describe('BOOL natives, answered as FXServer answers them', function()
+    --- Without fxv2 a BOOL native reaches Lua as the integer 1 or false,
+    --- never true. A stub that answered true let `== true` pass here while
+    --- it refused every staff command in game, so every stub answers the
+    --- game's way, and this holds them to it: { name, yes, no } each.
+    it('on the server', function()
+        Env.reset()
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN01', license = 'license:ccc' })
+        Env.aces[3] = { ['crimson.admin'] = true }
+        local answers = {
+            { 'IsPlayerAceAllowed',
+                IsPlayerAceAllowed(3, 'crimson.admin'), IsPlayerAceAllowed(3, 'crimson.other') },
+            { 'IsEntityVisible', IsEntityVisible(1003), IsEntityVisible(1009) },
+            { 'IsPedAPlayer', IsPedAPlayer(1003), IsPedAPlayer(2500) },
+            { 'DoesEntityExist', DoesEntityExist(1003), DoesEntityExist(0) },
+        }
+
+        Env.eventCanceled = true
+        local cancelled = WasEventCanceled()
+        Env.eventCanceled = nil
+        answers[#answers + 1] = { 'WasEventCanceled', cancelled, WasEventCanceled() }
+
+        Natives.blocked['data/refused.json'] = true
+        local refused = SaveResourceFile('crimson-hitman', 'data/refused.json', '{}', -1)
+        Natives.blocked['data/refused.json'] = nil
+        answers[#answers + 1] = { 'SaveResourceFile',
+            SaveResourceFile('crimson-hitman', 'data/written.json', '{}', -1), refused }
+
+        for _, a in ipairs(answers) do
+            eq(a[2], 1, a[1] .. ' answered ' .. tostring(a[2]) .. ' for yes')
+            eq(a[3], false, a[1] .. ' answered ' .. tostring(a[3]) .. ' for no')
+        end
+    end)
+
+    it('on the client', function()
+        Env.reset()
+        Client.boot()
+        Client.dead = true
+        local dead = IsEntityDead(1003)
+        Client.dead = false
+        eq(dead, 1, 'IsEntityDead answered ' .. tostring(dead) .. ' for yes')
+        eq(IsEntityDead(1003), false, 'IsEntityDead for no')
+    end)
+end)

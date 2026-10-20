@@ -133,9 +133,33 @@ local PHOTO_SEND_MS = 60000
 --- open the limit allowed: queued several times faster than it drained.
 local PHOTO_DRAIN_BPS = 150000
 
---- Forget what was on its way to a player who has left. A source is reused.
+--- [source] = true (masked) | false (bare face): what each player's own
+--- client last said about their mask (crimson-hitman:maskState), for the
+--- nearby list (nearbyNameable).
+---
+--- The server cannot see clothes. GetPedDrawableVariation is a client
+--- native, nil on FXServer, so reading it here failed for every candidate
+--- and the nearby list was always empty when switched on. Each client reads
+--- its own ped instead and says so when it changes (client/main.lua). It is
+--- the sender's word about the sender alone: a lie can hide them from the
+--- list or put them on it, as taking the mask off would. A player whose
+--- client has said nothing counts as masked, and is left off.
+---
+--- Forgotten when they leave (App.forgetSource), log out or switch
+--- character (App.forgetMask): whoever has the source next has said nothing.
+local masks = {}
+
+--- Forget what a player's client said about their mask. Their character
+--- has gone, and the next one on this source has not said yet.
+function App.forgetMask(src)
+    masks[tonumber(src) or src] = nil
+end
+
+--- Forget what was on its way to a player who has left, and what their
+--- client said about their mask. A source is reused.
 function App.forgetSource(src)
     photoSending[src] = nil
+    App.forgetMask(src)
 end
 
 function App.sweepFloodCounters()
@@ -213,12 +237,13 @@ local NEARBY_BAND = 10
 --- Not anybody the server can see (§14.33). Out: a player in another
 --- routing bucket (an instanced interior, a staff session); an invisible
 --- one (noclip, spectating staff); and anyone wearing a mask, whose face is
---- exactly what the list would have put a name to. A mask is the ped's
---- mask component (1) not being the bare face (0), as on the freemode
---- peds Qbox players use; an add-on ped model that draws something there
---- counts as masked and is not listed. A native that cannot answer, on a
---- server build without it, leaves the person off: an unlisted person
---- costs a search by name, and a listed masked one cannot be taken back.
+--- exactly what the list would have put a name to. Whether they wear one is
+--- their own client's word (`masks`): the mask component (1) not being the
+--- bare face (0), as on the freemode peds Qbox players use, so an add-on
+--- ped model that draws something there counts as masked. A client that
+--- has said nothing, and a native that cannot answer, leave the person
+--- off: an unlisted person costs a search by name, and a listed masked one
+--- cannot be taken back.
 ---@param src number
 ---@param ped number
 ---@param bucket number the browser's own routing bucket
@@ -227,11 +252,10 @@ local function nearbyNameable(src, ped, bucket)
     if not ped or ped == 0 then return false end
     local ok, theirs = pcall(GetPlayerRoutingBucket, src)
     if not ok or theirs ~= bucket then return false end
+    -- A BOOL native: 1 or false, so read for truth.
     local seen, visible = pcall(IsEntityVisible, ped)
     if not seen or not visible then return false end
-    local read, mask = pcall(GetPedDrawableVariation, ped, 1)
-    if not read or mask ~= 0 then return false end
-    return true
+    return masks[tonumber(src) or src] == false
 end
 
 --- Whether this player is on a live contract: placed it, holds it as a
@@ -1263,6 +1287,22 @@ function App.register()
                 sending.arrived = true
             end
         end
+    end)
+
+    -- What the sender's own game shows about their mask, sent by their
+    -- client when it changes (client/main.lua), for the nearby list. About
+    -- the sender alone: it names nobody, so a modified client can only hide
+    -- itself or show itself. Anything but a yes or no is refused.
+    RegisterNetEvent('crimson-hitman:maskState', function(masked)
+        local src = source
+        if not App.floodOk(src, 'maskState') then return end
+        if type(masked) ~= 'boolean' then
+            if shouldLogGate(src) then
+                deps.audit.rejected('mask_bad_format', nil, nil, { source = src })
+            end
+            return
+        end
+        masks[tonumber(src) or src] = masked
     end)
 
     RegisterNetEvent('crimson-hitman:iRevived', function()

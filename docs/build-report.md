@@ -68,7 +68,7 @@ You said to use my judgement. These are the ones that were mine:
 sh crimson-hitman/tests/all.sh
 ```
 
-- **2,322 server tests** (the run of 20 October 2026) — escrow arithmetic,
+- **2,340 server tests** (the run of 20 October 2026) — escrow arithmetic,
   the state machine, every payout and refund path, deliberate exploit
   attempts, storage conformance across all three backends, and a randomised
   simulation asserting that no sequence of operations creates or destroys
@@ -79,7 +79,8 @@ sh crimson-hitman/tests/all.sh
   identity from a payload, every module the resource loader asks for exists,
   every event name agrees across UI/client/server, every config key is read,
   the MySQL schema holds every field the code writes, no production read of a
-  test-harness field, and no native browser dialogs.
+  test-harness field, no native browser dialogs, and no native's answer
+  compared with `true` (FXServer answers a BOOL native with 1 or false).
 
 Beyond that, **four completed rounds** of adversarial review by independent
 agents, each finding verified or refuted by a second pass. A fifth round

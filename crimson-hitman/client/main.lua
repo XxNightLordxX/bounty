@@ -1,8 +1,9 @@
 --- Client bootstrap: registers the app with lb-phone and bridges the UI.
 ---
 --- The client holds no authority. It renders what the server sends, asks for
---- what the player clicks, and reports only two facts about itself: that this
---- player died, and that this player was revived.
+--- what the player clicks, and reports only three facts about itself: that
+--- this player died, that this player was revived, and, while the nearby
+--- list is on, whether this player wears a mask.
 
 local App = {}
 
@@ -859,6 +860,53 @@ end)
 
 RegisterNetEvent('QBCore:Client:OnPlayerUnload', forgetDeath)
 RegisterNetEvent('qbx_core:client:playerLoggedOut', forgetDeath)
+
+--------------------------------------------------------------------------
+-- Mask reporting, for the nearby list
+--------------------------------------------------------------------------
+--
+-- The nearby list leaves out anyone wearing a mask, and only this player's
+-- own game can see what they are wearing: GetPedDrawableVariation is a
+-- client native, nil on the server. So the client says, about itself
+-- alone, whenever it changes. A modified client can only hide itself from
+-- the list or put itself on it, which taking the mask off would do anyway.
+-- The server counts a player it has heard nothing from as masked.
+
+--- How often the mask is looked at: one native read, and an event only
+--- when the answer changes.
+local MASK_CHECK_MS = 1000
+
+--- What the server was last told: true masked, false bare face, nil
+--- nothing yet for this character. The server forgets it at logout.
+local maskSaid = nil
+
+--- Whether this ped has a mask on: its mask component (1) is not the bare
+--- face (0), as on the freemode peds Qbox players use, so an add-on model
+--- that draws something there counts as masked. A read that fails does too.
+local function wearingMask(ped)
+    local ok, drawable = pcall(GetPedDrawableVariation, ped, 1)
+    return not ok or drawable ~= 0
+end
+
+CreateThread(function()
+    -- Nothing to say while the list is off (Config.Targeting.AllowNearby):
+    -- the server never asks.
+    local rules = Config and Config.Targeting
+    if type(rules) ~= 'table' or not rules.AllowNearby then return end
+    while true do
+        Wait(MASK_CHECK_MS)
+        if not loggedIn() then
+            -- The next character says it again.
+            maskSaid = nil
+        else
+            local masked = wearingMask(PlayerPedId())
+            if masked ~= maskSaid then
+                maskSaid = masked
+                TriggerServerEvent('crimson-hitman:maskState', masked)
+            end
+        end
+    end
+end)
 
 --------------------------------------------------------------------------
 -- Verification photo (§7.4)

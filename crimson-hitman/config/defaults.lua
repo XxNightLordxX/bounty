@@ -622,8 +622,11 @@ ConfigDefaults.Targeting = {
     ---
     --- Turned on, it leaves out: players in another routing bucket, players
     --- who are invisible (noclip, spectating staff), and anyone wearing a
-    --- mask. It is closed altogether, to the player asking, while they are
-    --- on a live contract: one they placed, one they hold, or one on them
+    --- mask. The server cannot see clothes, so each player's own game says
+    --- when their mask goes on or comes off, and anybody whose game has not
+    --- said yet is left off as masked. It is closed altogether, to the
+    --- player asking, while they are on a live contract: one they placed,
+    --- one they hold, or one on them
     --- that they have been shown (they can still pick a target by name, or
     --- from everyone online), and for NearbyClosedAfterSeconds after one
     --- ends, since a handover ends with all three standing together.

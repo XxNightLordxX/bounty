@@ -648,7 +648,7 @@ describe('damage observation is actually wired', function()
             if entity == 7002 then return 2 end
             return realOwner(entity)
         end
-        _G.DoesEntityExist = function(entity) return entity == 7002 or realExists(entity) end
+        _G.DoesEntityExist = function(entity) return (entity == 7002 and 1) or realExists(entity) end
         local ok, recorded = pcall(s.bridges.onWeaponDamage, s, 3,
             { weaponDamage = 30, weaponType = 123456, hitGlobalIds = { 7002 } })
         _G.NetworkGetEntityOwner, _G.DoesEntityExist = realOwner, realExists

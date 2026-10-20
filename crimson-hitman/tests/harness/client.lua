@@ -81,6 +81,28 @@ local function defaultExports()
     }
 end
 
+--- What this player's ped has drawn in a clothing component: the mask (1)
+--- is the bare face (0) unless a test puts something there
+--- (Client.drawables), or makes the read throw (Client.drawableThrows).
+local function drawableVariation(_, component)
+    if Client.drawableThrows then error('GetPedDrawableVariation: no such ped') end
+    return Client.drawables and Client.drawables[component] or 0
+end
+
+--- Run fn with the client-only natives in place, and take them away again.
+---
+--- Only while client code runs. FXServer has none of them, and one left
+--- behind as a global is one every server spec after it could call: a
+--- server reading a ped's clothes passed here while the native was nil on
+--- every live server, and the nearby list it fed was always empty.
+local function clientNatives(fn, ...)
+    local had = _G.GetPedDrawableVariation
+    _G.GetPedDrawableVariation = drawableVariation
+    local results = table.pack(pcall(fn, ...))
+    _G.GetPedDrawableVariation = had
+    return table.unpack(results, 1, results.n)
+end
+
 --- Run something with this build's lb-phone in place and the console
 --- captured.
 ---
@@ -108,7 +130,7 @@ local function withPhone(fn, ...)
         table.insert(Client.console, table.concat(parts, ' '))
     end
 
-    local results = table.pack(pcall(fn, ...))
+    local results = table.pack(clientNatives(fn, ...))
 
     _G.exports, _G.print = realExports, realPrint
     return table.unpack(results, 1, results.n)
@@ -126,6 +148,7 @@ function Client.boot(opts)
     Client.toServer, Client.phone = {}, {}
     Client.nui, Client.netEvents, Client.handlers = {}, {}, {}
     Client.cameraCallback = nil
+    Client.drawables, Client.drawableThrows = nil, nil
     Client.refuseRegistration = opts.refuseRegistration or false
     Client.console = {}
 
@@ -139,7 +162,8 @@ function Client.boot(opts)
     -- The build Qbox enforces, whose event layouts the client reads.
     _G.GetGameBuildNumber = function() return Client.gameBuild or opts.gameBuild or 3258 end
     _G.PlayerPedId = function() return Client.ped or 1003 end
-    _G.IsEntityDead = function() return Client.dead == true end
+    -- A BOOL native, so 1 or false, as the game answers it; never true.
+    _G.IsEntityDead = function() return Client.dead == true and 1 or false end
     -- What a medical resource says about this player: nil player data is a
     -- qbx_core that cannot be read, which is every test that does not set it.
     -- The bag says a character is loaded, as qbx_core's does once one is.
@@ -221,7 +245,7 @@ function Client.ticks(n)
             count = count + 1
             if count > (n or 1) then error(STOP) end
         end
-        local ok, err = pcall(fn)
+        local ok, err = clientNatives(fn)
         if not ok and err ~= STOP then
             _G.Wait, _G.exports = realWait, realExports
             error(err, 0)

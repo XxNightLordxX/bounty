@@ -44,7 +44,10 @@ local function at(src, x)
     Env.players[src]._coords = { x = x, y = 0.0, z = 0.0 }
 end
 
+--- The nearby list, once everybody's client has said whether they are
+--- masked, as each does when its character loads.
 local function nearby(source)
+    Env.reportMasks()
     local reply = call('browseTargets', source, { scope = 'nearby' })
     truthy(reply and reply.ok, 'the nearby list must answer: ' .. tostring(reply and reply.err))
     return reply.data
@@ -239,7 +242,7 @@ describe('the nearby list, two worlds apart', function()
     it('never names a masked person, whoever they are, or says that one is there', function()
         local empty = street()
         truthy(namesIn(empty)['Bea Lowe'], 'the bystander is listed: the list works')
-        local masked = { _drawables = { [1] = 52 } }
+        local masked = { _masked = true }
         eq(encode(street(function() person('Mia Vance', 'MASKED01', 6, masked) end)), encode(empty),
             'a masked person six metres away changed the list')
         eq(encode(street(function() person('Lou Park', 'MASKED02', 6, masked) end)), encode(empty),
@@ -254,6 +257,119 @@ describe('the nearby list, two worlds apart', function()
             'a player in an instance changed the list')
         eq(encode(street(function() person('Ivy Stone', 'NOCLIP01', 2, { _invisible = true }) end)), empty,
             'an invisible player (noclip, spectating staff) changed the list')
+    end)
+
+    --- The server cannot see clothes. GetPedDrawableVariation is a client
+    --- native, nil on FXServer; read on the server it failed for everyone,
+    --- and the list was always empty in game. Each client says instead.
+    it('works on a server with no clothing native, from what each client says', function()
+        eq(_G.GetPedDrawableVariation, nil, 'FXServer has no GetPedDrawableVariation')
+        local seen = street()
+        truthy(namesIn(seen)['Bea Lowe'], 'a bystander whose client said bare face is listed')
+        eq(#seen.people, 1, 'and only her')
+    end)
+
+    it('leaves off anybody whose client has said nothing, as if masked', function()
+        eq(encode(street(function() person('Mia Vance', 'SILENT01', 6, { _silent = true }) end)),
+            encode(street()), 'a player whose client never said was named')
+    end)
+
+    --- A report is the sender's word about the sender. A lie hides them, or
+    --- lists them masked, which taking the mask off would do anyway; it
+    --- cannot move anybody else.
+    it('lets a report move only the player who sent it', function()
+        local function told(masked)
+            return street(function()
+                person('Mia Vance', 'LIAR0001', 6, { _masked = masked })
+            end)
+        end
+        local function others(data)
+            local rows = {}
+            for _, row in ipairs(data.people) do
+                if row.name ~= 'Mia Vance' then
+                    rows[#rows + 1] = row.name .. '@' .. tostring(row.metres)
+                end
+            end
+            return table.concat(rows, ',')
+        end
+        local hidden, shown = told(true), told(false)
+        falsy(namesIn(hidden)['Mia Vance'], 'saying masked takes them off')
+        truthy(namesIn(shown)['Mia Vance'], 'saying bare-faced lists them, mask or not')
+        truthy(others(hidden) ~= '', 'the bystander is there to be moved')
+        eq(others(hidden), others(shown), 'what one player said moved somebody else')
+    end)
+
+    it('takes nothing but a yes or no, and only about whoever sent it', function()
+        local function claims(...)
+            local sent = table.pack(...)
+            return street(function()
+                person('Mia Vance', 'SENDER01', 6, { _silent = true })
+                -- The bystander's own client has said nothing either.
+                Env.players[11]._silent = true
+                _G.source = 12
+                for i = 1, sent.n do Env.events['crimson-hitman:maskState'](sent[i]) end
+                _G.source = nil
+            end)
+        end
+        local quiet = claims()
+        eq(#quiet.people, 0, 'nobody has said anything, so nobody is listed')
+        eq(encode(claims({ source = 11, masked = false }, { [11] = false }, 'false', 0, 11, nil)),
+            encode(quiet), 'a report that was not a plain yes or no changed the list')
+        local own = claims(false)
+        truthy(namesIn(own)['Mia Vance'], 'her own word lists her')
+        falsy(namesIn(own)['Bea Lowe'], 'and nobody else')
+    end)
+
+    --- What a client said was about one character on one connection. The
+    --- next to hold the source, or the next character on it, has said
+    --- nothing.
+    it('forgets what a client said when its player leaves, logs out or switches character', function()
+        for how, leave in pairs({
+            dropped = function() _G.source = 11; Env.handlers['playerDropped'](); _G.source = nil end,
+            unloaded = function() Env.handlers['QBCore:Server:OnPlayerUnload'](11) end,
+            loggedOut = function() Env.handlers['qbx_core:server:playerLoggedOut'](11) end,
+        }) do
+            local s = newStack()
+            fixture(s)
+            s.bridges.install(s)
+            withConfig({ { Config.Targeting, 'AllowNearby', true } }, function()
+                at(1, 5000); at(2, 6000); at(3, 7000)
+                Env.addPlayer({ source = 10, citizenid = 'WATCHER1', license = 'license:w1',
+                    firstname = 'Wes', lastname = 'Hale', coords = { x = 0, y = 0, z = 0 } })
+                Env.addPlayer({ source = 11, citizenid = 'BYSTAND1', license = 'license:b1',
+                    firstname = 'Bea', lastname = 'Lowe', coords = { x = 3, y = 0, z = 0 } })
+                truthy(namesIn(nearby(10))['Bea Lowe'], how .. ': listed while her client has said')
+                leave()
+                -- Back on the same source, her client not having said yet.
+                Env.players[11]._silent = true
+                falsy(namesIn(nearby(10))['Bea Lowe'], how .. ': what she said was kept')
+            end)
+        end
+    end)
+
+    it('stops listening to a client that floods it', function()
+        local s = newStack()
+        fixture(s)
+        withConfig({ { Config.Targeting, 'AllowNearby', true } }, function()
+            at(1, 5000); at(2, 6000); at(3, 7000)
+            Env.addPlayer({ source = 10, citizenid = 'WATCHER1', license = 'license:w1',
+                firstname = 'Wes', lastname = 'Hale', coords = { x = 0, y = 0, z = 0 } })
+            Env.addPlayer({ source = 11, citizenid = 'FLOODER1', license = 'license:f1',
+                firstname = 'Bea', lastname = 'Lowe', coords = { x = 3, y = 0, z = 0 } })
+            Env.players[11]._silent = true
+            local report = Env.events['crimson-hitman:maskState']
+            _G.source = 11
+            for _ = 1, 200 do report(true) end
+            report(false)
+            _G.source = nil
+            falsy(namesIn(nearby(10))['Bea Lowe'], 'the flood guard let the two hundred and first through')
+            -- A window later she is heard again.
+            Env.advance(11)
+            _G.source = 11
+            report(false)
+            _G.source = nil
+            truthy(namesIn(nearby(10))['Bea Lowe'], 'and heard again once the window has passed')
+        end)
     end)
 
     it('gives a band, not a distance, and orders inside it by name', function()

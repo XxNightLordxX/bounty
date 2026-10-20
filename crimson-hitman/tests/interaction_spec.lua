@@ -1405,6 +1405,55 @@ describe('masked calls', function()
         s.comms.resetMaskingCache()
     end)
 
+    --- lb-phone is optional, and may be stopped or restarting the first
+    --- time anybody asks for a call. Its exports throw then, and that
+    --- answer, kept, refused every anonymous call until this resource
+    --- restarted.
+    it('does not keep an answer from a moment lb-phone was not running', function()
+        local s = threaded({ anonCreator = true })
+        local phone = exports['lb-phone']
+        local getConfig = phone.GetConfig
+        s.comms.resetMaskingCache()
+        Natives.resourceStates['lb-phone'] = 'stopped'
+        phone.GetConfig = function() error('No such export GetConfig in resource lb-phone') end
+        local stopped = s.comms.maskingAvailable()
+        Natives.resourceStates['lb-phone'] = 'started'
+        phone.GetConfig = getConfig
+        falsy(stopped, 'nothing to ask while it is stopped')
+        truthy(s.comms.maskingAvailable(), 'asked again once it runs')
+        s.comms.resetMaskingCache()
+    end)
+
+    it('asks lb-phone again whether it hides numbers when it starts', function()
+        local s = threaded({ anonCreator = true })
+        s.bridges.install(s)
+        s.comms.resetMaskingCache()
+        truthy(s.comms.maskingAvailable(), 'this phone hides numbers')
+        withConfig({ { Natives, 'phoneConfig', { AnonymousCalls = false } } }, function()
+            truthy(s.comms.maskingAvailable(), 'kept while it runs: asked once, not per call')
+            Env.handlers['onResourceStart']('qbx_medical')
+            truthy(s.comms.maskingAvailable(), 'another resource starting changes nothing')
+            Env.handlers['onResourceStart']('lb-phone')
+            falsy(s.comms.maskingAvailable(), 'restarted with AnonymousCalls off, it is asked again')
+        end)
+        s.comms.resetMaskingCache()
+    end)
+
+    it('looks again for a way to place calls when lb-phone starts', function()
+        local s = threaded()
+        s.bridges.install(s)
+        falsy(s.comms.canCall(), 'this build has no CreateCall')
+        local phone = exports['lb-phone']
+        phone.CreateCall = function() return 42 end
+        local before = s.comms.canCall()
+        Env.handlers['onResourceStart']('lb-phone')
+        local after = s.comms.canCall()
+        phone.CreateCall = nil
+        s.comms.resetCallCache()
+        falsy(before, 'remembered while it runs: not probed again on every call')
+        truthy(after, 'probed again once lb-phone has started with it')
+    end)
+
     --- lb-phone's documented export, used when no override is configured.
     --- The phone shows the caller table's phoneNumber, so that is the alias.
     describe("through lb-phone's own CreateCall", function()
@@ -2537,7 +2586,8 @@ describe('browsing for a target', function()
         return reply
     end
 
-    --- Three strangers: two on top of the browser, one across the map.
+    --- Three strangers: two on top of the browser, one across the map. None
+    --- of them masked, as their clients have said.
     local function crowd(s)
         local f = fixture(s)
         Env.players[1]._coords = { x = 0.0, y = 0.0, z = 0.0 }
@@ -2547,6 +2597,7 @@ describe('browsing for a target', function()
             firstname = 'Bo', lastname = 'Renn', coords = { x = 10.0, y = 0.0, z = 0.0 } })
         Env.addPlayer({ source = 12, citizenid = 'PERSON12', license = 'license:p12',
             firstname = 'Cy', lastname = 'Stark', coords = { x = 500.0, y = 0.0, z = 0.0 } })
+        Env.reportMasks()
         return f
     end
 

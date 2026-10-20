@@ -70,7 +70,9 @@ without a word; put the old `data/` back and start it again. To start empty on
 purpose, run `set crimson_hitman_new_store 1` in the server console and
 start the resource, then leave it unset.
 
-Restarting `lb-phone` is safe: the app comes back on every phone by itself.
+Restarting `lb-phone` is safe: the app comes back on every phone by itself,
+and whether it can place calls and hide a caller's number is asked again, so
+an edit to its config takes effect on the restart.
 Restarting `qbx_core`, `ox_inventory` or `oxmysql` stops this resource with
 them (FiveM stops everything that depends on a resource it restarts and does
 not start it again), so follow it with `ensure crimson-hitman`. A player still
@@ -147,7 +149,9 @@ items and weapons. The target is picked by name or from everyone online
 whatever the walls or the mask: on, it named the anonymous hitman to the
 target he was closing on, and the anonymous client to the hitman at a
 handover. Turned on, it leaves out anyone masked, invisible or in another
-routing bucket, gives distance only as "under 10m", "under 20m" and so on,
+routing bucket (the server cannot see clothes, so each player's own game says
+when their mask goes on or comes off, and anyone whose game has not said yet
+is left off as masked), gives distance only as "under 10m", "under 20m" and so on,
 and is closed to a player while they are on a live contract and for half an
 hour after one ends (`NearbyClosedAfterSeconds`; a handover ends with all
 three standing together); a friend on no contract can still read the names
@@ -510,6 +514,7 @@ waits, the server runs everything else, and that is not this job's work.
 | The app stopped answering after you restarted `qbx_core`, `ox_inventory` or `oxmysql` | FiveM stops this resource with them and does not start it again. Run `ensure crimson-hitman` |
 | `json` mode refuses to start on an empty `data/` | You replaced the resource folder and lost `data/`, which is the store. Put the old `data/` back and start it again. To start empty on purpose, run `set crimson_hitman_new_store 1` in the console, start the resource, then leave it unset (see *Updating*) |
 | The resource refuses to start after you changed `Config.Database.Mode` | The mode you left still holds players' money, and the console says where and how much. Switch back, let those contracts finish or cancel them, then switch. `Config.Database.AllowModeSwitch = true` starts anyway, for money you have settled by hand (see *Changing storage mode*) |
+| With `Config.Targeting.AllowNearby` on, somebody standing beside you is not on the nearby list | They are listed only once their own game has said they wear no mask, about a second after their character loads; their game reads the setting when the resource starts, so restart it after turning it on. Anyone masked, invisible or in another routing bucket is left off by design, and the list is closed to you while you are on a live contract |
 | `/ch-diag` shows `photo hosts: 0`, or kill photos are refused as "not on this server's allow list" | `'host'` storage only. Add your phone's upload host to `Config.Completion.ExtraPhotoHosts` (a bare domain), and check that lb-phone's own camera upload works |
 | Save to Photos keeps the photo in the app instead | `'server'` storage needs a public https address: set `Config.Completion.PhotoPublicUrl` or `web_baseUrl`, and add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. `/ch-diag` says which address it uses and whether it reaches this resource |
 | The startup warning says `Config.Audit.Webhook` is ignored | The URL in `config.lua` has already been sent to every player. Regenerate it in Discord and set the new one in `server.cfg` with `set crimson_hitman_webhook "..."` (never `setr`) |

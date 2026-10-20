@@ -218,9 +218,19 @@ function Bridges.install(modules)
     -- A medical resource starting again may be a version with the death-state
     -- exports the one before did not have (Identity.deathState stops asking
     -- one that has none). A local event: the engine raises it, no client can.
+    --
+    -- lb-phone starting again may have a config edit behind it, or exports
+    -- it did not have: whether it hides a caller's number, and how a call is
+    -- placed, are asked of it afresh rather than kept from before. Kept,
+    -- an answer read while it was stopped refused every anonymous call, or
+    -- hid the Call button, until this resource restarted.
     AddEventHandler('onResourceStart', function(name)
         if modules.identity and modules.identity.forgetProvider then
             modules.identity.forgetProvider(name)
+        end
+        if name == 'lb-phone' and modules.comms then
+            if modules.comms.resetMaskingCache then modules.comms.resetMaskingCache() end
+            if modules.comms.resetCallCache then modules.comms.resetCallCache() end
         end
     end)
 
@@ -484,6 +494,9 @@ function Bridges.install(modules)
         end
         connected[src] = nil
         if loggedOut then loggingOut[src] = nil else loggingOut[src] = cid end
+        -- What their client said about their mask was said for the
+        -- character that has gone; the next one says it again.
+        if modules.app and modules.app.forgetMask then modules.app.forgetMask(src) end
         if cid then Bridges.onPlayerDropped(modules, cid) end
     end
 

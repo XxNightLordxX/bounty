@@ -25,7 +25,9 @@ A staff account that can adjust money and spawn items makes this much faster.
       LIKE 'crimson%'` shows `InnoDB` and `utf8mb4_unicode_ci`), on MariaDB as
       on MySQL; and a contract reason with an emoji is accepted
 - [ ] `restart lb-phone`: crimson-hitman stays started (`ensure` not needed)
-      and the app is back on an open phone within a few seconds
+      and the app is back on an open phone within a few seconds, and
+      **Call** in a contract thread does what it did before the restart,
+      anonymous parties included
 - [ ] json mode, on a copy of the server: move `data/` out of the folder and
       restart. It refuses to start, saying the folder was replaced; put
       `data/` back and it starts with every contract
@@ -74,7 +76,9 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] As shipped there is no **Within 30m** button, and boot printed
       `nearby: off`. With `Config.Targeting.AllowNearby = true` (boot now
       warns about it): a player standing beside you is listed as "under
-      10m"; put a mask on them and they are gone from the list; a player in
+      10m"; put a mask on them and within a couple of seconds they are gone
+      from the list, take it off and they are back; a player who has just
+      logged in shows up a second or so after their character loads; a player in
       noclip or another routing bucket is never listed; and once you have
       placed a contract, taken one, or seen one on you under On me, the
       list says it is closed while you are on a contract. After a handover
@@ -320,7 +324,9 @@ uploads, and with neither. Restart the resource between them.
 
 ## 12. Performance
 
-- [ ] `resmon` for `crimson-hitman` stays near 0.01ms idle
+- [ ] `resmon` for `crimson-hitman` stays near 0.01ms idle, with
+      `Config.Targeting.AllowNearby` off and on (on, the client looks at its
+      own mask once a second; an estimate until measured)
 - [ ] With 10+ live contracts and the app open, it stays under 0.05ms
 - [ ] Opening the app on a board of fifteen targets: their faces arrive within
       a few seconds, all at once, and the reading stays under 0.35ms. The

@@ -120,21 +120,24 @@ function Natives.install()
     end
     -- What the nearby list reads about who is standing there: which routing
     -- bucket they are in (0, the shared world, unless a test puts them in
-    -- an instance), whether their ped is visible (noclip and spectating
-    -- staff are not), and what is drawn in each clothing component, the
-    -- mask being component 1 and 0 the bare face. A fixture sets _bucket,
-    -- _invisible and _drawables on the player.
+    -- an instance) and whether their ped is visible (noclip and spectating
+    -- staff are not). A fixture sets _bucket and _invisible on the player.
+    -- Not what they are wearing: GetPedDrawableVariation is a client
+    -- native, nil on FXServer, and a stub of it here is how a nearby list
+    -- that was always empty in game passed. Their client says whether they
+    -- are masked (crimson-hitman:maskState).
     _G.GetPlayerRoutingBucket = function(src)
         local p = Env.players[tonumber(src)]
         return p and (p._bucket or 0) or 0
     end
+    -- BOOL natives answer here as FXServer answers them without the fxv2
+    -- path: the integer 1 for true, false for false, never a Lua true. A
+    -- stub that answered true let a caller comparing with `== true` pass
+    -- here and fail in game (IsPlayerAceAllowed, above, refused every staff
+    -- command that way).
     _G.IsEntityVisible = function(ped)
         local p = Env.players[ped - 1000]
-        return p ~= nil and not p._invisible
-    end
-    _G.GetPedDrawableVariation = function(ped, component)
-        local p = Env.players[ped - 1000]
-        return p and p._drawables and p._drawables[component] or 0
+        return (p ~= nil and not p._invisible) and 1 or false
     end
     _G.GetEntityHealth = function(ped)
         local p = Env.players[ped - 1000]
@@ -151,7 +154,7 @@ function Natives.install()
         local p = Env.players[ped - 1000]
         return p and p._killerPed or 0
     end
-    _G.IsPedAPlayer = function(ped) return Env.players[ped - 1000] ~= nil end
+    _G.IsPedAPlayer = function(ped) return Env.players[ped - 1000] ~= nil and 1 or false end
     _G.NetworkGetPlayerIndexFromPed = function(ped) return ped - 1000 end
     _G.GetPlayerServerId = function(index) return index end
     _G.GetPedArmour = function(ped)
@@ -163,14 +166,14 @@ function Natives.install()
         return p and p._vehicle or 0
     end
     -- What another resource's handler did to the event now being handled.
-    _G.WasEventCanceled = function() return Env.eventCanceled == true end
+    _G.WasEventCanceled = function() return Env.eventCanceled == true and 1 or false end
     _G.GetPedInVehicleSeat = function(veh, seat)
         for src, p in pairs(Env.players) do
             if p._vehicle == veh and p._seat == seat then return 1000 + src end
         end
         return 0
     end
-    _G.DoesEntityExist = function(entity) return entity and entity ~= 0 end
+    _G.DoesEntityExist = function(entity) return (entity and entity ~= 0) and 1 or false end
 
     _G.print = function(...)
         local parts = {}
@@ -216,7 +219,8 @@ function Natives.install()
         -- which is the whole claim the sharded store makes.
         if Natives.saveFile then Natives.saveFile(file, data) end
         -- A write into a directory that does not exist goes nowhere and
-        -- says nothing, which is what FiveM does rather than raising.
+        -- says nothing, which is what FiveM does rather than raising. A BOOL
+        -- native: 1 when written, false when not.
         if Natives.blocked and Natives.blocked[file] then return false end
         -- The length, as FiveM reads it: -1 (or 0) is "up to the first NUL
         -- byte", which is right for JSON and cuts a picture short at its
@@ -230,7 +234,7 @@ function Natives.install()
             end
         end
         Natives.files[file] = data
-        return true
+        return 1
     end
 
     -- The resource's own folder on disk, and the few things the server's

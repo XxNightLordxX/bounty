@@ -552,11 +552,17 @@ function Comms.placeCall(actor, recipientCid, anonymous, alias)
     return placer(actor, number, anonymous == true, alias) == true
 end
 
---- Whether this lb-phone build can suppress caller identity. Checked once at
---- boot and cached; when it cannot, masked calls stay disabled.
+--- Whether this lb-phone build can suppress caller identity. Asked once
+--- lb-phone is running and cached; when it cannot, masked calls stay
+--- disabled. Asked again when lb-phone starts (bridges.lua).
+---
+--- Never cached while lb-phone is not started. Its GetConfig throws then,
+--- and that answer, kept, refused every anonymous call until this resource
+--- restarted, whatever lb-phone did meanwhile.
 local maskingChecked, maskingOk = false, false
 function Comms.maskingAvailable()
     if maskingChecked then return maskingOk end
+    if GetResourceState('lb-phone') ~= 'started' then return false end
     maskingChecked = true
     local ok, result = pcall(function()
         local config = exports['lb-phone']:GetConfig()
