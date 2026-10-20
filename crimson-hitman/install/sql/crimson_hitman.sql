@@ -2,11 +2,13 @@
 --
 -- You do not need to import this file. In mysql mode the resource creates
 -- these tables itself on its first start, and adds any column or index a
--- newer version needs to the tables an older version made. Import it only if
--- your database user may not create or alter tables: then run it once, as a
--- user that may, before the first start in mysql mode. The resource still
--- checks and migrates the tables each start, so give its own user CREATE,
--- ALTER and INDEX on this database as well if you can.
+-- newer version needs to the tables an older version made (moving one left on
+-- another engine to InnoDB). Import it only if your database user may not
+-- create or alter tables: then run it once, as a user that may, before the
+-- first start in mysql mode. Each start asks information_schema first and
+-- creates or alters only what is missing, so that user starts on these tables
+-- without CREATE or ALTER. When a newer version needs a column it cannot add,
+-- the console names it and prints the ALTER TABLE to run as a user that may.
 --
 -- In json mode (the default) nothing here is used.
 --
@@ -85,6 +87,9 @@ CREATE TABLE IF NOT EXISTS crimson_escrow (
     -- Who the line was taken from. Added to existing databases by
     -- migrate; NULL on older rows.
     taken_from VARCHAR(32),
+    -- How many times in a row giving it raised (Escrow.deliver). At the
+    -- limit it waits for staff in /ch-stuck. NULL on older rows, as 0.
+    deliver_raises INT DEFAULT 0,
     INDEX idx_contract (contract_id),
     INDEX idx_state (state)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

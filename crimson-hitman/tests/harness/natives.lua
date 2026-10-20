@@ -624,6 +624,20 @@ function Natives.exportsProxy()
             local src = Env.byCitizen[cid]
             return src and Env.players[src] or nil
         end,
+        --- One field of a loaded character's metadata, by server id or
+        --- citizen id as qbx_core's resolvePlayer takes either; nil when
+        --- nobody is loaded there. Natives.noGetMetadata is a qbx_core
+        --- build without the export.
+        GetMetadata = function(_, identifier, key)
+            if Natives.noGetMetadata then
+                error('No such export GetMetadata in resource qbx_core', 0)
+            end
+            local src = type(identifier) == 'string' and Env.byCitizen[identifier]
+                or tonumber(identifier)
+            local p = src and Env.players[src]
+            local meta = p and p.PlayerData and p.PlayerData.metadata
+            return meta and meta[key]
+        end,
         GetJob = function(_, name)
             Natives.calls.getJob = (Natives.calls.getJob or 0) + 1
             return Env.jobDefinitions and Env.jobDefinitions[name] or nil

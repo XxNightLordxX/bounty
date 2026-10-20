@@ -1517,6 +1517,9 @@ function JsonStore.writeEscrow(contractId, lines)
         if existing and existing ~= incoming then
             existing.owed_to = incoming.owed_to
             existing.releasing_to = incoming.releasing_to
+            if incoming.deliver_raises ~= nil then
+                existing.deliver_raises = incoming.deliver_raises
+            end
         else
             if existing then unindexRow(escrowBy, existing, incoming.id) end
             db.escrow[incoming.id] = incoming

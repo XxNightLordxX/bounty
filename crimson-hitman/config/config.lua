@@ -865,6 +865,12 @@ Config.Database = {
     --- gone at the next restart, which is why it releases all open escrow
     --- on shutdown rather than losing it.
     ---
+    --- mysql (oxmysql) makes its crimson_* tables at the first start. Each
+    --- start asks information_schema what is there and creates or alters
+    --- only what is missing, so a database user without CREATE and ALTER
+    --- starts on tables imported from install/sql/crimson_hitman.sql; what
+    --- it cannot add, the console names, with the statement to run.
+    ---
     --- Modes do not share data: a server switched from one to another
     --- starts with nothing in the new one. So it refuses to start while the
     --- mode it left still holds players' money — escrow not yet settled, or
@@ -900,6 +906,9 @@ Config.PendingEscrow = {
     MaxRetriesPerLogin = 5,
     --- Randomised slightly in code so a reconnect wave does not converge.
     LoginRetryDelayMs = 5000,
+    --- Not a setting: an item whose give raised an error three times in a
+    --- row is no longer retried. It stays owed and waits for staff in
+    --- /ch-stuck, because a give that raised may have given it already.
 }
 
 --------------------------------------------------------------------------

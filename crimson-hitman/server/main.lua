@@ -243,11 +243,11 @@ local DEFAULTS = {
     Advisory = {
         AlwaysAlertTarget = true,
         TriggerJobTypes = { leo = true, police = true, ems = true, fire = true },
-        TriggerJobNames = { doj = true, lawyer = true, ranger = true },
+        TriggerJobNames = { doj = true, lawyer = true, ranger = true, sast = true, fib = true, k9 = true },
         RecipientJobTypes = { leo = true, police = true },
         RecipientJobNames = {
             police = true, sheriff = true, bcso = true, fib = true,
-            trooper = true, sasp = true, ranger = true,
+            trooper = true, sasp = true, ranger = true, sast = true, k9 = true,
         },
     },
     --- What the json backend needs before it can open at all. Read from the

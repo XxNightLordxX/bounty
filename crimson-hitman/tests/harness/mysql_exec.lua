@@ -19,7 +19,7 @@
 ---   * every read returns a fresh copy, so a caller mutating what it read
 ---     does not reach into the store.
 
-local Exec = { tables = {}, schema = {}, primary = {}, booleans = true }
+local Exec = { tables = {}, schema = {}, primary = {}, engines = {}, booleans = true }
 
 local function copy(value)
     if type(value) ~= 'table' then return value end
@@ -65,6 +65,8 @@ local function parseSchema(sql)
     Exec.schema[name] = { columns = columns, order = order }
     Exec.primary[name] = primary or 'id'
     Exec.tables[name] = Exec.tables[name] or {}
+    -- The engine it names, or the server's default, which is InnoDB.
+    Exec.engines[name] = sql:match('%)[^)]*ENGINE=([%w_]+)[^)]*$') or 'InnoDB'
 end
 
 --- Store a value the way it will be read back: a TINYINT(1) in the shape
@@ -352,6 +354,11 @@ local function insert(sql, params)
         -- incapable of showing it.
         for column in clause:gmatch('([%w_]+) = VALUES%(') do
             existing[column] = row[column]
+        end
+        -- `col = COALESCE(VALUES(col), col)`: a NULL parameter keeps what
+        -- the row has.
+        for column in clause:gmatch('([%w_]+) = COALESCE%(VALUES%(') do
+            if row[column] ~= nil then existing[column] = row[column] end
         end
         return {}
     end
@@ -642,7 +649,7 @@ end
 --------------------------------------------------------------------------
 
 function Exec.reset()
-    Exec.tables, Exec.schema, Exec.primary = {}, {}, {}
+    Exec.tables, Exec.schema, Exec.primary, Exec.engines = {}, {}, {}, {}
     Exec.statements = {}
 end
 
@@ -653,8 +660,28 @@ function Exec.run(sql, params)
     local flat = squash(sql)
     Exec.statements[#Exec.statements + 1] = flat
 
-    if flat:find('^CREATE TABLE') then parseSchema(sql) return {} end
+    if flat:find('^CREATE TABLE') then
+        -- IF NOT EXISTS: a table already here is left exactly as it is.
+        local name = flat:match('^CREATE TABLE IF NOT EXISTS ([%w_]+)')
+        if not (name and Exec.schema[name]) then parseSchema(sql) end
+        return {}
+    end
+    -- A table moved to another engine keeps its rows.
+    local moved, engine = flat:match('^ALTER TABLE ([%w_]+) ENGINE=([%w_]+)$')
+    if moved then
+        if Exec.schema[moved] then Exec.engines[moved] = engine end
+        return {}
+    end
     if flat:find('^ALTER TABLE') then return {} end
+    -- The crimson tables there are, with each one's engine.
+    if flat:find('information_schema%.TABLES') and flat:find("TABLE_NAME LIKE 'crimson%%'") then
+        local rows = {}
+        for name in pairs(Exec.schema) do
+            rows[#rows + 1] = { TABLE_NAME = name, ENGINE = Exec.engines[name] or 'InnoDB' }
+        end
+        table.sort(rows, function(a, b) return a.TABLE_NAME < b.TABLE_NAME end)
+        return rows
+    end
     -- Which of a list of tables exist: the ones CREATE TABLE has made here.
     if flat:find('information_schema%.TABLES') and flat:find('TABLE_NAME IN %(') then
         local rows = {}

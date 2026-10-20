@@ -869,6 +869,39 @@ describe('what a staff command prints', function()
         truthy(out:find('Settle each with'), out)
     end)
 
+    it('prints a line whose give kept raising, and tells staff to check before paying', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000, items = { { name = 'lockpick', count = 2 } } } } })
+        truthy(c, 'placed')
+        local item
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.source == 'item' then item = line end
+        end
+        truthy(item, 'the seeded contract escrows an item')
+        local real = exports.ox_inventory.AddItem
+        exports.ox_inventory.AddItem = function() error('hook raised', 0) end
+        local ok, err = pcall(function()
+            for _ = 1, s.escrow.DELIVER_RAISE_LIMIT do
+                s.escrow.release(c.id, f.hitman.cid, { line = item.id }, 'test')
+            end
+        end)
+        exports.ox_inventory.AddItem = real
+        truthy(ok, tostring(err))
+        truthy(s.escrow.parked(s.storage.readEscrowLine(item.id)), 'left for staff')
+
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+        truthy(pcall(cmd[Config.Admin.Commands.stuck], 3, {}))
+        local out = said(3)
+        truthy(out:find(item.id, 1, true) and out:find('raised ' .. s.escrow.DELIVER_RAISE_LIMIT
+            .. ' times', 1, true), out)
+        truthy(out:find('check their inventory', 1, true), out)
+        falsy(out:find('mid%-release'), 'not one a shutdown interrupted: ' .. out)
+    end)
+
     it('prints an empty interrupted list rather than a header with nothing under it', function()
         local s = newStack(); fixture(s)
         local cmd = commands(s)

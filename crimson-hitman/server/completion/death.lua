@@ -736,9 +736,48 @@ local function awaitReport(victim)
     end)
 end
 
+--- Who is in the city as whom: [cid] -> server id, from the map the bridges
+--- keep of every loaded character (Bridges.install sets it). Nil without the
+--- bridges, as on a test's own stack.
+---@type fun(cid: string): number|nil
+Death.sourceOf = nil
+
+--- The server id a party to a live contract is in the city as, or nil.
+---
+--- From the bridges' map: free. The sampler used to ask qbx_core for the
+--- whole player record of every target and every active hitman, once a
+--- second each, only to read the server id out of it. Somebody the map does
+--- not have is asked of qbx_core's own lookup: for a party who is offline,
+--- which is a contract's ordinary state while it waits for them, that
+--- answers nil and carries nothing; one it does find is a login the map has
+--- not heard of yet, and is watched all the same, so no hit on a target
+--- waits on the map. Not through Identity.byCitizenId, whose fallback asks
+--- for every player online until its lookup has once been seen to work.
+---@param cid string|nil
+---@return number|nil
+local function inCity(cid)
+    cid = Util.toCitizenId(cid)
+    if not cid then return nil end
+    if not Death.sourceOf then
+        local actor = Identity.byCitizenId(cid)
+        return actor and actor.source or nil
+    end
+    local src = Death.sourceOf(cid)
+    if src then return src end
+    local ok, player = pcall(function() return exports.qbx_core:GetPlayerByCitizenId(cid) end)
+    local record = ok and type(player) == 'table' and player.PlayerData or nil
+    local found = record and record.citizenid == cid and tonumber(record.source) or nil
+    return (found and found > 0) and found or nil
+end
+
 --- Refresh baselines for every player who is the target of a live contract,
 --- and note which of its hitmen are near them.
 --- Bounded by the number of live contracts, not the player count.
+---
+--- It needs only who is where: a citizen id and the server id they are on.
+--- The record qbx_core would hand over for each is not read at all; the
+--- death state comes from the medical resource, or field by field from the
+--- metadata (Identity.deathState).
 ---@param contracts table[]
 ---@param rosters table<string, table[]>|nil each contract's hitmen, read
 ---   once for the pass (Storage.liveHitmen); read per contract without it
@@ -754,7 +793,10 @@ function Death.watchTargets(contracts, rosters)
     for i = 1, #contracts do
         local c = contracts[i]
         if c.state == CH.STATE.ACTIVE or c.state == CH.STATE.ACCEPTED then
-            local target = Identity.byCitizenId(c.target_cid)
+            local targetSource = inCity(c.target_cid)
+            -- What awaitReport needs, and all attributeDeath reads: who and
+            -- where. awaitReport resolves the source again before it acts.
+            local target = targetSource and { cid = c.target_cid, source = targetSource } or nil
             if target then
                 Death.watch(target.cid, target.source, true)
                 targets[target.source] = target.cid
@@ -815,10 +857,10 @@ function Death.watchTargets(contracts, rosters)
                 for j = 1, #hitmen do
                     local hitman = hitmen[j]
                     if hitman.state == 'active' then
-                        local actor = Identity.byCitizenId(hitman.hitman_cid)
-                        if actor then
+                        local hitmanSource = inCity(hitman.hitman_cid)
+                        if hitmanSource then
                             local distance2 = Util.dist2(
-                                GetEntityCoords(GetPlayerPed(actor.source)), targetCoords)
+                                GetEntityCoords(GetPlayerPed(hitmanSource)), targetCoords)
                             if distance2 <= radius2 then
                                 seenNear[c.id] = seenNear[c.id] or {}
                                 seenNear[c.id][hitman.hitman_cid] = now

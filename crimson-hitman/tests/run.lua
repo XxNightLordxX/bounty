@@ -246,6 +246,8 @@ function _G.newStack()
     -- And a phone lb-phone can notify, by number, on every stack.
     Natives.unequipped, Natives.noServerNotification, Natives.notificationRefused = nil, nil, nil
     Natives.httpAnswer = nil
+    -- And a qbx_core with every export it ships.
+    Natives.noGetMetadata = nil
     -- shared/util is not reloaded between stacks, so its wrap-absorbing
     -- clock would carry the previous test's elapsed time into this one.
     require('crimson-hitman.shared.util').resetMonotonic()

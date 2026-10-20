@@ -675,6 +675,136 @@ describe('complexity: a party who has logged off', function()
     end)
 end)
 
+describe('complexity: what the sampler asks qbx_core for', function()
+    --- Every live contract's target and every active hitman on it, once a
+    --- second. The sampler asked qbx_core for each one's whole player record
+    --- (GetPlayerByCitizenId) only to read the server id out of it, and with
+    --- no medical resource answering it asked again (GetPlayer) for two
+    --- flags in the metadata. The bridges already keep who is in the city as
+    --- whom; the flags can be asked for by name.
+    ---@param n integer contracts, each with its own target and one hitman on it
+    ---@param opts table|nil { away = targets who have left, hitmenAway = hitmen
+    ---   who have left, noMedical = no medical resource running, crowd =
+    ---   bystanders online, late = a target in the city the map never heard log in }
+    local function sampled(n, opts)
+        opts = opts or {}
+        local stack = newStack()
+        local out
+        withConfig(scaleLimits(), function()
+            Env.addPlayer({ source = 900, citizenid = 'CLIENT01', license = 'license:client',
+                cash = 90000000, bank = 90000000 })
+            local creator = stack.identity.resolve(900)
+            for i = 1, n do
+                Env.addPlayer({ source = 2000 + i, citizenid = ('TGT%05d'):format(i),
+                    license = ('license:tgt%d'):format(i) })
+                Env.addPlayer({ source = 3000 + i, citizenid = ('HIT%05d'):format(i),
+                    license = ('license:hit%d'):format(i) })
+                local c = stack.contracts.create(creator, { targetCid = ('TGT%05d'):format(i),
+                    reason = 'scale', reward = { baseline = { cash = 100 } } })
+                truthy(c, 'contract ' .. i .. ' placed')
+                truthy(stack.contracts.accept(stack.identity.resolve(3000 + i), c.id, false),
+                    'and taken')
+            end
+            for i = 1, opts.crowd or 0 do
+                Env.addPlayer({ source = 5000 + i, citizenid = ('CROWD%04d'):format(i),
+                    license = ('license:crowd%d'):format(i) })
+            end
+            stack.bridges.install(stack)
+
+            -- A disconnect, the way FXServer reports one.
+            local function drop(src)
+                _G.source = src
+                local ok, err = pcall(Env.events['local:playerDropped'])
+                _G.source = nil
+                truthy(ok, tostring(err))
+                Env.removePlayer(src)
+            end
+            for i = 1, opts.away or 0 do drop(2000 + i) end
+            for i = 1, opts.hitmenAway or 0 do drop(3000 + n + 1 - i) end
+            if opts.late then
+                -- Logged in, and no login event reached the bridges.
+                Env.removePlayer(2000 + n)
+                drop(2000 + n)
+                Env.addPlayer({ source = 4000, citizenid = ('TGT%05d'):format(n),
+                    license = ('license:tgt%d'):format(n) })
+            end
+            if opts.noMedical then
+                Natives.resourceStates['sc-ambulance'] = 'stopped'
+                Natives.resourceStates['qbx_medical'] = 'missing'
+            end
+
+            local exportCounts, restore = countingExports()
+            local ok, watched = pcall(stack.death.watchTargets,
+                stack.storage.liveContracts(), stack.storage.liveHitmen())
+            restore()
+            truthy(ok, tostring(watched))
+
+            local core = 0
+            for key, count in pairs(exportCounts) do
+                if key:sub(1, 9) == 'qbx_core.' then core = core + count end
+            end
+            out = {
+                watched = watched, core = core,
+                getPlayer = exportCounts['qbx_core.GetPlayer'] or 0,
+                byCid = exportCounts['qbx_core.GetPlayerByCitizenId'] or 0,
+                metadata = exportCounts['qbx_core.GetMetadata'] or 0,
+            }
+        end)
+        return out
+    end
+
+    it('asks qbx_core nothing for parties in the city', function()
+        local few, many = sampled(4), sampled(16, { crowd = 40 })
+        eq(few.watched, 4, 'every target in the city is watched')
+        eq(many.watched, 16)
+        eq(few.core, 0, ('no framework export in a pass over 4 contracts, made %d'):format(few.core))
+        eq(many.core, 0, ('nor over 16 with 40 more online, made %d'):format(many.core))
+    end)
+
+    it('reads the death state field by field when no medical resource answers', function()
+        local out = sampled(6, { noMedical = true })
+        eq(out.watched, 6)
+        eq(out.getPlayer, 0, 'never the whole player record for two flags')
+        eq(out.byCid, 0, 'nor to find a target the map already has')
+        eq(out.metadata, 2 * 6, 'isdead and inlaststand, by name, for each target')
+    end)
+
+    it('asks one empty lookup for each party who has left, and carries no record', function()
+        local out = sampled(8, { away = 3, hitmenAway = 2 })
+        eq(out.watched, 5, 'the three away are not watched')
+        eq(out.getPlayer, 0, 'no lookup that hands over a record')
+        eq(out.byCid, 3 + 2, 'one lookup for each party the map does not have, answered nil')
+        eq(out.core, 5, 'and nothing else')
+    end)
+
+    it('still watches a target in the city whose login the map never heard', function()
+        local out = sampled(3, { late = true })
+        eq(out.watched, 3, 'found through qbx_core\'s lookup, so no hit on them is missed')
+        eq(out.byCid, 1, 'the one the map does not have')
+    end)
+
+    it('reads the whole record only from a qbx_core without the field export', function()
+        local stack = newStack()
+        Natives.noGetMetadata = true
+        Natives.resourceStates['sc-ambulance'] = 'stopped'
+        Env.addPlayer({ source = 7, citizenid = 'OLDCORE1', license = 'license:old' })
+        Env.players[7].PlayerData.metadata.isdead = true
+        local exportCounts, restore = countingExports()
+        local ok, err = pcall(function()
+            local dead, last, resolved, by = stack.identity.deathState(7)
+            truthy(dead and resolved, 'still read, the old way')
+            falsy(last)
+            eq(by, 'metadata')
+            stack.identity.deathState(7)
+        end)
+        restore()
+        truthy(ok, tostring(err))
+        eq(exportCounts['qbx_core.GetMetadata'] or 0, 2,
+            'the missing export is asked once, then not again')
+        eq(exportCounts['qbx_core.GetPlayer'] or 0, 2)
+    end)
+end)
+
 describe('complexity: hits on players no contract names', function()
     --- Every hit between any two players went through attribution: both
     --- resolved, a death-state read, a 50 ms poll, and 'rejected' audit rows

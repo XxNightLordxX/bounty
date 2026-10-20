@@ -45,6 +45,8 @@ local function parseSchema(sql)
     -- bracket, or else the database's own default, which on a txAdmin
     -- database is utf8mb3.
     Sim.collations[name] = sql:match('%)[^)]*COLLATE=([%w_]+)[^)]*$') or Sim.databaseCollation
+    -- And on the engine it names, or the server's default, InnoDB.
+    Sim.engines[name] = sql:match('%)[^)]*ENGINE=([%w_]+)[^)]*$') or 'InnoDB'
 end
 
 --- Extract the column list from an INSERT so we can check it against the
@@ -62,6 +64,13 @@ end
 
 function Sim.reset()
     Sim.tables, Sim.schema, Sim.indexes, Sim.collations = {}, {}, {}, {}
+    -- [table] = engine, for the tables there are: made here, or left by an
+    -- older version (existingSchema's fourth argument; InnoDB otherwise).
+    Sim.engines = {}
+    -- Statements this database user may not run: { CREATE = true, ALTER =
+    -- true }. Refused as MySQL and MariaDB refuse them, error 1142, even for
+    -- a table that is already there.
+    Sim.denied = nil
     -- What CREATE TABLE gives a table that names no character set.
     Sim.databaseCollation = 'utf8mb3_general_ci'
     Sim.existingCollations = nil
@@ -81,10 +90,15 @@ end
 ---@param indexes table|nil [tableName] = { indexName = true }
 ---@param collations table|nil [tableName] = collation it was made with; a
 --- table not named here answers nothing, as a query that failed would
-function Sim.existingSchema(tables, indexes, collations)
+---@param engines table|nil [tableName] = engine it was made on; InnoDB if
+--- not named
+function Sim.existingSchema(tables, indexes, collations, engines)
     Sim.existing = tables
     Sim.existingIndexes = indexes or {}
     Sim.existingCollations = collations or {}
+    for name in pairs(tables or {}) do
+        Sim.engines[name] = engines and engines[name] or 'InnoDB'
+    end
 end
 
 --- The collation a table's text is in now, or nil when the test never said:
@@ -103,6 +117,9 @@ end
 local function parseAlter(sql)
     local renamedIn, from, to = sql:match('^ALTER TABLE ([%w_]+) CHANGE COLUMN `([%w_]+)` ([%w_]+)')
     if renamedIn then return { table_ = renamedIn, from = from, to = to, sql = sql } end
+
+    local movedIn, engine = sql:match('^ALTER TABLE ([%w_]+) ENGINE=([%w_]+)$')
+    if movedIn then return { table_ = movedIn, engine = engine, sql = sql } end
 
     local convertedIn, charset, collation =
         sql:match('^ALTER TABLE ([%w_]+) CONVERT TO CHARACTER SET ([%w_]+) COLLATE ([%w_]+)')
@@ -182,8 +199,38 @@ function Sim.install(Natives)
             end
         end
 
-        if sql:find('CREATE TABLE', 1, true) then parseSchema(sql) end
+        -- A user without the privilege is refused before the database looks
+        -- for the table, IF NOT EXISTS or not.
+        local verb = sql:match('^%s*(%u+)')
+        if Sim.denied and verb and Sim.denied[verb] then
+            local target = sql:match('TABLE IF NOT EXISTS ([%w_]+)') or sql:match('TABLE ([%w_]+)')
+            error(("%s command denied to user 'ch'@'localhost' for table `ch`.`%s` (1142)")
+                :format(verb, tostring(target)), 0)
+        end
+
+        if sql:find('CREATE TABLE', 1, true) then
+            -- IF NOT EXISTS: one already there is left exactly as it is.
+            local name = sql:match('CREATE TABLE IF NOT EXISTS ([%w_]+)')
+            if not (name and (Sim.schema[name] or (Sim.existing and Sim.existing[name]))) then
+                parseSchema(sql)
+            end
+        end
         if sql:find('INSERT INTO', 1, true) then Sim.check(sql) end
+
+        -- The crimson tables there are, with each one's engine: the ones an
+        -- older version left, and the ones made here.
+        if sql:find('information_schema.TABLES', 1, true) and sql:find("LIKE 'crimson%'", 1, true) then
+            local rows, seen = {}, {}
+            for _, source in ipairs({ Sim.existing or {}, Sim.schema }) do
+                for name in pairs(source) do
+                    if not seen[name] then
+                        seen[name] = true
+                        rows[#rows + 1] = { TABLE_NAME = name, ENGINE = Sim.engines[name] or 'InnoDB' }
+                    end
+                end
+            end
+            return rows
+        end
 
         -- What the database says it already has: the shape a test set up
         -- as left by an older version, or else what CREATE TABLE just made.
@@ -274,6 +321,7 @@ function Sim.install(Natives)
                     and Sim.existingIndexes[change.table_] then
                     Sim.existingIndexes[change.table_][change.index] = true
                 end
+                if change.engine then Sim.engines[change.table_] = change.engine end
             end
         end
 

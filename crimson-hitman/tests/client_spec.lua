@@ -2242,6 +2242,29 @@ describe('reporting your own death', function()
         eq(reported('iRevived'), 1)
     end)
 
+    --- The export carried this player's whole record across the resource
+    --- boundary once a second, on every client, for the whole session.
+    --- qbx_core's modules/playerdata.lua keeps the same data in QBX.PlayerData
+    --- from the SetPlayerData event qbx_core sends with every change.
+    it('reads the medical state from QBX.PlayerData, never through the export', function()
+        watching()
+        local meta = underMedical()
+        Client.ticks(2)
+        meta.isdead = true
+        Client.ticks(2)
+        eq(reported('iDied'), 1, 'the death the module holds is reported')
+        eq(#Client.coreCalls, 0,
+            'and no qbx_core export was asked: ' .. table.concat(Client.coreCalls, ', '))
+
+        local f = assert(io.open('crimson-hitman/fxmanifest.lua', 'r'))
+        local block = f:read('*a'):match('client_scripts%s*{(.-)}') or ''
+        f:close()
+        local module = block:find("'@qbx_core/modules/playerdata.lua'", 1, true)
+        local main = block:find("'client/main.lua'", 1, true)
+        truthy(module and main and module < main,
+            'the manifest loads the module before client/main.lua, or QBX is nil there')
+    end)
+
     it('falls back to the engine when the medical state cannot be read', function()
         -- sc-ambulance running, but qbx_core's player data unavailable.
         -- Waiting on a state that never arrives would report no death ever.

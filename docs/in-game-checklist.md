@@ -24,6 +24,14 @@ A staff account that can adjust money and spawn items makes this much faster.
       tables exist in the database as InnoDB and `utf8mb4` (`SHOW TABLE STATUS
       LIKE 'crimson%'` shows `InnoDB` and `utf8mb4_unicode_ci`), on MariaDB as
       on MySQL; and a contract reason with an emoji is accepted
+- [ ] **mysql mode, a database user without CREATE or ALTER** (on a copy):
+      import `install/sql/crimson_hitman.sql` as a user that may, give the
+      server's user only SELECT, INSERT, UPDATE and DELETE, and start: it
+      starts. Drop one column as the privileged user and start again: it
+      refuses, naming that column and printing the `ALTER TABLE` to run; run
+      it and it starts. A table moved to MyISAM (`ALTER TABLE crimson_audit
+      ENGINE=MyISAM`) is moved back to InnoDB at the next start by a user who
+      may alter tables
 - [ ] `restart lb-phone`: crimson-hitman stays started (`ensure` not needed)
       and the app is back on an open phone within a few seconds, and
       **Call** in a contract thread does what it did before the restart,

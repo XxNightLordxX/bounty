@@ -16,6 +16,7 @@ local Client = {}
 
 --- What the client sent to the server, and what it asked of lb-phone.
 Client.toServer = {}
+Client.coreCalls = {}
 Client.phone = {}
 
 --- The client's own handler tables, kept apart from the server's: both
@@ -103,6 +104,32 @@ local function clientNatives(fn, ...)
     return table.unpack(results, 1, results.n)
 end
 
+--- What qbx_core's modules/playerdata.lua gives a client that loads it:
+--- the QBX global, whose PlayerData qbx_core keeps current and empties on
+--- unload. Read live from Client.playerData, so a test that changes this
+--- player's metadata is changing what the module holds; nil is the module's
+--- empty table, as before a character loads. Only while client code runs:
+--- the server has no such global.
+local playerDataModule = setmetatable({}, {
+    __index = function(_, key)
+        if key == 'PlayerData' then return Client.playerData or {} end
+    end,
+})
+
+--- The client's view of qbx_core's exports. It has none the client should
+--- need: every call is recorded (Client.coreCalls) and answers nothing, so a
+--- test can say the death watcher never asked for the whole player record.
+local function clientCore()
+    return setmetatable({}, {
+        __index = function(_, method)
+            return function()
+                Client.coreCalls[#Client.coreCalls + 1] = method
+                return nil
+            end
+        end,
+    })
+end
+
 --- Run something with this build's lb-phone in place and the console
 --- captured.
 ---
@@ -111,19 +138,16 @@ end
 --- something useful needs the console — and doing it at four call sites is
 --- four places to forget to put the real ones back.
 local function withPhone(fn, ...)
-    local realExports, realPrint = _G.exports, _G.print
+    local realExports, realPrint, realQBX = _G.exports, _G.print, _G.QBX
 
     _G.exports = setmetatable({}, {
         __index = function(_, resource)
             if resource == 'lb-phone' then return Client.exports end
-            -- The client's own qbx_core: its player data, which is where the
-            -- medical resource's metadata reaches this player.
-            if resource == 'qbx_core' and Client.playerData ~= nil then
-                return { GetPlayerData = function() return Client.playerData end }
-            end
+            if resource == 'qbx_core' then return clientCore() end
             return realExports[resource]
         end,
     })
+    _G.QBX = playerDataModule
     _G.print = function(...)
         local parts = {}
         for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
@@ -132,7 +156,7 @@ local function withPhone(fn, ...)
 
     local results = table.pack(clientNatives(fn, ...))
 
-    _G.exports, _G.print = realExports, realPrint
+    _G.exports, _G.print, _G.QBX = realExports, realPrint, realQBX
     return table.unpack(results, 1, results.n)
 end
 
@@ -148,6 +172,7 @@ function Client.boot(opts)
     Client.toServer, Client.phone = {}, {}
     Client.nui, Client.netEvents, Client.handlers = {}, {}, {}
     Client.cameraCallback = nil
+    Client.coreCalls = {}
     Client.drawables, Client.drawableThrows = nil, nil
     Client.refuseRegistration = opts.refuseRegistration or false
     Client.console = {}
@@ -229,15 +254,14 @@ function Client.ticks(n)
     for i = 1, #Env.threads do threads[i] = Env.threads[i] end
 
     -- Inside the client's view of the exports, as the game runs them.
-    local realExports = _G.exports
+    local realExports, realQBX = _G.exports, _G.QBX
     _G.exports = setmetatable({}, {
         __index = function(_, resource)
-            if resource == 'qbx_core' and Client.playerData ~= nil then
-                return { GetPlayerData = function() return Client.playerData end }
-            end
+            if resource == 'qbx_core' then return clientCore() end
             return realExports[resource]
         end,
     })
+    _G.QBX = playerDataModule
 
     for _, fn in ipairs(threads) do
         local count = 0
@@ -247,12 +271,12 @@ function Client.ticks(n)
         end
         local ok, err = clientNatives(fn)
         if not ok and err ~= STOP then
-            _G.Wait, _G.exports = realWait, realExports
+            _G.Wait, _G.exports, _G.QBX = realWait, realExports, realQBX
             error(err, 0)
         end
     end
 
-    _G.Wait, _G.exports = realWait, realExports
+    _G.Wait, _G.exports, _G.QBX = realWait, realExports, realQBX
 end
 
 --- Run whatever CreateThread queued, with lb-phone's exports in place.

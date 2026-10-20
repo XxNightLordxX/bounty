@@ -552,6 +552,30 @@ function Identity.deathState(source)
     end
 
     -- Fall back to QBox metadata, which the medical resources write anyway.
+    --
+    -- The two flags, asked for by name (qbx_core server/player.lua,
+    -- GetMetadata): the same table GetPlayer hands over, without carrying
+    -- the whole player record across the export boundary for two booleans,
+    -- which the death sampler did once a second for every live target.
+    -- qbx_core gives every character both flags when it loads them
+    -- (CheckPlayerData sets each to false), so neither answering is nobody
+    -- loaded at that source, or a record without them: asked whole then, as
+    -- before. A qbx_core without the export is asked whole from then on.
+    if not noExport.qbx_core then
+        local okDead, isDead = pcall(function()
+            return exports.qbx_core:GetMetadata(source, 'isdead')
+        end)
+        local okLast, isLast = pcall(function()
+            return exports.qbx_core:GetMetadata(source, 'inlaststand')
+        end)
+        if okDead and okLast and (isDead ~= nil or isLast ~= nil) then
+            return isDead == true, isLast == true, true, 'metadata'
+        end
+        if (not okDead and missingExport(isDead)) or (not okLast and missingExport(isLast)) then
+            noExport.qbx_core = true
+        end
+    end
+
     local player = exports.qbx_core:GetPlayer(source)
     local meta = player and player.PlayerData and player.PlayerData.metadata
     if meta then

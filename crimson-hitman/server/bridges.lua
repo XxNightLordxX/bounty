@@ -156,6 +156,28 @@ function Bridges.install(modules)
     -- Citizen ids are remembered while players are connected, so disconnect
     -- cleanup does not depend on the framework still knowing them.
     local connected = {}
+    -- And the other way round, [cid] = src, for the death sampler, which
+    -- needs the server id of every live contract's parties once a second
+    -- and used to ask qbx_core for each one's whole record to read it.
+    -- Written only through connect(), so the two never disagree.
+    local sourceByCid = {}
+
+    ---@param src number
+    ---@param cid string|nil nil when the character at src has gone
+    local function connect(src, cid)
+        local was = connected[src]
+        if was and sourceByCid[was] == src then sourceByCid[was] = nil end
+        connected[src] = cid
+        if cid then sourceByCid[cid] = src end
+    end
+
+    -- Filled at every login, emptied at every logout and disconnect, and
+    -- checked against everyone online on every maintenance tick
+    -- (refreshAccess). Death.sourceOf asks qbx_core about anybody it does
+    -- not hold, so a login it has not heard of yet is still watched.
+    if modules.death then
+        modules.death.sourceOf = function(cid) return sourceByCid[cid] end
+    end
 
     --- Sources with a readiness pass already on the way.
     ---
@@ -252,7 +274,7 @@ function Bridges.install(modules)
     local function remember(src, untrusted)
         local actor = modules.identity.resolve(src)
         if actor then
-            connected[src] = actor.cid
+            connect(src, actor.cid)
             -- Someone arriving can unpause a contract's clock.
             if modules.scheduler then modules.scheduler.presenceChanged() end
             -- A session we watched begin, so its length is known exactly.
@@ -334,7 +356,7 @@ function Bridges.install(modules)
         -- has read yet.
         if not actor then return end
         -- Known from here on, whichever way they arrived (see refreshAccess).
-        connected[src] = actor.cid
+        connect(src, actor.cid)
 
         local allowed = Config.HideAppFromBlockedJobs == false
             or not modules.identity.isBarred(actor)
@@ -376,7 +398,7 @@ function Bridges.install(modules)
                     -- paused a clock: the deadline ran on while they were
                     -- away and the contract expired the moment they came
                     -- back, their hitman's stake with it.
-                    connected[src] = actor.cid
+                    connect(src, actor.cid)
                     local allowed = Config.HideAppFromBlockedJobs == false
                         or not modules.identity.isBarred(actor)
                     if lastAccess[src] ~= allowed then
@@ -445,7 +467,7 @@ function Bridges.install(modules)
             local actor = modules.identity.resolve(src)
             cid = actor and actor.cid
         end
-        connected[src] = nil
+        connect(src, nil)
         readying[src] = nil
         -- A photo on its way to them is not any more, whoever gets this
         -- server id next.
@@ -492,7 +514,7 @@ function Bridges.install(modules)
             local actor = modules.identity.resolve(src)
             cid = actor and actor.cid
         end
-        connected[src] = nil
+        connect(src, nil)
         if loggedOut then loggingOut[src] = nil else loggingOut[src] = cid end
         -- What their client said about their mask was said for the
         -- character that has gone; the next one says it again.
@@ -553,9 +575,17 @@ function Bridges.install(modules)
     -- made. The same pass a login runs, after recovery like any other
     -- (scheduleReady waits for App.ready). Not remember(): nobody watched
     -- these sessions begin.
+    --
+    -- And into the map the death sampler reads, now rather than at the first
+    -- maintenance tick: a target already in the city is watched from the
+    -- sampler's first pass without it having to ask qbx_core who they are.
     for _, id in ipairs(GetPlayers() or {}) do
         local src = tonumber(id)
-        if src then scheduleReady(src) end
+        if src then
+            scheduleReady(src)
+            local ok, actor = pcall(modules.identity.resolve, src)
+            if ok and actor then connect(src, actor.cid) end
+        end
     end
 
     Bridges.installCommands(modules)
@@ -702,10 +732,26 @@ function Bridges.installCommands(modules)
         local lines = Admin.interrupted(src)
         if #lines == 0 then return reply(src, 'No interrupted releases.') end
 
-        local interrupted, nameless = {}, {}
+        local interrupted, nameless, parked = {}, {}, {}
         for i = 1, #lines do
-            local list = lines[i].orphan and nameless or interrupted
+            local list = (lines[i].orphan and nameless) or (lines[i].raised and parked)
+                or interrupted
             list[#list + 1] = lines[i]
+        end
+
+        -- Lines whose give kept raising (Escrow.deliver): held, owed to the
+        -- player named, and given to nobody until settled here.
+        if #parked > 0 then
+            reply(src, ('%d escrow line(s) raised an error each time they were given, and wait '
+                .. 'for you:'):format(#parked))
+            for i = 1, #parked do
+                local line = parked[i]
+                reply(src, ('  %s  contract %s  %s %s  owed to %s  raised %d times  (%s)'):format(
+                    line.line, line.contract, tostring(line.portion), describeLine(line),
+                    tostring(line.intended), line.raised, os.date('%Y-%m-%d %H:%M', line.at)))
+            end
+            reply(src, ('A raise can come after the item was given, so check their inventory '
+                .. 'first: if it is not there, /%s <line> pay gives it'):format(names.settle))
         end
 
         if #interrupted > 0 then

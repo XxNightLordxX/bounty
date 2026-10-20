@@ -123,6 +123,48 @@ describe('starting on a config that predates a setting', function()
         resetConfig()
     end)
 
+    --- A fill is a second copy of what defaults.lua ships, and a copy
+    --- drifts. The advisory's job names did: sast, fib and k9 were added to
+    --- both config files, and a config whose Advisory section predated the
+    --- names was still filled with the old three, so a contract on an FIB
+    --- agent raised no advisory and carried no LAW ENFORCEMENT flag there.
+    --- A set or a value is filled whole and must match; a record is filled
+    --- field by field, so each field it fills must.
+    it('fills every key with what defaults.lua ships', function()
+        local main = boot()
+        local function same(a, b)
+            if type(a) ~= type(b) then return false end
+            if type(a) ~= 'table' then return a == b end
+            for k, v in pairs(a) do if not same(v, b[k]) then return false end end
+            for k in pairs(b) do if a[k] == nil then return false end end
+            return true
+        end
+        local function isRecord(value)
+            if type(value) ~= 'table' or #value > 0 then return false end
+            for _, v in pairs(value) do if v ~= true then return true end end
+            return false
+        end
+        local drifted = {}
+        for section, keys in pairs(main.configDefaults) do
+            for key, value in pairs(keys) do
+                local shipped = ConfigDefaults[section] and ConfigDefaults[section][key]
+                if isRecord(value) and type(shipped) == 'table' then
+                    for field, fill in pairs(value) do
+                        if not same(fill, shipped[field]) then
+                            drifted[#drifted + 1] = section .. '.' .. key .. '.' .. field
+                        end
+                    end
+                elseif not same(value, shipped) then
+                    drifted[#drifted + 1] = section .. '.' .. key
+                end
+            end
+        end
+        table.sort(drifted)
+        eq(#drifted, 0, 'server/main.lua fills these differently from config/defaults.lua: '
+            .. table.concat(drifted, ', '))
+        resetConfig()
+    end)
+
     it('keeps the ten-second tick for an Audit section without a flush interval', function()
         -- Missing read as below the floor, and every maintenance job, the
         -- prune among them, ran each second.

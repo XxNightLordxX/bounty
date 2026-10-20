@@ -198,6 +198,43 @@ function Admin.interrupted(src)
     local rows = Storage.auditByAction('release_interrupted', 1000) or {}
     local out, seen, contracts = {}, {}, {}
 
+    local function contractOf(contractId)
+        local contract = contracts[contractId]
+        if contract == nil then
+            contract = Storage.readContract(contractId) or false
+            contracts[contractId] = contract
+        end
+        return contract or nil
+    end
+
+    -- Lines whose give kept raising (Escrow.deliver), still held and owed to
+    -- the player they were for, and given to nobody until staff settle them.
+    -- First, so a line that was also caught mid-release once is shown for
+    -- what it is now. A raise can come after the item moved, so whether they
+    -- already have it is for staff to check before paying it.
+    local parkedRows = Storage.auditByAction('escrow_deliver_parked', 1000) or {}
+    for i = #parkedRows, 1, -1 do
+        local row = parkedRows[i]
+        local lineId = (row.detail or {}).line
+        if lineId and not seen[lineId] then
+            seen[lineId] = true
+            local line = Storage.readEscrowLine(lineId)
+            if line and line.state ~= CH.ESCROW_STATE.SETTLED and Escrow.parked(line) then
+                local contractId = line.contract_id or row.contract_id
+                local intended = line.owed_to or row.actor_cid
+                if not canIdentify then
+                    intended = Admin.partyRole(contractOf(contractId), intended)
+                end
+                out[#out + 1] = {
+                    line = lineId, contract = contractId, amount = line.amount,
+                    source = line.source, item = line.item, quantity = line.quantity,
+                    portion = line.portion, intended = intended, at = row.ts,
+                    raised = tonumber(line.deliver_raises) or 0,
+                }
+            end
+        end
+    end
+
     for i = #rows, 1, -1 do
         local row = rows[i]
         local detail = row.detail or {}
@@ -210,14 +247,9 @@ function Admin.interrupted(src)
             -- anybody needs to answer.
             if line and line.state ~= CH.ESCROW_STATE.SETTLED then
                 local contractId = line.contract_id or row.contract_id
-                local contract = contracts[contractId]
-                if contract == nil then
-                    contract = Storage.readContract(contractId) or false
-                    contracts[contractId] = contract
-                end
                 local intended = row.actor_cid
                 if not canIdentify then
-                    intended = Admin.partyRole(contract or nil, intended)
+                    intended = Admin.partyRole(contractOf(contractId), intended)
                 end
                 out[#out + 1] = {
                     line = lineId,
@@ -460,6 +492,15 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- to somebody else would take it off them.
     if line.owed_to and line.owed_to ~= recipient then return false, CH.ERR.LOCKED end
 
+    -- A line whose give kept raising waits for exactly this: staff who have
+    -- checked whether it already reached them. Its count starts again, so
+    -- the release below tries it, and a raise there is counted afresh.
+    local unparked = Escrow.parked(line) or nil
+    if unparked then
+        line.deliver_raises = 0
+        Storage.writeEscrow(line.contract_id, { line })
+    end
+
     -- Through the normal release path, filtered to this one line, so the
     -- compare-and-set and the never-destroy-property rules still apply.
     local _, result = Escrow.release(line.contract_id, recipient,
@@ -469,7 +510,8 @@ function Admin.settleLine(src, lineId, disposition, owner)
 
     Audit.financial('admin_settle_line', callerCid(src), line.contract_id,
         { line = lineId, disposition = disposition, recipient = recipient,
-          named_by_staff = owner and true or nil, settled = settled, pending = pending })
+          named_by_staff = owner and true or nil, settled = settled, pending = pending,
+          unparked = unparked })
 
     -- Queued is done: it is theirs, delivered at their next login. It was
     -- reported as "Could not settle it", so staff settled it again.

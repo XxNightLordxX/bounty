@@ -2,6 +2,7 @@
 --- json mode cannot quietly behave differently from memory mode (§10.4).
 
 local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+local Util = require('crimson-hitman.shared.util')
 
 --- Every backend, opened fresh.
 ---
@@ -149,6 +150,38 @@ describe('storage conformance', function()
             falsy(named and named.derived,
                 b.name .. ': a bonus the creator named came back looking derived, '
                 .. 'so raising it would overwrite their figure')
+        end
+    end)
+
+    --- How often a line's give has raised (Escrow.deliver). It is what stops
+    --- a give that raised after the item moved from giving it again on every
+    --- try, so it has to survive a restart, and a copy of the line written
+    --- back without it must not wipe it.
+    it('keeps an escrow line\'s raise count in every backend', function()
+        for _, b in ipairs(backends()) do
+            local fresh = { id = 'ct1:1', contract_id = 'ct1', slot = 1,
+                portion = CH.PORTION.BASELINE, source = 'item', item = 'lockpick',
+                quantity = 1, state = CH.ESCROW_STATE.HELD }
+            b.store.writeEscrow('ct1', { fresh })
+            local counted = Util.copy(b.store.readEscrowLine('ct1:1'))
+            counted.deliver_raises = 2
+            b.store.writeEscrow('ct1', { counted })
+            eq(tonumber(b.store.readEscrowLine('ct1:1').deliver_raises), 2,
+                b.name .. ': the count is kept')
+
+            local stale = Util.copy(fresh)
+            stale.deliver_raises = nil
+            stale.owed_to = 'HITMAN01'
+            b.store.writeEscrow('ct1', { stale })
+            local line = b.store.readEscrowLine('ct1:1')
+            eq(tonumber(line.deliver_raises), 2, b.name .. ': a copy without it leaves it')
+            eq(line.owed_to, 'HITMAN01', b.name .. ': while the rest of the copy is written')
+
+            local reset = Util.copy(line)
+            reset.deliver_raises = 0
+            b.store.writeEscrow('ct1', { reset })
+            eq(tonumber(b.store.readEscrowLine('ct1:1').deliver_raises), 0,
+                b.name .. ': and staff can start it again')
         end
     end)
 
@@ -1282,14 +1315,110 @@ end)
 describe('mysql schema migration', function()
     local Sim = require('crimson-hitman.tests.harness.mysql_sim')
 
-    local function opened(existing, indexes, collations)
+    local function opened(existing, indexes, collations, engines)
         Sim.install(Natives)
-        if existing then Sim.existingSchema(existing, indexes, collations) end
+        if existing then Sim.existingSchema(existing, indexes, collations, engines) end
         package.loaded['crimson-hitman.server.storage.mysql'] = nil
         local store = require('crimson-hitman.server.storage.mysql')
         store.open()
         return store
     end
+
+    --- The store opened again on the same database, as a later start: the
+    --- simulator keeps what the first open made.
+    local function reopened()
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local store = require('crimson-hitman.server.storage.mysql')
+        local ok, err = pcall(store.open)
+        return ok, tostring(err), store
+    end
+
+    --- The README says a database user without CREATE or ALTER can start
+    --- once install/sql/crimson_hitman.sql has been imported by one with
+    --- them. open() sent CREATE TABLE IF NOT EXISTS for every table anyway,
+    --- and MySQL and MariaDB check the privilege before they look for the
+    --- table: error 1142 on every start, for that user, every time.
+    it('starts as a user without CREATE or ALTER on tables already made', function()
+        opened(nil)
+        Sim.denied = { CREATE = true, ALTER = true }
+        Sim.altered = {}
+        local ok, err = reopened()
+        truthy(ok, 'nothing to make, so nothing is asked: ' .. err)
+        eq(#Sim.altered, 0)
+    end)
+
+    it('names a missing table, and how to make it, to a user who cannot create it', function()
+        opened(nil)
+        -- One table nobody imported: dropped, as far as the database knows.
+        Sim.schema.crimson_mutes, Sim.tables.crimson_mutes = nil, nil
+        Sim.indexes.crimson_mutes, Sim.collations.crimson_mutes = nil, nil
+        Sim.engines.crimson_mutes = nil
+        Sim.denied = { CREATE = true }
+        local ok, err = reopened()
+        falsy(ok, 'it cannot start without the table')
+        truthy(err:find('table crimson_mutes', 1, true), 'names the table: ' .. err)
+        truthy(err:find('1142', 1, true), 'with the database\'s own reason: ' .. err)
+        truthy(err:find('install/sql/crimson_hitman.sql', 1, true), 'and the fix: ' .. err)
+        falsy(err:find('crimson_contracts', 1, true), 'and nothing that is there: ' .. err)
+    end)
+
+    it('names a missing column, with the statement to add it, to a user who cannot alter', function()
+        Sim.install(Natives)
+        Sim.existingSchema({ crimson_contracts = { id = true, creator_cid = true,
+            target_cid = true, mode = true, state = true, created_at = true } })
+        Sim.denied = { ALTER = true }
+        local ok, err = reopened()
+        falsy(ok, 'the code writes columns the table does not have')
+        truthy(err:find('column crimson_contracts.paused_since', 1, true), 'names it: ' .. err)
+        truthy(err:find('ALTER TABLE crimson_contracts ADD COLUMN paused_since', 1, true),
+            'and the statement that adds it: ' .. err)
+        truthy(Sim.schema.crimson_escrow, 'the tables it may create are still made')
+    end)
+
+    --- Escrow writes go through one transaction, which is all-or-nothing on
+    --- InnoDB only. A table an older version or a restored dump left on
+    --- MyISAM kept it: CREATE TABLE IF NOT EXISTS never looks at a table it
+    --- finds.
+    it('moves a table left on another engine to InnoDB, once', function()
+        local store = opened(
+            { crimson_audit = { id = true, ts = true, kind = true, action = true,
+                actor_cid = true, contract_id = true, detail = true } },
+            nil, nil, { crimson_audit = 'MyISAM' })
+        local moved = {}
+        for _, change in ipairs(Sim.altered) do
+            if change.engine then moved[#moved + 1] = change.sql end
+        end
+        eq(#moved, 1, 'one table to move: ' .. table.concat(moved, ' | '))
+        eq(moved[1], 'ALTER TABLE crimson_audit ENGINE=InnoDB')
+        local first
+        for _, change in ipairs(Sim.altered) do
+            if change.table_ == 'crimson_audit' then first = first or change end
+        end
+        truthy(first and first.engine, 'before anything else is changed on it')
+        eq(Sim.engines.crimson_audit, 'InnoDB')
+
+        Sim.altered = {}
+        store.migrate()
+        eq(#Sim.altered, 0, 'and a second run moves nothing')
+    end)
+
+    it('leaves a table of the same prefix it does not declare alone', function()
+        opened({ crimson_fire_calls = { id = true } }, nil, nil, { crimson_fire_calls = 'MyISAM' })
+        for _, change in ipairs(Sim.altered) do
+            falsy(change.table_ == 'crimson_fire_calls', 'another resource\'s table: ' .. change.sql)
+        end
+        eq(Sim.engines.crimson_fire_calls, 'MyISAM')
+    end)
+
+    it('names the engine change to a user who cannot make it', function()
+        opened(nil)
+        Sim.engines.crimson_ledger = 'MyISAM'
+        Sim.denied = { ALTER = true }
+        local ok, err = reopened()
+        falsy(ok, 'escrow on MyISAM is not all-or-nothing')
+        truthy(err:find('crimson_ledger on the InnoDB engine (it is MyISAM)', 1, true), err)
+        truthy(err:find('ALTER TABLE crimson_ledger ENGINE=InnoDB;', 1, true), err)
+    end)
 
     local function addedColumns()
         local out = {}
@@ -2060,6 +2189,39 @@ end)
 --- this is what says the coverage is real: if a query shape is added that
 --- the simulator cannot run, this fails by name rather than the conformance
 --- suite quietly testing a little less than it did yesterday.
+describe('a mysql table on another engine', function()
+    --- Run against the executing simulator too, which keeps rows: the move
+    --- is ALTER TABLE ... ENGINE, which keeps every row it has.
+    it('is moved to InnoDB with its rows, once', function()
+        Exec.install(Natives)
+        Exec.run([[CREATE TABLE IF NOT EXISTS crimson_meta (
+            meta_key VARCHAR(32) PRIMARY KEY,
+            meta_value INT NOT NULL
+        ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]])
+        Exec.run('INSERT INTO crimson_meta (meta_key, meta_value) VALUES (?, ?)', { 'heartbeat', 1234 })
+        eq(Exec.engines.crimson_meta, 'MyISAM')
+
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local m = require('crimson-hitman.server.storage.mysql')
+        m.open()
+        eq(Exec.engines.crimson_meta, 'InnoDB', 'moved')
+        eq(m.lastHeartbeat(), 1234, 'with its rows')
+        local function moves()
+            local n = 0
+            for _, flat in ipairs(Exec.statements) do
+                if flat:find('ENGINE=InnoDB$') and flat:find('^ALTER TABLE') then n = n + 1 end
+            end
+            return n
+        end
+        eq(moves(), 1, 'one statement')
+
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        require('crimson-hitman.server.storage.mysql').open()
+        eq(moves(), 1, 'and none at the next start')
+        for name, engine in pairs(Exec.engines) do eq(engine, 'InnoDB', name) end
+    end)
+end)
+
 describe('every mysql statement is executable', function()
     it('runs every function this backend exposes', function()
         local Exec = require('crimson-hitman.tests.harness.mysql_exec')

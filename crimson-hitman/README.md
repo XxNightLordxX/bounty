@@ -9,6 +9,42 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ---
 
+## What's New in 1.1.0
+
+- **Renamed** to `crimson-hitman` (the app: **Crimson-Hitman**), with hitman
+  wording everywhere a player or admin reads it.
+- **The kill photo** is the client's alone and seen once, then saved to the
+  phone's Photos or deleted. On `'server'` storage (the default) it is taken in
+  the app's own viewfinder and kept on this server, so no image host is needed;
+  Save to Photos uses a link this server serves, lb-phone's own upload, or
+  keeps the photo in the app.
+- **Kills:** a death the target's game never reports is attributed by the
+  server; the photo counts where the body lies now; `MaxWeaponRange` is 425 m;
+  a kill made, or a handover armed, before a deadline or a buyout's delay holds
+  it off until it finishes.
+- **Anonymity:** the Nearby list ships off; a target learns of a contract only
+  when their alert's wait is over; an item that names an anonymous client is
+  refused; headshots only where `MugShotBase64` runs.
+- **Storage:** `mysql` mode starts on MariaDB (`portion` renamed), every table
+  is utf8mb4 in one collation and InnoDB, and each start creates or alters only
+  what is missing, so a database user without `CREATE`/`ALTER` starts on
+  imported tables; `json` keeps records in `records.json` and refuses to start
+  on an empty `data/`; no start while another mode still holds players' money.
+- **Escrow:** a payout whose `AddItem` raises stays owed, and after three
+  raises in a row waits for staff in `/ch-stuck` instead of being lost or given
+  again.
+- **Staff:** `/ch-contracts`, a contract **Ref** on every card, in-game ACE
+  checks that work (`IsPlayerAceAllowed` answers 1, not `true`), `/ch-diag`
+  job timings and a photo-address check.
+- **Performance:** the once-a-second death sampler asks `qbx_core` nothing for
+  parties in the city and reads only running contracts; the client reads
+  `QBX.PlayerData` instead of the `GetPlayerData` export; headshots are paced
+  and travel as latent events.
+- **Notices** are saved in the phone's notification list through lb-phone's
+  server export; threads can be muted; masked calls go through `CreateCall`.
+
+---
+
 ## Install
 
 1. Drop `crimson-hitman` into your resources folder. Another folder name
@@ -33,16 +69,22 @@ The config ships in `json` mode: everything lives in files under
 mode the tables are created automatically on first start, as `utf8mb4` so an
 emoji in a reason or a non-Latin character name is kept whatever the
 database defaults to (a table an older version made is converted at start),
-and as InnoDB, which the escrow writes need to be all-or-nothing; MariaDB and
-MySQL 8 both work. Nothing to import either way. The tables are
+and as InnoDB, which the escrow writes need to be all-or-nothing (a table left
+on another engine is moved to InnoDB at start); MariaDB and MySQL 8 both work.
+Nothing to import either way. The tables are
 `crimson_contracts`, `crimson_escrow`, `crimson_hitmen`, `crimson_amendments`,
 `crimson_messages`, `crimson_ledger`, `crimson_pending`, `crimson_stats`,
 `crimson_audit`, `crimson_reveals`, `crimson_mutes`, `crimson_photos` and
-`crimson_meta`. In `mysql` mode your database user needs `CREATE`, `ALTER`
-and `INDEX` on the database, because each start also adds any column or index
-a newer version needs. If your user may not create tables, import
-`install/sql/crimson_hitman.sql` once, as a user that may, before the first
-start: it holds the same statements, word for word. A busy server
+`crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
+there and creates or alters only what is missing: a table, a column or index a
+newer version needs, a table in another character set, or one on another
+engine. So a database user without `CREATE`, `ALTER` and `INDEX` starts on
+tables that are already complete: import `install/sql/crimson_hitman.sql`
+once, as a user that may, before the first start (it holds the same
+statements, word for word). If a later version needs something that user
+cannot add, the start stops and the console names each thing missing, with
+the `ALTER TABLE` statement to run as a user that may; this version adds the
+column `crimson_escrow.deliver_raises`. A busy server
 (thousands of contracts a month) is better on `mysql` from the start: see
 *Changing storage mode* before switching a server that already has players'
 money in one.
@@ -416,7 +458,11 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
   `ox_inventory` is handed back line by line. Where such an error leaves it
   unknown whether one line moved, the audit log names that line for you to
   check (`escrow_take_raised` on a charge, `escrow_deliver_raised` on a
-  payout, which is never given a second time).
+  payout). A payout whose give raises an error stays owed and is tried again,
+  since a raise almost always gave nothing; after three raises in a row on one
+  line it is tried no more and waits for you in `/ch-stuck`
+  (`escrow_deliver_parked`), because a raise can also come after the item was
+  given.
 - **Identity is never taken from a payload.** Every handler resolves the
   acting player from the connection. Citizen ids never reach a client;
   searches and threads use expiring per-viewer handles.
@@ -463,7 +509,7 @@ entry, and `/ch-contracts` lists it for any player.
 | `/ch-timeline <contract>` | One contract's state, escrow lines and audit trail |
 | `/ch-whois <contract>` | Who is really behind an anonymous creator or hitman. Needs `crimson.identity`, a separate ACE |
 | `/ch-void <contract> [reason]` | Close a contract and return its escrow to the creator. Any kill photo from it that the creator has not saved to their phone is deleted, including one kept for them in the app |
-| `/ch-stuck` | Escrow lines that were mid-payment when the server stopped, including one being handed back from a contract that was never placed. Who each was paying is shown as a role (the client, an operative) unless you also hold `crimson.identity`. Also lists held lines of a contract that was never placed which do not say whose they are (written by an older version) |
+| `/ch-stuck` | Escrow lines that were mid-payment when the server stopped, including one being handed back from a contract that was never placed. Who each was paying is shown as a role (the client, an operative) unless you also hold `crimson.identity`. Also lists held lines of a contract that was never placed which do not say whose they are (written by an older version), and items whose give raised an error three times in a row, still owed to the player named: check their inventory, and `/ch-settle <line> pay` gives it if it is not there |
 | `/ch-settle <line> pay\|return [citizenid]` | Finish one of those by hand. `pay` goes to whom the interrupted payment was for; `return` goes to whoever put the line up, so a hitman's stake goes back to that hitman. A line that does not say whose it is needs `return <citizenid>` once you know who put it up; the citizen id is refused on any other line. A player who is offline gets it at their next login, and the command says so |
 | `/hitmanadmin timers` | Test servers: bring every wait and cooldown forward. Deadlines are only ever moved later, never earlier. `crimson.admin` itself only — the extra ACEs do not open it — and audited |
 
@@ -504,6 +550,76 @@ waits, the server runs everything else, and that is not this job's work.
 
 ---
 
+## Integration Guide
+
+**Exports.** None. Nothing here is meant to be called by another resource:
+contracts, escrow and payouts change only through the app and the staff
+commands.
+
+**Events.** It raises none for other resources. The `crimson-hitman:*` net
+events are this resource's own protocol between its client and its server.
+Every one resolves the player from the connection, never from the payload,
+answers to a per-source flood guard and checks its payload; they are not an
+API, and they may change between versions. What it listens to:
+
+| Event | Raised by | What it does here |
+|---|---|---|
+| `QBCore:Server:PlayerLoaded` (and `qbx_core:server:playerLoaded`) | `qbx_core`, local | A character loaded: their session starts, the app is shown or hidden, owed payouts are delivered |
+| `QBCore:Server:OnPlayerLoaded` | the client, net | The same, flood-guarded, and never the start of a watched session (any client can fire it) |
+| `QBCore:Server:OnPlayerUnload`, `qbx_core:server:playerLoggedOut` | `qbx_core`, local | Logout or character switch: cleans up on the first, and again on the second, after `qbx_core` has let the player go |
+| `playerDropped` | FXServer | Disconnect: the same cleanup |
+| `QBCore:Server:OnJobUpdate` (and `qbx_core:server:onSetJob`) | `qbx_core`, local | Re-checks whether the app is closed to the player's jobs |
+| `qbx_core:server:onSetMetaData` | `qbx_core`, local | An `injail` sentence starting or ending pauses or resumes contract clocks |
+| `weaponDamageEvent` | FXServer | The damage log kills are attributed from |
+| `sc-ambulance:server:UseDefib` | sc-ambulance's client, net | A defibrillator used on a target, flood-guarded |
+| `lb-phone:deletedFromGallery`, `lb-phone:factoryReset` | `lb-phone`, local | Deletes the file behind a kill photo saved to Photos by link |
+| `onResourceStart` | FXServer | A medical resource or `lb-phone` that restarted is asked afresh what it supports |
+| `QBCore:Client:OnPlayerUnload`, `qbx_core:client:playerLoggedOut` | `qbx_core`, client | The client's death watcher forgets the last character |
+
+**Convars.**
+
+| Convar | How | What |
+|---|---|---|
+| `crimson_hitman_webhook` | `set` in `server.cfg`, never `setr` | The staff Discord webhook (optional) |
+| `crimson_hitman_new_store` | `set crimson_hitman_new_store 1` in the console, once | `json` mode: start an empty store on purpose (see *Updating*) |
+| `web_baseUrl` | read | The public address kill photos are served from when `Config.Completion.PhotoPublicUrl` is unset |
+| `inventory:accounts` | read (`ox_inventory`'s, default `["money"]`) | Items that are money and so are refused as goods |
+
+**lb-phone** (not a manifest dependency, so restarting it is safe; every call
+is guarded). Client: `AddCustomApp` with the identifier `crimson-hitman`, and
+`RemoveCustomApp` (or `DeleteCustomApp`, `UninstallApp`) for a player who
+loses access; `SendCustomAppMessage`; `SendNotification` for the popup;
+`SetCameraComponent` on `'host'` photo storage; `EnableWalkableCam` /
+`DisableWalkableCam` behind the `'server'` viewfinder; `SaveToGallery` where
+the page cannot save. Server: `GetEquippedPhoneNumber` and `SendNotification`
+for saved notices, `CreateCall`, `IsInCall` and `EndCall` for relay calls,
+`GetConfig` for upload hosts and caller masking, `ContainsBlacklistedWord` on
+reasons and messages, and the two gallery events above.
+
+**ox_inventory** (required). `GetInventoryItems`, `GetInventory`, `Search` and
+`GetItem` read what a player can put up; `RemoveItem` takes it into escrow;
+`CanCarryItem` then `AddItem` pay it out or hand it back, with the metadata it
+was taken with. Each call is made inside `pcall`, and a raise is a refusal: on
+a payout the line stays owed (see *What stops it being abused*). It registers
+no ox_inventory hooks and ships no items.
+
+**sc-dispatch** (optional; `Config.Advisory.UseDispatch`, only while it is
+started). A threat advisory goes to the MDT through `AddNotification` with
+`caller = 'Criminal Intelligence'`, `priority = Config.Advisory.DispatchPriority`,
+`job_table` from `Config.Advisory.RecipientJobNames` and
+`unique_id = 'ch-<contract>-<stage>'` (`posted` or `accepted`); it is cleared
+with `ClearNotification` when the contract ends.
+
+**Other optional hooks**, each skipped when the resource is not started:
+`sc-ambulance` (`IsDead`, `IsLaststand` through
+`Config.Completion.DeathStateProviders`; QBox metadata answers otherwise),
+`sc-blackmarket` (`AddTrust(citizenid, amount)` on a completed contract,
+`Config.Progression`), `MugShotBase64` (`GetMugShotBase64` on the client, for
+headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
+`Config.Immunity.PlaytimeProvider` (minutes played by citizen id).
+
+---
+
 ## Troubleshooting
 
 | Issue | Solution |
@@ -518,6 +634,30 @@ waits, the server runs everything else, and that is not this job's work.
 | `/ch-diag` shows `photo hosts: 0`, or kill photos are refused as "not on this server's allow list" | `'host'` storage only. Add your phone's upload host to `Config.Completion.ExtraPhotoHosts` (a bare domain), and check that lb-phone's own camera upload works |
 | Save to Photos keeps the photo in the app instead | `'server'` storage needs a public https address: set `Config.Completion.PhotoPublicUrl` or `web_baseUrl`, and add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. `/ch-diag` says which address it uses and whether it reaches this resource |
 | The startup warning says `Config.Audit.Webhook` is ignored | The URL in `config.lua` has already been sent to every player. Regenerate it in Discord and set the new one in `server.cfg` with `set crimson_hitman_webhook "..."` (never `setr`) |
+| `failed to start: mysql mode cannot start: the database is missing what it needs` | Your database user may not create or alter tables, and something is missing. The lines under it name each table, column, index or engine change, with the database's own reason (error 1142 is a missing privilege). Import `install/sql/crimson_hitman.sql` as a user that may create tables, run the `ALTER TABLE` statements it prints as one that may alter them, or grant this user `CREATE`, `ALTER` and `INDEX` on the database; then `ensure crimson-hitman` |
+| `/ch-stuck` lists a line that "raised an error each time" | `ox_inventory`'s `AddItem` raised three times in a row giving that item (a hook or another resource failing). It is still owed to that player and nothing gives it again on its own. Check their inventory: if it is not there, `/ch-settle <line> pay`; the console and the `escrow_deliver_raised` rows show the error |
+
+---
+
+## Dependencies
+
+Ensure them before `crimson-hitman` in `server.cfg`. "Checked against" means
+the calls this resource makes were read in that version's source; nothing here
+has been run in game by this build.
+
+| Resource | Needed | Known to work |
+|---|---|---|
+| `qbx_core` | Required (manifest dependency) | 1.24.0, checked against: `GetPlayer`, `GetPlayerByCitizenId`, `GetMetadata`, `GetJob`, `Save`, the login and logout events, `modules/playerdata.lua` |
+| `ox_inventory` | Required (manifest dependency) | 2.48.0, checked against |
+| `oxmysql` | Required in every mode: the manifest loads `@oxmysql/lib/MySQL.lua` (`qbx_core` needs it anyway) | 2.14.3, checked against |
+| `lb-phone` | Required for the app; not a manifest dependency | 2.8.0, the version this was built against (escrowed: exports from its documentation) |
+| MariaDB or MySQL | `mysql` mode only | MariaDB 10.11.14, run against: tables made, imported, migrated and refused as described in *Install*; MySQL 8 by the reserved-word and collation checks only |
+| `ox_lib` | Not used directly; `qbx_core` needs it | 3.40.3, beside `qbx_core` 1.24.0 |
+| `sc-ambulance` | Optional: death and last-stand state, the defibrillator | This server's build |
+| `qbx_medical` | Optional: read through the QBox metadata it writes | — |
+| `sc-dispatch` | Optional: advisories in the MDT | This server's build |
+| `sc-blackmarket` | Optional: criminal progression | This server's build |
+| `MugShotBase64` | Optional: target headshots | — |
 
 ---
 

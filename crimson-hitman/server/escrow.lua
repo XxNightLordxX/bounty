@@ -1090,15 +1090,23 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
                     line.owed_to = recipientCid
                     Storage.writeEscrow(contractId, { line })
                     Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD)
-                    if not alreadyQueued then
-                        Storage.queuePending(recipientCid, contractId, line.id)
-                        -- Kept current if it has been read, so a second line
-                        -- in this same pass sees the first one's entry.
-                        if queuedAlready then queuedAlready[line.id] = true end
+                    if Escrow.parked(line) then
+                        -- Its give kept raising (Escrow.deliver): still
+                        -- theirs, and left for staff rather than queued for
+                        -- another try. An entry already queued is cleared by
+                        -- the retry that next reads it.
+                        result.parked = (result.parked or 0) + 1
+                    else
+                        if not alreadyQueued then
+                            Storage.queuePending(recipientCid, contractId, line.id)
+                            -- Kept current if it has been read, so a second
+                            -- line in this same pass sees the first one's entry.
+                            if queuedAlready then queuedAlready[line.id] = true end
+                        end
+                        -- After the entry exists, so a retry that reads the
+                        -- queue on this wake-up finds it there.
+                        Escrow.noteWaiting(recipientCid, not alreadyQueued)
                     end
-                    -- After the entry exists, so a retry that reads the
-                    -- queue on this wake-up finds it there.
-                    Escrow.noteWaiting(recipientCid, not alreadyQueued)
                     result.pending = result.pending + 1
                 end
             end
@@ -1140,10 +1148,27 @@ local function handedOver(recipientCid, line)
     return copy
 end
 
+--- How many times in a row a line's give may raise before it is left for
+--- staff. A delivery that succeeds settles the line, so every raise on a
+--- line still owed is one more in the same row.
+Escrow.DELIVER_RAISE_LIMIT = 3
+
+--- Whether a line's give has raised DELIVER_RAISE_LIMIT times and it now
+--- waits for staff (/ch-stuck, /ch-settle) rather than another try.
+---@param line table
+---@return boolean
+function Escrow.parked(line)
+    return type(line) == 'table'
+        and (tonumber(line.deliver_raises) or 0) >= Escrow.DELIVER_RAISE_LIMIT
+end
+
 --- Hand a single escrow line to a player. Returns false when it cannot be
 --- delivered right now — never destroys the property to force success.
 ---@return boolean
 function Escrow.deliver(recipientCid, line)
+    -- Left for staff: nothing gives it again until they have looked.
+    if Escrow.parked(line) then return false end
+
     local recipient = exports.qbx_core:GetPlayerByCitizenId(recipientCid)
     if not recipient or not recipient.PlayerData then return false end
 
@@ -1164,13 +1189,23 @@ function Escrow.deliver(recipientCid, line)
         return Util.credit(recipient, account, amount)
     end
 
-    -- Each call inside guarded. A CanCarryItem that raised gave nothing, so
-    -- the line is not delivered and the caller keeps it owed. An AddItem
-    -- that raised may have given it first: that is a give whose result is
-    -- unknown, which §14.12 treats as delivered and never gives twice, loss
-    -- over duplication, with the row that lets staff restore it by hand.
-    -- Either way the release goes on to keep its books, where a raise used
-    -- to leave the line in `releasing` until the next restart's recovery.
+    -- Each call inside guarded, so a raise never leaves the line in
+    -- `releasing` until the next restart's recovery: the release goes on to
+    -- keep its books. A CanCarryItem that raised gave nothing, so the line
+    -- is not delivered and the caller keeps it owed.
+    --
+    -- An AddItem that raised is not delivered either. It was settled as
+    -- delivered (§14.12's unknown give), but a raise is almost always one
+    -- that gave nothing: a hook or a dependency failing before the item
+    -- moved. Settled, the property was gone for good with nobody owed it,
+    -- which is the one thing this function exists not to do; and a hook
+    -- that kept raising lost every line it touched. So it stays owed, with
+    -- a row naming it. A raise that came after the item was given would
+    -- give it again on the next try, so the tries are bounded: after
+    -- DELIVER_RAISE_LIMIT raises in a row the line is left for staff
+    -- (/ch-stuck), held and owed to the same player, and nothing gives it
+    -- again until staff settle it. At most that many copies, and the rows
+    -- say which line and how many times.
     local name, count, metadata
     if line.source == 'dirty' then
         name, count = dirtyItemOf(line), line.amount
@@ -1199,10 +1234,23 @@ function Escrow.deliver(recipientCid, line)
         return exports.ox_inventory:AddItem(src, name, count, metadata)
     end)
     if raised then
+        -- Counted on the line, so the bound holds across restarts too.
+        line.deliver_raises = (tonumber(line.deliver_raises) or 0) + 1
+        Storage.writeEscrow(line.contract_id, { line })
         Audit.financial('escrow_deliver_raised', recipientCid, line.contract_id, {
             line = line.id, source = line.source, item = name, count = count, error = raised,
+            raises = line.deliver_raises,
         })
-        return true
+        if Escrow.parked(line) then
+            Audit.financial('escrow_deliver_parked', recipientCid, line.contract_id, {
+                line = line.id, source = line.source, item = name, count = count,
+                raises = line.deliver_raises, review = true,
+            })
+            print(('[crimson-hitman] escrow line %s: giving %s x%s raised %d times; left for '
+                .. 'staff (/ch-stuck) — check whether they already have it')
+                :format(tostring(line.id), tostring(name), tostring(count), line.deliver_raises))
+        end
+        return false
     end
     return gave
 end
@@ -1504,7 +1552,10 @@ function Escrow.recoverOwed(lines)
     end
 
     for _, l in ipairs(lines or {}) do
-        if l.state == CH.ESCROW_STATE.HELD and l.owed_to and not isQueuedFor(l.owed_to, l.id) then
+        -- A line whose give kept raising is left for staff, not queued again
+        -- (Escrow.deliver).
+        if l.state == CH.ESCROW_STATE.HELD and l.owed_to and not Escrow.parked(l)
+            and not isQueuedFor(l.owed_to, l.id) then
             local mark = type(l.metadata) == 'table' and l.metadata or nil
             local voided, doubtful = false, false
             if l.portion == CH.PORTION.OWED and mark and mark.splitFrom then
@@ -1572,6 +1623,11 @@ function Escrow.retryPending(cid)
             -- queued for it, and no retry, login or recovery ever read it
             -- again.
             if tried[entry.id] ~= nil then stillTried[entry.id] = tried[entry.id] end
+        elseif theirs and line.state == CH.ESCROW_STATE.HELD and Escrow.parked(line) then
+            -- Its give kept raising: left for staff (/ch-stuck), so off the
+            -- queue rather than tried every thirty seconds for nothing.
+            Storage.clearPending(entry.id)
+            gone[entry.id] = true
         elseif theirs and line.state == CH.ESCROW_STATE.HELD then
             local claimed = Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING)
             local handed = false
@@ -1587,9 +1643,14 @@ function Escrow.retryPending(cid)
                     gone[entry.id] = true
                 else
                     Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD)
+                    -- That was its last raise: left for staff, off the queue.
+                    if Escrow.parked(line) then
+                        Storage.clearPending(entry.id)
+                        gone[entry.id] = true
+                    end
                 end
             end
-            if not handed then
+            if not handed and not gone[entry.id] then
                 attempts = attempts + 1
                 stillTried[entry.id] = attempts
             end

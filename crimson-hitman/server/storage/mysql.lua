@@ -38,7 +38,8 @@ local CHARSET, COLLATION = 'utf8mb4', 'utf8mb4_unicode_ci'
 
 --- Every table also names InnoDB rather than taking the server's default
 --- engine. Escrow writes go through db.transaction, which is only atomic on
---- InnoDB: on MyISAM a failure half-way left half the lines written. The
+--- InnoDB: on MyISAM a failure half-way left half the lines written, and
+--- migrate() converts a table an older version left on another engine. The
 --- same statements are in install/sql/crimson_hitman.sql, for an owner who
 --- imports them by hand (tests/storage_spec.lua holds the two together).
 
@@ -113,6 +114,9 @@ local SCHEMA = {
         -- Who the line was taken from. Added to existing databases by
         -- migrate; NULL on older rows.
         taken_from VARCHAR(32),
+        -- How many times in a row giving it raised (Escrow.deliver). At the
+        -- limit it waits for staff in /ch-stuck. NULL on older rows, as 0.
+        deliver_raises INT DEFAULT 0,
         INDEX idx_contract (contract_id),
         INDEX idx_state (state)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
@@ -278,10 +282,19 @@ local SCHEMA = {
 -- The declarations above are the single source of truth: what a table should
 -- have is read out of them, compared against what the database reports, and
 -- anything absent is added. Nothing is ever dropped, and nothing is altered
--- in place except in the two ways that keep every value: a column renamed
--- (RENAMED), and a table converted to utf8mb4, which holds every character
--- the old character set could. An automatic migration that can destroy a
--- column is a worse problem than the one it solves.
+-- in place except in the ways that keep every value: a column renamed
+-- (RENAMED), a table converted to utf8mb4, which holds every character the
+-- old character set could, and a table moved to InnoDB. An automatic
+-- migration that can destroy a column is a worse problem than the one it
+-- solves.
+--
+-- Each of these is run only for what the database says is missing, and
+-- information_schema is asked first. So a database user who may not create
+-- or alter tables starts on tables that are already right — imported from
+-- install/sql/crimson_hitman.sql by a user who may — and one that is missing
+-- something is told exactly what, instead of failing on a CREATE TABLE IF
+-- NOT EXISTS it was never going to need (MySQL and MariaDB check the
+-- privilege before they look for the table: error 1142).
 
 --- Columns renamed since an older version made them: [table] = { old = new }.
 --- Moved with CHANGE COLUMN, which keeps the values, before anything is
@@ -396,16 +409,95 @@ local function needsConverting(table_, columnRows)
     return collation ~= nil and not isOurCollation(collation)
 end
 
+--- The crimson tables this database has, with the engine of each:
+--- [name] = engine. Every crimson_* table this file declares is among them;
+--- a table of the same prefix that it does not declare (another resource's)
+--- is listed and never touched.
+---@return table<string, string>
+local function tablesPresent()
+    local rows = db.query([[
+        SELECT TABLE_NAME, ENGINE FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'crimson%'
+    ]]) or {}
+    local out = {}
+    for i = 1, #rows do
+        local name = rows[i].TABLE_NAME or rows[i].table_name
+        if name ~= nil then out[tostring(name)] = tostring(rows[i].ENGINE or rows[i].engine or '') end
+    end
+    return out
+end
+
+--- Make one schema change, or note that the database refused it. Every
+--- change a start needs is tried, and what could not be made is reported
+--- together (schemaRefused), rather than the first refusal standing for all.
+---@param failed table what could not be made: { what, sql, err, whole }
+---@param whole boolean|nil a whole table, which the install SQL makes
+---@return boolean made
+local function change(sql, what, failed, whole)
+    local ok, err = pcall(db.query, sql)
+    if ok then return true end
+    failed[#failed + 1] = { what = what, sql = sql, err = tostring(err), whole = whole }
+    return false
+end
+
+--- What to tell an owner whose database user could not make a change the
+--- tables need: each thing missing and the database's own reason, then how
+--- to fix it, with the exact statements for a change to a table that exists.
+---@param failed table[]
+---@return string
+local function schemaRefused(failed)
+    local lines = {
+        'mysql mode cannot start: the database is missing what it needs, and this database '
+            .. 'user could not add it:',
+    }
+    local statements = {}
+    for i = 1, #failed do
+        local f = failed[i]
+        lines[#lines + 1] = ('  - %s (%s)'):format(f.what, f.err)
+        if not f.whole then
+            statements[#statements + 1] = '    ' .. f.sql:gsub('%s+', ' ') .. ';'
+        end
+    end
+    lines[#lines + 1] = 'Import install/sql/crimson_hitman.sql as a database user that may '
+        .. 'create tables' .. (#statements > 0 and ', run the statements below as one that may '
+        .. 'alter them,' or '') .. ' or grant this user CREATE, ALTER and INDEX on the '
+        .. 'database; then start the resource again.'
+    for i = 1, #statements do lines[#lines + 1] = statements[i] end
+    return table.concat(lines, '\n')
+end
+
 --- Add whatever the declarations have and the database does not.
+---
+--- `failed` collects the changes the database refused (open passes its own
+--- list); called without one, a refusal raises with the same report.
+---@param failed table|nil
 ---@return integer added columns
 ---@return integer added indexes
-function MySQLStore.migrate()
+function MySQLStore.migrate(failed)
     local addedColumns, addedIndexes = 0, 0
+    local raiseAtEnd = failed == nil
+    failed = failed or {}
+    local engines = tablesPresent()
 
     for i = 1, #SCHEMA do
         local table_, columns, indexes = declarationsIn(SCHEMA[i])
 
         if table_ and safeIdentifier(table_) then
+            -- Moved to InnoDB first, once: escrow's transactions are only
+            -- all-or-nothing there, and the changes below are then made on
+            -- the engine the table keeps. A table an older version or an
+            -- import made on MyISAM (the server's default engine, or a dump
+            -- restored onto one) kept it, since CREATE TABLE IF NOT EXISTS
+            -- never looks at a table it finds.
+            local engine = engines[table_]
+            if engine and engine ~= '' and engine:lower() ~= 'innodb' then
+                if change(('ALTER TABLE %s ENGINE=InnoDB'):format(table_),
+                    ('%s on the InnoDB engine (it is %s)'):format(table_, engine), failed) then
+                    print(('[crimson-hitman] migrated: moved %s from %s to InnoDB')
+                        :format(table_, engine))
+                end
+            end
+
             local present = {}
             local rows = db.query([[
                 SELECT COLUMN_NAME, CHARACTER_SET_NAME, COLLATION_NAME FROM information_schema.COLUMNS
@@ -424,9 +516,11 @@ function MySQLStore.migrate()
                 -- as it was, refusing every four-byte character, and one
                 -- made in another utf8mb4 collation unable to be joined
                 -- with the tables made since.
-                db.query(('ALTER TABLE %s CONVERT TO CHARACTER SET %s COLLATE %s')
-                    :format(table_, CHARSET, COLLATION))
-                print(('[crimson-hitman] migrated: converted %s to %s'):format(table_, COLLATION))
+                if change(('ALTER TABLE %s CONVERT TO CHARACTER SET %s COLLATE %s')
+                    :format(table_, CHARSET, COLLATION),
+                    ('%s in %s'):format(table_, COLLATION), failed) then
+                    print(('[crimson-hitman] migrated: converted %s to %s'):format(table_, COLLATION))
+                end
             end
 
             -- Renamed before anything is added, so the new name is not added
@@ -437,11 +531,13 @@ function MySQLStore.migrate()
                     for old, new in pairs(RENAMED[table_]) do
                         if column.name == new and safeIdentifier(old) and safeIdentifier(new)
                             and present[old] and not present[new] then
-                            db.query(('ALTER TABLE %s CHANGE COLUMN `%s` %s')
-                                :format(table_, old, column.definition))
-                            print(('[crimson-hitman] migrated: renamed %s.%s to %s')
-                                :format(table_, old, new))
-                            present[old], present[new] = nil, true
+                            if change(('ALTER TABLE %s CHANGE COLUMN `%s` %s')
+                                :format(table_, old, column.definition),
+                                ('column %s.%s, renamed from %s'):format(table_, new, old), failed) then
+                                print(('[crimson-hitman] migrated: renamed %s.%s to %s')
+                                    :format(table_, old, new))
+                                present[old], present[new] = nil, true
+                            end
                         end
                     end
                 end
@@ -451,10 +547,11 @@ function MySQLStore.migrate()
                 for j = 1, #columns do
                     local column = columns[j]
                     if safeIdentifier(column.name) and not present[column.name:lower()] then
-                        db.query(
-                            ('ALTER TABLE %s ADD COLUMN %s'):format(table_, column.definition))
-                        print(('[crimson-hitman] migrated: added %s.%s'):format(table_, column.name))
-                        addedColumns = addedColumns + 1
+                        if change(('ALTER TABLE %s ADD COLUMN %s'):format(table_, column.definition),
+                            ('column %s.%s'):format(table_, column.name), failed) then
+                            print(('[crimson-hitman] migrated: added %s.%s'):format(table_, column.name))
+                            addedColumns = addedColumns + 1
+                        end
                     end
                 end
             end
@@ -472,11 +569,12 @@ function MySQLStore.migrate()
                 for j = 1, #indexes do
                     local index = indexes[j]
                     if safeIdentifier(index.name) and not haveIndex[index.name:lower()] then
-                        db.query(
-                            ('ALTER TABLE %s ADD %s'):format(table_, index.definition))
-                        print(('[crimson-hitman] migrated: added index %s on %s')
-                            :format(index.name, table_))
-                        addedIndexes = addedIndexes + 1
+                        if change(('ALTER TABLE %s ADD %s'):format(table_, index.definition),
+                            ('index %s on %s'):format(index.name, table_), failed) then
+                            print(('[crimson-hitman] migrated: added index %s on %s')
+                                :format(index.name, table_))
+                            addedIndexes = addedIndexes + 1
+                        end
                     end
                 end
             end
@@ -488,6 +586,7 @@ function MySQLStore.migrate()
             :format(addedColumns, addedIndexes))
     end
 
+    if raiseAtEnd and #failed > 0 then error(schemaRefused(failed), 0) end
     return addedColumns, addedIndexes
 end
 
@@ -516,13 +615,23 @@ function MySQLStore.inspect()
 end
 
 function MySQLStore.open()
+    -- Only the tables that are not there. CREATE TABLE IF NOT EXISTS for a
+    -- table that is there still needs CREATE, so a database user without it
+    -- failed here even after install/sql/crimson_hitman.sql had made every
+    -- table, which the README said was all it needed.
+    local failed = {}
+    local present = tablesPresent()
     for i = 1, #SCHEMA do
-        db.query(SCHEMA[i])
+        local name = SCHEMA[i]:match('CREATE TABLE IF NOT EXISTS ([%w_]+)')
+        if name and not present[name] then
+            change(SCHEMA[i], ('table %s'):format(name), failed, true)
+        end
     end
 
     -- A table that already existed keeps whatever shape it had, so the
     -- statements above are not enough on their own.
-    MySQLStore.migrate()
+    MySQLStore.migrate(failed)
+    if #failed > 0 then error(schemaRefused(failed), 0) end
 
     local highest = db.scalar('SELECT COUNT(*) FROM crimson_contracts') or 0
     seq = tonumber(highest) or 0
@@ -857,14 +966,17 @@ end
 local ESCROW_UPSERT = [[
     INSERT INTO crimson_escrow
         (id, contract_id, slot, line_portion, source, amount, item, quantity, metadata,
-         staker, inv_slot, owed_to, releasing_to, state, derived, taken_from)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         staker, inv_slot, owed_to, releasing_to, state, derived, taken_from, deliver_raises)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     -- State and amount are NOT written here, as they move only through
     -- claimEscrowLine / settleEscrowLine / setEscrowAmount, which are
     -- guarded. Writing them from a caller-held copy could resurrect a
     -- line that settled while the caller was reading.
+    -- The raise count only when the copy carries one, so a copy read
+    -- before Escrow.deliver counted a raise does not wipe it.
     ON DUPLICATE KEY UPDATE owed_to = VALUES(owed_to),
-        releasing_to = VALUES(releasing_to)
+        releasing_to = VALUES(releasing_to),
+        deliver_raises = COALESCE(VALUES(deliver_raises), deliver_raises)
 ]]
 
 local function escrowParams(contractId, l)
@@ -881,6 +993,7 @@ local function escrowParams(contractId, l)
         -- Never updated, like the staker: who put the line up does not
         -- change. See MySQLStore.orphanEscrow.
         l.taken_from,
+        l.deliver_raises,
     }
 end
 

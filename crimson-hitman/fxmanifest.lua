@@ -16,6 +16,11 @@ shared_scripts {
 }
 
 client_scripts {
+    -- qbx_core's own copy of this player's data, as QBX.PlayerData: it
+    -- follows QBCore:Player:SetPlayerData and empties on unload, so the
+    -- death watcher reads the medical metadata from it rather than asking
+    -- the GetPlayerData export for the whole record every second.
+    '@qbx_core/modules/playerdata.lua',
     -- The client needs Util.monotonicMs: GetGameTimer wraps every ~24.8 days
     -- and the mugshot floor is an elapsed subtraction against it. The server
     -- loads this same file through require_shared instead.

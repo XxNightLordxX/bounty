@@ -626,10 +626,16 @@ end)
 --- metadata is what sc-ambulance, qbx_medical and qb-ambulancejob all write
 --- (isdead, inlaststand); the state bags are read too, under the names each
 --- of them uses. The third answer is whether any of it could be read at all.
+---
+--- The metadata comes from QBX.PlayerData, which qbx_core's own
+--- modules/playerdata.lua (loaded by the manifest) keeps current from the
+--- QBCore:Player:SetPlayerData event qbx_core sends with every change, and
+--- empties on unload. GetPlayerData carried the whole record across the
+--- export boundary once a second, on every client, for the whole session.
 local function medical()
     local ok, state = pcall(function() return LocalPlayer.state end)
-    local okData, data = pcall(function() return exports.qbx_core:GetPlayerData() end)
-    local meta = okData and type(data) == 'table' and type(data.metadata) == 'table' and data.metadata or nil
+    local data = type(QBX) == 'table' and QBX.PlayerData or nil
+    local meta = type(data) == 'table' and type(data.metadata) == 'table' and data.metadata or nil
     state = ok and state or nil
     -- qbx_medical's isDead bag is true in last stand as well, so it means
     -- down, not dead; its deathState is 2 in last stand and 3 when dead.
