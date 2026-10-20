@@ -178,21 +178,18 @@ local function namesNobody(line)
         and not line.taken_from and not (line.portion == CH.PORTION.STAKE and line.staker)
 end
 
---- A held line owed to somebody that still names whom a give was going to,
---- neither left for staff nor queued for anyone: a give that stopped
---- part-way on the running server. A give that moved nothing clears the
---- name (Escrow.release), so whether this one moved anything cannot be
---- told, and nothing gives it until the next start leaves it for staff
---- (Recover). Listed and settled as a line left for staff already.
-local function stalled(line)
-    if line.state ~= CH.ESCROW_STATE.HELD or not line.owed_to or not line.releasing_to
-        or Escrow.parked(line) then
-        return false
-    end
-    for _, entry in ipairs(Storage.readPending(line.owed_to) or {}) do
-        if entry.line_id == line.id then return false end
-    end
-    return true
+--- A held line owed to somebody, neither left for staff (Escrow.parked) nor
+--- queued for anyone, whatever it says of a give (Escrow.leftForStaff): a
+--- give that stopped part-way on the running server (it still names whom
+--- it was going to, so whether it moved anything cannot be told), a queue
+--- entry that raised before it was written, or one a login retry cleared
+--- under a staff pay that reused it. Nothing gives it until the next start
+--- queues it or leaves it for staff, so it is listed and settled as a line
+--- left for staff already.
+---@param queues table|nil see Escrow.queued
+local function stalled(line, queues)
+    return line.state == CH.ESCROW_STATE.HELD and not Escrow.parked(line)
+        and Escrow.leftForStaff(line, queues)
 end
 
 --- Every interrupted release still open, and who it was paying.
@@ -240,7 +237,8 @@ function Admin.interrupted(src)
         local detail = row.detail or {}
         if detail.line then
             parkedAt[detail.line] = row.ts
-            parkedWhy[detail.line] = (detail.interrupted and 'interrupted')
+            parkedWhy[detail.line] = (detail.stopped and 'stopped')
+                or (detail.interrupted and 'interrupted')
                 or (detail.unknown and 'unknown') or 'raised'
         end
     end
@@ -263,11 +261,13 @@ function Admin.interrupted(src)
         end
     end
 
-    -- Held lines a give stopped part-way on the running server (stalled):
-    -- given by nothing until the next start leaves them for staff, and read
+    -- Held, owed lines nothing gives until the next start (stalled), read
     -- from the escrow itself, so none is ever in nobody's sight meanwhile.
-    for _, line in ipairs(Storage.namedHeldEscrow and Storage.namedHeldEscrow() or {}) do
-        if not seen[line.id] and stalled(line) then
+    -- One still naming whom a give was going to may have reached them
+    -- ('stalled'); one that does not was given nothing ('unqueued').
+    local queues = {}
+    for _, line in ipairs(Storage.owedHeldEscrow and Storage.owedHeldEscrow() or {}) do
+        if not seen[line.id] and stalled(line, queues) then
             seen[line.id] = true
             local intended = line.owed_to
             if not canIdentify then
@@ -276,7 +276,32 @@ function Admin.interrupted(src)
             out[#out + 1] = {
                 line = line.id, contract = line.contract_id, amount = line.amount,
                 source = line.source, item = line.item, quantity = line.quantity,
-                portion = line.portion, intended = intended, why = 'stalled',
+                portion = line.portion, intended = intended,
+                why = line.releasing_to and 'stalled' or 'unqueued',
+                raised = tonumber(line.deliver_raises) or 0,
+                arrived = tonumber(line.deliver_arrived), before = tonumber(line.deliver_before),
+            }
+        end
+    end
+
+    -- Lines left `releasing` with no call here holding them (Escrow.inFlight):
+    -- the call that claimed them raised, and nothing settles or puts them
+    -- back until the next start. Read again, so one a call has settled or
+    -- put back since the listing read it is not shown. /ch-settle parks one
+    -- first, as that start would (Escrow.parkStuck).
+    for _, found in ipairs(Storage.releasingEscrow and Storage.releasingEscrow() or {}) do
+        local line = not seen[found.id] and not Escrow.inFlight(found.id)
+            and Storage.readEscrowLine(found.id)
+        if line and line.state == CH.ESCROW_STATE.RELEASING and not Escrow.inFlight(line.id) then
+            seen[line.id] = true
+            local intended = line.releasing_to or line.owed_to
+            if not canIdentify or intended == nil then
+                intended = Admin.partyRole(contractOf(line.contract_id), intended)
+            end
+            out[#out + 1] = {
+                line = line.id, contract = line.contract_id, amount = line.amount,
+                source = line.source, item = line.item, quantity = line.quantity,
+                portion = line.portion, intended = intended, why = 'releasing',
                 raised = tonumber(line.deliver_raises) or 0,
                 arrived = tonumber(line.deliver_arrived), before = tonumber(line.deliver_before),
             }
@@ -478,6 +503,15 @@ local function logNow()
     if Storage.flush then pcall(Storage.flush) end
 end
 
+--- Whom a line is owed to, as /ch-stuck names them to `src`: a role to
+--- staff who may not see who is behind an anonymous party.
+local function partyFor(src, contract, cid)
+    local canIdentify = src == nil or src == 0
+        or Admin.allowed(src, Config.Admin.IdentityAce, true)
+    if canIdentify and cid then return cid end
+    return Admin.partyRole(contract, cid)
+end
+
 --- Settle one interrupted line deliberately: either to the person it was
 --- being paid to, or back to the contract's creator, or, for a line left for
 --- staff (Escrow.parked), as already delivered to the person it was being
@@ -496,6 +530,7 @@ end
 ---@param owner string|number|nil
 ---@return boolean ok
 ---@return string|nil err
+---@return string|integer|nil detail whose queue it is in ('already_queued'), what it owes ('owes_less')
 function Admin.settleLine(src, lineId, disposition, owner)
     lineId = Util.toLineId(lineId)
     if not lineId then return false, CH.ERR.INVALID_INPUT end
@@ -519,6 +554,16 @@ function Admin.settleLine(src, lineId, disposition, owner)
     if not line then return false, CH.ERR.NOT_FOUND end
     if line.state == CH.ESCROW_STATE.SETTLED then return false, CH.ERR.ALREADY_SETTLED end
 
+    -- A line `releasing` that no call here holds (Escrow.inFlight) was left
+    -- so by one that raised after its claim, and /ch-stuck lists it: what
+    -- the next start would do is done now (Escrow.parkStuck), and it is
+    -- settled as it then stands. One a call still holds is that call's.
+    if line.state == CH.ESCROW_STATE.RELEASING then
+        if not Escrow.parkStuck(lineId) then return false, CH.ERR.LOCKED end
+        line = Storage.readEscrowLine(lineId)
+        if not line or line.state ~= CH.ESCROW_STATE.HELD then return false, CH.ERR.LOCKED end
+    end
+
     -- A contract that was never stored has no row, and its lines still say
     -- whose they are (Contracts.recoverNeverPlaced leaves one caught
     -- mid-payment for staff, as recovery does any other). One that does not
@@ -541,20 +586,29 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- let the row go, a pay gave the hitman the same money as well.
     -- `releasing_to` is written before the money moves, so a line caught
     -- mid-release still names who it was going to. Only a line that names
-    -- nobody, written before lines did, goes to whom the log names.
-    --
-    -- A line not left for staff that is owed to somebody other than the
-    -- log's row names was queued for them since: a 'return' to an offline
-    -- creator, and a 'pay' after it would go to the creator as well.
+    -- nobody, written before lines did, goes to whom the log names: the
+    -- line decides, and a pay never goes to a party it no longer names.
     --
     -- Return goes to whoever put the line up. A stake is the hitman's own
     -- money: returned "to the creator", an interrupted stake was handed to
     -- the one party it was never theirs to take. A line owed to somebody
     -- has no payer this can name.
     --
-    -- A line a give stopped part-way on the running server (stalled) is
-    -- settled as one left for staff: the next start would leave it so.
-    local parked = Escrow.parked(line) or stalled(line)
+    -- A held line owed to somebody that nothing gives (stalled) is settled
+    -- as one left for staff: the next start would queue it or leave it so.
+    local queues = {}
+    local parked = Escrow.parked(line) or stalled(line, queues)
+
+    -- Queued for whom it is owed to (a 'return' to an offline client, say):
+    -- theirs already, given at their next login or while they are in the
+    -- city, so there is nothing to settle and the answer says whose it is.
+    -- Refused as locked because the log's release_interrupted row named
+    -- somebody else, staff told by /ch-stuck to pay it were turned away
+    -- from a line that needed nothing.
+    if not parked and Escrow.queued(line, queues) then
+        return false, 'already_queued', partyFor(src, contract, line.owed_to)
+    end
+
     local owed = amount and Escrow.stillOwed(line)
     if amount and (not parked or amount > owed) then
         return false, CH.ERR.INVALID_INPUT
@@ -562,16 +616,11 @@ function Admin.settleLine(src, lineId, disposition, owner)
     local recipient
     if disposition == 'pay' or disposition == 'delivered' then
         recipient = line.owed_to or line.releasing_to
-        if not parked then
-            local recorded
+        if not recipient then
             local rows = Storage.auditByAction('release_interrupted', 1000) or {}
             for i = #rows, 1, -1 do
-                if (rows[i].detail or {}).line == lineId then recorded = rows[i].actor_cid; break end
+                if (rows[i].detail or {}).line == lineId then recipient = rows[i].actor_cid; break end
             end
-            if recipient and recorded and recorded ~= recipient then
-                return false, CH.ERR.LOCKED
-            end
-            recipient = recipient or recorded
         end
     elseif line.portion == CH.PORTION.OWED then
         return false, CH.ERR.INVALID_INPUT
@@ -584,14 +633,17 @@ function Admin.settleLine(src, lineId, disposition, owner)
     end
     if not recipient then return false, CH.ERR.INVALID_INPUT end
 
-    -- Already queued for somebody by an earlier settle: settling it again
-    -- to somebody else would take it off them. A line left for staff is
-    -- owed to whoever its give was for and queued for nobody, and handing it
-    -- back instead is exactly the question staff were left.
-    if line.owed_to and line.owed_to ~= recipient
-        and not (parked and disposition == 'return') then
-        return false, CH.ERR.LOCKED
+    -- Owed to somebody else: settling it to another would take it off them.
+    -- A line left for staff is owed to whoever its give was for and queued
+    -- for nobody, and handing it back instead is exactly the question staff
+    -- were left. Asked again of the line as the release claims it (its
+    -- guard, below): another settle can have queued it, or left it owed to
+    -- somebody else, since this read.
+    local function owedElsewhere(l)
+        return l.owed_to ~= nil and l.owed_to ~= recipient
+            and not (parked and disposition == 'return')
     end
+    if owedElsewhere(line) then return false, CH.ERR.LOCKED end
 
     -- Already with them: staff checked and found it there, after a give that
     -- raised or a restart in the middle of one (Escrow.deliver,
@@ -632,29 +684,70 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- gives it once. A part that already arrived stays on the line, and
     -- only the rest is given; with an amount, exactly that much (`give`).
     local unparked = parked or nil
+    local who = callerCid(src)
+
+    -- On the record, and the log written, before anything moves. Written
+    -- after the release, a raise part-way through it (a lookup in
+    -- Escrow.deliver, a dropped connection) left money given and nothing
+    -- saying staff had settled it, or for how much. What came of it
+    -- follows in admin_settle_result.
+    Audit.financial('admin_settle_line', who, line.contract_id,
+        { line = lineId, disposition = disposition, recipient = recipient,
+          named_by_staff = owner and true or nil, unparked = unparked,
+          amount = amount, owed = owed })
+    logNow()
 
     -- Through the normal release path, filtered to this one line, so the
-    -- compare-and-set and the never-destroy-property rules still apply.
-    local _, result = Escrow.release(line.contract_id, recipient,
-        { line = lineId, unpark = unparked, give = amount }, 'admin_' .. disposition)
-    local settled = result and result.settled or 0
-    local pending = result and result.pending or 0
-    local again = result and result.parked or 0
+    -- compare-and-set and the never-destroy-property rules still apply, and
+    -- checked again on the line as it claims it (`unpark`, the guard). A
+    -- raise in it is logged, and a line it left `releasing` is left for
+    -- staff at once, as the next start would (Escrow.parkStuck): what of it
+    -- arrived cannot be told. Raised on, it went unlogged, stuck
+    -- `releasing` and listed by nothing until that start.
+    local ran, raised, result = pcall(Escrow.release, line.contract_id, recipient,
+        { line = lineId, unpark = unparked, give = amount }, 'admin_' .. disposition,
+        function(claimed) return not owedElsewhere(claimed) end)
+    if not ran then
+        local parkRan, stuck = pcall(Escrow.parkStuck, lineId)
+        Audit.financial('admin_settle_raised', who, line.contract_id,
+            { line = lineId, disposition = disposition, recipient = recipient,
+              error = tostring(raised), parked = (parkRan and stuck) or nil,
+              park_error = not parkRan and tostring(stuck) or nil, review = true })
+        logNow()
+        print(('[crimson-hitman] settling escrow line %s (%s) raised: %s'):format(
+            tostring(lineId), disposition, tostring(raised)))
+        return false, 'raised'
+    end
+    local settled = result.settled or 0
+    local pending = result.pending or 0
+    local again = result.parked or 0
+    local requeued = result.requeued or 0
 
-    Audit.financial('admin_settle_line', callerCid(src), line.contract_id,
+    -- What it actually gave, and what the line owed as it was claimed: the
+    -- read above may be older than another settle that moved it since.
+    Audit.financial('admin_settle_result', who, line.contract_id,
         { line = lineId, disposition = disposition, recipient = recipient,
-          named_by_staff = owner and true or nil, settled = settled, pending = pending,
-          unparked = unparked, amount = amount, owed = owed,
-          parked = again > 0 and again or nil })
+          settled = settled, pending = pending, parked = again > 0 and again or nil,
+          requeued = requeued > 0 and requeued or nil,
+          refused = result.why or ((result.refused or 0) > 0 and 'owed_elsewhere') or nil,
+          given = result.given, owed = result.owed })
     logNow()
 
     -- Queued is done: it is theirs, delivered at their next login. It was
     -- reported as "Could not settle it", so staff settled it again. A give
     -- that raised again left it for staff once more, which the release also
     -- counts as pending; called queued, staff waited for a login that gives
-    -- nothing a line left for staff.
+    -- nothing a line left for staff. One that raised with nothing arriving
+    -- went back on the queue, and is said to have, rather than called
+    -- queued for a player who is in the city.
     if settled > 0 then return true, nil end
+    if result.why == 'queued' then
+        return false, 'already_queued', partyFor(src, contract, result.owed_to)
+    end
+    if result.why == 'owes_less' then return false, 'owes_less', result.owed end
+    if result.why then return false, 'not_left' end
     if again > 0 then return false, 'parked' end
+    if requeued > 0 then return true, 'requeued' end
     if pending > 0 then return true, 'queued' end
     return false, CH.ERR.LOCKED
 end

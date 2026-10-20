@@ -1336,10 +1336,12 @@ describe('escrow left for staff', function()
         end
     end)
 
-    --- A held line owed to somebody that still names whom a give was going
-    --- to: one a give stopped part-way on the running server is given by
-    --- nothing until the next start, so /ch-stuck lists it from the escrow.
-    it('finds held lines still naming a give\'s recipient in every backend', function()
+    --- A held line owed to somebody that nothing queues, whatever it says of
+    --- a give, and a line left `releasing` by a call that raised, are given
+    --- or finished by nothing until the next start, so /ch-stuck lists them
+    --- from the escrow. Only lines naming a give's recipient were read, and
+    --- an owed line whose queue entry was lost was listed by nothing.
+    it('finds held owed lines and releasing lines in every backend', function()
         for _, b in ipairs(backends()) do
             b.store.writeContract(contractFixture('ct00000004'))
             local function line(n, fields)
@@ -1361,11 +1363,17 @@ describe('escrow left for staff', function()
             b.store.settleEscrowLine('ct00000004:6', 'HITMAN01')
 
             local out = {}
-            for _, l in ipairs(b.store.namedHeldEscrow()) do out[#out + 1] = l.id end
-            eq(table.concat(out, ','), 'ct00000004:1,ct00000004:4',
-                b.name .. ': held, owed and naming a recipient, and nothing else')
-            eq(b.store.namedHeldEscrow()[1].releasing_to, 'HITMAN01', b.name)
-            eq(b.store.namedHeldEscrow()[1].amount, 100, b.name)
+            for _, l in ipairs(b.store.owedHeldEscrow()) do out[#out + 1] = l.id end
+            eq(table.concat(out, ','), 'ct00000004:1,ct00000004:2,ct00000004:4',
+                b.name .. ': held and owed, naming a recipient or not, and nothing else')
+            eq(b.store.owedHeldEscrow()[1].releasing_to, 'HITMAN01', b.name)
+            eq(b.store.owedHeldEscrow()[2].owed_to, 'HITMAN01', b.name)
+            eq(b.store.owedHeldEscrow()[1].amount, 100, b.name)
+
+            out = {}
+            for _, l in ipairs(b.store.releasingEscrow()) do out[#out + 1] = l.id end
+            eq(table.concat(out, ','), 'ct00000004:5', b.name .. ': releasing, and nothing else')
+            eq(b.store.releasingEscrow()[1].releasing_to, 'HITMAN01', b.name)
         end
     end)
 end)
@@ -2403,7 +2411,8 @@ describe('every mysql statement is executable', function()
             function() m.readEscrowLine('c1:1') end,
             function() m.orphanEscrow() end,
             function() m.parkedEscrow(3) end,
-            function() m.namedHeldEscrow() end,
+            function() m.owedHeldEscrow() end,
+            function() m.releasingEscrow() end,
             function() m.claimEscrowLine('c1:1','held','releasing') end,
             function() m.setEscrowAmount('c1:1','releasing',50,100) end,
             function() m.settleEscrowLine('c1:1','A') end,

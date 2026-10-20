@@ -746,10 +746,10 @@ function Bridges.installCommands(modules)
 
         -- Lines left for staff (Escrow.parked): a give that kept raising with
         -- nothing arriving, raised with only part of it or no telling what
-        -- arrived, or was under way when the server stopped; and one a give
-        -- stopped part-way on the running server, which the next start would
-        -- leave for staff (stalled). Held, owed to the player named, and
-        -- given to nobody until settled here.
+        -- arrived, or was under way when the server stopped; one held and
+        -- owed that nothing queues or gives until the next start (stalled,
+        -- unqueued); and one left `releasing` by a call that raised. Owed to
+        -- the player named, and given to nobody until settled here.
         if #parked > 0 then
             reply(src, ('%d escrow line(s) raised an error when they were given, or were stopped '
                 .. 'while being given, and wait for you:'):format(#parked))
@@ -766,6 +766,12 @@ function Bridges.installCommands(modules)
                     known = ('raised %d times with nothing arriving'):format(line.raised)
                 elseif line.why == 'stalled' then
                     known = 'giving it stopped part-way, and nothing will try it again'
+                elseif line.why == 'unqueued' then
+                    known = 'owed and in no retry queue, so nothing will give it'
+                elseif line.why == 'stopped' then
+                    known = 'a raise stopped it while it was being given'
+                elseif line.why == 'releasing' then
+                    known = 'left mid-release by a call that raised, and nothing is finishing it'
                 end
                 if (line.arrived or 0) > 0 then
                     known = ('%s; %s of it arrived'):format(known, tostring(line.arrived))
@@ -774,11 +780,12 @@ function Bridges.installCommands(modules)
                     line.line, line.contract, tostring(line.portion), describeLine(line),
                     tostring(line.intended), known,
                     line.at and ('  (' .. os.date('%Y-%m-%d %H:%M', line.at) .. ')') or ''))
-                -- Only one that raised with nothing arriving is known to
-                -- have given nothing. Any other may have given more than the
-                -- line says arrived: a give stopped before the line recorded
-                -- what of it had, and pay alone would give that part again.
-                if line.why ~= 'raised' then
+                -- Only one that raised with nothing arriving, or that no
+                -- give was under way for, is known to have given nothing.
+                -- Any other may have given more than the line says arrived:
+                -- a give stopped before the line recorded what of it had,
+                -- and pay alone would give that part again.
+                if line.why ~= 'raised' and line.why ~= 'unqueued' then
                     reply(src, ('    arrival unknown: check what they received, then pay the rest '
                         .. 'with /%s %s pay <amount>, or delivered'):format(names.settle, line.line))
                 end
@@ -836,13 +843,36 @@ function Bridges.installCommands(modules)
     end
 
     command(names.settle, Config.Admin.Ace, function(src, args)
-        local ok, err = Admin.settleLine(src, args[1], args[2], args[3])
+        local ok, err, detail = Admin.settleLine(src, args[1], args[2], args[3])
         if ok and err == 'queued' then
             return reply(src, 'Queued: they are not in the city, so it is delivered at their next login.')
+        end
+        if ok and err == 'requeued' then
+            return reply(src, ('Re-queued after a failed give: giving it raised an error with nothing '
+                .. 'arriving, so it goes back on their retry queue and is tried again while they are '
+                .. 'in the city and at their next login; three such raises leave it for staff (see /%s).')
+                :format(names.stuck))
         end
         if err == 'parked' then
             return reply(src, ('Not settled: giving it raised again, so it is left for staff again; '
                 .. 'see /%s.'):format(names.stuck))
+        end
+        if err == 'already_queued' then
+            return reply(src, ('Already queued for %s: it is theirs, given while they are in the city '
+                .. 'or at their next login. Nothing to settle.'):format(tostring(detail)))
+        end
+        if err == 'owes_less' then
+            return reply(src, ('Not settled: the line now owes only %s, less than that amount; '
+                .. 'check again (/%s).'):format(tostring(detail), names.stuck))
+        end
+        if err == 'not_left' then
+            return reply(src, ('Not settled: it is no longer left for staff, as something settled or '
+                .. 'moved it since it was read; see /%s.'):format(names.stuck))
+        end
+        if err == 'raised' then
+            return reply(src, ('Not settled: settling it raised an error (logged as admin_settle_raised, '
+                .. 'and in the console). Anything it left mid-give is left for staff; see /%s.')
+                :format(names.stuck))
         end
         reply(src, ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err)))
     end, true)

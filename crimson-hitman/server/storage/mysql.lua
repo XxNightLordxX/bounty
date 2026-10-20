@@ -1120,13 +1120,21 @@ function MySQLStore.parkedEscrow(limit)
     return rows
 end
 
---- Held escrow owed to somebody that still names whom a give was going
---- to; see the memory backend.
-function MySQLStore.namedHeldEscrow()
+--- Held escrow owed to somebody; see the memory backend.
+function MySQLStore.owedHeldEscrow()
     local rows = db.query([[
         SELECT * FROM crimson_escrow
-        WHERE state = 'held' AND owed_to IS NOT NULL AND releasing_to IS NOT NULL
+        WHERE state = 'held' AND owed_to IS NOT NULL
         ORDER BY id
+    ]]) or {}
+    for i = 1, #rows do hydrateEscrow(rows[i]) end
+    return rows
+end
+
+--- Escrow `releasing`; see the memory backend.
+function MySQLStore.releasingEscrow()
+    local rows = db.query([[
+        SELECT * FROM crimson_escrow WHERE state = 'releasing' ORDER BY id
     ]]) or {}
     for i = 1, #rows do hydrateEscrow(rows[i]) end
     return rows

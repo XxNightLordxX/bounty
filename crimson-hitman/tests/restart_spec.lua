@@ -2537,7 +2537,8 @@ describe('a staff return the server stops part-way', function()
             local s, f, _, line, hitman, creator = parkedPayout(mode)
             -- Dies between the client's credit and the settle.
             s.storage.settleEscrowLine = function() error('process killed', 0) end
-            falsy(pcall(s.admin.settleLine, 0, line.id, 'return'))
+            local _, settled = pcall(s.admin.settleLine, 0, line.id, 'return')
+            falsy(settled, 'not settled')
             eq(money(1) - creator, 5000, 'the credit landed')
 
             local _, s2 = restart(mode, s)
@@ -2831,8 +2832,11 @@ describe('a staff pay that raises before its release claims the line', function(
             local s, f, _, line, hitman = parkedPayout(mode)
             local claim = s.storage.claimEscrowLine
             s.storage.claimEscrowLine = function() error('connection lost', 0) end
-            falsy(pcall(s.admin.settleLine, 0, line.id, 'pay'))
+            local ran, ok, err = pcall(s.admin.settleLine, 0, line.id, 'pay')
             s.storage.claimEscrowLine = claim
+            truthy(ran, 'answered rather than raised: ' .. tostring(ok))
+            falsy(ok)
+            eq(err, 'raised')
 
             truthy(s.escrow.parked(s.storage.readEscrowLine(line.id)), 'still left for staff')
             eq(#s.admin.interrupted(), 1, 'and listed')
@@ -2840,6 +2844,136 @@ describe('a staff pay that raises before its release claims the line', function(
             eq(money(3), hitman, 'given by nothing meanwhile')
             truthy(s.admin.settleLine(0, line.id, 'pay'))
             eq(money(3) - hitman, 5000, 'paid once')
+        end)
+    end
+end)
+
+--- Two staff settle one line left for staff, and on mysql the second's
+--- read is an await before its claim. A pays 3,000 to a hitman who is away
+--- (queued, 2,000 counted as already with them); B's `pay 1000`, read
+--- before A's settle, claimed the queued line and counted 4,000 as arrived:
+--- the hitman got 1,000 of the 3,000 A found missing, and B's row said the
+--- line owed 5,000 when it owed 3,000.
+describe('two staff settling one line left for staff at once', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': the one read before the other queued it is refused, and moves nothing', function()
+            local s, f, c, line, hitman = parkedPayout(mode)
+            local away = Env.players[3]
+            Env.removePlayer(3)
+
+            local claim, fired, first = s.storage.claimEscrowLine, false, nil
+            s.storage.claimEscrowLine = function(id, from, to)
+                if not fired and from == CH.ESCROW_STATE.HELD then
+                    fired = true
+                    first = { s.admin.settleLine(0, line.id, 'pay', '3000') }
+                end
+                return claim(id, from, to)
+            end
+            local ok, err, whose = s.admin.settleLine(0, line.id, 'pay', '1000')
+            s.storage.claimEscrowLine = claim
+            truthy(fired, 'A never landed between B\'s read and its claim')
+            truthy(first[1])
+            eq(first[2], 'queued', 'A: queued for the hitman, who is away')
+            falsy(ok, 'B is refused')
+            eq(err, 'already_queued')
+            eq(whose, f.hitman.cid)
+            eq(tonumber(s.storage.readEscrowLine(line.id).deliver_arrived), 2000,
+                'what A found already with them, and nothing on top')
+
+            Env.players[3], Env.byCitizen[f.hitman.cid] = away, 3
+            for _ = 1, 3 do s.escrow.retryPending(f.hitman.cid) end
+            eq(money(3) - hitman, 3000, 'the 3,000 A found missing, once')
+
+            local _, s2 = restart(mode, s)
+            eq(s2.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+            eq(#auditRows(s2, 'admin_settle_line'), 2, 'both asked, on the record')
+            local refused, given
+            for _, row in ipairs(auditRows(s2, 'admin_settle_result')) do
+                if row.detail.refused then refused = row else given = row end
+            end
+            truthy(refused, 'B\'s refusal is on the record')
+            eq(refused.detail.refused, 'queued')
+            eq(refused.detail.owed, 3000, 'what the line owed as B claimed it')
+            eq(given.detail.owed, 5000, 'and as A claimed it')
+            eq(given.detail.given, 0, 'A gave nothing then: the hitman was away')
+            local _ = c
+        end)
+    end
+end)
+
+--- The settle's row was written after the release returned, so a process
+--- that died inside the release took with it the only record that staff
+--- had settled the line, and for how much.
+describe('a staff pay the server stops inside its release', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is on the record from before anything moved', function()
+            local s, _, _, line, hitman = parkedPayout(mode)
+            Env.addPlayer({ source = 7, citizenid = 'STAFF001', license = 'license:st' })
+            killBefore(s.storage, 1, function(name) return name == 'settleEscrowLine' end)
+            pcall(s.admin.settleLine, 7, line.id, 'pay', '5000')
+            eq(money(3) - hitman, 5000, 'given before the process died')
+
+            local _, s2 = restart(mode, s)
+            local rows = auditRows(s2, 'admin_settle_line')
+            eq(#rows, 1, 'the log lost it with the process')
+            eq(rows[1].actor_cid, 'STAFF001')
+            eq(rows[1].detail.amount, 5000)
+            eq(rows[1].detail.owed, 5000)
+
+            truthy(s2.escrow.parked(s2.storage.readEscrowLine(line.id)), 'left for staff')
+            eq(#s2.admin.interrupted(), 1, 'and listed')
+            truthy(s2.admin.settleLine(0, line.id, 'delivered'))
+            eq(money(3) - hitman, 5000, 'once')
+        end)
+    end
+end)
+
+--- A release that raised after its claim (here qbx_core's lookup inside
+--- Escrow.deliver) left its line `releasing`: no login retry takes a line
+--- another pass has, nothing settles or puts it back until the next start,
+--- and /ch-stuck listed nothing.
+describe('a line a raise left releasing on the running server', function()
+    for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
+        it(mode .. ': is listed once nothing holds it, and settled once', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local line = s.storage.readEscrow(c.id)[1]
+            local hitman = money(3)
+
+            local qbx = exports.qbx_core
+            local real, during = qbx.GetPlayerByCitizenId, nil
+            qbx.GetPlayerByCitizenId = function()
+                during = s.admin.interrupted(0)
+                error('qbx_core raised', 0)
+            end
+            local ran = pcall(s.escrow.release, c.id, f.hitman.cid, { line = line.id }, 'test')
+            qbx.GetPlayerByCitizenId = real
+            falsy(ran, 'the release raised')
+            truthy(during, 'the release reached the give')
+            eq(#during, 0, 'not listed while its release still holds it')
+            eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.RELEASING)
+
+            local rows = s.admin.interrupted(0)
+            eq(#rows, 1, 'listed once nothing holds it')
+            eq(rows[1].line, line.id)
+            eq(rows[1].why, 'releasing')
+            eq(rows[1].intended, f.hitman.cid)
+            falsy(s.escrow.inFlight(line.id), 'held by nothing')
+
+            for _ = 1, 3 do s.escrow.retryPending(f.hitman.cid) end
+            eq(money(3), hitman, 'given by nothing meanwhile')
+
+            -- Nothing reached them (the raise came looking them up), so pay.
+            truthy(s.admin.settleLine(0, line.id, 'pay'))
+            eq(money(3) - hitman, 5000)
+            eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+            eq(#s.admin.interrupted(0), 0)
         end)
     end
 end)

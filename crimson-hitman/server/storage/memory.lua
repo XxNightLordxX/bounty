@@ -411,19 +411,30 @@ function Memory.parkedEscrow(limit)
     return out
 end
 
---- Held escrow owed to somebody that still names whom a give was going to
---- (releasing_to). A give that moved nothing clears that name, so on the
---- running server one not left for staff (Escrow.parked) is a give that
---- stopped part-way, which nothing gives again until the next start leaves
---- it for staff. Read for /ch-stuck, which lists those of them that are
---- neither left for staff nor queued for their player.
-function Memory.namedHeldEscrow()
+--- Held escrow owed to somebody, whatever it says of a give. Read for
+--- /ch-stuck, which lists those of them that are neither left for staff
+--- (Escrow.parked) nor queued for their player: a give that stopped
+--- part-way, a queue entry that was never written or that a retry cleared,
+--- given by nothing until the next start queues them (Escrow.recoverOwed).
+function Memory.owedHeldEscrow()
     local out = {}
     for _, line in pairs(db.escrow) do
-        if line.state == CH.ESCROW_STATE.HELD and line.owed_to ~= nil
-            and line.releasing_to ~= nil then
+        if line.state == CH.ESCROW_STATE.HELD and line.owed_to ~= nil then
             out[#out + 1] = line
         end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+--- Escrow `releasing`: claimed by a release and not yet settled or put
+--- back. Read for /ch-stuck, which lists those no call in this process
+--- holds (Escrow.inFlight): left there by a call that raised, and settled
+--- or put back by nothing until the next start (Recover).
+function Memory.releasingEscrow()
+    local out = {}
+    for _, line in pairs(db.escrow) do
+        if line.state == CH.ESCROW_STATE.RELEASING then out[#out + 1] = line end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
