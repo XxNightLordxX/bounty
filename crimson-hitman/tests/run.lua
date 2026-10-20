@@ -207,7 +207,8 @@ function _G.newCopyingStack()
     stack.ledger.init({ storage = copying, photos = stack.photos, notify = stack.notify })
     stack.bailout.init({ storage = copying, identity = stack.identity,
                          contracts = stack.contracts, escrow = stack.escrow,
-                         audit = stack.audit, notify = stack.notify, kidnap = stack.kidnap })
+                         audit = stack.audit, notify = stack.notify, kidnap = stack.kidnap,
+                         death = stack.death })
     stack.death.init({ storage = copying, identity = stack.identity,
                        contracts = stack.contracts, audit = stack.audit })
     -- Amendments were left talking to the sharing store behind the
@@ -316,7 +317,7 @@ function _G.newStack()
     })
 
     bailout.init({ storage = storage, identity = identity, contracts = contracts,
-        escrow = escrow, audit = audit, notify = notify, kidnap = kidnap })
+        escrow = escrow, audit = audit, notify = notify, kidnap = kidnap, death = death })
     informant.init({ storage = storage, identity = identity, audit = audit, death = death })
     amendments.init({ storage = storage, identity = identity, contracts = contracts,
         escrow = escrow, audit = audit, notify = notify })

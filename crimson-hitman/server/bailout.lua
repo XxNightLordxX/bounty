@@ -15,6 +15,7 @@ function Bailout.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
         deps.storage, deps.identity, deps.contracts, deps.escrow, deps.audit, deps.notify
     Bailout.kidnap = deps.kidnap
+    Bailout.death = deps.death
 end
 
 --- Queued buyouts live on the contract row, not in a process-local table.
@@ -48,6 +49,22 @@ function Bailout.kidnapInProgress(contractId)
     for i = 1, #hitmen do
         if hitmen[i].state == 'active'
             and Bailout.kidnap.progress(contractId, hitmen[i].hitman_cid) then
+            return true
+        end
+    end
+    return false
+end
+
+--- True when a hitman on this contract is in the middle of finishing it: a
+--- kill of theirs waiting for its photo, or a handover counting down. Asked
+--- when a queued buyout's delay runs out, and when the deadline does.
+function Bailout.finishing(contractId)
+    local hitmen = Storage.readHitmen(contractId)
+    for i = 1, #hitmen do
+        local cid = hitmen[i].hitman_cid
+        if hitmen[i].state == 'active'
+            and ((Bailout.death and Bailout.death.getPending(contractId, cid))
+                or (Bailout.kidnap and Bailout.kidnap.progress(contractId, cid))) then
             return true
         end
     end
@@ -323,6 +340,22 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
     -- cleared. Treating that as "resolved some other way" refunded the
     -- target a buyout they had been given, and the creator never saw the
     -- premium.
+    -- A hitman told "it closes in two minutes unless you finish it first"
+    -- who did: the kill made, its photo on the way, or the handover armed
+    -- and counting. Settled over them, the photo was refused and the
+    -- handover ended as closed, with the target paid out of a contract they
+    -- had lost. So the queue waits for it, as it waits for a claim
+    -- (LOCKED, below), and nothing is counted against the attempts. Bounded
+    -- by the longest a kill waits for its photo: a kill made as the delay ran
+    -- out has that long, and the target's money is already gone.
+    if opts and opts.retryable and contract.bailout_queued_at
+        and contract.state == CH.STATE.ACCEPTED
+        and os.time() - contract.bailout_queued_at < (Config.Bailout.ProcessingDelaySeconds or 0)
+            + 2 * Config.Completion.PhotoTokenLifetimeSeconds
+        and Bailout.finishing(contractId) then
+        return false, CH.ERR.LOCKED
+    end
+
     local ok, err
     if contract.state == CH.STATE.BAILED_OUT and contract.bailout_queued_at then
         ok = true

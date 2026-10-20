@@ -66,6 +66,14 @@ A staff account that can adjust money and spawn items makes this much faster.
 ## 5. Elimination
 
 - [ ] Hitman kills target with a firearm → hitman can request the camera
+- [ ] The same from 300-400 m with a sniper rifle → the kill is credited
+- [ ] With the target's game killed (quit or crash) in the second after the
+      death, Verify kill works a few seconds later anyway, and `/ch-timeline`
+      shows `death_unreported`
+- [ ] A kill by sticky bomb or grenade pays nothing, and Verify kill says only
+      gunfire and melee count (not "Down is not dead")
+- [ ] Kill a target driving at speed: the photo is taken standing at the car
+      where it stopped, not where they died
 - [ ] `/ch-diag` says which photo storage is in use (`server` as shipped)
 - [ ] On `'server'` storage, **Verify kill** opens the app's own viewfinder
       over the whole screen, showing the phone's rear camera, with **Take
@@ -156,6 +164,8 @@ uploads, and with neither. Restart the resource between them.
 - [ ] Completing pays **baseline + bonus**
 - [ ] Killing the target mid-countdown fails the delivery — no payout
 - [ ] Downing the target mid-countdown fails the delivery
+- [ ] A cuffed, conscious target under 20% health is refused as "too badly
+      hurt", not "alive and conscious"; patched up, the handover arms
 
 ## 7. Law enforcement advisory
 
@@ -174,6 +184,12 @@ uploads, and with neither. Restart the resource between them.
 - [ ] Buying out closes the contract, returns escrow **and** premium to the creator
 - [ ] A cash-paid premium arrives as cash, not bank
 - [ ] Buying out is refused while a handover countdown is running
+- [ ] Buy out with a hitman on it; the hitman kills the target in the last
+      seconds of the delay: the contract stays open until the photo is sent,
+      the hitman is paid, and the target gets the premium back
+- [ ] The same with a handover armed in the last seconds of the delay
+- [ ] A kill made just before the deadline can still be photographed after
+      it, and the hitman's stake comes back; a handover cannot be armed after it
 - [ ] Informant data names one hitman, and charges even when it finds nobody
 - [ ] Buying informant data twice returns the same name
 

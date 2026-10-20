@@ -966,7 +966,8 @@ function StartCrimsonHitman()
     kidnap.init({ storage = Storage, identity = identity, contracts = contracts,
                   audit = audit, notify = notify, ledger = ledger })
     bailout.init({ storage = Storage, identity = identity, contracts = contracts,
-                   escrow = escrow, audit = audit, notify = notify, kidnap = kidnap })
+                   escrow = escrow, audit = audit, notify = notify, kidnap = kidnap,
+                   death = death })
     informant.init({ storage = Storage, identity = identity, audit = audit, death = death })
     amendments.init({ storage = Storage, identity = identity, contracts = contracts,
                       escrow = escrow, audit = audit, notify = notify })
@@ -1450,7 +1451,21 @@ function ExpireContracts()
                         end
                     end
 
-                    if contract.deadline_at and now > contract.deadline_at then
+                    -- A hitman who made the kill before the deadline and is
+                    -- walking to the body with the camera, or who armed a
+                    -- handover that is still counting: expired under them,
+                    -- the photo was refused and the stake went to the
+                    -- client, for a job done in time. The pass comes back
+                    -- next tick until it finishes, for no longer than a kill
+                    -- waits for its photo. Never the lifetime's branch: that
+                    -- ceiling holds whatever anyone is doing.
+                    local finishing = contract.deadline_at and now > contract.deadline_at
+                        and now <= contract.deadline_at
+                            + 2 * Config.Completion.PhotoTokenLifetimeSeconds
+                        and modules.bailout.finishing(contract.id)
+                    if finishing then
+                        soonest = now
+                    elseif contract.deadline_at and now > contract.deadline_at then
                         if modules.contracts.resolve(contract.id, CH.STATE.EXPIRED,
                             contract.creator_cid, nil, 'expired', { dueAt = now }) then
                             resolved = resolved + 1

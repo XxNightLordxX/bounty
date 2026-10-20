@@ -664,3 +664,60 @@ describe('alive-only goods beside a percentage bonus', function()
         eq(#s.escrow.bonusTopUp(c.id, 50, 100), 1, 'the cash bonus is recomputed')
     end)
 end)
+
+--- Under the health floor is not "not conscious". Qbox gives no health back
+--- and bleeding takes more, so a target shot during the abduction sits under
+--- it awake, cuffed and talking: told they "must be alive and conscious",
+--- or that they "went down", the hitman could see it was not so.
+describe('a target too badly hurt to hand over', function()
+    local function hurt()
+        local floor = Config.Kidnap.MinTargetHealthPercent
+        Env.players[2]._health = 100 + floor - 1
+    end
+
+    it('is refused at arming with a reason of its own', function()
+        local s, f, c = seeded()
+        hurt()
+        local ok, reason = s.kidnap.arm(c.id, 'HITMAN01')
+        falsy(ok)
+        eq(reason, 'target_too_hurt')
+    end)
+
+    it('still reads a dead or downed target as not conscious', function()
+        local s, f, c = seeded()
+        hurt()
+        Env.players[2].PlayerData.metadata.inlaststand = true
+        local _, reason = s.kidnap.arm(c.id, 'HITMAN01')
+        eq(reason, 'target_not_conscious', 'down comes before hurt')
+    end)
+
+    it('fails a countdown with that reason, and says so', function()
+        local s, f, c = seeded()
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+        runCountdown(s, 10)
+        Natives.calls.notifications = {}
+        hurt()
+        runCountdown(s, 10)
+        eq(s.kidnap.activeCount(), 0)
+        eq(s.kidnap.outcome(c.id, 'HITMAN01').reason, 'target_too_hurt')
+        local told = false
+        for _, note in ipairs(Natives.calls.notifications) do
+            if tostring(note.content):find('too badly hurt', 1, true) then told = true end
+            falsy(tostring(note.content):find('went down', 1, true), 'they did not go down')
+        end
+        truthy(told, 'the phone says why')
+        eq(Env.players[3].PlayerData.money.cash, 5000, 'and nothing is paid')
+    end)
+end)
+
+describe('a handover after the deadline', function()
+    it('is not started on a contract whose time is up', function()
+        local s, f, c = seeded()
+        local row = s.storage.readContract(c.id)
+        row.deadline_at = Env.time - 1
+        s.storage.writeContract(row)
+        local ok, err = s.kidnap.arm(c.id, 'HITMAN01')
+        falsy(ok, 'the expiry waits for a handover already counting, not one started late')
+        eq(err, CH.ERR.ALREADY_SETTLED)
+    end)
+end)

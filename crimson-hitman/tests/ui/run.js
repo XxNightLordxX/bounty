@@ -5105,6 +5105,7 @@ async function main() {
     const REFUSALS = [
       ['not_coerced', 'restrained'],
       ['target_not_conscious', 'conscious'],
+      ['target_too_hurt', 'too badly hurt'],
       ['creator_too_far', 'client'],
       ['target_too_far', 'close'],
       ['target_just_on', 'come into the city'],
@@ -5362,6 +5363,15 @@ async function main() {
       const said = clientGone.notice();
       truthy(said.indexOf('offline') !== -1, said);
       falsy(said.indexOf('lost hold') !== -1, said);
+    });
+
+    /* Under the health floor and awake: "went down" contradicted what the
+       hitman could see. */
+    const tooHurt = await endedWith({ outcome: 'failed', reason: 'target_too_hurt' });
+    it('says the target got too badly hurt, not that they went down', function () {
+      const said = tooHurt.notice();
+      truthy(said.indexOf('too badly hurt') !== -1, said);
+      falsy(said.indexOf('went down') !== -1, said);
     });
 
     const closedPage = await endedWith({ outcome: 'closed' });
@@ -8305,6 +8315,21 @@ async function main() {
       truthy(listeners.length > 0, 'nothing listens for the next tap');
       listeners.forEach(function (fn) { fn({}); });
       eq(refused.notice(), '', 'the refusal outlived the next tap');
+    });
+
+    /* A car bomb, a grenade, a fire: the target's own game named this
+       hitman, and the server saw nothing of theirs land. "Down is not dead"
+       said nothing to somebody who had just blown them up. */
+    const unseen = onHeld({ takeVerificationPhoto: { ok: false, err: 'kill_unobserved' } });
+    await settle(); await settle();
+    tab(unseen, 'mine');
+    await settle();
+    click(unseen, 'Verify kill');
+    await settle(); await settle();
+    const unseenSaid = unseen.notice();
+    it('tells a bomber why their kill pays nobody', function () {
+      truthy(unseenSaid.indexOf('explosives') !== -1, unseenSaid);
+      falsy(unseenSaid.indexOf('Down is not dead') !== -1, unseenSaid);
     });
 
     const paid = onHeld({ takeVerificationPhoto: { ok: true, data: { pending: true } } });

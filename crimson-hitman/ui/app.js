@@ -458,10 +458,17 @@
     // "Take the target down" was said to a hitman who just had: a downed
     // target is not a kill, and nothing told them to finish the job. The
     // last line covers the second the server waits for the finishing shot.
+    // "A few seconds": a kill the target's own phone never reports is
+    // opened by the server alone, a few seconds after the death.
     no_kill_to_verify: 'No kill on this contract is waiting for proof. Down is '
       + 'not dead: if they are on the ground, finish them. Then photograph the '
       + 'body from a few metres away, soon after the kill. If you only just '
-      + 'finished them, give it a second and try again.',
+      + 'finished them, give it a few seconds and try again.',
+    // Their death was put down to this hitman, and nothing the server can
+    // see landed: Config.Completion.RequireObservedDamage.
+    kill_unobserved: 'They died, but no shot or blow of yours was seen landing on '
+      + 'them, so the kill pays nobody. Only gunfire and melee count: '
+      + 'explosives, fire, run-overs and falls do not.',
     // Not a fault. The poller stops on this and says the handover ended.
     no_handover: 'That handover is not running.',
     // A token outlived by a newer kill, replaced by a second tap, or lost to
@@ -1955,6 +1962,7 @@
   var BREAKING = {
     party_offline: 'Someone this handover needs has gone offline',
     target_not_conscious: 'Your target must be alive and conscious',
+    target_too_hurt: 'Your target is too badly hurt',
     not_coerced: 'Your target is not restrained',
     target_too_far: 'Your target is too far from you',
     creator_too_far: 'The client is too far away'
@@ -2579,6 +2587,7 @@
            logged in, and promised a retry the hold on the kill can outlast. */
         var noKill = noKillOn[contract.id];
         noKillOn[contract.id] = r.err === 'no_kill_to_verify'
+          || r.err === 'kill_unobserved'
           || (noKill && r.err === 'rate_limited');
         var here = {
           target_just_up: 'They had only just got back up when you killed them, '
@@ -2623,6 +2632,8 @@
       if (!r.ok) {
         var reasons = {
           target_not_conscious: 'The target must be alive and conscious.',
+          target_too_hurt: 'The target is too badly hurt to hand over. Get them '
+            + 'patched up first.',
           not_coerced: 'The target must be restrained or in your vehicle.',
           creator_too_far: 'Get the target to the client.',
           target_too_far: 'Keep the target close.',
@@ -2784,6 +2795,7 @@
       party_offline: 'Someone the handover needed went offline.',
       creator_too_far: 'Your client did not arrive in time.',
       target_not_conscious: 'The target went down. A handover has to be alive.',
+      target_too_hurt: 'The target got too badly hurt. Get them patched up first.',
       contract_locked: 'The contract was stuck settling another payout.'
     };
     return say('The handover failed. ' + (failed[ended.reason]

@@ -54,7 +54,8 @@ local function newMysqlStack()
     stack.ledger.init({ storage = store, photos = stack.photos, notify = stack.notify })
     stack.bailout.init({ storage = store, identity = stack.identity,
                          contracts = stack.contracts, escrow = stack.escrow,
-                         audit = stack.audit, notify = stack.notify, kidnap = stack.kidnap })
+                         audit = stack.audit, notify = stack.notify, kidnap = stack.kidnap,
+                         death = stack.death })
     stack.death.init({ storage = store, identity = stack.identity,
                        contracts = stack.contracts, audit = stack.audit })
     stack.amendments.init({ storage = store, identity = stack.identity,
@@ -446,5 +447,193 @@ describe('a balance this resource moves', function()
         Natives.saveThrows = nil
         truthy(ok and c, 'a save that failed is not a payment that failed')
         eq(Env.players[1].PlayerData.money.cash, 100000 - 5000, 'and the escrow was taken once')
+    end)
+end)
+
+--- The hitman put the target down and is on the way to the body with the
+--- camera, or has them in hand and is counting: what closes the contract
+--- underneath them now waits for it.
+local PHOTO = 'https://cdn.fivemanage.com/proof.png'
+
+--- A real kill of TARGET01 by HITMAN01, reported by the target.
+local function kill(m)
+    Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+    Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+    Env.players[2]._health = 140
+    m.death.recordDamage(3, 2, 123456)
+    Env.players[2].PlayerData.metadata.isdead = true
+    eq(m.death.onVictimReport(2, 3), 1, 'the kill is the hitman\'s')
+end
+
+describe('a buyout whose delay runs out while a hitman is finishing', function()
+    local function bought(opts)
+        local main, m = boot()
+        m.photo.loadAllowedHosts()
+        local f = fixture(m)
+        Env.players[2].PlayerData.money.bank = 50000
+        local c = m.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
+            bailoutAmount = 15000,
+        })
+        truthy(m.contracts.accept(f.hitman, c.id, false))
+        local before = { creator = worth(1), target = worth(2), hitman = worth(3) }
+        truthy(m.bailout.buy(f.target, c.id))
+        eq(before.target - worth(2), 15000, 'the premium is taken now')
+        if opts and opts.handover then
+            for _, src in ipairs({ 1, 2, 3 }) do
+                Env.players[src]._coords = { x = 300.0, y = 300.0, z = 30.0 }
+            end
+            Env.players[2].PlayerData.metadata.ishandcuffed = true
+        end
+        return main, m, f, c, before
+    end
+
+    it('waits for the photo of a kill made as it ran out, and gives the premium back', function()
+        local main, m, f, c, before = bought()
+        Env.advance(Config.Bailout.ProcessingDelaySeconds - 5)
+        kill(m)
+        local token = m.photo.issue(f.hitman, c.id)
+        truthy(token)
+
+        Env.advance(10)
+        main.tick()
+        local row = m.storage.readContract(c.id)
+        eq(row.state, CH.STATE.ACCEPTED, 'not settled over a kill waiting for its photo')
+        eq(row.bailout_attempts or 0, 0, 'and waiting on it is not a failed attempt')
+
+        local ok, err = m.photo.submit(f.hitman, token, PHOTO)
+        truthy(ok, 'the hitman finished it first, as they were told they could: ' .. tostring(err))
+        m.bailout.processQueue()
+
+        eq(m.storage.readContract(c.id).state, CH.STATE.COMPLETED)
+        eq(worth(3) - before.hitman, 5000, 'the hitman is paid the baseline')
+        eq(worth(2) - before.target, 0, 'the target lost the race and has the premium back')
+        eq(worth(1) - before.creator, 2500, 'the client the bonus a kill does not pay, and no premium')
+        falsy(m.storage.readContract(c.id).bailout_queued_at, 'nothing is left queued')
+    end)
+
+    it('waits for a handover armed as it ran out', function()
+        local main, m, f, c, before = bought({ handover = true })
+        Env.advance(Config.Bailout.ProcessingDelaySeconds - 10)
+        truthy(m.kidnap.arm(c.id, 'HITMAN01'))
+        Env.advance(12)
+        main.tick()
+        eq(m.storage.readContract(c.id).state, CH.STATE.ACCEPTED,
+            'not closed under a handover counting down')
+
+        local paid
+        for _ = 1, Config.Kidnap.CountdownSeconds do
+            local done = m.kidnap.tick(Config.Kidnap.TickMs)
+            if done[1] then paid = done[1] end
+        end
+        truthy(paid and paid.result, 'the handover finished and paid')
+        m.bailout.processQueue()
+        eq(worth(3) - before.hitman, 7500, 'baseline and bonus')
+        eq(worth(2) - before.target, 0, 'the premium back')
+    end)
+
+    it('settles as it always did with nothing in progress', function()
+        local main, m, f, c, before = bought()
+        Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
+        main.tick()
+        eq(m.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
+        eq(worth(1) - before.creator, 7500 + 15000, 'escrow and premium to the client')
+    end)
+
+    it('does not wait for ever', function()
+        local main, m, f, c, before = bought()
+        local real = m.bailout.finishing
+        m.bailout.finishing = function() return true end
+        Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
+        m.bailout.processQueue()
+        eq(m.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
+        Env.advance(2 * Config.Completion.PhotoTokenLifetimeSeconds)
+        m.bailout.processQueue()
+        m.bailout.finishing = real
+        eq(m.storage.readContract(c.id).state, CH.STATE.BAILED_OUT,
+            'the target\'s money is already gone, and the wait is as long as a kill can wait')
+        eq(worth(1) - before.creator, 7500 + 15000)
+    end)
+end)
+
+describe('a deadline that runs out while a hitman is finishing', function()
+    local function staked()
+        local main, m = boot()
+        m.photo.loadAllowedHosts()
+        local f = fixture(m)
+        local c = m.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } }, penaltyAmount = 2000,
+        })
+        truthy(m.contracts.accept(f.hitman, c.id, false))
+        local row = m.storage.readContract(c.id)
+        row.deadline_at = Env.time + 60
+        m.storage.writeContract(row)
+        main.markPresenceChanged()
+        main.expire()
+        return main, m, f, c
+    end
+
+    it('waits for the photo of a kill made in time, and returns the stake', function()
+        local main, m, f, c = staked()
+        local before = { creator = worth(1), hitman = worth(3) }
+        Env.advance(55)
+        kill(m)
+        local token = m.photo.issue(f.hitman, c.id)
+        Env.advance(10)
+        main.markPresenceChanged()
+        main.expire()
+        eq(m.storage.readContract(c.id).state, CH.STATE.ACCEPTED,
+            'not expired under a kill waiting for its photo')
+
+        local ok, err = m.photo.submit(f.hitman, token, PHOTO)
+        truthy(ok, tostring(err))
+        eq(worth(3) - before.hitman, 5000 + 2000, 'the baseline, and the stake back')
+        eq(worth(1) - before.creator, 0, 'the client keeps nothing of a hitman who did it in time')
+    end)
+
+    it('comes back for it on the very next pass', function()
+        local main, m, f, c = staked()
+        Env.advance(55)
+        kill(m)
+        Env.advance(10)
+        main.expire()
+        -- The kill lapses with no photo: the next pass expires it.
+        m.death.clearPending(c.id, 'HITMAN01')
+        Env.advance(10)
+        main.expire()
+        eq(m.storage.readContract(c.id).state, CH.STATE.EXPIRED,
+            'a waiting pass that skipped to the far deadline would leave it open')
+    end)
+
+    it('does not wait for ever, and then forfeits as before', function()
+        local main, m, f, c = staked()
+        local before = worth(1)
+        local real = m.bailout.finishing
+        m.bailout.finishing = function() return true end
+        Env.advance(61)
+        main.markPresenceChanged()
+        main.expire()
+        eq(m.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
+        Env.advance(2 * Config.Completion.PhotoTokenLifetimeSeconds)
+        main.markPresenceChanged()
+        main.expire()
+        m.bailout.finishing = real
+        eq(m.storage.readContract(c.id).state, CH.STATE.EXPIRED)
+        eq(worth(1) - before, 7000, 'the escrow back and the stake of a hitman who ran out of time')
+    end)
+
+    it('never holds off the lifetime', function()
+        local main, m, f, c = staked()
+        local row = m.storage.readContract(c.id)
+        row.expires_at = Env.time + 30
+        m.storage.writeContract(row)
+        Env.advance(25)
+        kill(m)
+        Env.advance(10)
+        main.markPresenceChanged()
+        main.expire()
+        eq(m.storage.readContract(c.id).state, CH.STATE.EXPIRED, 'the ceiling holds whatever anyone is doing')
     end)
 end)

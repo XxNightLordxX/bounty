@@ -139,6 +139,11 @@ CH.ERR = {
     --- one the server did not attribute — was four words that explain
     --- nothing about a mechanic with a distance rule and a time limit.
     NO_KILL_TO_VERIFY = 'no_kill_to_verify',
+    --- No kill to verify, because the target's own game named this hitman as
+    --- their killer and the server never saw a hit of theirs land: a blast,
+    --- fire, a car (Config.Completion.RequireObservedDamage). "Down is not
+    --- dead" was what they were told, about a target they had blown up.
+    KILL_UNOBSERVED   = 'kill_unobserved',
     --- No handover is running on this contract for this hitman. Either it
     --- ended or it was never armed, and both are ordinary answers to an
     --- ordinary question rather than faults.

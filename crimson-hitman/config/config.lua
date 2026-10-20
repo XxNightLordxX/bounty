@@ -133,7 +133,10 @@ Config.Bailout = {
     AbsoluteMax = 500000,
     --- A bailout does not resolve instantly once a hitman is engaged: the
     --- hitman gets this long to complete before it takes effect, so a target
-    --- cannot rug-pull a hitman mid-fight.
+    --- cannot rug-pull a hitman mid-fight. A kill still waiting for its
+    --- photo, or a handover still counting down, when it runs out holds it
+    --- off until that finishes, for at most two PhotoTokenLifetimeSeconds
+    --- more: the hitman was told to finish it first, and had.
     ProcessingDelaySeconds = 120,
     --- Bailout is blocked while the target is dead or in last stand.
     BlockWhileIncapacitated = true,
@@ -184,6 +187,10 @@ Config.Limits = {
     SameCreatorSameTargetCooldownSeconds = 7200,
 
     ContractLifetimeSeconds = 172800,   -- absolute ceiling, pause included
+    --- How long a contract runs before it expires, unless the client
+    --- extends it. A kill made before it that is still waiting for its
+    --- photo, or a handover still counting down, holds the expiry off until
+    --- it finishes, for at most two Completion.PhotoTokenLifetimeSeconds.
     DefaultDeadlineSeconds  = 10800,
     --- The deadline stops while the target is in prison, as it does while
     --- they are offline, and is moved on by however long they served. The
@@ -390,6 +397,12 @@ Config.Completion = {
     --- changed upload provider had to restart this resource too, and the
     --- failure mode is every verification photo being rejected.
     PhotoHostRefreshSeconds = 300,
+    --- How long before a death a hit still counts towards it. The kill goes
+    --- to the hitman the target's own game names, if the server saw a hit of
+    --- theirs land; otherwise to whoever on the contract it saw do the most
+    --- damage in this time. A death the target's game never reports (it
+    --- crashed or quit, or never sends it) is attributed by the server
+    --- itself a few seconds later, the second way.
     DeathReportWindowMs = 30000,
     --- A killer named by their victim must also appear in the damage log
     --- the server built for itself. The victim naming them is a client
@@ -397,9 +410,11 @@ Config.Completion = {
     --- server never observed them touch.
     ---
     --- The cost is that a kill by something that raises no weapon damage
-    --- event — a vehicle, a fall, fire — pays nobody, which is the safer
-    --- side of the trade. Turn it off only if that matters more than the
-    --- attribution being observed.
+    --- event — an explosive (a grenade, a sticky bomb, a rocket), fire, a
+    --- vehicle, a fall — pays nobody, which is the safer side of the trade:
+    --- only gunfire and melee count. Verify kill tells the hitman the
+    --- target's game named so. Turn it off only if that matters more than
+    --- the attribution being observed.
     RequireObservedDamage = true,
     --- The defibrillator the kill logic listens for. sc-ambulance's brings a
     --- dead player back to last stand after a gap in which they read as up;
@@ -422,7 +437,16 @@ Config.Completion = {
     --- whatever else happened to the target in between — a fall, a blast.
     --- Bounded by the number of live contracts.
     ConditionSampleMs = 1000,
-    MaxWeaponRange      = 250.0,
+    --- How far a hit is believed from, in metres. A hit from further, and
+    --- a killer the target's game names from further, is dropped. Keep it
+    --- at least OneSync's player culling radius (424 m unless the server
+    --- changes it): players are in each other's game, and can shoot each
+    --- other, out to there, and a sniper's kill beyond this pays nobody.
+    MaxWeaponRange      = 425.0,
+    --- How close to the body the hitman must stand for the photo: to where
+    --- it lay when the death was recorded, or to where it lies now, while
+    --- the target is online and still dead (a car rolling on, a body
+    --- carried off).
     PhotoRadius         = 5.0,
     PhotoTokenLifetimeSeconds = 120,
     --- How long the client may look at a kill photo once they open it.
@@ -466,6 +490,10 @@ Config.Kidnap = {
     RequireConscious   = true,
     RejectDead         = true,
     RejectLastStand    = true,
+    --- Below this (health above the 100 that is dead, out of 100) the target
+    --- is too badly hurt to hand over, and the hitman is told so. Qbox gives
+    --- no health back on its own and bleeding takes more, so a target shot
+    --- during the abduction needs patching up first.
     MinTargetHealthPercent = 20,
     --- Observable coercion: the target must be restrained or under the
     --- hitman's physical control. Any enabled detector satisfies it.

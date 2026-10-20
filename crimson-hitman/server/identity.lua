@@ -506,6 +506,15 @@ end
 
 --- True when the player is alive and conscious — the state a kidnapping
 --- delivery requires for its whole countdown (§7.4).
+---
+--- False with 'target_too_hurt' when only the health floor refuses them. A
+--- target sitting up and talking under it is neither dead nor down, and was
+--- refused as "not conscious", or failed mid-countdown as "went down", in
+--- front of a hitman who could see otherwise. Qbox gives no health back on
+--- its own, and bleeding takes more, so it is the ordinary case after a
+--- rough abduction.
+---@return boolean ok
+---@return string|nil why 'target_too_hurt' for the health floor alone
 function Identity.isAliveAndConscious(source)
     local dead, lastStand, resolved = Identity.deathState(source)
     if not resolved then return false end
@@ -520,7 +529,7 @@ function Identity.isAliveAndConscious(source)
     -- would ever have let the delivery start.
     local health = GetEntityHealth(GetPlayerPed(source)) or 0
     local percent = health - 100
-    if percent < (Config.Kidnap.MinTargetHealthPercent or 0) then return false end
+    if percent < (Config.Kidnap.MinTargetHealthPercent or 0) then return false, 'target_too_hurt' end
 
     return true
 end

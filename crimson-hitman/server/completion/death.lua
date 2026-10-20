@@ -120,6 +120,20 @@ local aliveAt = {}
 --- at all.
 local deferred = {}
 
+--- [cid] = a death the server saw for itself, waiting for the victim's own
+--- report of it (see awaitReport). The report used to be the only way a
+--- kill was ever opened, and it is the victim's client that sends it: a game
+--- that crashed or quit in the second after the death, a report the flood
+--- guard dropped, or a client that simply never sends it, and the hitman
+--- standing over the body was told there was no kill to verify.
+local unreported = {}
+
+--- [contractId .. ':' .. hitmanCid] = { at, victimCid, hitmanCid }: the victim's own
+--- game named this hitman as their killer, and the server never saw a hit
+--- of theirs land (a blast, fire, a car). Kept a short while so Verify kill
+--- can say so, rather than talk about a target who is only down.
+local unobserved = {}
+
 --- A defibrillator's own gap, which is no revive whatever lands in it. The
 --- gap is first seen within one sample of the shock; a time up that begins
 --- later is not the gap, and taken for it, a real revive a hitman cut short
@@ -164,7 +178,7 @@ function Death.init(deps)
     upSince, reviveClaims, lastHitAt = {}, {}, {}
     defibAt, lastUp, inflight, credited = {}, {}, {}, {}
     lethalAt, deferred, downHits, polling = {}, {}, {}, {}
-    aliveAt = {}
+    aliveAt, unreported, unobserved = {}, {}, {}
 end
 
 --------------------------------------------------------------------------
@@ -630,6 +644,58 @@ end
 --- synonym for "a hitman who accepted".
 local seenNear = {}
 
+--- How long a death the server saw for itself waits for the victim's own
+--- report before it is attributed without one. The client looks once a
+--- second and its report is on the wire a moment later, so an honest report
+--- has long arrived by then, and wins: it is the one that can name the
+--- killer. The hits are settled by then too (HIT_WINDOW_MS).
+Death.UNREPORTED_WAIT_MS = Death.HIT_WINDOW_MS + 3000
+
+--- The server saw this target die and nobody has reported it yet.
+---
+--- The report is the victim's client, and the victim is the hitman's
+--- adversary: a client that never sends it (a cheat menu stopping this
+--- resource, one blocked event), a game that crashed or quit in the second
+--- after the death, a report the flood guard dropped, and the kill paid
+--- nobody however clean it was. So the death is attributed without it, the
+--- way a report naming nobody is: from the damage log the server built for
+--- itself, to whoever on the contract it saw do the most damage. A hitman
+--- is still never the source of either signal.
+---
+--- Once per death. Only the first sighting of one waits (the sampler asks
+--- wasSeenDead, which a report also sets and only a revive clears), a report
+--- arriving in the wait stands it down, and one arriving after it finds the
+--- kill already open (attributeDeath, the same death told again).
+---@param victim table the target, resolved
+local function awaitReport(victim)
+    local cid = victim.cid
+    local entry = {
+        victim = victim, source = victim.source, at = Util.monotonicMs(),
+        -- Where the body is, as a report would have said.
+        coords = GetEntityCoords(GetPlayerPed(victim.source)),
+    }
+    unreported[cid] = entry
+    SetTimeout(Death.UNREPORTED_WAIT_MS, function()
+        if unreported[cid] ~= entry then return end
+        unreported[cid] = nil
+        local ok, err = pcall(function()
+            -- Still this death: never revived since (onRevived clears the
+            -- wait, and seenDead), still dead, and still the same player
+            -- behind the source.
+            if not seenDead[cid] then return end
+            local actor = Identity.resolve(entry.source)
+            if not actor or actor.cid ~= cid or not Identity.isTrulyDead(entry.source) then return end
+            -- Staff can see which kills opened with no word from the victim.
+            Audit.action('death_unreported', nil, nil, { victim = cid })
+            checkHits(cid)
+            Death.attributeDeath(victim, entry.source, nil, entry.at, entry.coords)
+        end)
+        if not ok then
+            Audit.rejected('error_unreported_death', cid, nil, { error = tostring(err) })
+        end
+    end)
+end
+
 --- Refresh baselines for every player who is the target of a live contract,
 --- and note which of its hitmen are near them.
 --- Bounded by the number of live contracts, not the player count.
@@ -688,7 +754,11 @@ function Death.watchTargets(contracts)
                     if resolved and lastStand and not dead then defibAt[target.cid] = nil end
                 end
                 if Identity.isTrulyDead(target.source) then
+                    -- Seen dead before this is the same death: reported, or
+                    -- already waiting on its report.
+                    local fresh = not Death.wasSeenDead(target.cid)
                     Death.markDead(target.cid)
+                    if fresh then awaitReport(target) end
                 end
 
                 local targetCoords = GetEntityCoords(GetPlayerPed(target.source))
@@ -872,6 +942,10 @@ function Death.onVictimReport(victimSource, killerServerId)
         return 0
     end
 
+    -- Their own word, which can name the killer, takes the place of the
+    -- server's attributing this death without it (awaitReport).
+    unreported[victim.cid] = nil
+
     -- A time up before this death, ended by the hit that caused it, was a
     -- revive: settled first, so it cannot touch the kill opened below.
     endUpPeriod(victim.cid)
@@ -979,6 +1053,11 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
                 elseif not hit then
                     Audit.rejected('named_killer_unobserved', named, contract.id,
                         { victim = victim.cid })
+                    -- So Verify kill can tell them why: a bomb, a fire or a
+                    -- car raises no weapon event, and "down is not dead"
+                    -- said nothing to somebody who had just blown them up.
+                    unobserved[contract.id .. ':' .. named] =
+                        { at = Util.monotonicMs(), victimCid = victim.cid, hitmanCid = named }
                 end
 
                 -- Falling back to the damage log would hand the kill to
@@ -994,6 +1073,20 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
             -- resending the report could keep doing so.
             local same = hit and Death.getPending(contract.id, hit.attackerCid)
             if same and (aliveAt[victim.cid] or -math.huge) > same.at then same = nil end
+            -- Or opened for another hitman on it. A report that came after
+            -- the server attributed the death without one (awaitReport), and
+            -- named somebody else, opened a second kill for the one death,
+            -- and both could be paid.
+            if hit and not same then
+                for cid in pairs(active) do
+                    local other = cid ~= hit.attackerCid and Death.getPending(contract.id, cid)
+                    if other and other.victimCid == victim.cid
+                        and (aliveAt[victim.cid] or -math.huge) <= other.at then
+                        same = other
+                        break
+                    end
+                end
+            end
 
             if same then
                 opened = opened + 1
@@ -1070,6 +1163,23 @@ end
 
 function Death.clearPending(contractId, hitmanCid)
     pending[contractId .. ':' .. hitmanCid] = nil
+end
+
+--- Whether this hitman's last kill on this contract went unseen: their
+--- target's own game named them as the killer, and the server never saw a
+--- hit of theirs land. Only for as long as a kill would wait for its photo.
+---@param contractId string
+---@param hitmanCid string
+---@return boolean
+function Death.unobservedKill(contractId, hitmanCid)
+    local key = contractId .. ':' .. hitmanCid
+    local record = unobserved[key]
+    if not record then return false end
+    if Util.monotonicMs() - record.at > Config.Completion.PhotoTokenLifetimeSeconds * 1000 then
+        unobserved[key] = nil
+        return false
+    end
+    return true
 end
 
 --- A revive invalidates every pending completion for that player: a target
@@ -1157,6 +1267,11 @@ function Death.onRevived(cid, since)
     lastUp[cid] = nil
     defibAt[cid] = nil
     downHits[cid] = nil
+    -- The death a wait was for is undone, and so is one that went unseen.
+    unreported[cid] = nil
+    for key, record in pairs(unobserved) do
+        if record.victimCid == cid then unobserved[key] = nil end
+    end
 
     -- A revive ends the fight. Damage recorded before it must not
     -- corroborate a death that happens afterwards, or a hitman who shot
@@ -1231,6 +1346,11 @@ function Death.sweep()
         if not kept[1] then downHits[cid] = nil end
     end
 
+    local unseenFor = Config.Completion.PhotoTokenLifetimeSeconds * 1000
+    for key, record in pairs(unobserved) do
+        if now - record.at > unseenFor then unobserved[key] = nil end
+    end
+
     return removed
 end
 
@@ -1280,6 +1400,20 @@ function Death.clearPlayer(cid)
             Audit.rejected('error_iDied', cid, nil, { error = tostring(err), deferred = true })
         end
     end
+    -- A death the server saw and nobody reported, the victim gone before the
+    -- wait for their report ran out: attributed now, the way the wait would
+    -- have, with what the damage log holds.
+    local u = unreported[cid]
+    if u then
+        unreported[cid] = nil
+        local ok, err = pcall(function()
+            Audit.action('death_unreported', nil, nil, { victim = cid })
+            Death.attributeDeath(u.victim, u.source, nil, u.at, u.coords)
+        end)
+        if not ok then
+            Audit.rejected('error_unreported_death', cid, nil, { error = tostring(err) })
+        end
+    end
     damage[cid] = nil
     hitBy[cid] = nil
     condition[cid] = nil
@@ -1298,6 +1432,9 @@ function Death.clearPlayer(cid)
     aliveAt[cid] = nil
     for key, record in pairs(pending) do
         if record.hitmanCid == cid then pending[key] = nil end
+    end
+    for key, record in pairs(unobserved) do
+        if record.hitmanCid == cid or record.victimCid == cid then unobserved[key] = nil end
     end
 end
 

@@ -336,6 +336,9 @@ function Photo.issue(actor, contractId)
     -- put there, and it needs to say so.
     local record = Death.getPending(contractId, actor.cid)
     if not record then
+        -- Killed, by their own game's word, with nothing the server can see
+        -- land: a blast, fire, a car. Only the hitman it named is told.
+        if Death.unobservedKill(contractId, actor.cid) then return nil, CH.ERR.KILL_UNOBSERVED end
         if downedInReach(actor, contractId) then return nil, CH.ERR.PHOTO_STILL_DOWN end
         return nil, CH.ERR.NO_KILL_TO_VERIFY
     end
@@ -440,9 +443,23 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
     --
     -- The hitman must be at the scene. Position is read server-side; a
     -- client claiming to be somewhere is not consulted.
+    --
+    -- The scene is where the body was when the death was recorded, or where
+    -- it is now. A body keeps moving after that: a dead driver's car rolls
+    -- on, a passenger is driven off, friends carry it, a stretcher takes it.
+    -- Measured only from the first, a hitman standing over the body was told
+    -- to stand over the body. Where it is now is read only for a victim who
+    -- is online and still dead, and the kill must still stand (below), so
+    -- nothing can be claimed that could not be before.
     local hitmanCoords = GetEntityCoords(GetPlayerPed(actor.source))
     local radius = Config.Completion.PhotoRadius
-    if Util.dist2(hitmanCoords, record.coords) > (radius * radius) then
+    local near = Util.dist2(hitmanCoords, record.coords) <= radius * radius
+    if not near then
+        local body = Identity.byCitizenId(record.victimCid)
+        near = body ~= nil and Identity.isTrulyDead(body.source)
+            and Util.dist2(hitmanCoords, GetEntityCoords(GetPlayerPed(body.source))) <= radius * radius
+    end
+    if not near then
         Audit.rejected('photo_out_of_range', actor.cid, record.contractId, {})
         return false, CH.ERR.PHOTO_TOO_FAR
     end

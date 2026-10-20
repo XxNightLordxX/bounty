@@ -1028,10 +1028,12 @@ function App.register()
     --- held until it has finished.
     ---
     --- They were dropped, on the word of a comment saying the condition
-    --- sampler records the kill anyway. It does not: it marks the death and
-    --- attributes nothing, and the client reports a death once and not again
-    --- while the player stays dead. The hitman standing over the body was
-    --- told there was no kill to verify, and the kill paid nobody.
+    --- sampler records the kill anyway. It did not then, and the client
+    --- reports a death once and not again while the player stays dead: the
+    --- hitman standing over the body was told there was no kill to verify.
+    --- The sampler now attributes a death nobody reports, a few seconds on
+    --- (Death.UNREPORTED_WAIT_MS), but only from the damage log; the report
+    --- is what can name the killer, so it is still held, not dropped.
     local heldDeaths = {}
     local onDied
 

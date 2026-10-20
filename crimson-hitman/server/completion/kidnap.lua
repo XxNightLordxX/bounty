@@ -92,10 +92,11 @@ function Kidnap.conditionsMet(contract, hitman, target, creator)
     end
 
     -- The target must be alive and conscious for the entire delivery.
-    -- Delivering a corpse is not a kidnapping (§7.4).
-    if Config.Kidnap.RequireConscious
-        and not Identity.isAliveAndConscious(target.source) then
-        return false, 'target_not_conscious'
+    -- Delivering a corpse is not a kidnapping (§7.4). Under the health floor
+    -- is its own reason: they are neither, and the hitman can see it.
+    if Config.Kidnap.RequireConscious then
+        local alive, why = Identity.isAliveAndConscious(target.source)
+        if not alive then return false, why or 'target_not_conscious' end
     end
 
     local coerced = Kidnap.isCoerced(hitman.source, target.source)
@@ -152,6 +153,10 @@ function Kidnap.arm(contractId, hitmanCid)
 
     local contract = Storage.readContract(contractId)
     if not contract or contract.state ~= CH.STATE.ACCEPTED then return false, CH.ERR.BAD_STATE end
+    -- Past its deadline it is ending, as an acceptance is told. The expiry
+    -- waits for a handover already counting (ExpireContracts), not for one
+    -- started after the time ran out.
+    if Contracts.isOverdue(contract, os.time()) then return false, CH.ERR.ALREADY_SETTLED end
 
     local hitman = Storage.readHitman(contractId, hitmanCid)
     if not hitman or hitman.state ~= 'active' then return false, CH.ERR.NOT_PARTICIPANT end
@@ -403,6 +408,9 @@ function Kidnap.tick(deltaMs)
                         elseif reason == 'target_not_conscious' then
                             why = 'The target went down before the handover finished. '
                                 .. 'A handover has to be alive.'
+                        elseif reason == 'target_too_hurt' then
+                            why = 'The target got too badly hurt before the handover '
+                                .. 'finished. Get them patched up first.'
                         else
                             why = 'You lost hold of the target.'
                         end

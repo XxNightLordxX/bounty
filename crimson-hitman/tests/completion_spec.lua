@@ -1670,3 +1670,218 @@ describe('what one verification costs against the rate limit', function()
             'every token that was issued can still be used')
     end)
 end)
+
+--- A death the target's own client never reports. The report was the only
+--- way a kill opened, and it is the victim's client that sends it: a crash
+--- or quit in the second after the death, a report the flood guard dropped,
+--- or a client that never sends it, and the hitman over the body was told
+--- there was no kill to verify.
+describe('a death the target never reports', function()
+    local URL = 'https://cdn.fivemanage.com/p.png'
+
+    --- The hitman's real hit and the target dead by the medical state, seen
+    --- by the sampler, with no word from the target's client.
+    local function killedSilently(s)
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 140
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.watchTargets(s.storage.allContracts())
+    end
+
+    --- Past the wait for the target's own report.
+    local function waitOut(s)
+        Env.advance(math.ceil(s.death.UNREPORTED_WAIT_MS / 1000) + 1)
+    end
+
+    local function audited(s, action)
+        s.audit.flush()
+        local n = 0
+        for _, row in ipairs(s.storage.readAudit(400) or {}) do
+            if row.action == action then n = n + 1 end
+        end
+        return n
+    end
+
+    it('opens the kill on the server\'s own sighting, and it pays', function()
+        local s, f, c = seeded()
+        killedSilently(s)
+        falsy(s.death.getPending(c.id, 'HITMAN01'), 'the report still has its moment to arrive')
+
+        waitOut(s)
+        truthy(s.death.getPending(c.id, 'HITMAN01'),
+            'the server saw the hit land and the target die, and needs nobody\'s word for it')
+        eq(audited(s, 'death_unreported'), 1, 'staff can see it opened without the target\'s report')
+
+        local token = s.photo.issue(f.hitman, c.id)
+        truthy(token, 'Verify kill works')
+        local before = Env.players[3].PlayerData.money.cash
+        local ok, err = s.photo.submit(f.hitman, token, URL)
+        truthy(ok, tostring(err))
+        eq(Env.players[3].PlayerData.money.cash - before, 5000, 'the baseline, once')
+    end)
+
+    it('attributes nobody the damage log does not name', function()
+        local s, f, c = seeded()
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.watchTargets(s.storage.allContracts())
+        waitOut(s)
+        falsy(s.death.getPending(c.id, 'HITMAN01'),
+            'a death with no hit of a hitman\'s in the log pays nobody, as a report naming nobody does')
+    end)
+
+    it('stands down for the target\'s own report, which can name the killer', function()
+        local s, f, c = seeded()
+        killedSilently(s)
+        eq(s.death.onVictimReport(2, 3), 1)
+        local opened = s.death.getPending(c.id, 'HITMAN01')
+        local token = s.photo.issue(f.hitman, c.id)
+
+        waitOut(s)
+        eq(s.death.getPending(c.id, 'HITMAN01').at, opened.at,
+            'the kill the report opened is not opened again under the token in the hitman\'s hand')
+        eq(audited(s, 'death_unreported'), 0, 'the report was made')
+        truthy(s.photo.submit(f.hitman, token, URL))
+    end)
+
+    it('opens no second kill when the report comes after it, naming somebody else', function()
+        local s, f, c = seeded()
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+            coords = { x = 100.0, y = 101.0, z = 30.0 } })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        -- Hitman one does most of the damage; hitman two lands a hit too.
+        Env.players[2]._health = 140
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2]._health = 120
+        s.death.recordDamage(4, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.watchTargets(s.storage.allContracts())
+        waitOut(s)
+        local first = s.death.getPending(c.id, 'HITMAN01')
+        truthy(first, 'the most damage, by the server\'s own log')
+
+        -- The report, late, names hitman two.
+        eq(s.death.onVictimReport(2, 4), 1, 'the death is accounted for')
+        falsy(s.death.getPending(c.id, 'HITMAN02'),
+            'one death, one kill: two would be two payouts on a competitive contract')
+        eq(s.death.getPending(c.id, 'HITMAN01').at, first.at, 'and the first stands as it was')
+    end)
+
+    it('waits once per death, however many passes see the body', function()
+        local s, f, c = seeded()
+        killedSilently(s)
+        for _ = 1, 5 do
+            s.death.watchTargets(s.storage.allContracts())
+            Env.advance(1)
+        end
+        waitOut(s)
+        local first = s.death.getPending(c.id, 'HITMAN01')
+        truthy(first)
+        for _ = 1, 10 do
+            s.death.watchTargets(s.storage.allContracts())
+            Env.advance(1)
+        end
+        eq(s.death.getPending(c.id, 'HITMAN01').at, first.at,
+            'the same body seen again is not a new death to attribute')
+        eq(audited(s, 'death_unreported'), 1)
+    end)
+
+    it('opens nothing for a target revived before the wait ran out', function()
+        local s, f, c = seeded()
+        killedSilently(s)
+        s.death.onRevived('TARGET01')
+        Env.players[2].PlayerData.metadata.isdead = false
+        waitOut(s)
+        falsy(s.death.getPending(c.id, 'HITMAN01'), 'back on their feet before anything was opened')
+    end)
+
+    it('opens it at once for a target who quits before the wait runs out', function()
+        local s, f, c = seeded()
+        killedSilently(s)
+        s.death.clearPlayer('TARGET01')
+        Env.removePlayer(2)
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'quitting is not a way out of a contract')
+        waitOut(s)
+        eq(audited(s, 'death_unreported'), 1, 'and once, not again when the wait runs out')
+    end)
+end)
+
+describe('a body that moved after the death was recorded', function()
+    local URL = 'https://cdn.fivemanage.com/p.png'
+
+    it('takes the photo at the body where it lies now, while the target is still dead', function()
+        local s, f, c = seeded()
+        killTarget(s)
+        local token = s.photo.issue(f.hitman, c.id)
+        -- The car rolled on with them in it, 25 m.
+        Env.players[2]._coords = { x = 126.0, y = 100.0, z = 30.0 }
+        Env.players[3]._coords = { x = 126.5, y = 100.0, z = 30.0 }
+        local ok, err = s.photo.submit(f.hitman, token, URL)
+        truthy(ok, 'standing over the body, told to stand over the body: ' .. tostring(err))
+    end)
+
+    it('still refuses a photo from nowhere near either', function()
+        local s, f, c = seeded()
+        killTarget(s)
+        local token = s.photo.issue(f.hitman, c.id)
+        Env.players[2]._coords = { x = 126.0, y = 100.0, z = 30.0 }
+        Env.players[3]._coords = { x = 300.0, y = 100.0, z = 30.0 }
+        local ok, err = s.photo.submit(f.hitman, token, URL)
+        falsy(ok)
+        eq(err, CH.ERR.PHOTO_TOO_FAR)
+    end)
+
+    it('does not follow a target who is back on their feet', function()
+        local s, f, c = seeded()
+        killTarget(s)
+        local token = s.photo.issue(f.hitman, c.id)
+        Env.players[2].PlayerData.metadata.isdead = false
+        Env.players[2]._coords = { x = 126.0, y = 100.0, z = 30.0 }
+        Env.players[3]._coords = { x = 126.5, y = 100.0, z = 30.0 }
+        local ok, err = s.photo.submit(f.hitman, token, URL)
+        falsy(ok, 'a living player is not a body to photograph')
+        eq(err, CH.ERR.PHOTO_TOO_FAR)
+    end)
+end)
+
+describe('the reach of a kill', function()
+    it('credits a rifle shot from 300 m, inside what OneSync lets players see', function()
+        local s, f, c = seeded()
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 400.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 140
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2, 3), 1, 'a sniper\'s kill pays')
+        truthy(Config.Completion.MaxWeaponRange >= 424,
+            'at least the player culling radius: players further apart cannot shoot each other')
+    end)
+
+    it('tells a hitman whose kill the server could not see why it pays nobody', function()
+        local s, f, c = seeded()
+        -- A car bomb: no weapon event, and the target's game names the bomber.
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 110.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 100
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2, 3), 0, 'nothing the server saw, nothing paid')
+        local token, err = s.photo.issue(f.hitman, c.id)
+        falsy(token)
+        eq(err, CH.ERR.KILL_UNOBSERVED, 'not "down is not dead"')
+
+        -- Nobody else is told anything about it.
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+            coords = { x = 5000.0, y = 0.0, z = 30.0 } })
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        local _, other = s.photo.issue(s.identity.resolve(4), c.id)
+        eq(other, CH.ERR.NO_KILL_TO_VERIFY)
+
+        -- And not for ever.
+        Env.advance(Config.Completion.PhotoTokenLifetimeSeconds + 1)
+        local _, later = s.photo.issue(f.hitman, c.id)
+        eq(later, CH.ERR.NO_KILL_TO_VERIFY)
+    end)
+end)

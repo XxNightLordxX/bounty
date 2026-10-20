@@ -172,14 +172,23 @@ sentence, as `sc-police` writes it, and standing inside
 write its own sentence, so the metadata alone is not trusted.
 
 **Finishing it.** Kill the target, tap **Verify kill** and photograph the
-body for the baseline. On `'server'` storage the app opens its own
+body for the baseline, standing within `Config.Completion.PhotoRadius` (5 m)
+of where it lay when they died, or of where it lies now if it has moved
+since (a car rolling on, a body carried off) while they are still dead. On `'server'` storage the app opens its own
 viewfinder over the screen, showing the phone's rear camera: point it at the
 body and tap **Take photo** (or **Cancel**). On `'host'` storage lb-phone's
 own camera opens instead. With `sc-ambulance`, downing them is not the kill:
 they are in last stand, and you have to finish them. The kill is credited to
 whoever landed a hit within `Config.Completion.DeathReportWindowMs` (30
 seconds) of the death, and bleeding out takes minutes, so a target left to
-bleed out pays nobody. For `Config.Completion.ProofWindowSeconds` (60
+bleed out pays nobody. Only gunfire and melee the server sees land on the
+target count, from up to `Config.Completion.MaxWeaponRange` (425 m, OneSync's
+player culling radius) away: explosives (grenades, sticky bombs, rockets),
+fire, run-overs and falls pay nobody (`Config.Completion.RequireObservedDamage`),
+and Verify kill tells a hitman whose kill the target's own game put down to
+them that this is why. The target's game reports its death; if that report
+never comes (the game crashed or quit, or never sends it), the server
+attributes the death itself a few seconds later, the same way. For `Config.Completion.ProofWindowSeconds` (60
 seconds) after the death, the photograph counts whatever has happened to them
 since, whether a respawn, a revive or a defibrillator, so none of these can
 take a kill away from a hitman standing over the body. After that, a revive
@@ -197,8 +206,14 @@ medic of `Config.Completion.MedicJobs` holding `DefibItem` within `DefibRange`
 of the patient. Match them to sc-ambulance's `Config.Defib`: `MedicJobs = false`
 when it does not require EMS, `MedicJobs = {}` when its defibrillator is off.
 A kill waits for its photograph for at most two photo-token lifetimes, however
-many tokens are asked for. Or take them alive to the client and hold them there
-for thirty seconds for baseline plus bonus.
+many tokens are asked for. A kill made before the deadline whose photograph
+is still on its way, or a handover still counting down, holds off the expiry
+until it finishes, for that long at most; a handover cannot be started once
+the deadline has passed. Or take them alive to the client and hold them there
+for thirty seconds for baseline plus bonus: restrained or in your vehicle,
+neither dead nor down, and not under `Config.Kidnap.MinTargetHealthPercent`
+(20%) health. A target hurt worse than that (Qbox gives no health back on its
+own) has to be patched up first, and the app says so.
 
 **The kill photo.** The photo is the client's alone, and they get to see it
 once. Nothing of it stays on the hitman's phone: on `'server'` storage the
@@ -283,6 +298,11 @@ and how many photos are on disk, kept in the app and served to phones, and
 how much space they take.
 
 **Counter-play.** A target can see the price on their head and buy it out.
+With a hitman on the contract, the buyout waits
+`Config.Bailout.ProcessingDelaySeconds` (2 minutes) so they can finish first,
+and longer for a kill already waiting for its photograph or a handover
+already counting down (up to two photo-token lifetimes more). If they
+finish, the premium goes back to the target.
 Players the app is closed to — law enforcement and EMS — do the same with
 `/cleanse` (lists what is on them) and `/cleanse <id>` (buys one out). Either
 side can pay an informant to unmask one hitman. Creator and hitmen can
@@ -327,7 +347,9 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
   acting player from the connection. Citizen ids never reach a client;
   searches and threads use expiring per-viewer handles.
 - **A kill has to be real.** Death is attributed from damage the server
-  observed, corroborated against the medical state. A downed player is not a
+  observed, corroborated against the medical state. The target's own report
+  can name the killer, but never stands in for that damage, and a kill
+  still opens without it. A downed player is not a
   kill, and a revive more than `ProofWindowSeconds` (60 s) after the death
   voids a pending claim.
 - **A delivery has to be real.** The target must be alive, conscious and
