@@ -21,7 +21,9 @@ local function purse(src)
 end
 
 --- Everything escrow is still holding, per source. A settled line has
---- already been delivered; anything else is money the escrow owes somebody.
+--- already been delivered; anything else is money the escrow owes somebody,
+--- less any part of it that a give which raised part-way already left with
+--- them (deliver_arrived), which is in their pocket.
 local function heldEscrow(s)
     local out = { cash = 0, bank = 0, dirty = 0 }
     for _, c in ipairs(s.storage.allContracts()) do
@@ -29,6 +31,7 @@ local function heldEscrow(s)
             if CH.MONEY_SOURCES[line.source]
                 and line.state ~= CH.ESCROW_STATE.SETTLED then
                 out[line.source] = out[line.source] + (line.amount or 0)
+                    - (tonumber(line.deliver_arrived) or 0)
             end
         end
     end
@@ -250,5 +253,63 @@ describe('conservation across every settlement path', function()
 
         truthy(s.bailout.buy(f.target, c.id))
         conserved(s, before, 'bailout')
+    end)
+
+    --- qbx_core adds the money before the hooks that can raise. A credit
+    --- that raised after it landed was read as not paid: the line stayed
+    --- owed, and every retry minted the payout again.
+    it('a payout whose credit raises after it lands, retried, mints nothing', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = world(s)
+        local c, err = place(s, f, { baseline = { cash = 5000, bank = 3000 } })
+        truthy(c, tostring(err))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+
+        local p = Env.players[3]
+        local real = p.Functions.AddMoney
+        p.Functions.AddMoney = function(...)
+            real(...)
+            error('AddMoney hook raised', 0)
+        end
+        local ok, why = pcall(function()
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION))
+            for _ = 1, 5 do s.escrow.retryPending(f.hitman.cid) end
+        end)
+        p.Functions.AddMoney = real
+        truthy(ok, tostring(why))
+        conserved(s, before, 'payout retried after a raise')
+    end)
+
+    --- Part of it landed, and staff paid the rest: nothing minted either way.
+    it('a credit that lands part-way, then a staff pay, mints nothing', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = world(s)
+        local c, err = place(s, f, { baseline = { cash = 5000 } })
+        truthy(c, tostring(err))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+
+        local p = Env.players[3]
+        local real = p.Functions.AddMoney
+        p.Functions.AddMoney = function(account, _, reason)
+            real(account, 1500, reason)
+            error('AddMoney hook raised', 0)
+        end
+        local ok, why = pcall(function()
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION))
+            for _ = 1, 5 do s.escrow.retryPending(f.hitman.cid) end
+        end)
+        p.Functions.AddMoney = real
+        truthy(ok, tostring(why))
+        conserved(s, before, 'a part that arrived')
+
+        local line
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CH.PORTION.BASELINE then line = l end
+        end
+        truthy(s.admin.settleLine(0, line.id, 'pay'))
+        conserved(s, before, 'the rest paid by staff')
+        eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
     end)
 end)

@@ -139,6 +139,143 @@ describe('paying each money source out to a hitman', function()
     end
 end)
 
+--- One player's AddMoney made to raise: after crediting all of it
+--- ('after'), before crediting anything ('before'), or after crediting only
+--- the figure given. qbx_core adds the money before the save, the log and
+--- the money events that can raise, so 'after' is the shape a live server
+--- shows. Returns a function that puts it back and says how often it ran.
+local function creditRaises(src, how)
+    local p = Env.players[src]
+    local real, calls = p.Functions.AddMoney, 0
+    p.Functions.AddMoney = function(account, amount, reason)
+        calls = calls + 1
+        if how == 'after' then
+            real(account, amount, reason)
+        elseif type(how) == 'number' then
+            real(account, how, reason)
+        end
+        error('AddMoney hook raised', 0)
+    end
+    return function()
+        p.Functions.AddMoney = real
+        return calls
+    end
+end
+
+--- The baseline line of a contract, as stored.
+local function baselineLine(s, contractId)
+    for _, line in ipairs(s.storage.readEscrow(contractId)) do
+        if line.portion == CH.PORTION.BASELINE then return line end
+    end
+end
+
+describe('a payout whose credit raises', function()
+    for _, source in ipairs({ 'cash', 'bank' }) do
+        --- Treated as "not credited", the line stayed owed and was paid
+        --- again on every retry: every thirty seconds, and at every login.
+        it(('pays %s once when the credit raises after it lands'):format(source), function()
+            local s = newStack()
+            local f, c = fundedFrom(s, source, 5000)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local before = purse(3)
+            local restore = creditRaises(3, 'after')
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION))
+            for _ = 1, 3 do s.escrow.retryPending(f.hitman.cid) end
+            for _ = 1, 10 do
+                Env.advance(31)
+                s.escrow.retryWaiting(function() return true end)
+            end
+            eq(restore(), 1, 'credited once and never tried again')
+            eq(moved(before, purse(3))[source], 5000, 'paid once, not once per retry')
+            eq(baselineLine(s, c.id).state, CH.ESCROW_STATE.SETTLED, 'settled as delivered')
+            eq(#s.storage.readPending(f.hitman.cid), 0, 'nothing left queued')
+        end)
+
+        it(('keeps %s owed while its credit raises before it lands, and leaves it for staff '
+            .. 'at the limit'):format(source), function()
+            local s = newStack()
+            local f, c = fundedFrom(s, source, 5000)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local before = purse(3)
+            local restore = creditRaises(3, 'before')
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION))
+            for _ = 1, 6 do s.escrow.retryPending(f.hitman.cid) end
+            eq(restore(), s.escrow.DELIVER_RAISE_LIMIT, 'tried up to the limit, then left alone')
+            eq(moved(before, purse(3))[source], 0, 'nothing arrived')
+
+            local line = baselineLine(s, c.id)
+            truthy(s.escrow.parked(line), 'left for staff')
+            eq(line.state, CH.ESCROW_STATE.HELD, 'still held: nothing destroyed')
+            eq(line.owed_to, f.hitman.cid, 'and still theirs')
+            eq(#s.storage.readPending(f.hitman.cid), 0, 'off the retry queue')
+
+            truthy(s.admin.settleLine(0, line.id, 'pay'))
+            eq(moved(before, purse(3))[source], 5000, 'a staff pay gives it once')
+        end)
+
+        it(('leaves %s for staff at once when the balance cannot be read after a raise')
+            :format(source), function()
+            local s = newStack()
+            local f, c = fundedFrom(s, source, 5000)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local before = purse(3)
+            local p = Env.players[3]
+            local realAdd, realGet = p.Functions.AddMoney, p.Functions.GetMoney
+            local unreadable, calls = false, 0
+            p.Functions.AddMoney = function(...)
+                calls = calls + 1
+                realAdd(...)
+                unreadable = true
+                error('AddMoney hook raised', 0)
+            end
+            p.Functions.GetMoney = function(...)
+                if unreadable then error('GetMoney raised', 0) end
+                return realGet(...)
+            end
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION))
+            p.Functions.GetMoney = realGet
+            for _ = 1, 5 do s.escrow.retryPending(f.hitman.cid) end
+            p.Functions.AddMoney = realAdd
+            eq(calls, 1, 'never given again blind')
+            eq(moved(before, purse(3))[source], 5000)
+
+            local line = baselineLine(s, c.id)
+            truthy(s.escrow.parked(line), 'left for staff on the first raise')
+            eq(line.owed_to, f.hitman.cid)
+
+            -- Staff look, find it there, and settle it: nothing more is given.
+            truthy(s.admin.settleLine(0, line.id, 'delivered'))
+            eq(moved(before, purse(3))[source], 5000, 'settled without giving it again')
+            line = s.storage.readEscrowLine(line.id)
+            eq(line.state, CH.ESCROW_STATE.SETTLED)
+            eq(line.settled_to, f.hitman.cid)
+        end)
+
+        --- A credit that raised with only part of it there. The part is
+        --- theirs, kept on the line, and a staff pay gives only the rest.
+        it(('gives only the rest of %s when part of it landed'):format(source), function()
+            local s = newStack()
+            local f, c = fundedFrom(s, source, 5000)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local before = purse(3)
+            local restore = creditRaises(3, 2000)
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION))
+            for _ = 1, 5 do s.escrow.retryPending(f.hitman.cid) end
+            eq(restore(), 1, 'left for staff at once')
+            eq(moved(before, purse(3))[source], 2000, 'part of it arrived')
+
+            local line = baselineLine(s, c.id)
+            truthy(s.escrow.parked(line), 'left for staff')
+            eq(tonumber(line.deliver_arrived), 2000, 'with the part that arrived')
+            eq(tonumber(line.deliver_before), before[source], 'and what they held before it')
+
+            truthy(s.admin.settleLine(0, line.id, 'pay'))
+            eq(moved(before, purse(3))[source], 5000, 'the pay gave only the 3,000 still owed')
+            eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+        end)
+    end
+end)
+
 describe('giving each money source back', function()
     for _, source in ipairs(SOURCES) do
         it(('returns %s in full when the contract is withdrawn'):format(source), function()

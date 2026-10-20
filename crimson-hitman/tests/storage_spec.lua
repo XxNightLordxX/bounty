@@ -185,6 +185,33 @@ describe('storage conformance', function()
         end
     end)
 
+    --- What a give that raised part-way left with the player, and what they
+    --- held before it (Escrow.deliver). A later give hands over only the
+    --- rest, so the part that arrived has to survive a restart, and a copy
+    --- written back without it must not wipe it: that gives it twice.
+    it('keeps what part of an escrow line arrived in every backend', function()
+        for _, b in ipairs(backends()) do
+            local fresh = { id = 'ct1:1', contract_id = 'ct1', slot = 1,
+                portion = CH.PORTION.BASELINE, source = 'item', item = 'lockpick',
+                quantity = 3, state = CH.ESCROW_STATE.HELD }
+            b.store.writeEscrow('ct1', { fresh })
+            local part = Util.copy(b.store.readEscrowLine('ct1:1'))
+            part.deliver_before, part.deliver_arrived = 4, 1
+            b.store.writeEscrow('ct1', { part })
+            local line = b.store.readEscrowLine('ct1:1')
+            eq(tonumber(line.deliver_before), 4, b.name .. ': what they held before is kept')
+            eq(tonumber(line.deliver_arrived), 1, b.name .. ': what arrived is kept')
+
+            local stale = Util.copy(fresh)
+            stale.owed_to = 'HITMAN01'
+            b.store.writeEscrow('ct1', { stale })
+            line = b.store.readEscrowLine('ct1:1')
+            eq(tonumber(line.deliver_arrived), 1, b.name .. ': a copy without it leaves it')
+            eq(tonumber(line.deliver_before), 4, b.name .. ': and what they held')
+            eq(line.owed_to, 'HITMAN01', b.name .. ': while the rest of the copy is written')
+        end
+    end)
+
     --- The audit detail, as a table rather than the text it is stored in.
     ---
     --- /ch-stuck walks the log for release_interrupted rows and reads

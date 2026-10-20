@@ -1933,3 +1933,127 @@ describe('RACE: one photo token sent twice at once', function()
         eq(money(3) - before, 1000, 'one kill paid two collections')
     end)
 end)
+
+--- A buyout that lands while another settle of the same contract holds it
+--- is handed straight back (Bailout.buy's handBack). That credit can raise
+--- after the money moved (qbx_core adds it before the hooks that can raise),
+--- and read as not paid it was also owed on a new line: every retry paid
+--- the premium again.
+describe('RACE: a buyout handed back while another settle holds the contract', function()
+    local function handedBack(addMoney)
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[2].PlayerData.money.bank = 100000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000,
+        })
+        truthy(c)
+        local before = money(2)
+        local p = Env.players[2]
+        local real = p.Functions.AddMoney
+        p.Functions.AddMoney = function(...) return addMoney(real, ...) end
+        local ok, why = s.contracts.serialized({ 'settle:' .. c.id }, function()
+            return s.bailout.buy(f.target, c.id)
+        end)
+        for _ = 1, 3 do s.escrow.retryPending('TARGET01') end
+        p.Functions.AddMoney = real
+        falsy(ok, 'another settle held it')
+        eq(why, CH.ERR.BUSY)
+        local owed = {}
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CH.PORTION.OWED and l.owed_to == 'TARGET01' then owed[#owed + 1] = l end
+        end
+        return s, before, owed
+    end
+
+    it('hands the premium back once when the credit raises after it lands', function()
+        local _, before, owed = handedBack(function(real, ...)
+            real(...)
+            error('AddMoney hook raised', 0)
+        end)
+        eq(money(2), before, 'charged once, handed back once')
+        eq(#owed, 0, 'and owed on no line besides')
+    end)
+
+    it('owes it, counting the raise, when nothing landed', function()
+        local _, before, owed = handedBack(function()
+            error('AddMoney hook raised', 0)
+        end)
+        eq(money(2), before - 15000, 'not back yet')
+        eq(#owed, 1, 'owed on one line')
+        truthy(tonumber(owed[1].deliver_raises) >= 1, 'with the raise counted')
+    end)
+
+    it('leaves it for staff when only part landed, and their pay gives the rest', function()
+        local s, before, owed = handedBack(function(real, account, _, reason)
+            real(account, 6000, reason)
+            error('AddMoney hook raised', 0)
+        end)
+        eq(money(2), before - 15000 + 6000, 'part of it back, and nothing given again blind')
+        eq(#owed, 1)
+        truthy(s.escrow.parked(owed[1]), 'left for staff')
+        eq(tonumber(owed[1].deliver_arrived), 6000)
+        eq(#s.storage.readPending('TARGET01'), 0, 'not queued for a retry')
+        truthy(s.admin.settleLine(0, owed[1].id, 'pay'))
+        eq(money(2), before, 'the pay gave only the 9,000 still owed')
+    end)
+end)
+
+--- A login retry reads a queued line, and in the await before its claim
+--- the tick's retry gives it, part of it lands and the give raises: the
+--- line is left for staff with the part recorded. The first retry then
+--- claimed the line as it had read it and gave it all again.
+describe('RACE: a retry claims a line another retry just left part of with them', function()
+    it('gives nothing more than what landed (mysql)', function()
+        local s = mysqlStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        -- Refused when it is paid: owed and queued.
+        Env.players[3]._refuseMoney = true
+        truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION))
+        Env.players[3]._refuseMoney = nil
+        eq(#s.storage.readPending('HITMAN01'), 1, 'queued')
+
+        local before = money(3)
+        local p = Env.players[3]
+        local realAdd = p.Functions.AddMoney
+        p.Functions.AddMoney = function(account, _, reason)
+            realAdd(account, 2000, reason)
+            error('AddMoney hook raised', 0)
+        end
+        local realClaim = s.storage.claimEscrowLine
+        local fired = false
+        s.storage.claimEscrowLine = function(id, from, to)
+            if not fired and from == CH.ESCROW_STATE.HELD then
+                fired = true
+                s.escrow.retryPending('HITMAN01')
+            end
+            return realClaim(id, from, to)
+        end
+        local ok, err = pcall(s.escrow.retryPending, 'HITMAN01')
+        s.storage.claimEscrowLine = realClaim
+        p.Functions.AddMoney = realAdd
+        truthy(ok, tostring(err))
+        truthy(fired, 'the second retry ran in the await')
+        eq(money(3) - before, 2000, 'what landed once, and nothing given again from a stale copy')
+
+        local line
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.portion == CH.PORTION.BASELINE then line = l end
+        end
+        truthy(s.escrow.parked(line), 'left for staff')
+        eq(tonumber(line.deliver_arrived), 2000)
+        -- Staff, on the same store.
+        s.admin.init({ storage = s.storage, identity = s.identity, contracts = s.contracts,
+            escrow = s.escrow, audit = s.audit, notify = s.notify, death = s.death,
+            photo = s.photo, photos = s.photos, app = s.app })
+        truthy(s.admin.settleLine(0, line.id, 'pay'))
+        eq(money(3) - before, 5000, 'and staff pay only the rest')
+    end)
+end)

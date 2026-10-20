@@ -88,9 +88,15 @@ CREATE TABLE IF NOT EXISTS crimson_escrow (
     -- migrate; NULL on older rows.
     taken_from VARCHAR(32),
     -- How many times giving it raised with nothing arriving, until staff
-    -- settle it (Escrow.deliver). At the limit it waits for staff in
-    -- /ch-stuck. NULL on older rows, as 0.
+    -- settle it (Escrow.deliver); the limit at once when what arrived
+    -- cannot be told. At the limit it waits for staff in /ch-stuck.
+    -- NULL on older rows, as 0.
     deliver_raises INT DEFAULT 0,
+    -- What the player held before the last give that raised, and how much
+    -- of the line has reached them, since a later give hands over only the
+    -- rest. NULL when none.
+    deliver_before INT,
+    deliver_arrived INT,
     INDEX idx_contract (contract_id),
     INDEX idx_state (state)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

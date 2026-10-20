@@ -340,10 +340,19 @@ function Memory.writeEscrow(contractId, lines)
             -- fields a caller is allowed to change.
             existing.owed_to = incoming.owed_to
             existing.releasing_to = incoming.releasing_to
-            -- How often its give has raised (Escrow.deliver). A copy that
-            -- does not carry it leaves it as it is, as COALESCE does on mysql.
+            -- How often its give has raised (Escrow.deliver), what they held
+            -- before the last one, and how much of it has reached them. A
+            -- copy that does not carry one leaves it as it is, as COALESCE
+            -- does on mysql: a part that arrived is never forgotten, and so
+            -- never given again.
             if incoming.deliver_raises ~= nil then
                 existing.deliver_raises = incoming.deliver_raises
+            end
+            if incoming.deliver_before ~= nil then
+                existing.deliver_before = incoming.deliver_before
+            end
+            if incoming.deliver_arrived ~= nil then
+                existing.deliver_arrived = incoming.deliver_arrived
             end
         else
             if existing then unindexRow(escrowBy, existing, incoming.id) end

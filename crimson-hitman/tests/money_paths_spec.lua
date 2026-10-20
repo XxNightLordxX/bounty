@@ -163,6 +163,59 @@ describe('a memory-mode shutdown with a buyout waiting out its delay', function(
         Env.handlers['onResourceStop'](GetCurrentResourceName())
         eq(worth(1) - before, 15000, 'the escrow back and the premium, rather than neither')
     end)
+
+    --- The target's refund raised after it landed (qbx_core adds the money
+    --- before the hooks that can raise). Read as not paid, the premium went
+    --- on to the creator as well: paid twice.
+    local function boughtAndStopping(targetAddMoney)
+        local _, m = boot()
+        local f = fixture(m)
+        local c = m.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 10000,
+        })
+        truthy(m.contracts.accept(f.hitman, c.id, false))
+        truthy(m.bailout.buy(f.target, c.id))
+        local creator, target = worth(1), worth(2)
+        local p = Env.players[2]
+        local real = p.Functions.AddMoney
+        p.Functions.AddMoney = function(...) return targetAddMoney(real, ...) end
+        -- The rows, as they are written: the store goes with the stop.
+        local rows, financial = {}, m.audit.financial
+        m.audit.financial = function(action, actor, contractId, detail)
+            rows[#rows + 1] = { action = action, actor = actor, detail = detail }
+            return financial(action, actor, contractId, detail)
+        end
+        Env.handlers['onResourceStop'](GetCurrentResourceName())
+        m.audit.financial = financial
+        p.Functions.AddMoney = real
+        return rows, c, worth(1) - creator, worth(2) - target
+    end
+
+    it('does not pay the creator as well when the target\'s refund raises after it lands', function()
+        local _, _, creator, target = boughtAndStopping(function(real, ...)
+            real(...)
+            error('AddMoney hook raised', 0)
+        end)
+        eq(target, 10000, 'the target has their premium back')
+        eq(creator, 5000, 'and the creator only their escrow, not the premium a second time')
+    end)
+
+    it('offers nobody else a refund only part of which landed, and says what did', function()
+        local rows, _, creator, target = boughtAndStopping(function(real, account, _, reason)
+            real(account, 4000, reason)
+            error('AddMoney hook raised', 0)
+        end)
+        eq(target, 4000, 'part of it reached the target')
+        eq(creator, 5000, 'and none of it went to the creator as well')
+        local row
+        for _, r in ipairs(rows) do
+            if r.action == 'bailout_refund_stranded' then row = r end
+        end
+        truthy(row, 'staff are told')
+        eq(row.detail.raised_for, 'TARGET01')
+        eq(row.detail.arrived, 4000, 'with the part that arrived, so they hand over only the rest')
+    end)
 end)
 
 describe('taking a stake on a contract that closes during the acceptance', function()

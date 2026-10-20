@@ -115,9 +115,16 @@ local SCHEMA = {
         -- migrate; NULL on older rows.
         taken_from VARCHAR(32),
         -- How many times giving it raised with nothing arriving, until staff
-        -- settle it (Escrow.deliver). At the limit it waits for staff in
-        -- /ch-stuck. NULL on older rows, as 0.
+        -- settle it (Escrow.deliver); the limit at once when what arrived
+        -- cannot be told. At the limit it waits for staff in /ch-stuck.
+        -- NULL on older rows, as 0.
         deliver_raises INT DEFAULT 0,
+        -- What the player held before the last give that raised, and how
+        -- much of the line has reached them, since a later give hands over
+        -- only the rest. Added to existing databases by migrate; NULL when
+        -- none.
+        deliver_before INT,
+        deliver_arrived INT,
         INDEX idx_contract (contract_id),
         INDEX idx_state (state)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
@@ -967,17 +974,21 @@ end
 local ESCROW_UPSERT = [[
     INSERT INTO crimson_escrow
         (id, contract_id, slot, line_portion, source, amount, item, quantity, metadata,
-         staker, inv_slot, owed_to, releasing_to, state, derived, taken_from, deliver_raises)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         staker, inv_slot, owed_to, releasing_to, state, derived, taken_from, deliver_raises,
+         deliver_before, deliver_arrived)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     -- State and amount are NOT written here, as they move only through
     -- claimEscrowLine / settleEscrowLine / setEscrowAmount, which are
     -- guarded. Writing them from a caller-held copy could resurrect a
     -- line that settled while the caller was reading.
     -- The raise count only when the copy carries one, so a copy read
-    -- before Escrow.deliver counted a raise does not wipe it.
+    -- before Escrow.deliver counted a raise does not wipe it; and the same
+    -- for what arrived, which a wipe would give a second time.
     ON DUPLICATE KEY UPDATE owed_to = VALUES(owed_to),
         releasing_to = VALUES(releasing_to),
-        deliver_raises = COALESCE(VALUES(deliver_raises), deliver_raises)
+        deliver_raises = COALESCE(VALUES(deliver_raises), deliver_raises),
+        deliver_before = COALESCE(VALUES(deliver_before), deliver_before),
+        deliver_arrived = COALESCE(VALUES(deliver_arrived), deliver_arrived)
 ]]
 
 local function escrowParams(contractId, l)
@@ -995,6 +1006,8 @@ local function escrowParams(contractId, l)
         -- change. See MySQLStore.orphanEscrow.
         l.taken_from,
         l.deliver_raises,
+        l.deliver_before,
+        l.deliver_arrived,
     }
 end
 

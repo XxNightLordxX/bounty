@@ -561,6 +561,39 @@ describe('escrow release', function()
         truthy(s.escrow.parked(itemLine(s, 'ct1')), 'left for staff')
     end)
 
+    --- The part that arrived is kept on the line, and a staff pay gives only
+    --- the rest: paying the whole line again gave 3 of 2 lockpicks.
+    it('gives only what had not arrived when staff pay a line part of which did', function()
+        local s = newStack()
+        local f = fixture(s)
+        s.escrow.take(f.creator, 'ctpartly01', s.escrow.validate(f.creator, {
+            baseline = { cash = 5000, items = { { name = 'lockpick', count = 2 } } },
+        }))
+        withAddItem(function(real, self, src, name, count, metadata)
+            real(self, src, name, count - 1, metadata)
+            error('raised half-way', 0)
+        end, function()
+            s.escrow.release('ctpartly01', 'HITMAN01', CH.PORTION.BASELINE, 'test')
+            for _ = 1, 3 do s.escrow.retryPending('HITMAN01') end
+        end)
+        eq(picks(), 1, 'one of the two arrived')
+        local line = itemLine(s, 'ctpartly01')
+        truthy(s.escrow.parked(line), 'left for staff')
+        eq(tonumber(line.deliver_arrived), 1, 'with the one that arrived')
+        eq(tonumber(line.deliver_before), 0, 'and what they held before')
+
+        local gave
+        withAddItem(function(real, self, src, name, count, metadata)
+            gave = count
+            return real(self, src, name, count, metadata)
+        end, function()
+            truthy(s.admin.settleLine(0, line.id, 'pay'))
+        end)
+        eq(gave, 1, 'the pay gave the one still owed')
+        eq(picks(), 2, 'two lockpicks, not three')
+        eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+    end)
+
     --- A weapon is checked by its serial, so it is the line's own pistol.
     it('delivers a weapon whose give raised after it arrived, once, found by its serial', function()
         local s = newStack()

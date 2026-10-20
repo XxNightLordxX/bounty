@@ -455,10 +455,13 @@ local function refundAnonymityFee(actor, contractId, anonymous)
     if not anonymous or fee <= 0 then return true end
 
     local account = Config.Anonymity.FeeAccount or 'bank'
-    if Util.credit(actor.player, account, fee) then return true end
+    local credited, raised, arrived = Util.credit(actor.player, account, fee)
+    if credited then return true end
 
+    -- A credit that raised says what of it arrived (Util.credit): nothing,
+    -- part of it, or unknown (none written). Staff return only the rest.
     Audit.financial('anonymity_fee_refund_failed', actor.cid, contractId,
-        { amount = fee, account = account })
+        { amount = fee, account = account, error = raised, arrived = raised and arrived or nil })
     return false
 end
 
@@ -1359,14 +1362,20 @@ local function returnNeverPlaced(contractId)
     for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
         if line.state == CH.ESCROW_STATE.RELEASING
             and Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD) then
+            line.state = CH.ESCROW_STATE.HELD
             if line.releasing_to then
                 print(('[crimson-hitman] escrow line %s of a contract never placed was mid-release; '
-                    .. 'returned to held — verify it was not already paid'):format(tostring(line.id)))
+                    .. 'returned to held and left for staff (/%s) — check whether it was already '
+                    .. 'paid'):format(tostring(line.id), tostring(Config.Admin.Commands.stuck)))
                 Audit.financial('release_interrupted', line.releasing_to, contractId,
                     { line = line.id, amount = line.amount, review = true })
-            else
-                line.state = CH.ESCROW_STATE.HELD
+                -- Never given again on its own (Escrow.parkInterrupted).
+                Escrow.parkInterrupted(line)
             end
+        elseif line.state == CH.ESCROW_STATE.HELD and line.releasing_to and not line.owed_to
+            and not Escrow.parked(line) then
+            -- Put back to held by an older version: left for staff the same way.
+            Escrow.parkInterrupted(line)
         end
 
         if line.state == CH.ESCROW_STATE.HELD and not line.owed_to and not line.releasing_to then

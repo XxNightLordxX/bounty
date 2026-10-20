@@ -543,7 +543,8 @@ function Util.charge(player, account, amount)
     return true
 end
 
---- Give money to a player, treating a raise like a refusal.
+--- Give money to a player, never letting a raise out, and say whether it
+--- arrived.
 ---
 --- Every caller already handles AddMoney returning false: the credit did
 --- not happen, so the money is owed rather than lost. None of them handled
@@ -559,16 +560,43 @@ end
 --- Found by breaking one call at a time under a conservation check rather
 --- than by reading: 144 pairings of a broken dependency with an operation
 --- that moves money, and this was the one that did not add up.
+---
+--- A raise is not always a credit that did not happen. qbx_core's AddMoney
+--- adds to the balance first and only then saves, logs and emits its money
+--- events, and for cash those set ox_inventory's 'money' item, which runs
+--- AddItem, its hooks and a sync: any of them can raise after the money
+--- moved. Read as "not credited", a payout like that stayed owed and was
+--- paid again every thirty seconds and at every login. So the balance is
+--- read before and, after a raise, again, as Util.charge does: up by the
+--- amount is credited; unchanged is not; anything else (a read that fails,
+--- or only part of it there) cannot be told apart from a payment, and the
+--- caller is told so rather than left to try again blind. A balance that
+--- cannot be read before is not credited at all: a raise could not be checked.
 ---@param player table qbx_core player
 ---@param account string
 ---@param amount number
 ---@return boolean credited
+---@return string|nil raised the error, when AddMoney raised
+---@return integer|nil arrived after a raise, how much reached the balance: 0
+--- for none, nil when that could not be read
+---@return integer|nil before the balance before the credit, after a raise
 function Util.credit(player, account, amount)
     if not player or not player.Functions then return false end
+    local read, before = pcall(player.Functions.GetMoney, account)
+    before = read and tonumber(before) or nil
+    if not before then return false end
     local ok, gave = pcall(player.Functions.AddMoney, account, amount, Util.MONEY_REASON)
-    if not (ok and gave) then return false end
-    persist(player)
-    return true
+    if ok then
+        if not gave then return false end
+        persist(player)
+        return true
+    end
+    local readAfter, after = pcall(player.Functions.GetMoney, account)
+    after = readAfter and tonumber(after) or nil
+    local arrived = after and after - before or nil
+    local credited = arrived ~= nil and arrived >= (tonumber(amount) or 0)
+    if credited then persist(player) end
+    return credited, tostring(gave), arrived, before
 end
 
 --- The client has no module loader — server/boot.lua's require_shared is a

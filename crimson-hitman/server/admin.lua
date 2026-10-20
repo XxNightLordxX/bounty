@@ -207,17 +207,25 @@ function Admin.interrupted(src)
         return contract or nil
     end
 
-    -- Lines whose give kept raising (Escrow.deliver), still held and owed to
+    -- Lines left for staff (Escrow.parked): a give that kept raising with
+    -- nothing arriving, raised with only part of it or no telling what
+    -- arrived (Escrow.deliver), or was under way when the server stopped
+    -- (Escrow.parkInterrupted, at the next start). Still held and owed to
     -- the player they were for, and given to nobody until staff settle them.
     -- First, so a line that was also caught mid-release once is shown for
     -- what it is now. Read from the escrow itself: the log's rows are pruned
     -- after Config.Audit.RetentionDays, and nothing else ever picks such a
-    -- line up again, so listed from the rows it went unseen for good. The
-    -- rows still kept say only when it was parked.
-    local parkedAt = {}
+    -- line up again, so listed from the rows it went unseen for good. What
+    -- arrived is on the line; the rows still kept say when it was parked,
+    -- and why.
+    local parkedAt, parkedWhy = {}, {}
     for _, row in ipairs(Storage.auditByAction('escrow_deliver_parked', 1000) or {}) do
-        local lineId = (row.detail or {}).line
-        if lineId then parkedAt[lineId] = row.ts end
+        local detail = row.detail or {}
+        if detail.line then
+            parkedAt[detail.line] = row.ts
+            parkedWhy[detail.line] = (detail.interrupted and 'interrupted')
+                or (detail.unknown and 'unknown') or 'raised'
+        end
     end
     local parked = Storage.parkedEscrow
         and Storage.parkedEscrow(Escrow.DELIVER_RAISE_LIMIT) or {}
@@ -232,7 +240,8 @@ function Admin.interrupted(src)
                 line = line.id, contract = line.contract_id, amount = line.amount,
                 source = line.source, item = line.item, quantity = line.quantity,
                 portion = line.portion, intended = intended, at = parkedAt[line.id],
-                raised = tonumber(line.deliver_raises) or 0,
+                raised = tonumber(line.deliver_raises) or 0, why = parkedWhy[line.id],
+                arrived = tonumber(line.deliver_arrived), before = tonumber(line.deliver_before),
             }
         end
     end
@@ -421,19 +430,21 @@ function Admin.void(src, contractId, reason)
 end
 
 --- Settle one interrupted line deliberately: either to the person it was
---- being paid to, or back to the contract's creator.
+--- being paid to, or back to the contract's creator, or, for a line left for
+--- staff (Escrow.parked), as already delivered to the person it was being
+--- paid to, giving nothing.
 ---
 --- `owner` is a citizen id, for `return` only, and only on a line that
 --- names nobody (namesNobody): staff found out whose it was, since nothing
 --- on the server can say.
----@param disposition string 'pay' | 'return'
+---@param disposition string 'pay' | 'return' | 'delivered'
 ---@param owner string|nil
 ---@return boolean ok
 ---@return string|nil err
 function Admin.settleLine(src, lineId, disposition, owner)
     lineId = Util.toLineId(lineId)
     if not lineId then return false, CH.ERR.INVALID_INPUT end
-    if disposition ~= 'pay' and disposition ~= 'return' then
+    if disposition ~= 'pay' and disposition ~= 'return' and disposition ~= 'delivered' then
         return false, CH.ERR.INVALID_INPUT
     end
     if owner ~= nil and (disposition ~= 'return' or type(owner) ~= 'string' or #owner > 64
@@ -472,7 +483,7 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- the one party it was never theirs to take. A line owed to somebody
     -- has no payer this can name.
     local recipient
-    if disposition == 'pay' then
+    if disposition == 'pay' or disposition == 'delivered' then
         local recorded
         local rows = Storage.auditByAction('release_interrupted', 1000) or {}
         for i = #rows, 1, -1 do
@@ -491,15 +502,44 @@ function Admin.settleLine(src, lineId, disposition, owner)
     if not recipient then return false, CH.ERR.INVALID_INPUT end
 
     -- Already queued for somebody by an earlier settle: settling it again
-    -- to somebody else would take it off them.
-    if line.owed_to and line.owed_to ~= recipient then return false, CH.ERR.LOCKED end
+    -- to somebody else would take it off them. A line left for staff is
+    -- owed to whoever its give was for and queued for nobody, and handing it
+    -- back instead is exactly the question staff were left.
+    local parked = Escrow.parked(line)
+    if line.owed_to and line.owed_to ~= recipient
+        and not (parked and disposition == 'return') then
+        return false, CH.ERR.LOCKED
+    end
+
+    -- Already with them: staff checked and found it there, after a give that
+    -- raised or a restart in the middle of one (Escrow.deliver,
+    -- Escrow.parkInterrupted). Settled to whom it was going, giving nothing,
+    -- through the same compare-and-set as every release, so it cannot settle
+    -- a line something else is paying. Only a line left for staff: any other
+    -- is given by the normal paths, and settling one unpaid would lose it.
+    if disposition == 'delivered' then
+        if not parked then return false, CH.ERR.INVALID_INPUT end
+        local claimed = Storage.claimEscrowLine(lineId, CH.ESCROW_STATE.HELD,
+            CH.ESCROW_STATE.RELEASING)
+        local settled = claimed and Storage.settleEscrowLine(lineId, recipient)
+        Audit.financial('admin_settle_line', callerCid(src), line.contract_id,
+            { line = lineId, disposition = disposition, recipient = recipient,
+              settled = settled and 1 or 0, pending = 0, given = 0,
+              arrived = line.deliver_arrived, before = line.deliver_before })
+        if settled then return true, nil end
+        if claimed then
+            Audit.financial('escrow_settle_lost', recipient, line.contract_id, { line = lineId })
+        end
+        return false, CH.ERR.LOCKED
+    end
 
     -- A line whose give kept raising waits for exactly this: staff who have
     -- checked whether it already reached them. Its count starts again, so
     -- the release below tries it. Every try is checked (Escrow.deliver): a
     -- give that raises after the item arrived settles the line, and one
-    -- that raises before is counted afresh, so paying it gives it once.
-    local unparked = Escrow.parked(line) or nil
+    -- that raises before is counted afresh, so paying it gives it once. A
+    -- part that already arrived stays on the line, and only the rest is given.
+    local unparked = parked or nil
     if unparked then
         line.deliver_raises = 0
         Storage.writeEscrow(line.contract_id, { line })

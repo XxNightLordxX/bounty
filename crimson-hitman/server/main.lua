@@ -1156,20 +1156,39 @@ function Recover()
                 -- cannot know which happened.
                 --
                 -- The line is returned to `held` so it is owed rather than
-                -- stuck forever. That is the deliberate trade: the window is
-                -- a few instructions wide, and a line left `releasing` is
-                -- money no code path can ever reach again. Every one of
-                -- these is logged with everything staff need to check it.
+                -- stuck forever: a line left `releasing` is money no code
+                -- path can ever reach again. One that names who it was going
+                -- to may have reached them (the name is written just before
+                -- the give), and it used to be given again by the next
+                -- login's retry: it is left for staff instead, owed to that
+                -- player, given by nothing until they settle it
+                -- (Escrow.parkInterrupted). One that names nobody was never
+                -- given, and goes on as before. Every one of these is logged
+                -- with everything staff need to check it.
                 Storage.claimEscrowLine(lines[j].id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD)
                 unstuck = unstuck + 1
+                local parked = lines[j].releasing_to ~= nil
                 print(('[crimson-hitman] escrow line %s was mid-release at shutdown; ' ..
-                       'returned to held — verify it was not already paid')
-                       :format(tostring(lines[j].id)))
+                       'returned to held%s')
+                       :format(tostring(lines[j].id), parked
+                           and ' and left for staff (/ch-stuck) — check whether it was already paid'
+                           or ''))
                 if modules.audit then
                     modules.audit.financial('release_interrupted', lines[j].releasing_to,
                         contract.id, { line = lines[j].id, amount = lines[j].amount,
                                        review = true })
                 end
+                if parked then
+                    lines[j].state = CH.ESCROW_STATE.HELD
+                    modules.escrow.parkInterrupted(lines[j])
+                end
+            elseif line.state == CH.ESCROW_STATE.HELD and line.releasing_to and not line.owed_to
+                and not modules.escrow.parked(line) then
+                -- Put back to held by an older version at an earlier start:
+                -- the same question, and it waited only in the log, which is
+                -- pruned. Left for staff the same way, so /ch-stuck lists it
+                -- from the escrow itself.
+                modules.escrow.parkInterrupted(line)
             end
         end
 

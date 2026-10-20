@@ -744,23 +744,38 @@ function Bridges.installCommands(modules)
             list[#list + 1] = lines[i]
         end
 
-        -- Lines whose give kept raising with nothing arriving, or raised once
-        -- without telling whether it arrived (Escrow.deliver): held, owed to
+        -- Lines left for staff (Escrow.parked): a give that kept raising with
+        -- nothing arriving, raised with only part of it or no telling what
+        -- arrived, or was under way when the server stopped. Held, owed to
         -- the player named, and given to nobody until settled here.
         if #parked > 0 then
-            reply(src, ('%d escrow line(s) raised an error when they were given, and wait '
-                .. 'for you:'):format(#parked))
+            reply(src, ('%d escrow line(s) raised an error when they were given, or were being '
+                .. 'given when the server stopped, and wait for you:'):format(#parked))
             for i = 1, #parked do
                 local line = parked[i]
-                -- When it was parked, while the log still has the row.
-                reply(src, ('  %s  contract %s  %s %s  owed to %s  raised %d times%s'):format(
+                -- What is known: a part that arrived is on the line; why it
+                -- was left, and when, while the log still has the row.
+                local known = 'why is no longer in the log'
+                if line.why == 'interrupted' then
+                    known = 'the server stopped while it was being given'
+                elseif line.why == 'unknown' then
+                    known = 'raised, and what arrived could not be read'
+                elseif line.why == 'raised' then
+                    known = ('raised %d times with nothing arriving'):format(line.raised)
+                end
+                if (line.arrived or 0) > 0 then
+                    known = ('%s; %s of it arrived'):format(known, tostring(line.arrived))
+                end
+                reply(src, ('  %s  contract %s  %s %s  owed to %s  %s%s'):format(
                     line.line, line.contract, tostring(line.portion), describeLine(line),
-                    tostring(line.intended), line.raised,
+                    tostring(line.intended), known,
                     line.at and ('  (' .. os.date('%Y-%m-%d %H:%M', line.at) .. ')') or ''))
             end
-            reply(src, ('Whether a give that raised arrived cannot always be told, so check '
-                .. 'their inventory first: if it is not there, /%s <line> pay gives it')
-                :format(names.settle))
+            reply(src, ('Whether such a give arrived cannot always be told, so check their '
+                .. 'inventory or balance first. /%s <line> delivered if it is there (settled, '
+                .. 'nothing given); /%s <line> pay if it is not (gives only what has not '
+                .. 'arrived); /%s <line> return to hand that back to whoever put it up instead')
+                :format(names.settle, names.settle, names.settle))
         end
 
         if #interrupted > 0 then

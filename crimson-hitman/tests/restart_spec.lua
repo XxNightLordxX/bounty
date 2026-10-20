@@ -1421,7 +1421,12 @@ describe('a crash part-way through accepting', function()
 end)
 
 describe('a crash part-way through paying a collection', function()
-    it('mysql: an owed collection caught mid-release is queued at the first boot', function()
+    --- Caught after its recipient was written, which is just before the
+    --- give: whether the money moved cannot be told at the next start. It
+    --- was put back owed and given again by the next login's retry; it is
+    --- left for staff, at the first boot rather than the one after, and
+    --- their pay gives it once.
+    it('mysql: an owed collection caught mid-release is left for staff at the first boot', function()
         local _, s = boot('mysql')
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
@@ -1437,9 +1442,14 @@ describe('a crash part-way through paying a collection', function()
         falsy(pcall(s.contracts.claimSlot, c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}))
 
         local _, s2 = restart('mysql', s)
+        for _ = 1, 3 do s2.escrow.retryPending(f.hitman.cid) end
+        eq(money(3) - before, 0, 'not given again blind')
+        local stuck = s2.admin.interrupted()
+        eq(#stuck, 1, 'listed for staff at the first boot')
+        eq(stuck[1].intended, f.hitman.cid)
+        truthy(s2.admin.settleLine(0, stuck[1].line, 'pay'))
         s2.escrow.retryPending(f.hitman.cid)
-        eq(money(3) - before, 10000,
-            'owed, unqueued, and left for the restart after this one')
+        eq(money(3) - before, 10000, 'and paid once by staff')
     end)
 end)
 
@@ -2127,6 +2137,126 @@ describe('a payout queued for a player still connected through a restart', funct
             end
             eq(carried(3, 'lockpick'), 5, 'handed over after the restart')
             eq(#s2.storage.readPending('HITMAN01'), 0, 'and nothing is left queued')
+        end)
+    end
+end)
+
+local function lockpicks(src)
+    local n = 0
+    for _, e in ipairs(Env.players[src]._inventory or {}) do
+        if e.name == 'lockpick' then n = n + (e.count or 0) end
+    end
+    return n
+end
+
+--- The process died between a give and the settle that records it. The
+--- next start put the line back to held with its queue entry still there,
+--- and the next login's retry gave it again: 2 lockpicks became 4. A give
+--- that may have happened is never given again (§14.12): it is left for
+--- staff.
+describe('a give that landed just before the process died', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is left for staff at the next start, not given again at the next login', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 1000, items = { { name = 'lockpick', count = 2 } } } },
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            Env.players[3]._inventoryFull = true
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}))
+            Env.players[3]._inventoryFull = false
+            eq(lockpicks(3), 0, 'owed: their pockets were full')
+
+            -- The login's retry gives it, and the process dies before the
+            -- line is recorded as settled.
+            s.storage.settleEscrowLine = function() error('process killed', 0) end
+            falsy(pcall(s.escrow.retryPending, f.hitman.cid))
+            eq(lockpicks(3), 2, 'it arrived')
+
+            local _, s2 = restart(mode, s)
+            for _ = 1, 3 do s2.escrow.retryPending(f.hitman.cid) end
+            eq(lockpicks(3), 2, 'and was not given a second time')
+
+            local stuck = s2.admin.interrupted()
+            eq(#stuck, 1, 'listed for staff')
+            eq(stuck[1].why, 'interrupted')
+            eq(stuck[1].intended, f.hitman.cid)
+            truthy(s2.admin.settleLine(0, stuck[1].line, 'delivered'))
+            eq(lockpicks(3), 2, 'settled as delivered, giving nothing')
+            eq(#s2.admin.interrupted(), 0)
+        end)
+    end
+end)
+
+--- /ch-stuck found a line caught mid-release only through the log's
+--- release_interrupted row. Once the log let it go, the line was listed
+--- nowhere: held, kept with its contract for ever, and seen by nobody.
+describe('a line caught mid-release, past the log\'s retention', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is still listed for staff, from the escrow itself', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            truthy(c)
+            local before = money(1)
+            -- Voided by staff: paying the client back, the process dies
+            -- between the credit and the settle.
+            s.storage.settleEscrowLine = function() error('process killed', 0) end
+            falsy(pcall(s.admin.void, 0, c.id, 'test'))
+            eq(money(1) - before, 5000, 'the credit landed')
+
+            local _, s2 = restart(mode, s)
+            eq(#s2.admin.interrupted(), 1, 'listed after the restart')
+
+            s2.audit.flush()
+            Env.time = Env.time + (math.max(Config.Audit.RetentionDays,
+                Config.Audit.ContractRetentionDays) + 1) * 86400
+            s2.storage.prune()
+            -- The json log ages its rows out as the next one is written.
+            s2.audit.action('after_retention', nil, nil, {})
+            s2.audit.flush()
+            for _, row in ipairs(s2.storage.readAudit(1000)) do
+                falsy(row.action == 'release_interrupted', 'the log still has the row')
+            end
+
+            local _, s3 = restart(mode, s2)
+            local stuck = s3.admin.interrupted()
+            eq(#stuck, 1, 'still listed once the log has let its rows go')
+            eq(stuck[1].intended, f.creator.cid)
+            truthy(s3.storage.readContract(c.id), 'the contract is kept while it holds the line')
+            truthy(s3.admin.settleLine(0, stuck[1].line, 'delivered'))
+            eq(money(1) - before, 5000, 'paid once')
+        end)
+
+        --- Put back to held by an older version, which left it only in the log.
+        it(mode .. ': is left for staff the same way when an older version put it back', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            truthy(c)
+            local line = s.storage.readEscrow(c.id)[1]
+            truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+            line = s.storage.readEscrowLine(line.id)
+            line.releasing_to = f.creator.cid
+            s.storage.writeEscrow(c.id, { line })
+            truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
+
+            local _, s2 = restart(mode, s)
+            local stored = s2.storage.readEscrowLine(line.id)
+            truthy(s2.escrow.parked(stored), 'left for staff')
+            eq(stored.owed_to, f.creator.cid, 'owed to whom it was going')
+            local stuck = s2.admin.interrupted()
+            eq(#stuck, 1, 'and listed from the escrow, with no row in the log')
+            eq(stuck[1].why, 'interrupted')
         end)
     end
 end)

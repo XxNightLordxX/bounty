@@ -906,11 +906,14 @@ Config.PendingEscrow = {
     MaxRetriesPerLogin = 5,
     --- Randomised slightly in code so a reconnect wave does not converge.
     LoginRetryDelayMs = 5000,
-    --- Not a setting: an item whose give raises an error is checked against
-    --- the player's inventory. One that arrived counts as delivered. After
-    --- three raises with nothing arriving (counted until staff settle it), or
-    --- one where what arrived cannot be read, it is no longer retried: it
-    --- stays owed and waits for staff in /ch-stuck.
+    --- Not a setting: a payout whose give raises an error (an item, or money)
+    --- is checked against the player's inventory or balance. One that all
+    --- arrived counts as delivered. After three raises with nothing arriving
+    --- (counted until staff settle it), or one where only part arrived or what
+    --- arrived cannot be read, it is no longer retried: it stays owed, with
+    --- any part that arrived recorded, and waits for staff in /ch-stuck, as
+    --- does one the server stopped in the middle of. /ch-settle pay then
+    --- gives only the rest; /ch-settle delivered settles it, giving nothing.
 }
 
 --------------------------------------------------------------------------

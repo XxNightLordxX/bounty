@@ -68,7 +68,7 @@ You said to use my judgement. These are the ones that were mine:
 sh crimson-hitman/tests/all.sh
 ```
 
-- **2,366 server tests** (the run of 20 October 2026) — escrow arithmetic,
+- **2,394 server tests** (the run of 20 October 2026) — escrow arithmetic,
   the state machine, every payout and refund path, deliberate exploit
   attempts, storage conformance across all three backends, and a randomised
   simulation asserting that no sequence of operations creates or destroys

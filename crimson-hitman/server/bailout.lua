@@ -277,10 +277,22 @@ end
 --- simply stopped existing, with an audit row the player cannot see as its
 --- only trace. Util.mintId exists for the documented case of two server
 --- instances sharing one database, where ids collide as a matter of course.
+---
+--- A credit that raised is decided by the balance either side of it
+--- (Util.credit). Arrived: paid, and nothing is owed. Nothing arrived:
+--- owed like a refusal, with the raise counted on the line. Part of it, or
+--- no telling: owed on a line left for staff with what is known, so
+--- nothing gives it again blind; a second owed line for money that had
+--- already arrived paid it twice.
 deliver = function(cid, contractId, amount, account, reason)
     local who = Identity.byCitizenId(cid)
-    if who and Util.credit(who.player, account, amount) then return true end
-    return Bailout.owe(cid, contractId, amount, account, reason) ~= nil
+    local raise
+    if who then
+        local credited, raised, arrived, before = Util.credit(who.player, account, amount)
+        if credited then return true end
+        if raised then raise = { error = raised, arrived = arrived, before = before } end
+    end
+    return Bailout.owe(cid, contractId, amount, account, reason, raise) ~= nil
 end
 
 --- The id of a contract's buyout premium line. One per contract: only one
@@ -449,7 +461,14 @@ end
 
 --- Record money owed to an offline player as a real escrow line, so
 --- Escrow.retryPending can deliver it on their next login (§9.3).
-function Bailout.owe(cid, contractId, amount, account, reason)
+---
+--- `raise` when crediting it raised (deliver), and the line carries it as
+--- Escrow.deliver would have: nothing arrived is one raise, and queued as
+--- usual; part of it, or no telling, is left for staff at once
+--- (Escrow.parked), not queued, with what they held before and the part
+--- that arrived, so a staff pay gives only the rest.
+---@param raise table|nil { error, arrived, before } from Util.credit
+function Bailout.owe(cid, contractId, amount, account, reason, raise)
     -- The id comes from the store's own sequence, not a truncated clock:
     -- two owes in the same second would otherwise share an id and the second
     -- would overwrite the first. And confirmed unused before it is written,
@@ -462,7 +481,7 @@ function Bailout.owe(cid, contractId, amount, account, reason)
         return nil
     end
 
-    Storage.writeEscrow(contractId, { {
+    local line = {
         id = lineId,
         contract_id = contractId,
         slot = 0,                       -- outside the payout slots: not claimable
@@ -473,10 +492,32 @@ function Bailout.owe(cid, contractId, amount, account, reason)
         source = account == 'cash' and 'cash' or 'bank',
         amount = amount,
         state = CH.ESCROW_STATE.HELD,
-    } })
-    Storage.queuePending(cid, contractId, lineId)
-    if Escrow and Escrow.noteWaiting then Escrow.noteWaiting(cid, true) end
-    Audit.financial('owed_queued', cid, contractId, { amount = amount, reason = reason })
+    }
+    local parked = false
+    if raise and Escrow then
+        line.deliver_raises = raise.arrived == 0 and 1 or Escrow.DELIVER_RAISE_LIMIT
+        line.deliver_before = raise.before
+        if raise.arrived and raise.arrived > 0 then line.deliver_arrived = raise.arrived end
+        parked = Escrow.parked(line)
+    end
+    Storage.writeEscrow(contractId, { line })
+    if not parked then
+        Storage.queuePending(cid, contractId, lineId)
+        if Escrow and Escrow.noteWaiting then Escrow.noteWaiting(cid, true) end
+    end
+    Audit.financial('owed_queued', cid, contractId, { amount = amount, reason = reason,
+        error = raise and raise.error, arrived = raise and raise.arrived })
+    if parked then
+        Audit.financial('escrow_deliver_parked', cid, contractId, {
+            line = lineId, source = line.source, amount = amount,
+            raises = line.deliver_raises, unknown = true, before = line.deliver_before,
+            arrived = raise.arrived, review = true,
+        })
+        print(('[crimson-hitman] escrow line %s: crediting %s %s raised, and only part of it '
+            .. 'arrived or what did could not be read; left for staff (/ch-stuck) — check what '
+            .. 'they have')
+            :format(tostring(lineId), tostring(amount), tostring(line.source)))
+    end
     return lineId
 end
 
@@ -500,21 +541,33 @@ function Bailout.returnQueued(contract, reason)
     local amount = tonumber(contract.bailout_paid_amount) or 0
     local account = contract.bailout_paid_account == 'cash' and 'cash' or 'bank'
     local payer = contract.bailout_paid_by
-    local paidTo
+    local paidTo, doubt
 
     if amount > 0 then
         for _, cid in ipairs({ payer, contract.creator_cid }) do
             local who = cid and Identity.byCitizenId(cid)
-            if who and Util.credit(who.player, account, amount) then
-                paidTo = cid
-                break
+            if who then
+                local credited, raised, arrived = Util.credit(who.player, account, amount)
+                if credited then
+                    paidTo = cid
+                    break
+                end
+                -- A credit that raised with some of it there, or no telling
+                -- (Util.credit), is not offered to the next one as well:
+                -- that paid it twice. The row says what is known.
+                if raised and arrived ~= 0 then
+                    doubt = { cid = cid, error = raised, arrived = arrived }
+                    break
+                end
             end
         end
     end
 
     Audit.financial(paidTo and 'bailout_refunded' or 'bailout_refund_stranded',
         payer, contract.id,
-        { amount = amount, account = account, paid_to = paidTo, reason = reason })
+        { amount = amount, account = account, paid_to = paidTo, reason = reason,
+          raised_for = doubt and doubt.cid, error = doubt and doubt.error,
+          arrived = doubt and doubt.arrived, review = doubt and true or nil })
     Bailout.clearQueue(contract.id)
     return paidTo ~= nil
 end

@@ -57,7 +57,14 @@ local function seams(s)
                 local saved = {}
                 for src, p in pairs(Env.players) do
                     saved[src] = p.Functions[fname]
+                    local real = p.Functions[fname]
                     p.Functions[fname] = function(...)
+                        -- qbx_core moves the money before the hooks that
+                        -- can raise, so a raise may come after it moved.
+                        if how == 'throws after' then
+                            real(...)
+                            error(fname .. ' exploded after moving it', 0)
+                        end
                         if how == 'throws' then error(fname .. ' exploded', 0) end
                         return false
                     end
@@ -74,6 +81,7 @@ local function seams(s)
     for _, fname in ipairs({ 'AddMoney', 'RemoveMoney', 'GetMoney' }) do
         for _, how in ipairs({ 'refuses', 'throws' }) do moneySeam(fname, how) end
     end
+    for _, fname in ipairs({ 'AddMoney', 'RemoveMoney' }) do moneySeam(fname, 'throws after') end
 
     local function inventorySeam(fname, how)
         out[#out + 1] = {

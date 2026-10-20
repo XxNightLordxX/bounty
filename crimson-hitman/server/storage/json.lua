@@ -1520,6 +1520,12 @@ function JsonStore.writeEscrow(contractId, lines)
             if incoming.deliver_raises ~= nil then
                 existing.deliver_raises = incoming.deliver_raises
             end
+            if incoming.deliver_before ~= nil then
+                existing.deliver_before = incoming.deliver_before
+            end
+            if incoming.deliver_arrived ~= nil then
+                existing.deliver_arrived = incoming.deliver_arrived
+            end
         else
             if existing then unindexRow(escrowBy, existing, incoming.id) end
             db.escrow[incoming.id] = incoming
