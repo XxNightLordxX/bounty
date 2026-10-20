@@ -97,6 +97,10 @@ CREATE TABLE IF NOT EXISTS crimson_escrow (
     -- rest. NULL when none.
     deliver_before INT,
     deliver_arrived INT,
+    -- Settled by staff without anything given (/ch-settle delivered),
+    -- 'delivered', and who; settled_at says when. NULL on every other line.
+    settled_by_staff VARCHAR(16),
+    settled_staff VARCHAR(64),
     INDEX idx_contract (contract_id),
     INDEX idx_state (state)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

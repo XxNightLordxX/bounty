@@ -243,6 +243,53 @@ describe('storage conformance', function()
         end
     end)
 
+    --- A row with no actor (the console) or no contract, in a batch: the nil
+    --- was skipped as the values were laid out, and every value after it
+    --- landed one column early, the rest of the batch with it. A console
+    --- /ch-settle was logged with its action in the actor's column.
+    it('writes a batch of audit rows missing an actor or a contract column by column', function()
+        for _, b in ipairs(backends()) do
+            if b.store.writeAuditBatch then
+                b.store.writeAuditBatch({
+                    { ts = os.time(), kind = 'financial', action = 'admin_settle_line',
+                      detail = { line = 'ct3:1' } },
+                    { ts = os.time(), kind = 'financial', action = 'escrow_released',
+                      actor_cid = 'HITMAN01', contract_id = 'ct3', detail = { settled = 1 } },
+                })
+                local rows = b.store.auditByAction('admin_settle_line', 10) or {}
+                eq(#rows, 1, b.name .. ': the row is not under its own action')
+                eq(rows[1].actor_cid, nil, b.name)
+                eq(rows[1].detail.line, 'ct3:1', b.name)
+                rows = b.store.auditByAction('escrow_released', 10) or {}
+                eq(#rows, 1, b.name .. ': nor the one after it')
+                eq(rows[1].actor_cid, 'HITMAN01', b.name)
+                eq(rows[1].contract_id, 'ct3', b.name)
+            end
+        end
+    end)
+
+    --- A staff 'delivered' gives nothing, so the line has to say why it is
+    --- settled: written by the settle itself, in the same write.
+    it('keeps a staff delivered on the settled line in every backend', function()
+        for _, b in ipairs(backends()) do
+            for _, id in ipairs({ 'ct4:1', 'ct4:2' }) do
+                b.store.writeEscrow('ct4', { { id = id, contract_id = 'ct4', slot = 1,
+                    portion = CH.PORTION.BASELINE, source = 'cash', amount = 5000,
+                    state = CH.ESCROW_STATE.HELD } })
+                truthy(b.store.claimEscrowLine(id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+            end
+            truthy(b.store.settleEscrowLine('ct4:1', 'HITMAN01',
+                { disposition = 'delivered', by = 'STAFF001' }))
+            truthy(b.store.settleEscrowLine('ct4:2', 'HITMAN01'))
+            local line = b.store.readEscrowLine('ct4:1')
+            eq(line.settled_by_staff, 'delivered', b.name)
+            eq(line.settled_staff, 'STAFF001', b.name .. ': and who')
+            truthy(tonumber(line.settled_at), b.name .. ': and when')
+            eq(b.store.readEscrowLine('ct4:2').settled_by_staff, nil,
+                b.name .. ': a line given as usual says nothing of staff')
+        end
+    end)
+
     it('round-trips an audit detail through the general read too', function()
         for _, b in ipairs(backends()) do
             b.store.writeAudit({

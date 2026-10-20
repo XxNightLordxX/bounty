@@ -34,11 +34,13 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   the player's inventory or balance: delivered if all of it arrived, still
   owed if none did. After three raises with nothing arriving, or at once when
   only part arrived or what arrived cannot be read, it waits for staff in
-  `/ch-stuck`, and so does a payout the server stopped in the middle of;
+  `/ch-stuck`, and so does a payout the server stopped in the middle of,
+  owed to whom that give was going (a hand-back you started included);
   `/ch-stuck` lists them from the escrow itself for as long as they are held.
   A part that arrived is kept on the line, so `/ch-settle <line> pay` gives
   only the rest, and `/ch-settle <line> delivered` settles one that did arrive
-  without giving anything. Nothing is given again blind.
+  without giving anything, recorded on the line itself. Nothing is given
+  again blind.
 - **Staff:** `/ch-contracts`, a contract **Ref** on every card, in-game ACE
   checks that work (`IsPlayerAceAllowed` answers 1, not `true`), `/ch-diag`
   job timings and a photo-address check.
@@ -93,7 +95,8 @@ once, as a user that may, before the first start (it holds the same
 statements, word for word). If a later version needs something that user
 cannot add, the start stops and the console names each thing missing, with
 the `ALTER TABLE` statement to run as a user that may; this version adds the
-column `crimson_escrow.deliver_raises`. A busy server
+columns `crimson_escrow.deliver_raises`, `deliver_before`, `deliver_arrived`,
+`settled_by_staff` and `settled_staff`. A busy server
 (thousands of contracts a month) is better on `mysql` from the start: see
 *Changing storage mode* before switching a server that already has players'
 money in one.
@@ -120,6 +123,14 @@ has run, and refuses to start on an empty `data/` rather than start empty
 without a word; put the old `data/` back and start it again. To start empty on
 purpose, run `set crimson_hitman_new_store 1` in the server console and
 start the resource, then leave it unset.
+
+Payouts an earlier version left owed (to a player who was away, or whose
+pockets were full) still name whom they were being given to, which is what a
+payout the server stopped in the middle of looks like, and the two cannot be
+told apart. So the first start after updating leaves each of them for you in
+`/ch-stuck` instead of giving it at the player's next login: check their
+inventory or balance, then `/ch-settle <line> pay`, or `delivered` if it is
+already there. Payouts owed from then on are given at login as before.
 
 Restarting `lb-phone` is safe: the app comes back on every phone by itself,
 and whether it can place calls and hide a caller's number is asked again, so
@@ -483,7 +494,14 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
   What they hold that cannot be read before the give means nothing is given,
   and it stays owed. A payout the server stopped between naming who it was for
   and recording it as settled waits for you the same way at the next start,
-  owed to that player, rather than being given again at their next login. A
+  rather than being given again at their next login: owed to whom that give
+  was going, so a `/ch-settle <line> return` stopped after the client's credit
+  is owed to the client, never to the hitman it was owed to before. It is
+  left for you before it is put back to held, so a start that stops part-way
+  leaves nothing to be given again. A held line still naming whom it was
+  being given to is left for you the same way (a give that moved nothing no
+  longer names anybody), which at the first start after updating includes
+  the payouts an earlier version left owed (see *Updating*). A
   buyout premium handed back, an anonymity fee refunded and a charge rolled
   back are decided by the balance the same way: once it has arrived it is
   never owed or offered to anybody a second time. Where only part of it
@@ -538,7 +556,7 @@ entry, and `/ch-contracts` lists it for any player.
 | `/ch-whois <contract>` | Who is really behind an anonymous creator or hitman. Needs `crimson.identity`, a separate ACE |
 | `/ch-void <contract> [reason]` | Close a contract and return its escrow to the creator. Any kill photo from it that the creator has not saved to their phone is deleted, including one kept for them in the app |
 | `/ch-stuck` | Escrow lines left for you: a payout whose give raised an error three times with nothing arriving, or once with only part of it arriving or no telling what did, and one the server stopped in the middle of (including one being handed back from a contract that was never placed). Each is still owed to the player named, given by nothing until you settle it, and listed from the escrow itself for as long as it is held, with how much of it arrived and, while the log keeps it, why it was left and when. Who each was paying is shown as a role (the client, an operative) unless you also hold `crimson.identity`. Check their inventory or balance first: `/ch-settle <line> delivered` if it is there, `pay` if it is not. Also lists, while the log keeps its row, a line the server stopped before anything of it was given (`pay` or `return` settles it), and held lines of a contract that was never placed which do not say whose they are (written by an older version) |
-| `/ch-settle <line> pay\|return\|delivered [citizenid]` | Finish one of those by hand. `pay` goes to whom the interrupted payment was for; `return` goes to whoever put the line up, so a hitman's stake goes back to that hitman. Either gives only the part that has not already arrived. `delivered`, only on a line `/ch-stuck` lists as left for you, settles it to whom it was going without giving anything, for one you found already there; it is logged (`admin_settle_line`) like the others. A line that does not say whose it is needs `return <citizenid>` once you know who put it up; the citizen id is refused on any other line. A player who is offline gets it at their next login, and the command says so |
+| `/ch-settle <line> pay\|return\|delivered [citizenid]` | Finish one of those by hand. `pay` goes to the player the line is owed to, as `/ch-stuck` names them (whom the interrupted payment was for; for a `return` the server stopped, the one it was returning to); `return` goes to whoever put the line up, so a hitman's stake goes back to that hitman. Either gives only the part that has not already arrived. `delivered`, only on a line `/ch-stuck` lists as left for you, settles it to that player without giving anything, for one you found already there, and the line itself records it (`settled_by_staff` = `delivered`, `settled_staff` = who, `settled_at` = when). Every settle is logged (`admin_settle_line`) and the log written at once, not at the next flush. A line that does not say whose it is needs `return <citizenid>` once you know who put it up; the citizen id is refused on any other line. A player who is offline gets it at their next login, and the command says so |
 | `/hitmanadmin timers` | Test servers: bring every wait and cooldown forward. Deadlines are only ever moved later, never earlier. `crimson.admin` itself only — the extra ACEs do not open it — and audited |
 
 Faults the phone page hits are reported to the server, printed to the console
@@ -668,7 +686,7 @@ headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
 | Save to Photos keeps the photo in the app instead | `'server'` storage needs a public https address: set `Config.Completion.PhotoPublicUrl` or `web_baseUrl`, and add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. `/ch-diag` says which address it uses and whether it reaches this resource |
 | The startup warning says `Config.Audit.Webhook` is ignored | The URL in `config.lua` has already been sent to every player. Regenerate it in Discord and set the new one in `server.cfg` with `set crimson_hitman_webhook "..."` (never `setr`) |
 | `failed to start: mysql mode cannot start: the database is missing what it needs` | Your database user may not create or alter tables, and something is missing. The lines under it name each table, column, index or engine change, with the database's own reason (error 1142 is a missing privilege). Import `install/sql/crimson_hitman.sql` as a user that may create tables, run the `ALTER TABLE` statements it prints as one that may alter them, or grant this user `CREATE`, `ALTER` and `INDEX` on the database; then `ensure crimson-hitman` |
-| `/ch-stuck` lists a line that "raised an error when they were given, or were being given when the server stopped" | `ox_inventory`'s `AddItem` or `qbx_core`'s `AddMoney` raised giving it (a hook or another resource failing): three times with nothing arriving, or once with only part of it arriving or no telling what did. Or the server stopped while it was being given. It is still owed to that player and nothing gives it again on its own. Check their inventory or balance against what the line says arrived: if it is all there, `/ch-settle <line> delivered`; if not, `/ch-settle <line> pay` gives only what has not arrived. The console and the `escrow_deliver_raised` rows show the error |
+| `/ch-stuck` lists a line that "raised an error when they were given, or were being given when the server stopped" | `ox_inventory`'s `AddItem` or `qbx_core`'s `AddMoney` raised giving it (a hook or another resource failing): three times with nothing arriving, or once with only part of it arriving or no telling what did. Or the server stopped while it was being given, in which case it is owed to whom that give was going (the client, for a `return` you ran). It is still owed to that player and nothing gives it again on its own. Check their inventory or balance against what the line says arrived: if it is all there, `/ch-settle <line> delivered`; if not, `/ch-settle <line> pay` gives only what has not arrived. The console and the `escrow_deliver_raised` rows show the error |
 
 ---
 

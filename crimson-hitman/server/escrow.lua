@@ -1091,6 +1091,11 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
                         and isQueued(line.id)
 
                     line.owed_to = recipientCid
+                    -- Nothing of it moved (Escrow.deliver), so no give is in
+                    -- flight any more: a held line still naming one is what
+                    -- a restart leaves for staff (Recover). One left for
+                    -- staff keeps it: part of it may have moved.
+                    if not Escrow.parked(line) then line.releasing_to = nil end
                     Storage.writeEscrow(contractId, { line })
                     Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD)
                     if Escrow.parked(line) then
@@ -1259,20 +1264,23 @@ end
 
 --- Leave for staff a line a give may already have reached: one a restart
 --- found `releasing` with a recipient written (Recover, and
---- Contracts.recoverNeverPlaced's returnNeverPlaced), once it is back in
---- held. That recipient is written just before the give, and the line is
---- settled just after it, so whether it moved cannot be told from here, and
---- given again it would be twice: an unknown give is never given again
---- (§14.12). Counted at the limit, so nothing gives it until staff settle it
---- (/ch-settle pay, delivered or return); and owed to whoever it was going
---- to, so no other release takes it either, and /ch-stuck lists it from the
---- escrow itself for as long as it is held.
----@param line table as read, back in held
+--- Contracts.recoverNeverPlaced's returnNeverPlaced), before it is put back
+--- in held, or one an older version put back without this. That recipient
+--- is written just before the give, and the line is settled just after it,
+--- so whether it moved cannot be told from here, and given again it would be
+--- twice: an unknown give is never given again (§14.12). Counted at the
+--- limit, so nothing gives it until staff settle it (/ch-settle pay,
+--- delivered or return); and owed to whoever that give was going to, which
+--- is who it may have reached (a staff return the server stopped is owed to
+--- whom it was returning to, not to whom it was owed before), so no other
+--- release takes it either, and /ch-stuck lists it from the escrow itself
+--- for as long as it is held.
+---@param line table as read: still releasing, or held by an older version
 ---@return boolean parked
 function Escrow.parkInterrupted(line)
-    local to = line.owed_to or line.releasing_to
+    local to = line.releasing_to or line.owed_to
     if not to then return false end
-    if Escrow.parked(line) and line.owed_to then return true end
+    if Escrow.parked(line) and line.owed_to == to then return true end
     line.owed_to = to
     line.deliver_raises = math.max(tonumber(line.deliver_raises) or 0, Escrow.DELIVER_RAISE_LIMIT)
     Storage.writeEscrow(line.contract_id, { line })
@@ -1785,6 +1793,12 @@ function Escrow.retryPending(cid)
                     handed = true
                     gone[entry.id] = true
                 else
+                    -- Nothing of it moved: no give in flight, as in
+                    -- Escrow.release, written before it is held again.
+                    if not Escrow.parked(line) then
+                        line.releasing_to = nil
+                        Storage.writeEscrow(line.contract_id, { line })
+                    end
                     Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD)
                     -- That was its last raise: left for staff, off the queue.
                     if Escrow.parked(line) then

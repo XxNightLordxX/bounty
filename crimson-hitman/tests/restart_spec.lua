@@ -2258,5 +2258,492 @@ describe('a line caught mid-release, past the log\'s retention', function()
             eq(#stuck, 1, 'and listed from the escrow, with no row in the log')
             eq(stuck[1].why, 'interrupted')
         end)
+
+        --- Owed and queued as well: it looked like any owed line, so only one
+        --- owed to nobody was left for staff, and the next login gave this
+        --- one again. A held line names whom a give was going to only while
+        --- that give may have happened.
+        it(mode .. ': is left for staff when an older version put back an owed one', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local hitman = Env.players[3]
+            Env.removePlayer(3)
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}))
+            local line = s.storage.readEscrow(c.id)[1]
+            eq(line.owed_to, f.hitman.cid, 'owed: they were away')
+            eq(line.releasing_to, nil, 'a give that moved nothing names nobody')
+            eq(#s.storage.readPending(f.hitman.cid), 1)
+            -- What an older version left when it put it back mid-give.
+            line = s.storage.readEscrowLine(line.id)
+            line.releasing_to = f.hitman.cid
+            s.storage.writeEscrow(c.id, { line })
+
+            local _, s2 = restart(mode, s)
+            Env.players[3], Env.byCitizen[f.hitman.cid] = hitman, 3
+            local before = money(3)
+            for _ = 1, 3 do s2.escrow.retryPending(f.hitman.cid) end
+            eq(money(3), before, 'given again at the next login')
+            truthy(s2.escrow.parked(s2.storage.readEscrowLine(line.id)), 'left for staff')
+            local stuck = s2.admin.interrupted()
+            eq(#stuck, 1)
+            eq(stuck[1].intended, f.hitman.cid)
+        end)
+    end
+end)
+
+--- Kill the process just before its n-th store call from here on (of those
+--- `counts` picks, or of all): that call and every one after it throw, and
+--- whatever ran before it, a credit or an AddItem included, has happened.
+--- Stepping n from 1 dies at every boundary of a sequence, until it is
+--- one past the end: then nothing dies, and the sequence has finished.
+---@param store table the storage module
+---@param n integer
+---@param counts fun(name: string, ...): boolean|nil
+---@return fun(): boolean died whether it was killed
+local function killBefore(store, n, counts)
+    -- Mid-operation by construction, like any process that died; and the
+    -- invariant monitor's own reads are not calls of the process to count.
+    rawset(store, '__rawFixture', true)
+    local seen, dead = 0, false
+    for name, fn in pairs(store) do
+        if type(fn) == 'function' then
+            store[name] = function(...)
+                if not dead and (counts == nil or counts(name, ...)) then
+                    seen = seen + 1
+                    dead = seen >= n
+                end
+                if dead then error('process killed', 0) end
+                return fn(...)
+            end
+        end
+    end
+    return function() return dead end
+end
+
+--- Boot again on the same disk, with that boot killed by killBefore.
+---@return boolean finished the boot ran to its end
+local function restartKilledBefore(mode, old, n, counts)
+    if old and old.storage then rawset(old.storage, '__rawFixture', true) end
+    forgetServerModules()
+    Env.events, Env.clientEvents, Env.notifications = {}, {}, {}
+    Env.handlers, Env.threads, Env.timers, Env.commands = {}, {}, {}, {}
+    Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+    Config.Database.Mode = mode
+    local died = killBefore(require('server.storage.' .. mode), n, counts)
+    pcall(require('server.main').start)
+    return not died()
+end
+
+--- The store calls that read or write one escrow line.
+local function touching(contractId, lineId)
+    return function(name, a, b)
+        if name == 'readEscrow' then return a == contractId end
+        if name == 'claimEscrowLine' or name == 'settleEscrowLine' or name == 'readEscrowLine' then
+            return a == lineId
+        end
+        if name == 'writeEscrow' and a == contractId and type(b) == 'table' then
+            for _, l in ipairs(b) do
+                if l.id == lineId then return true end
+            end
+        end
+        return false
+    end
+end
+
+--- Boot recovery put a line it found mid-give back to held, and only then
+--- left it for staff. A boot that died between the two (or whose park
+--- raised) left it held, owed, queued and not parked, like any owed line:
+--- the next login gave it again, 2 lockpicks became 4, and /ch-stuck listed
+--- nothing. Each boot dies at every boundary of what recovery does to the line.
+describe('a boot that dies while leaving a line for staff', function()
+    local function givenAndDied(mode)
+        local _, s = boot(mode)
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 1000, items = { { name = 'lockpick', count = 2 } } } },
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.players[3]._inventoryFull = true
+        truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}))
+        Env.players[3]._inventoryFull = false
+        local line
+        for _, l in ipairs(s.storage.readEscrow(c.id)) do
+            if l.item == 'lockpick' then line = l end
+        end
+        eq(line.owed_to, f.hitman.cid, 'owed: their pockets were full')
+
+        -- The login's retry gives it, and the process dies before the line
+        -- is recorded as settled.
+        s.storage.settleEscrowLine = function() error('process killed', 0) end
+        falsy(pcall(s.escrow.retryPending, f.hitman.cid))
+        eq(lockpicks(3), 2, 'it arrived')
+        return s, f, c, line
+    end
+
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is never left to be given again, wherever recovery dies', function()
+            local kills = 0
+            for n = 1, 12 do
+                local s, f, c, line = givenAndDied(mode)
+                local finished = restartKilledBefore(mode, s, n, touching(c.id, line.id))
+                local _, s3 = restart(mode, s)
+                for _ = 1, 3 do s3.escrow.retryPending(f.hitman.cid) end
+                eq(lockpicks(3), 2, ('recovery died before its call %d on the line, and the '
+                    .. 'next login gave it again'):format(n))
+                local stuck = s3.admin.interrupted()
+                eq(#stuck, 1, ('died before call %d: not listed for staff'):format(n))
+                eq(stuck[1].intended, f.hitman.cid)
+                truthy(s3.admin.settleLine(0, stuck[1].line, 'delivered'))
+                eq(lockpicks(3), 2)
+                if finished then break end
+                kills = kills + 1
+            end
+            truthy(kills >= 3, 'recovery has to have boundaries to die at')
+        end)
+
+        --- The same for a contract that was never placed (returnNeverPlaced):
+        --- its client was away at the first start and owed the hand-back,
+        --- and the login's retry gave it as the process died.
+        it(mode .. ': a never-placed contract\'s hand-back is not given again either', function()
+            local kills = 0
+            for n = 1, 12 do
+                local _, s = boot(mode)
+                local f = fixture(s)
+                local before = money(1)
+                killAt(s, function(name) return name == 'writeEscrow' end)
+                falsy(pcall(s.contracts.create, f.creator, {
+                    targetCid = 'TARGET01', reason = 'y', reward = { baseline = { bank = 7000 } },
+                }))
+                eq(money(1), before - 7000, 'the crash came after the charge')
+                local creator = Env.players[1]
+                Env.removePlayer(1)
+                local _, s2 = restart(mode, s)
+                local line = s2.storage.orphanEscrow()[1]
+                truthy(line, 'owed to the client, who was away')
+                eq(line.owed_to, f.creator.cid)
+
+                Env.players[1], Env.byCitizen[f.creator.cid] = creator, 1
+                s2.storage.settleEscrowLine = function() error('process killed', 0) end
+                falsy(pcall(s2.escrow.retryPending, f.creator.cid))
+                eq(money(1), before, 'it arrived')
+
+                local finished = restartKilledBefore(mode, s2, n, touching(line.contract_id, line.id))
+                local _, s4 = restart(mode, s2)
+                for _ = 1, 3 do s4.escrow.retryPending(f.creator.cid) end
+                eq(money(1), before, ('recovery died before its call %d on the line, and the '
+                    .. 'next login gave it again'):format(n))
+                local stuck = s4.admin.interrupted()
+                eq(#stuck, 1, ('died before call %d: not listed for staff'):format(n))
+                eq(stuck[1].intended, f.creator.cid)
+                truthy(s4.admin.settleLine(0, stuck[1].line, 'delivered'))
+                eq(money(1), before)
+                if finished then break end
+                kills = kills + 1
+            end
+            truthy(kills >= 3, 'recovery has to have boundaries to die at')
+        end)
+    end
+end)
+
+--- A payout whose give raised three times with nothing arriving, left for
+--- staff. Its hitman's AddMoney raises before anything moves.
+local function parkedPayout(mode)
+    local _, s = boot(mode)
+    local f = fixture(s)
+    local c = s.contracts.create(f.creator, {
+        targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+        reward = { baseline = { cash = 5000 } },
+    })
+    truthy(c)
+    truthy(s.contracts.accept(f.hitman, c.id, false))
+    local hitman, creator = money(3), money(1)
+    local p = Env.players[3]
+    local real = p.Functions.AddMoney
+    p.Functions.AddMoney = function() error('AddMoney hook raised', 0) end
+    truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}))
+    for _ = 1, 3 do s.escrow.retryPending(f.hitman.cid) end
+    p.Functions.AddMoney = real
+    local line = s.storage.readEscrow(c.id)[1]
+    truthy(s.escrow.parked(line), 'left for staff')
+    eq(line.owed_to, f.hitman.cid)
+    eq(money(3), hitman, 'nothing arrived')
+    return s, f, c, line, hitman, creator
+end
+
+local function auditRows(s, action)
+    local out = {}
+    for _, row in ipairs(s.storage.auditByAction(action, 100) or {}) do out[#out + 1] = row end
+    return out
+end
+
+--- Staff hand a parked payout back to the client, and the process dies part
+--- of the way. Parked to whom it was owed before rather than whom the return
+--- was crediting, /ch-stuck named the hitman, delivered and pay answered
+--- locked, a second return paid the client 10,000, and after the log let its
+--- row go a pay gave the hitman 5,000 as well: 10,000 out of a 5,000 line.
+describe('a staff return the server stops part-way', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is left owed to whom it was returning to, and settled once', function()
+            local kills = 0
+            for n = 1, 20 do
+                local s, f, _, line, hitman, creator = parkedPayout(mode)
+                local died = killBefore(s.storage, n)
+                pcall(s.admin.settleLine, 0, line.id, 'return')
+
+                local _, s2 = restart(mode, s)
+                local arrived = money(1) - creator
+                if s2.storage.readEscrowLine(line.id).state ~= CH.ESCROW_STATE.SETTLED then
+                    -- What staff do: check the client, then settle it.
+                    local stuck = s2.admin.interrupted()
+                    eq(#stuck, 1, ('died before call %d: not listed for staff'):format(n))
+                    if arrived == 5000 then
+                        eq(stuck[1].intended, f.creator.cid, ('died before call %d, after the '
+                            .. 'credit: owed to whom it was being returned to'):format(n))
+                        local settled, why = s2.admin.settleLine(0, line.id, 'delivered')
+                        truthy(settled, ('died before call %d: delivered refused (%s)')
+                            :format(n, tostring(why)))
+                    else
+                        eq(arrived, 0)
+                        truthy(s2.admin.settleLine(0, line.id, 'return'))
+                    end
+                end
+                eq(money(1) - creator, 5000, ('died before call %d: not handed back once')
+                    :format(n))
+                eq(money(3), hitman, 'and none of it paid to the hitman')
+                eq(select(2, s2.admin.settleLine(0, line.id, 'pay')), CH.ERR.ALREADY_SETTLED)
+                eq(money(3), hitman, 'nor by a pay after it')
+
+                if not died() then
+                    -- Finished, and the process went straight after.
+                    eq(#auditRows(s2, 'admin_settle_line'), 1, 'the return was not logged')
+                    break
+                end
+                kills = kills + 1
+            end
+            truthy(kills >= 6, 'a return has to have boundaries to die at')
+        end)
+
+        --- After the log has let the row go, a pay still goes nowhere but
+        --- to whom the line is owed.
+        it(mode .. ': is never paid to the hitman once the log has let it go', function()
+            local s, f, _, line, hitman, creator = parkedPayout(mode)
+            -- Dies between the client's credit and the settle.
+            s.storage.settleEscrowLine = function() error('process killed', 0) end
+            falsy(pcall(s.admin.settleLine, 0, line.id, 'return'))
+            eq(money(1) - creator, 5000, 'the credit landed')
+
+            local _, s2 = restart(mode, s)
+            s2.audit.flush()
+            Env.time = Env.time + (math.max(Config.Audit.RetentionDays,
+                Config.Audit.ContractRetentionDays) + 1) * 86400
+            s2.storage.prune()
+            s2.audit.action('after_retention', nil, nil, {})
+            s2.audit.flush()
+            eq(#auditRows(s2, 'release_interrupted'), 0, 'the log still has the row')
+
+            local _, s3 = restart(mode, s2)
+            eq(s3.storage.readEscrowLine(line.id).owed_to, f.creator.cid)
+            Env.removePlayer(1)
+            local ok, note = s3.admin.settleLine(0, line.id, 'pay')
+            truthy(ok)
+            eq(note, 'queued', 'to the client it is owed to')
+            eq(money(3), hitman, 'the hitman was paid the line the client already had')
+        end)
+
+        --- Left for staff by a restart mid-give to the hitman, and again by a
+        --- return whose credit to the client raised part-way: owed to the
+        --- client now, while the log's row from the restart still names the
+        --- hitman. Who it went to was read from that row first, so delivered
+        --- and pay were refused on a line /ch-stuck said was the client's.
+        it(mode .. ': is settled to whom it is owed now, not whom the log first named', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local away = Env.players[3]
+            Env.removePlayer(3)
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}))
+            Env.players[3], Env.byCitizen[f.hitman.cid] = away, 3
+            local hitman, creator = money(3), money(1)
+
+            -- The login's retry names the hitman, and the process dies
+            -- before anything is given.
+            killAt(s, function(name, _, lines)
+                return name == 'writeEscrow' and type(lines) == 'table' and lines[1] ~= nil
+                    and lines[1].releasing_to == f.hitman.cid
+            end)
+            falsy(pcall(s.escrow.retryPending, f.hitman.cid))
+            local _, s2 = restart(mode, s)
+            s2.audit.flush()
+            local line = s2.storage.readEscrow(c.id)[1]
+            truthy(s2.escrow.parked(line), 'left for staff')
+            eq(#auditRows(s2, 'release_interrupted'), 1, 'and the log names the hitman')
+
+            -- Nothing reached the hitman, so staff hand it back; the client's
+            -- credit raises with 2,000 of it there.
+            local p = Env.players[1]
+            local real = p.Functions.AddMoney
+            p.Functions.AddMoney = function(account, _, reason)
+                real(account, 2000, reason)
+                error('AddMoney hook raised', 0)
+            end
+            s2.admin.settleLine(0, line.id, 'return')
+            p.Functions.AddMoney = real
+            local stored = s2.storage.readEscrowLine(line.id)
+            truthy(s2.escrow.parked(stored), 'left for staff again')
+            eq(stored.owed_to, f.creator.cid)
+            eq(s2.admin.interrupted()[1].intended, f.creator.cid)
+
+            local settled, why = s2.admin.settleLine(0, line.id, 'pay')
+            truthy(settled, 'refused: ' .. tostring(why))
+            eq(money(1) - creator, 5000, 'the rest to the client it is owed to')
+            eq(money(3), hitman, 'and nothing to the hitman')
+        end)
+    end
+end)
+
+--- A staff 'delivered' gives nothing, and its only record was a row in the
+--- audit queue: a crash inside the flush interval left a settled line that
+--- reached nobody, and nothing saying why.
+describe('a staff delivered the server stops part-way', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is recorded on the line itself, wherever it dies', function()
+            local kills = 0
+            for n = 1, 12 do
+                local s, _, _, line, hitman = parkedPayout(mode)
+                Env.addPlayer({ source = 7, citizenid = 'STAFF001', license = 'license:st' })
+                local died = killBefore(s.storage, n)
+                pcall(s.admin.settleLine, 7, line.id, 'delivered')
+
+                local _, s2 = restart(mode, s)
+                local stored = s2.storage.readEscrowLine(line.id)
+                if stored.state ~= CH.ESCROW_STATE.SETTLED then
+                    truthy(s2.escrow.parked(stored), ('died before call %d: no longer left for '
+                        .. 'staff'):format(n))
+                    eq(#s2.admin.interrupted(), 1)
+                    truthy(s2.admin.settleLine(7, line.id, 'delivered'))
+                    stored = s2.storage.readEscrowLine(line.id)
+                end
+                eq(stored.state, CH.ESCROW_STATE.SETTLED)
+                eq(stored.settled_by_staff, 'delivered', ('died before call %d: settled with '
+                    .. 'nothing given, and nothing on the line says why'):format(n))
+                eq(stored.settled_staff, 'STAFF001', 'and by whom')
+                truthy(tonumber(stored.settled_at), 'and when')
+                eq(money(3), hitman, 'nothing given')
+
+                if not died() then
+                    eq(#auditRows(s2, 'admin_settle_line'), 1, 'the log lost it with the process')
+                    break
+                end
+                kills = kills + 1
+            end
+            truthy(kills >= 2, 'a delivered has to have boundaries to die at')
+        end)
+    end
+end)
+
+--- A buyout handed back (another settle held the contract) whose credit
+--- raised with part of it there, and no id left to owe the rest under: the
+--- row staff are told by said nothing of the part that arrived, so a hand
+--- refund of all of it overpaid by that part.
+describe('a buyout hand-back stranded part-way', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': says how much of it arrived', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            Env.players[2].PlayerData.money.bank = 100000
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000,
+            })
+            truthy(c)
+            local before = money(2)
+            local p = Env.players[2]
+            local real = p.Functions.AddMoney
+            p.Functions.AddMoney = function(account, _, reason)
+                real(account, 6000, reason)
+                error('AddMoney hook raised', 0)
+            end
+            local realNext = s.storage.nextId
+            s.storage.nextId = function(prefix)
+                if prefix == 'owe' then return nil end
+                return realNext(prefix)
+            end
+            local ok, why = s.contracts.serialized({ 'settle:' .. c.id }, function()
+                return s.bailout.buy(f.target, c.id)
+            end)
+            p.Functions.AddMoney = real
+            falsy(ok, 'another settle held it')
+            eq(why, CH.ERR.BUSY)
+            eq(money(2), before - 15000 + 6000, 'part of it back')
+
+            -- The tick's flush, to the disk.
+            s.audit.flush()
+            s.storage.flush()
+            local _, s2 = restart(mode, s)
+            local rows = auditRows(s2, 'bailout_refund_stranded')
+            eq(#rows, 1, 'staff are told')
+            eq(rows[1].detail.arrived, 6000, 'with the part that arrived, so they hand over '
+                .. 'only the rest')
+        end)
+    end
+end)
+
+--- A login retry that finds the pockets still full gives nothing, and it
+--- left the line naming whom it was going to: what a restart leaves for
+--- staff as a give that may have happened. Every payout still owed at a
+--- restart would have waited for staff instead of the player's next login.
+describe('a login retry that gives nothing, then a restart', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is given at the next login, once, wherever it dies', function()
+            local kills = 0
+            for n = 1, 20 do
+                local _, s = boot(mode)
+                local f = fixture(s)
+                local c = s.contracts.create(f.creator, {
+                    targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                    reward = { baseline = { cash = 1000, items = { { name = 'lockpick', count = 2 } } } },
+                })
+                truthy(c)
+                truthy(s.contracts.accept(f.hitman, c.id, false))
+                Env.players[3]._inventoryFull = true
+                truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}))
+
+                -- The login's retry, with no room yet, dies at call n.
+                local died = killBefore(s.storage, n)
+                pcall(s.escrow.retryPending, f.hitman.cid)
+                Env.players[3]._inventoryFull = false
+
+                local _, s2 = restart(mode, s)
+                for _ = 1, 3 do s2.escrow.retryPending(f.hitman.cid) end
+                local stuck = s2.admin.interrupted()
+                if #stuck > 0 then
+                    -- Caught naming the hitman before it was known that
+                    -- nothing moved: left for staff, whose pay gives it.
+                    eq(lockpicks(3), 0, ('died before call %d: given and left for staff')
+                        :format(n))
+                    truthy(s2.admin.settleLine(0, stuck[1].line, 'pay'))
+                end
+                eq(lockpicks(3), 2, ('died before call %d: not given once'):format(n))
+                if not died() then
+                    eq(#stuck, 0, 'a give that moved nothing was left for staff')
+                    break
+                end
+                kills = kills + 1
+            end
+            truthy(kills >= 4, 'a retry has to have boundaries to die at')
+        end)
     end
 end)

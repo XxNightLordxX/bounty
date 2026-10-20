@@ -119,11 +119,14 @@ end
 local settleUnlocked, deliver
 
 --- Hand back a premium nothing of this buyout recorded, rather than let it
---- vanish.
+--- vanish. Stranded, the row says how much of it arrived when the credit
+--- raised, so staff hand over only the rest.
 local function handBack(cid, contractId, amount, account, why)
-    if not deliver(cid, contractId, amount, account, 'bailout_refund') then
+    local delivered, raise = deliver(cid, contractId, amount, account, 'bailout_refund')
+    if not delivered then
         Audit.financial('bailout_refund_stranded', cid, contractId,
-            { amount = amount, account = account, reason = why })
+            { amount = amount, account = account, reason = why,
+              error = raise and raise.error, arrived = raise and raise.arrived })
     end
 end
 
@@ -284,6 +287,8 @@ end
 --- no telling: owed on a line left for staff with what is known, so
 --- nothing gives it again blind; a second owed line for money that had
 --- already arrived paid it twice.
+---@return boolean placed in their hands or on the books
+---@return table|nil raise { error, arrived, before } when the credit raised
 deliver = function(cid, contractId, amount, account, reason)
     local who = Identity.byCitizenId(cid)
     local raise
@@ -292,7 +297,7 @@ deliver = function(cid, contractId, amount, account, reason)
         if credited then return true end
         if raised then raise = { error = raised, arrived = arrived, before = before } end
     end
-    return Bailout.owe(cid, contractId, amount, account, reason, raise) ~= nil
+    return Bailout.owe(cid, contractId, amount, account, reason, raise) ~= nil, raise
 end
 
 --- The id of a contract's buyout premium line. One per contract: only one

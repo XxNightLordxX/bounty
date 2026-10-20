@@ -453,12 +453,20 @@ end
 --- returning a stuck `releasing` line to `held`, or a second server
 --- instance on the same database — which is a line paid twice and recorded
 --- once.
-function Memory.settleEscrowLine(id, recipientCid)
+---
+--- `staff` when staff settled it without giving anything (/ch-settle
+--- delivered): { disposition = 'delivered', by = who }, kept on the line in
+--- the same write, so it is never settled without a record of why.
+function Memory.settleEscrowLine(id, recipientCid, staff)
     local line = db.escrow[id]
     if not line or line.state ~= CH.ESCROW_STATE.RELEASING then return false end
     line.state = CH.ESCROW_STATE.SETTLED
     line.settled_to = recipientCid
     line.settled_at = os.time()
+    if staff then
+        line.settled_by_staff = staff.disposition
+        line.settled_staff = staff.by
+    end
     return true
 end
 

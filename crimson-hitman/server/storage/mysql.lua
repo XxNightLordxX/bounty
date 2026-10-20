@@ -125,6 +125,11 @@ local SCHEMA = {
         -- none.
         deliver_before INT,
         deliver_arrived INT,
+        -- Settled by staff without anything given (/ch-settle delivered),
+        -- 'delivered', and who; settled_at says when. Added to existing
+        -- databases by migrate; NULL on every other line.
+        settled_by_staff VARCHAR(16),
+        settled_staff VARCHAR(64),
         INDEX idx_contract (contract_id),
         INDEX idx_state (state)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
@@ -1148,11 +1153,13 @@ end
 --- returning a stuck `releasing` line to `held`, or a second server
 --- instance on the same database — which is a line paid twice and recorded
 --- once.
-function MySQLStore.settleEscrowLine(id, recipientCid)
+--- `staff`: see the memory backend. In the same statement as the settle.
+function MySQLStore.settleEscrowLine(id, recipientCid, staff)
     local affected = db.update(
-        'UPDATE crimson_escrow SET state = ?, settled_to = ?, settled_at = ? '
-        .. 'WHERE id = ? AND state = ?',
-        { CH.ESCROW_STATE.SETTLED, recipientCid, os.time(), id, CH.ESCROW_STATE.RELEASING })
+        'UPDATE crimson_escrow SET state = ?, settled_to = ?, settled_at = ?, '
+        .. 'settled_by_staff = ?, settled_staff = ? WHERE id = ? AND state = ?',
+        { CH.ESCROW_STATE.SETTLED, recipientCid, os.time(), staff and staff.disposition,
+          staff and staff.by, id, CH.ESCROW_STATE.RELEASING })
     return (tonumber(affected) or 0) > 0
 end
 
@@ -1487,7 +1494,11 @@ function MySQLStore.writeAuditBatch(entries)
     for i = 1, #entries do
         local row = auditParams(entries[i])
         groups[i] = '(?,?,?,?,?,?)'
-        for j = 1, 6 do params[#params + 1] = row[j] end
+        -- By position, as writeAudit's are: a row with no actor or no
+        -- contract (a console /ch-settle, a system row) has a NULL in that
+        -- column. Appended, the nil was skipped, and every value after it
+        -- landed one column early, the rest of the batch with it.
+        for j = 1, 6 do params[(i - 1) * 6 + j] = row[j] end
     end
     db.query('INSERT INTO crimson_audit (ts, kind, action, actor_cid, contract_id, detail) '
         .. 'VALUES ' .. table.concat(groups, ','), params)

@@ -429,6 +429,14 @@ function Admin.void(src, contractId, reason)
     return true
 end
 
+--- The log written now, and on json to the disk as well, rather than at the
+--- next tick: a staff settlement is the record of money moved by hand, and
+--- a crash inside the flush interval lost it with the queue.
+local function logNow()
+    Audit.flush()
+    if Storage.flush then pcall(Storage.flush) end
+end
+
 --- Settle one interrupted line deliberately: either to the person it was
 --- being paid to, or back to the contract's creator, or, for a line left for
 --- staff (Escrow.parked), as already delivered to the person it was being
@@ -468,28 +476,41 @@ function Admin.settleLine(src, lineId, disposition, owner)
         return false, CH.ERR.NOT_FOUND
     end
 
-    -- Who it goes to. `settled_to` is who the interrupted release was
-    -- paying; without one there is nobody to pay and it can only go back.
+    -- Who it goes to, read off the line itself. Pay and delivered go to
+    -- whom it is owed: a line left for staff is owed to whom its give was
+    -- for, and one a restart found mid-give to whom that give was going
+    -- (Escrow.parkInterrupted), a staff return included, which is the only
+    -- party it can have reached and the one /ch-stuck names. Taken from the
+    -- log's release_interrupted row first, a return the server stopped after
+    -- the client's credit was refused for delivered and pay, and once the log
+    -- let the row go, a pay gave the hitman the same money as well.
     -- `releasing_to` is written before the money moves, so a line caught
-    -- mid-release at a shutdown still names who it was going to.
+    -- mid-release still names who it was going to. Only a line that names
+    -- nobody, written before lines did, goes to whom the log names.
     --
-    -- Pay goes to whom the interrupted release was paying, as the log
-    -- recorded it when it was interrupted. owed_to and releasing_to are
-    -- rewritten by every later release, so a 'return' that queued for an
-    -- offline creator made a 'pay' after it go to the creator too.
+    -- A line not left for staff that is owed to somebody other than the
+    -- log's row names was queued for them since: a 'return' to an offline
+    -- creator, and a 'pay' after it would go to the creator as well.
     --
     -- Return goes to whoever put the line up. A stake is the hitman's own
     -- money: returned "to the creator", an interrupted stake was handed to
     -- the one party it was never theirs to take. A line owed to somebody
     -- has no payer this can name.
+    local parked = Escrow.parked(line)
     local recipient
     if disposition == 'pay' or disposition == 'delivered' then
-        local recorded
-        local rows = Storage.auditByAction('release_interrupted', 1000) or {}
-        for i = #rows, 1, -1 do
-            if (rows[i].detail or {}).line == lineId then recorded = rows[i].actor_cid; break end
+        recipient = line.owed_to or line.releasing_to
+        if not parked then
+            local recorded
+            local rows = Storage.auditByAction('release_interrupted', 1000) or {}
+            for i = #rows, 1, -1 do
+                if (rows[i].detail or {}).line == lineId then recorded = rows[i].actor_cid; break end
+            end
+            if recipient and recorded and recorded ~= recipient then
+                return false, CH.ERR.LOCKED
+            end
+            recipient = recipient or recorded
         end
-        recipient = recorded or line.owed_to or line.releasing_to or line.settled_to
     elseif line.portion == CH.PORTION.OWED then
         return false, CH.ERR.INVALID_INPUT
     elseif owner then
@@ -505,7 +526,6 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- to somebody else would take it off them. A line left for staff is
     -- owed to whoever its give was for and queued for nobody, and handing it
     -- back instead is exactly the question staff were left.
-    local parked = Escrow.parked(line)
     if line.owed_to and line.owed_to ~= recipient
         and not (parked and disposition == 'return') then
         return false, CH.ERR.LOCKED
@@ -517,19 +537,26 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- through the same compare-and-set as every release, so it cannot settle
     -- a line something else is paying. Only a line left for staff: any other
     -- is given by the normal paths, and settling one unpaid would lose it.
+    --
+    -- Recorded on the line by the settle itself (settled_by_staff, who, and
+    -- settled_at), and the log written at once: a line that left escrow and
+    -- reached nobody here, with its only record a row in the audit queue,
+    -- had no record at all after a crash inside the flush interval.
     if disposition == 'delivered' then
         if not parked then return false, CH.ERR.INVALID_INPUT end
         local claimed = Storage.claimEscrowLine(lineId, CH.ESCROW_STATE.HELD,
             CH.ESCROW_STATE.RELEASING)
-        local settled = claimed and Storage.settleEscrowLine(lineId, recipient)
+        local settled = claimed and Storage.settleEscrowLine(lineId, recipient,
+            { disposition = disposition, by = callerCid(src) or 'console' })
         Audit.financial('admin_settle_line', callerCid(src), line.contract_id,
             { line = lineId, disposition = disposition, recipient = recipient,
               settled = settled and 1 or 0, pending = 0, given = 0,
               arrived = line.deliver_arrived, before = line.deliver_before })
-        if settled then return true, nil end
-        if claimed then
+        if claimed and not settled then
             Audit.financial('escrow_settle_lost', recipient, line.contract_id, { line = lineId })
         end
+        logNow()
+        if settled then return true, nil end
         return false, CH.ERR.LOCKED
     end
 
@@ -556,6 +583,7 @@ function Admin.settleLine(src, lineId, disposition, owner)
         { line = lineId, disposition = disposition, recipient = recipient,
           named_by_staff = owner and true or nil, settled = settled, pending = pending,
           unparked = unparked })
+    logNow()
 
     -- Queued is done: it is theirs, delivered at their next login. It was
     -- reported as "Could not settle it", so staff settled it again.

@@ -1351,7 +1351,8 @@ end
 --- Every line here was held under this key or by the boot, so one found
 --- `releasing` is a release a crash or a throw stopped. Put back to held as
 --- Recover does: paid on if it had not reached anybody yet, and left for
---- staff (/ch-stuck) if it may already have been.
+--- staff (/ch-stuck) if it may already have been, parked before it is put
+--- back so no moment between the two leaves it to be given again.
 ---@param contractId string
 ---@return integer returned lines handed back or queued
 local function returnNeverPlaced(contractId)
@@ -1360,21 +1361,24 @@ local function returnNeverPlaced(contractId)
 
     local returned, reported = 0, nil
     for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
+        -- Never given again on its own (Escrow.parkInterrupted): parked while
+        -- still `releasing`, then put back.
+        local interrupted = line.state == CH.ESCROW_STATE.RELEASING and line.releasing_to ~= nil
+        if interrupted then Escrow.parkInterrupted(line) end
         if line.state == CH.ESCROW_STATE.RELEASING
             and Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD) then
             line.state = CH.ESCROW_STATE.HELD
-            if line.releasing_to then
+            if interrupted then
                 print(('[crimson-hitman] escrow line %s of a contract never placed was mid-release; '
                     .. 'returned to held and left for staff (/%s) — check whether it was already '
                     .. 'paid'):format(tostring(line.id), tostring(Config.Admin.Commands.stuck)))
                 Audit.financial('release_interrupted', line.releasing_to, contractId,
                     { line = line.id, amount = line.amount, review = true })
-                -- Never given again on its own (Escrow.parkInterrupted).
-                Escrow.parkInterrupted(line)
             end
-        elseif line.state == CH.ESCROW_STATE.HELD and line.releasing_to and not line.owed_to
+        elseif line.state == CH.ESCROW_STATE.HELD and line.releasing_to
             and not Escrow.parked(line) then
-            -- Put back to held by an older version: left for staff the same way.
+            -- Put back to held without being parked, by an older version:
+            -- left for staff the same way (Recover).
             Escrow.parkInterrupted(line)
         end
 

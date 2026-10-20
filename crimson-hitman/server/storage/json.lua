@@ -1614,12 +1614,17 @@ end
 --- returning a stuck `releasing` line to `held`, or a second server
 --- instance on the same database — which is a line paid twice and recorded
 --- once.
-function JsonStore.settleEscrowLine(id, recipientCid)
+--- `staff`: see the memory backend.
+function JsonStore.settleEscrowLine(id, recipientCid, staff)
     local line = db.escrow[id]
     if not line or line.state ~= CH.ESCROW_STATE.RELEASING then return false end
     line.state = CH.ESCROW_STATE.SETTLED
     line.settled_to = recipientCid
     line.settled_at = os.time()
+    if staff then
+        line.settled_by_staff = staff.disposition
+        line.settled_staff = staff.by
+    end
     touch(true, line.contract_id)
     return true
 end
