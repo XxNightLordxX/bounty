@@ -58,6 +58,23 @@ ConfigDefaults.BlockOffDuty = true
 --- needs a switch an operator can reach without waiting for a patch.
 ConfigDefaults.HideAppFromBlockedJobs = true
 
+--- How the app reaches players' phones.
+ConfigDefaults.App = {
+    --- Put the app on every eligible player's home screen (lb-phone's
+    --- defaultApp), rather than leaving each of them to find Crimson-Hitman
+    --- in the phone's App Store and download it. Off by default: it is a
+    --- criminal app, and a player goes looking for it. Nothing tells a
+    --- player it exists, though — a target included, whose alert says a
+    --- price is on their head and whose only answer to it (On me, the
+    --- buyout) is in this app — so say so in your server's guide, or turn
+    --- this on. lb-phone does not let a player remove an app installed this
+    --- way. Barred jobs never get it either way (HideAppFromBlockedJobs).
+    --- Read by each player's game when the app is added to their phone, so
+    --- a change reaches them when this resource or lb-phone next restarts,
+    --- or when they next join.
+    DefaultInstalled = false,
+}
+
 --------------------------------------------------------------------------
 -- Reward sources (§3.4)
 --------------------------------------------------------------------------
@@ -384,12 +401,16 @@ ConfigDefaults.Completion = {
     --- 'server' storage only: how big a kill photo may be. The app shrinks
     --- the photo until its longest side is at most PhotoMaxSide pixels
     --- (320 to 4096) and it weighs at most PhotoMaxBytes bytes (50000 to
-    --- 4000000), and the server refuses anything bigger. Every photo is
+    --- 1500000), and the server refuses anything bigger. Every photo is
     --- sent to the server and, when opened, back out to the client's phone,
     --- so keep these modest: the defaults give a clear photo of a few
-    --- hundred kilobytes. The server also decodes each photo it keeps, in
-    --- Lua on its main thread: about 60ms at the default size, half a
-    --- second at the largest, once per kill.
+    --- hundred kilobytes, which takes about four seconds each way (FXServer
+    --- moves these no faster than about 150 KB a second), and the largest
+    --- about ten. The server also decodes each photo it keeps, in Lua on
+    --- its main thread, and encodes it again to show it: about 80ms each at
+    --- the default size, a fifth of a second at the largest — once per kill,
+    --- and once per opening of a photo kept in the app (the last few are
+    --- remembered, so opening one again is free).
     PhotoMaxSide = 1280,
     PhotoMaxBytes = 600000,
 

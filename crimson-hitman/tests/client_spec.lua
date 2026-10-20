@@ -74,6 +74,37 @@ describe('the client on an ordinary phone', function()
             .. tostring(registered.ui))
     end)
 
+    --- In the App Store unless the owner puts it on every phone. It was a
+    --- hard-coded false, with nothing in the README or the config to say
+    --- players have to go and download it.
+    it('puts the app on the home screen only when the owner says to', function()
+        local function registered(app)
+            local real = Config.App
+            Config.App = app
+            Env.reset()
+            Client.boot()
+            Natives.resourceStates = { ['lb-phone'] = 'started' }
+            Client.fire('crimson-hitman:access', true)
+            Client.runThreads()
+            Config.App = real
+            local spec
+            for _, call in ipairs(Client.phone) do
+                if call.call == 'AddCustomApp' then spec = call.spec end
+            end
+            return spec
+        end
+
+        eq(registered(Config.App).defaultApp, false, 'as shipped, players download it')
+        eq(Config.App.DefaultInstalled, false, 'and that is what the shipped config says')
+        eq(registered({ DefaultInstalled = true }).defaultApp, true,
+            'on every eligible phone when the owner turns it on')
+        eq(registered({ DefaultInstalled = 'yes' }).defaultApp, false,
+            'only a real true turns it on')
+        eq(registered(nil).defaultApp, false,
+            'a config from before the setting reads as the shipped default; the '
+            .. 'server fills missing sections only on its own side')
+    end)
+
     it('forwards a push to the app', function()
         Env.reset()
         Client.boot()
@@ -270,6 +301,12 @@ describe('the client handed something it did not expect', function()
             if call.call == 'SendCustomAppMessage' then forwarded = call end
         end
         truthy(forwarded, 'and the open app is told about it')
+        eq(forwarded.message.event, 'mine')
+        eq(forwarded.message.ok, true)
+        -- Told, and no more: the page acts only on pushes, and every reply
+        -- it uses reaches it once, as the answer to its own fetch. Mirrored
+        -- in full, a board of fifteen headshots crossed the bridge twice.
+        eq(forwarded.message.data, nil, 'a reply reaches the page once, as its answer')
     end)
 end)
 
@@ -881,6 +918,16 @@ describe('a kill photo kept on the server, on its way to the client', function()
         eq(Client.answer.data.handle, 'ph00000000aa')
         eq(Client.answerCount, 1)
 
+        -- And tells the server it is here, which sends one photo at a time
+        -- and otherwise waits out the minute.
+        local said
+        for _, sent in ipairs(Client.toServer) do
+            if sent.name == 'crimson-hitman:photoArrived' then said = sent end
+        end
+        truthy(said, 'the server is told the photo landed')
+        eq(said.args[1], 'ph00000000aa', 'naming it, and nothing else')
+        falsy(said.latent)
+
         for _, call in ipairs(Client.phone) do
             if call.call == 'SendCustomAppMessage' then
                 falsy(tostring(call.message.data and call.message.data.src or ''):find('base64', 1, true),
@@ -937,6 +984,10 @@ describe('a kill photo kept on the server, on its way to the client', function()
             src = 'https://elsewhere.example/x.png' })
         Client.fire('crimson-hitman:photoImage', 'nonsense')
         falsy(Client.answered, 'another handle, a link and junk are none of them the photo')
+        for _, sent in ipairs(Client.toServer) do
+            falsy(sent.name == 'crimson-hitman:photoArrived' and sent.args[1] == 'ph00000000aa',
+                'and none of them is reported as the photo arriving')
+        end
     end)
 
     it('tells the page when the photo never arrives', function()

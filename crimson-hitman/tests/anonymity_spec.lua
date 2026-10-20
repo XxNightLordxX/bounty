@@ -295,7 +295,7 @@ describe('a contract placed on somebody, two worlds apart', function()
             eq(after.nearby.closed, true, 'and the nearby list closes')
             local alerted = false
             for _, event in ipairs(after.events) do
-                if event.name == 'crimson-hitman:notify'
+                if Natives.isNotice(event)
                     and tostring(event.args[1].content):find('eyes on you', 1, true) then
                     alerted = true
                 end

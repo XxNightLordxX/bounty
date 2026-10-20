@@ -421,9 +421,9 @@ describe('replies arriving in a runtime that does not keep order', function()
     end)
 
     it('still tells the app about a reply nobody is waiting for', function()
-        -- A reply whose request has already timed out, or a push the server
-        -- sends unprompted. The page renders on these, so losing them is a
-        -- screen that never updates.
+        -- A reply whose request has already timed out. The page is told a
+        -- reply came — the event, ok and err, never its data — and acts
+        -- only on pushes, so this is a courtesy that must not throw.
         ready()
         truthy(Client.fire('crimson-hitman:result',
             { rid = 4242, event = 'list', ok = true, data = {} }),

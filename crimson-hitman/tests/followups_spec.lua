@@ -1116,7 +1116,7 @@ describe('endings reach the phone, not only an open app', function()
     local function told(src)
         local out = {}
         for _, event in ipairs(Env.clientEvents) do
-            if event.name == 'crimson-hitman:notify' and event.target == src then
+            if Natives.isNotice(event) and event.target == src then
                 out[#out + 1] = event.args[1]
             end
         end
@@ -1193,6 +1193,187 @@ describe('endings reach the phone, not only an open app', function()
         eq(creator[1].title, 'Operative walked away')
         truthy(creator[1].content:find('Their $2000 stake is yours. It is back on the board.', 1, true),
             creator[1].content)
+    end)
+end)
+
+--- lb-phone keeps a notification in the phone's list only when its server
+--- export is given a phone number; its client export, which every notice
+--- went through, shows a popup that is never saved. A receipt, a target's
+--- alert or a stake forfeited was gone once it faded, and a notice kept for
+--- a player's next login reached them before their phone had loaded.
+describe('a notification is kept on the phone', function()
+    local function sent(src)
+        local saved, popups = {}, {}
+        for _, event in ipairs(Env.clientEvents) do
+            if event.target == src and event.name == 'lb-phone:SendNotification' then
+                saved[#saved + 1] = event
+            elseif event.target == src and event.name == 'crimson-hitman:notify' then
+                popups[#popups + 1] = event
+            end
+        end
+        return saved, popups
+    end
+
+    it('goes through lb-phone\'s server export, by the player\'s number', function()
+        local s = newStack()
+        fixture(s)
+        Env.clientEvents = {}
+        eq(s.notify.toCitizen('CREATOR1', 'Contract accepted', 'Taken.'), true)
+        local saved, popups = sent(1)
+        eq(#saved, 1, 'saved on their phone')
+        eq(#popups, 0, 'and not raised a second time by their client')
+        eq(saved[1].number, '555-1')
+        eq(saved[1].args[1].app, 'crimson-hitman')
+        eq(saved[1].args[1].title, 'Contract accepted')
+        eq(saved[1].args[1].content, 'Taken.')
+    end)
+
+    --- What a notice kept for the next login meets: the player is back,
+    --- choosing a character or a spawn, and lb-phone has not loaded their
+    --- phone yet.
+    it('waits for a phone that has not loaded yet, and saves it there', function()
+        local s = newStack()
+        fixture(s)
+        Natives.unequipped = { [1] = true }
+        local realWait, waited = _G.Wait, 0
+        _G.Wait = function()
+            waited = waited + 1
+            if waited == 3 then Natives.unequipped = nil end   -- the phone loads
+        end
+        Env.clientEvents = {}
+        local ok, err = pcall(s.notify.toCitizen, 'CREATOR1', 'Outstanding payment', 'Paid.')
+        _G.Wait = realWait
+        truthy(ok, tostring(err))
+        local saved, popups = sent(1)
+        eq(#saved, 1, 'saved, once the phone was there')
+        eq(saved[1].number, '555-1')
+        eq(#popups, 0)
+        eq(waited, 3)
+    end)
+
+    --- lb-phone answers a citizen id with the phone they last had equipped,
+    --- which may be in somebody else's pocket: a notice saved there tells
+    --- whoever holds it what this player is part of.
+    it('asks for the phone the player has equipped, never by citizen id', function()
+        local s = newStack()
+        fixture(s)
+        local phone = exports['lb-phone']
+        local real, asked = phone.GetEquippedPhoneNumber, {}
+        phone.GetEquippedPhoneNumber = function(self, who)
+            asked[#asked + 1] = who
+            return real(self, who)
+        end
+        Natives.unequipped = { [1] = true }
+        local ok, err = pcall(function()
+            s.notify.toCitizen('CREATOR1', 'Contract accepted', 'Taken.')
+            Natives.unequipped = nil
+            s.notify.toCitizen('CREATOR1', 'Contract accepted', 'Taken.')
+        end)
+        phone.GetEquippedPhoneNumber = real
+        truthy(ok, tostring(err))
+        truthy(#asked > 0)
+        for _, who in ipairs(asked) do eq(who, 1, 'asked by server id only') end
+    end)
+
+    it('tells nobody when the player leaves while it waits, whoever gets their server id', function()
+        local s = newStack()
+        fixture(s)
+        Natives.unequipped = { [1] = true }
+        local realWait = _G.Wait
+        _G.Wait = function()
+            if Env.players[1] and Env.players[1].PlayerData.citizenid == 'CREATOR1' then
+                Env.removePlayer(1)
+                Env.addPlayer({ source = 1, citizenid = 'NEWCOMER', license = 'license:zzz',
+                    firstname = 'New', lastname = 'Comer' })
+                Natives.unequipped = nil
+            end
+        end
+        Env.clientEvents = {}
+        local ok, err = pcall(s.notify.toCitizen, 'CREATOR1', 'Contract accepted', 'Taken.')
+        _G.Wait = realWait
+        truthy(ok, tostring(err))
+        local saved, popups = sent(1)
+        eq(#saved + #popups, 0, 'nothing reached the newcomer on that server id')
+    end)
+
+    it('raises the popup at once where lb-phone cannot be asked for the number', function()
+        local s = newStack()
+        fixture(s)
+        local phone = exports['lb-phone']
+        local real = phone.GetEquippedPhoneNumber
+        phone.GetEquippedPhoneNumber = function() error('no such export') end
+        local realWait, waited = _G.Wait, 0
+        _G.Wait = function() waited = waited + 1 end
+        Env.clientEvents = {}
+        local ok, err = pcall(s.notify.toCitizen, 'CREATOR1', 'Contract accepted', 'Taken.')
+        phone.GetEquippedPhoneNumber, _G.Wait = real, realWait
+        truthy(ok, tostring(err))
+        local saved, popups = sent(1)
+        eq(#saved, 0)
+        eq(#popups, 1)
+        eq(waited, 0, 'not waited for: there is nothing to wait for')
+    end)
+
+    it('falls back to the client\'s popup wherever lb-phone cannot take it', function()
+        local cases = {
+            { 'lb-phone is not started', function() Natives.resourceStates['lb-phone'] = 'stopped' end },
+            { 'this build has no server export', function() Natives.noServerNotification = true end },
+            { 'lb-phone says no', function() Natives.notificationRefused = true end },
+            { 'the player has no phone equipped, however long it waits',
+              function() Natives.unequipped = { [1] = true } end },
+        }
+        for _, case in ipairs(cases) do
+            local s = newStack()
+            fixture(s)
+            case[2]()
+            Env.clientEvents = {}
+            eq(s.notify.toCitizen('CREATOR1', 'Contract accepted', 'Taken.'), true, case[1])
+            local saved, popups = sent(1)
+            eq(#saved, 0, case[1])
+            eq(#popups, 1, case[1] .. ': the popup, as before')
+            eq(popups[1].args[1].title, 'Contract accepted', case[1])
+        end
+    end)
+
+    it('keeps the budget and the mute exactly as they were', function()
+        local s = newStack()
+        fixture(s)
+        Env.clientEvents = {}
+        eq(s.notify.toCitizen('CREATOR1', 'Contract message', 'x', { muted = true }), false,
+            'a muted thread is charged and not sent')
+        local saved, popups = sent(1)
+        eq(#saved + #popups, 0, 'by neither route')
+
+        local allowed = Config.Notifications.MaxPerRecipientPerMinute
+        for i = 1, allowed - 1 do
+            truthy(s.notify.toCitizen('CREATOR1', 'n' .. i, 'x'), 'within the budget: ' .. i)
+        end
+        eq(s.notify.toCitizen('CREATOR1', 'over', 'x'), false, 'past it, the muted one included')
+        saved, popups = sent(1)
+        eq(#saved, allowed - 1, 'one fewer than the budget: the mute spent one')
+        eq(#popups, 0)
+        eq(s.notify.toCitizen('CREATOR1', 'receipt', 'x', { bypassBudget = true }), true,
+            'a receipt still goes')
+        eq(s.notify.toCitizen('NOBODY01', 'gone', 'x'), false, 'and nobody offline is told')
+    end)
+
+    it('sends it in a thread of its own, so a settlement never waits on lb-phone', function()
+        local s = newStack()
+        fixture(s)
+        local real = _G.Citizen
+        local queued = {}
+        _G.Citizen = { CreateThreadNow = function(fn) queued[#queued + 1] = fn end }
+        Env.clientEvents = {}
+        local ok, answered = pcall(s.notify.toCitizen, 'CREATOR1', 'Contract accepted', 'Taken.')
+        _G.Citizen = real
+        truthy(ok, tostring(answered))
+        eq(answered, true)
+        local saved, popups = sent(1)
+        eq(#saved + #popups, 0, 'nothing reached lb-phone outside the thread')
+        eq(#queued, 1)
+        queued[1]()
+        saved = sent(1)
+        eq(#saved, 1, 'and the thread sends it')
     end)
 end)
 

@@ -108,8 +108,32 @@ local function floodCheck(src)
     return false, shouldLog
 end
 
+--- [source] = { handle, at } for the kill photo on its way to that player
+--- as a latent event (openPhoto), until their client says it is there
+--- (photoArrived), PHOTO_SEND_MS passes, or they leave (App.forgetSource).
+---
+--- One at a time. Each open of a photo kept in the app queued another send
+--- of the whole photo with nothing to say one was already going: FXServer
+--- moves a latent event no faster than the client's acknowledgements, which
+--- it caps at 75 packets a second, so a client tapping View photo, or one
+--- scripting the page, piled sends up faster than they drained — hundreds
+--- of megabytes held for one player in ten minutes.
+local photoSending = {}
+
+--- How long a photo is taken to be on its way at most: as long as the
+--- client waits for one (PHOTO_WAIT_MS, client/main.lua).
+local PHOTO_SEND_MS = 60000
+
+--- Forget what was on its way to a player who has left. A source is reused.
+function App.forgetSource(src)
+    photoSending[src] = nil
+end
+
 function App.sweepFloodCounters()
     local now = Util.monotonicMs()
+    for src, sending in pairs(photoSending) do
+        if now - sending.at > PHOTO_SEND_MS then photoSending[src] = nil end
+    end
     for src, entry in pairs(floodCounters) do
         if now - entry.since > 60000 then floodCounters[src] = nil end
     end
@@ -342,10 +366,14 @@ local function handler(name, action, fn)
 end
 
 --- How fast a kill photo kept on this server is sent to the phone opening
---- it, in bytes a second. FiveM's default for a latent event is 25000,
---- half a minute for a large photo with the client watching an empty
---- dialog; this sends the largest one PhotoMaxBytes allows in about two
---- seconds, to one player, once.
+--- it, in bytes a second. FiveM's default for a latent event is 25000.
+--- What actually bounds it is lower: FXServer sends a latent event no
+--- faster than the client acknowledges its pieces, and caps those at 75
+--- packets a second (125 at once) — about 150 KB/s. So a photo at the
+--- default PhotoMaxBytes takes about four seconds, and one at the largest
+--- allowed (1500000) about ten. Asking for more than the cap is not lost:
+--- it is what lets the first 125 pieces go at once, and slower asks make a
+--- normal open slower.
 App.PHOTO_BPS = 500000
 
 --- Send a result back to one client. Payloads are built by the projection
@@ -856,10 +884,22 @@ function App.register()
     -- The reply also says how it may be saved: `link` where this server can
     -- serve it to the phone's Photos itself, `kept` for one kept in the
     -- app, which opens as often as its owner likes.
+    --
+    -- One on its way to a player at a time (photoSending). Asked before the
+    -- photo is opened, so a refusal spends no look and reads no file.
     handler('openPhoto', 'photoView', function(actor, payload)
+        local sending = photoSending[actor.source]
+        if sending then
+            local left = PHOTO_SEND_MS - (Util.monotonicMs() - sending.at)
+            if left > 0 then
+                return false, CH.ERR.RATE_LIMITED, { retryAfter = math.ceil(left / 1000) }
+            end
+            photoSending[actor.source] = nil
+        end
         local view, err = deps.photos.open(actor, payload.handle)
         if not view then return false, err end
         if view.image then
+            photoSending[actor.source] = { handle = view.handle, at = Util.monotonicMs() }
             TriggerLatentClientEvent('crimson-hitman:photoImage', actor.source, App.PHOTO_BPS,
                 { handle = view.handle, src = view.image })
             return { handle = view.handle, latent = true, link = view.link, kept = view.kept }
@@ -1154,6 +1194,18 @@ function App.register()
         local ok, err = pcall(deps.death.onVictimReport, src, tonumber(killerServerId))
         if not ok then deps.audit.rejected('error_iDied', actor.cid, nil, { error = tostring(err) }) end
     end
+
+    -- The client saying the photo openPhoto sent it is there, so the next
+    -- open need not wait out PHOTO_SEND_MS. Only ever lets go of the
+    -- sender's own, and only of the photo named; anything else is ignored.
+    RegisterNetEvent('crimson-hitman:photoArrived', function(handle)
+        local src = source
+        if not App.floodOk(src, 'photoArrived') then return end
+        local sending = photoSending[src]
+        if sending and type(handle) == 'string' and sending.handle == handle then
+            photoSending[src] = nil
+        end
+    end)
 
     RegisterNetEvent('crimson-hitman:iRevived', function()
         local src = source

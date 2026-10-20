@@ -88,6 +88,15 @@ local function call(name, src, payload)
     return reply, Env.clientEvents
 end
 
+--- The client saying the photo it was sent is there, as its photoImage
+--- handler does on arrival (client/main.lua).
+local function arrived(src, handle)
+    _G.source = src
+    local fired, err = pcall(Env.events['crimson-hitman:photoArrived'], handle)
+    _G.source = nil
+    truthy(fired, tostring(err))
+end
+
 local function latentTo(events, name)
     local out = {}
     for _, event in ipairs(events or {}) do
@@ -470,6 +479,7 @@ describe('the client\'s one look at a photo kept on this server', function()
     it('sends it once', function()
         local _, _, _, handle = photographed()
         call('openPhoto', 1, { handle = handle })
+        arrived(1, handle)
         local again, events = call('openPhoto', 1, { handle = handle })
         falsy(again.ok)
         eq(again.err, CH.ERR.PHOTO_GONE)
@@ -700,6 +710,9 @@ end)
 
 local QBOX = 'chatty.server.qbox.re'
 
+--- The header the photo handler marks its answers with.
+local function s_MARKER() return require('crimson-hitman.server.photos').MARKER end
+
 --- Opened by its client, on a server with a public address.
 local function opened(opts)
     opts = opts or {}
@@ -708,6 +721,8 @@ local function opened(opts)
     s.bridges.install(s)
     local reply = call('openPhoto', 1, { handle = handle })
     truthy(reply and reply.ok, tostring(reply and reply.err))
+    -- And it lands, as the client says on arrival.
+    if reply.data and reply.data.latent then arrived(1, handle) end
     return s, f, c, handle, file, reply
 end
 
@@ -876,6 +891,15 @@ describe('serving a saved photo over HTTP', function()
             'a query string is dropped, not read')
     end)
 
+    it('marks every answer as this resource\'s, found or not', function()
+        local _, _, _, _, _, _, name = savedByLink()
+        eq(Natives.httpRequest('GET', '/p/' .. name .. '.jpg').headers[s_MARKER()], '1')
+        local missing = Natives.httpRequest('GET', '/p/' .. ('0'):rep(22) .. '.webp')
+        eq(missing.status, 404)
+        eq(missing.headers[s_MARKER()], '1', 'what /ch-diag knows this handler by')
+        eq(Natives.httpRequest('POST', '/x').headers[s_MARKER()], '1')
+    end)
+
     it('answers 404 to anything else, the same way every time', function()
         local _, _, _, handle, file, _, name = savedByLink()
         local reads = {}
@@ -1040,6 +1064,7 @@ describe('a photo kept for the client in the app, on this server', function()
             eq(#sent, 1, 'sent latent, to the client')
             eq(sent[1].target, 1)
             eq(Util.fromBase64(sent[1].args[1].src:sub(24)), JPEG)
+            arrived(1, handle)
         end
         eq(s.storage.readPhoto(handle).state, CH.PHOTO.KEPT)
         for _, src in ipairs({ 2, 3 }) do
@@ -1062,6 +1087,7 @@ describe('a photo kept for the client in the app, on this server', function()
                 truthy(reply and reply.ok, tostring(reply and reply.err))
                 eq(Util.fromBase64(latentTo(events, 'crimson-hitman:photoImage')[1].args[1].src:sub(24)),
                     JPEG, 'the same picture each time')
+                arrived(1, handle)
             end
             eq(encodes, 1, 'encoded on the first open only')
             local reply = call('openPhoto', 2, { handle = handle })
@@ -1073,6 +1099,66 @@ describe('a photo kept for the client in the app, on this server', function()
             eq(reply.err, CH.ERR.PHOTO_GONE, 'deleted is deleted, cache or not')
         end)
         Util.toBase64 = real
+        truthy(ok, tostring(err))
+    end)
+
+    --- Each open queued another whole photo to the same player with nothing
+    --- to say one was already on its way. FXServer moves them no faster than
+    --- the client acknowledges, so a client tapping, or a page scripted to
+    --- open every two seconds, piled sends up faster than they drained.
+    it('is sent to a player one at a time, and the next waits for the first to land', function()
+        local s, _, _, handle = kept({ web = false })
+        local reads, realLoad = 0, _G.LoadResourceFile
+        _G.LoadResourceFile = function(res, path)
+            if tostring(path):find('^data/photos/') then reads = reads + 1 end
+            return realLoad(res, path)
+        end
+        local ok, err = pcall(function()
+            local reply, events = call('openPhoto', 1, { handle = handle })
+            truthy(reply and reply.ok, tostring(reply and reply.err))
+            eq(#latentTo(events, 'crimson-hitman:photoImage'), 1)
+            local readsForOne = reads
+
+            -- Refused before the photo is opened at all: a photo waiting
+            -- for its one look, asked for meanwhile, keeps it.
+            local opens, realOpen = 0, s.photos.open
+            s.photos.open = function(...) opens = opens + 1 return realOpen(...) end
+            local sentAgain = 0
+            for _ = 1, 10 do
+                local again, more = call('openPhoto', 1, { handle = handle })
+                eq(again.err, CH.ERR.RATE_LIMITED, 'still on its way')
+                truthy(again.data and again.data.retryAfter >= 1 and again.data.retryAfter <= 60,
+                    'with how long: ' .. tostring(again.data and again.data.retryAfter))
+                sentAgain = sentAgain + #latentTo(more, 'crimson-hitman:photoImage')
+            end
+            s.photos.open = realOpen
+            eq(sentAgain, 0, 'ten more taps queued nothing')
+            eq(reads, readsForOne, 'and read nothing')
+            eq(opens, 0, 'and opened nothing, so no look is spent')
+
+            -- Somebody else's word, or a word about another photo, is not it.
+            arrived(2, handle)
+            arrived(1, 'ph0000000other')
+            eq(call('openPhoto', 1, { handle = handle }).err, CH.ERR.RATE_LIMITED)
+
+            arrived(1, handle)
+            reply, events = call('openPhoto', 1, { handle = handle })
+            truthy(reply and reply.ok, 'once it landed, it opens again: ' .. tostring(reply and reply.err))
+            eq(#latentTo(events, 'crimson-hitman:photoImage'), 1)
+
+            -- A send the client never acknowledged is let go of once the
+            -- client itself would have stopped waiting.
+            Env.advance(61)
+            reply = call('openPhoto', 1, { handle = handle })
+            truthy(reply and reply.ok, tostring(reply and reply.err))
+
+            -- And forgotten with the player, so the next one on this
+            -- server id is not kept waiting.
+            s.app.forgetSource(1)
+            reply = call('openPhoto', 1, { handle = handle })
+            truthy(reply and reply.ok, tostring(reply and reply.err))
+        end)
+        _G.LoadResourceFile = realLoad
         truthy(ok, tostring(err))
     end)
 
@@ -1135,6 +1221,87 @@ describe('what /ch-diag says about saving photos kept on this server', function(
         said = diag(s)
         truthy(said:find('does NOT take ' .. QBOX, 1, true), said)
         truthy(said:find('UploadWhitelistedHostnames', 1, true), 'and says where to add it: ' .. said)
+    end)
+
+    --- Everything the report checks can be right and every link still dead:
+    --- an address without the /crimson-hitman FXServer routes by, a proxy
+    --- that does not pass it on, a certificate a phone refuses. The client's
+    --- one look is then spent on a broken picture, and its file kept for
+    --- good behind the saved link. So the address itself is asked.
+    describe('whether the address reaches this resource', function()
+        local function ask(s, answer)
+            Natives.httpAnswer = answer
+            local after = {}
+            local lines = s.admin.diagnose(1, nil, function(line) after[#after + 1] = line end)
+            Natives.httpAnswer = nil
+            return table.concat(lines, '\n'), table.concat(after, '\n')
+        end
+        local function server()
+            local s = newStack()
+            fixture(s)
+            Config.Completion.PhotoStorage = 'server'
+            Natives.convars.web_baseUrl = 'r2.qbox.re'
+            return s
+        end
+
+        it('says yes when its own handler answers', function()
+            local s = server()
+            local asked
+            local report, after = ask(s, function(url)
+                asked = url
+                -- What FXServer does: the path under /crimson-hitman goes
+                -- to this resource's handler.
+                local path = url:match('^https://r2%.qbox%.re/crimson%-hitman(/.*)$')
+                if not path then return 404, 'Not Found', {} end
+                local got = Natives.httpRequest('GET', path)
+                return got.status, got.body, got.headers
+            end)
+            truthy(report:find('checking that this address reaches this resource', 1, true), report)
+            truthy(asked and asked:find('^https://r2%.qbox%.re/crimson%-hitman/p/0+%.webp$'),
+                'a name nobody has, under the address links are built on: ' .. tostring(asked))
+            truthy(after:find('reaches this resource: yes', 1, true), after)
+        end)
+
+        it('warns when something else answers there', function()
+            local s = server()
+            local _, after = ask(s, function() return 404, 'Not Found', { ['Content-Type'] = 'text/html' } end)
+            truthy(after:find('answered 404, not this resource', 1, true), after)
+            truthy(after:find('/crimson-hitman/', 1, true), 'and says what the address needs: ' .. after)
+            falsy(after:find(': yes', 1, true), after)
+
+            _, after = ask(s, function() return 200, '<html>', {} end)
+            truthy(after:find('answered 200, not this resource', 1, true), after)
+        end)
+
+        it('warns, without condemning the address, when nothing answers', function()
+            local s = server()
+            local _, after = ask(s, function() return 0, nil, {}, 'SSL certificate problem' end)
+            truthy(after:find('could not load https://r2.qbox.re/crimson-hitman/p/...', 1, true), after)
+            truthy(after:find('SSL certificate problem', 1, true), after)
+            truthy(after:find('from a phone', 1, true), 'a hairpin is not a verdict: ' .. after)
+        end)
+
+        it('is not asked where there is no address, or nowhere to answer', function()
+            local s = newStack()
+            fixture(s)
+            Config.Completion.PhotoStorage = 'server'
+            Natives.calls.http = {}
+            ask(s, function() error('nothing should be asked') end)
+            eq(#Natives.calls.http, 0, 'no address, nothing to ask')
+
+            s = server()
+            Natives.calls.http = {}
+            s.admin.diagnose(1)
+            eq(#Natives.calls.http, 0, 'a report with nowhere to put the answer asks nothing')
+        end)
+
+        it('header names are read as HTTP reads them, whatever their case', function()
+            local s = server()
+            local _, after = ask(s, function()
+                return 404, 'Not found.', { ['x-crimson-hitman'] = '1' }
+            end)
+            truthy(after:find('reaches this resource: yes', 1, true), after)
+        end)
     end)
 
     it('says so when there is no address, and what happens instead', function()

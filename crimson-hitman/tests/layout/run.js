@@ -305,6 +305,31 @@ async function main() {
     atLeast(bar.count, 5, 'tab count');
   });
 
+  /* ---- lb-phone's status bar ----
+   *
+   * The other edge. lb-phone draws no header over a custom app: its clock,
+   * the island and the battery lie straight over the top of the page, the
+   * island ending about 3.45rem down. The page took out its own header
+   * believing lb-phone drew one, and kept 0.9rem at the top — so the first
+   * card's name, Mine's first heading, a thread's Back and Call and the
+   * first line of every notice sat under the status bar. Measured against
+   * that line, in the page's own rem. */
+  const STATUS_BAR_REM = 3.45;
+  function clearOfStatusBar(probe, selector) {
+    return probe.evaluate(function (which) {
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      const node = document.querySelector(which);
+      if (!node) { return null; }
+      return node.getBoundingClientRect().top / rem;
+    }, selector);
+  }
+  const firstOnBoard = await clearOfStatusBar(page, '#view > *');
+
+  it('starts the board below lb-phone\'s status bar', function () {
+    truthy(firstOnBoard !== null, 'nothing drawn on the board, so this measures nothing');
+    atLeast(firstOnBoard, STATUS_BAR_REM, 'the first card starts (rem)');
+  });
+
   /* ---- the board ---- */
 
   const cards = await page.evaluate(function () {
@@ -639,6 +664,7 @@ async function main() {
     if (b) { b.click(); }
   });
   await tp.waitForTimeout(250);
+  const threadButtonsTop = await clearOfStatusBar(tp, '.thread-head button');
   const threadHead = await tp.evaluate(function () {
     const withLine = document.querySelector('.thread-head .with');
     const about = document.querySelector('.thread-head .about');
@@ -669,6 +695,11 @@ async function main() {
     atLeast(threadHead.width, threadHead.needed,
       '"with Operative #2" is cut off (' + JSON.stringify(threadHead) + ')');
     atLeast(threadHead.about, 120, 'the target\'s name');
+  });
+
+  it('keeps a thread\'s Back and Call below lb-phone\'s status bar', function () {
+    truthy(threadButtonsTop !== null, 'the thread did not open, so this measures nothing');
+    atLeast(threadButtonsTop, STATUS_BAR_REM, 'the thread\'s first button starts (rem)');
   });
 
   /* ---- every screen this might be on ----
@@ -911,6 +942,37 @@ async function main() {
     });
   });
 
+  /* A tab tapped over the photo's one look is refused, with a notice; the
+     notice is measured against the status bar while it is up. Then the
+     photo is deleted, as the notice asks, so the rest of this page can
+     move on. */
+  await page.click('[data-tab="onme"]');
+  await page.waitForTimeout(120);
+  const heldTab = await page.evaluate(function () {
+    return {
+      photo: !!document.querySelector('.dialog.photo-view'),
+      notice: (document.querySelector('#notice') || {}).textContent || ''
+    };
+  });
+  const noticeTop = await clearOfStatusBar(page, '#notice .notice');
+
+  it('holds the tab bar while the photo\'s one look is unanswered', function () {
+    truthy(heldTab.photo, 'a tab tap closed the photo, which deletes it');
+    truthy(heldTab.notice.indexOf('Save or delete the photo first') !== -1, heldTab.notice);
+  });
+
+  it('puts a notice below lb-phone\'s status bar, first line and all', function () {
+    truthy(noticeTop !== null, 'no notice was up, so this measures nothing');
+    atLeast(noticeTop, STATUS_BAR_REM, 'the notice starts (rem)');
+  });
+
+  await page.evaluate(function () {
+    const b = Array.prototype.slice.call(document.querySelectorAll('.dialog.photo-view button'))
+      .filter(function (n) { return n.textContent === 'Delete'; })[0];
+    if (b) { b.click(); }
+  });
+  await page.waitForTimeout(300);
+
   await page.click('[data-tab="onme"]');
   await page.waitForTimeout(300);
 
@@ -1036,6 +1098,7 @@ async function main() {
       sideways: shade.scrollWidth > shade.clientWidth + 1
     };
   });
+  const finderHintTop = await clearOfStatusBar(page, '#viewfinder .viewfinder-hint');
 
   it('opens the viewfinder over the whole app, tab bar included', function () {
     truthy(finder, 'Verify kill opened no viewfinder, so this measures nothing');
@@ -1051,6 +1114,11 @@ async function main() {
     truthy(finder && finder.lowest <= finder.viewportH - 16,
       'a button ends at ' + (finder && finder.lowest) + ' of ' + (finder && finder.viewportH));
     atLeast(finder ? finder.shortest : 0, 44, 'shortest viewfinder button');
+  });
+
+  it('starts the viewfinder\'s instruction below lb-phone\'s status bar', function () {
+    truthy(finderHintTop !== null, 'no viewfinder instruction, so this measures nothing');
+    atLeast(finderHintTop, STATUS_BAR_REM, 'the instruction starts (rem)');
   });
 
   it('fits every screen size it might be opened on', function () {

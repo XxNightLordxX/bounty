@@ -13,6 +13,11 @@ function Natives.install()
     _G.GetGameTimer = function() return Env.gameTimer end
     _G.os_time_real = os.time
     _G.CreateThread = function(fn) table.insert(Env.threads, fn) end
+    -- Runs at once, up to its first wait, then the caller carries on;
+    -- nothing here waits, so it runs to the end. What Notify sends a
+    -- notification in, so a settlement does not yield for the database
+    -- lb-phone writes it to.
+    _G.Citizen = { CreateThreadNow = function(fn) fn() end }
     _G.SetTimeout = function(ms, fn)
         -- Numbered as set, so timers due together run in the order they
         -- were set, as the engine runs them.
@@ -52,13 +57,13 @@ function Natives.install()
     _G.NetworkGetEntityOwner = function(entity) return entity - 1000 end
     _G.TriggerClientEvent = function(name, target, ...)
         table.insert(Env.clientEvents, { name = name, target = target, args = { ... } })
-        -- Phone notifications reach the player as a client event, since
         if name == 'chat:addMessage' then
             local payload = ...
             local args = payload and payload.args or {}
             table.insert(Env.chat, { target = target, text = tostring(args[2] or '') })
         end
-        -- lb-phone's SendNotification export is client-side only.
+        -- The popup the player's client raises, where lb-phone's server
+        -- export could not take the notification (Notify's raise).
         if name == 'crimson-hitman:notify' then
             local payload = ...
             table.insert(Natives.calls.notifications, payload)
@@ -342,9 +347,15 @@ function Natives.install()
     end
 
     Natives.calls.http = {}
+    -- Answered at once, 204, unless a test says what is at the other end
+    -- (Natives.httpAnswer(url, method) -> status, body, headers, error).
     _G.PerformHttpRequest = function(url, cb, method, body, headers)
+        -- A stack resets Natives.calls without this list in it.
+        Natives.calls.http = Natives.calls.http or {}
         table.insert(Natives.calls.http, { url = url, method = method, body = body })
-        if cb then cb(204, '', {}) end
+        if not cb then return end
+        if Natives.httpAnswer then return cb(Natives.httpAnswer(url, method, body, headers)) end
+        cb(204, '', {})
     end
 
     _G.json = Natives.json
@@ -589,6 +600,14 @@ Natives.resetResourceStates()
 
 Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
 
+--- Whether a recorded client event is a phone notification reaching its
+--- target: saved through lb-phone's server export, or the popup the
+--- player's client raises where that could not be done. args[1] carries
+--- the title and content either way.
+function Natives.isNotice(event)
+    return event.name == 'crimson-hitman:notify' or event.name == 'lb-phone:SendNotification'
+end
+
 function Natives.exportsProxy()
     local resources = {}
 
@@ -733,9 +752,23 @@ function Natives.exportsProxy()
     }
 
     resources['lb-phone'] = {
-        SendNotification = function(_, data)
+        --- lb-phone's server form: (phone number, data). Saved on that
+        --- phone, and shown to whoever has it equipped. Recorded with the
+        --- other notifications, and among the client events under its own
+        --- name with the player it reached, so a test that asks "was this
+        --- player told" sees either way (Natives.isNotice). A test takes it
+        --- away (noServerNotification) or has it say no
+        --- (notificationRefused) to model a build where it cannot.
+        SendNotification = function(_, target, data)
+            if Natives.noServerNotification then error('no such export') end
+            if Natives.notificationRefused then return false end
+            local src = tonumber(tostring(target):match('^555%-(%d+)$'))
             table.insert(Natives.calls.notifications, data)
-            return true
+            table.insert(Env.clientEvents, {
+                name = 'lb-phone:SendNotification', target = src, number = target,
+                args = { data },
+            })
+            return #Natives.calls.notifications
         end,
         --- Removable, for the same reason StartCall is absent by default:
         --- lb-phone ships its server code escrowed and its export surface
@@ -748,7 +781,13 @@ function Natives.exportsProxy()
             if Natives.noWordFilter then error('no such export') end
             return tostring(text):lower():find('slur') ~= nil
         end,
-        GetEquippedPhoneNumber = function(_, src) return '555-' .. tostring(src) end,
+        --- By server id or by citizen id, as lb-phone takes either. A server
+        --- id a test lists in Natives.unequipped has no phone equipped: none
+        --- at all, or one the client has not loaded yet.
+        GetEquippedPhoneNumber = function(_, who)
+            if Natives.unequipped and Natives.unequipped[who] then return nil end
+            return '555-' .. tostring(tonumber(who) or Env.byCitizen[who] or who)
+        end,
         AddCustomApp = function() return true end,
         -- The photo host allowlist is derived from this. Without a stub the
         -- pcall around it always failed, so the half of the allowlist that

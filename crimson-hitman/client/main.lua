@@ -126,7 +126,12 @@ local function registerApp()
             name        = 'Crimson-Hitman',
             description = 'Contracts, quietly arranged.',
             developer   = 'Crimson',
-            defaultApp  = false,
+            -- In the App Store for players to find, unless the owner puts
+            -- it on every eligible phone (Config.App.DefaultInstalled). Read
+            -- here, from this player's own copy of the config: the server
+            -- fills a section an older config lacks only on its own side,
+            -- so a missing one reads as the shipped false.
+            defaultApp  = Config.App ~= nil and Config.App.DefaultInstalled == true,
             size        = 4200,
             -- The build stamp is what makes an update reach the player.
             --
@@ -311,8 +316,11 @@ end)
 --- How fast a kill photo goes to the server, in bytes a second, on
 --- 'server' storage. A latent event is sent in pieces at this rate rather
 --- than as one burst; FiveM's default of 25000 is half a minute for a large
---- photo with the hitman standing over the body. This sends the largest
---- one the server allows in about two seconds.
+--- photo with the hitman standing over the body. The server acknowledges
+--- the pieces no faster than about 75 a second, so in practice a photo at
+--- the default size takes about four seconds and the largest allowed about
+--- ten; asking for more than that is what lets the first pieces go at
+--- once.
 local PHOTO_BPS = 500000
 
 --- Ask the server for something and hand the answer to the UI.
@@ -397,19 +405,17 @@ RegisterNetEvent('crimson-hitman:result', function(result)
         cb(result)
     end
 
-    -- Everything also goes to the UI, which decides what to render.
-    --
-    -- Except a photo token. It is what lets a picture claim a payout, and it
-    -- stays in this file: the page hands over the picture and nothing else,
-    -- and this client puts the token to it (sendVerificationPhoto). A page
-    -- is a browser anybody can script, and every reply mirrored to it is
-    -- readable there.
-    local data = result.data
-    if result.event == 'requestPhotoToken' then data = nil end
+    -- The open app is told that a reply came, and nothing more. It acts
+    -- only on pushes (ui/app.js, the message listener); every reply it uses
+    -- reaches it once, as the answer to the fetch that asked for it. Sent
+    -- in full, every reply crossed the bridge twice — a board's fifteen
+    -- headshots among them — to be thrown away on arrival. Nothing a reply
+    -- carries goes to the page this way, the photo token included: it is
+    -- what lets a picture claim a payout, and it stays in this file
+    -- (sendVerificationPhoto).
     phone('SendCustomAppMessage', function()
         exports['lb-phone']:SendCustomAppMessage('crimson-hitman', {
-            type = 'result', event = result.event, ok = result.ok,
-            err = result.err, data = data,
+            type = 'result', event = result.event, ok = result.ok, err = result.err,
         })
     end)
 end)
@@ -458,8 +464,10 @@ RegisterNetEvent('crimson-hitman:askDiagnostics', function()
     end)
 end)
 
---- Phone notifications. lb-phone's SendNotification is client-side only, so
---- the server addresses the player and the client raises it locally.
+--- Phone notifications, where the server could not save one on this
+--- player's phone through lb-phone's server export (Notify's raise: lb-phone
+--- not started, no number for them, an export that said no). Raised here as
+--- a popup, which lb-phone does not keep in the phone's list.
 RegisterNetEvent('crimson-hitman:notify', function(data)
     if type(data) ~= 'table' then return end
     phone('SendNotification', function()
@@ -508,8 +516,10 @@ local UI_EVENTS = {
 -- and the photo a slower latent one, but nothing promises the order.
 
 --- How long the page's request waits for the photo once the server has
---- said it is on its way. A few hundred kilobytes at the server's rate is
---- a couple of seconds; this is for a connection far slower than that.
+--- said it is on its way. A few hundred kilobytes at the rate FXServer
+--- actually manages is about four seconds; this is for a connection far
+--- slower than that. The server sends one photo at a time and counts the
+--- same minute (App's photoSending).
 local PHOTO_WAIT_MS = 60000
 
 --- [handle] = the page's callback, waiting for that photo.
@@ -561,6 +571,9 @@ RegisterNetEvent('crimson-hitman:photoImage', function(data)
         or not data.src:find('^data:image/') then
         return
     end
+    -- Here, so the server may send the next one: it sends one at a time,
+    -- and otherwise waits out the minute this file waits for it.
+    TriggerServerEvent('crimson-hitman:photoArrived', data.handle)
     local cb = photoWaiting[data.handle]
     if cb then
         photoWaiting[data.handle] = nil

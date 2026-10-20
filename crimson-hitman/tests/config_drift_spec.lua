@@ -207,6 +207,30 @@ describe('starting on a config that predates a setting', function()
             'every photo goes to the server and back out to the client whole')
         resetConfig()
 
+        -- 1500000 at most, not the 4000000 it was: FXServer moves a latent
+        -- event at about 150 KB a second, so the old largest took over half
+        -- a minute each way, near the minute both ends wait for it.
+        boot(function() Config.Completion.PhotoMaxBytes = 1500000 end)
+        eq(Config.Completion.PhotoMaxBytes, 1500000, 'the largest allowed')
+        resetConfig()
+        boot(function() Config.Completion.PhotoMaxBytes = 2000000 end)
+        eq(Config.Completion.PhotoMaxBytes, 600000, 'past it, the default')
+        resetConfig()
+
+        -- Read by players' games as a plain `== true`; anything else is
+        -- said at boot.
+        said = {}
+        _G.print = function(...)
+            local parts = {}
+            for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+            said[#said + 1] = table.concat(parts, ' ')
+        end
+        boot(function() Config.App.DefaultInstalled = 'true' end)
+        _G.print = realPrint
+        told = table.concat(said, ' | ')
+        truthy(told:find('Config.App.DefaultInstalled', 1, true), told)
+        resetConfig()
+
         boot(function() Config.Completion.PhotoStorage = 'host' end)
         eq(Config.Completion.PhotoStorage, 'host', 'the other place is left alone')
         resetConfig()

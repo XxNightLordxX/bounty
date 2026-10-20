@@ -83,6 +83,12 @@ local FILE_NAMES = {
 --- ever looked up in the store; it never becomes part of a path.
 local SERVED_PATH = '^/p/([%w_-]+)%.(%a+)$'
 
+--- A header on every answer the photo handler gives, found or not, and on
+--- nothing else's: what tells /ch-diag that the public address leads here
+--- (Photos.checkReach). It says only that this resource answered, which
+--- the '/<resource name>/' every link starts with says already.
+Photos.MARKER = 'X-Crimson-Hitman'
+
 function Photos.init(deps)
     Storage, Audit = deps.storage, deps.audit
 end
@@ -320,8 +326,8 @@ end
 --- The data URIs of the photos kept in the app opened most recently:
 --- [id] = { key, uri, used }. A kept photo opens as often as its owner
 --- likes, and each open read its file and encoded it again, in Lua on the
---- main thread: tens of milliseconds a time at the default size, half a
---- second at the largest, as fast as the open limit allows. Only ever read
+--- main thread: tens of milliseconds a time at the default size, a fifth of
+--- a second at the largest, as fast as the open limit allows. Only ever read
 --- for its owner, after the ownership check, and dropped when the photo
 --- is let go of (release) or its file moves (the key names the file).
 local KEPT_URIS = 4
@@ -500,11 +506,18 @@ end
 --- Every other answer is the same 404, so a request learns nothing about
 --- which part of it was wrong, and a photo no longer served — deleted from
 --- the phone, deleted by its client — is not there.
+---
+--- Every answer, the 404 included, carries Photos.MARKER, so /ch-diag can
+--- tell this handler answering from anything else at the public address
+--- (Photos.checkReach).
 ---@param req table FiveM's request: method, path
 ---@param res table FiveM's response: writeHead, send
 function Photos.serveHttp(req, res)
     local function notFound()
-        res.writeHead(404, { ['Content-Type'] = 'text/plain; charset=utf-8' })
+        res.writeHead(404, {
+            ['Content-Type'] = 'text/plain; charset=utf-8',
+            [Photos.MARKER] = '1',
+        })
         res.send('Not found.')
     end
 
@@ -534,8 +547,45 @@ function Photos.serveHttp(req, res)
         ['X-Content-Type-Options'] = 'nosniff',
         ['Referrer-Policy'] = 'no-referrer',
         ['Access-Control-Allow-Origin'] = '*',
+        [Photos.MARKER] = '1',
     })
     res.send(bytes)
+end
+
+--- Whether the public address reaches this resource's handler at all.
+---
+--- An address can be right in every way /ch-diag could check and still lead
+--- somewhere else: Config.Completion.PhotoPublicUrl without the
+--- '/<resource name>' FXServer routes by, a proxy that does not pass that
+--- path on, a certificate or a name that does not resolve. Every link
+--- built on it is then dead — the client's one look spent on a photo their
+--- Photos shows broken, and the file kept for good behind a saved link.
+--- So it is asked: a name nobody has, which this handler answers 404 with
+--- its marker. Anything else answering, or nothing answering, is not this
+--- resource. A warning rather than a verdict: a server that cannot reach
+--- its own public address from inside (some routers) can still be reached
+--- by every phone.
+---@param base string the public address, as Photos.publicBase gives it
+---@param done fun(reached: boolean, status: integer, marked: boolean, err: string|nil)
+function Photos.checkReach(base, done)
+    local probe = base .. '/p/' .. ('0'):rep(22) .. '.webp'
+    local answered = false
+    local asked = pcall(PerformHttpRequest, probe, function(status, _, headers, err)
+        answered = true
+        local marked = false
+        if type(headers) == 'table' then
+            for name in pairs(headers) do
+                if type(name) == 'string' and name:lower() == Photos.MARKER:lower() then
+                    marked = true
+                end
+            end
+        end
+        status = tonumber(status) or 0
+        done(status == 404 and marked, status, marked, err ~= nil and tostring(err) or nil)
+    end, 'GET', '', {})
+    if not asked and not answered then
+        done(false, 0, false, 'this server could not make the request')
+    end
 end
 
 --- Whether lb-phone takes a link into a gallery, decided as lb-phone

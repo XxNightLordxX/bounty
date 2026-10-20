@@ -243,6 +243,9 @@ function _G.newStack()
     Natives.resetConvars()
     Natives.blocked = {}
     Natives.dirs = {}
+    -- And a phone lb-phone can notify, by number, on every stack.
+    Natives.unequipped, Natives.noServerNotification, Natives.notificationRefused = nil, nil, nil
+    Natives.httpAnswer = nil
     -- shared/util is not reloaded between stacks, so its wrap-absorbing
     -- clock would carry the previous test's elapsed time into this one.
     require('crimson-hitman.shared.util').resetMonotonic()

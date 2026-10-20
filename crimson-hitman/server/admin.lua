@@ -547,8 +547,11 @@ end
 ---@param subjectId number|string|nil a player id to run the player-specific
 --- checks as. Defaults to the caller. The console has no character of its
 --- own, so an owner running this there names somebody who is in the city.
+---@param later fun(line: string)|nil where a check that has to wait for an
+--- answer (whether the public photo address reaches this resource) says
+--- what it found, after the report. Without it that check is not made.
 ---@return string[] lines
-function Admin.diagnose(source, subjectId)
+function Admin.diagnose(source, subjectId, later)
     local out = {}
     local function say(line) out[#out + 1] = line end
 
@@ -893,6 +896,34 @@ function Admin.diagnose(source, subjectId)
                 say(('  -> lb-phone\'s upload allow list does NOT take %s, so phones may refuse '
                     .. 'to save these photos. Add "%s" to Config.UploadWhitelistedHostnames in '
                     .. 'lb-phone\'s config.'):format(host, host))
+            end
+            -- Whether it leads here at all. Everything above can be right
+            -- and every link still dead: no '/<resource>' on the address, a
+            -- proxy that does not pass it on, a bad certificate. Asked of
+            -- the address itself, and answered after this report.
+            if later and Photos.checkReach then
+                say('  checking that this address reaches this resource; the answer follows')
+                local resource = GetCurrentResourceName()
+                Photos.checkReach(base, function(reached, status, marked, err)
+                    if reached then
+                        later(('photo links: %s reaches this resource: yes'):format(base))
+                    elseif status == 0 then
+                        later(('photo links: -> this server could not load %s/p/... (%s). If '
+                            .. 'phones cannot either, every photo saved to Photos by link is a '
+                            .. 'broken picture. Check the address, its certificate and its DNS. '
+                            .. 'Some networks cannot reach their own public address from inside, '
+                            .. 'so try a link from a phone before changing anything.')
+                            :format(base, err or 'no answer'))
+                    else
+                        later(('photo links: -> %s/p/... answered %d%s, not this resource, so '
+                            .. 'every photo saved to Photos by link would be a broken picture. '
+                            .. 'The address has to lead to this server\'s /%s/ (web_baseUrl, or '
+                            .. 'Config.Completion.PhotoPublicUrl ending in /%s), and any proxy in '
+                            .. 'front has to pass that path on.')
+                            :format(base, status, marked and ' from this resource' or '',
+                                resource, resource))
+                    end
+                end)
             end
         else
             say(('photo links: none (%s)'):format(tostring(from)))

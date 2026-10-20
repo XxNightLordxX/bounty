@@ -688,6 +688,10 @@ local CUSTOM = {
     -- must not do is let a browser put arbitrary text into the audit log,
     -- or name somebody else, and that is what the block below checks.
     pageError = 'a page reporting its own fault',
+    -- A client's word that the kill photo it was sent is there. Names no
+    -- contract; it can only let go of the caller's own send, of the photo
+    -- named (server_photos_spec has the whole of it).
+    photoArrived = 'a photo reported as arrived',
 }
 
 -- Registered in bridges.lua, which is how three events any player on the
@@ -707,6 +711,29 @@ MATRIX.iRevived = { custom = true,
 
 MATRIX.pageError = { custom = true,
     why = 'a fault report is about the caller own page and names no contract' }
+
+MATRIX.photoArrived = { custom = true,
+    why = 'lets go of the caller own photo on its way, and of nobody else' }
+
+describe('a photo reported as arrived', function()
+    --- Fired by the client's photoImage handler when a kill photo lands, so
+    --- the server may send the next. A net event any player can fire with
+    --- anything in it: it answers nobody, writes nothing and cannot throw,
+    --- and what it lets go of is keyed by the caller's own server id.
+    it('answers nobody, whoever fires it and with whatever', function()
+        world()
+        for _, role in ipairs(ROLES) do
+            for _, sent in ipairs({ 'ph00000000aa', 42, true, {}, false }) do
+                Env.clientEvents = {}
+                _G.source = CAST[role].source
+                local ok, err = pcall(Env.events['crimson-hitman:photoArrived'], sent)
+                _G.source = nil
+                truthy(ok, role .. ': ' .. tostring(err))
+                eq(#Env.clientEvents, 0, role .. ' was answered')
+            end
+        end
+    end)
+end)
 
 describe('a page reporting its own fault', function()
     --- The app runs in CEF, where a JavaScript error reaches nobody. This

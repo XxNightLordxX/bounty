@@ -474,6 +474,16 @@ local function validateConfig()
         warn[#warn + 1] = ('Config.Database.AllowModeSwitch is %s, not true or false; it is read '
             .. 'as false'):format(tostring(allowSwitch))
     end
+    -- Read by every player's game, not here, as a plain `== true`: a
+    -- string 'true' leaves the app in the App Store with nothing to say
+    -- why. Nothing is filled for an App section without it, since absent
+    -- is the shipped false on both sides.
+    local installed = Config.App and Config.App.DefaultInstalled
+    if installed ~= nil and type(installed) ~= 'boolean' then
+        warn[#warn + 1] = ('Config.App.DefaultInstalled is %s, not true or false; players\' '
+            .. 'phones read it as false and the app stays in the App Store')
+            :format(tostring(installed))
+    end
 
     if Config.Bailout.MinMultiplier > Config.Bailout.MaxMultiplier then
         fatal[#fatal + 1] = 'Bailout MinMultiplier is above MaxMultiplier; no premium could ever be valid'
@@ -531,7 +541,10 @@ local function validateConfig()
     -- above a floor, because the page draws to this many pixels and a
     -- photo of a body forty pixels across proves nothing; and a ceiling on
     -- the bytes, because each one is sent whole to the server and back out
-    -- to the client's phone.
+    -- to the client's phone. 1500000, not the 4000000 it was: FXServer moves
+    -- a latent event at about 150 KB a second, so a photo that size took
+    -- over half a minute each way, close to the minute either end waits for
+    -- it, and half a second of the server's main thread to decode or encode.
     local function photoLimit(key, default, floor, ceiling)
         local value = tonumber(Config.Completion[key])
         if not value or value ~= value or value < floor or value > ceiling then
@@ -542,7 +555,7 @@ local function validateConfig()
         Config.Completion[key] = math.floor(value)
     end
     photoLimit('PhotoMaxSide', 1280, 320, 4096)
-    photoLimit('PhotoMaxBytes', 600000, 50000, 4000000)
+    photoLimit('PhotoMaxBytes', 600000, 50000, 1500000)
 
     -- How long an opened kill photo waits for Save or Delete. Read on every
     -- tick; zero or less would delete a photo the moment it was opened.

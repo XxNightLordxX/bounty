@@ -116,6 +116,9 @@ function boot(responses) {
   const sandbox = {
     document: document,
     window: {
+      // Where FiveM serves a resource's page from, for a server that
+      // renamed the folder.
+      location: { hostname: 'cfx-nui-renamed-by-the-operator' },
       // Every listener, not the last one registered.
       //
       // This used to keep one function per type, so a second
@@ -186,14 +189,16 @@ function boot(responses) {
         }
       });
     },
-    /* What CEF provides so a page can address its own resource.
+    /* No GetParentResourceName, as in the real frame.
      *
-     * Absent from this shim until the page started using it, which is the
-     * shape of shim gap that reports a bug in the code under test: the page
-     * would fall back to the literal and the suite would agree with itself.
-     * Named here as something other than the shipped name, so a page that
+     * This shim used to provide one, and the page used it, and the suite
+     * agreed with itself: FiveM defines it only in frames directly under
+     * its NUI root, and lb-phone shows a custom app in an iframe inside its
+     * own frame, so the real page never had it and posted to the literal
+     * 'crimson-hitman' on every server. What the real frame does have is
+     * its own address, https://cfx-nui-<resource>/ (window.location below),
+     * named here as something other than the shipped name, so a page that
      * ignores it and uses the literal is a page that fails. */
-    GetParentResourceName: function () { return 'renamed-by-the-operator'; },
     // Ids are a counter, not a position: settle() splices fired timeouts out
     // of the list, so a position would name a different timer afterwards.
     setTimeout: function (fn, ms) { timers.push({ fn: fn, ms: ms, id: ++timerSeq }); return timerSeq; },
@@ -626,16 +631,26 @@ async function main() {
       truthy(text.indexOf('Save to Photos') !== -1 && text.indexOf('Delete') !== -1, text);
     });
 
-    // Another tab, the way a player leaves a screen.
+    // Another tab, the way a player leaves a screen — or a thumb that
+    // missed Save to Photos, thirty pixels above the tab bar.
+    const boardsAsked = app.sent.filter(function (r) { return r.name === 'list'; }).length;
     tab(app, 'board');
     await settle(); await settle();
 
-    it('counts closing it any other way as Delete, and tells the server', function () {
-      eq(decisions(app).join(','), 'delete');
+    it('keeps the photo up until it is saved or deleted, rather than deleting it on a tab tap', function () {
+      drewCleanly(app, 'a tab tapped over the photo');
+      eq(decisions(app).length, 0, 'a tab tap is not a Delete: ' + decisions(app).join(','));
       const images = app.view.all().filter(function (n) { return n.tagName === 'IMG'; });
-      eq(images.length, 0, 'and the photo is gone from the page');
+      eq(images.length, 1, 'the photo is still on screen');
+      truthy(app.notice().indexOf('Save or delete the photo first') !== -1, app.notice());
+      truthy(labels(app).indexOf('Save to Photos') !== -1 && labels(app).indexOf('Delete') !== -1,
+        labels(app).join(','));
+      eq(app.sent.filter(function (r) { return r.name === 'list'; }).length, boardsAsked,
+        'and the board was not opened behind it');
     });
 
+    click(app, 'Delete');
+    await settle(); await settle();
     tab(app, 'ledger');
     await settle();
     it('says on the row that it was deleted', function () {
@@ -781,6 +796,28 @@ async function main() {
       .map(function (n) { return n.textContent; });
   }
 
+  /* What the browser loads an image with, in a phone whose network answers
+     `outcome` for every link: 'load', 'error', or 'never' (no answer at
+     all, so only the page's own timer ends the wait). Records what it was
+     asked to load. */
+  function phoneImages(app, outcome) {
+    const loaded = [];
+    app.sandbox.window.Image = function () {
+      const image = this;
+      Object.defineProperty(image, 'src', {
+        set: function (url) {
+          loaded.push(url);
+          if (outcome === 'never') { return; }
+          app.sandbox.setTimeout(function () {
+            const handler = outcome === 'error' ? image.onerror : image.onload;
+            if (handler) { handler(); }
+          }, 0);
+        }
+      });
+    };
+    return loaded;
+  }
+
   await (async function photoServedByLink() {
     const gallery = [];
     const app = await openedPhoto({
@@ -789,6 +826,7 @@ async function main() {
     app.sandbox.window.components = {
       saveToGallery: function (url) { gallery.push(url); return Promise.resolve(42); }
     };
+    const loaded = phoneImages(app, 'load');
 
     it('shows a photo the server keeps, as it was sent', function () {
       drewCleanly(app, 'a photo kept on the server');
@@ -805,7 +843,53 @@ async function main() {
       eq(gallery.join(','), SERVED, 'the link the server serves, and never the picture');
       truthy(app.view.textContent.indexOf('Photo saved to your phone') !== -1, app.view.textContent);
     });
+
+    it('loads the link before the phone\'s Photos is given it', function () {
+      eq(loaded.join(','), SERVED, 'loaded once, as the Photos app will load it');
+    });
   })();
+
+  /* A link that leads nowhere: lb-phone takes any link on an allowed host,
+     so a public address that does not reach this server was saved all the
+     same — "Saved to your Photos.", a broken picture there, the one look
+     spent, and the file kept for good behind the saved link. */
+  for (const outcome of ['error', 'never']) {
+    await (async function photoLinkDoesNotLoad() {
+      const gallery = [];
+      const app = await openedPhoto({
+        openPhoto: { ok: true, data: { handle: 'ph00000000aa', src: KEPT, link: true } }
+      });
+      app.sandbox.window.components = {
+        saveToGallery: function (url) { gallery.push(url); return Promise.resolve(42); }
+      };
+      const loaded = phoneImages(app, outcome);
+      click(app, 'Save to Photos');
+      await settle(); await settle(); await settle();
+      if (outcome === 'never') {
+        // Nothing answers; the page's own wait runs out.
+        const wait = app.timers.filter(function (t) { return t.ms === 8000 && !t.cleared; });
+        eq(wait.length, 1, 'one wait for the link to load');
+        wait[0].fn();
+        await settle(); await settle(); await settle();
+      }
+
+      it('does not save a link that ' + (outcome === 'error' ? 'fails to load' : 'never loads')
+        + ', and offers to keep the photo instead', function () {
+        eq(loaded.join(','), SERVED, 'it was tried');
+        eq(gallery.length, 0, 'never handed to the phone\'s Photos: ' + gallery.join(','));
+        eq(decisions(app).join(','), 'link', 'not reported saved');
+        eq(images(app).length, 1, 'still open, the look not lost');
+        truthy(app.notice().indexOf('could not save') !== -1, app.notice());
+        truthy(labels(app).indexOf('Keep it in the app instead') !== -1, labels(app).join(','));
+      });
+
+      click(app, 'Keep it in the app instead');
+      await settle(); await settle();
+      it('keeps it in the app when asked, after a link that ' + outcome + 's', function () {
+        eq(decisions(app).join(','), 'link,keep');
+      });
+    })();
+  }
 
   await (async function photoLinkRefused() {
     const app = await openedPhoto({
@@ -920,8 +1004,10 @@ async function main() {
     });
     tab(app, 'board');
     await settle(); await settle();
-    it('counts closing it any other way as Delete here too', function () {
-      eq(decisions(app).join(','), 'delete');
+    it('holds the tab bar here too, until it is kept or deleted', function () {
+      eq(decisions(app).length, 0, decisions(app).join(','));
+      eq(images(app).length, 1, 'still open');
+      truthy(app.notice().indexOf('Save or delete the photo first') !== -1, app.notice());
     });
   })();
 
@@ -955,6 +1041,18 @@ async function main() {
       truthy(app.view.textContent.indexOf('Kept for you in this app') !== -1, app.view.textContent);
     });
 
+    // Left by the tab bar: a kept photo spends nothing by being left, so
+    // the tab bar is not held for it.
+    tab(app, 'board');
+    await settle(); await settle();
+    it('lets the tab bar leave a kept photo, without deleting it', function () {
+      eq(images(app).length, 0, 'the board, not the photo');
+      eq(decisions(app).length, 0, 'leaving a kept photo is not a Delete');
+    });
+
+    tab(app, 'ledger');
+    click(app, 'View photo');
+    await settle(); await settle();
     click(app, 'Close');
     await settle(); await settle();
     tab(app, 'board');
@@ -969,7 +1067,7 @@ async function main() {
     click(app, 'Delete');
     await settle(); await settle();
     it('opens again as often as asked, and deletes it when told to', function () {
-      eq(opened, 2);
+      eq(opened, 3);
       eq(decisions(app).join(','), 'delete');
       truthy(app.view.textContent.indexOf('Photo deleted') !== -1, app.view.textContent);
     });
@@ -1770,9 +1868,11 @@ async function main() {
     due[due.length - 1].fn();
     await settle(); await settle();
 
-    it('refreshes once for the whole burst', function () {
+    it('refreshes once for the whole burst, reading what the board draws', function () {
+      // The board, and not Mine and the ledger behind it: those are read
+      // when their tabs are opened (pushReadsWhatIsShown below).
       const calls = app.sent.slice(opening).map(function (s) { return s.name; }).sort();
-      eq(JSON.stringify(calls), JSON.stringify(['ledger', 'list', 'mine']),
+      eq(JSON.stringify(calls), JSON.stringify(['list']),
         'exactly one refresh: ' + JSON.stringify(calls));
     });
 
@@ -1780,6 +1880,224 @@ async function main() {
       const before = app.sent.length;
       app.sandbox.window._message({ data: { type: 'result', event: 'list' } });
       eq(app.sent.length, before, 'a reply is not a push');
+    });
+  })();
+
+  /* A push re-read the board, Mine and the ledger whatever tab was open:
+     three requests from the bucket all three share where one was drawn,
+     and the board, the costliest thing the server builds, for players who
+     were not looking at it. Each tab reads what it draws; the rest is read
+     when its tab is opened. */
+  await (async function pushReadsWhatIsShown() {
+    const app = boot({ list: BOARD, mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+
+    async function pushedOn(name) {
+      tab(app, name);
+      await settle(); await settle();
+      const before = app.sent.length;
+      app.sandbox.window._message({ data: { type: 'push', reason: 'accepted' } });
+      const due = app.timers.filter(function (t) { return t.ms === 250 && !t.cleared; });
+      due[due.length - 1].fn();
+      await settle(); await settle();
+      return app.sent.slice(before).map(function (r) { return r.name; }).sort();
+    }
+
+    const read = {};
+    for (const name of ['ledger', 'mine', 'onme', 'place', 'board']) {
+      read[name] = await pushedOn(name);
+    }
+    it('reads, on each tab, only what that tab draws', function () {
+      drewCleanly(app, 'pushes on every tab');
+      eq(JSON.stringify(read.board), JSON.stringify(['list']), 'board');
+      eq(JSON.stringify(read.mine), JSON.stringify(['ledger', 'mine']),
+        'Mine draws the ledger\'s record too');
+      eq(JSON.stringify(read.onme), JSON.stringify(['mine']), 'On me');
+      eq(JSON.stringify(read.ledger), JSON.stringify(['ledger']), 'the ledger');
+      eq(JSON.stringify(read.place), JSON.stringify([]), 'the Place form draws none of them');
+    });
+
+    const before = app.sent.length;
+    tab(app, 'ledger');
+    await settle(); await settle();
+    it('reads the ledger when its tab is opened, now a push may not have', function () {
+      eq(JSON.stringify(app.sent.slice(before).map(function (r) { return r.name; })),
+        JSON.stringify(['ledger']));
+    });
+  })();
+
+  /* Every reply redrew the open tab whether it showed the reply or not,
+     and NUI replies land in tasks of their own, so the coalescing did not
+     merge them: a refresh on the Board was three rebuilds of it. */
+  await (async function redrawsOnlyWhatIsShown() {
+    const waiting = {};
+    function later(name, answer) {
+      return function () {
+        return new Promise(function (resolve) { waiting[name] = function () { resolve(answer); }; });
+      };
+    }
+    const app = boot({ list: later('list', BOARD), mine: later('mine', MINE),
+      ledger: later('ledger', LEDGER) });
+    await settle(); await settle();
+    // The opening reads, answered.
+    ['list', 'mine', 'ledger'].forEach(function (n) { waiting[n](); });
+    await settle(); await settle();
+
+    tab(app, 'board');
+    await settle();
+    const view = app.document.getElementById('view');
+    const drawsBefore = view._clears || 0;
+    // The three replies, each in a task of its own.
+    for (const n of ['ledger', 'mine', 'list']) {
+      waiting[n]();
+      await settle(); await settle();
+    }
+    it('redraws the board for the board\'s reply, and not for Mine\'s or the ledger\'s', function () {
+      drewCleanly(app, 'replies landing apart');
+      eq((view._clears || 0) - drawsBefore, 1, 'full rebuilds of the board');
+      truthy(app.view.textContent.indexOf('Dana Reyes') !== -1, 'and it shows the board');
+    });
+  })();
+
+  /* Refused proposal reads each kept a retry of their own going for as long
+     as the contract stayed unread, and every push started another: while
+     the bucket was empty the reads multiplied with every refresh, and took
+     the tokens the last Mine read needed. */
+  await (async function proposalsOneReadAtATime() {
+    const placed = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    placed.role = 'creator';
+    placed.hitmen = [];
+    let asked = 0;
+    const app = boot({
+      list: BOARD, ledger: LEDGER,
+      mine: { ok: true, data: { created: [placed], accepted: [], onMe: [] } },
+      amendments: function () {
+        asked++;
+        return { ok: false, err: 'rate_limited', data: { retryAfter: 2 } };
+      }
+    });
+    await settle(); await settle();
+    tab(app, 'mine');
+    await settle(); await settle(); await settle();
+    const first = asked;
+
+    // Three pushes that name no contract, each refreshed, each refused.
+    for (let i = 0; i < 3; i++) {
+      app.sandbox.window._message({ data: { type: 'push', reason: 'accepted' } });
+      const due = app.timers.filter(function (t) { return t.ms === 250 && !t.cleared; });
+      due[due.length - 1].fn();
+      await settle(); await settle(); await settle();
+    }
+    const afterPushes = asked;
+
+    // Every retry that was waiting comes due.
+    app.timers.filter(function (t) { return t.ms === 2000 && !t.cleared; })
+      .forEach(function (t) { t.fn(); });
+    await settle(); await settle(); await settle();
+
+    it('keeps one read of a contract\'s proposals going, however many refreshes ask', function () {
+      truthy(first >= 1, 'the opening read was asked: ' + first);
+      eq(afterPushes - first, 3, 'one fresh read per push, which forgets the stale one');
+      eq(asked - afterPushes, 1, 'and of the retries waiting, only the live one asks again: '
+        + (asked - afterPushes));
+    });
+
+    // Left Mine while a retry waited: it does not ask from the board, and
+    // asks again when Mine is opened.
+    tab(app, 'board');
+    await settle(); await settle();
+    const onBoard = asked;
+    app.timers.filter(function (t) { return t.ms === 2000 && !t.cleared; })
+      .forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+    tab(app, 'mine');
+    await settle(); await settle(); await settle();
+    it('asks again when Mine is opened after a retry it skipped', function () {
+      eq(asked, onBoard + 1, 'nothing from the board, then one read on Mine');
+    });
+  })();
+
+  /* The handover countdown rebuilt the whole Mine tab — every card, face and
+     icon — once a second to move one bar. It is painted in place now, as
+     the clock chips are. */
+  await (async function countdownPaintsInPlace() {
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hitman';
+    held.myAlias = 'Operative #1';
+    held.kidnapProgress = { elapsed: 4, required: 30, graceLeft: 3000, graceTotal: 3000 };
+    let elapsed = 4;
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+      mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+      ledger: LEDGER,
+      kidnapProgress: function () {
+        elapsed += 1;
+        return { ok: true, data: { elapsed: elapsed, required: 30, graceLeft: 3000, graceTotal: 3000 } };
+      }
+    });
+    await settle(); await settle();
+    tab(app, 'mine');
+    await settle(); await settle();
+    const view = app.document.getElementById('view');
+    const poll = app.timers.filter(function (t) { return t.repeating && t.ms === 1000 && !t.cleared; });
+    const drawsBefore = view._clears || 0;
+    for (let i = 0; i < 3; i++) {
+      poll[poll.length - 1].fn();
+      await settle(); await settle();
+    }
+    it('moves the bar without rebuilding the tab', function () {
+      drewCleanly(app, 'a countdown painted in place');
+      eq(poll.length >= 1, true, 'the countdown is polled');
+      eq((view._clears || 0) - drawsBefore, 0, 'full rebuilds of Mine during the countdown');
+      truthy(app.view.textContent.indexOf('7s of 30s') !== -1,
+        'and the bar says where it is: ' + app.view.textContent);
+      eq(app.view.all().filter(function (n) {
+        return n._className && n._className.split(' ').indexOf('countdown') !== -1;
+      }).length, 1, 'one bar, not one more per poll');
+    });
+  })();
+
+  /* Every face ever seen was kept: each new render of a target has a new
+     reference, so an hour on the board, or a busy board paged through, held
+     megabytes more for as long as the app stayed open. */
+  await (async function facesAreNotKeptForever() {
+    let generation = 1;
+    const asked = [];
+    function boardOf(gen) {
+      const rows = [];
+      for (let i = 0; i < 15; i++) {
+        const row = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+        row.id = 'ct' + String(1000000 + i);
+        row.targetImageId = 'mg' + gen + '_' + String(100000 + i);
+        rows.push(row);
+      }
+      return { ok: true, data: { page: 1, pages: 1, contracts: rows, settings: {} } };
+    }
+    const app = boot({
+      list: function () { return boardOf(generation); },
+      mine: MINE, ledger: LEDGER,
+      mugshotImage: function (body) {
+        asked.push(body.id);
+        return { ok: true, data: { id: body.id, image: 'data:image/webp;base64,' + body.id } };
+      }
+    });
+    await settle(); await settle(); await settle();
+    async function show(gen) {
+      generation = gen;
+      tab(app, 'board');
+      for (let i = 0; i < 4; i++) { await settle(); }
+    }
+    for (let gen = 2; gen <= 5; gen++) { await show(gen); }
+    const afterFive = asked.length;
+    await show(5);
+    const again = asked.length - afterFive;
+    await show(1);
+    const oldest = asked.length - afterFive - again;
+    it('keeps the faces it draws, and lets the oldest go', function () {
+      drewCleanly(app, 'five boards of faces');
+      eq(afterFive, 75, 'five boards of fifteen new faces');
+      eq(again, 0, 'the faces on screen are kept');
+      eq(oldest, 15, 'the first board\'s faces were let go, and are asked for again');
     });
   })();
 

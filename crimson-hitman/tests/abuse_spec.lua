@@ -220,7 +220,7 @@ describe("an anonymous client's presence", function()
 
         local said
         for _, event in ipairs(Env.clientEvents) do
-            if event.name == 'crimson-hitman:notify' and event.target == 3 then
+            if Natives.isNotice(event) and event.target == 3 then
                 said = event.args[1].content
             end
         end
@@ -811,10 +811,14 @@ describe('a muted thread', function()
         return s, f, c, s.comms.threads(f.creator, c.id)[1].handle
     end
 
+    --- 'crimson-hitman:notify' counts a phone notification by either
+    --- route: saved through lb-phone's server export, or the client's popup.
     local function count(name, target, title)
         local n = 0
         for _, event in ipairs(Env.clientEvents) do
-            if event.name == name and event.target == target
+            local named = event.name == name
+                or (name == 'crimson-hitman:notify' and Natives.isNotice(event))
+            if named and event.target == target
                 and (not title or event.args[1].title == title) then
                 n = n + 1
             end

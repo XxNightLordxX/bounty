@@ -432,6 +432,9 @@ function Bridges.install(modules)
         end
         connected[src] = nil
         readying[src] = nil
+        -- A photo on its way to them is not any more, whoever gets this
+        -- server id next.
+        if modules.app.forgetSource then modules.app.forgetSource(src) end
         -- Somebody left, whoever they were: the expiry pass looks again.
         -- Without a citizen id onPlayerDropped stops before saying so, and
         -- the pass waited up to MaxDeadlineSkipSeconds to notice the clock
@@ -596,7 +599,9 @@ function Bridges.installCommands(modules)
     command(names.diagnose, Config.Admin.Ace, function(src, args)
         -- The optional player id is what makes this runnable from the server
         -- console, which is the one place that never refuses an owner.
-        local lines = Admin.diagnose(src, args[1])
+        -- With somewhere to say what comes back later: whether the public
+        -- photo address reaches this resource is asked over the network.
+        local lines = Admin.diagnose(src, args[1], function(line) reply(src, line) end)
         for i = 1, #lines do reply(src, lines[i]) end
     end)
 

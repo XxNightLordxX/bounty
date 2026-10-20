@@ -66,17 +66,96 @@ local function withinBudget(cid)
     return true
 end
 
+--- The number of the phone this player has equipped, as lb-phone answers
+--- by their server id. nil with no phone (yet); and a second false where
+--- the export itself could not be asked.
+---
+--- Never by citizen id, which lb-phone would answer with the phone they
+--- last had equipped: that phone may be in somebody else's pocket now, and
+--- a notice saved on it would tell whoever holds it what this player is
+--- part of.
+local function equippedNumber(src)
+    local ok, number = pcall(function()
+        return exports['lb-phone']:GetEquippedPhoneNumber(src)
+    end)
+    if not ok then return nil, false end
+    if type(number) ~= 'string' and type(number) ~= 'number' then return nil, true end
+    number = tostring(number)
+    if number == '' or #number > 32 then return nil, true end
+    return number, true
+end
+
+--- How long a notification waits for the player's phone, in steps: a
+--- notice kept for their next login (deliverWaiting) is handed over while
+--- they are still choosing a character or a spawn, before lb-phone has
+--- loaded the phone it would be saved on.
+local PHONE_WAIT_MS, PHONE_WAITS = 2000, 60
+
+--- Put a notification on the player's phone.
+---
+--- Through lb-phone's server export, by the number of the phone they have
+--- equipped: that is the one form of SendNotification lb-phone keeps in
+--- the phone's notification list. The client export it used to go through
+--- shows a popup that is never saved, so a receipt ("the photo is waiting
+--- under Ledger"), a target's alert or a stake forfeited was gone the
+--- moment it faded — and a notice kept for a player's next login reached
+--- them before their phone had loaded, where it was not seen at all. So a
+--- player whose phone is not loaded yet is waited for, a while.
+---
+--- The popup stays as the fallback: lb-phone not started, an export that
+--- throws or says no, or a phone that never loads. The player's client
+--- raises it, as it always did.
+---
+--- In a thread of its own. The export writes to lb-phone's database and
+--- waits for it, and this is reached from inside settlements and request
+--- handlers that must not yield halfway for the sake of a notification.
+--- CreateThreadNow runs it at once up to that wait, so the order things
+--- are sent in does not change.
+local function raise(actor, cid, title, content)
+    local src = actor.source
+    Citizen.CreateThreadNow(function()
+        if GetResourceState('lb-phone') == 'started' then
+            local number, asked = equippedNumber(src)
+            for _ = 1, PHONE_WAITS do
+                if number or not asked then break end
+                Wait(PHONE_WAIT_MS)
+                -- Still them on that server id. A source is reused, and a
+                -- notice is never saved on, or raised for, whoever has it now.
+                local now = Identity.byCitizenId(cid)
+                if not now or now.source ~= src then return end
+                number, asked = equippedNumber(src)
+            end
+            if number then
+                local ok, id = pcall(function()
+                    return exports['lb-phone']:SendNotification(number, {
+                        app = 'crimson-hitman', title = title, content = content,
+                    })
+                end)
+                if ok and id ~= false then return end
+            end
+        end
+        TriggerClientEvent('crimson-hitman:notify', src, {
+            title = title,
+            content = content,
+        })
+    end)
+end
+
 --- Send to one player by citizen id. Silently no-ops when they are offline.
 ---
---- lb-phone's SendNotification is a *client* export — there is no server-side
---- equivalent — so the server hands the notification to that player's client,
---- which calls the export locally.
+--- Saved on their phone through lb-phone's server export where it can be,
+--- and raised by their client where it cannot (raise).
 ---
 --- opts.muted: the recipient muted the thread this came from (§11.4). It is
 --- charged to their budget exactly as a sent one is, and then not sent.
 --- Left uncharged, a muted thread would leave room in the budget that an
 --- unmuted one fills, and the next notice — a call request, whose sender is
 --- told when it could not get through — would tell the sender which it was.
+---
+--- What it answers does not depend on which way the notice went, or on
+--- whether lb-phone took it: only on the budget, the mute and whether the
+--- player is here, exactly as before. The call request reports the answer
+--- to its sender.
 function Notify.toCitizen(cid, title, content, opts)
     if not cid then return false end
     if not (opts and opts.bypassBudget) and not withinBudget(cid) then return false end
@@ -85,10 +164,7 @@ function Notify.toCitizen(cid, title, content, opts)
     local actor = Identity.byCitizenId(cid)
     if not actor then return false end
 
-    TriggerClientEvent('crimson-hitman:notify', actor.source, {
-        title = title,
-        content = content,
-    })
+    raise(actor, cid, title, content)
     return true
 end
 

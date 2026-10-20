@@ -27,10 +27,21 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] With `MugShotBase64` stopped (`stop MugShotBase64`), a new contract's
       target never gets a face on the board, and no `crimson-hitman:renderMugshot`
       event reaches their client; started again, faces come back
+- [ ] On a copy of the server, rename the folder (`crimson-hitman-test`) and
+      `ensure` that name: the app opens, the board loads and a contract can
+      be placed. (Every request used to go to `crimson-hitman` whatever the
+      folder was called.) Rename it back
 
 ## 2. Access
 
-- [ ] A civilian character sees the **Crimson** app on their phone
+- [ ] A civilian character finds **Crimson-Hitman** in the phone's App Store
+      (not on the home screen) and can download it. With
+      `Config.App.DefaultInstalled = true` and a restart it is on their home
+      screen instead, and cannot be removed
+- [ ] The app's top lines sit below lb-phone's clock and island, on every
+      tab: the first board card's name, Mine's first heading, a thread's
+      **Back** and **Call**, the viewfinder's instruction, and the first line
+      of a refusal notice
 - [ ] A `police` character does **not** see it
 - [ ] So do `bcso`, `sheriff`, `trooper`, `sasp`, `fib`, `ranger`, `ambulance`, `fire`, `doj`, `lawyer`
 - [ ] An officer who clocks **off duty** still cannot open it
@@ -110,9 +121,11 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] View photo shows it full-screen with **Save to Photos** and **Delete**;
       on `'host'` storage Save puts it in the phone's Photos app and the row
       then reads "Photo saved to your phone"
-- [ ] Opening it again is refused; switching tab while it is open deletes it
-      and the row reads "Photo deleted"; on `'server'` storage its file is
-      gone from `data/photos/`
+- [ ] Opening it again is refused. Tapping a tab while it is open does
+      nothing but say "Save or delete the photo first"; the photo stays up.
+      **Delete** deletes it and the row reads "Photo deleted"; on `'server'`
+      storage its file is gone from `data/photos/`. A photo kept in the app
+      leaves by any tab
 - [ ] A photo left open (phone closed mid-view) is deleted after
       `Config.Completion.PhotoOpenSeconds`
 - [ ] A stray file put in `data/photos/` or `data/photos/kept/` (named like
@@ -129,7 +142,15 @@ uploads, and with neither. Restart the resource between them.
       `Config.Completion.PhotoPublicUrl`, and add that host to lb-phone's
       `Config.UploadWhitelistedHostnames`. `/ch-diag <id>` shows
       `photo links: https://<host>/crimson-hitman/p/...` and
-      `lb-phone's upload allow list takes <host>: yes`
+      `lb-phone's upload allow list takes <host>: yes`, and a moment after
+      the report `photo links: https://<host>/crimson-hitman reaches this
+      resource: yes`
+- [ ] Set `Config.Completion.PhotoPublicUrl` to the same host **without**
+      `/crimson-hitman` and restart: `/ch-diag` now says the address answered
+      404, not this resource. Save to Photos on a fresh photo: the page waits
+      a few seconds, says the phone could not save it and offers **Keep it in
+      the app instead**; nothing new is in the phone's Photos. Put the
+      address back
 - [ ] Remove the host from lb-phone's list and restart lb-phone: `/ch-diag`
       now says the list does NOT take it, and names the line to add. Put it back
 - [ ] Save to Photos on a fresh kill photo: the phone's **Photos** app has the
@@ -160,7 +181,9 @@ uploads, and with neither. Restart the resource between them.
       only on a phone build whose app page has no `components.uploadMedia` /
       `components.saveToGallery` at all.)
 - [ ] A kept photo opens again as often as you like, with **Delete** and
-      **Close**; Close keeps it, Delete removes it and its file
+      **Close**; Close keeps it, Delete removes it and its file. Tapping
+      **View photo** again while one is still arriving says to try again in
+      a few seconds, rather than sending it twice
 - [ ] When a save to Photos fails (take the host off lb-phone's list and
       try), the dialog says the phone could not save it and offers **Keep it
       in the app instead**; that keeps it as above
@@ -190,7 +213,10 @@ uploads, and with neither. Restart the resource between them.
 ## 7. Law enforcement advisory
 
 - [ ] Placing a contract on an officer warns the creator first, naming the department
-- [ ] **Every** online LEO gets a phone notification naming the officer
+- [ ] **Every** online LEO gets a phone notification naming the officer —
+      including officers who never had the app, since it is never on their
+      phone (lb-phone's handling of an app it has not installed is not
+      documented; this is the check)
 - [ ] The targeted officer is notified directly
 - [ ] An `sc-dispatch` entry appears in the MDT
 - [ ] Accepting raises a second advisory with the operative count
@@ -232,6 +258,13 @@ uploads, and with neither. Restart the resource between them.
 
 ## 11. Presence and persistence
 
+- [ ] Notifications stay in the phone's notification list once their popup
+      has gone: an acceptance, "the photo is waiting under Ledger", a
+      target's "eyes on you", a stake forfeited
+- [ ] A hitman logged off when their contract expires, logging back in
+      through the character and spawn selector, finds "Contract expired" in
+      their phone's notification list once they have spawned
+- [ ] A target who never downloaded the app still gets "eyes on you"
 - [ ] A contract disappears from the board when the target logs out
 - [ ] It reappears when they return, with escrow intact
 - [ ] Restarting the resource mid-contract loses nothing

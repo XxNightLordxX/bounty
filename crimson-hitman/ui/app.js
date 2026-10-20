@@ -5,22 +5,33 @@
 (function () {
   'use strict';
 
-  /* The resource this page belongs to, asked for rather than assumed.
+  /* The resource this page belongs to, read from the page's own address.
   
      This was the literal 'crimson-hitman'. Every NUI call posts to
      https://<resource>/..., and renaming a resource folder is an ordinary
-     thing for a server owner to do — at which point every request in the
-     app goes to a resource that does not exist, every one of them answers
+     thing for a server owner to do (a GitHub zip unpacks as
+     crimson-hitman-main) — at which point every request in the app goes to
+     a resource that does not exist, every one of them answers
      'unreachable', and the app is a set of buttons that do nothing with no
      clue anywhere as to why. The client derives every other URL from
      GetCurrentResourceName(); this is the one place that did not.
   
-     GetParentResourceName is what CEF provides for exactly this. The
-     literal stays as the fallback for anywhere it is absent — the test
-     harness, a browser opened on the file directly — because a page that
-     cannot work out its own name should still behave as it did before. */
-  var RESOURCE = (typeof GetParentResourceName === 'function'
-    && GetParentResourceName()) || 'crimson-hitman';
+     It then asked GetParentResourceName, which changed nothing. FiveM
+     defines that only in frames directly under its NUI root (the epoxy
+     script, NUIApp.cpp), and this page is an iframe inside lb-phone's own
+     frame, so it never has it: the literal was used on every server. The
+     page's own address is always there. FiveM serves a resource's files
+     from https://cfx-nui-<resource>/, which is where the client points
+     lb-phone for this page (client/main.lua), and the NUI request handler
+     matches a resource name whatever its case, so a host the browser has
+     lowercased still reaches it. GetParentResourceName and the literal are
+     left for a page opened anywhere else — a browser on the file directly,
+     a layout test — because a page that cannot work out its own name
+     should still behave as it did before. */
+  var RESOURCE = (/^cfx-nui-(.+)$/.exec(String((window.location
+      && window.location.hostname) || '')) || [])[1]
+    || (typeof GetParentResourceName === 'function' && GetParentResourceName())
+    || 'crimson-hitman';
   var state = {
     tab: 'board', board: null, mine: null, ledger: null,
     progress: {}, dialog: null, leoConfirmed: false, wallet: null,
@@ -813,8 +824,9 @@
      and shown once. The server spends the view as it hands the photo over
      (openPhoto), so this dialog is the only time the page holds it: Save to
      Photos puts it in the phone's own gallery, Delete lets it go, and the
-     server is told which. Closing it any other way — another tab, a redraw
-     that lost it — is a Delete, and the server is told that too
+     server is told which. The tab bar waits for one of the two (a mis-tap
+     there was a Delete); anything else that loses the dialog — a redraw
+     that dropped it — is a Delete, and the server is told that too
      (letGoOfProof). A phone closed mid-view tells nobody, and the server
      deletes it once Config.Completion.PhotoOpenSeconds have passed.
 
@@ -952,6 +964,48 @@
     });
   }
 
+  /* Whether the link the server serves a photo under actually loads, before
+     the phone's Photos is given it.
+
+     lb-phone checks a link's host and nothing else, so a link that leads
+     nowhere — a public address without the /<resource> FXServer routes by,
+     a proxy that does not pass it on, a certificate the phone refuses — was
+     saved all the same: the page said "Saved to your Photos.", the client's
+     Photos showed a broken picture, their one chance at the photo was
+     spent, and the server kept the file for good behind the saved link.
+     Loaded first here, the way the Photos app will load it: a link that
+     does not load in time is the phone saying no, and the dialog offers to
+     keep the photo in the app instead. The server serves an open photo, so
+     this costs one load of a photo the client is looking at anyway.
+
+     Only the host goes in the diagnostics: the name in the link is the
+     only thing between the photo and anybody who asks for it. */
+  var LINK_CHECK_MS = 8000;
+
+  function linkLoads(url) {
+    var Img = window.Image;
+    // Nothing to load it with, as in a page opened outside the phone.
+    if (typeof Img !== 'function') { return Promise.resolve(); }
+    return new Promise(function (resolve, reject) {
+      var probe = new Img();
+      var over = false;
+      function finish(loaded) {
+        if (over) { return; }
+        over = true;
+        clearTimeout(timer);
+        probe.onload = probe.onerror = null;
+        if (loaded) { return resolve(); }
+        Diag.note('refused', 'photo link did not load from '
+          + ((/^https?:\/\/([^\/]+)/.exec(url) || [])[1] || '?'));
+        reject({ err: 'save_unavailable' });
+      }
+      var timer = setTimeout(function () { finish(false); }, LINK_CHECK_MS);
+      probe.onload = function () { finish(true); };
+      probe.onerror = function () { finish(false); };
+      probe.src = url;
+    });
+  }
+
   // The data URI the server sent, as the Blob lb-phone's upload takes.
   function blobOf(src) {
     var parts = /^data:([^;,]+);base64,(.*)$/.exec(src);
@@ -1000,7 +1054,10 @@
     } else if (route === 'link') {
       saving = post('photoDecision', { handle: d.handle, choice: 'link' }).then(function (r) {
         if (!r.ok || !r.data || typeof r.data.link !== 'string') { throw r; }
-        return toGallery(d.handle, r.data.link);
+        var link = r.data.link;
+        // Only once it is known to load (linkLoads): a dead link saved is
+        // the one look spent on a broken picture.
+        return linkLoads(link).then(function () { return toGallery(d.handle, link); });
       });
     } else {
       saving = new Promise(function (resolve) {
@@ -1164,12 +1221,40 @@
   // for a whole page of faces, not one per face.
   var facesInFlight = 0;
 
+  /* How many faces are kept. Every new render of a target's face has a new
+     reference, and every one ever seen was kept, each up to the server's
+     largest headshot: an hour on the board was megabytes more held for as
+     long as the app stayed open, and paging a busy board, tens. The least
+     recently drawn go first; a face asked for again is fetched again. */
+  var FACES_KEPT = 60;
+
+  function keepFewerFaces() {
+    var held = Object.keys(state.images);
+    var over = held.length - FACES_KEPT;
+    for (var i = 0; i < held.length && over > 0; i++) {
+      // A null is a fetch in flight, or a reference the server refused,
+      // which must not be asked for again.
+      if (state.images[held[i]] !== null) {
+        delete state.images[held[i]];
+        over--;
+      }
+    }
+  }
+
   // The cached image for a reference, fetching it the first time it is seen.
   // Returns nothing while a fetch is in flight; the card simply renders
   // without a face, which is what it does before the first render anyway.
   function mugshot(id) {
     if (!id) { return null; }
-    if (state.images[id] !== undefined) { return state.images[id]; }
+    if (state.images[id] !== undefined) {
+      var face = state.images[id];
+      // Moved to the newest end, so the faces on screen are the last to go.
+      if (face !== null) {
+        delete state.images[id];
+        state.images[id] = face;
+      }
+      return face;
+    }
 
     // Marked as in flight before the request goes out, so a page of rows
     // naming the same target asks once rather than once per row.
@@ -1181,9 +1266,11 @@
       // reference; the next projection carries a new one.
       if (r.ok && r.data && r.data.image) {
         state.images[r.data.id] = r.data.image;
+        keepFewerFaces();
       }
       facesInFlight--;
-      if (facesInFlight === 0) { render(); }
+      // Faces are drawn on the board, Mine and On me, and nowhere else.
+      if (facesInFlight === 0) { redrawFor(['board', 'mine', 'onme']); }
     });
     return null;
   }
@@ -1844,7 +1931,8 @@
         ? contract.kidnapProgress : null;
       var progress = state.progress[contract.id] || snapshot;
       var panel = proposalPanel(contract);
-      if (progress) { row.appendChild(countdown(progress)); }
+      // Kept by contract, so the poll can repaint this bar in place.
+      if (progress) { row.appendChild(countdownBars[contract.id] = countdown(progress)); }
       // A handover already running when the page opened (reopened, or
       // reloaded mid-countdown) is followed too: only arming one started the
       // poll, so the bar froze at the snapshot it was drawn from.
@@ -1973,6 +2061,13 @@
     target_too_far: 'Your target is too far from you',
     creator_too_far: 'The client is too far away'
   };
+
+  /* The countdown bars on screen, by contract, from the last draw. The
+     poll repaints a bar in place, as the clock chips are (paintClock),
+     rather than rebuilding every card, face and icon on the tab once a
+     second to move one bar. Emptied by draw(), so a bar from an older draw
+     is never the one painted. */
+  var countdownBars = {};
 
   function countdown(progress) {
     var wrap = el('div', 'countdown' + (progress.breaking ? ' is-breaking' : ''));
@@ -2762,10 +2857,23 @@
         state.progress[id] = r.data;
         deadline = allowance();
 
-        // Coalesced, and only where the bar is actually on screen. The
-        // countdown is drawn on Mine and On me; redrawing the Place form
-        // once a second throws away what the player is typing into it.
-        if (state.tab === 'mine' || state.tab === 'onme') { redraw(); }
+        // Painted where it is, when the bar is on screen and nothing else
+        // is about to redraw it: a whole tab rebuilt every second to move
+        // one bar was a frame's worth of the phone's time, every second of
+        // a handover. Otherwise coalesced, and only where the bar is drawn
+        // — Mine and On me; redrawing the Place form once a second throws
+        // away what the player is typing into it.
+        var drawn = countdownBars[id];
+        if (drawn && drawn.parentNode && !redrawQueued && !state.dialog) {
+          var next = countdown(r.data);
+          drawn.className = next.className;
+          drawn.innerHTML = '';
+          Array.prototype.slice.call(next.children).forEach(function (part) {
+            drawn.appendChild(part);
+          });
+        } else if (state.tab === 'mine' || state.tab === 'onme') {
+          redraw();
+        }
 
         // A full bar is not the end. A countdown that has run its course is
         // still reported while its payout waits behind another one being
@@ -3032,8 +3140,36 @@
     return describe ? describe(proposal.payload, contract) : 'A change to this contract';
   }
 
+  /* The read of each contract's proposals that is the live one: a token
+     per contract, from the moment it is asked until it is answered, or
+     until its retry asks again.
+
+     Nothing said a read or a retry was already going. Every Mine reply
+     asked again for each contract still unread, and every refusal kept its
+     own retry going for as long as the contract stayed unread — so while
+     the bucket was empty, each push added another chain per contract, the
+     extra reads took the tokens the last Mine read needed, and Mine was
+     replaced by "Asked too fast" over data it already held. One read at a
+     time per contract now; a reply or a retry that is not the live one
+     does nothing. */
+  var proposalsAsking = {};
+
+  /* Forget what is known of one contract's proposals, or of all of them,
+     and any read of them still out: what it brings back is stale too. */
+  function forgetProposals(id) {
+    if (id === undefined) {
+      state.proposals = {};
+      proposalsAsking = {};
+      return;
+    }
+    delete state.proposals[id];
+    delete proposalsAsking[id];
+  }
+
   function loadProposals(contract) {
+    var asking = proposalsAsking[contract.id] = {};
     post('amendments', { id: contract.id }).then(function (r) {
+      if (proposalsAsking[contract.id] !== asking) { return; }
       /* Read in the background, so a refusal is not the player's to read.
          It raised "Slow down" on a player who had pressed nothing, and left
          the proposal undrawn until something else refreshed. Left unasked,
@@ -3042,19 +3178,27 @@
         if (r.err === 'rate_limited') {
           var wait = (Number(r.data && r.data.retryAfter) || 2) * 1000;
           setTimeout(function () {
+            if (proposalsAsking[contract.id] !== asking) { return; }
+            // Let go first: a player who left Mine meanwhile has it asked
+            // again when they come back, rather than never.
+            delete proposalsAsking[contract.id];
             if (state.proposals[contract.id] === undefined
               && (state.tab === 'mine' || state.tab === 'thread')) { loadProposals(contract); }
           }, wait);
+          return;
         }
+        delete proposalsAsking[contract.id];
         return;
       }
+      delete proposalsAsking[contract.id];
       state.proposals[contract.id] = asList(r.data);
       // Counted down from when this landed, as the cards' clocks are.
       stampClocks(state.proposals[contract.id]);
-      // One per contract on the page. Redrawing for each meant a screen of
-      // five contracts redrew five times, on top of the three from the
-      // refresh that asked for them.
-      redrawOffPlace();
+      // One per contract on the page, and only where they are drawn: on
+      // Mine's cards. Redrawing for each meant a screen of five contracts
+      // redrew five times, on top of the three from the refresh that asked
+      // for them, whatever tab was open.
+      redrawFor(['mine']);
     });
   }
 
@@ -3077,7 +3221,7 @@
       if (!r.ok) {
         if (PROPOSAL_OVER[r.err]) {
           say(PROPOSAL_OVER[r.err]);
-          state.proposals = {};
+          forgetProposals();
           refresh();
           return;
         }
@@ -3087,7 +3231,7 @@
       say(outcome === 'applied' ? 'Agreed — the change is in effect.'
         : outcome === 'declined' ? 'Declined.'
         : 'Recorded. Waiting on the other party.', 'ok');
-      state.proposals = {};
+      forgetProposals();
       refresh();
     });
   }
@@ -3562,7 +3706,7 @@
          agree. The page used to answer its own proposal with a second
          request, from the same rate-limit bucket: refused, it left a
          proposal the card never drew and that blocked the next one. */
-      state.proposals = {};
+      forgetProposals();
       if (r.data && r.data.outcome === 'applied') {
         say('Done \u2014 the change is in effect.', 'ok');
         return refresh();
@@ -6360,6 +6504,7 @@
     var view = document.getElementById('view');
     view.innerHTML = '';
     clockChips = [];
+    countdownBars = {};
 
     // A dialog is drawn alone, as a sheet at the foot of the view; the view
     // carries the seal behind it while one is open.
@@ -6418,11 +6563,15 @@
     }, 0);
   }
 
-  /* For a reply the Place form does not show: the board, Mine, the ledger.
-     Each rebuilt the whole form under a player filling it in, for nothing
-     on it — every push did, three times. The tab draws them when opened. */
-  function redrawOffPlace() {
-    if (state.tab !== 'place') { redraw(); }
+  /* For a reply only some tabs draw: the board, Mine, the ledger, a face.
+     Each reply redrew whatever tab was open, whether it showed the reply or
+     not — the Place form under a player filling it in, a thread for each of
+     six proposal reads, the board for the ledger. NUI replies land in tasks
+     of their own, so the coalescing in redraw() did not merge them: a push
+     on the Board was two or three full rebuilds of it. A tab draws what it
+     holds when it is opened. */
+  function redrawFor(tabs) {
+    if (tabs.indexOf(state.tab) !== -1) { redraw(); }
   }
 
   /* Why a section is empty, when the reason is a refusal.
@@ -6478,67 +6627,110 @@
   }
 
   /* Returns a promise that settles once all three reads have landed, so an
-     action can hold its button until the screen shows what it did. */
-  function refresh() {
-    var boardIsCurrent = newestLoad('board');
-    var board = post('list', { page: state.boardPage || 1 }).then(function (r) {
-      if (!boardIsCurrent()) { return; }
-      if (!loadResult('board', r)) { return; }
-      // The board shrank under the page being looked at: back to its last.
-      var pages = Number(r.data && r.data.pages) || 1;
-      if ((state.boardPage || 1) > pages) {
-        state.boardPage = pages;
-        return refresh();
-      }
-      // The Place form shows the server's settings, which come with the
-      // board, and nothing else of it.
-      var settingsWere = JSON.stringify(settings());
-      state.board = r.data;
-      stampClocks(r.data.contracts);
-      if (JSON.stringify(settings()) !== settingsWere) { redraw(); } else { redrawOffPlace(); }
-    });
+     action can hold its button until the screen shows what it did.
 
-    var mineIsCurrent = newestLoad('mine');
-    var mineAsked = loadSeq.mine;
-    var mine = post('mine', {}).then(function (r) {
-      if (!mineIsCurrent()) { return; }
-      var opening = !state.loaded.mine;
-      if (!loadResult('mine', r)) { return; }
-      state.mine = r.data;
-      // Read after the handover ended, so its snapshot is current again.
-      Object.keys(countdownOver).forEach(function (id) {
-        if (countdownOver[id] < mineAsked) { delete countdownOver[id]; }
+     `only` names the sections to read ({ board, mine, ledger }); without
+     it, all three. A push reads only what the open tab draws (shownNow):
+     it read all three whatever the tab, three requests from the bucket the
+     board, Mine and the ledger share where one was drawn — and the board
+     is the costliest thing the server builds. A section skipped is read
+     when its tab is opened. */
+  function refresh(only) {
+    function asked(section) { return !only || only[section] === true; }
+
+    function readBoard() {
+      var boardIsCurrent = newestLoad('board');
+      return post('list', { page: state.boardPage || 1 }).then(function (r) {
+        if (!boardIsCurrent()) { return; }
+        if (!loadResult('board', r)) { return; }
+        // The board shrank under the page being looked at: back to its last.
+        var pages = Number(r.data && r.data.pages) || 1;
+        if ((state.boardPage || 1) > pages) {
+          state.boardPage = pages;
+          return refresh();
+        }
+        // The Place form shows the server's settings, which come with the
+        // board, and nothing else of it.
+        var settingsWere = JSON.stringify(settings());
+        state.board = r.data;
+        stampClocks(r.data.contracts);
+        if (JSON.stringify(settings()) !== settingsWere) { redraw(); } else { redrawFor(['board']); }
       });
-      [r.data.created, r.data.accepted, r.data.onMe].forEach(stampClocks);
-      redrawOffPlace();
-      // Only for contracts this player is actually party to, and only for
-      // ones not already loaded: most contracts have no open proposal and
-      // asking about every one of them every refresh would be three
-      // requests a card.
-      //
-      // And, once the page is open, only while Mine is, the one tab that
-      // draws them. Every push empties them, and each was read again on
-      // whatever tab was open: three placed and three taken made a push
-      // cost nine reads from the bucket the board, Mine and the ledger
-      // share, so a few acceptances in a row ran the page into its own rate
-      // limit. Opening Mine refreshes, and reads them then.
-      if (!opening && state.tab !== 'mine' && state.tab !== 'thread') { return; }
-      asList(r.data.created).concat(asList(r.data.accepted)).forEach(function (c) {
-        if (state.proposals[c.id] === undefined) { loadProposals(c); }
+    }
+
+    function readMine() {
+      var mineIsCurrent = newestLoad('mine');
+      var mineAsked = loadSeq.mine;
+      return post('mine', {}).then(function (r) {
+        if (!mineIsCurrent()) { return; }
+        var opening = !state.loaded.mine;
+        if (!loadResult('mine', r)) { return; }
+        state.mine = r.data;
+        // Read after the handover ended, so its snapshot is current again.
+        Object.keys(countdownOver).forEach(function (id) {
+          if (countdownOver[id] < mineAsked) { delete countdownOver[id]; }
+        });
+        [r.data.created, r.data.accepted, r.data.onMe].forEach(stampClocks);
+        redrawFor(['mine', 'onme']);
+        // Only for contracts this player is actually party to, and only for
+        // ones not already loaded: most contracts have no open proposal and
+        // asking about every one of them every refresh would be three
+        // requests a card.
+        //
+        // And, once the page is open, only while Mine is, the one tab that
+        // draws them. Every push empties them, and each was read again on
+        // whatever tab was open: three placed and three taken made a push
+        // cost nine reads from the bucket the board, Mine and the ledger
+        // share, so a few acceptances in a row ran the page into its own rate
+        // limit. Opening Mine refreshes, and reads them then.
+        if (!opening && state.tab !== 'mine' && state.tab !== 'thread') { return; }
+        asList(r.data.created).concat(asList(r.data.accepted)).forEach(function (c) {
+          if (state.proposals[c.id] === undefined && !proposalsAsking[c.id]) { loadProposals(c); }
+        });
       });
-    });
-    var ledgerIsCurrent = newestLoad('ledger');
-    var ledger = post('ledger', {}).then(function (r) {
-      if (!ledgerIsCurrent()) { return; }
-      if (!loadResult('ledger', r)) { return; }
-      state.ledger = r.data;
-      redrawOffPlace();
-    });
+    }
+
+    function readLedger() {
+      var ledgerIsCurrent = newestLoad('ledger');
+      return post('ledger', {}).then(function (r) {
+        if (!ledgerIsCurrent()) { return; }
+        if (!loadResult('ledger', r)) { return; }
+        state.ledger = r.data;
+        // Mine reads it too: how to finish a contract (howToFinish).
+        redrawFor(['ledger', 'mine']);
+      });
+    }
+
+    var board = asked('board') ? readBoard() : Promise.resolve();
+    var mine = asked('mine') ? readMine() : Promise.resolve();
+    var ledger = asked('ledger') ? readLedger() : Promise.resolve();
     return Promise.all([board, mine, ledger]);
+  }
+
+  /* What the open tab draws, as refresh() takes it: a push re-reads only
+     that. Mine draws the ledger's record too, and a thread the proposals
+     Mine's reply asks for; the Place form draws none of them. */
+  function shownNow() {
+    var tab = state.tab;
+    return {
+      board: tab === 'board',
+      mine: tab === 'mine' || tab === 'onme' || tab === 'thread',
+      ledger: tab === 'ledger' || tab === 'mine'
+    };
   }
 
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
     tab.onclick = function () {
+      /* Not while the kill photo's one look is unanswered. Leaving it was a
+         Delete (letGoOfProof), so a tap on the tab bar thirty pixels under
+         Save to Photos threw away the photo the client had paid for, with
+         no undo, on what was a mis-tap or a "back in a moment". The one
+         chance stays one chance; it is spent by Save or Delete, said on
+         purpose. A photo kept in the app spends nothing by being left. */
+      if (state.dialog && state.dialog.kind === 'proof' && !state.dialog.kept) {
+        say('Save or delete the photo first. You can only see it once.', 'caution');
+        return;
+      }
       navigated();
       state.tab = tab.dataset.tab;
       state.dialog = null;
@@ -6566,15 +6758,18 @@
       }
 
       render();
-      // Opening a tab is when a player expects to see current state.
+      // Opening a tab is when a player expects to see current state. The
+      // ledger too: a push no longer reads it unless it is open.
       if (state.tab === 'board' || state.tab === 'mine' || state.tab === 'onme') refresh();
+      else if (state.tab === 'ledger') refresh({ ledger: true });
     };
   });
 
-  // The client mirrors every server reply here as well as resolving the
-  // fetch that asked for it. Refreshing on those is a loop: one refresh
-  // sends three requests, each reply triggers another refresh, and the app
-  // buries itself within seconds. Only an unsolicited push is acted on.
+  // The client tells the page each server reply came (its event and
+  // outcome, never its data) as well as resolving the fetch that asked for
+  // it. Refreshing on those is a loop: one refresh sends three requests,
+  // each reply triggers another refresh, and the app buries itself within
+  // seconds. Only an unsolicited push is acted on.
   var pushTimer = null;
 
   // A refusal stays up until the player does something else. Captured, so
@@ -6622,9 +6817,9 @@
          where something named none — still clears everything. */
       var named = data.ids && typeof data.ids === 'object' ? asList(data.ids) : [];
       if (named.length) {
-        named.forEach(function (id) { delete state.proposals[id]; });
+        named.forEach(function (id) { forgetProposals(id); });
       } else {
-        state.proposals = {};
+        forgetProposals();
       }
 
       /* And an open thread is re-read.
@@ -6644,7 +6839,7 @@
       // refresh is three requests, so a push per party would be a burst per
       // event.
       if (pushTimer) { clearTimeout(pushTimer); }
-      pushTimer = setTimeout(function () { pushTimer = null; refresh(); }, 250);
+      pushTimer = setTimeout(function () { pushTimer = null; refresh(shownNow()); }, 250);
       return;
     }
 

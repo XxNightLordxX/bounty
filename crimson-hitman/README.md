@@ -11,12 +11,21 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 ## Install
 
-1. Drop `crimson-hitman` into your resources folder.
+1. Drop `crimson-hitman` into your resources folder. Another folder name
+   (`crimson-hitman-main` from a zip, say) works too; use that name in the
+   `ensure` line.
 2. Add `ensure crimson-hitman` to `server.cfg`, **after** `qbx_core`,
    `ox_inventory` and `lb-phone`.
 3. Open `config/config.lua` and check the sections marked below.
 4. Restart. The console prints `[crimson-hitman] started in <mode> mode`,
    plus a warning for any configuration that will surprise you later.
+5. Tell your players where it is. **Crimson-Hitman** is in the phone's App
+   Store, not on anybody's home screen: each player downloads it, and
+   nothing in the game tells them to — a target alerted that a price is on
+   their head included, though their only answer to it (*On me*, the buyout)
+   is in the app. Set `Config.App.DefaultInstalled = true` to put it on
+   every eligible phone instead (lb-phone then does not let them remove it).
+   Barred jobs never see it either way.
 
 The config ships in `json` mode: everything lives in files under
 `crimson-hitman/data/` (`store.json`, `records.json`, `contracts/`, the
@@ -91,11 +100,12 @@ contract) against what those players are carrying.
 | Setting | Why it matters |
 |---|---|
 | `Config.Completion.PhotoStorage` | Where kill photos are kept. `'server'` (as shipped) needs no image host: the hitman takes the photo in the app's own viewfinder and it is kept as a file in `crimson-hitman/data/photos/`, which the server must be able to write to. `'host'` uses lb-phone's own camera and the image host it uploads to, keeping only the link. Either way only the client who placed the contract sees the photo, once (see *The kill photo* below). `/ch-diag` says which is in use |
-| `Config.Completion.PhotoMaxSide` / `PhotoMaxBytes` | `'server'` storage only: the app shrinks each kill photo until its longest side is at most this many pixels (1280) and it weighs at most this many bytes (600000), and the server refuses anything bigger |
+| `Config.Completion.PhotoMaxSide` / `PhotoMaxBytes` | `'server'` storage only: the app shrinks each kill photo until its longest side is at most this many pixels (1280) and it weighs at most this many bytes (600000; at most 1500000), and the server refuses anything bigger. FXServer moves a photo at about 150 KB a second, so the default takes about four seconds each way |
 | `Config.Completion.PhotoPublicUrl` | `'server'` storage only: the public **https** address this server serves photos from when a client saves one to their phone's Photos, such as `'https://photos.example.com/crimson-hitman'`. Unset (as shipped), the server's `web_baseUrl` is used. Add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. See *No image host?* below; `/ch-diag` says which address is used and whether lb-phone takes it |
 | `Config.Completion.KeptPhotoDays` | How many days a photo kept for its client in the app (because their phone could not save it) lasts. Unset (as shipped), it stays until they delete it. `/ch-diag` says how many are kept and how much disk they take |
 | `Config.Completion.ExtraPhotoHosts` | `'host'` storage only. Kill photos are accepted only from image hosts lb-phone itself allows uploads from, plus these. Ships with Fivemanage (`fivemanage.com`, `fmfile.com`), lb-phone's default uploader. If `/ch-diag` shows `photo hosts: 0`, or kill photos are refused with "not on this server's allow list", add your phone's upload host here (a bare domain, no `https://`). lb-phone's camera upload must work first |
 | `Config.Database.Mode` | `json` (as shipped; no database at all), `mysql` (oxmysql), `memory` (testing only — nothing survives a restart). Modes do not share data: see *Changing storage mode* |
+| `Config.App.DefaultInstalled` | Whether the app is on every eligible player's home screen (`true`) or left in the phone's App Store for each player to download (`false`, as shipped). Players are not told it exists either way; see *Install* |
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who cannot open the app. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit |
 | `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry |
 | `Config.Limits` | Contract caps, payouts, cooldowns |
@@ -239,9 +249,11 @@ row has no photo. The client is told it is waiting under Ledger. Their row
 there has a **View photo** button, and tapping it opens the photo full-screen
 with **Save to Photos** and **Delete**. Save to Photos puts it in the phone's
 own Photos app (how, on `'server'` storage, is under *No image host?* below);
-anything else deletes it, including closing it another way, such as
-switching tab. Afterwards the row says which happened. Reading the Ledger
-does not count as a view; only tapping the button does.
+**Delete** deletes it. Until one of the two is tapped the tab bar stays put
+("Save or delete the photo first"), so a mis-tap there cannot throw the photo
+away; anything else that closes it deletes it. Afterwards the row says which
+happened. Reading the Ledger does not count as a view; only tapping the
+button does.
 
 Where the phone cannot take the photo, it is not lost: the button reads
 **Save** and keeps it for the client in this app instead ("Your phone can't
@@ -286,6 +298,9 @@ lb-phone's Photos app keeps a link to each photo, never the picture, so
    gives the photo a new name nobody can guess (128 bits from the server's
    own cryptographic random source) and serves it read-only at
    `https://<address>/p/<name>.webp`; the client's Photos keeps that link.
+   The app loads the link first, as the Photos app will, and saves it only
+   if it loads within a few seconds: a link that leads nowhere is the phone
+   saying no (keep it in the app instead), not a broken picture in Photos.
    The file stays for as long as their Photos does: deleting it there
    (`lb-phone:deletedFromGallery`), or factory resetting the phone it was
    saved from (`lb-phone:factoryReset`), deletes it here too. The address is
@@ -310,7 +325,22 @@ lb-phone's Photos app keeps a link to each photo, never the picture, so
 `/ch-diag` says which: the address it serves photos from (or why there is
 none), whether lb-phone's `UploadWhitelistedHostnames` / `Domains` take it,
 and how many photos are on disk, kept in the app and served to phones, and
-how much space they take.
+how much space they take. A moment after the report it says whether the
+address actually reaches this resource: it asks the address for a photo
+nobody has and expects this resource's own "Not found." (every answer the
+photo handler gives carries an `X-Crimson-Hitman` header). Anything else
+answering — an address without `/crimson-hitman`, a proxy that does not pass
+it on — is named; no answer at all is a warning, since some networks cannot
+reach their own public address from inside while phones can.
+
+**Notifications.** Every notice the resource sends (an acceptance, the
+photo waiting under Ledger, a target's alert, a stake forfeited, the advisory
+to officers) is saved in the phone's notification list through lb-phone's
+server export, by the number of the phone the player has equipped, so it is
+still there after the popup has gone. A notice kept for a player's next login
+waits up to two minutes for their phone to load, so it is there once they
+have spawned. Where lb-phone cannot take it, the player's game raises
+lb-phone's popup instead, which is not saved.
 
 **Counter-play.** A target can see the price on their head and buy it out.
 A new contract shows on their On me tab (and in `/cleanse`) when their
@@ -476,8 +506,9 @@ Five kinds of check, because each catches what the others cannot:
   build were in the app and invisible to Lua tests: a form that could never
   submit a valid contract, and an open that refreshed itself into a storm.
 - **Layout suite** — the page rendered in a real browser at phone widths from
-  280 to 414px, measuring tap targets, clipping and the tab bar. Skipped where
-  Playwright is not installed.
+  280 to 414px, measuring tap targets, clipping, the tab bar over lb-phone's
+  home indicator and the page's top under lb-phone's status bar. Skipped
+  where Playwright is not installed.
 
 **What it cannot prove:** behaviour against the real `ox_inventory`,
 `lb-phone` and `qbx_core` builds. Work through `../docs/in-game-checklist.md` (in the repository, next to this resource folder) on
