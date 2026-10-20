@@ -902,6 +902,70 @@ describe('what a staff command prints', function()
         falsy(out:find('mid%-release'), 'not one a shutdown interrupted: ' .. out)
     end)
 
+    --- /ch-stuck found parked lines through the log's escrow_deliver_parked
+    --- rows, which go after Config.Audit.RetentionDays, and nothing else
+    --- picks a parked line up again: held for ever, and seen by nobody.
+    it('still lists a parked line once the log has let its rows go', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000, items = { { name = 'lockpick', count = 2 } } } } })
+        truthy(c, 'placed')
+        local real = exports.ox_inventory.AddItem
+        exports.ox_inventory.AddItem = function() error('hook raised', 0) end
+        local ok, err = pcall(function()
+            truthy(s.admin.void(0, c.id, 'test'), 'voided')
+            for _ = 1, s.escrow.DELIVER_RAISE_LIMIT + 2 do s.escrow.retryPending('CREATOR1') end
+        end)
+        exports.ox_inventory.AddItem = real
+        truthy(ok, tostring(err))
+        local item
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.source == 'item' then item = line end
+        end
+        truthy(s.escrow.parked(item), 'left for staff')
+        eq(item.owed_to, 'CREATOR1', 'owed back to the client')
+
+        -- Past the log's retention, and the contract's.
+        s.audit.flush()
+        Env.time = Env.time + (math.max(Config.Audit.RetentionDays,
+            Config.Audit.ContractRetentionDays) + 1) * 86400
+        s.storage.prune()
+        for _, row in ipairs(s.storage.readAudit(1000)) do
+            falsy(row.action == 'escrow_deliver_parked', 'the log still has the row')
+        end
+        truthy(s.storage.readContract(c.id), 'the contract is kept while it holds the line')
+        eq(s.storage.readEscrowLine(item.id).state, CH.ESCROW_STATE.HELD)
+        eq(s.escrow.recoverOwed(s.storage.readEscrow(c.id)), 0, 'recovery leaves it for staff')
+
+        local listed
+        for _, row in ipairs(s.admin.interrupted(0)) do
+            if row.line == item.id then listed = row end
+        end
+        truthy(listed, '/ch-stuck still shows it')
+        eq(listed.intended, 'CREATOR1')
+        eq(listed.raised, s.escrow.DELIVER_RAISE_LIMIT)
+
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+        Env.chat = {}
+        truthy(pcall(cmd[Config.Admin.Commands.stuck], 3, {}))
+        truthy(said(3):find(item.id, 1, true), said(3))
+
+        local function picks()
+            local n = 0
+            for _, slot in ipairs(Env.players[1]._inventory) do
+                if slot.name == 'lockpick' then n = n + slot.count end
+            end
+            return n
+        end
+        local held = picks()
+        truthy(s.admin.settleLine(0, item.id, 'pay'), 'staff can still pay it')
+        eq(picks(), held + 2, 'given back once')
+        eq(s.storage.readEscrowLine(item.id).state, CH.ESCROW_STATE.SETTLED)
+    end)
+
     it('prints an empty interrupted list rather than a header with nothing under it', function()
         local s = newStack(); fixture(s)
         local cmd = commands(s)

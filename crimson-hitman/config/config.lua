@@ -906,9 +906,11 @@ Config.PendingEscrow = {
     MaxRetriesPerLogin = 5,
     --- Randomised slightly in code so a reconnect wave does not converge.
     LoginRetryDelayMs = 5000,
-    --- Not a setting: an item whose give raised an error three times in a
-    --- row is no longer retried. It stays owed and waits for staff in
-    --- /ch-stuck, because a give that raised may have given it already.
+    --- Not a setting: an item whose give raises an error is checked against
+    --- the player's inventory. One that arrived counts as delivered. After
+    --- three raises with nothing arriving (counted until staff settle it), or
+    --- one where what arrived cannot be read, it is no longer retried: it
+    --- stays owed and waits for staff in /ch-stuck.
 }
 
 --------------------------------------------------------------------------

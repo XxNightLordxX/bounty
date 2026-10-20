@@ -767,13 +767,31 @@ describe('a mask reported by its own client', function()
     --- message, so a flood of them cannot fill the log.
     it('writes a malformed one down, once', function()
         local w = world()
-        _G.source = CAST.stranger.source
-        for _ = 1, 5 do Env.events['crimson-hitman:maskState']({ source = 1, masked = false }) end
-        _G.source = nil
+        withConfig({ { Config.Targeting, 'AllowNearby', true } }, function()
+            _G.source = CAST.stranger.source
+            for _ = 1, 5 do Env.events['crimson-hitman:maskState']({ source = 1, masked = false }) end
+            _G.source = nil
+        end)
         w.s.audit.flush()
         local rows = {}
         for _, row in ipairs(w.s.storage.readAudit()) do
             if row.action == 'mask_bad_format' then rows[#rows + 1] = row end
+        end
+        eq(#rows, 1, 'one row for five')
+        eq(rows[1].detail.source, CAST.stranger.source, 'naming the source that sent it')
+    end)
+
+    --- Our client sends nothing while the nearby list is off, so one that
+    --- does is refused, and written down once a window like a malformed one.
+    it('refuses one sent while the nearby list is off, and writes it down once', function()
+        local w = world()
+        _G.source = CAST.stranger.source
+        for _ = 1, 5 do Env.events['crimson-hitman:maskState'](false) end
+        _G.source = nil
+        w.s.audit.flush()
+        local rows = {}
+        for _, row in ipairs(w.s.storage.readAudit()) do
+            if row.action == 'gate_maskState' then rows[#rows + 1] = row end
         end
         eq(#rows, 1, 'one row for five')
         eq(rows[1].detail.source, CAST.stranger.source, 'naming the source that sent it')

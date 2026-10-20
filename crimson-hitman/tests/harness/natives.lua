@@ -761,14 +761,36 @@ function Natives.exportsProxy()
             end
             return { items = items }
         end,
-        Search = function(_, src, query, name)
+        --- Metadata matched as ox_inventory matches it (ox_lib's
+        --- table.contains): every value asked for is one of the slot's
+        --- values, compared by value, so a nested table never matches.
+        Search = function(_, src, query, name, metadata)
             local p = Env.players[tonumber(src)]
             if not p then return {} end
             local out = {}
             for _, slot in ipairs(p._inventory) do
-                if slot.name == name then out[#out + 1] = slot end
+                local held = true
+                if type(metadata) == 'table' then
+                    local values = {}
+                    for _, v in pairs(slot.metadata or {}) do values[v] = true end
+                    for _, v in pairs(metadata) do
+                        if not values[v] then held = false end
+                    end
+                end
+                if slot.name == name and held then out[#out + 1] = slot end
             end
             return out
+        end,
+        --- How many of an item, by name, in every slot: what ox_inventory's
+        --- export answers without metadata.
+        GetItemCount = function(_, src, name)
+            local p = Env.players[tonumber(src)]
+            if not p then return 0 end
+            local count = 0
+            for _, slot in ipairs(p._inventory) do
+                if slot.name == name then count = count + (slot.count or 0) end
+            end
+            return count
         end,
     }
 

@@ -2710,6 +2710,8 @@ describe('browsing for a target', function()
         local s = newStack()
         crowd(s)
         withConfig({ { Config.Targeting, 'AllowNearby', true } }, function()
+            -- Their clients say whether they are masked once the list is on.
+            Env.reportMasks()
             local data = browse(1, { scope = 'nearby' }).data
             truthy(#data.people > 0, 'somebody is standing right here')
 
@@ -2735,6 +2737,7 @@ describe('browsing for a target', function()
         local s = newStack()
         crowd(s)
         withConfig({ { Config.Targeting, 'AllowNearby', true } }, function()
+            Env.reportMasks()
             local everyone = browse(1, { scope = 'all' }).data
             local close = browse(1, { scope = 'nearby' }).data
             truthy(everyone.total > close.total,

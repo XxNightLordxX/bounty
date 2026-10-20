@@ -123,6 +123,9 @@ local function compare(actual, operator, expected)
         return tostring(actual) ~= tostring(expected)
     end
 
+    -- NULL is neither above nor below anything: the comparison is unknown,
+    -- and a WHERE keeps only what is true.
+    if actual == nil then return false end
     local a, b = tonumber(actual), tonumber(expected)
     if a == nil or b == nil then
         a, b = tostring(actual), tostring(expected)

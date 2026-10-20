@@ -384,6 +384,24 @@ function Memory.orphanEscrow()
     return out
 end
 
+--- Escrow not yet settled whose give has raised `limit` times or more
+--- (Escrow.parked): owed to somebody, and given to nobody until staff settle
+--- it. Read from the lines themselves for /ch-stuck, so a line is listed for
+--- as long as it is held, whatever the audit log has kept of how it came to
+--- be there.
+---@param limit integer Escrow.DELIVER_RAISE_LIMIT
+function Memory.parkedEscrow(limit)
+    local out = {}
+    for _, line in pairs(db.escrow) do
+        if line.state ~= CH.ESCROW_STATE.SETTLED
+            and (tonumber(line.deliver_raises) or 0) >= limit then
+            out[#out + 1] = line
+        end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 --- Every contract holding an escrow line that is not settled, as a set.
 ---
 --- Read once at boot. Recovery acts on nothing else of a finished

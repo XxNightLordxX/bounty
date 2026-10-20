@@ -210,28 +210,30 @@ function Admin.interrupted(src)
     -- Lines whose give kept raising (Escrow.deliver), still held and owed to
     -- the player they were for, and given to nobody until staff settle them.
     -- First, so a line that was also caught mid-release once is shown for
-    -- what it is now. A raise can come after the item moved, so whether they
-    -- already have it is for staff to check before paying it.
-    local parkedRows = Storage.auditByAction('escrow_deliver_parked', 1000) or {}
-    for i = #parkedRows, 1, -1 do
-        local row = parkedRows[i]
+    -- what it is now. Read from the escrow itself: the log's rows are pruned
+    -- after Config.Audit.RetentionDays, and nothing else ever picks such a
+    -- line up again, so listed from the rows it went unseen for good. The
+    -- rows still kept say only when it was parked.
+    local parkedAt = {}
+    for _, row in ipairs(Storage.auditByAction('escrow_deliver_parked', 1000) or {}) do
         local lineId = (row.detail or {}).line
-        if lineId and not seen[lineId] then
-            seen[lineId] = true
-            local line = Storage.readEscrowLine(lineId)
-            if line and line.state ~= CH.ESCROW_STATE.SETTLED and Escrow.parked(line) then
-                local contractId = line.contract_id or row.contract_id
-                local intended = line.owed_to or row.actor_cid
-                if not canIdentify then
-                    intended = Admin.partyRole(contractOf(contractId), intended)
-                end
-                out[#out + 1] = {
-                    line = lineId, contract = contractId, amount = line.amount,
-                    source = line.source, item = line.item, quantity = line.quantity,
-                    portion = line.portion, intended = intended, at = row.ts,
-                    raised = tonumber(line.deliver_raises) or 0,
-                }
+        if lineId then parkedAt[lineId] = row.ts end
+    end
+    local parked = Storage.parkedEscrow
+        and Storage.parkedEscrow(Escrow.DELIVER_RAISE_LIMIT) or {}
+    for _, line in ipairs(parked) do
+        if not seen[line.id] and Escrow.parked(line) then
+            seen[line.id] = true
+            local intended = line.owed_to or line.releasing_to
+            if not canIdentify then
+                intended = Admin.partyRole(contractOf(line.contract_id), intended)
             end
+            out[#out + 1] = {
+                line = line.id, contract = line.contract_id, amount = line.amount,
+                source = line.source, item = line.item, quantity = line.quantity,
+                portion = line.portion, intended = intended, at = parkedAt[line.id],
+                raised = tonumber(line.deliver_raises) or 0,
+            }
         end
     end
 
@@ -494,7 +496,9 @@ function Admin.settleLine(src, lineId, disposition, owner)
 
     -- A line whose give kept raising waits for exactly this: staff who have
     -- checked whether it already reached them. Its count starts again, so
-    -- the release below tries it, and a raise there is counted afresh.
+    -- the release below tries it. Every try is checked (Escrow.deliver): a
+    -- give that raises after the item arrived settles the line, and one
+    -- that raises before is counted afresh, so paying it gives it once.
     local unparked = Escrow.parked(line) or nil
     if unparked then
         line.deliver_raises = 0

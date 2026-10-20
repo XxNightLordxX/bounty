@@ -308,6 +308,11 @@ function Bridges.install(modules)
         -- handlers answer to.
         if type(player) ~= 'table' or type(player.PlayerData) ~= 'table' then return end
         local src = player.PlayerData.source
+        -- A character that has just loaded has said nothing about its mask:
+        -- qbx_core announces it before the client is marked logged in, and
+        -- the client says it once it is. Anything kept was said for the
+        -- one before.
+        if modules.app and modules.app.forgetMask then modules.app.forgetMask(src) end
         remember(src)
         Bridges.tellAccess(src)
         scheduleReady(src)
@@ -739,19 +744,23 @@ function Bridges.installCommands(modules)
             list[#list + 1] = lines[i]
         end
 
-        -- Lines whose give kept raising (Escrow.deliver): held, owed to the
-        -- player named, and given to nobody until settled here.
+        -- Lines whose give kept raising with nothing arriving, or raised once
+        -- without telling whether it arrived (Escrow.deliver): held, owed to
+        -- the player named, and given to nobody until settled here.
         if #parked > 0 then
-            reply(src, ('%d escrow line(s) raised an error each time they were given, and wait '
+            reply(src, ('%d escrow line(s) raised an error when they were given, and wait '
                 .. 'for you:'):format(#parked))
             for i = 1, #parked do
                 local line = parked[i]
-                reply(src, ('  %s  contract %s  %s %s  owed to %s  raised %d times  (%s)'):format(
+                -- When it was parked, while the log still has the row.
+                reply(src, ('  %s  contract %s  %s %s  owed to %s  raised %d times%s'):format(
                     line.line, line.contract, tostring(line.portion), describeLine(line),
-                    tostring(line.intended), line.raised, os.date('%Y-%m-%d %H:%M', line.at)))
+                    tostring(line.intended), line.raised,
+                    line.at and ('  (' .. os.date('%Y-%m-%d %H:%M', line.at) .. ')') or ''))
             end
-            reply(src, ('A raise can come after the item was given, so check their inventory '
-                .. 'first: if it is not there, /%s <line> pay gives it'):format(names.settle))
+            reply(src, ('Whether a give that raised arrived cannot always be told, so check '
+                .. 'their inventory first: if it is not there, /%s <line> pay gives it')
+                :format(names.settle))
         end
 
         if #interrupted > 0 then

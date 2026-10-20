@@ -1292,9 +1292,25 @@ function App.register()
     -- What the sender's own game shows about their mask, sent by their
     -- client when it changes (client/main.lua), for the nearby list. About
     -- the sender alone: it names nobody, so a modified client can only hide
-    -- itself or show itself. Anything but a yes or no is refused.
+    -- itself or show itself. Heard only while the list is on, as the client
+    -- sends it, and only from a loaded character: one sent before, or
+    -- between characters, was kept for whoever loaded next. Anything but a
+    -- yes or no is refused.
     RegisterNetEvent('crimson-hitman:maskState', function(masked)
         local src = source
+        if (tonumber(src) or 0) <= 0 then return end
+        local rules = Config.Targeting
+        local allowed = type(rules) == 'table' and rules.AllowNearby == true
+        if allowed then
+            local resolved, actor = pcall(deps.identity.resolve, src)
+            allowed = resolved and actor ~= nil
+        end
+        if not allowed then
+            if shouldLogGate(src) then
+                deps.audit.rejected('gate_maskState', nil, nil, { source = src })
+            end
+            return
+        end
         if not App.floodOk(src, 'maskState') then return end
         if type(masked) ~= 'boolean' then
             if shouldLogGate(src) then

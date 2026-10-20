@@ -1556,6 +1556,20 @@ function JsonStore.orphanEscrow()
     return out
 end
 
+--- Escrow not yet settled whose give has raised `limit` times or more; see
+--- the memory backend.
+function JsonStore.parkedEscrow(limit)
+    local out = {}
+    for _, line in pairs(db.escrow) do
+        if line.state ~= CH.ESCROW_STATE.SETTLED
+            and (tonumber(line.deliver_raises) or 0) >= limit then
+            out[#out + 1] = line
+        end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 --- Every contract holding an escrow line that is not settled, as a set.
 --- See the memory backend.
 function JsonStore.unsettledEscrowContracts()

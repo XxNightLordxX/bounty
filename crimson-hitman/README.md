@@ -30,16 +30,21 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   what is missing, so a database user without `CREATE`/`ALTER` starts on
   imported tables; `json` keeps records in `records.json` and refuses to start
   on an empty `data/`; no start while another mode still holds players' money.
-- **Escrow:** a payout whose `AddItem` raises stays owed, and after three
-  raises in a row waits for staff in `/ch-stuck` instead of being lost or given
-  again.
+- **Escrow:** a payout whose `AddItem` raises is checked against the player's
+  inventory: delivered if it arrived, still owed if it did not. After three
+  raises with nothing arriving, or at once when what arrived cannot be read,
+  it waits for staff in `/ch-stuck`, which lists it from the escrow itself for
+  as long as it is held. Nothing is given again blind.
 - **Staff:** `/ch-contracts`, a contract **Ref** on every card, in-game ACE
   checks that work (`IsPlayerAceAllowed` answers 1, not `true`), `/ch-diag`
   job timings and a photo-address check.
-- **Performance:** the once-a-second death sampler asks `qbx_core` nothing for
-  parties in the city and reads only running contracts; the client reads
-  `QBX.PlayerData` instead of the `GetPlayerData` export; headshots are paced
-  and travel as latent events.
+- **Performance:** the once-a-second death sampler reads only running
+  contracts and finds the parties in the city without asking `qbx_core` (one
+  lookup for each party who is away). Where no server-side medical resource
+  answers a target's death state (`qbx_medical`'s exports are client-only), it
+  asks `qbx_core`'s `GetMetadata` for `isdead` and `inlaststand`: two calls per
+  target a pass. The client reads `QBX.PlayerData` instead of the
+  `GetPlayerData` export; headshots are paced and travel as latent events.
 - **Notices** are saved in the phone's notification list through lb-phone's
   server export; threads can be muted; masked calls go through `CreateCall`.
 
@@ -450,19 +455,21 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
 - **Money cannot be duplicated.** Every escrow line settles at most once,
   guarded by a compare-and-set. Every release path shares one function.
 - **Money cannot be destroyed.** A payout that cannot be delivered — full
-  inventory, player offline — stays owed and is delivered on their next
-  login, never dropped. A contract the server went down while placing (its
-  reward taken, the contract itself never stored) has its reward handed back
-  to the client at the next start, once, and nobody else is told it existed.
+  inventory, player offline — stays owed and is delivered once there is room
+  or at their next login, never dropped. A contract the server went down
+  while placing (its reward taken, the contract itself never stored) has its
+  reward handed back to the client at the next start, once, and nobody else
+  is told it existed.
   A reward whose charge fails part-way with an error from `qbx_core` or
   `ox_inventory` is handed back line by line. Where such an error leaves it
   unknown whether one line moved, the audit log names that line for you to
   check (`escrow_take_raised` on a charge, `escrow_deliver_raised` on a
-  payout). A payout whose give raises an error stays owed and is tried again,
-  since a raise almost always gave nothing; after three raises in a row on one
-  line it is tried no more and waits for you in `/ch-stuck`
-  (`escrow_deliver_parked`), because a raise can also come after the item was
-  given.
+  payout). A payout whose give raises an error is checked against what the
+  player then holds (a weapon by its serial): one that arrived is delivered and
+  settled, and one that did not stays owed and is tried again. After the third
+  raise on one line with nothing arriving (counted until you settle it), or at
+  once when what arrived cannot be read, it is tried no more and waits for you
+  in `/ch-stuck` (`escrow_deliver_parked`).
 - **Identity is never taken from a payload.** Every handler resolves the
   acting player from the connection. Citizen ids never reach a client;
   searches and threads use expiring per-viewer handles.
@@ -509,7 +516,7 @@ entry, and `/ch-contracts` lists it for any player.
 | `/ch-timeline <contract>` | One contract's state, escrow lines and audit trail |
 | `/ch-whois <contract>` | Who is really behind an anonymous creator or hitman. Needs `crimson.identity`, a separate ACE |
 | `/ch-void <contract> [reason]` | Close a contract and return its escrow to the creator. Any kill photo from it that the creator has not saved to their phone is deleted, including one kept for them in the app |
-| `/ch-stuck` | Escrow lines that were mid-payment when the server stopped, including one being handed back from a contract that was never placed. Who each was paying is shown as a role (the client, an operative) unless you also hold `crimson.identity`. Also lists held lines of a contract that was never placed which do not say whose they are (written by an older version), and items whose give raised an error three times in a row, still owed to the player named: check their inventory, and `/ch-settle <line> pay` gives it if it is not there |
+| `/ch-stuck` | Escrow lines that were mid-payment when the server stopped, including one being handed back from a contract that was never placed. Who each was paying is shown as a role (the client, an operative) unless you also hold `crimson.identity`. Also lists held lines of a contract that was never placed which do not say whose they are (written by an older version), and items whose give raised an error three times with nothing arriving, or once when what arrived could not be read, still owed to the player named and listed for as long as they are held: check their inventory, and `/ch-settle <line> pay` gives it if it is not there |
 | `/ch-settle <line> pay\|return [citizenid]` | Finish one of those by hand. `pay` goes to whom the interrupted payment was for; `return` goes to whoever put the line up, so a hitman's stake goes back to that hitman. A line that does not say whose it is needs `return <citizenid>` once you know who put it up; the citizen id is refused on any other line. A player who is offline gets it at their next login, and the command says so |
 | `/hitmanadmin timers` | Test servers: bring every wait and cooldown forward. Deadlines are only ever moved later, never earlier. `crimson.admin` itself only — the extra ACEs do not open it — and audited |
 
@@ -575,6 +582,9 @@ API, and they may change between versions. What it listens to:
 | `lb-phone:deletedFromGallery`, `lb-phone:factoryReset` | `lb-phone`, local | Deletes the file behind a kill photo saved to Photos by link |
 | `onResourceStart` | FXServer | A medical resource or `lb-phone` that restarted is asked afresh what it supports |
 | `QBCore:Client:OnPlayerUnload`, `qbx_core:client:playerLoggedOut` | `qbx_core`, client | The client's death watcher forgets the last character |
+| `gameEventTriggered` (`CEventNetworkEntityDamage`) | the game, client | The blow that killed the player, so their death report can name who dealt it |
+| `onClientResourceStart` | FiveM, client | `lb-phone` starting again: the app is added to it again |
+| `qb-clothing:client:loadOutfit`, `illenium-appearance:client:reloadSkin`, `rcore_clothing:outfitChanged` | a clothing resource, client | The player's appearance changed: the server drops their cached headshot |
 
 **Convars.**
 
@@ -599,8 +609,10 @@ reasons and messages, and the two gallery events above.
 **ox_inventory** (required). `GetInventoryItems`, `GetInventory`, `Search` and
 `GetItem` read what a player can put up; `RemoveItem` takes it into escrow;
 `CanCarryItem` then `AddItem` pay it out or hand it back, with the metadata it
-was taken with. Each call is made inside `pcall`, and a raise is a refusal: on
-a payout the line stays owed (see *What stops it being abused*). It registers
+was taken with. Each call is made inside `pcall`, and a raise is a refusal,
+except an `AddItem` that raised after the item arrived: `GetItemCount` (or
+`Search` by serial, for a weapon) before and after the give tells which, and
+one that arrived is delivered (see *What stops it being abused*). It registers
 no ox_inventory hooks and ships no items.
 
 **sc-dispatch** (optional; `Config.Advisory.UseDispatch`, only while it is
@@ -635,7 +647,7 @@ headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
 | Save to Photos keeps the photo in the app instead | `'server'` storage needs a public https address: set `Config.Completion.PhotoPublicUrl` or `web_baseUrl`, and add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. `/ch-diag` says which address it uses and whether it reaches this resource |
 | The startup warning says `Config.Audit.Webhook` is ignored | The URL in `config.lua` has already been sent to every player. Regenerate it in Discord and set the new one in `server.cfg` with `set crimson_hitman_webhook "..."` (never `setr`) |
 | `failed to start: mysql mode cannot start: the database is missing what it needs` | Your database user may not create or alter tables, and something is missing. The lines under it name each table, column, index or engine change, with the database's own reason (error 1142 is a missing privilege). Import `install/sql/crimson_hitman.sql` as a user that may create tables, run the `ALTER TABLE` statements it prints as one that may alter them, or grant this user `CREATE`, `ALTER` and `INDEX` on the database; then `ensure crimson-hitman` |
-| `/ch-stuck` lists a line that "raised an error each time" | `ox_inventory`'s `AddItem` raised three times in a row giving that item (a hook or another resource failing). It is still owed to that player and nothing gives it again on its own. Check their inventory: if it is not there, `/ch-settle <line> pay`; the console and the `escrow_deliver_raised` rows show the error |
+| `/ch-stuck` lists a line that "raised an error when they were given" | `ox_inventory`'s `AddItem` raised giving that item (a hook or another resource failing): three times with nothing arriving, or once when what arrived could not be read. It is still owed to that player and nothing gives it again on its own. Check their inventory: if it is not there, `/ch-settle <line> pay`; the console and the `escrow_deliver_raised` rows show the error |
 
 ---
 
@@ -647,7 +659,7 @@ has been run in game by this build.
 
 | Resource | Needed | Known to work |
 |---|---|---|
-| `qbx_core` | Required (manifest dependency) | 1.24.0, checked against: `GetPlayer`, `GetPlayerByCitizenId`, `GetMetadata`, `GetJob`, `Save`, the login and logout events, `modules/playerdata.lua` |
+| `qbx_core` | Required (manifest dependency) | 1.24.0, checked against: `GetPlayer`, `GetPlayerByCitizenId`, `GetMetadata`, `GetJob`, `Save`, `Player.Functions.GetMoney` / `AddMoney` / `RemoveMoney`, the login and logout events, `modules/playerdata.lua` |
 | `ox_inventory` | Required (manifest dependency) | 2.48.0, checked against |
 | `oxmysql` | Required in every mode: the manifest loads `@oxmysql/lib/MySQL.lua` (`qbx_core` needs it anyway) | 2.14.3, checked against |
 | `lb-phone` | Required for the app; not a manifest dependency | 2.8.0, the version this was built against (escrowed: exports from its documentation) |

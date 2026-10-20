@@ -347,6 +347,65 @@ describe('the nearby list, two worlds apart', function()
         end
     end)
 
+    --- From a real player with a character loaded, and only while the list
+    --- is on (§4). A report sent before a character loaded was kept, and the
+    --- character that then loaded on that source was listed on it.
+    it('hears a mask only from a loaded character, while the list is on', function()
+        local s = newStack()
+        fixture(s)
+        s.bridges.install(s)
+        local function say(src, masked)
+            _G.source = src
+            local ok, err = pcall(Env.events['crimson-hitman:maskState'], masked)
+            _G.source = nil
+            truthy(ok, tostring(err))
+        end
+        local function bea()
+            local p = Env.addPlayer({ source = 11, citizenid = 'BYSTAND1', license = 'license:b1',
+                firstname = 'Bea', lastname = 'Lowe', coords = { x = 3, y = 0, z = 0 } })
+            p._silent = true
+        end
+        at(1, 5000); at(2, 6000); at(3, 7000)
+        Env.addPlayer({ source = 10, citizenid = 'WATCHER1', license = 'license:w1',
+            firstname = 'Wes', lastname = 'Hale', coords = { x = 0, y = 0, z = 0 } })
+        bea()
+
+        -- Said while the list is off: not kept for when it is turned on.
+        say(11, false)
+        withConfig({ { Config.Targeting, 'AllowNearby', true } }, function()
+            falsy(namesIn(nearby(10))['Bea Lowe'], 'heard while the list was off')
+
+            -- Said with no character on the source, or from no player.
+            Env.removePlayer(11)
+            say(11, false)
+            say(0, false)
+            say(-1, false)
+            bea()
+            falsy(namesIn(nearby(10))['Bea Lowe'], 'kept from before her character loaded')
+
+            say(11, false)
+            truthy(namesIn(nearby(10))['Bea Lowe'], 'her own word, once loaded, lists her')
+        end)
+    end)
+
+    it('forgets what a client said when a character loads on its source', function()
+        local s = newStack()
+        fixture(s)
+        s.bridges.install(s)
+        withConfig({ { Config.Targeting, 'AllowNearby', true } }, function()
+            at(1, 5000); at(2, 6000); at(3, 7000)
+            Env.addPlayer({ source = 10, citizenid = 'WATCHER1', license = 'license:w1',
+                firstname = 'Wes', lastname = 'Hale', coords = { x = 0, y = 0, z = 0 } })
+            Env.addPlayer({ source = 11, citizenid = 'BYSTAND1', license = 'license:b1',
+                firstname = 'Bea', lastname = 'Lowe', coords = { x = 3, y = 0, z = 0 } })
+            truthy(namesIn(nearby(10))['Bea Lowe'], 'listed while her client has said')
+            -- qbx_core's login, before her client has said anything for it.
+            Env.players[11]._silent = true
+            Env.handlers['QBCore:Server:PlayerLoaded'](Env.players[11])
+            falsy(namesIn(nearby(10))['Bea Lowe'], 'what was said before the login was kept')
+        end)
+    end)
+
     it('stops listening to a client that floods it', function()
         local s = newStack()
         fixture(s)

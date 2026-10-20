@@ -87,8 +87,9 @@ CREATE TABLE IF NOT EXISTS crimson_escrow (
     -- Who the line was taken from. Added to existing databases by
     -- migrate; NULL on older rows.
     taken_from VARCHAR(32),
-    -- How many times in a row giving it raised (Escrow.deliver). At the
-    -- limit it waits for staff in /ch-stuck. NULL on older rows, as 0.
+    -- How many times giving it raised with nothing arriving, until staff
+    -- settle it (Escrow.deliver). At the limit it waits for staff in
+    -- /ch-stuck. NULL on older rows, as 0.
     deliver_raises INT DEFAULT 0,
     INDEX idx_contract (contract_id),
     INDEX idx_state (state)

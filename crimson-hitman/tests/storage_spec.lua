@@ -1211,6 +1211,58 @@ describe('escrow whose contract was never stored', function()
     end)
 end)
 
+describe('escrow left for staff', function()
+    --- /ch-stuck lists these from the lines themselves: the audit rows that
+    --- used to name them are pruned after Config.Audit.RetentionDays.
+    it('is found from the escrow in every backend, and kept through a prune', function()
+        for _, b in ipairs(backends()) do
+            local old = os.time() - 400 * 86400
+            local function closed(id)
+                b.store.writeContract(contractFixture(id))
+                b.store.compareSetContractState(id, CH.STATE.ACTIVE, CH.STATE.CANCELLED)
+                local c = b.store.readContract(id)
+                c.resolved_at = old
+                b.store.writeContract(c)
+            end
+            local function line(id, n, raises)
+                return { id = id .. ':' .. n, contract_id = id, slot = 1, portion = 'baseline',
+                    source = 'item', item = 'lockpick', quantity = 1, state = 'held',
+                    owed_to = 'CREATOR1', taken_from = 'CREATOR1', deliver_raises = raises }
+            end
+            local function settle(id)
+                b.store.claimEscrowLine(id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING)
+                b.store.settleEscrowLine(id, 'CREATOR1')
+            end
+            closed('ct00000002')
+            b.store.writeEscrow('ct00000002', {
+                line('ct00000002', 1, 3), line('ct00000002', 2, 2), line('ct00000002', 3, nil),
+                line('ct00000002', 4, 3), line('ct00000002', 5, 4),
+            })
+            settle('ct00000002:4')
+            -- Nothing held: the prune is free to take it, which shows it ran.
+            closed('ct00000003')
+            b.store.writeEscrow('ct00000003', { line('ct00000003', 1, 3) })
+            settle('ct00000003:1')
+
+            local function ids()
+                local out = {}
+                for _, l in ipairs(b.store.parkedEscrow(3)) do out[#out + 1] = l.id end
+                return table.concat(out, ',')
+            end
+            eq(ids(), 'ct00000002:1,ct00000002:5',
+                b.name .. ': held lines at the limit or over, and nothing else')
+            local first = b.store.parkedEscrow(3)[1]
+            eq(first.owed_to, 'CREATOR1', b.name .. ': whom it is owed to')
+            eq(tonumber(first.deliver_raises), 3, b.name)
+
+            b.store.prune()
+            falsy(b.store.readContract('ct00000003'), b.name .. ': the prune did not run')
+            truthy(b.store.readContract('ct00000002'), b.name .. ': pruned with a line held')
+            eq(ids(), 'ct00000002:1,ct00000002:5', b.name .. ': and its lines with it')
+        end
+    end)
+end)
+
 describe('indexed contract lookups agree across backends', function()
     local function seeded(store)
         store.writeContract({ id = 'ct1', creator_cid = 'A', target_cid = 'B',
@@ -2243,6 +2295,7 @@ describe('every mysql statement is executable', function()
             function() m.readEscrow('c1') end,
             function() m.readEscrowLine('c1:1') end,
             function() m.orphanEscrow() end,
+            function() m.parkedEscrow(3) end,
             function() m.claimEscrowLine('c1:1','held','releasing') end,
             function() m.setEscrowAmount('c1:1','releasing',50,100) end,
             function() m.settleEscrowLine('c1:1','A') end,

@@ -114,8 +114,9 @@ local SCHEMA = {
         -- Who the line was taken from. Added to existing databases by
         -- migrate; NULL on older rows.
         taken_from VARCHAR(32),
-        -- How many times in a row giving it raised (Escrow.deliver). At the
-        -- limit it waits for staff in /ch-stuck. NULL on older rows, as 0.
+        -- How many times giving it raised with nothing arriving, until staff
+        -- settle it (Escrow.deliver). At the limit it waits for staff in
+        -- /ch-stuck. NULL on older rows, as 0.
         deliver_raises INT DEFAULT 0,
         INDEX idx_contract (contract_id),
         INDEX idx_state (state)
@@ -1084,6 +1085,19 @@ function MySQLStore.orphanEscrow()
               SELECT 1 FROM crimson_contracts c WHERE c.id = e.contract_id)
         ORDER BY id
     ]]) or {}
+    for i = 1, #rows do hydrateEscrow(rows[i]) end
+    return rows
+end
+
+--- Escrow not yet settled whose give has raised `limit` times or more; see
+--- the memory backend. A row from before the column has NULL there, which
+--- is no raise, and compares false.
+function MySQLStore.parkedEscrow(limit)
+    local rows = db.query([[
+        SELECT * FROM crimson_escrow
+        WHERE state IN ('held', 'releasing') AND deliver_raises >= ?
+        ORDER BY id
+    ]], { limit }) or {}
     for i = 1, #rows do hydrateEscrow(rows[i]) end
     return rows
 end

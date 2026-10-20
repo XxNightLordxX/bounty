@@ -352,6 +352,7 @@ describe('escrow release', function()
         truthy(named, 'the line is named for staff')
         eq(named.detail.line, line.id)
         eq(named.detail.raises, 1)
+        eq(named.detail.arrived, 0, 'checked: nothing arrived')
 
         -- The hook recovers: the next try gives it, once.
         eq(s.escrow.retryPending('HITMAN01'), 1, 'delivered on the next try')
@@ -363,9 +364,68 @@ describe('escrow release', function()
         eq(picks, 2, 'one lot of lockpicks, not two')
     end)
 
-    --- A raise after the item was given would give it again on every try.
-    --- The tries are bounded, and the line is then left for staff.
-    it('leaves a line for staff once its give has raised the limit, given at most that often', function()
+    --- How many lockpicks the hitman holds, in every slot.
+    local function picks()
+        local n = 0
+        for _, slot in ipairs(Env.players[3]._inventory) do
+            if slot.name == 'lockpick' then n = n + slot.count end
+        end
+        return n
+    end
+
+    --- The item line of a contract, as stored.
+    local function itemLine(s, contractId)
+        for _, l in ipairs(s.storage.readEscrow(contractId)) do
+            if l.source == 'item' then return l end
+        end
+    end
+
+    --- Run fn with ox_inventory's AddItem replaced, put back however fn ends.
+    local function withAddItem(give, fn)
+        local real = exports.ox_inventory.AddItem
+        exports.ox_inventory.AddItem = function(self, ...) return give(real, self, ...) end
+        local ok, err = pcall(fn)
+        exports.ox_inventory.AddItem = real
+        truthy(ok, tostring(err))
+    end
+
+    --- ox_inventory places the item and only then syncs, and the sync can
+    --- raise. Retried, that gave it again on every try; it is delivered.
+    it('delivers a give that raised after the item arrived, once', function()
+        local s = seed()
+        local calls = 0
+        withAddItem(function(real, self, ...)
+            calls = calls + 1
+            real(self, ...)
+            error('sync raised after the give', 0)
+        end, function()
+            local _, result = s.escrow.release('ct1', 'HITMAN01', CH.PORTION.BASELINE, 'test')
+            eq(result.settled, 2, 'the cash line and the item line, both delivered')
+            eq(result.pending, 0, 'nothing left owed')
+            for _ = 1, 5 do s.escrow.retryPending('HITMAN01') end
+        end)
+        eq(calls, 1, 'given once and never tried again')
+        eq(picks(), 2, 'one lot of lockpicks')
+        local line = itemLine(s, 'ct1')
+        eq(line.state, CH.ESCROW_STATE.SETTLED, 'settled as delivered')
+        falsy(s.escrow.parked(line), 'nothing for staff to do')
+        eq(#s.storage.readPending('HITMAN01'), 0)
+
+        s.audit.flush()
+        local named
+        for _, row in ipairs(s.storage.readAudit(200)) do
+            if row.action == 'escrow_deliver_raised' then named = row end
+        end
+        truthy(named, 'the raise is still written down')
+        eq(named.detail.arrived, 2, 'with what arrived')
+    end)
+
+    --- Left for staff after raising before the give, then paid by staff
+    --- with a give that raises after: given once, by the pay, and settled.
+    --- /ch-settle pay starts the count again, which gave a fresh round of
+    --- copies while a raise after the give was retried.
+    it('leaves a line for staff after its give raised the limit with nothing arriving, '
+        .. 'and a staff pay gives it once', function()
         -- A contract id long enough for /ch-settle to take its line ids.
         local s = newStack()
         local f = fixture(s)
@@ -374,37 +434,25 @@ describe('escrow release', function()
         }))
         local limit = s.escrow.DELIVER_RAISE_LIMIT
         truthy(limit >= 2 and limit <= 5, 'a small constant')
-        local real = exports.ox_inventory.AddItem
-        local calls = 0
-        -- The worst case: it gives, and then raises.
-        exports.ox_inventory.AddItem = function(self, src, name, count, metadata)
-            calls = calls + 1
-            real(self, src, name, count, metadata)
-            error('hook raised after the give', 0)
-        end
-        local ok, err = pcall(function()
+        local before = 0
+        withAddItem(function()
+            before = before + 1
+            error('hook raised before the give', 0)
+        end, function()
             s.escrow.release('ctparked01', 'HITMAN01', CH.PORTION.BASELINE, 'test')
             for _ = 1, limit + 5 do s.escrow.retryPending('HITMAN01') end
         end)
-        exports.ox_inventory.AddItem = real
-        truthy(ok, tostring(err))
-        eq(calls, limit, 'given at most DELIVER_RAISE_LIMIT times, then never again')
+        eq(before, limit, 'tried until the limit, then never again')
+        eq(picks(), 0, 'nothing arrived')
 
-        local line
-        for _, l in ipairs(s.storage.readEscrow('ctparked01')) do
-            if l.source == 'item' then line = l end
-        end
+        local line = itemLine(s, 'ctparked01')
         truthy(s.escrow.parked(line), 'left for staff')
         eq(line.state, CH.ESCROW_STATE.HELD, 'still held, nothing destroyed')
         eq(line.owed_to, 'HITMAN01', 'and still theirs')
         eq(#s.storage.readPending('HITMAN01'), 0, 'off the retry queue')
-
         -- Nor queued again by the recovery at the next start.
         eq(s.escrow.recoverOwed(s.storage.readEscrow('ctparked01')), 0, 'recovery leaves it for staff')
         eq(#s.storage.readPending('HITMAN01'), 0)
-        -- Nor given by another release to the same player.
-        s.escrow.release('ctparked01', 'HITMAN01', nil, 'sweep')
-        eq(calls, limit, 'a later release does not try it either')
 
         s.audit.flush()
         local parkedRow
@@ -423,22 +471,126 @@ describe('escrow release', function()
         eq(listed.raised, limit)
         eq(listed.intended, 'HITMAN01')
 
-        -- Staff checked: it is not there (taken off them here), so they pay
-        -- it, and it is given and settled.
-        Env.players[3]._inventory = {}
-        local settled, why = s.admin.settleLine(0, line.id, 'pay')
-        truthy(settled, tostring(why))
-        eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
-        local picks = 0
-        for _, slot in ipairs(Env.players[3]._inventory) do
-            if slot.name == 'lockpick' then picks = picks + slot.count end
-        end
-        eq(picks, 2, 'given once, by staff')
+        -- Staff checked: it is not there, so they pay it. The give raises
+        -- after the item arrives, and the count has just started again.
         local after = 0
+        withAddItem(function(real, self, ...)
+            after = after + 1
+            real(self, ...)
+            error('sync raised after the give', 0)
+        end, function()
+            local settled, why = s.admin.settleLine(0, line.id, 'pay')
+            truthy(settled, tostring(why))
+            eq(why, nil, 'delivered, not queued')
+            for _ = 1, 5 do s.escrow.retryPending('HITMAN01') end
+            s.escrow.release('ctparked01', 'HITMAN01', nil, 'sweep')
+            local again = s.admin.settleLine(0, line.id, 'pay')
+            falsy(again, 'and a second pay finds it settled')
+        end)
+        eq(after, 1, 'given once by the pay')
+        eq(picks(), 2, 'one lot of lockpicks, not one per try')
+        eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+        local still = 0
         for _, row in ipairs(s.admin.interrupted(0)) do
-            if row.line == line.id then after = after + 1 end
+            if row.line == line.id then still = still + 1 end
         end
-        eq(after, 0, 'and gone from /ch-stuck')
+        eq(still, 0, 'and gone from /ch-stuck')
+    end)
+
+    --- A raise whose outcome cannot be read: neither delivered nor tried
+    --- again, but left for staff at once.
+    it('leaves a line for staff at once when whether its give arrived cannot be read', function()
+        local s = newStack()
+        local f = fixture(s)
+        s.escrow.take(f.creator, 'ctunknown1', s.escrow.validate(f.creator, {
+            baseline = { cash = 5000, items = { { name = 'lockpick', count = 2 } } },
+        }))
+        local realCount = exports.ox_inventory.GetItemCount
+        local reads, gives = 0, 0
+        exports.ox_inventory.GetItemCount = function(...)
+            reads = reads + 1
+            -- What they held before reads; the check after the raise does not.
+            if reads % 2 == 0 then error('GetItemCount raised', 0) end
+            return realCount(...)
+        end
+        withAddItem(function(real, self, ...)
+            gives = gives + 1
+            real(self, ...)
+            error('sync raised after the give', 0)
+        end, function()
+            local _, result = s.escrow.release('ctunknown1', 'HITMAN01', CH.PORTION.BASELINE, 'test')
+            eq(result.pending, 1, 'not delivered: it cannot be told whether it was')
+            eq(result.parked, 1, 'and left for staff')
+            for _ = 1, 5 do s.escrow.retryPending('HITMAN01') end
+        end)
+        exports.ox_inventory.GetItemCount = realCount
+        eq(gives, 1, 'given once and never tried again blind')
+
+        local line = itemLine(s, 'ctunknown1')
+        truthy(s.escrow.parked(line), 'left for staff on the first raise')
+        eq(line.state, CH.ESCROW_STATE.HELD)
+        eq(line.owed_to, 'HITMAN01')
+        eq(#s.storage.readPending('HITMAN01'), 0, 'not queued for another try')
+
+        s.audit.flush()
+        local parkedRow
+        for _, row in ipairs(s.storage.readAudit(500)) do
+            if row.action == 'escrow_deliver_parked' then parkedRow = row end
+        end
+        truthy(parkedRow and parkedRow.detail.unknown, 'the row says the outcome is unknown')
+        local listed
+        for _, row in ipairs(s.admin.interrupted(0)) do
+            if row.line == line.id then listed = row end
+        end
+        truthy(listed, '/ch-stuck shows it')
+    end)
+
+    it('leaves a line for staff at once when only part of it arrived', function()
+        local s = seed()
+        local gives = 0
+        withAddItem(function(real, self, src, name, count, metadata)
+            gives = gives + 1
+            real(self, src, name, count - 1, metadata)
+            error('raised half-way', 0)
+        end, function()
+            local _, result = s.escrow.release('ct1', 'HITMAN01', CH.PORTION.BASELINE, 'test')
+            eq(result.parked, 1, 'part of it is there, so it cannot be given again')
+            for _ = 1, 5 do s.escrow.retryPending('HITMAN01') end
+        end)
+        eq(gives, 1)
+        truthy(s.escrow.parked(itemLine(s, 'ct1')), 'left for staff')
+    end)
+
+    --- A weapon is checked by its serial, so it is the line's own pistol.
+    it('delivers a weapon whose give raised after it arrived, once, found by its serial', function()
+        local s = newStack()
+        local f = fixture(s)
+        s.escrow.take(f.creator, 'ct9', s.escrow.validate(f.creator, {
+            baseline = { weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } },
+        }))
+        -- The hitman already carries another pistol: a count by name alone
+        -- is not what decides.
+        table.insert(Env.players[3]._inventory,
+            { name = 'WEAPON_PISTOL', count = 1, slot = 7, metadata = { serial = 'OTHER9' } })
+        local gives = 0
+        withAddItem(function(real, self, ...)
+            gives = gives + 1
+            real(self, ...)
+            error('sync raised after the give', 0)
+        end, function()
+            local _, result = s.escrow.release('ct9', 'HITMAN01', CH.PORTION.BASELINE, 'test')
+            eq(result.settled, 1, 'delivered')
+            for _ = 1, 5 do s.escrow.retryPending('HITMAN01') end
+        end)
+        eq(gives, 1, 'given once')
+        local serials = {}
+        for _, slot in ipairs(Env.players[3]._inventory) do
+            if slot.name == 'WEAPON_PISTOL' then
+                serials[#serials + 1] = slot.metadata and slot.metadata.serial
+            end
+        end
+        table.sort(serials)
+        eq(table.concat(serials, ','), 'ABC123,OTHER9', 'the escrowed pistol once, beside their own')
     end)
 
     it('delivers queued escrow on the next login', function()

@@ -1148,18 +1148,45 @@ local function handedOver(recipientCid, line)
     return copy
 end
 
---- How many times in a row a line's give may raise before it is left for
---- staff. A delivery that succeeds settles the line, so every raise on a
---- line still owed is one more in the same row.
+--- How many gives of one line may raise with nothing arriving before it is
+--- left for staff. A give that raised is checked against what the player
+--- holds (Escrow.deliver): one that arrived is delivered and settles the
+--- line, so only a raise that moved nothing is counted. The count is kept on
+--- the line until staff settle it (/ch-settle pay starts it again); a give
+--- refused for full pockets or an offline player neither adds to it nor
+--- clears it. A raise whose outcome cannot be checked sets it to the limit.
 Escrow.DELIVER_RAISE_LIMIT = 3
 
---- Whether a line's give has raised DELIVER_RAISE_LIMIT times and it now
---- waits for staff (/ch-stuck, /ch-settle) rather than another try.
+--- Whether a line's give has raised DELIVER_RAISE_LIMIT times with nothing
+--- arriving, or once without telling, and it now waits for staff
+--- (/ch-stuck, /ch-settle) rather than another try.
 ---@param line table
 ---@return boolean
 function Escrow.parked(line)
     return type(line) == 'table'
         and (tonumber(line.deliver_raises) or 0) >= Escrow.DELIVER_RAISE_LIMIT
+end
+
+--- How much of an item a player holds, read to check a give that raised
+--- (Escrow.deliver). nil when it could not be read.
+---
+--- A weapon by its serial, so it is the line's own object that is counted.
+--- Anything else by name alone: ox_inventory matches metadata by value and
+--- never matches a nested table, so a count by the line's metadata could
+--- miss the very stack just given and read as nothing arrived. By name is
+--- exact here: the reads either side of the give run back to back, with no
+--- wait between them for anything else to move the item.
+---@return integer|nil
+local function holding(src, name, metadata, weapon)
+    local ok, count = pcall(function()
+        local serial = weapon and type(metadata) == 'table' and metadata.serial
+        if type(serial) == 'string' and serial ~= '' then
+            local slots = exports.ox_inventory:Search(src, 'slots', name, { serial = serial })
+            return type(slots) == 'table' and #slots or nil
+        end
+        return exports.ox_inventory:GetItemCount(src, name)
+    end)
+    return ok and tonumber(count) or nil
 end
 
 --- Hand a single escrow line to a player. Returns false when it cannot be
@@ -1194,18 +1221,18 @@ function Escrow.deliver(recipientCid, line)
     -- keep its books. A CanCarryItem that raised gave nothing, so the line
     -- is not delivered and the caller keeps it owed.
     --
-    -- An AddItem that raised is not delivered either. It was settled as
-    -- delivered (§14.12's unknown give), but a raise is almost always one
-    -- that gave nothing: a hook or a dependency failing before the item
-    -- moved. Settled, the property was gone for good with nobody owed it,
-    -- which is the one thing this function exists not to do; and a hook
-    -- that kept raising lost every line it touched. So it stays owed, with
-    -- a row naming it. A raise that came after the item was given would
-    -- give it again on the next try, so the tries are bounded: after
-    -- DELIVER_RAISE_LIMIT raises in a row the line is left for staff
-    -- (/ch-stuck), held and owed to the same player, and nothing gives it
-    -- again until staff settle it. At most that many copies, and the rows
-    -- say which line and how many times.
+    -- An AddItem that raised is decided by what arrived. It can raise before
+    -- the item moves (a patched export, a dependency mid-restart) or after:
+    -- ox_inventory 2.48.0 places the item and only then syncs, and its qbx
+    -- bridge's sync uses the player without checking one was found. So what
+    -- the player holds is read before the give and again after a raise. All
+    -- of it there: delivered, and settled like any other give, never given
+    -- again. None of it: still owed, with a row naming it, and the raise
+    -- counted; after DELIVER_RAISE_LIMIT of those the line is left for staff
+    -- (/ch-stuck), held and owed to the same player, and nothing tries it
+    -- again until staff settle it. Anything else — the read raised, or only
+    -- part arrived — cannot be told apart from a delivery, so it is left
+    -- for staff at once rather than tried again blind.
     local name, count, metadata
     if line.source == 'dirty' then
         name, count = dirtyItemOf(line), line.amount
@@ -1230,29 +1257,53 @@ function Escrow.deliver(recipientCid, line)
     end)
     if not fits then return false end
 
+    -- What they hold before the give. Unread, a raise could not be checked,
+    -- so nothing is given: the line stays owed for the next try.
+    local weapon = line.source == CH.SOURCE.WEAPON
+    local before = holding(src, name, metadata, weapon)
+    if not before then return false end
+
     local gave, raised = guarded(function()
         return exports.ox_inventory:AddItem(src, name, count, metadata)
     end)
-    if raised then
-        -- Counted on the line, so the bound holds across restarts too.
-        line.deliver_raises = (tonumber(line.deliver_raises) or 0) + 1
-        Storage.writeEscrow(line.contract_id, { line })
+    if not raised then return gave end
+
+    local after = holding(src, name, metadata, weapon)
+    local arrived = after and after - before
+    if arrived and arrived >= count then
+        -- Given, and the raise came after: delivered.
         Audit.financial('escrow_deliver_raised', recipientCid, line.contract_id, {
             line = line.id, source = line.source, item = name, count = count, error = raised,
-            raises = line.deliver_raises,
+            arrived = arrived,
         })
-        if Escrow.parked(line) then
-            Audit.financial('escrow_deliver_parked', recipientCid, line.contract_id, {
-                line = line.id, source = line.source, item = name, count = count,
-                raises = line.deliver_raises, review = true,
-            })
-            print(('[crimson-hitman] escrow line %s: giving %s x%s raised %d times; left for '
-                .. 'staff (/ch-stuck) — check whether they already have it')
-                :format(tostring(line.id), tostring(name), tostring(count), line.deliver_raises))
-        end
-        return false
+        return true
     end
-    return gave
+
+    -- Counted on the line, so the bound holds across restarts too. An
+    -- outcome that cannot be told goes to the limit at once.
+    local raises = (tonumber(line.deliver_raises) or 0) + 1
+    local unknown = arrived ~= 0
+    if unknown then raises = math.max(raises, Escrow.DELIVER_RAISE_LIMIT) end
+    line.deliver_raises = raises
+    Storage.writeEscrow(line.contract_id, { line })
+    Audit.financial('escrow_deliver_raised', recipientCid, line.contract_id, {
+        line = line.id, source = line.source, item = name, count = count, error = raised,
+        raises = raises, arrived = arrived,
+    })
+    if Escrow.parked(line) then
+        Audit.financial('escrow_deliver_parked', recipientCid, line.contract_id, {
+            line = line.id, source = line.source, item = name, count = count,
+            raises = raises, unknown = unknown or nil, review = true,
+        })
+        print(unknown
+            and ('[crimson-hitman] escrow line %s: giving %s x%s raised, and whether it arrived '
+                .. 'could not be checked; left for staff (/ch-stuck) — check whether they have it')
+                :format(tostring(line.id), tostring(name), tostring(count))
+            or ('[crimson-hitman] escrow line %s: giving %s x%s raised %d times with nothing '
+                .. 'arriving; left for staff (/ch-stuck)')
+                :format(tostring(line.id), tostring(name), tostring(count), raises))
+    end
+    return false
 end
 
 --- What a contract holds, split by money source.
