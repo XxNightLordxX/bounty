@@ -158,13 +158,21 @@ end
 --- afterwards orphaned every row pushed in between — never written, never
 --- counted as dropped. A second flush started meanwhile (the staff commands
 --- flush before they read) walked the same rows and wrote them twice.
-function Audit.flush()
+---
+--- `stopping` is the resource going away. A backend whose writes wait for a
+--- database answer (mysql) hands each row over without waiting instead
+--- (writeAuditNoWait): waiting there yields the stop handler, and nothing
+--- resumes it before this resource's Lua is torn down.
+---@param stopping boolean|nil
+function Audit.flush(stopping)
+    local write = (stopping and Storage.writeAuditNoWait) or Storage.writeAudit
+
     -- An overflow is reported even when there is nothing else to write.
     if tail < head then
         if dropped > 0 then
             local count = dropped
             dropped = 0
-            pcall(Storage.writeAudit, {
+            pcall(write, {
                 ts = os.time(), kind = 'system', action = 'audit_overflow',
                 detail = { dropped = count },
             })
@@ -179,7 +187,7 @@ function Audit.flush()
     for i = first, last do
         local entry = batch[i]
         if entry then
-            if pcall(Storage.writeAudit, entry) then
+            if pcall(write, entry) then
                 written = written + 1
             else
                 dropped = dropped + 1
@@ -195,7 +203,7 @@ function Audit.flush()
     if dropped > 0 then
         local count = dropped
         dropped = 0
-        pcall(Storage.writeAudit, {
+        pcall(write, {
             ts = os.time(), kind = 'system', action = 'audit_overflow',
             detail = { dropped = count },
         })

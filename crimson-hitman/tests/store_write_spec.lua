@@ -89,13 +89,37 @@ describe('writing the json store', function()
     it('does report a write the engine actually refused', function()
         -- The check has to keep working where it can. A refused write is
         -- not the same as a read-back that disagreed.
+        -- Refused while a new contract has to be named in the index, so the
+        -- save has an index to write. A forced save with nothing changed in
+        -- the index no longer writes it at all (see the next test).
         local store = freshStore()
+        Natives.blocked = { ['data/store.json'] = true }
         store.writeContract({ id = 'ct4', creator_cid = 'C', target_cid = 'T',
             state = CH.STATE.ACTIVE, created_at = os.time() })
-        Natives.blocked = { ['data/store.json'] = true }
         local ok = store.save(true)
         Natives.blocked = {}
         falsy(ok, 'a write the engine refused is a failed flush')
+        truthy(store.save(true), 'and the next one, once it can write, succeeds')
+        truthy((Natives.files['data/store.json'] or ''):find('ct4', 1, true),
+            'naming the contract the refused one could not')
+    end)
+
+    --- A money write on a contract the index already names changes that
+    --- contract's file and nothing in the index. It used to rewrite the
+    --- index anyway, and the index carried the ledger: a kill payout wrote a
+    --- multi-megabyte store.json a dozen times over.
+    it('does not rewrite the index for a contract it already names', function()
+        local store = freshStore()
+        store.writeContract({ id = 'ct5', creator_cid = 'C', target_cid = 'T',
+            state = CH.STATE.ACTIVE, created_at = os.time() })
+        local written = {}
+        Natives.saveFile = function(file) written[file] = (written[file] or 0) + 1 end
+        store.setReason('ct5', 'changed')
+        store.save(true)
+        Natives.saveFile = nil
+        eq(written['data/contracts/ct5.json'], 1, 'the contract is written once')
+        eq(written['data/store.json'], nil, 'and the index not at all')
+        eq(written['data/records.json'], nil, 'nor the records')
     end)
 
     it('does not print the same complaint on every flush', function()
@@ -296,5 +320,116 @@ describe('the audit log and a money write', function()
         local actions = {}
         for _, row in ipairs(reopened.readAudit()) do actions[#actions + 1] = row.action end
         eq(table.concat(actions, ','), 'a,release_interrupted,c', 'and every row reads back')
+    end)
+end)
+
+
+--- The records — ledger, pending payouts, stats, reveals, kill photo
+--- records — were fields of store.json, and every money write rewrote
+--- store.json whole. They are records.json now, written only when one of
+--- them changed.
+describe('the records file', function()
+    local function reopen()
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        local store = require('crimson-hitman.server.storage.json')
+        return store, pcall(store.open)
+    end
+
+    local function owed(store)
+        store.writeContract({ id = 'ctrec01', creator_cid = 'C', target_cid = 'T',
+            state = CH.STATE.COMPLETED, created_at = os.time() })
+        store.writeEscrow('ctrec01', { { id = 'ctrec01:1', contract_id = 'ctrec01', slot = 1,
+            portion = 'baseline', source = 'cash', amount = 7000, owed_to = 'HITMAN01',
+            state = CH.ESCROW_STATE.HELD } })
+        store.queuePending('HITMAN01', 'ctrec01', 'ctrec01:1')
+        store.writeLedger({ cid = 'HITMAN01', contract_id = 'ctrec01', role = 'hitman',
+            resolved_at = os.time() })
+        store.bumpStat('HITMAN01', 'completed', 1)
+        store.close()
+    end
+
+    it('keeps them out of the index, and reads them back', function()
+        local store = freshStore()
+        owed(store)
+        local index = json.decode(Natives.files['data/store.json'])
+        eq(index.ledger, nil, 'no ledger in the index')
+        eq(index.pending, nil, 'no pending payouts in it')
+        eq(index.records, true, 'only that the records file exists')
+        local records = json.decode(Natives.files['data/records.json'])
+        truthy(records.pending and next(records.pending), 'the payout is in records.json')
+
+        local reopened, ok = reopen()
+        truthy(ok, 'it starts')
+        eq(#reopened.readPending('HITMAN01'), 1, 'the payout owed is still owed')
+        eq(#reopened.readLedger('HITMAN01', 10), 1, 'the ledger row is there')
+        eq(reopened.readStats('HITMAN01').completed, 1, 'and the stat')
+        eq(Natives.files['data/records.json.prev'], Natives.files['data/records.json'],
+            'and the records as this start read them are kept to restore from')
+    end)
+
+    it('moves them out of an index that still carries them, records first', function()
+        local store = freshStore()
+        owed(store)
+        -- An index as a version before the move wrote it: the records in it,
+        -- and no records.json.
+        local index = json.decode(Natives.files['data/store.json'])
+        local records = json.decode(Natives.files['data/records.json'])
+        for key, value in pairs(records) do index[key] = value end
+        index.records = nil
+        Natives.files['data/store.json'] = json.encode(index)
+        Natives.files['data/records.json'] = nil
+
+        local order = {}
+        Natives.saveFile = function(file) order[#order + 1] = file end
+        local moved, ok = reopen()
+        Natives.saveFile = nil
+        truthy(ok, 'it starts')
+        local recordsAt, indexAt
+        for i, file in ipairs(order) do
+            if file == 'data/records.json' and not recordsAt then recordsAt = i end
+            if file == 'data/store.json' and not indexAt then indexAt = i end
+        end
+        truthy(recordsAt and indexAt and recordsAt < indexAt,
+            'records.json is written before an index without them: ' .. table.concat(order, ', '))
+        eq(json.decode(Natives.files['data/store.json']).pending, nil, 'the index is without them')
+        eq(#moved.readPending('HITMAN01'), 1, 'and nothing owed was lost in the move')
+
+        local again, reopened = reopen()
+        truthy(reopened, 'and it starts from the new layout')
+        eq(#again.readPending('HITMAN01'), 1)
+    end)
+
+    it('does not start without a records file the index says it wrote', function()
+        local store = freshStore()
+        owed(store)
+        local kept = Natives.files['data/records.json']
+        Natives.files['data/records.json'] = ''
+        local _, ok, err = reopen()
+        falsy(ok, 'a missing records file is not an empty one')
+        truthy(tostring(err):find('records.json.prev', 1, true), 'names the copy: ' .. tostring(err))
+        eq(Natives.files['data/records.json'], '', 'and has written nothing over it')
+
+        Natives.files['data/records.json'] = '{"pending":{"pnd1":'
+        local _, torn = reopen()
+        falsy(torn, 'nor a torn one')
+
+        Natives.files['data/records.json'] = kept
+        local restored, back = reopen()
+        truthy(back, 'restored, it starts')
+        eq(#restored.readPending('HITMAN01'), 1, 'with the payout still owed')
+    end)
+
+    it('does not write a payout ahead of the sequence its id came from', function()
+        local store = freshStore()
+        Natives.blocked = { ['data/store.json'] = true }
+        local wrote = {}
+        Natives.saveFile = function(file) wrote[file] = true end
+        store.queuePending('HITMAN01', 'ctrec02', 'ctrec02:1')
+        Natives.saveFile = nil
+        Natives.blocked = {}
+        falsy(wrote['data/records.json'],
+            'with the index refused, the row whose id it minted waits for it')
+        truthy(store.save(true), 'once the index can be written, both are')
+        truthy(Natives.files['data/records.json']:find('ctrec02', 1, true))
     end)
 end)

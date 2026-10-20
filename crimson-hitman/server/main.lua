@@ -461,6 +461,14 @@ local function validateConfig()
     if mode ~= 'mysql' and mode ~= 'json' and mode ~= 'memory' then
         fatal[#fatal + 1] = ('Config.Database.Mode is "%s"; expected mysql, json or memory'):format(tostring(mode))
     end
+    -- Only true lets a start past money another mode still holds (see
+    -- refuseModeSwitch). Anything else, a string 'true' included, is the
+    -- refusal, which is the safe way to misread it; said so here.
+    local allowSwitch = Config.Database.AllowModeSwitch
+    if allowSwitch ~= nil and type(allowSwitch) ~= 'boolean' then
+        warn[#warn + 1] = ('Config.Database.AllowModeSwitch is %s, not true or false; it is read '
+            .. 'as false'):format(tostring(allowSwitch))
+    end
 
     if Config.Bailout.MinMultiplier > Config.Bailout.MaxMultiplier then
         fatal[#fatal + 1] = 'Bailout MinMultiplier is above MaxMultiplier; no premium could ever be valid'
@@ -744,6 +752,68 @@ local function selectStorage()
     if mode == 'json' then return require('server.storage.json') end
     return require('server.storage.memory')
 end
+
+--- Refuse to start where another storage mode still holds players' money.
+---
+--- Modes do not share data. A server switched from json to mysql (which the
+--- json store itself suggests once it is busy), or tried on memory for a
+--- test, started with an empty store: every open contract was invisible,
+--- the escrow taken for it with it — cash, bank, dirty money, items,
+--- weapons — and every payout owed to a player who was offline. Nothing
+--- returned any of it and nothing said so. Switching back found it all
+--- again, after staff had refunded by hand what they could, so it was paid
+--- twice.
+---
+--- Only money stops the start: escrow not yet settled, or a payout queued
+--- for somebody offline. A store holding finished history is left as it
+--- is and mentioned once. Config.Database.AllowModeSwitch = true starts
+--- anyway.
+local function refuseModeSwitch()
+    local mode = Config.Database.Mode
+    local found = {}
+
+    if mode ~= 'json' then
+        local ok, held = pcall(require('server.storage.json').inspect)
+        if ok and held then
+            if held.lines > 0 or held.owed > 0 or held.unreadable then
+                found[#found + 1] = held.unreadable
+                    and ('json mode: %s/store.json, which cannot be read')
+                        :format(Config.Database.Json.Directory or 'data')
+                    or ('json mode: %d escrow line(s) and %d payout(s) owed, in %s/')
+                        :format(held.lines, held.owed, Config.Database.Json.Directory or 'data')
+            elseif held.contracts > 0 then
+                print(('[crimson-hitman] %s/store.json still names %d finished contract(s) from '
+                    .. 'json mode. They hold no money and %s mode does not read them.')
+                    :format(Config.Database.Json.Directory or 'data', held.contracts, mode))
+            end
+        end
+    end
+
+    -- Only where oxmysql is running: a json server without a database has
+    -- nothing there to find, and asking would wait on a connection forever.
+    if mode ~= 'mysql' and GetResourceState('oxmysql') == 'started' and MySQL then
+        local ok, held = pcall(require('server.storage.mysql').inspect)
+        if ok and held and (held.lines > 0 or held.owed > 0) then
+            found[#found + 1] = ('mysql mode: %d escrow line(s) and %d payout(s) owed, in the '
+                .. 'crimson_* tables'):format(held.lines, held.owed)
+        end
+    end
+
+    if #found == 0 then return end
+    if Config.Database.AllowModeSwitch == true then
+        print(('[crimson-hitman] warning: started in %s mode although %s. '
+            .. 'Config.Database.AllowModeSwitch is on, so none of it is visible or returned '
+            .. 'from here.'):format(mode, table.concat(found, '; ')))
+        return
+    end
+    error(('[crimson-hitman] Config.Database.Mode is \'%s\', but players\' money is still held by '
+        .. 'another mode: %s. Modes do not share data, so started like this every contract '
+        .. 'there and the money in it would be invisible, and nothing would return it. '
+        .. 'Refusing to start. Switch Mode back and let those contracts finish (or cancel them '
+        .. 'in the app), or settle them by hand and move that data out of the way, or set '
+        .. 'Config.Database.AllowModeSwitch = true to start anyway.')
+        :format(tostring(mode), table.concat(found, '; ')), 0)
+end
 --------------------------------------------------------------------------
 -- Integration report (§4.2 of the improvements document)
 --------------------------------------------------------------------------
@@ -856,6 +926,7 @@ end
 function StartCrimsonHitman()
     validateConfig()
 
+    refuseModeSwitch()
     Storage = selectStorage()
     Storage.open()
 
@@ -1412,7 +1483,10 @@ AddEventHandler('onResourceStop', function(name)
     if name ~= GetCurrentResourceName() then return end
     if not modules.audit then return end
 
-    modules.audit.flush()
+    -- Without waiting on the database (Audit.flush): on mysql the first
+    -- awaited row yielded this handler, the stop went on without it, and
+    -- every queued row behind that one was lost.
+    modules.audit.flush(true)
 
     -- Memory mode: release every open escrow before the tables vanish.
     if Config.Database.Mode == 'memory' then

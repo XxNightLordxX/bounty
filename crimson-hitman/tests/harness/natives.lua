@@ -155,6 +155,36 @@ function Natives.install()
     -- Virtual resource filesystem for the json backend.
     Natives.files = {}
     _G.LoadResourceFile = function(_, file) return Natives.files[file] end
+
+    -- The server's resource KVP store, which lives in FXServer's own
+    -- database rather than in the resource folder. Kept per virtual disk:
+    -- a test that starts a fresh disk (Natives.files = {}) is a fresh
+    -- server, KVP and all, and one that restarts on the same disk keeps
+    -- both. A test of the folder being replaced keeps the KVP and changes
+    -- the disk: Natives.kvp[newFiles] = Natives.kvp[oldFiles].
+    Natives.kvp = setmetatable({}, { __mode = 'k' })
+    local function kvp()
+        local store = Natives.kvp[Natives.files]
+        if not store then
+            store = {}
+            Natives.kvp[Natives.files] = store
+        end
+        return store
+    end
+    _G.GetResourceKvpInt = function(key) return tonumber(kvp()[key]) or 0 end
+    _G.SetResourceKvpInt = function(key, value) kvp()[key] = math.floor(tonumber(value) or 0) end
+    _G.DeleteResourceKvp = function(key) kvp()[key] = nil end
+
+    -- Env.reset is a fresh server, which is a fresh disk: the boots that
+    -- call it model one, and a store another suite left in the files
+    -- would otherwise be found by the start-up check for data held by
+    -- another storage mode.
+    local reset = Env.reset
+    Env.reset = function(...)
+        Natives.files = {}
+        Natives.dirs = {}
+        return reset(...)
+    end
     _G.SaveResourceFile = function(_, file, data, length)
         -- A seam for asserting on which files a write actually touches,
         -- which is the whole claim the sharded store makes.
@@ -554,6 +584,17 @@ function Natives.exportsProxy()
             Natives.calls.getJob = (Natives.calls.getJob or 0) + 1
             return Env.jobDefinitions and Env.jobDefinitions[name] or nil
         end,
+        --- qbx_core's Save: the player's row written to the database now.
+        --- Recorded with the balances it would write, so a test can tell
+        --- what a crash right after it would have kept.
+        Save = function(_, src)
+            if Natives.saveThrows then error('qbx_core: database went away') end
+            local p = Env.players[tonumber(src)]
+            if not p then error('QBX.PLAYER.SAVE - PLAYERDATA IS EMPTY!') end
+            Natives.calls.saves = Natives.calls.saves or {}
+            table.insert(Natives.calls.saves, { source = tonumber(src),
+                cash = p.PlayerData.money.cash, bank = p.PlayerData.money.bank })
+        end,
     }
 
     --- The optional headshot renderer. Optional to the resource, but a test
@@ -749,11 +790,27 @@ local function recordQuery(sql, params)
     table.insert(Natives.mysql.queries, { sql = sql, params = params })
 end
 
-Natives.mysql.query = { await = function(sql, params) recordQuery(sql, params) return {} end }
-Natives.mysql.insert = { await = function(sql, params) recordQuery(sql, params) return 1 end }
-Natives.mysql.update = { await = function(sql, params) recordQuery(sql, params) return 1 end }
-Natives.mysql.scalar = { await = function(sql, params) recordQuery(sql, params) return nil end }
-Natives.mysql.prepare = { await = function(sql, params) recordQuery(sql, params) return {} end }
+--- A method oxmysql's lib/MySQL.lua gives both ways: `.await(sql, params)`,
+--- and called directly, `(sql, params, cb)`, which hands the statement to
+--- oxmysql at once and answers later through cb, if there is one. Run at
+--- once here, since nothing in the harness waits on a database.
+--- The statement runs through the `.await` it was made with, not whatever
+--- `.await` holds later: a test that makes awaiting hang (as it does at a
+--- resource stop) leaves the direct call, which waits on nothing, working.
+function Natives.mysqlMethod(method)
+    local run = method.await
+    return setmetatable(method, { __call = function(_, sql, params, cb)
+        if type(params) == 'function' then params, cb = nil, params end
+        local result = run(sql, params)
+        if type(cb) == 'function' then cb(result) end
+    end })
+end
+
+Natives.mysql.query = Natives.mysqlMethod({ await = function(sql, params) recordQuery(sql, params) return {} end })
+Natives.mysql.insert = Natives.mysqlMethod({ await = function(sql, params) recordQuery(sql, params) return 1 end })
+Natives.mysql.update = Natives.mysqlMethod({ await = function(sql, params) recordQuery(sql, params) return 1 end })
+Natives.mysql.scalar = Natives.mysqlMethod({ await = function(sql, params) recordQuery(sql, params) return nil end })
+Natives.mysql.prepare = Natives.mysqlMethod({ await = function(sql, params) recordQuery(sql, params) return {} end })
 Natives.mysql.transaction = { await = function(queries)
     for _, q in ipairs(queries) do recordQuery(q.query or q[1], q.values or q[2]) end
     return true

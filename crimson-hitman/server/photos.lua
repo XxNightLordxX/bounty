@@ -56,6 +56,9 @@ local PHOTO_DIR = 'data/photos'
 local KEPT_DIR = PHOTO_DIR .. '/kept'
 local KEPT_PREFIX = 'kept-'
 
+--- Which storage mode's records name the files here (Photos.sweepFiles).
+local MODE_FILE = PHOTO_DIR .. '/.mode'
+
 --- The longest link lb-phone's gallery keeps (phone_photos.link is
 --- VARCHAR(500)). A longer one would be cut short and point at nothing.
 local LINK_MAX = 500
@@ -915,10 +918,33 @@ end
 --- this resource gives its files: anything else in either is left alone.
 --- Needs io.readdir, which older server builds lack; there it says so once
 --- and the files wait.
+---
+--- Only against the store that named them. "No record names it" is only
+--- true of the store the files were written for: a server whose
+--- Config.Database.Mode was switched started with a store that names none
+--- of them, and this removed every kill photo the other mode kept or served
+--- — for good, though switching back finds the records again. So the mode
+--- the files belong to is written beside them (MODE_FILE), and a start in
+--- another mode leaves them all alone and says so. Memory mode's records
+--- never outlive a restart, so its files are swept by whatever comes next.
 ---@return integer removed
 function Photos.sweepFiles()
     local base = resourceRoot()
     if not base then return 0 end
+
+    local mode = tostring(Config.Database.Mode)
+    local resource = GetCurrentResourceName()
+    local owner = LoadResourceFile(resource, MODE_FILE)
+    owner = owner and owner:match('^%s*([%w_]+)')
+    if owner and owner ~= mode and owner ~= 'memory' then
+        print(('[crimson-hitman] the kill photo files in %s were kept for %s mode, and this '
+            .. 'server is in %s mode, whose store names none of them. They are left alone: '
+            .. 'the start-up sweep of photo files is off until the mode is switched back, or '
+            .. 'until %s is deleted once those photos are no longer wanted.')
+            :format(PHOTO_DIR, owner, mode, MODE_FILE))
+        return 0
+    end
+    if owner ~= mode then pcall(SaveResourceFile, resource, MODE_FILE, mode, -1) end
     local readdir = io and io.readdir
     if type(readdir) ~= 'function' then
         print('[crimson-hitman] this server build cannot list a folder (io.readdir), so kill '

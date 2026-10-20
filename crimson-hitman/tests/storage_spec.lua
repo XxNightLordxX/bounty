@@ -1159,9 +1159,9 @@ end)
 describe('mysql schema migration', function()
     local Sim = require('crimson-hitman.tests.harness.mysql_sim')
 
-    local function opened(existing, indexes)
+    local function opened(existing, indexes, collations)
         Sim.install(Natives)
-        if existing then Sim.existingSchema(existing, indexes) end
+        if existing then Sim.existingSchema(existing, indexes, collations) end
         package.loaded['crimson-hitman.server.storage.mysql'] = nil
         local store = require('crimson-hitman.server.storage.mysql')
         store.open()
@@ -1287,6 +1287,114 @@ describe('mysql schema migration', function()
         local names = table.concat(addedColumns(), ' ')
         truthy(names:find('crimson_escrow.staker', 1, true), 'the stake owner: ' .. names)
         truthy(names:find('crimson_escrow.owed_to', 1, true), 'and the owed marker')
+    end)
+
+    --- An escrow table an older version made has the column under the name
+    --- MariaDB will not take. It is moved, with its values, rather than a
+    --- second column added beside it that every row would have empty and
+    --- every insert would leave the old NOT NULL one without.
+    it('renames the escrow portion column an older version made, keeping its values', function()
+        local store = opened({
+            crimson_escrow = { id = true, contract_id = true, portion = true,
+                               source = true, state = true },
+        })
+        local renamed
+        for _, change in ipairs(Sim.altered) do
+            if change.from then renamed = change end
+        end
+        truthy(renamed, 'the column is renamed')
+        eq(renamed.sql, 'ALTER TABLE crimson_escrow CHANGE COLUMN `portion` line_portion '
+            .. 'VARCHAR(16) NOT NULL', 'by CHANGE COLUMN, the old name quoted')
+        for _, name in ipairs(addedColumns()) do
+            falsy(name == 'crimson_escrow.line_portion', 'and not added beside the old one')
+        end
+
+        Sim.altered = {}
+        store.migrate()
+        eq(#Sim.altered, 0, 'a second run finds nothing left to do')
+    end)
+
+    --- txAdmin makes the database utf8 (utf8mb3), older MariaDB and XAMPP
+    --- latin1. A table inheriting either refused an emoji in a contract
+    --- reason or a relay message with error 1366, and latin1 a Polish or
+    --- Cyrillic character name too.
+    it('makes every table utf8mb4, whatever the database defaults to', function()
+        opened(nil)
+        local tables = 0
+        for name, collation in pairs(Sim.collations) do
+            tables = tables + 1
+            eq(collation, 'utf8mb4_unicode_ci',
+                name .. ' must say utf8mb4 rather than take the database default')
+        end
+        truthy(tables >= 13, 'every table it creates: ' .. tables)
+    end)
+
+    it('converts a table an older version made in another character set, once', function()
+        local store = opened(
+            {
+                crimson_messages = { id = true, contract_id = true, thread_id = true,
+                    from_cid = true, from_alias = true, body = true, sent_at = true },
+                crimson_contracts = { id = true, creator_cid = true, target_cid = true,
+                    mode = true, state = true, created_at = true },
+                crimson_ledger = { id = true, cid = 'utf8mb4', contract_id = true,
+                    role = true, target_name = 'latin1', resolved_at = true },
+            },
+            nil,
+            { crimson_messages = 'utf8mb3_general_ci', crimson_contracts = 'utf8mb4_general_ci',
+              crimson_ledger = 'utf8mb4_general_ci' })
+        local converted = {}
+        for _, change in ipairs(Sim.altered) do
+            if change.charset then converted[change.table_] = change.sql end
+        end
+        eq(converted.crimson_messages, 'ALTER TABLE crimson_messages CONVERT TO CHARACTER SET '
+            .. 'utf8mb4 COLLATE utf8mb4_unicode_ci', 'a utf8mb3 table is converted')
+        truthy(converted.crimson_ledger, 'and one whose own default is right but a column is not')
+        eq(converted.crimson_contracts, nil, 'a table already utf8mb4 is left alone')
+
+        Sim.altered = {}
+        store.migrate()
+        eq(#Sim.altered, 0, 'and a second run converts nothing again')
+    end)
+
+    --- PORTION is reserved on MariaDB from 10.4 (FOR PORTION OF). The
+    --- escrow table named a column that, the CREATE TABLE was a syntax
+    --- error, and mysql mode never started on the database most FiveM
+    --- servers run. The harness's own simulators know nothing of reserved
+    --- words, which is why nothing caught it; this checks every name the
+    --- schema uses against the vendors' lists.
+    it('names nothing MariaDB or MySQL 8 reserves', function()
+        local reserved = {}
+        local lists = require('crimson-hitman.tests.harness.reserved_words')
+        for list, words in pairs(lists) do
+            for _, word in ipairs(words) do
+                reserved[word] = reserved[word] or {}
+                reserved[word][#reserved[word] + 1] = list
+            end
+        end
+        truthy(reserved.PORTION, 'the list knows the word that broke it')
+
+        opened(nil)
+        local clashes, checked = {}, 0
+        --- The word itself is what the database parses; the owner is only
+        --- for the message.
+        local function check(kind, owner, name)
+            checked = checked + 1
+            local on = reserved[name:upper()]
+            if on then
+                clashes[#clashes + 1] = ('%s %s%s (reserved on %s)')
+                    :format(kind, owner and (owner .. '.') or '', name, table.concat(on, ', '))
+            end
+        end
+        for tableName, columns in pairs(Sim.schema) do
+            check('table', nil, tableName)
+            for column in pairs(columns) do check('column', tableName, column) end
+            for index in pairs(Sim.indexes[tableName] or {}) do
+                -- PRIMARY is the key's own keyword, not a name it was given.
+                if index ~= 'PRIMARY' then check('index', tableName, index) end
+            end
+        end
+        truthy(checked > 100, 'every name was looked at: ' .. checked)
+        eq(#clashes, 0, 'unquoted reserved words in the schema: ' .. table.concat(clashes, '; '))
     end)
 end)
 

@@ -13,8 +13,17 @@ A staff account that can adjust money and spawn items makes this much faster.
 
 - [ ] `ensure crimson-hitman` produces `[crimson-hitman] started in mysql mode`
 - [ ] No errors in `txAdmin` console on start or on a `restart crimson-hitman`
-- [ ] The `crimson_*` tables exist in the database
+- [ ] The `crimson_*` tables exist in the database, `utf8mb4` (`SHOW TABLE
+      STATUS LIKE 'crimson%'` shows `utf8mb4_unicode_ci`), on MariaDB as on MySQL
 - [ ] Restarting twice in a row is clean (recovery runs, nothing duplicates)
+- [ ] `restart lb-phone`: crimson-hitman stays started (`ensure` not needed)
+      and the app is back on an open phone within a few seconds
+- [ ] json mode, on a copy of the server: move `data/` out of the folder and
+      restart. It refuses to start, saying the folder was replaced; put
+      `data/` back and it starts with every contract
+- [ ] With a contract holding money in json mode, switch `Config.Database.Mode`
+      to `mysql` and restart: it refuses, naming how many escrow lines json
+      still holds. Switch back and it starts as before
 
 ## 2. Access
 
@@ -187,6 +196,11 @@ uploads, and with neither. Restart the resource between them.
 - [ ] It reappears when they return, with escrow intact
 - [ ] Restarting the resource mid-contract loses nothing
 - [ ] A payout to a player with a full inventory is delivered on their next login
+- [ ] ...and, with them still connected through a `restart crimson-hitman`,
+      within a minute of making room, without a relog
+- [ ] A contract reason with an emoji is accepted in mysql mode
+- [ ] Right after a payout, the player's `money` in the `players` table already
+      shows it (qbx_core's `Save`), not five minutes later
 
 ## 12. Performance
 

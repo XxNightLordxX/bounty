@@ -19,8 +19,72 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
    plus a warning for any configuration that will surprise you later.
 
 The config ships in `json` mode: everything lives in files under
-`crimson-hitman/data/`, which is what to back up. In `mysql` mode the tables
-are created automatically on first start. Nothing to import either way.
+`crimson-hitman/data/` (`store.json`, `records.json`, `contracts/`, the
+`audit-<day>.jsonl` log and `photos/`), which is what to back up. In `mysql`
+mode the tables are created automatically on first start, as `utf8mb4` so an
+emoji in a reason or a non-Latin character name is kept whatever the
+database defaults to (a table an older version made is converted at start);
+MariaDB and MySQL 8 both work. Nothing to import either way. A busy server
+(thousands of contracts a month) is better on `mysql` from the start: see
+*Changing storage mode* before switching a server that already has players'
+money in one.
+
+Kill photo files are kept in `crimson-hitman/data/photos/` in **every** mode,
+`mysql` included.
+
+### Updating
+
+Keep `crimson-hitman/data/` when you put a new version in place, in every
+mode. The usual habit — delete the old folder, extract the new one — deletes
+it:
+
+- in `json` mode it **is** the store: every open contract, the money held for
+  it, the payouts owed to players who were offline, the ledger;
+- in every mode `data/photos/` (and `data/photos/kept/`) holds the kill photos
+  kept for clients in the app and the files behind the links already saved to
+  players' Photos. Lose them and those photos are gone and those links dead.
+
+So either copy the new files over the old folder, or move `data/` out first
+and back in after. `config/config.lua` is yours too; carry it across. In
+`json` mode the server remembers, outside the resource folder, that the store
+has run, and refuses to start on an empty `data/` rather than start empty
+without a word; put the old `data/` back and start it again. To start empty on
+purpose, run `set crimson_hitman_new_store 1` in the server console and
+start the resource, then leave it unset.
+
+Restarting `lb-phone` is safe: the app comes back on every phone by itself.
+Restarting `qbx_core`, `ox_inventory` or `oxmysql` stops this resource with
+them (FiveM stops everything that depends on a resource it restarts and does
+not start it again), so follow it with `ensure crimson-hitman`. A player still
+connected through a restart of this resource gets anything queued for them
+(goods that did not fit, a refund to full pockets) once they make room, as
+after a login.
+
+### Changing storage mode
+
+Modes do not share data: a server switched from `json` to `mysql` (or tried
+on `memory`) starts with nothing in the new one. So the resource refuses to
+start while the mode it left still holds players' money — escrow not yet
+settled, or payouts owed to somebody offline — and the console says where and
+how much. Switch back, let those contracts finish or cancel them in the app,
+then switch. A store holding only finished history is no reason to refuse;
+it is left where it is. `Config.Database.AllowModeSwitch = true` starts
+anyway, for money already settled by hand. Kill photo files kept for the old
+mode are left alone in the new one (the start-up sweep of unnamed photo
+files is off until you switch back or delete `data/photos/.mode`).
+
+### After a server crash
+
+Balances this resource moves are written to the database as they move
+(qbx_core's `Save`), so a hard crash no longer rolls cash and bank back by up
+to five minutes behind an escrow that was already written. Items, weapons
+and dirty money belong to
+`ox_inventory`, which saves every five minutes and at a clean shutdown, with
+no way to ask it to save one player. After a crash (not a restart), compare
+the `escrow_taken`, `escrow_released`, `stake_taken` and `pending_delivered`
+rows of the last five minutes in the audit log (`data/audit-<day>.jsonl` in
+`json` mode, the `crimson_audit` table in `mysql`, or `/ch-timeline` for one
+contract) against what those players are carrying.
 
 ### Configuration worth reading before you start
 
@@ -31,7 +95,7 @@ are created automatically on first start. Nothing to import either way.
 | `Config.Completion.PhotoPublicUrl` | `'server'` storage only: the public **https** address this server serves photos from when a client saves one to their phone's Photos, such as `'https://photos.example.com/crimson-hitman'`. Unset (as shipped), the server's `web_baseUrl` is used. Add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. See *No image host?* below; `/ch-diag` says which address is used and whether lb-phone takes it |
 | `Config.Completion.KeptPhotoDays` | How many days a photo kept for its client in the app (because their phone could not save it) lasts. Unset (as shipped), it stays until they delete it. `/ch-diag` says how many are kept and how much disk they take |
 | `Config.Completion.ExtraPhotoHosts` | `'host'` storage only. Kill photos are accepted only from image hosts lb-phone itself allows uploads from, plus these. Ships with Fivemanage (`fivemanage.com`, `fmfile.com`), lb-phone's default uploader. If `/ch-diag` shows `photo hosts: 0`, or kill photos are refused with "not on this server's allow list", add your phone's upload host here (a bare domain, no `https://`). lb-phone's camera upload must work first |
-| `Config.Database.Mode` | `json` (as shipped; no database at all), `mysql` (oxmysql), `memory` (testing only — nothing survives a restart) |
+| `Config.Database.Mode` | `json` (as shipped; no database at all), `mysql` (oxmysql), `memory` (testing only — nothing survives a restart). Modes do not share data: see *Changing storage mode* |
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who cannot open the app. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit |
 | `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry |
 | `Config.Limits` | Contract caps, payouts, cooldowns |
@@ -339,7 +403,7 @@ CH_SUITES=journeys_spec lua crimson-hitman/tests/run.lua   # one area, in second
 
 Five kinds of check, because each catches what the others cannot:
 
-- **Server suite** (about 1,870 tests) — escrow arithmetic, the state machine,
+- **Server suite** (about 2,200 tests) — escrow arithmetic, the state machine,
   every payout and refund path, whole player journeys, every action against
   every contract state, deliberate exploit attempts, storage conformance
   across all three backends, and randomised simulations asserting that no

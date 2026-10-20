@@ -9,6 +9,15 @@ local MySQLStore = {}
 
 local seq = 0
 
+--- Every table says utf8mb4, as qbx_core's own tables do, rather than taking
+--- whatever the database defaults to. txAdmin's recipe makes the database
+--- utf8 (utf8mb3), which has no four-byte characters, and older MariaDB and
+--- XAMPP make it latin1. Inherited, an emoji in a contract reason or a relay
+--- message was refused with error 1366, and on latin1 so was a Polish or
+--- Cyrillic character name: those players could neither place a contract nor
+--- be named in one. migrate() converts a table an older version made.
+local CHARSET, COLLATION = 'utf8mb4', 'utf8mb4_unicode_ci'
+
 local SCHEMA = {
     [[CREATE TABLE IF NOT EXISTS crimson_contracts (
         id VARCHAR(32) PRIMARY KEY,
@@ -52,12 +61,18 @@ local SCHEMA = {
         -- Read on every maintenance tick, and almost always empty. Added
         -- to existing databases by MySQLStore.migrate.
         INDEX idx_bailout_queued (bailout_queued_at)
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_escrow (
         id VARCHAR(64) PRIMARY KEY,
         contract_id VARCHAR(32) NOT NULL,
         slot INT DEFAULT 1,
-        portion VARCHAR(16) NOT NULL,
+        -- Baseline, bonus, stake or owed, which is the portion field of a
+        -- line everywhere else in this resource. Not named that here, because
+        -- PORTION is a reserved word on MariaDB (10.4 on, for FOR PORTION OF)
+        -- and a CREATE TABLE naming it was a syntax error, so mysql mode
+        -- never started there. RENAMED below moves the column an older
+        -- version made under the old name, and hydrateEscrow reads it back.
+        line_portion VARCHAR(16) NOT NULL,
         source VARCHAR(16) NOT NULL,
         amount INT DEFAULT 0,
         item VARCHAR(64),
@@ -76,7 +91,7 @@ local SCHEMA = {
         taken_from VARCHAR(32),
         INDEX idx_contract (contract_id),
         INDEX idx_state (state)
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_hitmen (
         id VARCHAR(32) PRIMARY KEY,
         contract_id VARCHAR(32) NOT NULL,
@@ -93,7 +108,7 @@ local SCHEMA = {
         state VARCHAR(16) NOT NULL,
         INDEX idx_contract (contract_id),
         INDEX idx_hitman (hitman_cid)
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_amendments (
         id VARCHAR(32) PRIMARY KEY,
         contract_id VARCHAR(32) NOT NULL,
@@ -105,7 +120,7 @@ local SCHEMA = {
         outcome VARCHAR(16) NOT NULL,
         declined_by VARCHAR(32),
         INDEX idx_contract (contract_id)
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_messages (
         id INT AUTO_INCREMENT PRIMARY KEY,
         contract_id VARCHAR(32) NOT NULL,
@@ -115,7 +130,7 @@ local SCHEMA = {
         body VARCHAR(255) NOT NULL,
         sent_at INT NOT NULL,
         INDEX idx_thread (thread_id)
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_ledger (
         id INT AUTO_INCREMENT PRIMARY KEY,
         cid VARCHAR(32) NOT NULL,
@@ -128,7 +143,7 @@ local SCHEMA = {
         photo_ref VARCHAR(512),
         resolved_at INT NOT NULL,
         INDEX idx_cid (cid, resolved_at)
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_pending (
         id VARCHAR(32) PRIMARY KEY,
         cid VARCHAR(32) NOT NULL,
@@ -136,14 +151,14 @@ local SCHEMA = {
         line_id VARCHAR(64) NOT NULL,
         queued_at INT NOT NULL,
         INDEX idx_cid (cid)
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_stats (
         cid VARCHAR(32) PRIMARY KEY,
         completed INT DEFAULT 0,
         failed INT DEFAULT 0,
         placed INT DEFAULT 0,
         survived INT DEFAULT 0
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_audit (
         id INT AUTO_INCREMENT PRIMARY KEY,
         ts INT NOT NULL,
@@ -157,7 +172,7 @@ local SCHEMA = {
         -- The admin timeline reads every row for one contract. Without this
         -- that is a scan of the whole log, which is the largest table here.
         INDEX idx_audit_contract (contract_id)
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- What one buyer's informant purchases on one contract have bought: the
     -- reroll lock and the purchase count. Kept here rather than only in
     -- memory, because a restart that forgot them charged the fee again for
@@ -172,7 +187,7 @@ local SCHEMA = {
         seed INT,
         answer TEXT,
         INDEX idx_reveal_contract (contract_id)
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Threads somebody has muted (§11.4): a row is a mute, and unmuting
     -- deletes it. Created on an existing database by the CREATE TABLE IF
     -- NOT EXISTS below at the next start, like any table added since.
@@ -183,7 +198,7 @@ local SCHEMA = {
         cid VARCHAR(32) NOT NULL,
         muted_at INT NOT NULL,
         INDEX idx_mute_contract (contract_id)
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Kill photos kept for a contract's client (§14.43), by handle: the
     -- ledger row the client is shown carries the handle and never the
     -- link. No hitman column, on purpose: the record goes to nobody but
@@ -216,14 +231,14 @@ local SCHEMA = {
         INDEX idx_photo_open (state, opened_at),
         INDEX idx_photo_created (created_at),
         INDEX idx_photo_public (public_id)
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
     -- nobody could play.
     [[CREATE TABLE IF NOT EXISTS crimson_meta (
         meta_key VARCHAR(32) PRIMARY KEY,
         meta_value INT NOT NULL
-    )]],
+    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
 }
 
 --------------------------------------------------------------------------
@@ -238,9 +253,20 @@ local SCHEMA = {
 --
 -- The declarations above are the single source of truth: what a table should
 -- have is read out of them, compared against what the database reports, and
--- anything absent is added. Nothing is ever dropped or altered in place —
--- an automatic migration that can destroy a column is a worse problem than
--- the one it solves.
+-- anything absent is added. Nothing is ever dropped, and nothing is altered
+-- in place except in the two ways that keep every value: a column renamed
+-- (RENAMED), and a table converted to utf8mb4, which holds every character
+-- the old character set could. An automatic migration that can destroy a
+-- column is a worse problem than the one it solves.
+
+--- Columns renamed since an older version made them: [table] = { old = new }.
+--- Moved with CHANGE COLUMN, which keeps the values, before anything is
+--- added, so the new name is never added beside the old one. The old name is
+--- quoted, since it may be the very word that could not be used unquoted.
+local RENAMED = {
+    crimson_escrow = { portion = 'line_portion' },
+}
+MySQLStore.RENAMED = RENAMED
 
 --- Column and index declarations for one CREATE TABLE statement.
 ---@return string|nil name
@@ -255,7 +281,9 @@ local function declarationsIn(sql)
     -- declarations, the prose in them became columns named `and` and
     -- `which`, the ALTER TABLE built from them was a syntax error, oxmysql
     -- raised it, and mysql mode never started.
-    local body = sql:gsub('%-%-[^\n]*', ''):match('%((.*)%)%s*$') or ''
+    -- Up to the last bracket: the table options (the character set) follow
+    -- it.
+    local body = sql:gsub('%-%-[^\n]*', ''):match('%((.*)%)[^)]*$') or ''
 
     -- Split on the commas between declarations only. One inside brackets
     -- belongs to a declaration: `INDEX idx_cid (cid, resolved_at)` is one.
@@ -304,6 +332,30 @@ local function safeIdentifier(name)
     return type(name) == 'string' and name:match('^[a-z][a-z0-9_]*$') ~= nil
 end
 
+--- Whether a character set or collation name is utf8mb4's. MySQL 8 and
+--- MariaDB both name the three-byte one utf8mb3 now, and older builds utf8.
+local function isUtf8mb4(name)
+    return type(name) == 'string' and name:lower():sub(1, 7) == 'utf8mb4'
+end
+
+--- Whether a table an older version made needs converting to utf8mb4: its
+--- own default (what a column added later inherits), or any text column in
+--- it, is something else. `columnRows` is the COLUMNS answer migrate already
+--- has; a column with no character set is not text.
+local function needsConverting(table_, columnRows)
+    for j = 1, #columnRows do
+        local charset = columnRows[j].CHARACTER_SET_NAME or columnRows[j].character_set_name
+        if charset ~= nil and not isUtf8mb4(charset) then return true end
+    end
+    local rows = MySQL.query.await([[
+        SELECT TABLE_COLLATION FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+    ]], { table_ }) or {}
+    local collation = rows[1] and (rows[1].TABLE_COLLATION or rows[1].table_collation)
+    -- No answer is no table, or a query that failed: nothing to convert.
+    return collation ~= nil and not isUtf8mb4(collation)
+end
+
 --- Add whatever the declarations have and the database does not.
 ---@return integer added columns
 ---@return integer added indexes
@@ -316,7 +368,7 @@ function MySQLStore.migrate()
         if table_ and safeIdentifier(table_) then
             local present = {}
             local rows = MySQL.query.await([[
-                SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                SELECT COLUMN_NAME, CHARACTER_SET_NAME FROM information_schema.COLUMNS
                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
             ]], { table_ }) or {}
             for j = 1, #rows do
@@ -326,6 +378,33 @@ function MySQLStore.migrate()
             -- An empty answer means the table was just created by the
             -- statement above and already matches, or the query failed. Doing
             -- nothing is right either way.
+            if next(present) and needsConverting(table_, rows) then
+                -- Rebuilds the table, once. CREATE TABLE IF NOT EXISTS left
+                -- one an older version made on a utf8mb3 or latin1 database
+                -- as it was, refusing every four-byte character.
+                MySQL.query.await(('ALTER TABLE %s CONVERT TO CHARACTER SET %s COLLATE %s')
+                    :format(table_, CHARSET, COLLATION))
+                print(('[crimson-hitman] migrated: converted %s to %s'):format(table_, CHARSET))
+            end
+
+            -- Renamed before anything is added, so the new name is not added
+            -- beside the old one with every row's value left behind.
+            if next(present) and RENAMED[table_] then
+                for j = 1, #columns do
+                    local column = columns[j]
+                    for old, new in pairs(RENAMED[table_]) do
+                        if column.name == new and safeIdentifier(old) and safeIdentifier(new)
+                            and present[old] and not present[new] then
+                            MySQL.query.await(('ALTER TABLE %s CHANGE COLUMN `%s` %s')
+                                :format(table_, old, column.definition))
+                            print(('[crimson-hitman] migrated: renamed %s.%s to %s')
+                                :format(table_, old, new))
+                            present[old], present[new] = nil, true
+                        end
+                    end
+                end
+            end
+
             if next(present) then
                 for j = 1, #columns do
                     local column = columns[j]
@@ -368,6 +447,30 @@ function MySQLStore.migrate()
     end
 
     return addedColumns, addedIndexes
+end
+
+--- What the crimson_* tables hold, for a server started in another mode
+--- (main.lua's refuseModeSwitch): escrow lines not yet settled, and payouts
+--- owed to players who were offline. Creates nothing: a database this
+--- resource never used answers zero.
+---@return table { lines, owed }
+function MySQLStore.inspect()
+    local rows = MySQL.query.await([[
+        SELECT TABLE_NAME FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('crimson_escrow', 'crimson_pending')
+    ]]) or {}
+    local have = {}
+    for i = 1, #rows do have[tostring(rows[i].TABLE_NAME or rows[i].table_name)] = true end
+
+    local out = { lines = 0, owed = 0 }
+    if have.crimson_escrow then
+        out.lines = tonumber(MySQL.scalar.await(
+            "SELECT COUNT(*) FROM crimson_escrow WHERE state <> 'settled'")) or 0
+    end
+    if have.crimson_pending then
+        out.owed = tonumber(MySQL.scalar.await('SELECT COUNT(*) FROM crimson_pending')) or 0
+    end
+    return out
 end
 
 function MySQLStore.open()
@@ -699,7 +802,7 @@ end
 --- had failed, while the hitman was paid the baseline.
 local ESCROW_UPSERT = [[
     INSERT INTO crimson_escrow
-        (id, contract_id, slot, portion, source, amount, item, quantity, metadata,
+        (id, contract_id, slot, line_portion, source, amount, item, quantity, metadata,
          staker, inv_slot, owed_to, releasing_to, state, derived, taken_from)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     -- State and amount are NOT written here, as they move only through
@@ -750,6 +853,9 @@ local function hydrateEscrow(row)
     -- from the database is truthy in Lua, so leaving it as a number would
     -- make every line look derived rather than none of them.
     row.derived = flag(row.derived) or nil
+    -- The column is line_portion only because PORTION is reserved on
+    -- MariaDB (see SCHEMA); every caller reads line.portion.
+    row.portion, row.line_portion = row.line_portion, nil
     return row
 end
 
@@ -1106,12 +1212,33 @@ function MySQLStore.readStats(cid)
         or { cid = cid, completed = 0, failed = 0, placed = 0, survived = 0 }
 end
 
+local AUDIT_INSERT = [[
+    INSERT INTO crimson_audit (ts, kind, action, actor_cid, contract_id, detail)
+    VALUES (?,?,?,?,?,?)
+]]
+
+local function auditParams(entry)
+    return { entry.ts, entry.kind, entry.action, entry.actor_cid, entry.contract_id,
+             json.encode(entry.detail or {}) }
+end
+
 function MySQLStore.writeAudit(entry)
-    MySQL.query.await([[
-        INSERT INTO crimson_audit (ts, kind, action, actor_cid, contract_id, detail)
-        VALUES (?,?,?,?,?,?)
-    ]], { entry.ts, entry.kind, entry.action, entry.actor_cid, entry.contract_id,
-          json.encode(entry.detail or {}) })
+    MySQL.query.await(AUDIT_INSERT, auditParams(entry))
+    return true
+end
+
+--- The same row, handed to oxmysql without waiting for the answer. Only for
+--- the resource stopping (Audit.flush(true)).
+---
+--- An event handler runs as a coroutine, and an await yields it until the
+--- database answers. At a stop nothing resumes it: the stop carries on and
+--- this resource's Lua is torn down. So the flush on the way out wrote its
+--- first row, yielded on it, and every row behind it — up to ten seconds of
+--- them, financial ones among them — was gone, on every restart. Each call
+--- here reaches oxmysql before it returns, so every row is on its way before
+--- the runtime goes.
+function MySQLStore.writeAuditNoWait(entry)
+    MySQL.insert(AUDIT_INSERT, auditParams(entry))
     return true
 end
 

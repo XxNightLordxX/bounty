@@ -8,8 +8,10 @@ handle. This folder ships with the resource because FiveM's
 Every file here is a photograph of somebody's corpse, seen by nobody but the
 client who placed the contract, once. They are deleted when the client
 deletes the photo, leaves it open too long, never opens it, or it is
-otherwise let go of, and each start removes any file no photo record names.
-Files this resource did not name (this one, for instance) are left alone.
+otherwise let go of, and each start removes any file no photo record names —
+unless `.mode` here names another storage mode than the one the server is
+in, whose store would name none of them (see `../README.md`). Files this
+resource did not name (this one, for instance) are left alone.
 
 Two kinds stay longer, on purpose. A photo the client saved to their phone's
 Photos through a link this server serves (`/crimson-hitman/p/<name>`) stays

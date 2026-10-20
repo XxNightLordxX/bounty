@@ -417,3 +417,91 @@ describe('complexity: the tick and the sampler', function()
         end)
     end)
 end)
+
+--------------------------------------------------------------------------
+-- What a kill payout writes, in json mode
+--------------------------------------------------------------------------
+
+--- json mode ships as the default, and every money write there is a file
+--- written before the handler returns, on the main thread. The ledger,
+--- pending payouts, stats, reveals and kill photo records were fields of
+--- store.json, and every money write rewrote store.json whole: a claim
+--- wrote it twelve times, and the ledger in it grows with every character
+--- ever party to a finished contract. Counted here in files written, which
+--- is the same number on every machine.
+describe('json mode: what a kill payout writes', function()
+    local function boot()
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Config.Database.Mode = 'json'
+        Natives.files = {}
+        local main = require('server.main')
+        return main.start()
+    end
+
+    --- One contract placed, taken and paid on a server whose ledger already
+    --- holds `history` characters' rows. Returns what each step wrote.
+    local function payout(history)
+        local s = boot()
+        local f = fixture(s)
+        for p = 1, history do
+            s.storage.writeLedger({ cid = ('PAST%04d'):format(p), contract_id = 'ctpast',
+                role = 'creator', target_name = 'Somebody Else', reason = 'history',
+                resolved_at = 1 })
+        end
+        s.storage.save(true)
+
+        local steps, current = {}, nil
+        Natives.saveFile = function(file, data)
+            local step = steps[current]
+            step[file] = step[file] or { writes = 0, bytes = 0 }
+            step[file].writes = step[file].writes + 1
+            step[file].bytes = step[file].bytes + #data
+        end
+        local ok, err = pcall(function()
+            current = 'create'; steps.create = {}
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { slots = { { baseline = { cash = 1000, bank = 2000 } } } },
+            })
+            truthy(c, 'a contract')
+            current = 'accept'; steps.accept = {}
+            truthy(s.contracts.accept(f.hitman, c.id), 'taken')
+            current = 'claim'; steps.claim = {}
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}),
+                'and paid')
+        end)
+        Natives.saveFile = nil
+        if not ok then error(err, 0) end
+        return steps
+    end
+
+    local function writes(step, file) return step[file] and step[file].writes or 0 end
+    local function bytes(step, file) return step[file] and step[file].bytes or 0 end
+
+    it('rewrites the records at most twice per payout, and the index not once', function()
+        local steps = payout(50)
+        truthy(writes(steps.claim, 'data/records.json') <= 2,
+            ('a claim wrote records.json %d times'):format(writes(steps.claim, 'data/records.json')))
+        eq(writes(steps.claim, 'data/store.json'), 0,
+            'a claim names no new contract and mints no id the index has to hold')
+        truthy(writes(steps.accept, 'data/store.json') <= 1, 'an acceptance at most once')
+        truthy(writes(steps.create, 'data/store.json') <= 2, 'and a new contract at most twice')
+    end)
+
+    it('writes an index whose size does not grow with the ledger', function()
+        local small = payout(5)
+        local big = payout(400)
+        eq(bytes(big.create, 'data/store.json'), bytes(small.create, 'data/store.json'),
+            'what placing a contract writes to the index is the same with 5 characters in the '
+            .. 'ledger and with 400')
+        eq(bytes(big.claim, 'data/store.json'), 0, 'and a payout writes none of it')
+    end)
+end)

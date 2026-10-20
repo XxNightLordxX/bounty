@@ -9,12 +9,21 @@ every write fails silently — escrow would be taken from players and never
 recorded, and a restart would lose it. The resource refuses to start in json
 mode rather than run that way, and the message names this directory.
 
-`store.json` holds the index — the sequence, the ledger, pending payouts,
-the stats and the kill photo records (a handle, a state and at most a link
-or the name of a file in `photos/` each, never an image).
-`contracts/<id>.json` holds one contract each, with its escrow, hitmen,
-amendments and messages, so a write touches only the contract that
-changed.
+`store.json` holds the index — the sequence, which contracts have a file,
+which days have an audit file, and whether `records.json` has been written.
+`records.json` holds the records: the ledger, pending payouts (money owed to
+players who were offline), the stats, the informant reveals and the kill
+photo records (a handle, a state and at most a link or the name of a file in
+`photos/` each, never an image). It is written only when one of those
+changes, so a money write never rewrites the history it carries; a
+`store.json` from an older version that still holds them is moved into it on
+the first start. `contracts/<id>.json` holds one contract each, with its
+escrow, hitmen, amendments and messages, so a write touches only the
+contract that changed. `store.json.prev` and `records.json.prev` are those
+two files as the last start read them: a missing or unreadable `store.json`
+or `records.json` stops the start rather than lose what they held, and these
+are what to restore from. `heartbeat.json` is when the server was last seen
+running.
 
 `audit-<day>.jsonl` holds the audit log, one file per day (UTC) and one row
 per line. The flush adds new rows to the end of the day's file, and a money
@@ -27,6 +36,16 @@ left untouched (the read may have failed) and that day's new rows go to
 
 Nothing above is needed in `mysql` or `memory` mode.
 
+**Keep this folder when you update the resource**, in every mode. Deleting
+the old resource folder and extracting the new one deletes it with it: in
+`json` mode that is the whole store, every open contract's escrow included,
+and in every mode `photos/` holds the kill photos kept for clients and the
+files behind links in players' Photos. Copy the new version over the old
+folder, or move `data/` aside and back. In `json` mode the server also
+remembers, outside this folder, that the store has run, and refuses to start
+on an empty one rather than start empty without a word (see the README,
+*Updating*).
+
 `photos/` holds the kill photos kept on this server
 (`Config.Completion.PhotoStorage = 'server'`, the default), in **every**
 database mode: one file each, named for the photo's own handle
@@ -37,7 +56,10 @@ server serves stays while their Photos keeps it, and one kept for them in
 the app moves to `photos/kept/` until they delete it. The server must be
 able to write here; it creates the folders if it can, and `photos/` ships
 with this resource for a server build that cannot. Each start removes any
-photo file no record names. Back
+photo file no record names. `photos/.mode` says which storage mode's records
+name the files: after `Config.Database.Mode` is switched, the files are left
+alone (the other store still names them) until the mode is switched back or
+`.mode` is deleted. Back
 it up with the rest of `data/` only if you mean to keep photos across a
 restore; in `memory` mode every photo is forgotten at a restart, and the
 files go with it at the next start.

@@ -401,3 +401,50 @@ describe('a payout that would not fit, for a player who is still online', functi
         eq(#m.storage.readPending('HITMAN01'), 0, 'and nothing is left queued')
     end)
 end)
+
+--- qbx_core changes a balance in memory and writes it every five minutes,
+--- while escrow is written at once. A hard crash in between came back with
+--- the escrow on disk and the balance it was taken from untouched (refunded
+--- later, paid twice), or a payout settled here and gone from the balance.
+describe('a balance this resource moves', function()
+    local function lastSave(src)
+        local found
+        for _, save in ipairs(Natives.calls.saves or {}) do
+            if save.source == src then found = save end
+        end
+        return found
+    end
+
+    it('is written to the database as it moves, both ways', function()
+        local _, m = boot()
+        local f = fixture(m)
+        Natives.calls.saves = {}
+        local c = m.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        local creator = lastSave(1)
+        truthy(creator, 'the client\'s row is saved when the escrow is taken')
+        eq(creator.cash, Env.players[1].PlayerData.money.cash, 'with the balance after it')
+
+        truthy(m.contracts.accept(f.hitman, c.id, false))
+        truthy(m.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        local hitman = lastSave(3)
+        truthy(hitman, 'and the hitman\'s when they are paid')
+        eq(hitman.cash, Env.players[3].PlayerData.money.cash, 'with the payout in it')
+    end)
+
+    it('is still paid when the save throws', function()
+        local _, m = boot()
+        local f = fixture(m)
+        Natives.saveThrows = true
+        local ok, c = pcall(m.contracts.create, f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        Natives.saveThrows = nil
+        truthy(ok and c, 'a save that failed is not a payment that failed')
+        eq(Env.players[1].PlayerData.money.cash, 100000 - 5000, 'and the escrow was taken once')
+    end)
+end)

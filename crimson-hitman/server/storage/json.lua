@@ -4,9 +4,10 @@
 --- the debounce, and a malformed data file halts the resource rather than
 --- starting with empty escrow. Writes are not atomic: each file is rewritten
 --- in place (see writeFile), so a crash mid-write can tear one. A torn index
---- halts the boot too, and store.json.prev holds the one the last start read.
---- The audit log is not in the index: it is a file per day, added to rather
---- than rewritten (see writeAudit).
+--- halts the boot too, and store.json.prev holds the one the last start read;
+--- records.json and records.json.prev the same for the records (see
+--- RECORDS). The audit log is not in the index: it is a file per day, added
+--- to rather than rewritten (see writeAudit).
 
 local Util = require_shared('util')
 
@@ -30,6 +31,28 @@ local EMPTY = {
 --- and only the contracts that actually changed are written.
 local dirtyShards = {}
 local indexDirty = false
+
+--- The records: everything that is not per-contract and is not the index's
+--- own bookkeeping. The ledger, pending payouts, the stats, the informant
+--- reveals and the kill photo records.
+---
+--- They were fields of store.json, and store.json was rewritten whole on
+--- every financial write, even one that changed only a contract's own file.
+--- The ledger keeps up to Ledger.Depth rows for every character ever party
+--- to a finished contract and is never aged out, so on a server some months
+--- old every kill payout encoded, wrote and read back a multi-megabyte
+--- index a dozen times over, on the main thread, with every player waiting
+--- on it. So they are a file of their own, records.json, written only when
+--- one of them changed: a money write on a contract writes that contract's
+--- file and, at most, a store.json small enough not to matter.
+local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos' }
+local recordsDirty = false
+
+--- Whether records.json is known to be on disk: read at this start, or
+--- written since. The index says so (`records = true`), so a later start
+--- that finds the file missing knows it is missing rather than not yet
+--- made, and refuses as it does for a missing index.
+local recordsOnDisk = false
 
 --- Every contract id that owns a file. Kept separately from db.contracts
 --- because a shard can hold escrow whose contract row is missing — an
@@ -74,6 +97,10 @@ end
 
 local function path()
     return directory() .. '/store.json'
+end
+
+local function recordsPath()
+    return directory() .. '/records.json'
 end
 
 --- The UTC day a row belongs to, as its file names it.
@@ -357,13 +384,10 @@ local function buildIndex()
 
     table.sort(index.contractIds)
 
-    -- Everything that is not per-contract. Small, and rewritten whole.
-    index.ledger, index.pending = db.ledger, db.pending
-    index.stats, index.reveals = db.stats, db.reveals
-    -- The kill photo records: a handle, a state and at most a link each,
-    -- never the image itself, so they stay small here with the ledger
-    -- rows that name them.
-    index.photos = db.photos
+    -- Not the records, which are a file of their own (RECORDS): only
+    -- whether that file has been written, so a start that cannot find it
+    -- knows something is missing.
+    index.records = recordsOnDisk or nil
 
     -- Not the audit log itself, which is files of its own: only which days
     -- have one, since nothing else records that.
@@ -380,6 +404,85 @@ local function writeIndex()
     for day in pairs(auditLog.lines) do auditLog.named[day] = true end
     unlinkPending()
     return true
+end
+
+--- Write the records file whole. It is the one file that grows with the
+--- server's history, which is why it is written only when a record changed.
+local function writeRecords()
+    local records = {}
+    for i = 1, #RECORDS do records[RECORDS[i]] = db[RECORDS[i]] end
+    if not writeFile(recordsPath(), records) then return false end
+    recordsOnDisk, recordsDirty = true, false
+    return true
+end
+
+--- Whether a decoded index still carries the records, as every index did
+--- before they had a file of their own.
+local function carriesRecords(decoded)
+    for i = 1, #RECORDS do
+        if decoded[RECORDS[i]] ~= nil then return true end
+    end
+    return false
+end
+
+--- Read the records back.
+---
+--- Moved out of an index that still carries them first, writing
+--- records.json before anything writes an index without them, so a start
+--- interrupted part-way still has them in store.json and moves them again.
+--- An index that carries them is newer than any records.json beside it, or
+--- the same: an interrupted move left both, and a store downgraded to a
+--- version from before the move and back wrote the newer ones there.
+---
+--- A missing or unreadable records.json that the index says was written is
+--- refused, as a missing or unreadable index is: it holds the payouts owed
+--- to players who were offline, and starting without them loses those.
+local function loadRecords(decoded)
+    if carriesRecords(decoded) then
+        if not writeRecords() then
+            error(('[crimson-hitman] cannot write %s while moving the records (ledger, pending '
+                .. 'payouts, stats, reveals, kill photos) out of %s. Refusing to start: %s '
+                .. 'still holds them, unchanged, and the move is tried again on the next start.')
+                :format(recordsPath(), path(), path()))
+        end
+        print(('[crimson-hitman] moved the records out of %s into %s, so a money write no '
+            .. 'longer rewrites them.'):format(path(), recordsPath()))
+        return
+    end
+
+    -- Read twice, as the index is, before believing there is nothing.
+    local raw = LoadResourceFile(resource, recordsPath())
+    if raw == nil or raw == '' then raw = LoadResourceFile(resource, recordsPath()) end
+
+    if raw == nil or raw == '' then
+        if decoded.records then
+            error(('[crimson-hitman] %s is missing or empty, but %s says it was written. '
+                .. 'Refusing to start: it holds the payouts owed to players who were offline, '
+                .. 'and starting without them would lose those. Restore it from %s.prev, the '
+                .. 'records as of the last start, or from a backup. To start without them on '
+                .. 'purpose, take "records":true out of %s.')
+                :format(recordsPath(), path(), recordsPath(), path()))
+        end
+        -- Never written: an index from the moment between a first start
+        -- writing it and writing this.
+        recordsDirty = true
+        return
+    end
+
+    local ok, records = pcall(json.decode, raw)
+    if not ok or type(records) ~= 'table' then
+        error(('[crimson-hitman] %s is unreadable. Refusing to start: it holds the payouts '
+            .. 'owed to players who were offline. Restore it from %s.prev or a backup, or '
+            .. 'move it aside deliberately.'):format(recordsPath(), recordsPath()))
+    end
+    for i = 1, #RECORDS do
+        local key = RECORDS[i]
+        db[key] = type(records[key]) == 'table' and records[key] or {}
+    end
+    recordsOnDisk = true
+    -- As the index is: once per start, so a start that finds this torn has
+    -- something to restore from.
+    SaveResourceFile(resource, recordsPath() .. '.prev', raw, -1)
 end
 
 --- Write the audit rows that are not on disk yet.
@@ -516,6 +619,39 @@ local function loadAudit(decoded)
     end
 end
 
+--- The server's own record that this store has run, kept outside the
+--- resource folder.
+---
+--- contracts/.writable says the same, but it lives in data/, and the usual
+--- way to update a FiveM resource is to delete its folder and extract the
+--- new one. That took data/ with it — every open contract's escrow, every
+--- payout owed to somebody offline, the ledger, the kill photos — and left
+--- exactly the signature of a first install, so the store started empty
+--- without a word. A resource KVP lives in the server's own database, not
+--- in the folder, and survives the folder being replaced.
+local function kvpKey()
+    return 'jsonStoreRan:' .. directory()
+end
+
+local function ranHereBefore()
+    if type(GetResourceKvpInt) ~= 'function' then return false end
+    local ok, value = pcall(GetResourceKvpInt, kvpKey())
+    return ok and value == 1
+end
+
+local function markRan()
+    if type(SetResourceKvpInt) == 'function' then pcall(SetResourceKvpInt, kvpKey(), 1) end
+end
+
+--- Starting empty on purpose, over a store that has run: set from the
+--- server console (`set crimson_hitman_new_store 1`) for one start. A
+--- convar rather than a setting, so it is not left in config.lua to wave
+--- the next lost folder through as well.
+local function startEmptyAllowed()
+    local value = GetConvar and GetConvar('crimson_hitman_new_store', '') or ''
+    return value == '1' or value == 'true'
+end
+
 --- Confirm the store's directories are actually writable.
 ---
 --- SaveResourceFile writes a file; it does not create the directories above
@@ -548,6 +684,8 @@ function JsonStore.assertWritable()
                'be taken and none of them stored.'):format(directory()))
     end
 
+    -- Outside the folder, so a replaced folder is told from a first install.
+    markRan()
     return true
 end
 
@@ -569,19 +707,35 @@ function JsonStore.open()
         -- empty: store.json is rewritten in place, and a crash mid-write
         -- leaves it zero-length. Starting empty here wrote an index naming
         -- no contracts over it, and every open contract and the escrow it
-        -- held were gone without a word.
-        local ranBefore = LoadResourceFile(resource, directory() .. '/contracts/.writable')
-        if ranBefore and ranBefore ~= '' then
-            error(('[crimson-hitman] %s is missing or empty, but this store has run before. ' ..
-                   'Refusing to start: starting empty would drop every open contract and its ' ..
-                   'escrow. Restore it from %s.prev, the index as of the last start (a ' ..
-                   'contract created since still has its file in %s/contracts/), or from a ' ..
-                   'backup. To start empty on purpose, delete %s/contracts/.writable too.')
-                   :format(path(), path(), directory(), directory()))
+        -- held were gone without a word. The server's own record (kvpKey)
+        -- says the same where the whole folder was replaced.
+        local writable = LoadResourceFile(resource, directory() .. '/contracts/.writable')
+        local folderSays = writable ~= nil and writable ~= ''
+        if (folderSays or ranHereBefore()) and not startEmptyAllowed() then
+            local how = folderSays
+                and ('Restore it from %s.prev, the index as of the last start (a contract '
+                    .. 'created since still has its file in %s/contracts/), or from a backup.')
+                    :format(path(), directory())
+                or ('The %s folder is gone or empty, which is what replacing the resource '
+                    .. 'folder in an update does: put the old %s/ back (all of it: store.json, '
+                    .. 'records.json, contracts/, photos/), or restore it from a backup.')
+                    :format(directory(), directory())
+            error(('[crimson-hitman] %s is missing or empty, but this server has run this store '
+                   .. 'before. Refusing to start: starting empty would drop every open contract '
+                   .. 'and its escrow, and every payout owed to a player who is offline. %s To '
+                   .. 'start empty on purpose, run `set crimson_hitman_new_store 1` in the server '
+                   .. 'console and start the resource again.')
+                   :format(path(), how))
+        end
+        if folderSays or ranHereBefore() then
+            print(('[crimson-hitman] starting with an empty store over one that has run here, '
+                .. 'because crimson_hitman_new_store is set. Unset it now: left set, the next '
+                .. 'lost %s/ starts empty without a word too.'):format(directory()))
         end
 
         db = json.decode(json.encode(EMPTY))
         dirtyShards, shardIds, quarantined, indexDirty = {}, {}, {}, true
+        recordsDirty, recordsOnDisk = true, false
         auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {}, unread = {} }
         JsonStore.save(true)
         JsonStore.assertWritable()
@@ -597,9 +751,14 @@ function JsonStore.open()
 
     db = json.decode(json.encode(EMPTY))
     dirtyShards, shardIds, quarantined = {}, {}, {}
+    recordsDirty, recordsOnDisk = false, false
     for key, value in pairs(decoded) do
-        -- The audit log is read from its own files, below.
-        if key ~= 'contractIds' and key ~= 'audit' and key ~= 'auditDays' then db[key] = value end
+        -- The audit log is read from its own files, below, and the records
+        -- from theirs. `records` is only the index saying that file exists.
+        if key ~= 'contractIds' and key ~= 'audit' and key ~= 'auditDays'
+            and key ~= 'records' then
+            db[key] = value
+        end
     end
     for key, value in pairs(EMPTY) do
         if db[key] == nil then db[key] = type(value) == 'table' and {} or value end
@@ -607,9 +766,10 @@ function JsonStore.open()
     seq = tonumber(db.seq) or 0
 
     -- Before either layout below writes an index: one that still carries the
-    -- audit log has to have it on disk elsewhere first.
+    -- audit log, or the records, has to have them on disk elsewhere first.
     if type(decoded.contractIds) == 'table' or type(decoded.contracts) == 'table' then
         loadAudit(decoded)
+        loadRecords(decoded)
     end
 
     if type(decoded.contractIds) == 'table' then
@@ -707,10 +867,68 @@ function JsonStore.open()
     local count = 0
     for _ in pairs(db.contracts) do count = count + 1 end
     if count > (Config.Database.Json.WarnContractCount or 2000) then
-        print(('[crimson-hitman] json store holds %d contracts; consider mysql mode'):format(count))
+        -- Moving to mysql is a fresh start there: nothing is carried over,
+        -- and mysql mode refuses to start while this store still holds
+        -- money (README, Changing storage mode).
+        print(('[crimson-hitman] json store holds %d contracts; a server this busy is better on '
+            .. 'mysql mode, which starts empty: let the open contracts here finish first (see '
+            .. 'the README, Changing storage mode)'):format(count))
     end
 
     return true
+end
+
+--- What a json store on disk holds, read without opening it, for a server
+--- started in another mode (main.lua's refuseModeSwitch): how many contracts
+--- it names, how many escrow lines are not yet settled, and how many payouts
+--- it owes players who were offline. nil where there is no store here.
+---
+--- Reads the files only; nothing in this module is touched, so the store it
+--- describes is exactly as it was left.
+---@return table|nil { contracts, lines, owed, unreadable }
+function JsonStore.inspect()
+    local raw = LoadResourceFile(resource, path())
+    if raw == nil or raw == '' then return nil end
+    local ok, index = pcall(json.decode, raw)
+    if not ok or type(index) ~= 'table' then
+        -- Nobody can tell what it holds, so it is not taken to hold nothing.
+        return { contracts = 0, lines = 0, owed = 0, unreadable = true }
+    end
+
+    local out = { contracts = 0, lines = 0, owed = 0 }
+    local function held(escrow)
+        for _, line in pairs(type(escrow) == 'table' and escrow or {}) do
+            if type(line) == 'table' and line.state ~= CH.ESCROW_STATE.SETTLED then
+                out.lines = out.lines + 1
+            end
+        end
+    end
+
+    -- The single-file layout of an older version holds it all in the index.
+    if type(index.contracts) == 'table' then
+        for _ in pairs(index.contracts) do out.contracts = out.contracts + 1 end
+        held(index.escrow)
+    end
+    for _, id in ipairs(type(index.contractIds) == 'table' and index.contractIds or {}) do
+        out.contracts = out.contracts + 1
+        local file = shardPath(id)
+        local shardRaw = file and LoadResourceFile(resource, file)
+        if shardRaw and shardRaw ~= '' then
+            local shardOk, shard = pcall(json.decode, shardRaw)
+            if shardOk and type(shard) == 'table' then held(shard.escrow) end
+        end
+    end
+
+    local pending = index.pending
+    if pending == nil then
+        local recordsRaw = LoadResourceFile(resource, recordsPath())
+        if recordsRaw and recordsRaw ~= '' then
+            local recordsOk, records = pcall(json.decode, recordsRaw)
+            pending = recordsOk and type(records) == 'table' and records.pending or nil
+        end
+    end
+    for _ in pairs(type(pending) == 'table' and pending or {}) do out.owed = out.owed + 1 end
+    return out
 end
 
 --- Write what changed.
@@ -738,9 +956,13 @@ function JsonStore.save(force)
             -- after. Dropped rather than written.
             dirtyShards[id] = nil
         elseif writeFile(file, shardOf(id)) then
+            -- The index is not marked for this. A contract it does not name
+            -- yet marked it when it was touched (touch); one it already
+            -- names has nothing new to say there. Marking it here rewrote
+            -- the index on every money write, which is the write that used
+            -- to carry the whole ledger.
             dirtyShards[id] = nil
             written = written + 1
-            indexDirty = true
         else
             -- Left dirty deliberately: a shard that did not land is retried
             -- on the next flush rather than forgotten.
@@ -748,27 +970,39 @@ function JsonStore.save(force)
         end
     end
 
+    -- Only when something in it changed: `force` means every dirty shard,
+    -- not every file whatever it holds.
     local indexOk = true
-    if indexDirty or force then
+    if indexDirty then
         db.seq = seq
         indexOk = writeIndex()
         if indexOk then indexDirty = false end
     end
 
-    if not next(dirtyShards) and not indexDirty then
+    -- After the index, and only once it is on disk. A pending payout's id is
+    -- minted from the sequence the index holds; written ahead of it, a crash
+    -- in between would leave a row on disk whose id the next start mints
+    -- again, and the next payout queued under it would land on top of it.
+    local recordsOk = true
+    if recordsDirty and indexOk then
+        recordsOk = writeRecords()
+    end
+
+    if not next(dirtyShards) and not indexDirty and not recordsDirty then
         dirty = false
     end
     lastFlush = Util.monotonicMs()
     -- A flush that could not write the index did not flush. Saying it did
     -- is what let the store report success while persisting nothing.
-    return indexOk
+    return indexOk and recordsOk
 end
 
 --- Mark the store dirty.
 ---
 --- `contractId` names which shard changed; without one the change is in the
---- index (the ledger, a pending payout, a stat). Financial writes
---- flush immediately; everything else rides the debounce (§10.2).
+--- records (the ledger, a pending payout, a stat, a reveal, a kill photo).
+--- Financial writes flush immediately; everything else rides the debounce
+--- (§10.2).
 local function touch(financial, contractId)
     dirty = true
     if contractId then
@@ -780,7 +1014,7 @@ local function touch(financial, contractId)
             indexDirty = true
         end
     else
-        indexDirty = true
+        recordsDirty = true
     end
     if financial and Config.Database.Json.SyncOnFinancialWrite then
         JsonStore.save(true)
@@ -852,7 +1086,10 @@ function JsonStore.prune()
             if db.messages[j].contract_id == id then table.remove(db.messages, j) end
         end
         for key, row in pairs(db.reveals) do
-            if row.contract_id == id then db.reveals[key] = nil end
+            if row.contract_id == id then
+                db.reveals[key] = nil
+                recordsDirty = true
+            end
         end
         for key, row in pairs(db.mutes) do
             if row.contract_id == id then db.mutes[key] = nil end
@@ -935,8 +1172,8 @@ end
 --- When this process was last known to be running.
 ---
 --- A file of its own rather than a field in the index: the index is
---- rewritten only when something in it changed, and this changes on every
---- tick.
+--- rewritten only when something in it changed (a new contract, the
+--- sequence, a new day of audit log), and this changes on every tick.
 local function heartbeatPath()
     return directory() .. '/heartbeat.json'
 end
@@ -954,9 +1191,10 @@ function JsonStore.lastHeartbeat()
     return tonumber(decoded.at)
 end
 
+--- The sequence is the index's, so this marks the index, not the records.
 function JsonStore.nextId(prefix)
     seq = seq + 1
-    touch(false)
+    indexDirty, dirty = true, true
     return string.format('%s%08d', prefix, seq)
 end
 
@@ -1476,10 +1714,11 @@ end
 -- Kill photos kept for a contract's client; see the memory backend.
 --------------------------------------------------------------------------
 --
--- In the index beside the ledger rows that name them. A change of state is
--- written at once, as a financial write is: a photo the client chose to
--- delete, or one they have already seen, must not come back as unseen
--- because the process stopped before the next flush.
+-- In the records beside the ledger rows that name them: a handle, a state
+-- and at most a link or a file name each, never the image itself. A change
+-- of state is written at once, as a financial write is: a photo the client
+-- chose to delete, or one they have already seen, must not come back as
+-- unseen because the process stopped before the next flush.
 
 function JsonStore.writePhoto(record)
     local row = {}

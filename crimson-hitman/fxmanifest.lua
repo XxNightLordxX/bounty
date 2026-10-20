@@ -50,10 +50,20 @@ files {
     'ui/icon.png',
 }
 
+-- Not lb-phone. FiveM stops every resource that depends on one being
+-- restarted and never starts them again, so `restart lb-phone` after a config
+-- edit took this app off every phone, and stopped the handover countdowns,
+-- expiry and the death sampler with it, until somebody typed `ensure
+-- crimson-hitman`. lb-phone's own app templates declare no dependency on it
+-- either: the client waits for lb-phone and adds the app again whenever it
+-- starts (client/main.lua), and every server call into it is guarded.
+--
+-- qbx_core and ox_inventory stay: money and items cannot be escrowed or
+-- paid without them. Restarting either (or oxmysql) still stops this
+-- resource; `ensure crimson-hitman` afterwards (README, Updating).
 dependencies {
     'qbx_core',
     'ox_inventory',
-    'lb-phone',
 }
 
 --- Optional integrations, all detected at runtime and skipped when absent:

@@ -499,6 +499,20 @@ function Bridges.install(modules)
         end)
     end
 
+    -- Players already connected as this resource starts: a `restart` or an
+    -- `ensure` after a config edit, with the server full. The login events
+    -- that schedule the readiness pass came and went before this resource
+    -- was listening, and the framework does not fire them again, so
+    -- whatever was queued for them — goods that did not fit, a refund to
+    -- full pockets — waited until they relogged, however much room they
+    -- made. The same pass a login runs, after recovery like any other
+    -- (scheduleReady waits for App.ready). Not remember(): nobody watched
+    -- these sessions begin.
+    for _, id in ipairs(GetPlayers() or {}) do
+        local src = tonumber(id)
+        if src then scheduleReady(src) end
+    end
+
     Bridges.installCommands(modules)
     return true
 end

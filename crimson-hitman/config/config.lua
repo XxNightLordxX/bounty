@@ -735,7 +735,24 @@ Config.Database = {
     --- memory keeps nothing: every contract and every escrowed reward is
     --- gone at the next restart, which is why it releases all open escrow
     --- on shutdown rather than losing it.
+    ---
+    --- Modes do not share data: a server switched from one to another
+    --- starts with nothing in the new one. So it refuses to start while the
+    --- mode it left still holds players' money — escrow not yet settled, or
+    --- payouts owed to somebody offline — and says where. Let those
+    --- contracts finish in the old mode first (README, Changing storage
+    --- mode). Kill photo files kept for the old mode are left alone too.
     Mode = 'json',
+    --- true starts in the mode above even though another mode still holds
+    --- players' money. That money is then invisible from here and nothing
+    --- returns it, so only for a server that has settled it by hand.
+    AllowModeSwitch = false,
+    --- json keeps its files in the resource folder, so an update that
+    --- replaces the folder takes them with it: keep data/ when updating
+    --- (README, Updating). The server also remembers, outside the folder,
+    --- that the store has run, and refuses to start empty where it has;
+    --- `set crimson_hitman_new_store 1` in the server console starts empty
+    --- on purpose, once.
     Json = {
         Directory = 'data',
         SyncOnFinancialWrite = true,

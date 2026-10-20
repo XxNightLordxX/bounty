@@ -813,6 +813,36 @@ describe('audit rows written while a flush waits on the database', function()
         eq(seen.escrow_settle_lost, 1, 'the row pushed during the flush was lost')
         eq(seen.first, 1, 'and nothing was written twice')
     end)
+
+    --- At a stop nothing waits. The stop handler runs as a coroutine, an
+    --- await yields it until the database answers, and before it answers
+    --- this resource's Lua is torn down. The flush on the way out wrote its
+    --- first row, yielded on it, and every queued row behind it was lost on
+    --- every restart.
+    it('mysql: every row queued at a stop reaches the database, with nothing waiting', function()
+        local _, s = boot('mysql')
+        for i = 1, 5 do s.audit.financial('stop_row_' .. i, 'A', 'ctStop', {}) end
+
+        -- An await at a stop never comes back.
+        local methods = { MySQL.query, MySQL.insert, MySQL.update, MySQL.scalar }
+        local saved = {}
+        for i, method in ipairs(methods) do
+            saved[i] = method.await
+            method.await = function() coroutine.yield('waiting on the database') end
+        end
+        local stop = coroutine.create(function()
+            Env.handlers['onResourceStop'](GetCurrentResourceName())
+        end)
+        local ok, err = coroutine.resume(stop)
+        for i, method in ipairs(methods) do method.await = saved[i] end
+        truthy(ok, tostring(err))
+
+        local seen = 0
+        for _, row in pairs(Exec.tables.crimson_audit or {}) do
+            if tostring(row.action):find('^stop_row_') then seen = seen + 1 end
+        end
+        eq(seen, 5, 'every queued row is in the table, not only the first')
+    end)
 end)
 
 describe('an acceptance and the anonymity fee, when something goes wrong', function()
@@ -1942,4 +1972,158 @@ describe('a crash between taking a new contract\'s escrow and storing it', funct
         eq(rows[#rows].detail.recipient, 'CREATOR1')
         truthy(rows[#rows].detail.named_by_staff)
     end)
+end)
+
+
+--- Modes do not share data. A server switched from json to mysql — which
+--- the json store itself suggests once it is busy — or tried on memory for
+--- a test started empty: every open contract invisible, the escrow taken
+--- for it with it, nothing returning it and nothing saying so.
+describe('changing storage mode', function()
+    local function placed(s, f)
+        Env.players[1].PlayerData.money.bank = 400000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { bank = 50000 } },
+        })
+        truthy(c, 'a contract holding the client\'s money')
+        return c
+    end
+
+    it('json to mysql: refuses to start while the json store holds money', function()
+        local _, s = boot('json')
+        local c = placed(s, fixture(s))
+        local before = Natives.files['data/contracts/' .. c.id .. '.json']
+        Exec.install(Natives)
+        local ok, err = pcall(restart, 'mysql', s)
+        falsy(ok, 'an empty mysql store over money held in json is not a start')
+        truthy(tostring(err):find('json mode: 1 escrow line', 1, true), tostring(err))
+        truthy(tostring(err):find('AllowModeSwitch', 1, true), 'and says how to start anyway')
+        eq(Natives.files['data/contracts/' .. c.id .. '.json'], before, 'the json store is untouched')
+    end)
+
+    it('json to memory: the same, and AllowModeSwitch starts it anyway, saying so', function()
+        local _, s = boot('json')
+        placed(s, fixture(s))
+        falsy(pcall(restart, 'memory', s), 'memory mode refuses too')
+
+        Config.Database.AllowModeSwitch = true
+        local ok, _, s2 = pcall(restart, 'memory', s)
+        truthy(ok, 'with the switch allowed it starts')
+        truthy(s2 and s2.contracts, 'wired')
+        truthy(table.concat(Env.console, ' '):find('AllowModeSwitch is on', 1, true),
+            'and warns that what the other mode holds is not visible from here')
+    end)
+
+    it('json to mysql: a json store holding nothing owed is no reason to refuse', function()
+        local _, s = boot('json')
+        local f = fixture(s)
+        local c = placed(s, f)
+        truthy(s.contracts.cancel(f.creator, c.id), 'cancelled, the money back')
+        Exec.install(Natives)
+        local ok, err = pcall(restart, 'mysql', s)
+        truthy(ok, tostring(err))
+    end)
+
+    it('mysql to json: refuses while the crimson tables hold money', function()
+        local _, s = boot('mysql')
+        placed(s, fixture(s))
+        Natives.resourceStates['oxmysql'] = 'started'
+        local ok, err = pcall(restart, 'json', s)
+        falsy(ok, 'an empty json store over money held in mysql is not a start')
+        truthy(tostring(err):find('mysql mode: 1 escrow line', 1, true), tostring(err))
+    end)
+
+    it('json: a server without oxmysql running is not asked about mysql', function()
+        local _, s = boot('mysql')
+        placed(s, fixture(s))
+        Natives.resourceStates['oxmysql'] = nil
+        local ok, err = pcall(restart, 'json', s)
+        truthy(ok, tostring(err))
+    end)
+end)
+
+--- The usual update is to delete the resource folder and extract the new
+--- one. In json mode that took data/ with it, and the store started empty
+--- without a word: it looked exactly like a first install.
+describe('a json store whose folder was replaced', function()
+    it('refuses to start empty where this server has run it before', function()
+        local _, s = boot('json')
+        local f = fixture(s)
+        Env.players[1].PlayerData.money.bank = 400000
+        truthy(s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { bank = 50000 } } }))
+
+        -- A new folder: the files gone, the server's own KVP store kept.
+        local old = Natives.files
+        Natives.files = {}
+        Natives.kvp[Natives.files] = Natives.kvp[old]
+        local ok, err = pcall(restart, 'json', s)
+        falsy(ok, 'an empty folder on a server that ran the store is not a first install')
+        truthy(tostring(err):find('replacing the resource folder', 1, true), tostring(err))
+        truthy(tostring(err):find('crimson_hitman_new_store', 1, true), 'and says how to start empty')
+        eq(Natives.files['data/store.json'], nil, 'nothing was written in its place')
+
+        -- Put back, it starts with the contract.
+        Natives.files = old
+        local back, _, s3 = pcall(restart, 'json', s)
+        truthy(back, 'the old data/ put back, it starts')
+        eq(#s3.storage.allContracts(), 1, 'with the contract and its escrow')
+    end)
+
+    it('starts empty on purpose with the console convar, and on a server that never ran it', function()
+        local _, s = boot('json')
+        local old = Natives.files
+        Natives.files = {}
+        Natives.kvp[Natives.files] = Natives.kvp[old]
+        Natives.convars['crimson_hitman_new_store'] = '1'
+        local ok, err = pcall(restart, 'json', s)
+        Natives.convars['crimson_hitman_new_store'] = nil
+        truthy(ok, tostring(err))
+        truthy(table.concat(Env.console, ' '):find('Unset it now', 1, true), 'and says to unset it')
+
+        -- A new server: new folder, nothing in its KVP store.
+        Natives.files = {}
+        local fresh, freshErr = pcall(restart, 'json', s)
+        truthy(fresh, tostring(freshErr))
+    end)
+end)
+
+--- A restart of this resource with players still connected. The login
+--- events that run the readiness pass came and went before it was
+--- listening, and the framework does not fire them again: a payout queued
+--- for a connected player waited for a relog, however much room they made.
+describe('a payout queued for a player still connected through a restart', function()
+    local function carried(src, name)
+        local n = 0
+        for _, slot in ipairs(Env.players[src]._inventory or {}) do
+            if slot.name == name then n = n + slot.count end
+        end
+        return n
+    end
+
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': arrives once they make room, without a relog', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
+                reward = { baseline = { cash = 1000, items = { { name = 'lockpick', count = 5 } } } },
+            })
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            Env.players[3]._inventoryFull = true
+            local ok, _, result = s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
+            truthy(ok)
+            eq(result.pending, 1, 'the lockpicks did not fit')
+
+            local main2, s2 = restart(mode, s)
+            Env.players[3]._inventoryFull = false
+            for _ = 1, 6 do
+                Env.advance(10)
+                main2.tick()
+            end
+            eq(carried(3, 'lockpick'), 5, 'handed over after the restart')
+            eq(#s2.storage.readPending('HITMAN01'), 0, 'and nothing is left queued')
+        end)
+    end
 end)

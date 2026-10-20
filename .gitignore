@@ -2,6 +2,8 @@
 # The directories themselves are tracked (see crimson-hitman/data/README.md);
 # what the server writes into them is not.
 crimson-hitman/data/store.json*
+crimson-hitman/data/records.json*
+crimson-hitman/data/heartbeat.json
 crimson-hitman/data/contracts/*.json
 crimson-hitman/data/contracts/.writable
 crimson-hitman/data/audit-*.jsonl
@@ -10,8 +12,10 @@ crimson-hitman/data/audit-*.jsonl
 crimson-hitman/data/photos/*.webp
 crimson-hitman/data/photos/*.jpg
 crimson-hitman/data/photos/*.png
-# And the ones kept for their client in the app.
+# And the ones kept for their client in the app, and which storage mode's
+# records name them.
 crimson-hitman/data/photos/kept/
+crimson-hitman/data/photos/.mode
 
 # Throwaway probes. A one-off spec plus a copy of the runner with its suite
 # list narrowed to that spec is how a question about this code gets asked:

@@ -1782,7 +1782,7 @@ do
         ['crimson_escrow.id']                 = 'the primary key',
         ['crimson_escrow.contract_id']        = 'a line does not move between contracts',
         ['crimson_escrow.slot']               = 'which payout slot it belongs to',
-        ['crimson_escrow.portion']            = 'baseline, bonus or stake, decided when it was taken',
+        ['crimson_escrow.line_portion']       = 'baseline, bonus or stake, decided when it was taken',
         ['crimson_escrow.source']             = 'the account or inventory it came out of',
         ['crimson_escrow.amount']             = 'moves only through setEscrowAmount, which is guarded',
         ['crimson_escrow.item']               = 'what was taken',

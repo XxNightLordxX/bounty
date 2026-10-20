@@ -1321,9 +1321,15 @@ describe('the framework events this resource listens for', function()
     --- the latch: 200 firings queued 200 timers and 200 reads.
     it('schedules one readiness pass however many times it is fired', function()
         local s = wired()
+        -- The firing player's reads only. Everyone already connected when the
+        -- bridges were installed has one pass of their own queued (as after
+        -- a restart of this resource), which is not the amplification.
         local reads = 0
         local real = s.storage.readPending
-        s.storage.readPending = function(...) reads = reads + 1 return real(...) end
+        s.storage.readPending = function(cid, ...)
+            if cid == 'HITMAN01' then reads = reads + 1 end
+            return real(cid, ...)
+        end
         s.escrow.init(s.storage, s.audit)
 
         local before = #Env.timers

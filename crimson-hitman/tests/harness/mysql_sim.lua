@@ -16,7 +16,8 @@ local function parseSchema(sql)
     if not name then return end
 
     local columns, indexes = {}, { PRIMARY = true }
-    local body = sql:gsub('%-%-[^\n]*', ''):match('%((.*)%)%s*$') or ''
+    -- Up to the last bracket: the table options (the character set) follow.
+    local body = sql:gsub('%-%-[^\n]*', ''):match('%((.*)%)[^)]*$') or ''
     local depth, part = 0, {}
     for ch in (body .. ','):gmatch('.') do
         if ch == ',' and depth == 0 then
@@ -40,6 +41,10 @@ local function parseSchema(sql)
     Sim.schema[name] = columns
     Sim.indexes[name] = indexes
     Sim.tables[name] = Sim.tables[name] or {}
+    -- What the table is made with: what it declares after its last
+    -- bracket, or else the database's own default, which on a txAdmin
+    -- database is utf8mb3.
+    Sim.collations[name] = sql:match('%)[^)]*COLLATE=([%w_]+)[^)]*$') or Sim.databaseCollation
 end
 
 --- Extract the column list from an INSERT so we can check it against the
@@ -56,7 +61,10 @@ local function parseInsert(sql)
 end
 
 function Sim.reset()
-    Sim.tables, Sim.schema, Sim.indexes = {}, {}, {}
+    Sim.tables, Sim.schema, Sim.indexes, Sim.collations = {}, {}, {}, {}
+    -- What CREATE TABLE gives a table that names no character set.
+    Sim.databaseCollation = 'utf8mb3_general_ci'
+    Sim.existingCollations = nil
     Sim.rejected = {}
     -- What a pre-existing database reports it has, which is the whole point
     -- of a migration: nil means the table is new and matches its
@@ -71,13 +79,25 @@ end
 --- a migration has to find.
 ---@param tables table [tableName] = { column = true }
 ---@param indexes table|nil [tableName] = { indexName = true }
-function Sim.existingSchema(tables, indexes)
+---@param collations table|nil [tableName] = collation it was made with; a
+--- table not named here answers nothing, as a query that failed would
+function Sim.existingSchema(tables, indexes, collations)
     Sim.existing = tables
     Sim.existingIndexes = indexes or {}
+    Sim.existingCollations = collations or {}
 end
 
 --- Parse an ALTER TABLE so a test can assert on what the migration did.
 local function parseAlter(sql)
+    local renamedIn, from, to = sql:match('^ALTER TABLE ([%w_]+) CHANGE COLUMN `([%w_]+)` ([%w_]+)')
+    if renamedIn then return { table_ = renamedIn, from = from, to = to, sql = sql } end
+
+    local convertedIn, charset, collation =
+        sql:match('^ALTER TABLE ([%w_]+) CONVERT TO CHARACTER SET ([%w_]+) COLLATE ([%w_]+)')
+    if convertedIn then
+        return { table_ = convertedIn, charset = charset, collation = collation, sql = sql }
+    end
+
     local table_, rest = sql:match('^ALTER TABLE ([%w_]+) ADD (.+)$')
     if not table_ then return nil end
 
@@ -108,9 +128,14 @@ function Sim.missingColumns(tableName, record)
     local declared = Sim.schema[tableName]
     if not declared then return { 'no such table: ' .. tableName } end
 
+    -- A field the backend keeps under another column name (RENAMED in
+    -- mysql.lua), and hands back under its own (hydrateEscrow).
+    local backend = package.loaded['crimson-hitman.server.storage.mysql']
+    local renamed = backend and backend.RENAMED and backend.RENAMED[tableName] or {}
+
     local missing = {}
     for field, value in pairs(record) do
-        if value ~= nil and not declared[field] then
+        if value ~= nil and not declared[renamed[field] or field] then
             missing[#missing + 1] = field
         end
     end
@@ -136,8 +161,28 @@ function Sim.install(Natives)
             local held = Sim.existing and Sim.existing[table_] or Sim.schema[table_]
             if not held then return {} end
             local rows = {}
-            for column in pairs(held) do rows[#rows + 1] = { COLUMN_NAME = column } end
+            -- A column a test gave as a string is a text column in that
+            -- character set.
+            for column, charset in pairs(held) do
+                rows[#rows + 1] = { COLUMN_NAME = column,
+                    CHARACTER_SET_NAME = type(charset) == 'string' and charset or nil }
+            end
             return rows
+        end
+
+        -- A table's own default collation: for one an older version left,
+        -- what the test said it was made with (or nothing); for one CREATE
+        -- TABLE just made, what it declared.
+        if sql:find('information_schema.TABLES', 1, true) then
+            local table_ = params and params[1]
+            local collation
+            if Sim.existing and Sim.existing[table_] then
+                collation = Sim.existingCollations and Sim.existingCollations[table_]
+            else
+                collation = Sim.collations[table_]
+            end
+            if not collation then return {} end
+            return { { TABLE_COLLATION = collation } }
         end
 
         if sql:find('information_schema.STATISTICS', 1, true) then
@@ -159,6 +204,22 @@ function Sim.install(Natives)
                 if change.column and Sim.existing and Sim.existing[change.table_] then
                     Sim.existing[change.table_][change.column] = true
                 end
+                if change.from and Sim.existing and Sim.existing[change.table_] then
+                    Sim.existing[change.table_][change.from] = nil
+                    Sim.existing[change.table_][change.to] = true
+                end
+                if change.collation then
+                    if Sim.existing and Sim.existing[change.table_] then
+                        Sim.existingCollations[change.table_] = change.collation
+                        for column, charset in pairs(Sim.existing[change.table_]) do
+                            if type(charset) == 'string' then
+                                Sim.existing[change.table_][column] = change.charset
+                            end
+                        end
+                    else
+                        Sim.collations[change.table_] = change.collation
+                    end
+                end
                 if change.index and Sim.existingIndexes
                     and Sim.existingIndexes[change.table_] then
                     Sim.existingIndexes[change.table_][change.index] = true
@@ -169,10 +230,11 @@ function Sim.install(Natives)
         return {}
     end
 
-    Natives.mysql.query = { await = function(sql, params) return run(sql, params) end }
-    Natives.mysql.insert = { await = function(sql, params) run(sql, params) return 1 end }
-    Natives.mysql.update = { await = function(sql, params) run(sql, params) return 1 end }
-    Natives.mysql.scalar = { await = function(sql, params) run(sql, params) return 0 end }
+    local method = Natives.mysqlMethod
+    Natives.mysql.query = method({ await = function(sql, params) return run(sql, params) end })
+    Natives.mysql.insert = method({ await = function(sql, params) run(sql, params) return 1 end })
+    Natives.mysql.update = method({ await = function(sql, params) run(sql, params) return 1 end })
+    Natives.mysql.scalar = method({ await = function(sql, params) run(sql, params) return 0 end })
 end
 
 return Sim

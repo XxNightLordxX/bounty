@@ -599,6 +599,38 @@ describe('the start\'s sweep of photo files nothing names', function()
             'a sweep alongside a kill being verified would remove the file written a moment before its record')
     end)
 
+    --- "No record names it" is only true of the store the files were kept
+    --- for. A server whose storage mode was switched starts with a store
+    --- that names none of them, and the sweep removed every kill photo the
+    --- other mode kept or served, for good.
+    it('leaves the files of another storage mode alone', function()
+        local s = photographed()
+        Natives.files['data/photos/ph0000000orphan.webp'] = WEBP
+        Natives.files['data/photos/kept/ph000000kept01.webp'] = WEBP
+        Natives.files['data/photos/.mode'] = 'mysql'
+        eq(Config.Database.Mode, 'json', 'this server is in json mode')
+
+        eq(s.photos.sweepFiles(), 0, 'nothing is removed')
+        truthy(Natives.files['data/photos/ph0000000orphan.webp'], 'not a waiting photo')
+        truthy(Natives.files['data/photos/kept/ph000000kept01.webp'], 'nor a kept one')
+        eq(Natives.files['data/photos/.mode'], 'mysql', 'and they stay marked as that mode\'s')
+        truthy(table.concat(Env.console, ' '):find('kept for mysql mode', 1, true),
+            'and the console says why: ' .. table.concat(Env.console, ' '))
+    end)
+
+    it('sweeps after memory mode, whose records never outlive a start, and marks the files', function()
+        local s = photographed()
+        Natives.files['data/photos/ph0000000orphan.webp'] = WEBP
+        Natives.files['data/photos/.mode'] = 'memory'
+        eq(s.photos.sweepFiles(), 1, 'memory mode\'s leftovers go')
+        eq(Natives.files['data/photos/.mode'], 'json', 'and what is left is this mode\'s')
+
+        Natives.files['data/photos/.mode'] = nil
+        Natives.files['data/photos/ph0000000orphan.webp'] = WEBP
+        eq(s.photos.sweepFiles(), 1, 'a folder no mode has marked yet is swept as before')
+        eq(Natives.files['data/photos/.mode'], 'json', 'and marked')
+    end)
+
     it('says so, and removes nothing, on a server that cannot list a folder', function()
         local s = photographed()
         Natives.files['data/photos/ph0000000orphan.webp'] = WEBP

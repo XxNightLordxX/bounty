@@ -41,7 +41,8 @@ local function parseSchema(sql)
     if not name then return end
 
     local columns, order, primary = {}, {}, nil
-    local body = sql:gsub('%-%-[^\n]*', ''):match('%((.*)%)%s*$') or ''
+    -- Up to the last bracket: the table options (the character set) follow.
+    local body = sql:gsub('%-%-[^\n]*', ''):match('%((.*)%)[^)]*$') or ''
 
     for line in body:gmatch('[^,\n]+') do
         local trimmed = line:match('^%s*(.-)%s*$')
@@ -607,6 +608,14 @@ function Exec.run(sql, params)
 
     if flat:find('^CREATE TABLE') then parseSchema(sql) return {} end
     if flat:find('^ALTER TABLE') then return {} end
+    -- Which of a list of tables exist: the ones CREATE TABLE has made here.
+    if flat:find('information_schema%.TABLES') and flat:find('TABLE_NAME IN %(') then
+        local rows = {}
+        for name in flat:match('TABLE_NAME IN %((.-)%)'):gmatch("'([%w_]+)'") do
+            if Exec.schema[name] then rows[#rows + 1] = { TABLE_NAME = name } end
+        end
+        return rows
+    end
     if flat:find('information_schema') then return {} end
 
     if flat:find('^INSERT INTO crimson_ledger') and flat:find('DELETE') then
@@ -620,6 +629,10 @@ function Exec.run(sql, params)
         return contractsInvolving(params)
     end
     if flat:find('^SELECT c%.state AS state') then return hitmanContractStates(flat, params) end
+    -- A count with a condition is the rows the same SELECT * would return.
+    if flat:find('^SELECT COUNT%(%*%) FROM [%w_]+ WHERE ') then
+        return #select_(flat:gsub('^SELECT COUNT%(%*%)', 'SELECT *', 1), params)
+    end
     if flat:find('^SELECT COUNT%(%*%)') then
         return #rowsOf(flat:match('FROM ([%w_]+)') or '')
     end
@@ -634,13 +647,14 @@ end
 
 function Exec.install(Natives)
     Exec.reset()
-    Natives.mysql.query = { await = function(sql, params) return Exec.run(sql, params) end }
-    Natives.mysql.insert = { await = function(sql, params) Exec.run(sql, params) return 1 end }
-    Natives.mysql.update = { await = function(sql, params) return Exec.run(sql, params) end }
-    Natives.mysql.scalar = { await = function(sql, params)
+    local method = Natives.mysqlMethod
+    Natives.mysql.query = method({ await = function(sql, params) return Exec.run(sql, params) end })
+    Natives.mysql.insert = method({ await = function(sql, params) Exec.run(sql, params) return 1 end })
+    Natives.mysql.update = method({ await = function(sql, params) return Exec.run(sql, params) end })
+    Natives.mysql.scalar = method({ await = function(sql, params)
         local result = Exec.run(sql, params)
         return type(result) == 'number' and result or 0
-    end }
+    end })
     -- All of it, in one await: nothing else runs in between, as nothing sees
     -- a transaction half-applied on a real database.
     Natives.mysql.transaction = { await = function(queries)

@@ -477,6 +477,28 @@ end
 --- into a player's missing money had nothing to follow.
 Util.MONEY_REASON = 'crimson-hitman'
 
+--- Write a player's money to the database now, not at qbx_core's next save.
+---
+--- AddMoney and RemoveMoney change the player in memory only. qbx_core
+--- writes them every updateInterval (five minutes as shipped) and when they
+--- leave, while this resource writes its escrow at once. A hard crash in
+--- between came back with the escrow on disk and the balance it was taken
+--- from as it was before, and a refund later paid it a second time; or with
+--- a payout marked settled here and gone from the balance it was paid into.
+--- One upsert of the player's row narrows that to the write itself. Items
+--- and dirty money are ox_inventory's, which has no save to call per
+--- player, so their five minutes stay (README, after a crash).
+---
+--- Only an online player: one qbx_core holds offline is saved by AddMoney
+--- itself. A Save that throws is not a payment that failed.
+local function persist(player)
+    -- The framework's own player object, never anything a client sent.
+    local playerData = type(player) == 'table' and player.PlayerData
+    local src = type(playerData) == 'table' and tonumber(playerData.source)
+    if not src or player.Offline then return end
+    pcall(function() exports.qbx_core:Save(src) end)
+end
+
 --- Take money from a player, refusing rather than overdrawing them.
 ---
 --- RemoveMoney's return is not an affordability check. qbx_core applies its
@@ -503,7 +525,9 @@ function Util.charge(player, account, amount)
     amount = tonumber(amount) or 0
     if amount <= 0 then return true end
     if (player.Functions.GetMoney(account) or 0) < amount then return false end
-    return player.Functions.RemoveMoney(account, amount, Util.MONEY_REASON) and true or false
+    if not player.Functions.RemoveMoney(account, amount, Util.MONEY_REASON) then return false end
+    persist(player)
+    return true
 end
 
 --- Give money to a player, treating a raise like a refusal.
@@ -529,7 +553,9 @@ end
 function Util.credit(player, account, amount)
     if not player or not player.Functions then return false end
     local ok, gave = pcall(player.Functions.AddMoney, account, amount, Util.MONEY_REASON)
-    return (ok and gave) and true or false
+    if not (ok and gave) then return false end
+    persist(player)
+    return true
 end
 
 --- The client has no module loader — server/boot.lua's require_shared is a
