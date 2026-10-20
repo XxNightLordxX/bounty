@@ -533,6 +533,38 @@ describe('a buyout whose delay runs out while a hitman is finishing', function()
         eq(worth(2) - before.target, 0, 'the premium back')
     end)
 
+    --- The delay ran out, and the tick that settles it comes round seconds
+    --- later. A kill made in that gap was held open for its photo and paid,
+    --- and the target, who had bought out in time, was refunded.
+    it('does not wait for a kill made after the delay ran out', function()
+        local main, m, f, c, before = bought()
+        Env.advance(Config.Bailout.ProcessingDelaySeconds + 3)
+        kill(m)
+        local token = m.photo.issue(f.hitman, c.id)
+        truthy(token, 'the kill itself is real')
+        m.bailout.processQueue()
+        eq(m.storage.readContract(c.id).state, CH.STATE.BAILED_OUT, 'bought out, as it was due')
+
+        local ok = m.photo.submit(f.hitman, token, PHOTO)
+        falsy(ok, 'a kill after the buyout went through is not paid')
+        m.bailout.processQueue()
+        eq(worth(3) - before.hitman, 0, 'the hitman was too late')
+        eq(worth(2) - before.target, -15000, 'the target keeps the buyout they paid for')
+        eq(worth(1) - before.creator, 7500 + 15000, 'escrow and premium to the client')
+    end)
+
+    it('does not wait for a handover armed after the delay ran out', function()
+        local main, m, f, c, before = bought({ handover = true })
+        Env.advance(Config.Bailout.ProcessingDelaySeconds + 3)
+        truthy(m.kidnap.arm(c.id, 'HITMAN01'), 'armed in the gap before the tick')
+        m.bailout.processQueue()
+        eq(m.storage.readContract(c.id).state, CH.STATE.BAILED_OUT,
+            'not held open for a countdown begun too late')
+        for _ = 1, Config.Kidnap.CountdownSeconds do m.kidnap.tick(Config.Kidnap.TickMs) end
+        eq(worth(3) - before.hitman, 0, 'and it pays nothing')
+        eq(worth(1) - before.creator, 7500 + 15000)
+    end)
+
     it('settles as it always did with nothing in progress', function()
         local main, m, f, c, before = bought()
         Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
@@ -591,6 +623,39 @@ describe('a deadline that runs out while a hitman is finishing', function()
         truthy(ok, tostring(err))
         eq(worth(3) - before.hitman, 5000 + 2000, 'the baseline, and the stake back')
         eq(worth(1) - before.creator, 0, 'the client keeps nothing of a hitman who did it in time')
+    end)
+
+    --- The pass runs on the maintenance tick, seconds after the deadline.
+    --- A kill made in that gap was held open for its photo, and the stake a
+    --- hitman who ran out of time forfeits went back to them.
+    it('does not wait for a kill made after the deadline', function()
+        local main, m, f, c = staked()
+        local before = { creator = worth(1), hitman = worth(3) }
+        Env.advance(65)
+        kill(m)
+        local token = m.photo.issue(f.hitman, c.id)
+        truthy(token, 'the kill itself is real')
+        Env.advance(4)
+        main.markPresenceChanged()
+        main.expire()
+        eq(m.storage.readContract(c.id).state, CH.STATE.EXPIRED, 'expired, as it was due')
+
+        local ok = m.photo.submit(f.hitman, token, PHOTO)
+        falsy(ok, 'a kill after the deadline is not paid')
+        eq(worth(3) - before.hitman, 0, 'the hitman ran out of time')
+        eq(worth(1) - before.creator, 5000 + 2000, 'the escrow back and the stake forfeited')
+    end)
+
+    it('does not wait for a handover armed after the deadline', function()
+        local main, m, f, c = staked()
+        for _, src in ipairs({ 1, 2, 3 }) do
+            Env.players[src]._coords = { x = 300.0, y = 300.0, z = 30.0 }
+        end
+        Env.players[2].PlayerData.metadata.ishandcuffed = true
+        Env.advance(65)
+        local armed, why = m.kidnap.arm(c.id, 'HITMAN01')
+        falsy(armed, 'refused once the deadline has gone')
+        eq(why, CH.ERR.ALREADY_SETTLED)
     end)
 
     it('comes back for it on the very next pass', function()

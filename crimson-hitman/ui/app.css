@@ -104,6 +104,10 @@
      build reports an inset; this is the floor. */
   --safe-top: max(3.6rem, env(safe-area-inset-top, 0px));
 
+  /* What those two bands are painted in lb-phone's light theme, where it
+     draws its status bar and home indicator black (see body::before). */
+  --status-band-light: #ece5d9;
+
   /* Nothing interactive is smaller than this. A phone screen inside a game
      window is a small target already. */
   --tap: 2.75rem;
@@ -168,6 +172,39 @@ body {
      distance no browser page ever is. */
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* lb-phone's light theme, which is its default. Its status bar (clock,
+   signal, battery) and its home indicator are drawn straight onto this
+   page, and in the light theme they are drawn black: on this near-black
+   page they vanished, the home indicator — the way out of the app — with
+   them. So in the light theme the two bands they sit on are paper, and
+   the glyphs read as they do over lb-phone's own apps. Over everything a
+   player can open (the viewfinder included) but the staff diagnostics
+   panel, and never in the way of a tap: nothing is drawn in either band.
+   lb-phone sets data-theme itself; the page also asks it for the theme
+   (app.js), on the root, so either way one of these matches. */
+html[data-theme="light"] body::before,
+body[data-theme="light"]::before,
+html[data-theme="light"] body::after,
+body[data-theme="light"]::after {
+  content: '';
+  position: fixed;
+  left: 0; right: 0;
+  z-index: 95;
+  pointer-events: none;
+  background: var(--status-band-light);
+}
+html[data-theme="light"] body::before,
+body[data-theme="light"]::before {
+  top: 0;
+  height: var(--safe-top);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+}
+html[data-theme="light"] body::after,
+body[data-theme="light"]::after {
+  bottom: 0;
+  height: var(--home-bar);
 }
 
 #app {

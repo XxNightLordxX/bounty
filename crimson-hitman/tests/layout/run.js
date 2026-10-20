@@ -330,6 +330,70 @@ async function main() {
     atLeast(firstOnBoard, STATUS_BAR_REM, 'the first card starts (rem)');
   });
 
+  /* ---- lb-phone's light theme ----
+   *
+   * Its default. lb-phone draws the clock, signal, battery and the home
+   * indicator onto the page in black in the light theme, and the page is
+   * near-black: they vanished, the way out of the app with them. A paper
+   * band goes under each, in the light theme only, set on the root (as the
+   * page does) or on the body (as lb-phone may). */
+  const bands = await page.evaluate(function () {
+    function luminance(css) {
+      const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/.exec(css || '');
+      if (!m) { return -1; }
+      return (0.2126 * m[1] + 0.7152 * m[2] + 0.0722 * m[3]) / 255;
+    }
+    function read() {
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      const top = getComputedStyle(document.body, '::before');
+      const bottom = getComputedStyle(document.body, '::after');
+      return {
+        topShown: top.content !== 'none' && top.content !== 'normal',
+        topAt: top.top, topRem: parseFloat(top.height) / rem,
+        topLight: luminance(top.backgroundColor),
+        topZ: parseInt(top.zIndex, 10), topTaps: top.pointerEvents,
+        bottomShown: bottom.content !== 'none' && bottom.content !== 'normal',
+        bottomPx: parseFloat(bottom.height), bottomLight: luminance(bottom.backgroundColor),
+        bottomAt: bottom.bottom
+      };
+    }
+    const dark = read();
+    document.documentElement.setAttribute('data-theme', 'light');
+    const onRoot = read();
+    document.documentElement.removeAttribute('data-theme');
+    document.body.setAttribute('data-theme', 'light');
+    const onBody = read();
+    document.body.removeAttribute('data-theme');
+    return { dark: dark, onRoot: onRoot, onBody: onBody };
+  });
+
+  it('lays a paper band under lb-phone\'s status bar in its light theme', function () {
+    [['on the root', bands.onRoot], ['on the body', bands.onBody]].forEach(function (pair) {
+      const b = pair[1];
+      truthy(b.topShown, 'no band with the theme ' + pair[0]);
+      truthy(b.topAt === '0px', 'the band starts at ' + b.topAt + ' ' + pair[0]);
+      atLeast(b.topRem, STATUS_BAR_REM, 'the band covers the status bar (rem) ' + pair[0]);
+      atLeast(b.topLight, 0.75, 'black glyphs need a light band ' + pair[0]);
+      atLeast(b.topZ, 91, 'over the viewfinder (z-index 90) ' + pair[0]);
+      truthy(b.topTaps === 'none', 'the band takes taps ' + pair[0]);
+    });
+  });
+
+  it('and under the home indicator', function () {
+    [['on the root', bands.onRoot], ['on the body', bands.onBody]].forEach(function (pair) {
+      const b = pair[1];
+      truthy(b.bottomShown, 'no band with the theme ' + pair[0]);
+      truthy(b.bottomAt === '0px', 'the band ends at ' + b.bottomAt + ' ' + pair[0]);
+      atLeast(b.bottomPx, 16, 'the band under the home indicator (px) ' + pair[0]);
+      atLeast(b.bottomLight, 0.75, 'a light band ' + pair[0]);
+    });
+  });
+
+  it('draws no band in the dark theme', function () {
+    truthy(!bands.dark.topShown && !bands.dark.bottomShown,
+      'a band drawn without the light theme: ' + JSON.stringify(bands.dark));
+  });
+
   /* ---- the board ---- */
 
   const cards = await page.evaluate(function () {

@@ -1138,11 +1138,16 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
             if same then
                 opened = opened + 1
             elseif hit then
+                local at = reportedAt or Util.monotonicMs()
                 pending[contract.id .. ':' .. hit.attackerCid] = {
                     contractId = contract.id,
                     hitmanCid  = hit.attackerCid,
                     victimCid  = victim.cid,
-                    at         = reportedAt or Util.monotonicMs(),
+                    at         = at,
+                    -- The same moment on the clock deadlines are kept in,
+                    -- so a deadline or a buyout's delay that ran out before
+                    -- it is not held open for its photo (Bailout.finishing).
+                    wallAt     = os.time() - math.max(0, (Util.monotonicMs() - at) // 1000),
                     -- Where the body is, which the photograph is taken
                     -- beside: the hit may have landed on a moving car, or
                     -- the body been dragged since.

@@ -87,6 +87,18 @@ function Sim.existingSchema(tables, indexes, collations)
     Sim.existingCollations = collations or {}
 end
 
+--- The collation a table's text is in now, or nil when the test never said:
+--- a text column given in a collation of its own wins over the table's.
+function Sim.collationOf(table_)
+    if Sim.existing and Sim.existing[table_] then
+        for _, text in pairs(Sim.existing[table_]) do
+            if type(text) == 'string' and text:find('_', 1, true) then return text end
+        end
+        return Sim.existingCollations and Sim.existingCollations[table_]
+    end
+    return Sim.collations[table_]
+end
+
 --- Parse an ALTER TABLE so a test can assert on what the migration did.
 local function parseAlter(sql)
     local renamedIn, from, to = sql:match('^ALTER TABLE ([%w_]+) CHANGE COLUMN `([%w_]+)` ([%w_]+)')
@@ -149,6 +161,27 @@ function Sim.install(Natives)
     local function run(sql, params)
         if type(sql) ~= 'string' then return {} end
 
+        -- A statement that compares text across two tables in different
+        -- collations, as every join between crimson tables does on their
+        -- ids, is refused by MariaDB and MySQL alike.
+        if not sql:find('information_schema', 1, true) and not sql:find('^%s*ALTER')
+            and not sql:find('CREATE TABLE', 1, true) then
+            local seen, first = {}, nil
+            for table_ in sql:gmatch('crimson_[%w_]+') do
+                if not seen[table_] then
+                    seen[table_] = true
+                    local collation = Sim.collationOf(table_)
+                    if collation then
+                        if first and collation ~= first then
+                            error(('Illegal mix of collations (%s,IMPLICIT) and (%s,IMPLICIT) '
+                                .. 'for operation \'=\' (1267)'):format(first, collation))
+                        end
+                        first = first or collation
+                    end
+                end
+            end
+        end
+
         if sql:find('CREATE TABLE', 1, true) then parseSchema(sql) end
         if sql:find('INSERT INTO', 1, true) then Sim.check(sql) end
 
@@ -162,10 +195,27 @@ function Sim.install(Natives)
             if not held then return {} end
             local rows = {}
             -- A column a test gave as a string is a text column in that
-            -- character set.
-            for column, charset in pairs(held) do
+            -- character set, or in that collation when the string names one
+            -- (`utf8mb4_general_ci`). Like MySQL, a text column always
+            -- reports a collation: the table's own, when it is in the
+            -- table's character set.
+            local own = Sim.existing and Sim.existing[table_]
+                and Sim.existingCollations and Sim.existingCollations[table_]
+                or Sim.collations[table_]
+            for column, text in pairs(held) do
+                local charset, collation
+                if type(text) == 'string' then
+                    charset = text:match('^([^_]+)')
+                    if text:find('_', 1, true) then
+                        collation = text
+                    elseif own and own:match('^([^_]+)') == charset then
+                        collation = own
+                    else
+                        collation = charset .. '_general_ci'
+                    end
+                end
                 rows[#rows + 1] = { COLUMN_NAME = column,
-                    CHARACTER_SET_NAME = type(charset) == 'string' and charset or nil }
+                    CHARACTER_SET_NAME = charset, COLLATION_NAME = collation }
             end
             return rows
         end

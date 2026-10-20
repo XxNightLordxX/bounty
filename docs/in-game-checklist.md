@@ -42,6 +42,11 @@ A staff account that can adjust money and spawn items makes this much faster.
       tab: the first board card's name, Mine's first heading, a thread's
       **Back** and **Call**, the viewfinder's instruction, and the first line
       of a refusal notice
+- [ ] With lb-phone in its light theme (its default),
+      the clock, signal, battery and the home indicator stay readable while
+      the app is open: they sit on a pale band at the top and bottom, on
+      every tab and over the viewfinder. Switch to dark with the app open:
+      the bands go and the page is dark to its edges
 - [ ] A `police` character does **not** see it
 - [ ] So do `bcso`, `sheriff`, `trooper`, `sasp`, `fib`, `ranger`, `ambulance`, `fire`, `doj`, `lawyer`
 - [ ] An officer who clocks **off duty** still cannot open it
@@ -56,7 +61,9 @@ A staff account that can adjust money and spawn items makes this much faster.
       10m"; put a mask on them and they are gone from the list; a player in
       noclip or another routing bucket is never listed; and once you have
       placed a contract, taken one, or seen one on you under On me, the
-      list says it is closed while you are on a contract
+      list says it is closed while you are on a contract. After a handover
+      pays, all three still standing together, it stays closed to each of
+      them (for `NearbyClosedAfterSeconds`, half an hour)
 - [ ] The item picker does not offer `money` (your cash) or `identification`
 - [ ] An anonymous contract funded with an item that names you (a unique
       phone with its number, an engraved item, an ID-like card from another
@@ -230,7 +237,11 @@ uploads, and with neither. Restart the resource between them.
       only once their "eyes on you" alert has arrived (one to ten minutes
       after it was placed); before that On Me and `/cleanse` show nothing,
       and the board shows no face for them unless one was already rendered.
-      Restart the resource inside that wait: it shows at once
+      Restart the resource inside that wait: it shows at once. Withdraw one
+      inside the wait: the target never gets the alert for it
+- [ ] With `Config.Advisory.OnCreate = false`, a contract on an officer is
+      accepted inside the wait: the officer's "THREAT ADVISORY — ACTIVE"
+      arrives and `/cleanse` lists the contract at once
 - [ ] Buying out closes the contract, returns escrow **and** premium to the creator
 - [ ] A cash-paid premium arrives as cash, not bank
 - [ ] Buying out is refused while a handover countdown is running
@@ -239,7 +250,12 @@ uploads, and with neither. Restart the resource between them.
       the hitman is paid, and the target gets the premium back
 - [ ] The same with a handover armed in the last seconds of the delay
 - [ ] A kill made just before the deadline can still be photographed after
-      it, and the hitman's stake comes back; a handover cannot be armed after it
+      it, and the hitman's stake comes back; a handover cannot be armed after it,
+      and a kill made a few seconds after it (before the contract shows as
+      expired) is not paid and the stake goes to the client
+- [ ] Buy out with a hitman on it; the hitman kills the target a few seconds
+      after the delay ran out: the contract closes as bought out, the photo
+      is refused, and the premium goes to the client, not back to the target
 - [ ] Informant data names one hitman, and charges even when it finds nobody
 - [ ] Buying informant data twice returns the same name
 
@@ -282,7 +298,8 @@ uploads, and with neither. Restart the resource between them.
 - [ ] A kidnap countdown running does not spike it
 - [ ] No console spam during normal play, and no
       `maintenance job ... took ... ms` warning; `/ch-diag` lists the
-      slowest jobs, every one under `Config.Diagnostics.SlowJobMs` (5 ms)
+      slowest jobs, every one under `Config.Diagnostics.SlowJobMs` (5 ms),
+      in `mysql` mode too (time spent waiting on the database is not counted)
 - [ ] With the staff webhook set, a gunfight between players no contract
       names posts nothing to it
 - [ ] On qbx_medical (no sc-ambulance), `/ch-diag <id>` says the death state

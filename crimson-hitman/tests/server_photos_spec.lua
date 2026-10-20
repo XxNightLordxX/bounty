@@ -97,6 +97,13 @@ local function arrived(src, handle)
     truthy(fired, tostring(err))
 end
 
+--- The photo landing: a moment later, as no photo arrives the instant it is
+--- sent, and then the client's word.
+local function landed(src, handle)
+    Env.advance(1)
+    arrived(src, handle)
+end
+
 local function latentTo(events, name)
     local out = {}
     for _, event in ipairs(events or {}) do
@@ -479,7 +486,7 @@ describe('the client\'s one look at a photo kept on this server', function()
     it('sends it once', function()
         local _, _, _, handle = photographed()
         call('openPhoto', 1, { handle = handle })
-        arrived(1, handle)
+        landed(1, handle)
         local again, events = call('openPhoto', 1, { handle = handle })
         falsy(again.ok)
         eq(again.err, CH.ERR.PHOTO_GONE)
@@ -722,7 +729,7 @@ local function opened(opts)
     local reply = call('openPhoto', 1, { handle = handle })
     truthy(reply and reply.ok, tostring(reply and reply.err))
     -- And it lands, as the client says on arrival.
-    if reply.data and reply.data.latent then arrived(1, handle) end
+    if reply.data and reply.data.latent then landed(1, handle) end
     return s, f, c, handle, file, reply
 end
 
@@ -1064,7 +1071,7 @@ describe('a photo kept for the client in the app, on this server', function()
             eq(#sent, 1, 'sent latent, to the client')
             eq(sent[1].target, 1)
             eq(Util.fromBase64(sent[1].args[1].src:sub(24)), JPEG)
-            arrived(1, handle)
+            landed(1, handle)
         end
         eq(s.storage.readPhoto(handle).state, CH.PHOTO.KEPT)
         for _, src in ipairs({ 2, 3 }) do
@@ -1087,7 +1094,7 @@ describe('a photo kept for the client in the app, on this server', function()
                 truthy(reply and reply.ok, tostring(reply and reply.err))
                 eq(Util.fromBase64(latentTo(events, 'crimson-hitman:photoImage')[1].args[1].src:sub(24)),
                     JPEG, 'the same picture each time')
-                arrived(1, handle)
+                landed(1, handle)
             end
             eq(encodes, 1, 'encoded on the first open only')
             local reply = call('openPhoto', 2, { handle = handle })
@@ -1141,7 +1148,13 @@ describe('a photo kept for the client in the app, on this server', function()
             arrived(1, 'ph0000000other')
             eq(call('openPhoto', 1, { handle = handle }).err, CH.ERR.RATE_LIMITED)
 
+            -- Said to have landed the moment it was sent: no photo drains
+            -- that fast, and a client acking at once had a whole photo
+            -- re-sent on every open the limit allowed.
             arrived(1, handle)
+            eq(call('openPhoto', 1, { handle = handle }).err, CH.ERR.RATE_LIMITED,
+                'not before it could have landed')
+            Env.advance(1)
             reply, events = call('openPhoto', 1, { handle = handle })
             truthy(reply and reply.ok, 'once it landed, it opens again: ' .. tostring(reply and reply.err))
             eq(#latentTo(events, 'crimson-hitman:photoImage'), 1)
@@ -1159,6 +1172,51 @@ describe('a photo kept for the client in the app, on this server', function()
             truthy(reply and reply.ok, tostring(reply and reply.err))
         end)
         _G.LoadResourceFile = realLoad
+        truthy(ok, tostring(err))
+    end)
+
+    --- photoArrived is the client's word, and the handle it names is in the
+    --- open's own reply. A modified client saying it at once had the whole
+    --- photo re-sent on every open the limit allowed, queued several times
+    --- faster than FXServer drains it: the memory the one-at-a-time guard
+    --- was there to save.
+    it('is not sent again sooner than a photo that size could have landed', function()
+        local s, _, _, handle = kept({ web = false })
+        local big = 'data:image/jpeg;base64,' .. ('A'):rep(1500000)
+        local realOpen = s.photos.open
+        s.photos.open = function(actor, h)
+            local view, err = realOpen(actor, h)
+            if view and view.image then view.image = big end
+            return view, err
+        end
+        local ok, err = pcall(function()
+            local sends = 0
+            local reply, events = call('openPhoto', 1, { handle = handle })
+            truthy(reply and reply.ok, tostring(reply and reply.err))
+            sends = sends + #latentTo(events, 'crimson-hitman:photoImage')
+            arrived(1, handle)
+            Env.advance(5)
+            local again = call('openPhoto', 1, { handle = handle })
+            eq(again.err, CH.ERR.RATE_LIMITED, 'a 1.5 MB photo has not landed five seconds on')
+            truthy(again.data.retryAfter >= 4 and again.data.retryAfter <= 6,
+                'and it says for how long: ' .. tostring(again.data.retryAfter))
+            Env.advance(6)
+            reply, events = call('openPhoto', 1, { handle = handle })
+            truthy(reply and reply.ok, 'it opens once it could have: ' .. tostring(reply and reply.err))
+            sends = sends + #latentTo(events, 'crimson-hitman:photoImage')
+
+            -- A client acking every send at once, and opening every two
+            -- seconds for a minute, as the open limit allows.
+            for _ = 1, 30 do
+                arrived(1, handle)
+                Env.advance(2)
+                local r, e = call('openPhoto', 1, { handle = handle })
+                if r and r.ok then sends = sends + #latentTo(e, 'crimson-hitman:photoImage') end
+            end
+            truthy(sends <= 2 + math.ceil(62 / 10),
+                'no faster than the photo drains: ' .. sends .. ' sends of 1.5 MB')
+        end)
+        s.photos.open = realOpen
         truthy(ok, tostring(err))
     end)
 

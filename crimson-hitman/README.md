@@ -138,8 +138,10 @@ whatever the walls or the mask: on, it named the anonymous hitman to the
 target he was closing on, and the anonymous client to the hitman at a
 handover. Turned on, it leaves out anyone masked, invisible or in another
 routing bucket, gives distance only as "under 10m", "under 20m" and so on,
-and is closed to a player while they are on a live contract; a friend on
-no contract can still read the names around a target. Cash goes up as cash:
+and is closed to a player while they are on a live contract and for half an
+hour after one ends (`NearbyClosedAfterSeconds`; a handover ends with all
+three standing together); a friend on no contract can still read the names
+around a target. Cash goes up as cash:
 the `money` item (and anything else in the `inventory:accounts` convar) is
 not offered as goods. On an anonymous contract an item that names you in its
 metadata (an ID, a phone with its number, a key with its owner) is refused,
@@ -232,9 +234,11 @@ of the patient. Match them to sc-ambulance's `Config.Defib`: `MedicJobs = false`
 when it does not require EMS, `MedicJobs = {}` when its defibrillator is off.
 A kill waits for its photograph for at most two photo-token lifetimes, however
 many tokens are asked for. A kill made before the deadline whose photograph
-is still on its way, or a handover still counting down, holds off the expiry
-until it finishes, for that long at most; a handover cannot be started once
-the deadline has passed. Or take them alive to the client and hold them there
+is still on its way, or a handover armed before it and still counting down,
+holds off the expiry until it finishes, for that long at most; a kill made
+after the deadline does not, and a handover cannot be started once the
+deadline has passed. A buyout's delay is held off the same way, only for a
+kill made or a handover armed before the delay ran out. Or take them alive to the client and hold them there
 for thirty seconds for baseline plus bonus: restrained or in your vehicle,
 neither dead nor down, and not under `Config.Kidnap.MinTargetHealthPercent`
 (20%) health. A target hurt worse than that (Qbox gives no health back on its
@@ -346,12 +350,14 @@ lb-phone's popup instead, which is not saved.
 A new contract shows on their On me tab (and in `/cleanse`) when their
 alert arrives, one to ten minutes after it was placed
 (`Config.Notifications.ParanoidAlertJitter`), not the second it was placed;
-after a restart, at once.
+after a restart, at once. One withdrawn inside that wait is never announced
+to them. An officer sees it as soon as a threat advisory about it goes out.
 With a hitman on the contract, the buyout waits
 `Config.Bailout.ProcessingDelaySeconds` (2 minutes) so they can finish first,
-and longer for a kill already waiting for its photograph or a handover
-already counting down (up to two photo-token lifetimes more). If they
-finish, the premium goes back to the target.
+and longer for a kill made, or a handover armed, before those two minutes
+ran out and still waiting for its photograph or counting down (up to two
+photo-token lifetimes more). If they finish, the premium goes back to the
+target.
 Players the app is closed to — law enforcement and EMS — do the same with
 `/cleanse` (lists what is on them) and `/cleanse <id>` (buys one out). Either
 side can pay an informant to unmask one hitman. Creator and hitmen can
@@ -473,7 +479,9 @@ death sampler's pass every second. One that takes longer than
 `Config.Diagnostics.SlowJobMs` (5 ms as shipped) prints one console line
 naming it, at most once every five minutes per job; `0` turns that off.
 `/ch-diag` lists the five slowest with their numbers either way. The times are
-processor time (`os.clock`), so read them as "about this slow".
+processor time (`os.clock`), so read them as "about this slow". In `mysql`
+mode the time a job spends waiting on the database is left out: while it
+waits, the server runs everything else, and that is not this job's work.
 
 ---
 
@@ -507,7 +515,8 @@ Five kinds of check, because each catches what the others cannot:
   submit a valid contract, and an open that refreshed itself into a storm.
 - **Layout suite** — the page rendered in a real browser at phone widths from
   280 to 414px, measuring tap targets, clipping, the tab bar over lb-phone's
-  home indicator and the page's top under lb-phone's status bar. Skipped
+  home indicator, the page's top under lb-phone's status bar, and the pale
+  bands that keep both readable in lb-phone's light theme. Skipped
   where Playwright is not installed.
 
 **What it cannot prove:** behaviour against the real `ox_inventory`,

@@ -121,6 +121,77 @@ describe('the nearby list, two worlds apart', function()
         eq(handover(3), handover(500), 'the client beside the hitman was named to him')
     end)
 
+    --- The handover pays with all three a few metres apart, and the
+    --- contract closes in that same moment. The list reopened at once, and
+    --- named the anonymous hitman and the anonymous client to the others
+    --- still standing there.
+    it('stays closed to all three once a handover pays, while they stand together', function()
+        local function delivered(afterwards)
+            local s = newStack()
+            local f = fixture(s)
+            local seen = {}
+            withConfig({ { Config.Targeting, 'AllowNearby', true } }, function()
+                at(1, 900); at(2, 0); at(3, 500)
+                local c = s.contracts.create(f.creator, {
+                    targetCid = 'TARGET01', reason = 'x', anonymous = true,
+                    reward = { baseline = { cash = 5000 } },
+                })
+                truthy(s.contracts.accept(f.hitman, c.id, true), 'taken anonymously')
+                Env.advance(WAIT())
+                at(1, 3); at(2, 0); at(3, 2)
+                Env.players[2].PlayerData.metadata.ishandcuffed = true
+                truthy(s.kidnap.arm(c.id, 'HITMAN01'), 'the handover arms')
+                local ticks = math.ceil(Config.Kidnap.CountdownSeconds * 1000 / Config.Kidnap.TickMs)
+                for _ = 1, ticks + 1 do s.kidnap.tick(Config.Kidnap.TickMs) end
+                eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED, 'it paid')
+                Env.players[2].PlayerData.metadata.ishandcuffed = false
+                if afterwards then afterwards() end
+                for _, src in ipairs({ 1, 2, 3 }) do seen[src] = nearby(src) end
+            end)
+            return seen
+        end
+
+        local together = delivered()
+        local apart = delivered(function() at(1, 900); at(2, 0); at(3, 500) end)
+        for src, who in pairs({ 'the client', 'the target', 'the hitman' }) do
+            eq(together[src].closed, true, 'closed to ' .. who .. ' as the handover pays')
+            eq(encode(together[src]), encode(apart[src]),
+                'the others standing beside ' .. who .. ' changed what they saw')
+        end
+
+        local later = delivered(function()
+            Env.advance(Config.Targeting.NearbyClosedAfterSeconds + 1)
+        end)
+        for src, who in pairs({ 'the client', 'the target', 'the hitman' }) do
+            falsy(later[src].closed, 'open again to ' .. who .. ' once the time has passed')
+        end
+    end)
+
+    --- Closing the list to a target over a contract withdrawn inside the
+    --- reveal wait would tell them it had existed.
+    it('stays open to the target of a contract withdrawn inside the wait', function()
+        local function street(placeAndWithdraw)
+            local s = newStack()
+            local f = fixture(s)
+            local seen
+            withConfig({ { Config.Targeting, 'AllowNearby', true } }, function()
+                at(1, 900); at(2, 0); at(3, 4)
+                if placeAndWithdraw then
+                    local c = s.contracts.create(f.creator, {
+                        targetCid = 'TARGET01', reason = 'x', anonymous = true,
+                        reward = { baseline = { cash = 5000 } },
+                    })
+                    truthy(c)
+                    truthy(s.contracts.cancel(f.creator, c.id), 'withdrawn at once')
+                end
+                Env.advance(30)
+                seen = nearby(2)
+            end)
+            return encode(seen)
+        end
+        eq(street(true), street(false), 'the target could tell a contract had come and gone')
+    end)
+
     it('shows a client the same whether their anonymous hitman is beside them or not', function()
         local function waiting(hitmanAt)
             local s = newStack()
@@ -318,7 +389,8 @@ describe('a contract placed on somebody, two worlds apart', function()
                 truthy(c)
                 truthy(s.contracts.cancel(f.creator, c.id), 'withdrawn at once')
             end
-            Env.advance(30)
+            -- Past the longest wait: the alert drawn for it went off then.
+            Env.advance(Config.Notifications.ParanoidAlertJitter.max + 5)
             local seen = {}
             for _, event in ipairs(Env.clientEvents) do
                 if event.target == 2 then seen[#seen + 1] = { name = event.name, args = event.args } end
@@ -327,6 +399,64 @@ describe('a contract placed on somebody, two worlds apart', function()
         end
         eq(eventsToTarget(true), eventsToTarget(false),
             'the target was told something happened to a contract they never saw')
+    end)
+
+    local function alertsTo(src)
+        local n = 0
+        for _, event in ipairs(Env.clientEvents) do
+            if event.target == src and Natives.isNotice(event)
+                and tostring(event.args[1].content):find('eyes on you', 1, true) then
+                n = n + 1
+            end
+        end
+        return n
+    end
+
+    --- And it used up the target's cooldown, so the next contract placed on
+    --- them went unannounced.
+    it('gives the cooldown back when the one it was for is withdrawn inside the wait', function()
+        local s = newStack()
+        local f = fixture(s)
+        local first = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', anonymous = true,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.contracts.cancel(f.creator, first.id), 'withdrawn at once')
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 5)
+        eq(alertsTo(2), 0, 'nothing said of it')
+
+        Env.addPlayer({ source = 10, citizenid = 'CLIENT02', license = 'license:c2',
+            firstname = 'Lee', lastname = 'Moss', cash = 50000, bank = 50000 })
+        local second, why = s.contracts.create(s.identity.resolve(10), {
+            targetCid = 'TARGET01', reason = 'y', anonymous = true,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(second, 'another, placed after by somebody else: ' .. tostring(why))
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 5)
+        eq(alertsTo(2), 1, 'and it is announced, as the first never was')
+    end)
+
+    --- Two placed inside one wait share its alert. The first withdrawn, the
+    --- second still out, the target is still told.
+    it('still alerts for a second contract when the first is withdrawn in the wait', function()
+        local s = newStack()
+        local f = fixture(s)
+        local first = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', anonymous = true,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(first)
+        Env.addPlayer({ source = 10, citizenid = 'CLIENT02', license = 'license:c2',
+            firstname = 'Lee', lastname = 'Moss', cash = 50000, bank = 50000 })
+        local other = s.identity.resolve(10)
+        local second, why = s.contracts.create(other, {
+            targetCid = 'TARGET01', reason = 'y', anonymous = true,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(second, 'a second client: ' .. tostring(why))
+        truthy(s.contracts.cancel(f.creator, first.id), 'the first withdrawn')
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 5)
+        eq(alertsTo(2), 1, 'the second is still out, and the target is told')
     end)
 
     it('draws a different wait for each contract, inside the configured window', function()

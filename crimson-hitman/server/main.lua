@@ -34,6 +34,7 @@ local DEFAULTS = {
         AllowNearby = false,
         NearbyRadius = 30.0,
         MaxNearby = 12,
+        NearbyClosedAfterSeconds = 1800,
         AllowProtectedJobTargets = true,
     },
     Sources = {
@@ -988,6 +989,10 @@ function StartCrimsonHitman()
     local app        = require('server.app')
     local timing     = require('server.timing')
 
+    -- A job is charged for the time it holds the thread, not for the time
+    -- it waits on the database while everything else runs (Timing.await).
+    if Storage.timeWaitsWith then Storage.timeWaitsWith(timing.await) end
+
     audit.init(Storage)
     notify.init({ identity = identity })
     escrow.init(Storage, audit)
@@ -1538,11 +1543,13 @@ function ExpireContracts()
                     -- client, for a job done in time. The pass comes back
                     -- next tick until it finishes, for no longer than a kill
                     -- waits for its photo. Never the lifetime's branch: that
-                    -- ceiling holds whatever anyone is doing.
+                    -- ceiling holds whatever anyone is doing. Never for a
+                    -- kill made after the deadline either, in the seconds
+                    -- before this pass came round: that one was too late.
                     local finishing = contract.deadline_at and now > contract.deadline_at
                         and now <= contract.deadline_at
                             + 2 * Config.Completion.PhotoTokenLifetimeSeconds
-                        and modules.bailout.finishing(contract.id)
+                        and modules.bailout.finishing(contract.id, contract.deadline_at)
                     if finishing then
                         soonest = now
                     elseif contract.deadline_at and now > contract.deadline_at then

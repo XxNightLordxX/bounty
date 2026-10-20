@@ -86,7 +86,7 @@ function acrossTheWire(value) {
 }
 
 /** Boot the app against a server that answers from `responses`. */
-function boot(responses) {
+function boot(responses, windowExtras) {
   const document = makeDocument();
   const sent = [];
   const urls = [];
@@ -215,6 +215,9 @@ function boot(responses) {
     Array: Array, Object: Object, console: console
   };
   sandbox.window.document = document;
+  // What lb-phone itself puts on the page's window before it runs
+  // (getSettings, onSettingsChange), for a test that needs it there first.
+  Object.assign(sandbox.window, windowExtras || {});
 
   const source = fs.readFileSync(APP, 'utf8');
   const vm = require('vm');
@@ -8995,6 +8998,33 @@ async function main() {
         JSON.stringify(['ct00000011', 'ct00000012', 'ct00000013']));
     });
     drewCleanly(app); drewCleanly(held); drewCleanly(broke); drewCleanly(working); drewCleanly(pushed);
+  })();
+
+  /* lb-phone's light theme, its default. It draws its status bar and home
+     indicator onto the page in black, and the page is dark, so the page
+     marks its root with the theme and the stylesheet lays a paper band
+     under each (app.css, body::before). */
+  await (async function () {
+    let listener = null;
+    const themed = boot({}, {
+      getSettings: function () { return Promise.resolve({ display: { theme: 'light' } }); },
+      onSettingsChange: function (fn) { listener = fn; }
+    });
+    await settle(); await settle();
+    it('marks the page with lb-phone\'s light theme', function () {
+      eq(themed.document.documentElement.attributes['data-theme'], 'light');
+    });
+    if (listener) { listener({ display: { theme: 'dark' } }); }
+    it('and follows it when the player switches to dark', function () {
+      truthy(listener, 'the page did not ask to hear of a change');
+      eq(themed.document.documentElement.attributes['data-theme'], 'dark');
+    });
+    const plain = boot({});
+    await settle(); await settle();
+    it('leaves a page with no lb-phone around it as it was', function () {
+      eq(plain.document.documentElement.attributes['data-theme'], undefined);
+    });
+    drewCleanly(themed); drewCleanly(plain);
   })();
 
   console.log('');

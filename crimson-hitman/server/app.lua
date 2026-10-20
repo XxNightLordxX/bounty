@@ -108,9 +108,10 @@ local function floodCheck(src)
     return false, shouldLog
 end
 
---- [source] = { handle, at } for the kill photo on its way to that player
---- as a latent event (openPhoto), until their client says it is there
---- (photoArrived), PHOTO_SEND_MS passes, or they leave (App.forgetSource).
+--- [source] = { handle, at, earliest, arrived } for the kill photo on its
+--- way to that player as a latent event (openPhoto), until their client
+--- says it is there (photoArrived) and it could have been, PHOTO_SEND_MS
+--- passes, or they leave (App.forgetSource).
 ---
 --- One at a time. Each open of a photo kept in the app queued another send
 --- of the whole photo with nothing to say one was already going: FXServer
@@ -124,6 +125,14 @@ local photoSending = {}
 --- client waits for one (PHOTO_WAIT_MS, client/main.lua).
 local PHOTO_SEND_MS = 60000
 
+--- Bytes a second a latent event actually drains at: FXServer's cap on the
+--- client's acknowledgements (App.PHOTO_BPS says why). A photo cannot have
+--- landed sooner than its size at this rate, whatever the client says. The
+--- client's word was enough on its own, and a modified client saying it at
+--- once, the moment openPhoto answered, had a whole photo re-sent on every
+--- open the limit allowed: queued several times faster than it drained.
+local PHOTO_DRAIN_BPS = 150000
+
 --- Forget what was on its way to a player who has left. A source is reused.
 function App.forgetSource(src)
     photoSending[src] = nil
@@ -132,7 +141,10 @@ end
 function App.sweepFloodCounters()
     local now = Util.monotonicMs()
     for src, sending in pairs(photoSending) do
-        if now - sending.at > PHOTO_SEND_MS then photoSending[src] = nil end
+        if now - sending.at > PHOTO_SEND_MS
+            or (sending.arrived and now >= sending.earliest) then
+            photoSending[src] = nil
+        end
     end
     for src, entry in pairs(floodCounters) do
         if now - entry.since > 60000 then floodCounters[src] = nil end
@@ -226,19 +238,38 @@ end
 --- hitman, or is named on one they have been shown (Notify.shownToTarget,
 --- so the nearby list closing cannot date a placement the target's On me
 --- tab does not show yet). One indexed read of their own contracts.
+---
+--- Or was, on one that ended inside Config.Targeting.NearbyClosedAfterSeconds.
+--- A handover keeps client, hitman and target within a few metres until it
+--- pays, and the contract closes in that same moment: open again then, the
+--- list named the anonymous hitman and the anonymous client to the others
+--- still standing beside them. A target counts only for an ending they were
+--- told of: a completion (their history shows it), their own buyout, or one
+--- that outlived the longest reveal wait. One withdrawn inside the wait
+--- closing their list would tell them it had existed.
 ---@param actor table
 ---@return boolean
 local function onLiveContract(actor)
     local involved = deps.storage.contractsInvolving(actor.cid) or {}
+    local now = os.time()
+    local after = tonumber(Config.Targeting.NearbyClosedAfterSeconds) or 0
+    local wait = Config.Notifications.ParanoidAlertJitter
+    local longestWait = type(wait) == 'table' and tonumber(wait.max) or 0
     for i = 1, #involved do
         local c = involved[i]
-        if not CH.TERMINAL[c.state] then
+        local live = not CH.TERMINAL[c.state]
+        local recent = not live and c.resolved_at ~= nil and now - c.resolved_at < after
+        if live or recent then
             if c.creator_cid == actor.cid then return true end
             if c.target_cid == actor.cid then
-                if deps.notify.shownToTarget(c) then return true end
+                if live and deps.notify.shownToTarget(c) then return true end
+                if recent and (c.state == CH.STATE.COMPLETED or c.state == CH.STATE.BAILED_OUT
+                    or c.resolved_at - (c.created_at or c.resolved_at) >= longestWait) then
+                    return true
+                end
             else
                 local mine = deps.storage.readHitman(c.id, actor.cid)
-                if mine and mine.state == 'active' then return true end
+                if mine and (recent or mine.state == 'active') then return true end
             end
         end
     end
@@ -890,7 +921,10 @@ function App.register()
     handler('openPhoto', 'photoView', function(actor, payload)
         local sending = photoSending[actor.source]
         if sending then
-            local left = PHOTO_SEND_MS - (Util.monotonicMs() - sending.at)
+            -- Said to have landed: free once it could have. Otherwise once
+            -- the client itself would have stopped waiting.
+            local freeAt = sending.arrived and sending.earliest or (sending.at + PHOTO_SEND_MS)
+            local left = freeAt - Util.monotonicMs()
             if left > 0 then
                 return false, CH.ERR.RATE_LIMITED, { retryAfter = math.ceil(left / 1000) }
             end
@@ -899,7 +933,9 @@ function App.register()
         local view, err = deps.photos.open(actor, payload.handle)
         if not view then return false, err end
         if view.image then
-            photoSending[actor.source] = { handle = view.handle, at = Util.monotonicMs() }
+            local now = Util.monotonicMs()
+            photoSending[actor.source] = { handle = view.handle, at = now,
+                earliest = now + math.ceil(#view.image * 1000 / PHOTO_DRAIN_BPS) }
             TriggerLatentClientEvent('crimson-hitman:photoImage', actor.source, App.PHOTO_BPS,
                 { handle = view.handle, src = view.image })
             return { handle = view.handle, latent = true, link = view.link, kept = view.kept }
@@ -1198,12 +1234,18 @@ function App.register()
     -- The client saying the photo openPhoto sent it is there, so the next
     -- open need not wait out PHOTO_SEND_MS. Only ever lets go of the
     -- sender's own, and only of the photo named; anything else is ignored.
+    -- Never sooner than the photo could have landed (PHOTO_DRAIN_BPS): said
+    -- earlier, it is let go of then.
     RegisterNetEvent('crimson-hitman:photoArrived', function(handle)
         local src = source
         if not App.floodOk(src, 'photoArrived') then return end
         local sending = photoSending[src]
         if sending and type(handle) == 'string' and sending.handle == handle then
-            photoSending[src] = nil
+            if Util.monotonicMs() >= (sending.earliest or 0) then
+                photoSending[src] = nil
+            else
+                sending.arrived = true
+            end
         end
     end)
 

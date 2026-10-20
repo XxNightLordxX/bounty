@@ -166,10 +166,11 @@ ConfigDefaults.Bailout = {
     AbsoluteMax = 500000,
     --- A bailout does not resolve instantly once a hitman is engaged: the
     --- hitman gets this long to complete before it takes effect, so a target
-    --- cannot rug-pull a hitman mid-fight. A kill still waiting for its
-    --- photo, or a handover still counting down, when it runs out holds it
-    --- off until that finishes, for at most two PhotoTokenLifetimeSeconds
-    --- more: the hitman was told to finish it first, and had.
+    --- cannot rug-pull a hitman mid-fight. A kill made before it ran out
+    --- that is still waiting for its photo, or a handover armed before it
+    --- ran out and still counting down, holds it off until that finishes,
+    --- for at most two PhotoTokenLifetimeSeconds more: the hitman was told
+    --- to finish it first, and had. One begun after it ran out does not.
     ProcessingDelaySeconds = 120,
     --- Bailout is blocked while the target is dead or in last stand.
     BlockWhileIncapacitated = true,
@@ -222,8 +223,9 @@ ConfigDefaults.Limits = {
     ContractLifetimeSeconds = 172800,   -- absolute ceiling, pause included
     --- How long a contract runs before it expires, unless the client
     --- extends it. A kill made before it that is still waiting for its
-    --- photo, or a handover still counting down, holds the expiry off until
-    --- it finishes, for at most two Completion.PhotoTokenLifetimeSeconds.
+    --- photo, or a handover armed before it and still counting down, holds
+    --- the expiry off until it finishes, for at most two
+    --- Completion.PhotoTokenLifetimeSeconds. One begun after it does not.
     DefaultDeadlineSeconds  = 10800,
     --- The deadline stops while the target is in prison, as it does while
     --- they are offline, and is moved on by however long they served. The
@@ -612,7 +614,9 @@ ConfigDefaults.Targeting = {
     --- mask. It is closed altogether, to the player asking, while they are
     --- on a live contract: one they placed, one they hold, or one on them
     --- that they have been shown (they can still pick a target by name, or
-    --- from everyone online). Distance goes out only as "under 10m",
+    --- from everyone online), and for NearbyClosedAfterSeconds after one
+    --- ends, since a handover ends with all three standing together.
+    --- Distance goes out only as "under 10m",
     --- "under 20m" and so on, and the list is ordered by that and by name.
     --- What it cannot stop: a friend who is on no contract standing next to
     --- a target and reading off the names around them. That is why it is
@@ -622,6 +626,13 @@ ConfigDefaults.Targeting = {
     NearbyRadius = 30.0,
     --- How many names to list, nearest band first.
     MaxNearby = 12,
+    --- Seconds the list stays closed to the parties after a contract ends.
+    --- A handover pays with client, hitman and target a few metres apart,
+    --- and the list reopening that moment named the anonymous ones to the
+    --- others. A target counts only for an ending they were told of: a
+    --- completion, their own buyout, or a contract that ran past the
+    --- longest Notifications.ParanoidAlertJitter wait.
+    NearbyClosedAfterSeconds = 1800,
     --- Protected-job players may be targeted by default: putting a hit on a cop is
     --- legitimate criminal roleplay. What makes it fair is the advisory
     --- below, not a ban. Set false to refuse creation instead.
@@ -792,7 +803,9 @@ ConfigDefaults.Notifications = {
     --- over, their headshot is not asked of their phone before then (so the
     --- board shows no face for a new target until it is, unless one is
     --- already cached), and the nearby list stays open to them meanwhile.
-    --- An officer whose department is advised at once is not held back.
+    --- An officer is not held back once a bulletin (Advisory) goes out
+    --- about it, at posting or at acceptance. A contract that ends inside
+    --- the wait takes its alert with it, and gives the cooldown below back.
     --- Kept in memory: after a restart every contract shows at once.
     ParanoidAlertJitter = { min = 60, max = 600 },
     --- And at most one per target in this many minutes, however many
@@ -977,7 +990,9 @@ ConfigDefaults.Diagnostics = {
     --- this, in milliseconds, prints one warning in the server console
     --- naming it, at most once every five minutes per job. 0 turns the
     --- warning off. Either way /ch-diag lists the slowest jobs with their
-    --- worst, average and last times over their recent runs.
+    --- worst, average and last times over their recent runs. A job is timed
+    --- only while it holds the server thread: on mysql, the time it spends
+    --- waiting on the database (when everything else runs) is left out.
     SlowJobMs = 5,
 }
 

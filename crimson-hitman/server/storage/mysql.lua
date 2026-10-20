@@ -9,6 +9,24 @@ local MySQLStore = {}
 
 local seq = 0
 
+--- Every oxmysql await this file makes goes through `db`, so the time spent
+--- waiting on the database can be told from the time spent working
+--- (MySQLStore.timeWaitsWith, which main points at Timing.await). Without
+--- it a maintenance job was charged for everything the server did while it
+--- waited. Looked up at call time, as oxmysql's own table is.
+local awaitVia = function(fn, ...) return fn(...) end
+local db = {}
+for _, kind in ipairs({ 'query', 'update', 'insert', 'scalar', 'transaction' }) do
+    db[kind] = function(...) return awaitVia(MySQL[kind].await, ...) end
+end
+
+--- Hand every await to `wrapper(fn, ...)`, which must call fn(...) and
+--- return what it returns.
+---@param wrapper function|nil nil puts the plain call back
+function MySQLStore.timeWaitsWith(wrapper)
+    awaitVia = wrapper or function(fn, ...) return fn(...) end
+end
+
 --- Every table says utf8mb4, as qbx_core's own tables do, rather than taking
 --- whatever the database defaults to. txAdmin's recipe makes the database
 --- utf8 (utf8mb3), which has no four-byte characters, and older MariaDB and
@@ -338,22 +356,38 @@ local function isUtf8mb4(name)
     return type(name) == 'string' and name:lower():sub(1, 7) == 'utf8mb4'
 end
 
---- Whether a table an older version made needs converting to utf8mb4: its
---- own default (what a column added later inherits), or any text column in
---- it, is something else. `columnRows` is the COLUMNS answer migrate already
---- has; a column with no character set is not text.
+--- Whether a collation is the one every table here declares. utf8mb4 is not
+--- enough: two text columns compared in a join must share a collation, or
+--- MariaDB and MySQL refuse the query outright (error 1267, "Illegal mix of
+--- collations"). An older version took the database default, which on
+--- Debian's MariaDB is utf8mb4_general_ci, on MariaDB 11.6 and later
+--- utf8mb4_uca1400_ai_ci and on MySQL 8 utf8mb4_0900_ai_ci. One such table
+--- left beside the ones this version creates broke every join between them,
+--- the recovery at start included, and mysql mode never started.
+local function isOurCollation(name)
+    return type(name) == 'string' and name:lower() == COLLATION
+end
+
+--- Whether a table an older version made needs converting to utf8mb4 in
+--- COLLATION: its own default (what a column added later inherits), or any
+--- text column in it, is in another character set or another collation.
+--- `columnRows` is the COLUMNS answer migrate already has; a column with no
+--- character set is not text.
 local function needsConverting(table_, columnRows)
     for j = 1, #columnRows do
-        local charset = columnRows[j].CHARACTER_SET_NAME or columnRows[j].character_set_name
+        local row = columnRows[j]
+        local charset = row.CHARACTER_SET_NAME or row.character_set_name
+        local collation = row.COLLATION_NAME or row.collation_name
         if charset ~= nil and not isUtf8mb4(charset) then return true end
+        if collation ~= nil and not isOurCollation(collation) then return true end
     end
-    local rows = MySQL.query.await([[
+    local rows = db.query([[
         SELECT TABLE_COLLATION FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
     ]], { table_ }) or {}
     local collation = rows[1] and (rows[1].TABLE_COLLATION or rows[1].table_collation)
     -- No answer is no table, or a query that failed: nothing to convert.
-    return collation ~= nil and not isUtf8mb4(collation)
+    return collation ~= nil and not isOurCollation(collation)
 end
 
 --- Add whatever the declarations have and the database does not.
@@ -367,8 +401,8 @@ function MySQLStore.migrate()
 
         if table_ and safeIdentifier(table_) then
             local present = {}
-            local rows = MySQL.query.await([[
-                SELECT COLUMN_NAME, CHARACTER_SET_NAME FROM information_schema.COLUMNS
+            local rows = db.query([[
+                SELECT COLUMN_NAME, CHARACTER_SET_NAME, COLLATION_NAME FROM information_schema.COLUMNS
                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
             ]], { table_ }) or {}
             for j = 1, #rows do
@@ -381,10 +415,12 @@ function MySQLStore.migrate()
             if next(present) and needsConverting(table_, rows) then
                 -- Rebuilds the table, once. CREATE TABLE IF NOT EXISTS left
                 -- one an older version made on a utf8mb3 or latin1 database
-                -- as it was, refusing every four-byte character.
-                MySQL.query.await(('ALTER TABLE %s CONVERT TO CHARACTER SET %s COLLATE %s')
+                -- as it was, refusing every four-byte character, and one
+                -- made in another utf8mb4 collation unable to be joined
+                -- with the tables made since.
+                db.query(('ALTER TABLE %s CONVERT TO CHARACTER SET %s COLLATE %s')
                     :format(table_, CHARSET, COLLATION))
-                print(('[crimson-hitman] migrated: converted %s to %s'):format(table_, CHARSET))
+                print(('[crimson-hitman] migrated: converted %s to %s'):format(table_, COLLATION))
             end
 
             -- Renamed before anything is added, so the new name is not added
@@ -395,7 +431,7 @@ function MySQLStore.migrate()
                     for old, new in pairs(RENAMED[table_]) do
                         if column.name == new and safeIdentifier(old) and safeIdentifier(new)
                             and present[old] and not present[new] then
-                            MySQL.query.await(('ALTER TABLE %s CHANGE COLUMN `%s` %s')
+                            db.query(('ALTER TABLE %s CHANGE COLUMN `%s` %s')
                                 :format(table_, old, column.definition))
                             print(('[crimson-hitman] migrated: renamed %s.%s to %s')
                                 :format(table_, old, new))
@@ -409,7 +445,7 @@ function MySQLStore.migrate()
                 for j = 1, #columns do
                     local column = columns[j]
                     if safeIdentifier(column.name) and not present[column.name:lower()] then
-                        MySQL.query.await(
+                        db.query(
                             ('ALTER TABLE %s ADD COLUMN %s'):format(table_, column.definition))
                         print(('[crimson-hitman] migrated: added %s.%s'):format(table_, column.name))
                         addedColumns = addedColumns + 1
@@ -418,7 +454,7 @@ function MySQLStore.migrate()
             end
 
             local haveIndex = {}
-            local indexRows = MySQL.query.await([[
+            local indexRows = db.query([[
                 SELECT INDEX_NAME FROM information_schema.STATISTICS
                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
             ]], { table_ }) or {}
@@ -430,7 +466,7 @@ function MySQLStore.migrate()
                 for j = 1, #indexes do
                     local index = indexes[j]
                     if safeIdentifier(index.name) and not haveIndex[index.name:lower()] then
-                        MySQL.query.await(
+                        db.query(
                             ('ALTER TABLE %s ADD %s'):format(table_, index.definition))
                         print(('[crimson-hitman] migrated: added index %s on %s')
                             :format(index.name, table_))
@@ -455,7 +491,7 @@ end
 --- resource never used answers zero.
 ---@return table { lines, owed }
 function MySQLStore.inspect()
-    local rows = MySQL.query.await([[
+    local rows = db.query([[
         SELECT TABLE_NAME FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('crimson_escrow', 'crimson_pending')
     ]]) or {}
@@ -464,25 +500,25 @@ function MySQLStore.inspect()
 
     local out = { lines = 0, owed = 0 }
     if have.crimson_escrow then
-        out.lines = tonumber(MySQL.scalar.await(
+        out.lines = tonumber(db.scalar(
             "SELECT COUNT(*) FROM crimson_escrow WHERE state <> 'settled'")) or 0
     end
     if have.crimson_pending then
-        out.owed = tonumber(MySQL.scalar.await('SELECT COUNT(*) FROM crimson_pending')) or 0
+        out.owed = tonumber(db.scalar('SELECT COUNT(*) FROM crimson_pending')) or 0
     end
     return out
 end
 
 function MySQLStore.open()
     for i = 1, #SCHEMA do
-        MySQL.query.await(SCHEMA[i])
+        db.query(SCHEMA[i])
     end
 
     -- A table that already existed keeps whatever shape it had, so the
     -- statements above are not enough on their own.
     MySQLStore.migrate()
 
-    local highest = MySQL.scalar.await('SELECT COUNT(*) FROM crimson_contracts') or 0
+    local highest = db.scalar('SELECT COUNT(*) FROM crimson_contracts') or 0
     seq = tonumber(highest) or 0
     return true
 end
@@ -506,7 +542,7 @@ end
 --- matters more here than in the other backends, because reads return fresh
 --- rows rather than shared tables.
 function MySQLStore.writeContract(c)
-    MySQL.query.await([[
+    db.query([[
         INSERT INTO crimson_contracts
             (id, creator_cid, creator_account, creator_name, target_cid, target_account,
              target_name, target_protected, target_job, reason, mode, state, anon_creator, bonus_percent,
@@ -578,7 +614,7 @@ end
 function MySQLStore.setBailoutQueue(id, fields)
     local affected
     if fields then
-        affected = MySQL.update.await([[
+        affected = db.update([[
             UPDATE crimson_contracts
             SET bailout_queued_at = ?, bailout_paid_by = ?, bailout_paid_amount = ?,
                 bailout_paid_account = ?, bailout_attempts = ?
@@ -587,7 +623,7 @@ function MySQLStore.setBailoutQueue(id, fields)
               fields.bailout_paid_amount, fields.bailout_paid_account,
               fields.bailout_attempts or 0, id })
     else
-        affected = MySQL.update.await([[
+        affected = db.update([[
             UPDATE crimson_contracts
             SET bailout_queued_at = NULL, bailout_paid_by = NULL,
                 bailout_paid_amount = NULL, bailout_paid_account = NULL,
@@ -615,12 +651,12 @@ local function hydrateContract(row)
 end
 
 function MySQLStore.readContract(id)
-    local rows = MySQL.query.await('SELECT * FROM crimson_contracts WHERE id = ?', { id })
+    local rows = db.query('SELECT * FROM crimson_contracts WHERE id = ?', { id })
     return hydrateContract(rows and rows[1])
 end
 
 function MySQLStore.allContracts()
-    local rows = MySQL.query.await('SELECT * FROM crimson_contracts ORDER BY id') or {}
+    local rows = db.query('SELECT * FROM crimson_contracts ORDER BY id') or {}
     for i = 1, #rows do hydrateContract(rows[i]) end
     return rows
 end
@@ -631,7 +667,7 @@ end
 --- a second: past a thousand rows oxmysql also printed its oversized-result
 --- warning, every second.
 function MySQLStore.liveContracts()
-    local rows = MySQL.query.await(
+    local rows = db.query(
         "SELECT * FROM crimson_contracts WHERE state IN ('active', 'accepted') ORDER BY id") or {}
     for i = 1, #rows do hydrateContract(rows[i]) end
     return rows
@@ -641,7 +677,7 @@ end
 --- The indexes for all three columns already exist, so this is the query
 --- the schema was designed for — rather than a full scan filtered in Lua.
 function MySQLStore.contractsInvolving(cid)
-    local rows = MySQL.query.await([[
+    local rows = db.query([[
         SELECT c.* FROM crimson_contracts c
         WHERE c.creator_cid = ? OR c.target_cid = ?
         UNION
@@ -655,7 +691,7 @@ function MySQLStore.contractsInvolving(cid)
 end
 
 function MySQLStore.contractsNaming(cid)
-    local rows = MySQL.query.await(
+    local rows = db.query(
         'SELECT * FROM crimson_contracts WHERE target_cid = ? ORDER BY id', { cid }) or {}
     for i = 1, #rows do hydrateContract(rows[i]) end
     return rows
@@ -666,14 +702,14 @@ end
 --- The tick used to read every contract the server has ever held and filter
 --- in Lua. There is rarely more than one of these and usually none.
 function MySQLStore.queuedBailouts()
-    local rows = MySQL.query.await(
+    local rows = db.query(
         'SELECT * FROM crimson_contracts WHERE bailout_queued_at IS NOT NULL ORDER BY id') or {}
     for i = 1, #rows do hydrateContract(rows[i]) end
     return rows
 end
 
 function MySQLStore.contractsBy(cid)
-    local rows = MySQL.query.await(
+    local rows = db.query(
         'SELECT * FROM crimson_contracts WHERE creator_cid = ? ORDER BY id', { cid }) or {}
     for i = 1, #rows do hydrateContract(rows[i]) end
     return rows
@@ -683,7 +719,7 @@ end
 --- limits belong to the player, not to whichever character they are on.
 function MySQLStore.contractsByAccount(account)
     if account == nil then return {} end
-    local rows = MySQL.query.await(
+    local rows = db.query(
         'SELECT * FROM crimson_contracts WHERE creator_account = ? ORDER BY id', { account }) or {}
     for i = 1, #rows do hydrateContract(rows[i]) end
     return rows
@@ -695,7 +731,7 @@ end
 --- One guarded UPDATE rather than writing back a contract read before
 --- several yielding calls; see the memory backend for what that erased.
 function MySQLStore.advanceSlot(id, expectedSlot)
-    local affected = MySQL.update.await([[
+    local affected = db.update([[
         UPDATE crimson_contracts
         SET next_slot = ?, slots_claimed = slots_claimed + 1
         WHERE id = ? AND next_slot = ?
@@ -708,12 +744,12 @@ end
 function MySQLStore.expireIfDue(id, expected, next_, now, byLifetime)
     local affected
     if byLifetime then
-        affected = MySQL.update.await([[
+        affected = db.update([[
             UPDATE crimson_contracts SET state = ?
             WHERE id = ? AND state = ? AND expires_at < ?
         ]], { next_, id, expected, now })
     else
-        affected = MySQL.update.await([[
+        affected = db.update([[
             UPDATE crimson_contracts SET state = ?
             WHERE id = ? AND state = ? AND paused_since IS NULL AND deadline_at < ?
         ]], { next_, id, expected, now })
@@ -725,7 +761,7 @@ function MySQLStore.reduceSlots(id, expected)
     if expected <= 1 then return false end
     -- Guarded on the collection being unclaimed and no claim holding the
     -- contract, not only on the count (see Memory.reduceSlots).
-    local affected = MySQL.update.await([[
+    local affected = db.update([[
         UPDATE crimson_contracts SET payout_slots = ?
         WHERE id = ? AND payout_slots = ? AND next_slot < ? AND state IN ('active', 'accepted')
     ]], { expected - 1, id, expected, expected })
@@ -735,11 +771,11 @@ end
 function MySQLStore.setDeadline(id, expected, deadline)
     local affected
     if expected ~= nil then
-        affected = MySQL.update.await(
+        affected = db.update(
             'UPDATE crimson_contracts SET deadline_at = ? WHERE id = ? AND deadline_at = ?',
             { deadline, id, expected })
     else
-        affected = MySQL.update.await(
+        affected = db.update(
             'UPDATE crimson_contracts SET deadline_at = ? WHERE id = ?', { deadline, id })
     end
     return (tonumber(affected) or 0) > 0
@@ -768,26 +804,26 @@ function MySQLStore.setContractFields(id, fields)
         if not SETTABLE[k] then error('setContractFields: not a settable field: ' .. tostring(k)) end
     end
     for column, sql in pairs(SETTABLE) do
-        if fields[column] ~= nil then MySQL.update.await(sql, { fields[column], id }) end
+        if fields[column] ~= nil then db.update(sql, { fields[column], id }) end
     end
     return true
 end
 
 function MySQLStore.setReason(id, reason)
-    local affected = MySQL.update.await(
+    local affected = db.update(
         'UPDATE crimson_contracts SET reason = ? WHERE id = ?', { reason, id })
     return (tonumber(affected) or 0) > 0
 end
 
 function MySQLStore.startPause(id, at)
-    local affected = MySQL.update.await(
+    local affected = db.update(
         'UPDATE crimson_contracts SET paused_since = ? WHERE id = ? AND paused_since IS NULL',
         { at, id })
     return (tonumber(affected) or 0) > 0
 end
 
 function MySQLStore.endPause(id, since, seconds)
-    local affected = MySQL.update.await([[
+    local affected = db.update([[
         UPDATE crimson_contracts
         SET deadline_at = deadline_at + ?, paused_ms = paused_ms + ?, paused_since = NULL
         WHERE id = ? AND paused_since = ?
@@ -796,7 +832,7 @@ function MySQLStore.endPause(id, since, seconds)
 end
 
 function MySQLStore.compareSetContractState(id, expected, next_)
-    local affected = MySQL.update.await(
+    local affected = db.update(
         'UPDATE crimson_contracts SET state = ? WHERE id = ? AND state = ?',
         { next_, id, expected })
     return (tonumber(affected) or 0) > 0
@@ -845,14 +881,14 @@ end
 function MySQLStore.writeEscrow(contractId, lines)
     if #lines == 0 then return true end
     if #lines == 1 then
-        MySQL.query.await(ESCROW_UPSERT, escrowParams(contractId, lines[1]))
+        db.query(ESCROW_UPSERT, escrowParams(contractId, lines[1]))
         return true
     end
     local queries = {}
     for i = 1, #lines do
         queries[i] = { query = ESCROW_UPSERT, values = escrowParams(contractId, lines[i]) }
     end
-    return MySQL.transaction.await(queries) ~= false
+    return db.transaction(queries) ~= false
 end
 
 local function hydrateEscrow(row)
@@ -892,14 +928,14 @@ local function hydrateAuditRows(rows)
 end
 
 function MySQLStore.readEscrow(contractId)
-    local rows = MySQL.query.await(
+    local rows = db.query(
         'SELECT * FROM crimson_escrow WHERE contract_id = ? ORDER BY id', { contractId }) or {}
     for i = 1, #rows do hydrateEscrow(rows[i]) end
     return rows
 end
 
 function MySQLStore.readEscrowLine(id)
-    local rows = MySQL.query.await('SELECT * FROM crimson_escrow WHERE id = ?', { id })
+    local rows = db.query('SELECT * FROM crimson_escrow WHERE id = ?', { id })
     return hydrateEscrow(rows and rows[1])
 end
 
@@ -912,7 +948,7 @@ end
 --- table keeps for its lines, twice, before the app answered anybody: some
 --- four awaited queries per contract, thirty days of them.
 function MySQLStore.unsettledEscrowContracts()
-    local rows = MySQL.query.await(
+    local rows = db.query(
         "SELECT DISTINCT contract_id FROM crimson_escrow WHERE state IN ('held', 'releasing')") or {}
     local out = {}
     for i = 1, #rows do
@@ -922,7 +958,7 @@ function MySQLStore.unsettledEscrowContracts()
 end
 
 function MySQLStore.orphanEscrow()
-    local rows = MySQL.query.await([[
+    local rows = db.query([[
         SELECT * FROM crimson_escrow e
         WHERE e.state IN ('held', 'releasing')
           AND NOT EXISTS (
@@ -936,7 +972,7 @@ end
 --- The compare-and-set that makes double release impossible (§14.3).
 --- One statement, so the check and the write cannot be interleaved.
 function MySQLStore.claimEscrowLine(id, expected, next_)
-    local affected = MySQL.update.await(
+    local affected = db.update(
         'UPDATE crimson_escrow SET state = ? WHERE id = ? AND state = ?',
         { next_, id, expected })
     return (tonumber(affected) or 0) > 0
@@ -947,11 +983,11 @@ end
 function MySQLStore.setEscrowAmount(id, expectedState, amount, expectedAmount)
     local affected
     if expectedAmount ~= nil then
-        affected = MySQL.update.await(
+        affected = db.update(
             'UPDATE crimson_escrow SET amount = ? WHERE id = ? AND state = ? AND amount = ?',
             { amount, id, expectedState, expectedAmount })
     else
-        affected = MySQL.update.await(
+        affected = db.update(
             'UPDATE crimson_escrow SET amount = ? WHERE id = ? AND state = ?',
             { amount, id, expectedState })
     end
@@ -967,7 +1003,7 @@ end
 --- instance on the same database — which is a line paid twice and recorded
 --- once.
 function MySQLStore.settleEscrowLine(id, recipientCid)
-    local affected = MySQL.update.await(
+    local affected = db.update(
         'UPDATE crimson_escrow SET state = ?, settled_to = ?, settled_at = ? '
         .. 'WHERE id = ? AND state = ?',
         { CH.ESCROW_STATE.SETTLED, recipientCid, os.time(), id, CH.ESCROW_STATE.RELEASING })
@@ -979,7 +1015,7 @@ end
 --------------------------------------------------------------------------
 
 function MySQLStore.addHitman(h)
-    MySQL.query.await([[
+    db.query([[
         INSERT INTO crimson_hitmen
             (id, contract_id, hitman_cid, hitman_account, hitman_name, alias, anon,
              accepted_at, state, claims)
@@ -997,7 +1033,7 @@ local function hydrateHitman(row)
 end
 
 function MySQLStore.readHitmen(contractId)
-    local rows = MySQL.query.await(
+    local rows = db.query(
         'SELECT * FROM crimson_hitmen WHERE contract_id = ? ORDER BY accepted_at, id',
         { contractId }) or {}
     for i = 1, #rows do hydrateHitman(rows[i]) end
@@ -1005,7 +1041,7 @@ function MySQLStore.readHitmen(contractId)
 end
 
 function MySQLStore.readHitman(contractId, cid)
-    local rows = MySQL.query.await(
+    local rows = db.query(
         'SELECT * FROM crimson_hitmen WHERE contract_id = ? AND hitman_cid = ?',
         { contractId, cid })
     return hydrateHitman(rows and rows[1])
@@ -1017,39 +1053,39 @@ end
 --- before the row is written, so an id already in use is a duplicate-key
 --- error with the money already gone and no record naming who staked it.
 function MySQLStore.readHitmanById(id)
-    local rows = MySQL.query.await('SELECT * FROM crimson_hitmen WHERE id = ?', { id })
+    local rows = db.query('SELECT * FROM crimson_hitmen WHERE id = ?', { id })
     return hydrateHitman(rows and rows[1])
 end
 
 function MySQLStore.updateHitman(id, fields)
     -- Column names are literals here, never interpolated from the caller.
     if fields.state ~= nil then
-        MySQL.update.await('UPDATE crimson_hitmen SET state = ? WHERE id = ?', { fields.state, id })
+        db.update('UPDATE crimson_hitmen SET state = ? WHERE id = ?', { fields.state, id })
     end
     if fields.left_at ~= nil then
-        MySQL.update.await('UPDATE crimson_hitmen SET left_at = ? WHERE id = ?', { fields.left_at, id })
+        db.update('UPDATE crimson_hitmen SET left_at = ? WHERE id = ?', { fields.left_at, id })
     end
     if fields.last_claim_at ~= nil then
-        MySQL.update.await('UPDATE crimson_hitmen SET last_claim_at = ? WHERE id = ?', { fields.last_claim_at, id })
+        db.update('UPDATE crimson_hitmen SET last_claim_at = ? WHERE id = ?', { fields.last_claim_at, id })
     end
     if fields.claims ~= nil then
-        MySQL.update.await('UPDATE crimson_hitmen SET claims = ? WHERE id = ?', { fields.claims, id })
+        db.update('UPDATE crimson_hitmen SET claims = ? WHERE id = ?', { fields.claims, id })
     end
     -- A hitman who could not cover the anonymity fee is named instead. This
     -- branch was missing, so on the backend that ships by default the write
     -- was dropped: the hitman stayed listed as anonymous having paid nothing
     -- for it, and only on mysql.
     if fields.anon ~= nil then
-        MySQL.update.await('UPDATE crimson_hitmen SET anon = ? WHERE id = ?',
+        db.update('UPDATE crimson_hitmen SET anon = ? WHERE id = ?',
             { fields.anon and 1 or 0, id })
     end
     if fields.alias ~= nil then
-        MySQL.update.await('UPDATE crimson_hitmen SET alias = ? WHERE id = ?',
+        db.update('UPDATE crimson_hitmen SET alias = ? WHERE id = ?',
             { fields.alias, id })
     end
     -- A stint's start, rewritten when a hitman takes a contract up again.
     if fields.accepted_at ~= nil then
-        MySQL.update.await('UPDATE crimson_hitmen SET accepted_at = ? WHERE id = ?',
+        db.update('UPDATE crimson_hitmen SET accepted_at = ? WHERE id = ?',
             { fields.accepted_at, id })
     end
     return true
@@ -1057,7 +1093,7 @@ end
 
 --- The row goes active only if it is still the acceptance that wrote it.
 function MySQLStore.confirmHitman(id, anon, acceptedAt)
-    local affected = MySQL.update.await([[
+    local affected = db.update([[
         UPDATE crimson_hitmen SET state = 'active', anon = ?, accepted_at = ?
         WHERE id = ? AND state IN ('joining', 'rejoining')
     ]], { anon and 1 or 0, acceptedAt, id })
@@ -1067,7 +1103,7 @@ end
 --- Mid-acceptance rows count: two acceptances in flight must each see the
 --- other against the cap.
 function MySQLStore.countHitmanContracts(cid, states)
-    local rows = MySQL.query.await([[
+    local rows = db.query([[
         SELECT c.state AS state FROM crimson_hitmen h
         JOIN crimson_contracts c ON c.id = h.contract_id
         WHERE h.hitman_cid = ? AND h.state IN ('active', 'joining', 'rejoining')
@@ -1084,7 +1120,7 @@ end
 --------------------------------------------------------------------------
 
 function MySQLStore.writeAmendment(a)
-    MySQL.query.await([[
+    db.query([[
         INSERT INTO crimson_amendments
             (id, contract_id, proposer, kind, payload, approvals, expires_at, outcome, declined_by)
         VALUES (?,?,?,?,?,?,?,?,?)
@@ -1118,14 +1154,14 @@ local function hydrateAmendment(row)
 end
 
 function MySQLStore.readAmendment(id)
-    local rows = MySQL.query.await('SELECT * FROM crimson_amendments WHERE id = ?', { id })
+    local rows = db.query('SELECT * FROM crimson_amendments WHERE id = ?', { id })
     return hydrateAmendment(rows and rows[1])
 end
 
 --- Every contract with a proposal still open, as a set: one query at boot,
 --- where the amendment expiry's index asked every contract kept.
 function MySQLStore.openAmendmentContracts()
-    local rows = MySQL.query.await(
+    local rows = db.query(
         "SELECT DISTINCT contract_id FROM crimson_amendments WHERE outcome = 'open'") or {}
     local out = {}
     for i = 1, #rows do
@@ -1135,7 +1171,7 @@ function MySQLStore.openAmendmentContracts()
 end
 
 function MySQLStore.readOpenAmendments(contractId)
-    local rows = MySQL.query.await(
+    local rows = db.query(
         "SELECT * FROM crimson_amendments WHERE contract_id = ? AND outcome = 'open'",
         { contractId }) or {}
     for i = 1, #rows do hydrateAmendment(rows[i]) end
@@ -1143,7 +1179,7 @@ function MySQLStore.readOpenAmendments(contractId)
 end
 
 function MySQLStore.writeMessage(m)
-    MySQL.query.await([[
+    db.query([[
         INSERT INTO crimson_messages (contract_id, thread_id, from_cid, from_alias, body, sent_at)
         VALUES (?,?,?,?,?,?)
     ]], { m.contract_id, m.thread_id, m.from_cid, m.from_alias, m.body, m.sent_at })
@@ -1151,7 +1187,7 @@ function MySQLStore.writeMessage(m)
     -- ledger keeps its depth.
     local keep = tonumber(Config.Relay.MaxMessagesPerThread) or 0
     if keep > 0 then
-        MySQL.query.await([[
+        db.query([[
             DELETE FROM crimson_messages WHERE thread_id = ? AND contract_id = ? AND id NOT IN (
                 SELECT id FROM (
                     SELECT id FROM crimson_messages WHERE thread_id = ? AND contract_id = ?
@@ -1164,13 +1200,13 @@ function MySQLStore.writeMessage(m)
 end
 
 function MySQLStore.readMessages(contractId, threadId)
-    return MySQL.query.await(
+    return db.query(
         'SELECT * FROM crimson_messages WHERE contract_id = ? AND thread_id = ? ORDER BY id',
         { contractId, threadId }) or {}
 end
 
 function MySQLStore.writeLedger(entry)
-    MySQL.query.await([[
+    db.query([[
         INSERT INTO crimson_ledger
             (cid, contract_id, role, target_name, reason, fulfilment, slot, photo_ref, resolved_at)
         VALUES (?,?,?,?,?,?,?,?,?)
@@ -1179,7 +1215,7 @@ function MySQLStore.writeLedger(entry)
         entry.fulfilment, entry.slot or 1, entry.photo_ref, entry.resolved_at,
     })
     -- Keep the footprint small: prune anything past the configured depth.
-    MySQL.query.await([[
+    db.query([[
         DELETE FROM crimson_ledger WHERE cid = ? AND id NOT IN (
             SELECT id FROM (
                 SELECT id FROM crimson_ledger WHERE cid = ? ORDER BY resolved_at DESC LIMIT ?
@@ -1190,7 +1226,7 @@ function MySQLStore.writeLedger(entry)
 end
 
 function MySQLStore.readLedger(cid, depth)
-    return MySQL.query.await(
+    return db.query(
         'SELECT * FROM crimson_ledger WHERE cid = ? ORDER BY resolved_at DESC LIMIT ?',
         { cid, depth }) or {}
 end
@@ -1200,7 +1236,7 @@ function MySQLStore.queuePending(cid, contractId, lineId)
     -- every boot, so a restart within the same second minted the ids of
     -- entries already queued, and ON DUPLICATE KEY UPDATE landed the new
     -- entry on top of an old one — one owed payment silently unqueued.
-    MySQL.query.await([[
+    db.query([[
         INSERT INTO crimson_pending (id, cid, contract_id, line_id, queued_at)
         VALUES (?,?,?,?,?)
         ON DUPLICATE KEY UPDATE queued_at = VALUES(queued_at)
@@ -1211,12 +1247,12 @@ function MySQLStore.queuePending(cid, contractId, lineId)
 end
 
 function MySQLStore.readPending(cid)
-    return MySQL.query.await(
+    return db.query(
         'SELECT * FROM crimson_pending WHERE cid = ? ORDER BY queued_at', { cid }) or {}
 end
 
 function MySQLStore.clearPending(id)
-    MySQL.query.await('DELETE FROM crimson_pending WHERE id = ?', { id })
+    db.query('DELETE FROM crimson_pending WHERE id = ?', { id })
     return true
 end
 
@@ -1230,16 +1266,16 @@ function MySQLStore.bumpStat(cid, field, amount)
     amount = amount or 1
 
     if field == 'completed' then
-        MySQL.query.await([[INSERT INTO crimson_stats (cid, completed) VALUES (?, ?)
+        db.query([[INSERT INTO crimson_stats (cid, completed) VALUES (?, ?)
             ON DUPLICATE KEY UPDATE completed = completed + VALUES(completed)]], { cid, amount })
     elseif field == 'failed' then
-        MySQL.query.await([[INSERT INTO crimson_stats (cid, failed) VALUES (?, ?)
+        db.query([[INSERT INTO crimson_stats (cid, failed) VALUES (?, ?)
             ON DUPLICATE KEY UPDATE failed = failed + VALUES(failed)]], { cid, amount })
     elseif field == 'placed' then
-        MySQL.query.await([[INSERT INTO crimson_stats (cid, placed) VALUES (?, ?)
+        db.query([[INSERT INTO crimson_stats (cid, placed) VALUES (?, ?)
             ON DUPLICATE KEY UPDATE placed = placed + VALUES(placed)]], { cid, amount })
     else
-        MySQL.query.await([[INSERT INTO crimson_stats (cid, survived) VALUES (?, ?)
+        db.query([[INSERT INTO crimson_stats (cid, survived) VALUES (?, ?)
             ON DUPLICATE KEY UPDATE survived = survived + VALUES(survived)]], { cid, amount })
     end
 
@@ -1247,7 +1283,7 @@ function MySQLStore.bumpStat(cid, field, amount)
 end
 
 function MySQLStore.readStats(cid)
-    local rows = MySQL.query.await('SELECT * FROM crimson_stats WHERE cid = ?', { cid })
+    local rows = db.query('SELECT * FROM crimson_stats WHERE cid = ?', { cid })
     return (rows and rows[1])
         or { cid = cid, completed = 0, failed = 0, placed = 0, survived = 0 }
 end
@@ -1263,7 +1299,7 @@ local function auditParams(entry)
 end
 
 function MySQLStore.writeAudit(entry)
-    MySQL.query.await(AUDIT_INSERT, auditParams(entry))
+    db.query(AUDIT_INSERT, auditParams(entry))
     return true
 end
 
@@ -1284,7 +1320,7 @@ function MySQLStore.writeAuditBatch(entries)
         groups[i] = '(?,?,?,?,?,?)'
         for j = 1, 6 do params[#params + 1] = row[j] end
     end
-    MySQL.query.await('INSERT INTO crimson_audit (ts, kind, action, actor_cid, contract_id, detail) '
+    db.query('INSERT INTO crimson_audit (ts, kind, action, actor_cid, contract_id, detail) '
         .. 'VALUES ' .. table.concat(groups, ','), params)
     return true
 end
@@ -1306,7 +1342,7 @@ end
 
 function MySQLStore.readAudit(limit)
     return hydrateAuditRows(
-        MySQL.query.await('SELECT * FROM crimson_audit ORDER BY id DESC LIMIT ?',
+        db.query('SELECT * FROM crimson_audit ORDER BY id DESC LIMIT ?',
             { limit or 100 }) or {})
 end
 
@@ -1320,7 +1356,7 @@ end
 --- /ch-stuck, which reads this for release_interrupted rows, reported a
 --- stuck release as nothing at all.
 function MySQLStore.auditForContract(contractId, limit)
-    local newest = MySQL.query.await(
+    local newest = db.query(
         'SELECT * FROM crimson_audit WHERE contract_id = ? ORDER BY id DESC LIMIT ?',
         { contractId, limit or 200 }) or {}
     local rows = {}
@@ -1331,7 +1367,7 @@ end
 --- Every audit row with one action, oldest first, the newest `limit` of
 --- them: one query, where /ch-stuck asked once per contract.
 function MySQLStore.auditByAction(action, limit)
-    local newest = MySQL.query.await(
+    local newest = db.query(
         'SELECT * FROM crimson_audit WHERE action = ? ORDER BY id DESC LIMIT ?',
         { action, limit or 500 }) or {}
     local rows = {}
@@ -1342,7 +1378,7 @@ end
 --- Drop the photo reference from rows older than the cutoff (§14.43).
 --- One indexed UPDATE rather than reading the ledger into Lua.
 function MySQLStore.forgetLedgerPhotos(cutoff)
-    local affected = MySQL.update.await(
+    local affected = db.update(
         'UPDATE crimson_ledger SET photo_ref = NULL WHERE resolved_at < ? AND photo_ref IS NOT NULL',
         { cutoff })
     return tonumber(affected) or 0
@@ -1352,7 +1388,7 @@ function MySQLStore.prune()
     -- 0 keeps the log, as the retention settings beside it do.
     local auditDays = tonumber(Config.Audit.RetentionDays) or 0
     if auditDays > 0 then
-        MySQL.query.await('DELETE FROM crimson_audit WHERE ts < ?',
+        db.query('DELETE FROM crimson_audit WHERE ts < ?',
             { os.time() - (auditDays * 86400) })
     end
 
@@ -1380,7 +1416,7 @@ end
 ---@param cutoff integer
 ---@return integer removed
 function MySQLStore.pruneContracts(cutoff)
-    local rows = MySQL.query.await([[
+    local rows = db.query([[
         SELECT c.id FROM crimson_contracts c
         WHERE c.state IN ('completed', 'bailed_out', 'expired', 'cancelled', 'voided')
           AND c.resolved_at IS NOT NULL
@@ -1398,13 +1434,13 @@ function MySQLStore.pruneContracts(cutoff)
     for i = 1, #rows do
         local id = rows[i].id
         if id then
-            MySQL.query.await('DELETE FROM crimson_escrow WHERE contract_id = ?', { id })
-            MySQL.query.await('DELETE FROM crimson_hitmen WHERE contract_id = ?', { id })
-            MySQL.query.await('DELETE FROM crimson_amendments WHERE contract_id = ?', { id })
-            MySQL.query.await('DELETE FROM crimson_messages WHERE contract_id = ?', { id })
-            MySQL.query.await('DELETE FROM crimson_reveals WHERE contract_id = ?', { id })
-            MySQL.query.await('DELETE FROM crimson_mutes WHERE contract_id = ?', { id })
-            MySQL.query.await('DELETE FROM crimson_contracts WHERE id = ?', { id })
+            db.query('DELETE FROM crimson_escrow WHERE contract_id = ?', { id })
+            db.query('DELETE FROM crimson_hitmen WHERE contract_id = ?', { id })
+            db.query('DELETE FROM crimson_amendments WHERE contract_id = ?', { id })
+            db.query('DELETE FROM crimson_messages WHERE contract_id = ?', { id })
+            db.query('DELETE FROM crimson_reveals WHERE contract_id = ?', { id })
+            db.query('DELETE FROM crimson_mutes WHERE contract_id = ?', { id })
+            db.query('DELETE FROM crimson_contracts WHERE id = ?', { id })
             removed = removed + 1
         end
     end
@@ -1414,13 +1450,13 @@ end
 --- What one buyer's informant purchases on one contract have bought; see the
 --- memory backend.
 function MySQLStore.readReveal(contractId, buyerCid)
-    local rows = MySQL.query.await('SELECT * FROM crimson_reveals WHERE id = ?',
+    local rows = db.query('SELECT * FROM crimson_reveals WHERE id = ?',
         { contractId .. ':' .. buyerCid }) or {}
     return rows[1]
 end
 
 function MySQLStore.writeReveal(contractId, buyerCid, record)
-    MySQL.query.await([[
+    db.query([[
         INSERT INTO crimson_reveals
             (id, contract_id, buyer_cid, hitman_cid, revealed_at, purchases, seed, answer)
         VALUES (?,?,?,?,?,?,?,?)
@@ -1435,13 +1471,13 @@ function MySQLStore.writeReveal(contractId, buyerCid, record)
 end
 
 function MySQLStore.clearReveals(contractId)
-    MySQL.query.await('DELETE FROM crimson_reveals WHERE contract_id = ?', { contractId })
+    db.query('DELETE FROM crimson_reveals WHERE contract_id = ?', { contractId })
     return true
 end
 
 --- Threads somebody has muted; see the memory backend.
 function MySQLStore.readMute(threadId, cid)
-    local rows = MySQL.query.await('SELECT id FROM crimson_mutes WHERE id = ?',
+    local rows = db.query('SELECT id FROM crimson_mutes WHERE id = ?',
         { threadId .. ':' .. cid }) or {}
     return rows[1] ~= nil
 end
@@ -1449,13 +1485,13 @@ end
 function MySQLStore.setMute(contractId, threadId, cid, muted, at)
     local id = threadId .. ':' .. cid
     if muted then
-        MySQL.query.await([[
+        db.query([[
             INSERT INTO crimson_mutes (id, contract_id, thread_id, cid, muted_at)
             VALUES (?,?,?,?,?)
             ON DUPLICATE KEY UPDATE muted_at = VALUES(muted_at)
         ]], { id, contractId, threadId, cid, at })
     else
-        MySQL.query.await('DELETE FROM crimson_mutes WHERE id = ?', { id })
+        db.query('DELETE FROM crimson_mutes WHERE id = ?', { id })
     end
     return true
 end
@@ -1464,7 +1500,7 @@ end
 --- state change is one guarded UPDATE, so two requests racing to open the
 --- same photo cannot both be shown it.
 function MySQLStore.writePhoto(r)
-    MySQL.query.await([[
+    db.query([[
         INSERT INTO crimson_photos
             (id, contract_id, slot, owner_cid, kind, url, file, mime, size, state,
              created_at, opened_at, saved_link)
@@ -1477,24 +1513,24 @@ function MySQLStore.writePhoto(r)
 end
 
 function MySQLStore.readPhoto(id)
-    local rows = MySQL.query.await('SELECT * FROM crimson_photos WHERE id = ?', { id }) or {}
+    local rows = db.query('SELECT * FROM crimson_photos WHERE id = ?', { id }) or {}
     return rows[1]
 end
 
 function MySQLStore.photosOf(ownerCid)
-    return MySQL.query.await(
+    return db.query(
         'SELECT * FROM crimson_photos WHERE owner_cid = ? ORDER BY created_at',
         { ownerCid }) or {}
 end
 
 function MySQLStore.photosForContract(contractId)
-    return MySQL.query.await(
+    return db.query(
         'SELECT * FROM crimson_photos WHERE contract_id = ? ORDER BY created_at',
         { contractId }) or {}
 end
 
 function MySQLStore.photosOpenedBefore(cutoff, limit, state)
-    return MySQL.query.await([[
+    return db.query([[
         SELECT * FROM crimson_photos WHERE state = ? AND opened_at < ?
         ORDER BY created_at LIMIT ?
     ]], { state or 'open', cutoff, limit or 200 }) or {}
@@ -1502,7 +1538,7 @@ end
 
 function MySQLStore.readPhotoByPublic(publicId)
     if type(publicId) ~= 'string' then return nil end
-    local rows = MySQL.query.await('SELECT * FROM crimson_photos WHERE public_id = ?',
+    local rows = db.query('SELECT * FROM crimson_photos WHERE public_id = ?',
         { publicId }) or {}
     return rows[1]
 end
@@ -1510,7 +1546,7 @@ end
 --- Summed here rather than in SQL: it is for /ch-diag, and the photos that
 --- hold a file at all are the few waiting, kept or served.
 function MySQLStore.photoTotals()
-    local rows = MySQL.query.await(
+    local rows = db.query(
         'SELECT state, size FROM crimson_photos WHERE file IS NOT NULL') or {}
     local out = {}
     for i = 1, #rows do
@@ -1523,7 +1559,7 @@ function MySQLStore.photoTotals()
 end
 
 function MySQLStore.photosCreatedBefore(cutoff, limit)
-    return MySQL.query.await([[
+    return db.query([[
         SELECT * FROM crimson_photos
         WHERE created_at < ? AND state <> 'kept' AND public_id IS NULL
         ORDER BY created_at LIMIT ?
@@ -1531,7 +1567,7 @@ function MySQLStore.photosCreatedBefore(cutoff, limit)
 end
 
 function MySQLStore.openPhoto(id, at)
-    local affected = MySQL.update.await(
+    local affected = db.update(
         "UPDATE crimson_photos SET state = 'open', opened_at = ? WHERE id = ? AND state = 'pending'",
         { at, id })
     return (tonumber(affected) or 0) > 0
@@ -1540,7 +1576,7 @@ end
 --- The link and the file name are cleared in the same statement that moves
 --- the state, so no row is ever closed and still pointing at an image.
 function MySQLStore.closePhoto(id, expected, next_, savedLink)
-    local affected = MySQL.update.await([[
+    local affected = db.update([[
         UPDATE crimson_photos SET state = ?, url = NULL, file = NULL, saved_link = ?,
             public_id = NULL, saved_phone = NULL
         WHERE id = ? AND state = ?
@@ -1549,7 +1585,7 @@ function MySQLStore.closePhoto(id, expected, next_, savedLink)
 end
 
 function MySQLStore.publishPhoto(id, expected, publicId, link, phone)
-    local affected = MySQL.update.await([[
+    local affected = db.update([[
         UPDATE crimson_photos SET public_id = ?, saved_link = ?, saved_phone = ?
         WHERE id = ? AND state = ? AND file IS NOT NULL
     ]], { publicId, link, phone, id, expected })
@@ -1557,7 +1593,7 @@ function MySQLStore.publishPhoto(id, expected, publicId, link, phone)
 end
 
 function MySQLStore.movePhoto(id, expected, next_)
-    local affected = MySQL.update.await(
+    local affected = db.update(
         'UPDATE crimson_photos SET state = ? WHERE id = ? AND state = ?',
         { next_, id, expected })
     return (tonumber(affected) or 0) > 0
@@ -1567,13 +1603,13 @@ end
 function MySQLStore.keepPhoto(id, expected, file)
     local affected
     if file then
-        affected = MySQL.update.await([[
+        affected = db.update([[
             UPDATE crimson_photos SET state = 'kept', file = ?,
                 public_id = NULL, saved_link = NULL, saved_phone = NULL
             WHERE id = ? AND state = ?
         ]], { file, id, expected })
     else
-        affected = MySQL.update.await([[
+        affected = db.update([[
             UPDATE crimson_photos SET state = 'kept',
                 public_id = NULL, saved_link = NULL, saved_phone = NULL
             WHERE id = ? AND state = ?
@@ -1583,13 +1619,13 @@ function MySQLStore.keepPhoto(id, expected, file)
 end
 
 function MySQLStore.deletePhoto(id)
-    MySQL.query.await('DELETE FROM crimson_photos WHERE id = ?', { id })
+    db.query('DELETE FROM crimson_photos WHERE id = ?', { id })
     return true
 end
 
 --- When this process was last known to be running. See main.lua's Recover.
 function MySQLStore.heartbeat(at)
-    MySQL.query.await([[
+    db.query([[
         INSERT INTO crimson_meta (meta_key, meta_value) VALUES (?, ?)
         ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
     ]], { 'heartbeat', at })
@@ -1597,7 +1633,7 @@ function MySQLStore.heartbeat(at)
 end
 
 function MySQLStore.lastHeartbeat()
-    local rows = MySQL.query.await(
+    local rows = db.query(
         'SELECT meta_value FROM crimson_meta WHERE meta_key = ?', { 'heartbeat' }) or {}
     return rows[1] and tonumber(rows[1].meta_value) or nil
 end

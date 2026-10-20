@@ -121,6 +121,8 @@ Node.prototype.all = function (out) {
 function makeDocument() {
   var doc = new Node('document');
   var byId = {};
+  // The root, which the page marks with lb-phone's theme.
+  doc.documentElement = new Node('html');
 
   doc.createElement = function (tag) {
     var node = new Node(tag);

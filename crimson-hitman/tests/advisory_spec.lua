@@ -450,6 +450,30 @@ describe('an advisory switched off at one stage', function()
         truthy(found, 'an officer with a price on their head was told nothing')
     end)
 
+    --- Told by the acceptance bulletin, an officer still read "Nothing is
+    --- out on you" in /cleanse until the reveal wait ran out.
+    it('shows the officer the contract once the acceptance bulletin has told them', function()
+        local s, f = seeded(leoJob('trooper'))
+        Config.Advisory.OnCreate = false
+        Config.Notifications.ParanoidAlertJitter = { min = 300, max = 300 }
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+            bailoutAmount = 5000,
+        })
+        truthy(c)
+        eq(#s.bailout.available(f.target), 0, 'held back inside the wait, with nothing said yet')
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.advance(1)
+        local told = false
+        for _, note in ipairs(Natives.calls.notifications) do
+            if tostring(note.content):find('The contract on you has been accepted', 1, true) then
+                told = true
+            end
+        end
+        truthy(told, 'the officer is told an operative is on them')
+        eq(#s.bailout.available(f.target), 1, 'and /cleanse lists what they were told of')
+    end)
+
     it('tells the page the same thing it does', function()
         local settings, bulletins = placed(false)
         eq(settings.advisory.posted, false)

@@ -1237,6 +1237,53 @@ describe('maintenance jobs that time themselves', function()
         eq(warnings(said, 'death.sampler'), 1, table.concat(said, '\n'))
     end)
 
+    --- On mysql every query is an await, and the server thread runs every
+    --- other resource until the answer comes. The clock ran through all of
+    --- it, so a job doing nothing of its own was reported slow for work
+    --- other resources did while it waited.
+    it('charges a job for the time it holds the thread, not its database waits', function()
+        local main, modules = boot()
+        local spend = clocked(modules)
+        modules.photos.expire = function()
+            spend(1)
+            -- Three round trips, other resources spending 4 ms in each.
+            for _ = 1, 3 do modules.timing.await(function() spend(4) end) end
+        end
+        local said = capture(function() main.tick() end)
+        eq(warnings(said, 'photos.expire'), 0, table.concat(said, '\n'))
+        local row
+        for _, job in ipairs(modules.timing.slowest()) do
+            if job.name == 'photos.expire' then row = job end
+        end
+        truthy(row, 'timed')
+        truthy(math.abs(row.last - 1) < 1e-6,
+            'its own millisecond, not the twelve spent waiting: ' .. row.last)
+    end)
+
+    it('charges each of two interleaved jobs only its own time', function()
+        local _, modules = boot()
+        local spend = clocked(modules)
+        local T = modules.timing
+        local function waits() T.await(function() coroutine.yield() end) end
+        local a = coroutine.wrap(function()
+            T.run('job.a', function() spend(2) waits() spend(3) end)
+        end)
+        local b = coroutine.wrap(function()
+            T.run('job.b', function() spend(7) waits() spend(1) end)
+        end)
+        capture(function()
+            a()   -- 2 ms, then waits on the database
+            b()   -- runs meanwhile: 7 ms, then waits
+            a()   -- the answer: 3 ms more
+            b()   -- 1 ms more
+        end)
+        local last = {}
+        for _, job in ipairs(T.slowest()) do last[job.name] = job.last end
+        truthy(math.abs(last['job.a'] - 5) < 1e-6,
+            'a is not charged for b\'s work in its wait: ' .. tostring(last['job.a']))
+        truthy(math.abs(last['job.b'] - 8) < 1e-6, 'nor b for a\'s: ' .. tostring(last['job.b']))
+    end)
+
     it('lists the slowest jobs, with their numbers, in /ch-diag', function()
         local main, modules = boot()
         local spend = clocked(modules)

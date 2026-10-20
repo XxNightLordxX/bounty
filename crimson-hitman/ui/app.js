@@ -6296,11 +6296,13 @@
       var people = asList(rows);
       results.innerHTML = '';
 
-      // The server closes the nearby list to anyone on a live contract, so
-      // it cannot name the other side of it. Said, rather than reading as
-      // an empty street.
+      // The server closes the nearby list to anyone on a live contract, and
+      // for a while after one ends (a handover ends with all three standing
+      // together), so it cannot name the other side of it. Said, rather than
+      // reading as an empty street.
       if (browse.scope === 'nearby' && paging && paging.closed) {
-        show(status, 'Nobody is listed near you while you are on a contract. '
+        show(status, 'Nobody is listed near you while you are on a contract, '
+          + 'or for a while after one ends. '
           + (canBrowse ? 'Look under Everyone.'
             : 'Type at least ' + (settings().minQueryLength || 3) + ' letters of their name.'));
         return;
@@ -6853,6 +6855,28 @@
       return;
     }
   });
+
+  /* lb-phone's theme, on the root, for the light status band (app.css,
+     body::before). lb-phone draws its clock, signal, battery and home
+     indicator onto this page in black in its light theme, its default, and
+     the page is dark: they vanished. It sets data-theme itself; asked here
+     too, as its own app template does, so a build that leaves it to the
+     app still gets the band. Optional: a page with neither function (a
+     browser, a test) stays as it is. */
+  function applyTheme(settings) {
+    var theme = settings && settings.display && settings.display.theme;
+    if (theme === 'light' || theme === 'dark') {
+      document.documentElement.setAttribute('data-theme', theme);
+    }
+  }
+  try {
+    if (typeof window.getSettings === 'function') {
+      Promise.resolve(window.getSettings()).then(applyTheme, function () {});
+    }
+    if (typeof window.onSettingsChange === 'function') {
+      window.onSettingsChange(applyTheme);
+    }
+  } catch (err) { /* the dark page as before */ }
 
   // Installed before the first render: a throw in that render is exactly
   // the kind this exists to catch, and catching it needs the handler

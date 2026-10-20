@@ -197,6 +197,8 @@ function Kidnap.arm(contractId, hitmanCid)
         graceUsedMs = 0,
         lastTick   = Util.monotonicMs(),
         startedAt  = Util.monotonicMs(),
+        -- On the clock deadlines are kept in (Kidnap.armedAt).
+        armedAt    = os.time(),
     }
 
     -- How the PREVIOUS handover ended is not how this one ends. Kept, it
@@ -541,6 +543,14 @@ function Kidnap.progress(contractId, hitmanCid)
         graceTotal = Config.Kidnap.MaxTotalGraceMs,
         breaking  = state.breaking,
     }
+end
+
+--- When this hitman's running countdown on this contract was armed, on
+--- os.time(), or nil when none is running. Asked by Bailout.finishing, which
+--- holds a closing contract open only for a handover armed in time.
+function Kidnap.armedAt(contractId, hitmanCid)
+    local state = active[key(contractId, hitmanCid)]
+    return state and state.armedAt or nil
 end
 
 function Kidnap.activeCount()

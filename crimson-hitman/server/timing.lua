@@ -11,9 +11,18 @@
 --- lists the slowest.
 ---
 --- os.clock is processor time, and cheap. On Linux it counts the whole
---- server process, so a busy server's other threads add to a reading; a job
---- that waits on the database counts the wait only where os.clock is wall
---- time (Windows). Read as "about this slow", which is what a warning needs.
+--- server process, so a busy server's other threads add to a reading. Read
+--- as "about this slow", which is what a warning needs.
+---
+--- But not the time a job spends waiting on the database. On mysql every
+--- query is an await that hands the server thread to everything else until
+--- the answer comes, and the clock kept running through all of it: on
+--- Linux every other resource's work in that gap, on Windows (where
+--- os.clock is wall time) the round trip itself. The sampler awaits at least
+--- once a pass, so a healthy mysql server was told every five minutes that
+--- its jobs were slow, for work other resources did. The store hands each
+--- await to Timing.await, which counts its span as waiting, and a job is
+--- charged only for the time it held the thread.
 ---
 --- Each job's window is allocated once, on its first run; a run after that
 --- writes two numbers into it and allocates nothing.
@@ -33,6 +42,26 @@ Timing.WARN_EVERY_SECONDS = 300
 --- [name] = { ms = { ...WINDOW }, n = runs so far, sum = over the window,
 ---            last = ms, warnedAt = os.time() }
 local jobs = {}
+
+--- [coroutine] = clock seconds it has spent inside Timing.await. By the
+--- thread, because jobs interleave: a job's await is where another job runs,
+--- and with one counter for everybody, the second job's waits were taken
+--- off the first job's time, work it did included. Weak, so a thread that
+--- has ended is not kept.
+local waited = setmetatable({}, { __mode = 'k' })
+
+--- Make a call that may yield the thread to wait (a database round trip),
+--- and count the clock it spans as waiting rather than work. Errors pass
+--- through as they would from the call itself.
+---@param fn function
+---@return any, any what fn returns (an oxmysql await returns one value)
+function Timing.await(fn, ...)
+    local thread = coroutine.running()
+    local started = Timing.clock()
+    local a, b = fn(...)
+    waited[thread] = (waited[thread] or 0) + (Timing.clock() - started)
+    return a, b
+end
 
 --- The threshold, in ms. 0 (or anything not above zero) is no warning.
 local function limit()
@@ -76,9 +105,12 @@ end
 ---@return boolean ok
 ---@return any err
 function Timing.run(name, fn, ...)
+    local thread = coroutine.running()
+    local waitedBefore = waited[thread] or 0
     local started = Timing.clock()
     local ok, err = pcall(fn, ...)
-    Timing.record(name, (Timing.clock() - started) * 1000)
+    local held = (Timing.clock() - started) - ((waited[thread] or 0) - waitedBefore)
+    Timing.record(name, math.max(0, held) * 1000)
     return ok, err
 end
 

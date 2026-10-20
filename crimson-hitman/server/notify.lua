@@ -40,6 +40,14 @@ local paranoidUntil = {}
 --- not the moment anybody placed one.
 local revealAt = {}
 
+--- [targetCid] = the paranoid alert waiting out its delay, and the
+--- contracts it stands for: { ids = { [contractId] = true }, before =
+--- paranoidUntil as it was }. It goes only while one of them is still out
+--- (Notify.clearContract). One withdrawn inside the wait rang the target
+--- with "A price has been put on your head" for a contract their On me tab
+--- and /cleanse never showed, and used up their cooldown doing it.
+local pendingAlert = {}
+
 function Notify.init(deps)
     Identity = deps.identity
     budgets, advisorySent = {}, {}
@@ -47,6 +55,7 @@ function Notify.init(deps)
     waiting = {}
     paranoidUntil = {}
     revealAt = {}
+    pendingAlert = {}
 end
 
 local function withinBudget(cid)
@@ -341,7 +350,7 @@ function Notify.contractCreated(contract, targetActor)
     -- An officer is told by the posting bulletin instead, unless none goes.
     if Config.Notifications.ParanoidAlert
         and (not contract.target_protected or not Notify.advises('posted')) then
-        Notify.paranoid(contract.target_cid, delay)
+        Notify.paranoid(contract.target_cid, delay, contract.id)
     end
 
     if contract.target_protected then
@@ -371,11 +380,22 @@ end
 --- second when they were online and acting. Everything else dates a
 --- placement only roughly (Util.roundClock). And it went once per
 --- contract, so the count of alerts was the count of people paying.
+---
+--- Tied to the contract it is about (pendingAlert): one ended inside the
+--- wait takes its alert with it, and gives the cooldown back. A second
+--- contract placed while the first one's alert is still waiting rides on
+--- that alert, so the first being withdrawn does not silence the second.
 ---@param targetCid string
 ---@param delay integer|nil seconds to wait; drawn from the jitter when nil
-function Notify.paranoid(targetCid, delay)
+---@param contractId string|nil the contract it is about
+function Notify.paranoid(targetCid, delay, contractId)
     local now = os.time()
-    if (paranoidUntil[targetCid] or 0) > now then return end
+    if (paranoidUntil[targetCid] or 0) > now then
+        local waitingAlert = pendingAlert[targetCid]
+        if waitingAlert and contractId then waitingAlert.ids[contractId] = true end
+        return
+    end
+    local before = paranoidUntil[targetCid]
     paranoidUntil[targetCid] = now
         + math.max(0, (tonumber(Config.Notifications.ParanoidCooldownMinutes) or 0) * 60)
 
@@ -386,7 +406,18 @@ function Notify.paranoid(targetCid, delay)
             'You feel eyes on you. A price has been put on your head.')
     end
     if wait <= 0 then return send() end
-    SetTimeout(wait * 1000, send)
+    if not contractId then
+        SetTimeout(wait * 1000, send)
+        return
+    end
+
+    local alert = { ids = { [contractId] = true }, before = before }
+    pendingAlert[targetCid] = alert
+    SetTimeout(wait * 1000, function()
+        if pendingAlert[targetCid] ~= alert then return end
+        pendingAlert[targetCid] = nil
+        if next(alert.ids) then send() end
+    end)
 end
 
 function Notify.contractAccepted(contract, hitmanRecord, activeHitmen)
@@ -699,6 +730,13 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
     if advisorySent[key] then return end
     advisorySent[key] = true
 
+    -- The bulletin dates the contract to the second for every officer
+    -- online, the one it names included, so the wait has nothing left to
+    -- hide (contractCreated skips it for a posting bulletin). With only the
+    -- acceptance bulletin on, an officer told "The contract on you has been
+    -- accepted" was told by /cleanse that nothing was out on them.
+    revealAt[contract.id] = nil
+
     local rank = contract.target_job and (contract.target_job:upper() .. ' ') or ''
     local title, content
 
@@ -767,6 +805,18 @@ end
 
 function Notify.clearContract(contractId, contract)
     revealAt[contractId] = nil
+    -- An alert still waiting goes only while a contract it stands for is
+    -- still out. With none left it never goes, and the cooldown it started
+    -- is given back: nothing was said.
+    for targetCid, alert in pairs(pendingAlert) do
+        if alert.ids[contractId] then
+            alert.ids[contractId] = nil
+            if not next(alert.ids) then
+                pendingAlert[targetCid] = nil
+                paranoidUntil[targetCid] = alert.before
+            end
+        end
+    end
     for key in pairs(advisorySent) do
         if key:sub(1, #contractId + 1) == contractId .. ':' then advisorySent[key] = nil end
     end

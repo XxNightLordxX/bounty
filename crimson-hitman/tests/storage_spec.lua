@@ -1440,11 +1440,95 @@ describe('mysql schema migration', function()
         eq(converted.crimson_messages, 'ALTER TABLE crimson_messages CONVERT TO CHARACTER SET '
             .. 'utf8mb4 COLLATE utf8mb4_unicode_ci', 'a utf8mb3 table is converted')
         truthy(converted.crimson_ledger, 'and one whose own default is right but a column is not')
-        eq(converted.crimson_contracts, nil, 'a table already utf8mb4 is left alone')
+        eq(converted.crimson_contracts, 'ALTER TABLE crimson_contracts CONVERT TO CHARACTER SET '
+            .. 'utf8mb4 COLLATE utf8mb4_unicode_ci',
+            'and one in utf8mb4 but another collation, which no join with the rest survives')
 
         Sim.altered = {}
         store.migrate()
         eq(#Sim.altered, 0, 'and a second run converts nothing again')
+    end)
+
+    --- On MariaDB the previous version made crimson_contracts and then
+    --- stopped at crimson_escrow (`portion`), so that one table kept the
+    --- database's default collation: utf8mb4_general_ci on Debian's
+    --- MariaDB. This version made the rest utf8mb4_unicode_ci. Every join
+    --- between them was refused (error 1267), the recovery at start
+    --- included, and mysql mode still never started on those servers.
+    it('puts a table left in another utf8mb4 collation on the same one as the rest', function()
+        local store = opened(
+            { crimson_contracts = { id = 'utf8mb4', creator_cid = 'utf8mb4',
+                target_cid = 'utf8mb4', mode = 'utf8mb4', state = 'utf8mb4',
+                created_at = true } },
+            nil,
+            { crimson_contracts = 'utf8mb4_general_ci' })
+
+        local converted
+        for _, change in ipairs(Sim.altered) do
+            if change.charset and change.table_ == 'crimson_contracts' then converted = change end
+        end
+        truthy(converted, 'a utf8mb4_general_ci table is converted')
+        eq(converted and converted.collation, 'utf8mb4_unicode_ci', 'to the collation of the rest')
+
+        for name in pairs(Sim.collations) do
+            eq(Sim.collationOf(name), 'utf8mb4_unicode_ci', name .. ' ends on the one collation')
+        end
+
+        -- The queries that failed: the recovery at start, the board, every
+        -- acceptance and the per-tick prune.
+        local ok, err = pcall(store.orphanEscrow)
+        truthy(ok, 'the recovery at start joins contracts and escrow: ' .. tostring(err))
+        ok, err = pcall(store.contractsInvolving, 'CID1')
+        truthy(ok, 'the board joins contracts and hitmen: ' .. tostring(err))
+        ok, err = pcall(store.countHitmanContracts, 'CID1', { accepted = true })
+        truthy(ok, 'an acceptance counts across both: ' .. tostring(err))
+        ok, err = pcall(store.pruneContracts, 0)
+        truthy(ok, 'and the prune checks escrow and pending: ' .. tostring(err))
+
+        -- The simulator refuses what the database refuses, or the above
+        -- proves nothing.
+        Sim.existingCollations.crimson_contracts = 'utf8mb4_general_ci'
+        ok, err = pcall(store.orphanEscrow)
+        falsy(ok, 'a mix of collations is refused, as MariaDB refuses it')
+        truthy(tostring(err):find('1267', 1, true), 'with the error MariaDB gives: ' .. tostring(err))
+    end)
+
+    it('converts a table whose own default is right but a column has its own collation', function()
+        opened(
+            { crimson_ledger = { id = true, cid = 'utf8mb4_general_ci', contract_id = 'utf8mb4',
+                role = 'utf8mb4', target_name = 'utf8mb4', resolved_at = true } },
+            nil,
+            { crimson_ledger = 'utf8mb4_unicode_ci' })
+        local converted
+        for _, change in ipairs(Sim.altered) do
+            if change.charset and change.table_ == 'crimson_ledger' then converted = change end
+        end
+        truthy(converted, 'a column in utf8mb4_general_ci is converted with its table')
+    end)
+
+    --- Each await is handed to Timing.await, so a maintenance job is charged
+    --- for the time it holds the thread and not for everything the server
+    --- did while it waited on the database. One call made straight to
+    --- oxmysql would be charged in full again.
+    it('hands every database wait to the job timing', function()
+        local store = opened(nil)
+        local waits = 0
+        store.timeWaitsWith(function(fn, ...) waits = waits + 1 return fn(...) end)
+        local ok, err = pcall(function()
+            store.liveContracts()
+            store.orphanEscrow()
+            store.readEscrow('ct00000001')
+        end)
+        store.timeWaitsWith(nil)
+        truthy(ok, tostring(err))
+        eq(waits, 3, 'one per query')
+
+        local f = assert(io.open('crimson-hitman/server/storage/mysql.lua', 'r'))
+        local src = f:read('*a')
+        f:close()
+        local straight = {}
+        for call in src:gmatch('MySQL%.%a+%.await%b()') do straight[#straight + 1] = call:sub(1, 60) end
+        eq(#straight, 0, 'an await made around db: ' .. table.concat(straight, ' | '))
     end)
 
     --- PORTION is reserved on MariaDB from 10.4 (FOR PORTION OF). The
