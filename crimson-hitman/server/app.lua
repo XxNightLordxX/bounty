@@ -24,6 +24,11 @@ local deps
 --- nothing to recover.
 App.ready = true
 
+--- Set when boot recovery raised (StartCrimsonHitman): App.ready then stays
+--- down for the life of the process, and the staff commands say that a
+--- restart, once the logged cause is fixed, is what opens it.
+App.recoveryFailed = false
+
 function App.init(d)
     deps = d
     App.register()

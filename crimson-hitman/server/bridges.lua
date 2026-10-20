@@ -647,6 +647,19 @@ function Bridges.installCommands(modules)
     local RECOVERING = 'Still recovering from the restart: nothing is settled, voided or listed '
         .. 'until that has finished. Try again in a moment.'
 
+    --- And once recovery has raised (App.recoveryFailed): it never finishes
+    --- in this process, so waiting a moment changes nothing.
+    local RECOVERY_FAILED = 'Recovery failed at the last start (the server console says why): '
+        .. 'nothing is settled, voided or listed, and the app stays closed. Fix the logged cause, '
+        .. 'then restart the resource.'
+
+    --- What one of those says while recovery has not finished
+    --- (App.ready), or nil once it has.
+    local function notRecovered()
+        if not (modules.app and modules.app.ready == false) then return nil end
+        return modules.app.recoveryFailed and RECOVERY_FAILED or RECOVERING
+    end
+
     --- Wrap a command in its permission check. A caller without the ACE is
     --- told the same thing whether or not the contract exists, so the
     --- command cannot be used to probe for ids.
@@ -735,6 +748,17 @@ function Bridges.installCommands(modules)
         local reason = table.concat(args, ' ', math.min(2, #args + 1))
         local ok, err = Admin.void(src, args[1], reason)
         if err == 'recovering' then return reply(src, RECOVERING) end
+        if err == 'recovery_failed' then return reply(src, RECOVERY_FAILED) end
+        -- Mid-claim with no claim running (Admin.void): the void waits for
+        -- the restart that puts it back to accepted.
+        if err == 'stalled_claim' then
+            return reply(src, ('Could not void it: contract %s is mid-claim with no claim running (a '
+                .. 'stalled claim: the claim paying a collection raised part-way), and only the next '
+                .. 'start puts it back. Pay each line /%s lists for it as a stalled claim with /%s '
+                .. '<line> pay, then restart the resource: recovery puts the contract back to accepted '
+                .. '(or completes it, if that was its last collection), and /%s %s closes it then.')
+                :format(tostring(args[1]), names.stuck, names.settle, names.void, tostring(args[1])))
+        end
         reply(src, ok and 'Contract voided; escrow returned to the creator.'
                        or ('Could not void it: ' .. tostring(err)))
     end, true)
@@ -743,7 +767,8 @@ function Bridges.installCommands(modules)
         -- Recovery is still putting back, leaving for staff and queuing what
         -- the last shutdown left: listed now, a line it is about to deal
         -- with read as stuck.
-        if modules.app and modules.app.ready == false then return reply(src, RECOVERING) end
+        local waiting = notRecovered()
+        if waiting then return reply(src, waiting) end
         local lines = Admin.interrupted(src)
         if #lines == 0 then return reply(src, 'No interrupted releases.') end
 
@@ -831,8 +856,22 @@ function Bridges.installCommands(modules)
                 reply(src, ('  %s  contract %s  %s %s  was paying %s  (%s)'):format(
                     line.line, line.contract, tostring(line.portion), describeLine(line),
                     tostring(line.intended), os.date('%Y-%m-%d %H:%M', line.at)))
+                -- What settles this one (Admin.interrupted): a pay needs
+                -- somebody to go to, which a line the boot put back naming
+                -- nobody does not have.
+                if line.settles == 'queued' then
+                    reply(src, '    queued for them since: nothing to settle')
+                elseif line.settles == 'return_owner' then
+                    reply(src, ('    does not say whose it is: /%s %s return <citizenid> once you know '
+                        .. 'who put it up'):format(names.settle, line.line))
+                elseif line.settles == 'pay_or_return' then
+                    reply(src, ('    /%s %s pay (to them) or return (to whoever put it up)')
+                        :format(names.settle, line.line))
+                else
+                    reply(src, ('    names nobody to pay: only /%s %s return settles it, to whoever '
+                        .. 'put it up'):format(names.settle, line.line))
+                end
             end
-            reply(src, ('Settle each with /%s <line> pay|return'):format(names.settle))
         end
 
         -- Lines of a contract never stored, written before a line said
@@ -871,6 +910,7 @@ function Bridges.installCommands(modules)
     command(names.settle, Config.Admin.Ace, function(src, args)
         local ok, err, detail = Admin.settleLine(src, args[1], args[2], args[3])
         if err == 'recovering' then return reply(src, RECOVERING) end
+        if err == 'recovery_failed' then return reply(src, RECOVERY_FAILED) end
         if err == 'live' then
             return reply(src, ('Not settled: contract %s is still live and this line is its own (a payout '
                 .. 'its next claim pays, a bonus or a stake), not one left for you. /%s %s closes a live '

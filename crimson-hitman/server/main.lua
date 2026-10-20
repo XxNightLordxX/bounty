@@ -1041,6 +1041,7 @@ function StartCrimsonHitman()
 
     -- Nothing is answered until recovery has finished (App.ready).
     app.ready = false
+    app.recoveryFailed = false
     app.init(modules)
     admin.init(modules)
     require('server.bridges').install(modules)
@@ -1049,7 +1050,29 @@ function StartCrimsonHitman()
     -- as precise as the last condition sample.
     death.startSampler()
 
-    Recover()
+    -- A recovery that raises has left part of what the last shutdown left
+    -- as it was: a line still `releasing`, a contract still mid-claim, a
+    -- clock not paused for the downtime. Raised through, the boot said only
+    -- "failed to start" and App.ready stayed down, so /ch-settle, /ch-void
+    -- and /ch-stuck answered "try again in a moment" for as long as the
+    -- process ran. The gate stays shut (the app, the login payouts, the
+    -- maintenance tick and those commands), and the commands say what
+    -- happened instead: only a restart once the cause is fixed runs
+    -- recovery again.
+    local recovered, recoverErr = pcall(Recover)
+    if not recovered then
+        app.recoveryFailed = true
+        pcall(audit.flush)
+        print('[crimson-hitman] ============================================')
+        print('[crimson-hitman] BOOT RECOVERY FAILED: ' .. tostring(recoverErr))
+        print('[crimson-hitman]   What the last shutdown left part-way is not settled, so the app,')
+        print('[crimson-hitman]   the login payouts and the staff commands that settle, void or')
+        print('[crimson-hitman]   list escrow stay closed, and the maintenance tick does not start.')
+        print('[crimson-hitman]   Fix the cause above, then restart the resource.')
+        print('[crimson-hitman] ============================================')
+        return modules
+    end
+
     -- Kill photo files no record names any more. Before the app answers:
     -- a photo is written to its file a moment before its record, and a
     -- sweep that ran alongside a kill being verified would remove that one.

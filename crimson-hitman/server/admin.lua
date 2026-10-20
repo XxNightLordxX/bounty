@@ -249,10 +249,13 @@ function Admin.interrupted(src)
                 or (detail.unknown and 'unknown') or 'raised'
         end
     end
+    -- Not one a call here holds (Escrow.inFlight): another staff settle
+    -- claims it and unparks it in the write after, and listed in between it
+    -- read as still waiting for staff while that settle gave it.
     local parked = Storage.parkedEscrow
         and Storage.parkedEscrow(Escrow.DELIVER_RAISE_LIMIT) or {}
     for _, line in ipairs(parked) do
-        if not seen[line.id] and Escrow.parked(line) then
+        if not seen[line.id] and Escrow.parked(line) and not Escrow.inFlight(line.id) then
             seen[line.id] = true
             local intended = line.owed_to or line.releasing_to
             if not canIdentify then
@@ -332,16 +335,34 @@ function Admin.interrupted(src)
             -- release or retry is giving now is that call's. And not a line
             -- of a contract still live: put back with nothing given, it is
             -- that contract's own again, which /ch-settle refuses (/ch-void
-            -- closes the contract).
+            -- closes the contract). Nor of one an ending is still closing
+            -- (Escrow.claimRunning), whose lines are its own until it returns.
             if line and line.state == CH.ESCROW_STATE.HELD and not Escrow.inFlight(lineId)
-                and not (contract and not CH.TERMINAL[contract.state]) then
+                and not (contract and not CH.TERMINAL[contract.state])
+                and not Escrow.claimRunning(line.contract_id or row.contract_id) then
                 local contractId = line.contract_id or row.contract_id
                 -- Whom it is owed to now, read off the line as /ch-settle
                 -- does: a return queued since is owed to the client, while
                 -- the row still names whom the interrupted give was for.
                 -- The row is only for a line that names nobody.
                 local intended = line.owed_to or line.releasing_to or row.actor_cid
-                if not canIdentify then
+                -- What settles it, as /ch-settle decides (Admin.settleLine):
+                -- 'queued' for one queued for whom it is owed since, which
+                -- needs nothing; 'pay_or_return' where something names whom
+                -- a pay goes to; 'return' where nothing does, as the row
+                -- recovery writes now for a line that named nobody, which
+                -- only a return settles (a pay has nobody to go to); and
+                -- 'return_owner' for one of a contract never stored that
+                -- does not say whose it is.
+                local settles = 'return'
+                if line.owed_to and Escrow.queued(line, queues) then
+                    settles = 'queued'
+                elseif not contract and namesNobody(line) then
+                    settles = 'return_owner'
+                elseif intended then
+                    settles = 'pay_or_return'
+                end
+                if not canIdentify or intended == nil then
                     intended = Admin.partyRole(contractOf(contractId), intended)
                 end
                 out[#out + 1] = {
@@ -353,6 +374,7 @@ function Admin.interrupted(src)
                     portion = line.portion,
                     intended = intended,
                     at = row.ts,
+                    settles = settles,
                 }
             end
         end
@@ -361,9 +383,10 @@ function Admin.interrupted(src)
     -- Escrow of a contract that was never stored, from before lines said
     -- whose they were (Contracts.recoverNeverPlaced): held, and naming
     -- nobody to hand it back to. Not an interrupted payment, but the same
-    -- question for staff, and the boot told them to look here for it.
+    -- question for staff, and the boot told them to look here for it. Not
+    -- one a call here holds: a staff return giving it, say.
     for _, line in ipairs(Storage.orphanEscrow and Storage.orphanEscrow() or {}) do
-        if not seen[line.id] and namesNobody(line) then
+        if not seen[line.id] and namesNobody(line) and not Escrow.inFlight(line.id) then
             seen[line.id] = true
             out[#out + 1] = {
                 line = line.id,
@@ -467,10 +490,13 @@ end
 --- store, so a settle typed then ran in the middle of it: recovery put back,
 --- from what it had read, a line a staff pay was giving, then queued it
 --- again, and it was paid twice. Nothing that moves escrow by hand runs
---- until recovery has finished.
----@return boolean
+--- until recovery has finished; nor ever, when it raised (App.recoveryFailed):
+--- what the last shutdown left is then not settled, and only a restart once
+--- the logged cause is fixed runs it again.
+---@return string|nil why 'recovering' | 'recovery_failed', or nil when it has finished
 local function recovering()
-    return App ~= nil and App.ready == false
+    if App == nil or App.ready ~= false then return nil end
+    return App.recoveryFailed and 'recovery_failed' or 'recovering'
 end
 
 --- Close a contract and return everything to the creator.
@@ -479,15 +505,37 @@ end
 --- settle, the remainder returns and the parties are told. A staff void is
 --- not a special case in the money paths and must never become one.
 ---@return boolean ok
----@return string|nil err
+---@return string|nil err 'recovering' / 'recovery_failed' until boot recovery has
+--- finished, and 'stalled_claim' for a contract mid-claim with no claim running
 function Admin.void(src, contractId, reason)
-    if recovering() then return false, 'recovering' end
+    local waiting = recovering()
+    if waiting then return false, waiting end
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
 
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
+
+    -- Mid-claim (COMPLETING) is no state a void closes: only the claim's own
+    -- end, or the next start, takes it back to accepted. With a claim running
+    -- on it (Escrow.claimRunning) the void below is refused as locked, and
+    -- goes through once the claim is done. With none, a claim raised part-way
+    -- and left it so (a stalled claim), and answered `locked` it read as busy
+    -- for ever. Not put back here: which collection that claim paid is
+    -- recovery's to decide, with nothing else running. Staff pay what
+    -- /ch-stuck lists for it as a stalled claim and restart the resource;
+    -- recovery puts it back to accepted (or completes it, when every
+    -- collection was paid), and the void closes it then. Read again with no
+    -- claim counted: a claim that finished during the read above had moved
+    -- it on already.
+    if contract.state == CH.STATE.COMPLETING and not Escrow.claimRunning(contractId) then
+        contract = Storage.readContract(contractId) or contract
+        if contract.state == CH.STATE.COMPLETING and not Escrow.claimRunning(contractId) then
+            return false, 'stalled_claim'
+        end
+        if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
+    end
 
     -- VOIDED, not CANCELLED. The state machine has declared VOIDED terminal
     -- and reachable from ACTIVE and ACCEPTED since it was written, commented
@@ -579,9 +627,11 @@ end
 ---@return string|integer|nil detail whose queue it is in ('already_queued'), whom only a
 --- pay settles it to ('pay_only'), what it owes ('owes_less'), the live contract it
 --- belongs to ('live'), or for 'queued' why it was not given: 'away' (not in the
---- city) or 'refused' (the give was refused). 'recovering' while boot recovery runs.
+--- city) or 'refused' (the give was refused). 'recovering' while boot recovery runs,
+--- and 'recovery_failed' once it has raised.
 function Admin.settleLine(src, lineId, disposition, owner)
-    if recovering() then return false, 'recovering' end
+    local waiting = recovering()
+    if waiting then return false, waiting end
     lineId = Util.toLineId(lineId)
     if not lineId then return false, CH.ERR.INVALID_INPUT end
     if disposition ~= 'pay' and disposition ~= 'return' and disposition ~= 'delivered' then
@@ -682,6 +732,15 @@ function Admin.settleLine(src, lineId, disposition, owner)
     if not parked and contract and not CH.TERMINAL[contract.state] then
         return false, 'live', contract.id
     end
+
+    -- Closed, by an ending still running on it (Contracts.resolve, counted
+    -- with the claims, Escrow.claimRunning): it writes the closed state
+    -- before it moves the escrow, and its lines are its own until it
+    -- returns. Settled here in between, a `return` of a hitman's stake an
+    -- expiry was about to forfeit handed it back to them, and the client lost
+    -- the forfeit. Asked after the contract was read: an ending that closed
+    -- it is counted from before its write.
+    if not parked and Escrow.claimRunning(line.contract_id) then return false, CH.ERR.LOCKED end
 
     -- Nothing of it was given (Escrow.NEVER_GIVEN: owed, in no retry queue,
     -- and naming no give that may have run, or owed by a claim that raised
@@ -835,6 +894,7 @@ function Admin.settleLine(src, lineId, disposition, owner)
         return false, 'pay_only', partyFor(src, contract, result.owed_to)
     end
     if result.why == 'owes_less' then return false, 'owes_less', result.owed end
+    if result.why == 'locked' then return false, CH.ERR.LOCKED end
     if result.why then return false, 'not_left' end
     if again > 0 then return false, 'parked' end
     if requeued > 0 then return true, 'requeued' end

@@ -400,6 +400,57 @@ describe('interrupted releases', function()
         eq(money(1) - creator, 5000, 'returned by the void')
     end)
 
+    --- Recovery logs a line it put back naming nobody with no recipient, and
+    --- only a return settles one (a pay has nobody to go to): /ch-stuck told
+    --- staff `pay|return` for every line it listed from the log.
+    it('gives each line listed from the log the command that settles it', function()
+        local s, _, c = seeded()
+        rawset(s.storage, '__rawFixture', true)
+        truthy(s.storage.compareSetContractState(c.id, CH.STATE.ACTIVE, CH.STATE.CANCELLED))
+        local line = s.storage.readEscrow(c.id)[1]
+        truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+        truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
+        s.audit.financial('release_interrupted', nil, c.id,
+            { line = line.id, amount = line.amount, review = true })
+        s.audit.flush()
+
+        local rows = s.admin.interrupted(0)
+        eq(#rows, 1)
+        eq(rows[1].settles, 'return')
+        eq(rows[1].intended, '(nobody)')
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+        Env.chat = {}
+        truthy(pcall(cmd[Config.Admin.Commands.stuck], 3, {}))
+        local out = said(3)
+        truthy(out:find(('only /%s %s return settles it'):format(Config.Admin.Commands.settle, line.id),
+            1, true), out)
+        falsy(out:find('pay|return', 1, true), out)
+        falsy(out:find(' pay (to them)', 1, true), out)
+
+        -- As it says: a pay has nobody to go to, and a return settles it.
+        local ok, err = s.admin.settleLine(0, line.id, 'pay')
+        falsy(ok)
+        eq(err, CH.ERR.INVALID_INPUT)
+        local creator = money(1)
+        truthy(s.admin.settleLine(0, line.id, 'return'))
+        eq(money(1) - creator, 5000)
+
+        -- One whose row names whom it was paying: either settles it.
+        local s2, _, _, named = stranded()
+        eq(s2.admin.interrupted(0)[1].settles, 'pay_or_return')
+        -- And one queued for the client since: nothing to settle.
+        Env.removePlayer(1)
+        truthy(s2.admin.settleLine(0, named.id, 'return'))
+        local queued = s2.admin.interrupted(0)
+        eq(#queued, 1)
+        eq(queued[1].settles, 'queued')
+        Env.aces[3] = { ['crimson.admin'] = true }
+        Env.chat = {}
+        truthy(pcall(commands(s2)[Config.Admin.Commands.stuck], 3, {}))
+        truthy(said(3):find('queued for them since: nothing to settle', 1, true), said(3))
+    end)
+
     it('refuses to settle a line twice', function()
         local s, f, c, line = stranded()
         truthy(s.admin.settleLine(0, line.id, 'return'))
@@ -907,7 +958,7 @@ describe('what a staff command prints', function()
         truthy(out:find('mid%-release'), out)
         truthy(not out:find('lockpick%s+%$0'),
             'the one tool for handing property back must not call it $0: ' .. out)
-        truthy(out:find('Settle each with'), out)
+        truthy(out:find(' pay (to them) or return (to whoever put it up)', 1, true), out)
     end)
 
     it('prints a line whose give kept raising, and tells staff to check before paying', function()

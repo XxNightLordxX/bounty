@@ -2545,7 +2545,7 @@ end
 
 ---@param opts table|nil { forfeit = boolean } to say whether an expiry is
 --- the hitmen' failure; by default every expiry is
-function Contracts.resolve(contractId, terminal, recipientCid, filter, reason, opts)
+local function resolve(contractId, terminal, recipientCid, filter, reason, opts)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
@@ -2595,6 +2595,22 @@ function Contracts.resolve(contractId, terminal, recipientCid, filter, reason, o
     finalise(contractId, contract, forfeit, terminal)
 
     return true, result
+end
+
+--- Resolve a contract to a terminal state: see resolve above. Counted as an
+--- ending running on the contract, from before it writes the closed state
+--- until finalise has settled the stakes and it returns or raises
+--- (Escrow.whileClaiming), as a claim is. The state is written first and
+--- the money moved after, so in between the contract reads closed while
+--- its escrow is still held: a staff `return` of a stake an expiry was
+--- about to forfeit handed it back to the hitman, and the forfeit was lost.
+--- Its lines are the ending's meanwhile, and /ch-settle refuses them as
+--- locked.
+---@return boolean ok
+---@return string|table|nil err, or what the release to recipientCid did
+function Contracts.resolve(contractId, terminal, recipientCid, filter, reason, opts)
+    return Escrow.whileClaiming(contractId, resolve, contractId, terminal, recipientCid, filter,
+        reason, opts)
 end
 
 --------------------------------------------------------------------------

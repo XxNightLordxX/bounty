@@ -43,12 +43,16 @@ local wakes = {}
 --- it first (Escrow.parkStuck). Nothing else decides that.
 local inFlight = {}  -- { [lineId] = count }
 
---- Contracts a claim in this process is paying (Contracts.claimSlot), by how
---- many such calls run for each, counted from before the claim takes the
---- contract (ACCEPTED -> COMPLETING) until it returns or raises
---- (Escrow.whileClaiming). A contract COMPLETING that is not here has no
---- claim paying it any more: the one that took it raised part-way, and it
---- stays so until the next start (leftAs: 'stalled_claim').
+--- Contracts a claim in this process is paying (Contracts.claimSlot), or an
+--- ending is closing (Contracts.resolve), by how many such calls run for
+--- each, counted from before the claim takes the contract (ACCEPTED ->
+--- COMPLETING), or the ending writes its closed state, until it returns or
+--- raises (Escrow.whileClaiming). Their lines are theirs meanwhile (leftAs):
+--- an expiry writes EXPIRED before it forfeits the stakes, and a staff
+--- `return` of a stake in between handed it to the hitman. A contract
+--- COMPLETING that is not here has no claim paying it any more: the one
+--- that took it raised part-way, and it stays so until the next start
+--- (leftAs: 'stalled_claim').
 local claiming = {}  -- { [contractId] = count }
 
 --- The ox_inventory items that are a money account, by name; read once per
@@ -998,12 +1002,12 @@ end
 --- is the only one that moves anything (checked again once made). Otherwise only
 --- a line owed to somebody, in no retry queue, that nothing else in this
 --- process holds or asks for (a release that put it back holds it until it
---- is queued), and whose contract no claim in this process holds
---- (COMPLETING with a claim in `claiming`: claimSlot owes a collection's
---- lines before its release claims them, and treated as left for staff in
---- between, a hitman's payout was handed back to the client while the claim
---- reported it paid). Nothing gives such a line until the next start queues
---- it (Escrow.recoverOwed): 'stalled' when it still names whom a give was
+--- is queued), and whose contract no claim or ending in this process holds
+--- (in `claiming`: claimSlot owes a collection's lines before its release
+--- claims them, and treated as left for staff in between, a hitman's payout
+--- was handed back to the client while the claim reported it paid). Nothing
+--- gives such a line until the next start queues it (Escrow.recoverOwed):
+--- 'stalled' when it still names whom a give was
 --- going to (releasing_to), which may have reached them; 'stalled_claim'
 --- when it names none and its contract is COMPLETING with no claim running
 --- (the claim raised part-way, after owing it: given nothing, and the
@@ -1027,9 +1031,11 @@ local function leftAs(line, queues, mine)
         if stake == nil or stake.amount ~= mark.stakeNow then return nil end
     end
     local contract = line.contract_id and Storage.readContract(line.contract_id)
-    if contract and contract.state == CH.STATE.COMPLETING then
-        if claiming[line.contract_id] then return nil end
-        if not line.releasing_to then return 'stalled_claim' end
+    -- Asked after the read, so a claim or ending that moved the contract
+    -- the read saw is still counted.
+    if line.contract_id and claiming[line.contract_id] then return nil end
+    if contract and contract.state == CH.STATE.COMPLETING and not line.releasing_to then
+        return 'stalled_claim'
     end
     return line.releasing_to and 'stalled' or 'unqueued'
 end
@@ -1047,16 +1053,23 @@ Escrow.NEVER_GIVEN = { unqueued = true, stalled_claim = true }
 --- and the player got 1,000 of the 3,000 A found missing. A `return` or a
 --- `delivered` (`ran`) only on a line whose give may have run: one nothing
 --- of which was given (Escrow.NEVER_GIVEN) is paid to whom it is owed.
+--- 'locked' when another call asks for it, or a claim or ending runs on its
+--- contract: that one's for now, and listed again once it is done, where
+--- 'not_left' told staff it was no longer theirs at all.
 ---@param line table as claimed
 ---@param give integer|nil the amount staff named
 ---@param ran boolean|nil only a line whose give may have run
 ---@param mine table the claims of the call that claimed it
----@return string|nil why 'queued' | 'not_left' | 'pay_only' | 'owes_less'
+---@return string|nil why 'queued' | 'locked' | 'not_left' | 'pay_only' | 'owes_less'
 local function unparkRefusal(line, give, ran, mine)
     local queues = {}
     local left = leftAs(line, queues, mine)
     if not left then
-        return Escrow.queued(line, queues) and 'queued' or 'not_left'
+        if Escrow.queued(line, queues) then return 'queued' end
+        if heldElsewhere(line.id, mine) or (line.contract_id and claiming[line.contract_id]) then
+            return 'locked'
+        end
+        return 'not_left'
     end
     if ran and Escrow.NEVER_GIVEN[left] then return 'pay_only' end
     if give and Escrow.stillOwed(line) < give then return 'owes_less' end
@@ -1440,9 +1453,10 @@ function Escrow.inFlight(id)
     return inFlight[id] ~= nil
 end
 
---- Run fn(...) as a claim on a contract (Contracts.claimSlot), counted in
---- `claiming` from before it starts until it returns or raises: a contract
---- COMPLETING that none is paying is one a claim left so when it raised.
+--- Run fn(...) as a claim on a contract (Contracts.claimSlot), or as its
+--- ending (Contracts.resolve), counted in `claiming` from before it starts
+--- until it returns or raises: a contract COMPLETING that none is paying is
+--- one a claim left so when it raised.
 ---@param contractId string
 ---@param fn function
 ---@return any ... what fn returns
@@ -1454,6 +1468,14 @@ function Escrow.whileClaiming(contractId, fn, ...)
     claiming[contractId] = n > 0 and n or nil
     if not out[1] then error(out[2], 0) end
     return table.unpack(out, 2, out.n)
+end
+
+--- Whether a claim or an ending runs on a contract in this process
+--- (Escrow.whileClaiming): its lines are that call's until it returns.
+---@param contractId string|nil
+---@return boolean
+function Escrow.claimRunning(contractId)
+    return contractId ~= nil and claiming[contractId] ~= nil
 end
 
 --- Do now what the next start would do (Recover) to a line `releasing` that
@@ -1512,7 +1534,7 @@ end
 ---@param staff table { disposition = 'delivered', by = who }, kept on the line
 ---@return boolean settled
 ---@return table|nil claim nil when it could not be claimed; else { owed = what it
---- still owed as claimed, why = the refusal ('queued' | 'not_left' | 'pay_only' |
+--- still owed as claimed, why = the refusal ('queued' | 'locked' | 'not_left' | 'pay_only' |
 --- 'owed_elsewhere'), owed_to = whom it is owed to, lost = claimed and its settle refused }
 function Escrow.settleDelivered(lineId, recipientCid, staff)
     return withClaims(function(mine)
