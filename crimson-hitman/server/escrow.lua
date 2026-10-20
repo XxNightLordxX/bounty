@@ -662,6 +662,20 @@ local takeUnlocked
 --- the loser is told the contract is busy and nothing is charged.
 local taking = {}
 
+--- Call another resource's export, treating a raise as a refusal.
+---
+--- ox_inventory's and qbx_core's calls can raise (a patched hook, a
+--- dependency mid-restart), and on the take, the rollback and the delivery
+--- a raise skipped the code that keeps the books: money charged with
+--- nothing held, or a line left in `releasing`.
+---@return boolean ok
+---@return string|nil raised the error, when it raised
+local function guarded(fn, ...)
+    local ran, result = pcall(fn, ...)
+    if not ran then return false, tostring(result) end
+    return result and true or false, nil
+end
+
 --- Confiscate the validated lines and write the escrow record as one
 --- operation. On any failure everything already taken is put back, so a
 --- partially-charged creator is not a reachable state (§3.5).
@@ -696,14 +710,22 @@ takeUnlocked = function(actor, contractId, lines)
             local line = taken[i]
             local back = false
 
+            -- Each give-back in its own pcall: one that raised stopped the
+            -- loop, and every line after it stayed taken with no row.
             if line.source == 'cash' or line.source == 'bank' then
                 back = Util.credit(actor.player, line.source, line.amount)
             elseif line.source == 'dirty' then
-                back = exports.ox_inventory:AddItem(actor.source, dirtyItemOf(line), line.amount)
+                back = guarded(function()
+                    return exports.ox_inventory:AddItem(actor.source, dirtyItemOf(line), line.amount)
+                end)
             elseif line.source == CH.SOURCE.ITEM then
-                back = exports.ox_inventory:AddItem(actor.source, line.item, line.quantity, line.metadata)
+                back = guarded(function()
+                    return exports.ox_inventory:AddItem(actor.source, line.item, line.quantity, line.metadata)
+                end)
             elseif line.source == CH.SOURCE.WEAPON then
-                back = exports.ox_inventory:AddItem(actor.source, line.item, 1, line.metadata)
+                back = guarded(function()
+                    return exports.ox_inventory:AddItem(actor.source, line.item, 1, line.metadata)
+                end)
             end
 
             if not back then
@@ -753,7 +775,7 @@ takeUnlocked = function(actor, contractId, lines)
 
     for i = 1, #lines do
         local line = lines[i]
-        local ok = false
+        local ok, raised = false, nil
 
         if line.source == 'cash' or line.source == 'bank' then
             -- Through Util.charge, which reads the balance before it
@@ -773,17 +795,34 @@ takeUnlocked = function(actor, contractId, lines)
             -- anything that moves money in that window, including another
             -- resource, and costs one balance read on a path that is already
             -- writing to the database.
-            ok = Util.charge(actor.player, line.source, line.amount)
+            ok, raised = guarded(Util.charge, actor.player, line.source, line.amount)
         elseif line.source == 'dirty' then
-            ok = exports.ox_inventory:RemoveItem(actor.source, dirtyItemOf(line), line.amount) and true or false
+            ok, raised = guarded(function()
+                return exports.ox_inventory:RemoveItem(actor.source, dirtyItemOf(line), line.amount)
+            end)
         elseif line.source == CH.SOURCE.ITEM then
             -- Names the metadata, so the slot that was staged is the slot
             -- that is taken rather than any stack of the same name.
-            ok = exports.ox_inventory:RemoveItem(actor.source, line.item, line.quantity, line.metadata) and true or false
+            ok, raised = guarded(function()
+                return exports.ox_inventory:RemoveItem(actor.source, line.item, line.quantity, line.metadata)
+            end)
         elseif line.source == CH.SOURCE.WEAPON then
-            ok = exports.ox_inventory:RemoveItem(actor.source, line.item, 1, line.metadata) and true or false
+            ok, raised = guarded(function()
+                return exports.ox_inventory:RemoveItem(actor.source, line.item, 1, line.metadata)
+            end)
         end
 
+        -- A raise is a refusal. It used to leave this loop through
+        -- Escrow.take, past the rollback, with nothing written: every line
+        -- charged before it was gone, and the stuck-create retry found no
+        -- lines to return. Whether the line that raised moved first cannot
+        -- be known from here, so the row names it for staff to check.
+        if raised then
+            Audit.financial('escrow_take_raised', actor.cid, contractId, {
+                source = line.source, item = line.item, amount = line.amount,
+                quantity = line.quantity, error = raised,
+            })
+        end
         if not ok then
             rollback()
             return false, CH.ERR.INSUFFICIENT
@@ -1123,30 +1162,49 @@ function Escrow.deliver(recipientCid, line)
         -- with nothing delivered: gone from escrow, never arrived, and no
         -- record that anyone was still owed it.
         return Util.credit(recipient, account, amount)
+    end
 
-    elseif line.source == 'dirty' then
-        local name = dirtyItemOf(line)
-        if not exports.ox_inventory:CanCarryItem(src, name, line.amount) then return false end
-        return exports.ox_inventory:AddItem(src, name, line.amount) and true or false
-
+    -- Each call inside guarded. A CanCarryItem that raised gave nothing, so
+    -- the line is not delivered and the caller keeps it owed. An AddItem
+    -- that raised may have given it first: that is a give whose result is
+    -- unknown, which §14.12 treats as delivered and never gives twice, loss
+    -- over duplication, with the row that lets staff restore it by hand.
+    -- Either way the release goes on to keep its books, where a raise used
+    -- to leave the line in `releasing` until the next restart's recovery.
+    local name, count, metadata
+    if line.source == 'dirty' then
+        name, count = dirtyItemOf(line), line.amount
     elseif line.source == CH.SOURCE.ITEM then
-        if not exports.ox_inventory:CanCarryItem(src, line.item, line.quantity) then return false end
         -- The snapshot goes back exactly as it was taken. Without it a worn
         -- item returns pristine and a container returns as a fresh empty
         -- one, which mints value in the first case and destroys it in the
         -- second (§9.4).
-        return exports.ox_inventory:AddItem(src, line.item, line.quantity, line.metadata) and true or false
-
+        name, count, metadata = line.item, line.quantity, line.metadata
     elseif line.source == CH.SOURCE.WEAPON then
-        if not exports.ox_inventory:CanCarryItem(src, line.item, 1) then return false end
         -- The snapshot goes back exactly as it was taken: serial, attachments
         -- and durability all restored (§9.4). Bar the name of an anonymous
         -- client, to anybody else (handedOver).
-        return exports.ox_inventory:AddItem(src, line.item, 1, handedOver(recipientCid, line))
-            and true or false
+        name, count, metadata = line.item, 1, handedOver(recipientCid, line)
+    else
+        return false
     end
 
-    return false
+    -- CanCarryItem answers nil for an item it does not know.
+    local fits = guarded(function()
+        return exports.ox_inventory:CanCarryItem(src, name, count)
+    end)
+    if not fits then return false end
+
+    local gave, raised = guarded(function()
+        return exports.ox_inventory:AddItem(src, name, count, metadata)
+    end)
+    if raised then
+        Audit.financial('escrow_deliver_raised', recipientCid, line.contract_id, {
+            line = line.id, source = line.source, item = name, count = count, error = raised,
+        })
+        return true
+    end
+    return gave
 end
 
 --- What a contract holds, split by money source.

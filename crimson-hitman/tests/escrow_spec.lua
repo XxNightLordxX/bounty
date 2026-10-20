@@ -300,6 +300,57 @@ describe('escrow release', function()
         eq(#s.storage.readPending('HITMAN01'), 1, 'queued for retry')
     end)
 
+    -- ox_inventory's calls are another resource's exports. One that raised
+    -- left Escrow.deliver mid-release, so the line sat in `releasing`, owed
+    -- to nobody and queued for nobody, until the next restart's recovery.
+    it('keeps the line owed when the inventory raises before giving', function()
+        local s, f = seed()
+        local real = exports.ox_inventory.CanCarryItem
+        exports.ox_inventory.CanCarryItem = function() error('CanCarryItem exploded', 0) end
+        local ran, moved, result = pcall(s.escrow.release, 'ct1', 'HITMAN01',
+            CH.PORTION.BASELINE, 'test')
+        exports.ox_inventory.CanCarryItem = real
+        truthy(ran, 'a raise in the inventory does not escape the release')
+        eq(result.pending, 1, 'nothing was given, so the item line is still owed')
+
+        local line
+        for _, l in ipairs(s.storage.readEscrow('ct1')) do
+            if l.source == 'item' then line = l end
+        end
+        eq(line.state, CH.ESCROW_STATE.HELD, 'back in held, not left releasing')
+        eq(line.owed_to, 'HITMAN01')
+        eq(#s.storage.readPending('HITMAN01'), 1, 'queued for retry')
+    end)
+
+    -- An AddItem that raised may have given the item first. §14.12: a give
+    -- whose result is unknown is treated as delivered and never given
+    -- twice, and the row is what lets staff restore it by hand.
+    it('settles, never re-gives, a line whose give raised, and names it', function()
+        local s, f = seed()
+        local real = exports.ox_inventory.AddItem
+        exports.ox_inventory.AddItem = function() error('AddItem exploded', 0) end
+        local ran, moved, result = pcall(s.escrow.release, 'ct1', 'HITMAN01',
+            CH.PORTION.BASELINE, 'test')
+        exports.ox_inventory.AddItem = real
+        truthy(ran, 'a raise in the inventory does not escape the release')
+        eq(result.pending, 0, 'not queued to be given a second time')
+
+        local line
+        for _, l in ipairs(s.storage.readEscrow('ct1')) do
+            if l.source == 'item' then line = l end
+        end
+        eq(line.state, CH.ESCROW_STATE.SETTLED, 'settled, not left releasing')
+        eq(#s.storage.readPending('HITMAN01'), 0)
+
+        s.audit.flush()
+        local named
+        for _, row in ipairs(s.storage.readAudit(200)) do
+            if row.action == 'escrow_deliver_raised' then named = row end
+        end
+        truthy(named, 'the line is named for staff')
+        eq(named.detail.line, line.id)
+    end)
+
     it('delivers queued escrow on the next login', function()
         local s, f = seed()
         Env.players[3]._inventoryFull = true

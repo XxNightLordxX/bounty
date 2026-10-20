@@ -32,8 +32,17 @@ The config ships in `json` mode: everything lives in files under
 `audit-<day>.jsonl` log and `photos/`), which is what to back up. In `mysql`
 mode the tables are created automatically on first start, as `utf8mb4` so an
 emoji in a reason or a non-Latin character name is kept whatever the
-database defaults to (a table an older version made is converted at start);
-MariaDB and MySQL 8 both work. Nothing to import either way. A busy server
+database defaults to (a table an older version made is converted at start),
+and as InnoDB, which the escrow writes need to be all-or-nothing; MariaDB and
+MySQL 8 both work. Nothing to import either way. The tables are
+`crimson_contracts`, `crimson_escrow`, `crimson_hitmen`, `crimson_amendments`,
+`crimson_messages`, `crimson_ledger`, `crimson_pending`, `crimson_stats`,
+`crimson_audit`, `crimson_reveals`, `crimson_mutes`, `crimson_photos` and
+`crimson_meta`. In `mysql` mode your database user needs `CREATE`, `ALTER`
+and `INDEX` on the database, because each start also adds any column or index
+a newer version needs. If your user may not create tables, import
+`install/sql/crimson_hitman.sql` once, as a user that may, before the first
+start: it holds the same statements, word for word. A busy server
 (thousands of contracts a month) is better on `mysql` from the start: see
 *Changing storage mode* before switching a server that already has players'
 money in one.
@@ -100,7 +109,7 @@ contract) against what those players are carrying.
 | Setting | Why it matters |
 |---|---|
 | `Config.Completion.PhotoStorage` | Where kill photos are kept. `'server'` (as shipped) needs no image host: the hitman takes the photo in the app's own viewfinder and it is kept as a file in `crimson-hitman/data/photos/`, which the server must be able to write to. `'host'` uses lb-phone's own camera and the image host it uploads to, keeping only the link. Either way only the client who placed the contract sees the photo, once (see *The kill photo* below). `/ch-diag` says which is in use |
-| `Config.Completion.PhotoMaxSide` / `PhotoMaxBytes` | `'server'` storage only: the app shrinks each kill photo until its longest side is at most this many pixels (1280) and it weighs at most this many bytes (600000; at most 1500000), and the server refuses anything bigger. FXServer moves a photo at about 150 KB a second, so the default takes about four seconds each way |
+| `Config.Completion.PhotoMaxSide` / `PhotoMaxBytes` | `'server'` storage only: the app shrinks each kill photo until its longest side is at most this many pixels (1280) and it weighs at most this many bytes (600000; at most 1500000), and the server refuses anything bigger. FXServer moves a photo at about 150 KB a second, so the default takes about four seconds each way. The server also decodes each photo when it arrives and encodes it again when the client opens it, on its main thread and roughly in proportion to its size: about 80 ms each at the default and a fifth of a second at 1500000, each a single hitch (estimates; measure yours with the in-game checklist) |
 | `Config.Completion.PhotoPublicUrl` | `'server'` storage only: the public **https** address this server serves photos from when a client saves one to their phone's Photos, such as `'https://photos.example.com/crimson-hitman'`. Unset (as shipped), the server's `web_baseUrl` is used. Add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. See *No image host?* below; `/ch-diag` says which address is used and whether lb-phone takes it |
 | `Config.Completion.KeptPhotoDays` | How many days a photo kept for its client in the app (because their phone could not save it) lasts. Unset (as shipped), it stays until they delete it. `/ch-diag` says how many are kept and how much disk they take |
 | `Config.Completion.ExtraPhotoHosts` | `'host'` storage only. Kill photos are accepted only from image hosts lb-phone itself allows uploads from, plus these. Ships with Fivemanage (`fivemanage.com`, `fmfile.com`), lb-phone's default uploader. If `/ch-diag` shows `photo hosts: 0`, or kill photos are refused with "not on this server's allow list", add your phone's upload host here (a bare domain, no `https://`). lb-phone's camera upload must work first |
@@ -112,6 +121,7 @@ contract) against what those players are carrying.
 | `Config.Immunity` | Playtime and session floors that protect new players from being farmed |
 | `Config.Targeting.AllowBrowseAll` / `AllowNearby` | How a client finds a target. Browsing everyone online is on (a roster of names, no positions). The nearby list is **off**: on, it puts names to the unmasked people around a player, through walls, and boot warns while it is (see *Placing a contract*) |
 | `Config.Notifications.ParanoidAlertJitter` | How long (1 to 10 minutes, drawn per contract) a new contract is kept from its target: their alert, their On me tab, `/cleanse` and the request for their headshot all wait for it, so none of them dates the placement |
+| `Config.Mugshot.RemoveBackground` | Whether target headshots have their background cut out (`false`, as shipped). On, `MugShotBase64` loads a 2.6 MB model into the target's game for every render and never frees it, set off by other players viewing a board that names them; off, the headshot keeps the game's grey backdrop |
 | `Config.Diagnostics.SlowJobMs` | A maintenance job (the tick's, or the death sampler's pass) slower than this many milliseconds (5) prints one console warning naming it, at most every five minutes per job; `0` turns it off. `/ch-diag` lists the slowest jobs either way |
 
 ### Dirty money
@@ -398,6 +408,11 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
   login, never dropped. A contract the server went down while placing (its
   reward taken, the contract itself never stored) has its reward handed back
   to the client at the next start, once, and nobody else is told it existed.
+  A reward whose charge fails part-way with an error from `qbx_core` or
+  `ox_inventory` is handed back line by line. Where such an error leaves it
+  unknown whether one line moved, the audit log names that line for you to
+  check (`escrow_take_raised` on a charge, `escrow_deliver_raised` on a
+  payout, which is never given a second time).
 - **Identity is never taken from a payload.** Every handler resolves the
   acting player from the connection. Citizen ids never reach a client;
   searches and threads use expiring per-viewer handles.
@@ -485,6 +500,22 @@ waits, the server runs everything else, and that is not this job's work.
 
 ---
 
+## Troubleshooting
+
+| Issue | Solution |
+|---|---|
+| A player cannot find the app | It is in the phone's App Store, not on the home screen: each player downloads it. Set `Config.App.DefaultInstalled = true` to put it on every eligible phone. Players with a barred job (`Config.BlockedJobTypes` / `Config.BlockedJobNames`, any job they hold) never see it. `/ch-diag <player id>` says why it is not showing for them |
+| A staff command answers "Not authorised" in game | Grant the ACE in `server.cfg`: `add_ace group.admin crimson.admin allow` (and `crimson.identity` for `/ch-whois`). The server console never refuses, so you can run any of them there meanwhile |
+| The console keeps printing `[crimson-hitman] still waiting after ...s for ... resource(s) to start` | The lines under it name `qbx_core` or `ox_inventory`, which is not started or runs under another name. Start it under that name; a renamed or forked copy never matches |
+| The app stopped answering after you restarted `qbx_core`, `ox_inventory` or `oxmysql` | FiveM stops this resource with them and does not start it again. Run `ensure crimson-hitman` |
+| `json` mode refuses to start on an empty `data/` | You replaced the resource folder and lost `data/`, which is the store. Put the old `data/` back and start it again. To start empty on purpose, run `set crimson_hitman_new_store 1` in the console, start the resource, then leave it unset (see *Updating*) |
+| The resource refuses to start after you changed `Config.Database.Mode` | The mode you left still holds players' money, and the console says where and how much. Switch back, let those contracts finish or cancel them, then switch. `Config.Database.AllowModeSwitch = true` starts anyway, for money you have settled by hand (see *Changing storage mode*) |
+| `/ch-diag` shows `photo hosts: 0`, or kill photos are refused as "not on this server's allow list" | `'host'` storage only. Add your phone's upload host to `Config.Completion.ExtraPhotoHosts` (a bare domain), and check that lb-phone's own camera upload works |
+| Save to Photos keeps the photo in the app instead | `'server'` storage needs a public https address: set `Config.Completion.PhotoPublicUrl` or `web_baseUrl`, and add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. `/ch-diag` says which address it uses and whether it reaches this resource |
+| The startup warning says `Config.Audit.Webhook` is ignored | The URL in `config.lua` has already been sent to every player. Regenerate it in Discord and set the new one in `server.cfg` with `set crimson_hitman_webhook "..."` (never `setr`) |
+
+---
+
 ## Testing
 
 The suite runs the real server modules against a stubbed FiveM runtime, so it
@@ -497,7 +528,7 @@ CH_SUITES=journeys_spec lua crimson-hitman/tests/run.lua   # one area, in second
 
 Five kinds of check, because each catches what the others cannot:
 
-- **Server suite** (about 2,200 tests) — escrow arithmetic, the state machine,
+- **Server suite** (about 2,300 tests) — escrow arithmetic, the state machine,
   every payout and refund path, whole player journeys, every action against
   every contract state, deliberate exploit attempts, storage conformance
   across all three backends, and randomised simulations asserting that no

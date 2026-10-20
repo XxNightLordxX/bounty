@@ -597,6 +597,22 @@ local function hitmanContractStates(sql, params)
     return out
 end
 
+--- Every hitman row whose contract is in one of the named states, in
+--- (accepted_at, id) order: the death sampler's one roster read a pass.
+local function liveHitmen(sql)
+    local wanted = {}
+    local list = sql:match("c%.state IN %(([^)]*)%)")
+    if not list then error('mysql_exec: cannot read the contract states in: ' .. sql) end
+    for state in list:gmatch("'([^']*)'") do wanted[state] = true end
+    local out = {}
+    for _, hitman in pairs(Exec.tables.crimson_hitmen or {}) do
+        local contract = (Exec.tables.crimson_contracts or {})[hitman.contract_id]
+        if contract and wanted[contract.state] then out[#out + 1] = copy(hitman) end
+    end
+    sortRows(out, { 'accepted_at', 'id' }, false)
+    return out
+end
+
 local function pruneLedger(params)
     local cid, depth = params[1], tonumber(params[3]) or 10
     local mine = {}
@@ -660,6 +676,9 @@ function Exec.run(sql, params)
         return contractsInvolving(params)
     end
     if flat:find('^SELECT c%.state AS state') then return hitmanContractStates(flat, params) end
+    if flat:find('^SELECT h%.%* FROM crimson_hitmen h JOIN crimson_contracts c') then
+        return liveHitmen(flat)
+    end
     -- A count with a condition is the rows the same SELECT * would return.
     if flat:find('^SELECT COUNT%(%*%) FROM [%w_]+ WHERE ') then
         return #select_(flat:gsub('^SELECT COUNT%(%*%)', 'SELECT *', 1), params)

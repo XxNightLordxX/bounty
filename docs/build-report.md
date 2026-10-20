@@ -68,12 +68,13 @@ You said to use my judgement. These are the ones that were mine:
 sh crimson-hitman/tests/all.sh
 ```
 
-- **301 server tests** — escrow arithmetic, the state machine, every payout
-  and refund path, deliberate exploit attempts, storage conformance across
-  all three backends, and a randomised simulation asserting that no sequence
-  of operations creates or destroys value.
-- **29 UI tests** — the real `ui/app.js` driven through a minimal DOM against
-  a scripted server.
+- **2,322 server tests** (the run of 20 October 2026) — escrow arithmetic,
+  the state machine, every payout and refund path, deliberate exploit
+  attempts, storage conformance across all three backends, and a randomised
+  simulation asserting that no sequence of operations creates or destroys
+  value.
+- **541 UI tests** (the same run) — the real `ui/app.js` driven through a
+  minimal DOM against a scripted server.
 - **Static checks** — no SQL built by concatenation, no handler reading an
   identity from a payload, every module the resource loader asks for exists,
   every event name agrees across UI/client/server, every config key is read,
@@ -124,8 +125,11 @@ paths.
 
 Given that every completed review round found something real, the honest
 expectation is that a live server will find more. The audit log is there for
-exactly that: `SELECT * FROM crimson_audit ORDER BY id DESC LIMIT 50` shows
-every financial movement and every refused attempt, with the reason.
+exactly that: it holds every financial movement and every refused attempt,
+with the reason. In `json` mode (the shipped one) it is
+`crimson-hitman/data/audit-<day>.jsonl`; in `mysql` mode
+`SELECT * FROM crimson_audit ORDER BY id DESC LIMIT 50`; and
+`/ch-timeline <contract>` shows one contract's trail in either.
 
 ## What I would want you to look at
 
@@ -133,8 +137,10 @@ every financial movement and every refused attempt, with the reason.
   back to QBox character metadata. If your build does not store `playtime`
   there, the rule is skipped and the console says so at startup. Point it at
   whatever your server uses.
-- **`Config.Database.Mode`** defaults to `mysql`. Tables are created on first
-  start.
+- **`Config.Database.Mode`** defaults to `json` (as of 20 October 2026): no
+  database at all, everything under `crimson-hitman/data/`. In `mysql` mode
+  the tables are created on first start; `install/sql/crimson_hitman.sql`
+  holds the same statements for a database user that may not create tables.
 - **`Config.Progression.Resource`** is `sc-blackmarket`. Trust per contract is
   10 for a kill and 20 for a live delivery — tune to taste.
 - **The rate limits** in `Config.Cooldowns` are deliberately tight. If normal

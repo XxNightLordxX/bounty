@@ -277,9 +277,9 @@ describe('the client handed something it did not expect', function()
     end)
 
     it('still delivers a real result after a malformed one', function()
-        -- The handler forwards every reply to the open app as well as
-        -- resolving the request that asked. A throw skipped both, so the
-        -- app was told nothing either.
+        -- A throw out of the handler skipped resolving the request that
+        -- asked, so the page waited out its timeout on a call the server
+        -- had answered.
         Env.reset()
         Client.boot()
 
@@ -296,17 +296,14 @@ describe('the client handed something it did not expect', function()
         })
         truthy(Client.answered, 'and the real reply still lands')
 
-        local forwarded
+        -- And only there: the page acts on pushes alone, and every reply it
+        -- uses reaches it once, as the answer to its own fetch. Mirrored as
+        -- well, each reply was an export and an NUI message thrown away.
         for _, call in ipairs(Client.phone) do
-            if call.call == 'SendCustomAppMessage' then forwarded = call end
+            falsy(call.call == 'SendCustomAppMessage' and call.message
+                and call.message.type == 'result',
+                'a reply reaches the page once, as its answer')
         end
-        truthy(forwarded, 'and the open app is told about it')
-        eq(forwarded.message.event, 'mine')
-        eq(forwarded.message.ok, true)
-        -- Told, and no more: the page acts only on pushes, and every reply
-        -- it uses reaches it once, as the answer to its own fetch. Mirrored
-        -- in full, a board of fifteen headshots crossed the bridge twice.
-        eq(forwarded.message.data, nil, 'a reply reaches the page once, as its answer')
     end)
 end)
 
@@ -872,6 +869,19 @@ describe('the viewfinder, on a server that keeps its photos itself', function()
         end })
         spec.onClose()
         _G.exports = real
+        eq(#called('DisableWalkableCam'), 1)
+    end)
+
+    -- `restart crimson-hitman` with the viewfinder open: the onClose above
+    -- is a function in the resource that just stopped, so only this
+    -- resource's own stop handler can turn the camera off.
+    it('turns the camera off when this resource stops mid-shot', function()
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:verificationCamera', { on = true })
+        truthy(Client.fire('onResourceStop', 'some-other-resource') ~= false)
+        eq(#called('DisableWalkableCam'), 0, 'another resource stopping is not ours')
+        Client.fire('onResourceStop', 'crimson-hitman')
         eq(#called('DisableWalkableCam'), 1)
     end)
 
@@ -1623,13 +1633,35 @@ describe('rendering your own headshot', function()
         truthy(tostring(sent[1]):find('data:image/png', 1, true), tostring(sent[1]))
     end)
 
-    it('renders the caller own ped, transparent', function()
+    -- Cutting the background out loads a 2.6 MB segmentation model in
+    -- MugShotBase64's page on every render and never frees it, on the
+    -- target's game, set off by somebody else viewing the board.
+    it('renders the caller own ped, background left in by default', function()
         booted()
         Client.fire('crimson-hitman:renderMugshot')
         local rendered = Natives.calls.mugshots[1]
         truthy(rendered, 'the renderer must have been called')
         eq(rendered.ped, 1003, 'a player renders themselves and nobody else')
-        eq(rendered.transparent, true)
+        eq(rendered.transparent, false)
+    end)
+
+    it('cuts the background out only when the server owner asks', function()
+        booted()
+        Config.Mugshot.RemoveBackground = true
+        Client.fire('crimson-hitman:renderMugshot')
+        Config.Mugshot.RemoveBackground = false
+        eq(Natives.calls.mugshots[1].transparent, true)
+    end)
+
+    it('sends the image as a latent event', function()
+        booted()
+        Client.fire('crimson-hitman:renderMugshot')
+        local sent
+        for _, call in ipairs(Client.toServer) do
+            if call.name == 'crimson-hitman:mugshot' then sent = call end
+        end
+        truthy(sent and sent.latent, 'tens of KB, sent paced rather than all at once')
+        truthy((sent.bps or 0) > 0)
     end)
 
     it('does not render again inside the floor', function()
@@ -2048,6 +2080,25 @@ describe('reporting your own death', function()
         meta.isdead = false
         Client.ticks(10)
         eq(reported('iRevived'), 0, 'the new character reported a revive')
+    end)
+
+    it('watches nobody while no character is loaded', function()
+        -- 17mov's character selection, between unload and the next load.
+        -- qbx_core's own player data still holds the last character there,
+        -- and one who logged out dead read as a fresh death, then the next
+        -- character standing up as a revive the server had no death for.
+        watching()
+        local meta = underMedical()
+        Client.fire('QBCore:Client:OnPlayerUnload')
+        Client.state.isLoggedIn = false
+        meta.isdead = true
+        Client.ticks(3)
+        eq(reported('iDied'), 0, 'no death reported for nobody')
+
+        meta.isdead = false
+        Client.state.isLoggedIn = true
+        Client.ticks(10)
+        eq(reported('iRevived'), 0, 'the next character has nothing to recover from')
     end)
 
     it('reports a second death after a defibrillator, and one revive', function()

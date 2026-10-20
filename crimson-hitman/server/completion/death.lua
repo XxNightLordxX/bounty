@@ -648,8 +648,12 @@ function Death.startSampler()
     -- Live contracts only: the pass looks at nothing else, and the whole
     -- table holds every finished contract the retention keeps (thirty days
     -- of them as shipped). On mysql that was every row of it, every second.
+    --
+    -- And every roster in one read alongside: one each was 1 + N awaited
+    -- queries a second on mysql, for as long as the server ran.
     local function pass()
-        Death.watchTargets(Storage.liveContracts())
+        local live = Storage.liveContracts()
+        Death.watchTargets(live, Storage.liveHitmen and Storage.liveHitmen() or nil)
     end
 
     CreateThread(function()
@@ -735,7 +739,10 @@ end
 --- Refresh baselines for every player who is the target of a live contract,
 --- and note which of its hitmen are near them.
 --- Bounded by the number of live contracts, not the player count.
-function Death.watchTargets(contracts)
+---@param contracts table[]
+---@param rosters table<string, table[]>|nil each contract's hitmen, read
+---   once for the pass (Storage.liveHitmen); read per contract without it
+function Death.watchTargets(contracts, rosters)
     local watched = 0
     local radius = (Config.Informant.ProximityRadius or 120.0)
     local radius2 = radius * radius
@@ -804,7 +811,7 @@ function Death.watchTargets(contracts)
                 end
 
                 local targetCoords = GetEntityCoords(GetPlayerPed(target.source))
-                local hitmen = Storage.readHitmen(c.id)
+                local hitmen = rosters and (rosters[c.id] or {}) or Storage.readHitmen(c.id)
                 for j = 1, #hitmen do
                     local hitman = hitmen[j]
                     if hitman.state == 'active' then

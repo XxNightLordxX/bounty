@@ -11,11 +11,19 @@ A staff account that can adjust money and spawn items makes this much faster.
 
 ## 1. It starts
 
-- [ ] `ensure crimson-hitman` produces `[crimson-hitman] started in mysql mode`
+- [ ] `ensure crimson-hitman` produces `[crimson-hitman] started in json mode`
+      (the shipped `Config.Database.Mode`), and once a contract is placed its
+      files are in `crimson-hitman/data/` (`store.json`, `contracts/`)
 - [ ] No errors in `txAdmin` console on start or on a `restart crimson-hitman`
-- [ ] The `crimson_*` tables exist in the database, `utf8mb4` (`SHOW TABLE
-      STATUS LIKE 'crimson%'` shows `utf8mb4_unicode_ci`), on MariaDB as on MySQL
 - [ ] Restarting twice in a row is clean (recovery runs, nothing duplicates)
+- [ ] An admin with `crimson.admin` (`add_ace group.admin crimson.admin allow`)
+      can run `/ch-diag` in game; a player without it is told "Not
+      authorised" and how to grant it
+- [ ] **mysql mode only** (`Config.Database.Mode = 'mysql'`, on a copy of the
+      server): the console says `started in mysql mode`; the `crimson_*`
+      tables exist in the database as InnoDB and `utf8mb4` (`SHOW TABLE STATUS
+      LIKE 'crimson%'` shows `InnoDB` and `utf8mb4_unicode_ci`), on MariaDB as
+      on MySQL; and a contract reason with an emoji is accepted
 - [ ] `restart lb-phone`: crimson-hitman stays started (`ensure` not needed)
       and the app is back on an open phone within a few seconds
 - [ ] json mode, on a copy of the server: move `data/` out of the folder and
@@ -47,9 +55,17 @@ A staff account that can adjust money and spawn items makes this much faster.
       the app is open: they sit on a pale band at the top and bottom, on
       every tab and over the viewfinder. Switch to dark with the app open:
       the bands go and the page is dark to its edges
-- [ ] A `police` character does **not** see it
-- [ ] So do `bcso`, `sheriff`, `trooper`, `sasp`, `fib`, `ranger`, `ambulance`, `fire`, `doj`, `lawyer`
-- [ ] An officer who clocks **off duty** still cannot open it
+- [ ] A `sast` character does **not** see it, on duty or off
+- [ ] Nor does an `fib` character, on duty or off, or an `ambulance` character
+- [ ] A SAST officer who switches their primary job to a civilian one with
+      `sc-multijob` (F9) is still barred, and their phone says which job
+      they hold bars them
+- [ ] Take SAST off that character's jobs altogether: the app is in their App
+      Store again within about ten seconds (the maintenance tick,
+      `Config.Audit.FlushIntervalMs`; an estimate until you time it)
+- [ ] If your server also has other law, medical or legal jobs (`police`,
+      `bcso`, `sheriff`, `trooper`, `sasp`, `ranger`, `fire`, `doj`,
+      `lawyer`), one character of each does not see it either
 - [ ] Nothing appears in console when a blocked player's phone opens
 
 ## 3. Placing a contract
@@ -117,6 +133,9 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] Take photo sends it (the button reads "Sending…") and the viewfinder
       closes; a file appears in `crimson-hitman/data/photos/` and nothing new
       is in the hitman's Photos app or on the image host
+- [ ] Open the viewfinder and, with it still open, run `restart
+      crimson-hitman` in the console: the phone's camera goes off with it and
+      the phone works as normal
 - [ ] On `'host'` storage, Verify kill opens lb-phone's camera instead, on
       the rear camera, and its flip key (UP) does not turn it to the selfie
       camera
@@ -230,6 +249,7 @@ uploads, and with neither. Restart the resource between them.
 - [ ] A second acceptance raises another, with the count now 2
 - [ ] The creator is **never** named in any of it
 - [ ] The listing shows the LAW ENFORCEMENT flag and warns before accepting
+- [ ] All of the above for a target on `sast` and for one on `fib`
 
 ## 8. Counter-play
 
@@ -287,7 +307,14 @@ uploads, and with neither. Restart the resource between them.
 - [ ] A payout to a player with a full inventory is delivered on their next login
 - [ ] ...and, with them still connected through a `restart crimson-hitman`,
       within a minute of making room, without a relog
-- [ ] A contract reason with an emoji is accepted in mysql mode
+- [ ] A target with a live contract on them who logs out through the
+      character selector, waits more than a minute and comes back as the same
+      character cannot be named in a new contract for
+      `Config.Immunity.MinTargetSessionMinutes` (10): "They have only just
+      come online"
+- [ ] A character who logs out dead (or in last stand) and comes back as
+      another, alive, leaves no `revive_claim_without_death` row in the audit
+      log and nothing about it on the staff webhook
 - [ ] Right after a payout, the player's `money` in the `players` table already
       shows it (qbx_core's `Save`), not five minutes later
 
@@ -295,6 +322,15 @@ uploads, and with neither. Restart the resource between them.
 
 - [ ] `resmon` for `crimson-hitman` stays near 0.01ms idle
 - [ ] With 10+ live contracts and the app open, it stays under 0.05ms
+- [ ] Opening the app on a board of fifteen targets: their faces arrive within
+      a few seconds, all at once, and the reading stays under 0.35ms. The
+      faces keep the game's grey backdrop (`Config.Mugshot.RemoveBackground =
+      false`), and the audit log has no `mugshot_too_large` row
+- [ ] On `'server'` storage, send a kill photo and then open it as the client
+      while watching the server's frame time (txAdmin's performance chart, or
+      the console's `profiler record`): note the hitch on each. Expect about
+      80 ms at the shipped `Config.Completion.PhotoMaxBytes` (600000) and a
+      fifth of a second at 1500000; these are estimates until you measure them
 - [ ] A kidnap countdown running does not spike it
 - [ ] No console spam during normal play, and no
       `maintenance job ... took ... ms` warning; `/ch-diag` lists the
@@ -310,7 +346,10 @@ uploads, and with neither. Restart the resource between them.
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.
-In `mysql` mode:
+`/ch-timeline <contract>` shows one contract's state, escrow lines and audit
+trail in any mode. For the whole log, in `json` mode (the shipped one) read
+the day's file, `crimson-hitman/data/audit-<day>.jsonl`, one row a line. In
+`mysql` mode:
 
 ```sql
 SELECT * FROM crimson_audit ORDER BY id DESC LIMIT 50;

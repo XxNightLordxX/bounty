@@ -610,6 +610,38 @@ describe('finished contracts do not accumulate forever', function()
         end
     end)
 
+    -- The death sampler's one roster read a pass, in place of a readHitmen
+    -- per running contract: on mysql those were 1 + N awaited queries a
+    -- second. It must answer exactly what readHitmen does, for the running
+    -- contracts and no others.
+    it('reads every running contract\'s hitmen at once, as readHitmen would', function()
+        for _, backend in ipairs(backends()) do
+            local store = backend.store
+            for i, state in ipairs({ CH.STATE.ACTIVE, CH.STATE.ACCEPTED, CH.STATE.COMPLETED }) do
+                local c = contractFixture('ctlive0' .. i)
+                c.state = state
+                store.writeContract(c)
+                for j = 2, 1, -1 do
+                    store.addHitman({ id = 'h' .. i .. j, contract_id = c.id,
+                        hitman_cid = 'HIT' .. i .. j, state = 'active',
+                        accepted_at = 100 + j, alias = 'Op' })
+                end
+            end
+
+            local rosters = store.liveHitmen()
+            for i = 1, 2 do
+                local id = 'ctlive0' .. i
+                local expected = store.readHitmen(id)
+                eq(#(rosters[id] or {}), #expected, backend.name .. ': ' .. id)
+                for k = 1, #expected do
+                    eq(rosters[id][k].hitman_cid, expected[k].hitman_cid,
+                        backend.name .. ': in readHitmen order')
+                end
+            end
+            eq(rosters['ctlive03'], nil, backend.name .. ': a finished contract is not running')
+        end
+    end)
+
     it('json: deletes the pruned contract\'s file from the resource folder', function()
         -- SaveResourceFile resolves against the resource; os.remove resolves
         -- against the server's working directory. The relative path named a
@@ -1973,6 +2005,55 @@ describe('json sharding', function()
     end)
 end)
 
+--- The SQL an owner can import by hand is the SQL mysql mode runs.
+---
+--- install/sql/crimson_hitman.sql is for a database user that may not
+--- create tables. A copy that drifted from server/storage/mysql.lua would
+--- make tables this version does not expect, and the first a server heard
+--- of it would be a refused write with money in it.
+describe('the install SQL', function()
+    local function statements(sql)
+        local out = {}
+        -- Comments off, then one statement per semicolon, whitespace squashed.
+        sql = sql:gsub('%-%-[^\n]*', '')
+        for stmt in sql:gmatch('([^;]+);') do
+            local flat = stmt:gsub('%s+', ' '):gsub('^%s+', ''):gsub('%s+$', '')
+            if flat ~= '' then out[#out + 1] = flat end
+        end
+        return out
+    end
+
+    it('creates exactly the tables mysql mode creates, word for word', function()
+        Exec.install(Natives)
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local m = require('crimson-hitman.server.storage.mysql')
+        -- The statements as mysql.lua sends them, before the executor
+        -- squashes them.
+        local realRun, raw = Exec.run, {}
+        Exec.run = function(sql, params)
+            if type(sql) == 'string' and sql:find('^%s*CREATE TABLE') then raw[#raw + 1] = sql end
+            return realRun(sql, params)
+        end
+        local ok, err = pcall(m.open)
+        Exec.run = realRun
+        truthy(ok, tostring(err))
+        local ran = statements(table.concat(raw, ';\n') .. ';')
+
+        local handle = io.open('crimson-hitman/install/sql/crimson_hitman.sql', 'r')
+        truthy(handle, 'install/sql/crimson_hitman.sql must ship')
+        local shipped = statements(handle:read('a'))
+        handle:close()
+
+        eq(#ran, 13, 'the thirteen crimson_* tables')
+        eq(#shipped, #ran, 'one statement for every table')
+        for i = 1, #ran do
+            eq(shipped[i], ran[i], 'statement ' .. i .. ' as mysql mode runs it')
+            truthy(ran[i]:find('ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci$'),
+                'InnoDB and utf8mb4: ' .. ran[i]:sub(1, 60))
+        end
+    end)
+end)
+
 --- Every function the mysql backend exposes, executed.
 ---
 --- The executing simulator raises on a statement it does not understand, so
@@ -2005,6 +2086,7 @@ describe('every mysql statement is executable', function()
             function() m.settleEscrowLine('c1:1','A') end,
             function() m.addHitman({ id='h1', contract_id='c1', hitman_cid='H', state='active', accepted_at=1, alias='Op' }) end,
             function() m.readHitmen('c1') end,
+            function() m.liveHitmen() end,
             function() m.readHitman('c1','H') end,
             function() m.updateHitman('h1', { claims = 1 }) end,
             function() m.countHitmanContracts('H', { accepted = true }) end,

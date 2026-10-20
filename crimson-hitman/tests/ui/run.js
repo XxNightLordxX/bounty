@@ -268,6 +268,25 @@ function settle() {
   });
 }
 
+/** Let every queued headshot batch go, a second at a time.
+ *
+ * The page asks for faces five at a time, a second apart (FACE_BATCH_MS),
+ * and settle() fires only zero-delay timers. A test about what a whole
+ * page of faces does lets the batches run here. */
+async function drainFaces(app) {
+  for (let pass = 0; pass < 50; pass++) {
+    const due = app.timers.filter(function (t) {
+      return !t.repeating && !t.cleared && t.ms === 1000;
+    });
+    if (due.length === 0) { return; }
+    due.forEach(function (t) { app.timers.splice(app.timers.indexOf(t), 1); });
+    due.forEach(function (t) {
+      try { t.fn(); } catch (err) { app.thrown.push(err); }
+    });
+    await settle(); await settle();
+  }
+}
+
 /** Click a button in the rendered view by its exact label. */
 function click(app, label) {
   const match = app.view.all().filter(function (n) {
@@ -2089,6 +2108,7 @@ async function main() {
       generation = gen;
       tab(app, 'board');
       for (let i = 0; i < 4; i++) { await settle(); }
+      await drainFaces(app);
     }
     for (let gen = 2; gen <= 5; gen++) { await show(gen); }
     const afterFive = asked.length;
@@ -2101,6 +2121,59 @@ async function main() {
       eq(afterFive, 75, 'five boards of fifteen new faces');
       eq(again, 0, 'the faces on screen are kept');
       eq(oldest, 15, 'the first board\'s faces were let go, and are asked for again');
+    });
+  })();
+
+  /* Opening the app asked for a whole board page of faces in the same
+     instant as the board, Mine and the ledger: eighteen events to the server
+     at once, against a budget of ten a second per player. */
+  await (async function facesArePacedOnOpen() {
+    const rows = [];
+    for (let i = 0; i < 15; i++) {
+      const row = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+      row.id = 'ct' + String(2000000 + i);
+      row.targetImageId = 'mg7_' + String(200000 + i);
+      rows.push(row);
+    }
+    const asked = [];
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: rows, settings: {} } },
+      mine: MINE, ledger: LEDGER,
+      mugshotImage: function (body) {
+        asked.push(body.id);
+        return { ok: true, data: { id: body.id, image: 'data:image/webp;base64,' + body.id } };
+      }
+    });
+    for (let i = 0; i < 6; i++) { await settle(); }
+    const firstSecond = app.sent.length;
+    const facesFirst = asked.length;
+    const drawnEarly = app.view.all().filter(function (n) {
+      return n.tagName === 'IMG' && n._className === 'mugshot';
+    }).length;
+    await drainFaces(app);
+
+    it('stays within ten requests in the first second', function () {
+      truthy(firstSecond <= 10, firstSecond + ' requests: '
+        + app.sent.map(function (r) { return r.name; }).join(', '));
+      eq(facesFirst, 5, 'the first five faces go at once');
+    });
+
+    it('still asks for every face, once, and draws them together', function () {
+      eq(asked.length, 15, 'every face on the page');
+      eq(new Set(asked).size, 15, 'none twice');
+      eq(drawnEarly, 0, 'no half-drawn page while the rest are queued');
+      const shots = app.view.all().filter(function (n) {
+        return n.tagName === 'IMG' && n._className === 'mugshot';
+      });
+      eq(shots.length, 15, 'one redraw once the last face is in');
+      drewCleanly(app, 'a paced page of faces');
+    });
+
+    it('leaves no timer behind once every face is in', function () {
+      const left = app.timers.filter(function (t) {
+        return !t.repeating && !t.cleared && t.ms === 1000;
+      });
+      eq(left.length, 0, 'an idle board holds no face timer');
     });
   })();
 

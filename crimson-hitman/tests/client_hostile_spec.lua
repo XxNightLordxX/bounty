@@ -420,22 +420,22 @@ describe('replies arriving in a runtime that does not keep order', function()
         end
     end)
 
-    it('still tells the app about a reply nobody is waiting for', function()
-        -- A reply whose request has already timed out. The page is told a
-        -- reply came — the event, ok and err, never its data — and acts
-        -- only on pushes, so this is a courtesy that must not throw.
+    it('drops a reply nobody is waiting for, quietly', function()
+        -- A reply whose request has already timed out. The page acts only
+        -- on pushes and gets every reply it uses as the answer to its own
+        -- fetch, so mirroring replies to it was an export and an NUI
+        -- message each, thrown away on arrival: eighteen per open of the
+        -- app. Nothing is sent to it now, and nothing throws.
         ready()
+        local before = #Client.phone
         truthy(Client.fire('crimson-hitman:result',
             { rid = 4242, event = 'list', ok = true, data = {} }),
             'an unknown request id must not throw')
 
-        local sent
-        for _, call in ipairs(Client.phone) do
-            if call.call == 'SendCustomAppMessage' then sent = call.message end
+        for i = before + 1, #Client.phone do
+            falsy(Client.phone[i].call == 'SendCustomAppMessage',
+                'a reply must not be mirrored to the page: ' .. console())
         end
-        truthy(sent, 'the page must still be told: ' .. console())
-        eq(sent.type, 'result')
-        eq(sent.event, 'list')
     end)
 
     it('gives every action on the page a route to the server', function()

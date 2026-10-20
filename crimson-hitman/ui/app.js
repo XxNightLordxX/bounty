@@ -1215,11 +1215,53 @@
 
   /* ---------- target headshots ---------- */
 
-  // Fetches issued by the render now in progress. Every mugshot() call
-  // happens inside one synchronous render, so the counter reaches its peak
-  // before the first reply arrives and hits zero exactly once — one redraw
-  // for a whole page of faces, not one per face.
+  // Fetches issued by the render now in progress, queued ones included.
+  // Every mugshot() call happens inside one synchronous render, so the
+  // counter reaches its peak before the first reply arrives and hits zero
+  // exactly once — one redraw for a whole page of faces, not one per face.
   var facesInFlight = 0;
+
+  /* Faces are asked for a few at a time. Each one is an event from this
+     player to the server, and opening the app asked for a whole board page
+     of them in the same instant as the board, Mine and the ledger: eighteen
+     at once, against a budget of ten a second per player. Five now, then
+     five more each second after, so an open stays at eight. */
+  var FACES_PER_BATCH = 5;
+  var FACE_BATCH_MS = 1000;
+  var faceQueue = [];
+  var facesThisBatch = 0;
+  var faceBatchTimer = null;
+
+  function fetchFace(id) {
+    post('mugshotImage', { id: id }).then(function (r) {
+      // A reference that no longer resolves — the target re-rendered, or the
+      // entry was dropped. The null stays, so we do not ask again for this
+      // reference; the next projection carries a new one.
+      if (r.ok && r.data && r.data.image) {
+        state.images[r.data.id] = r.data.image;
+        keepFewerFaces();
+      }
+      facesInFlight--;
+      // Faces are drawn on the board, Mine and On me, and nowhere else.
+      if (facesInFlight === 0) { redrawFor(['board', 'mine', 'onme']); }
+    });
+  }
+
+  // A batch opens with the first face asked for in it and closes a second
+  // later, when whatever queued behind it goes. Nothing queued, no timer.
+  function nextFaces() {
+    while (faceQueue.length && facesThisBatch < FACES_PER_BATCH) {
+      facesThisBatch++;
+      fetchFace(faceQueue.shift());
+    }
+    if (faceBatchTimer === null && facesThisBatch > 0) {
+      faceBatchTimer = setTimeout(function () {
+        faceBatchTimer = null;
+        facesThisBatch = 0;
+        nextFaces();
+      }, FACE_BATCH_MS);
+    }
+  }
 
   /* How many faces are kept. Every new render of a target's face has a new
      reference, and every one ever seen was kept, each up to the server's
@@ -1260,18 +1302,8 @@
     // naming the same target asks once rather than once per row.
     state.images[id] = null;
     facesInFlight++;
-    post('mugshotImage', { id: id }).then(function (r) {
-      // A reference that no longer resolves — the target re-rendered, or the
-      // entry was dropped. The null stays, so we do not ask again for this
-      // reference; the next projection carries a new one.
-      if (r.ok && r.data && r.data.image) {
-        state.images[r.data.id] = r.data.image;
-        keepFewerFaces();
-      }
-      facesInFlight--;
-      // Faces are drawn on the board, Mine and On me, and nowhere else.
-      if (facesInFlight === 0) { redrawFor(['board', 'mine', 'onme']); }
-    });
+    faceQueue.push(id);
+    nextFaces();
     return null;
   }
 

@@ -1098,9 +1098,12 @@ describe('RACE F16: a throw part-way through accepting', function()
             if amount == 1500 then error('framework refused', 0) end
             return realRemove(account, amount, ...)
         end
-        local ok = pcall(s.contracts.accept, f.hitman, c.id, true)
+        -- Refused either way: Util.charge reads a raise that left the
+        -- balance where it was as not paid, rather than letting it unwind
+        -- the caller.
+        local ran, accepted = pcall(s.contracts.accept, f.hitman, c.id, true)
         fns.RemoveMoney = realRemove
-        falsy(ok)
+        falsy(ran and accepted, 'the acceptance does not stand')
         local row = s.storage.readHitman(c.id, 'HITMAN01')
         falsy(row and row.state == 'active', 'anonymous on the contract without paying for it')
         eq(money(3), before, 'and the stake came back')

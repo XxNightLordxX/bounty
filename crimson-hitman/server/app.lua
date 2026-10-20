@@ -407,13 +407,29 @@ end
 --- normal open slower.
 App.PHOTO_BPS = 500000
 
+--- How fast a headshot goes to the phone asking for it, in bytes a second.
+--- A full-size one is tens of KB; the page asks for five a second.
+App.MUGSHOT_BPS = 100000
+
+--- Replies that carry an image, sent as a latent event when they do: a
+--- headshot is tens of KB, and FiveM's documentation says a payload that
+--- size goes latent rather than holding up the client's reliable channel.
+--- The client hears both on the same event.
+local LATENT_REPLIES = { mugshotImage = App.MUGSHOT_BPS }
+
 --- Send a result back to one client. Payloads are built by the projection
 --- module, so nothing leaks here that the viewer may not see. A refusal's
 --- data is built by its handler from the asker's own figures alone.
 function App.reply(src, name, ok, err, data, rid)
-    TriggerClientEvent('crimson-hitman:result', src, {
+    local payload = {
         event = name, ok = ok and true or false, err = err, data = data, rid = rid,
-    })
+    }
+    local bps = ok and LATENT_REPLIES[name]
+    if bps then
+        TriggerLatentClientEvent('crimson-hitman:result', src, bps, payload)
+    else
+        TriggerClientEvent('crimson-hitman:result', src, payload)
+    end
 end
 
 --------------------------------------------------------------------------

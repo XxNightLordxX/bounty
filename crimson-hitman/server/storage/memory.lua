@@ -451,6 +451,26 @@ function Memory.readHitmen(contractId)
     return out
 end
 
+--- Every running contract's hitmen, by contract id. See the mysql backend:
+--- one read for the death sampler's pass instead of one per contract.
+function Memory.liveHitmen()
+    local out = {}
+    for id, c in pairs(db.contracts) do
+        if c.state == 'active' or c.state == 'accepted' then
+            local list = {}
+            for hid, h in pairs(hitmenBy[id] or {}) do
+                if db.hitmen[hid] == h then list[#list + 1] = h end
+            end
+            table.sort(list, function(a, b)
+                if a.accepted_at == b.accepted_at then return a.id < b.id end
+                return a.accepted_at < b.accepted_at
+            end)
+            out[id] = list
+        end
+    end
+    return out
+end
+
 function Memory.readHitman(contractId, cid)
     for id, h in pairs(hitmenBy[contractId] or {}) do
         if db.hitmen[id] == h and h.hitman_cid == cid then return h end

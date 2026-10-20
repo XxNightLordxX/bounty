@@ -142,7 +142,8 @@ function Client.boot(opts)
     _G.IsEntityDead = function() return Client.dead == true end
     -- What a medical resource says about this player: nil player data is a
     -- qbx_core that cannot be read, which is every test that does not set it.
-    Client.playerData, Client.state = nil, {}
+    -- The bag says a character is loaded, as qbx_core's does once one is.
+    Client.playerData, Client.state = nil, { isLoggedIn = true }
     _G.LocalPlayer = setmetatable({}, { __index = function(_, key)
         if key == 'state' then return Client.state end
     end })

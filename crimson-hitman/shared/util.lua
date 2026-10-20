@@ -516,6 +516,13 @@ end
 ---
 --- The balance is read first here, so this is right whatever an operator
 --- has put in dontAllowMinus.
+---
+--- RemoveMoney runs inside pcall, as AddMoney does in Util.credit below.
+--- qbx_core takes the money off before its update and log hooks run, so a
+--- raise may come after the money moved. The balance read again decides:
+--- down by the amount is paid, anything else is not. A raise that left
+--- this function used to unwind its caller past the code that gives back
+--- what it had already taken.
 ---@param player table qbx_core player
 ---@param account string
 ---@param amount number
@@ -524,8 +531,14 @@ function Util.charge(player, account, amount)
     if not player or not player.Functions then return false end
     amount = tonumber(amount) or 0
     if amount <= 0 then return true end
-    if (player.Functions.GetMoney(account) or 0) < amount then return false end
-    if not player.Functions.RemoveMoney(account, amount, Util.MONEY_REASON) then return false end
+    local before = tonumber(player.Functions.GetMoney(account)) or 0
+    if before < amount then return false end
+    local ran, removed = pcall(player.Functions.RemoveMoney, account, amount, Util.MONEY_REASON)
+    if not ran then
+        local read, after = pcall(player.Functions.GetMoney, account)
+        removed = read and (tonumber(after) or 0) <= before - amount
+    end
+    if not removed then return false end
     persist(player)
     return true
 end

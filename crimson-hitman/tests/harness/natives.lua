@@ -88,9 +88,12 @@ function Natives.install()
     _G.RegisterCommand = function(name, handler)
         Env.commands[name] = handler
     end
+    -- Answers like FXServer does for a BOOL native without the fxv2 path:
+    -- the integer 1 when granted, false otherwise. Never a Lua true, so a
+    -- caller that compares with `== true` is refused here as it is in game.
     _G.IsPlayerAceAllowed = function(src, ace)
         local granted = Env.aces[tonumber(src)]
-        return (granted and granted[ace]) == true
+        return (granted and granted[ace] == true) and 1 or false
     end
 
     _G.GetPlayerIdentifiers = function(src)

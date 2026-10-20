@@ -2185,6 +2185,39 @@ describe('a character switch', function()
             'a character that logged out is not still sitting in a session')
     end)
 
+    -- qbx_core's Logout fires OnPlayerUnload, waits 200 ms with the player
+    -- still registered, then unregisters them and fires playerLoggedOut.
+    -- The death sampler looks every live target up once a second, so about
+    -- one logout in five has a lookup inside that window, and the lookup
+    -- notes them again as observed. That record outlived the logout and,
+    -- being observed and old, gave their next login no session length: no
+    -- login-camping floor for exactly the target who logged off.
+    it('ends a session noted again inside the logout window', function()
+        local s, f = installed()
+        switched(s, 2)
+        truthy(s.identity.byCitizenId('TARGET01'), 'still registered inside the window')
+
+        local player = Env.players[2]
+        Env.players[2], Env.byCitizen['TARGET01'] = nil, nil
+        local loggedOut = Env.events['local:qbx_core:server:playerLoggedOut']
+            or Env.events['qbx_core:server:playerLoggedOut']
+        truthy(loggedOut, 'the logged-out event must be handled')
+        _G.source = 2
+        loggedOut(2)
+        _G.source = nil
+
+        -- Back an hour later as the same character, through qbx_core's own
+        -- loaded event.
+        Env.time = Env.time + 3600
+        Env.players[2], Env.byCitizen['TARGET01'] = player, 2
+        local loaded = Env.events['local:QBCore:Server:PlayerLoaded']
+            or Env.events['QBCore:Server:PlayerLoaded']
+        loaded(player)
+        eq(s.identity.sessionMinutes('TARGET01'), 0, 'a watched session, just begun')
+        truthy(s.contracts.isImmune(s.identity.resolve(2)),
+            'the session floor protects a target who has just come back')
+    end)
+
     it('releases an armed handover rather than leaking its slot', function()
         local s, f = installed()
         local AT = { x = 400.0, y = 400.0, z = 30.0 }

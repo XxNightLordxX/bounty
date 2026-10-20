@@ -302,6 +302,13 @@ describe('proving the kill', function()
         -- ui/app.js:322 — post('mugshotImage', { id })
         local served = ok('mugshotImage', 1, { id = handle })
         eq(served.image, VALID_IMAGE)
+        -- Tens of KB once the background is left in, so paced as a latent
+        -- event rather than holding up the client's reliable channel.
+        local latent = false
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:result' then latent = event.latent == true end
+        end
+        truthy(latent, 'a face goes to the phone as a latent event')
     end)
 end)
 

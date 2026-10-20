@@ -204,8 +204,13 @@ function Bridges.install(modules)
     -- nothing they could not do with the real device. What it cannot read
     -- is whether sc-ambulance's defibrillator is switched on at all: with
     -- it off, set MedicJobs = {} so none is heard.
+    --
+    -- Any client can fire it, so it answers to the same flood guard as every
+    -- other net event this resource hears; each one costs two framework
+    -- lookups before the job check can refuse a non-medic.
     RegisterNetEvent('sc-ambulance:server:UseDefib', function(targetId)
         local src = source
+        if not modules.app.floodOk(src, 'useDefib') then return end
         if not modules.death or not modules.death.noteDefib then return end
         pcall(modules.death.noteDefib, src, targetId)
     end)
@@ -454,27 +459,42 @@ function Bridges.install(modules)
     -- countdown budget until the grace timer happens to expire it. It is
     -- the same cleanup as a disconnect, because from here it is the same
     -- event — that character has left.
-    local function unload(src)
+    --
+    -- qbx_core's Logout fires OnPlayerUnload, waits 200 ms with the player
+    -- still registered, and only then unregisters them and fires
+    -- playerLoggedOut. Anything that looks them up inside that window (the
+    -- death sampler does, once a second, for every live target) starts
+    -- their session again as observed, and an observed session that old has
+    -- no length on their next login, so the login-camping floor did not
+    -- apply to them. So the citizen id is kept from the first event and the
+    -- cleanup runs again on the second, once nothing can find them.
+    local loggingOut = {}   -- [src] = cid, from OnPlayerUnload to playerLoggedOut
+
+    ---@param loggedOut boolean|nil true for qbx_core:server:playerLoggedOut
+    local function unload(src, loggedOut)
         src = tonumber(src)
         if not src then return end
 
-        local cid = connected[src]
+        local cid
+        if loggedOut then cid = loggingOut[src] or connected[src]
+        else cid = connected[src] end
         if not cid then
             local actor = modules.identity.resolve(src)
             cid = actor and actor.cid
         end
         connected[src] = nil
+        if loggedOut then loggingOut[src] = nil else loggingOut[src] = cid end
         if cid then Bridges.onPlayerDropped(modules, cid) end
     end
 
-    -- Both spellings: qbx_core emits the QBCore-compatible one, and a build
-    -- that emits its own is still covered. The handler is idempotent, so
-    -- being called twice for one switch costs nothing.
+    -- Both spellings: qbx_core emits the QBCore-compatible one first and
+    -- its own after the window above. The handler is idempotent, so being
+    -- called twice for one switch costs nothing.
     AddEventHandler('QBCore:Server:OnPlayerUnload', function(src)
         unload(src or source)
     end)
     AddEventHandler('qbx_core:server:playerLoggedOut', function(src)
-        unload(src or source)
+        unload(src or source, true)
     end)
 
     -- Kill photos kept on this server and saved to a client's Photos

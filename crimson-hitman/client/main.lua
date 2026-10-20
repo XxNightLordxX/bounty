@@ -391,10 +391,9 @@ RegisterNetEvent('crimson-hitman:result', function(result)
     -- Type-checked like the notify and push handlers beside it. Net event
     -- names are a server-wide namespace: this resource's server always
     -- sends a table, and any other resource on the server can send anything
-    -- at all. Indexing it raw threw out of the handler, which also skipped
-    -- the SendCustomAppMessage below — so the open app was told nothing
-    -- either, and the waiting request was freed fifteen seconds later with
-    -- 'timeout' on a call the server had actually answered.
+    -- at all. Indexing it raw threw out of the handler, and the waiting
+    -- request was freed fifteen seconds later with 'timeout' on a call the
+    -- server had actually answered.
     if type(result) ~= 'table' then return end
 
     notePhoto(result)
@@ -405,19 +404,15 @@ RegisterNetEvent('crimson-hitman:result', function(result)
         cb(result)
     end
 
-    -- The open app is told that a reply came, and nothing more. It acts
-    -- only on pushes (ui/app.js, the message listener); every reply it uses
-    -- reaches it once, as the answer to the fetch that asked for it. Sent
-    -- in full, every reply crossed the bridge twice — a board's fifteen
-    -- headshots among them — to be thrown away on arrival. Nothing a reply
-    -- carries goes to the page this way, the photo token included: it is
-    -- what lets a picture claim a payout, and it stays in this file
+    -- Nothing goes to the page from here. Every reply it uses reaches it
+    -- once, as the answer to the fetch that asked for it, and it acts on
+    -- pushes alone (ui/app.js, the message listener). Each reply used to be
+    -- mirrored to it as well, as a 'result' message it threw away: an
+    -- export into lb-phone and an NUI message per reply, eighteen on every
+    -- open of the app and one a second through a handover's countdown. The
+    -- photo token never went that way and still does not: it is what lets
+    -- a picture claim a payout, and it stays in this file
     -- (sendVerificationPhoto).
-    phone('SendCustomAppMessage', function()
-        exports['lb-phone']:SendCustomAppMessage('crimson-hitman', {
-            type = 'result', event = result.event, ok = result.ok, err = result.err,
-        })
-    end)
 end)
 
 --- An unsolicited nudge for an open app: something the player is looking at
@@ -753,9 +748,36 @@ local upFor = 0
 local notDeadFor = 0
 local diedSinceUp = false
 
+-- A new character starts with a watcher that has seen nothing. /relog keeps
+-- this resource running, so the last character's death carried over: the
+-- next one, alive, was "up after a death" and reported a revive the server
+-- had no death for, which goes to the staff webhook as a probe.
+local function forgetDeath()
+    reportedDead, wasDown, diedSinceUp = false, false, false
+    upFor, notDeadFor = 0, 0
+    engineDeathAt, engineKiller = nil, nil
+    lethalBy, lethalByAt = nil, nil
+end
+
+--- Whether a character is loaded. qbx_core sets the bag on load and clears
+--- it on unload; between the two (17mov's character selection) its own
+--- player data still holds the last character, dead or alive.
+local function loggedIn()
+    local ok, state = pcall(function() return LocalPlayer.state end)
+    return ok and state and state.isLoggedIn and true or false
+end
+
 CreateThread(function()
     while true do
         Wait(1000)
+        -- Nobody to watch while no character is loaded. Read then, the last
+        -- character's isdead was reported as a death nobody had, and the
+        -- next character standing up as a revive without one, which the
+        -- server posts to the staff webhook as a probe.
+        if not loggedIn() then
+            forgetDeath()
+            goto continue
+        end
         local ped = PlayerPedId()
         local medDead, lastStand, readable = medical()
         local engineDead = IsEntityDead(ped)
@@ -831,19 +853,10 @@ CreateThread(function()
                 wasDown, upFor = false, 0
             end
         end
+        ::continue::
     end
 end)
 
--- A new character starts with a watcher that has seen nothing. /relog keeps
--- this resource running, so the last character's death carried over: the
--- next one, alive, was "up after a death" and reported a revive the server
--- had no death for, which goes to the staff webhook as a probe.
-local function forgetDeath()
-    reportedDead, wasDown, diedSinceUp = false, false, false
-    upFor, notDeadFor = 0, 0
-    engineDeathAt, engineKiller = nil, nil
-    lethalBy, lethalByAt = nil, nil
-end
 RegisterNetEvent('QBCore:Client:OnPlayerUnload', forgetDeath)
 RegisterNetEvent('qbx_core:client:playerLoggedOut', forgetDeath)
 
@@ -891,6 +904,15 @@ function App.walkableCam(on)
     if called then walkable = on end
     return called
 end
+
+-- A restart with the viewfinder open. lb-phone turns the camera off only
+-- when the page asks or through the app's onClose, and that callback dies
+-- with this resource, so nothing else would: the phone stayed in camera
+-- mode. Nothing else here holds a handle; lb-phone keeps the focus.
+AddEventHandler('onResourceStop', function(resource)
+    if resource ~= GetCurrentResourceName() then return end
+    App.walkableCam(false)
+end)
 
 RegisterNUICallback('crimson:verificationCamera', function(data, cb)
     local on = type(data) == 'table' and data.on == true

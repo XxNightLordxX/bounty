@@ -835,6 +835,25 @@ describe('damage observation is actually wired', function()
             'a defibrillator\'s gap would read as a revive whatever landed in it')
     end)
 
+    -- Any client can fire it, and each one cost two framework lookups
+    -- before the job check refused a non-medic. Every other net event the
+    -- resource hears is behind the per-source flood guard; this was not.
+    it('puts sc-ambulance\'s defibrillator event behind the flood guard', function()
+        local s = wiredStack()
+        fixture(s)
+        local real, ran = s.death.noteDefib, 0
+        s.death.noteDefib = function(...) ran = ran + 1; return real(...) end
+        local fire = Env.events['sc-ambulance:server:UseDefib']
+        for _ = 1, 500 do
+            _G.source = 3
+            fire(2)
+        end
+        _G.source = nil
+        s.death.noteDefib = real
+        truthy(ran > 0, 'the event is still heard')
+        truthy(ran <= 90, ('one client ran it %d times in one window'):format(ran))
+    end)
+
     it('ignores a damage event reporting no damage', function()
         local s = wiredStack()
         local f = fixture(s)

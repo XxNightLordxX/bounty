@@ -36,6 +36,12 @@ end
 --- be named in one. migrate() converts a table an older version made.
 local CHARSET, COLLATION = 'utf8mb4', 'utf8mb4_unicode_ci'
 
+--- Every table also names InnoDB rather than taking the server's default
+--- engine. Escrow writes go through db.transaction, which is only atomic on
+--- InnoDB: on MyISAM a failure half-way left half the lines written. The
+--- same statements are in install/sql/crimson_hitman.sql, for an owner who
+--- imports them by hand (tests/storage_spec.lua holds the two together).
+
 local SCHEMA = {
     [[CREATE TABLE IF NOT EXISTS crimson_contracts (
         id VARCHAR(32) PRIMARY KEY,
@@ -79,7 +85,7 @@ local SCHEMA = {
         -- Read on every maintenance tick, and almost always empty. Added
         -- to existing databases by MySQLStore.migrate.
         INDEX idx_bailout_queued (bailout_queued_at)
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_escrow (
         id VARCHAR(64) PRIMARY KEY,
         contract_id VARCHAR(32) NOT NULL,
@@ -109,7 +115,7 @@ local SCHEMA = {
         taken_from VARCHAR(32),
         INDEX idx_contract (contract_id),
         INDEX idx_state (state)
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_hitmen (
         id VARCHAR(32) PRIMARY KEY,
         contract_id VARCHAR(32) NOT NULL,
@@ -126,7 +132,7 @@ local SCHEMA = {
         state VARCHAR(16) NOT NULL,
         INDEX idx_contract (contract_id),
         INDEX idx_hitman (hitman_cid)
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_amendments (
         id VARCHAR(32) PRIMARY KEY,
         contract_id VARCHAR(32) NOT NULL,
@@ -138,7 +144,7 @@ local SCHEMA = {
         outcome VARCHAR(16) NOT NULL,
         declined_by VARCHAR(32),
         INDEX idx_contract (contract_id)
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_messages (
         id INT AUTO_INCREMENT PRIMARY KEY,
         contract_id VARCHAR(32) NOT NULL,
@@ -148,7 +154,7 @@ local SCHEMA = {
         body VARCHAR(255) NOT NULL,
         sent_at INT NOT NULL,
         INDEX idx_thread (thread_id)
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_ledger (
         id INT AUTO_INCREMENT PRIMARY KEY,
         cid VARCHAR(32) NOT NULL,
@@ -161,7 +167,7 @@ local SCHEMA = {
         photo_ref VARCHAR(512),
         resolved_at INT NOT NULL,
         INDEX idx_cid (cid, resolved_at)
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_pending (
         id VARCHAR(32) PRIMARY KEY,
         cid VARCHAR(32) NOT NULL,
@@ -169,14 +175,14 @@ local SCHEMA = {
         line_id VARCHAR(64) NOT NULL,
         queued_at INT NOT NULL,
         INDEX idx_cid (cid)
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_stats (
         cid VARCHAR(32) PRIMARY KEY,
         completed INT DEFAULT 0,
         failed INT DEFAULT 0,
         placed INT DEFAULT 0,
         survived INT DEFAULT 0
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_audit (
         id INT AUTO_INCREMENT PRIMARY KEY,
         ts INT NOT NULL,
@@ -190,7 +196,7 @@ local SCHEMA = {
         -- The admin timeline reads every row for one contract. Without this
         -- that is a scan of the whole log, which is the largest table here.
         INDEX idx_audit_contract (contract_id)
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- What one buyer's informant purchases on one contract have bought: the
     -- reroll lock and the purchase count. Kept here rather than only in
     -- memory, because a restart that forgot them charged the fee again for
@@ -205,7 +211,7 @@ local SCHEMA = {
         seed INT,
         answer TEXT,
         INDEX idx_reveal_contract (contract_id)
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Threads somebody has muted (§11.4): a row is a mute, and unmuting
     -- deletes it. Created on an existing database by the CREATE TABLE IF
     -- NOT EXISTS below at the next start, like any table added since.
@@ -216,7 +222,7 @@ local SCHEMA = {
         cid VARCHAR(32) NOT NULL,
         muted_at INT NOT NULL,
         INDEX idx_mute_contract (contract_id)
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Kill photos kept for a contract's client (§14.43), by handle: the
     -- ledger row the client is shown carries the handle and never the
     -- link. No hitman column, on purpose: the record goes to nobody but
@@ -249,14 +255,14 @@ local SCHEMA = {
         INDEX idx_photo_open (state, opened_at),
         INDEX idx_photo_created (created_at),
         INDEX idx_photo_public (public_id)
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
     -- nobody could play.
     [[CREATE TABLE IF NOT EXISTS crimson_meta (
         meta_key VARCHAR(32) PRIMARY KEY,
         meta_value INT NOT NULL
-    ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
 }
 
 --------------------------------------------------------------------------
@@ -1038,6 +1044,29 @@ function MySQLStore.readHitmen(contractId)
         { contractId }) or {}
     for i = 1, #rows do hydrateHitman(rows[i]) end
     return rows
+end
+
+--- Every running contract's hitmen, by contract id, in one query.
+---
+--- The death sampler reads the roster of every live contract once a second.
+--- One readHitmen each was 1 + N awaited queries a second for the life of
+--- the server, which the slow-job timer never shows (it does not count
+--- database waits); this is one.
+function MySQLStore.liveHitmen()
+    local rows = db.query([[
+        SELECT h.* FROM crimson_hitmen h
+        JOIN crimson_contracts c ON c.id = h.contract_id
+        WHERE c.state IN ('active', 'accepted')
+        ORDER BY h.accepted_at, h.id
+    ]]) or {}
+    local out = {}
+    for i = 1, #rows do
+        local h = hydrateHitman(rows[i])
+        local list = out[h.contract_id]
+        if not list then list = {} out[h.contract_id] = list end
+        list[#list + 1] = h
+    end
+    return out
 end
 
 function MySQLStore.readHitman(contractId, cid)

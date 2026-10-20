@@ -239,3 +239,109 @@ describe('money when something fails partway through', function()
                         table.concat(broken, '\n  ', 1, math.min(#broken, 8))))
     end)
 end)
+
+--- A raise after part of a reward was already taken.
+---
+--- The seams above break every call, so on a reward's first line nothing had
+--- been taken yet and the rollback had nothing to do. The one shape that
+--- destroyed money was a raise on a later line: it left the take through
+--- Escrow.take, past the rollback, with nothing written, and the earlier
+--- lines were gone. These break only the later call.
+describe('a raise after part of a reward was taken', function()
+    local function lockpicks(src)
+        local n = 0
+        for _, e in ipairs(Env.players[src]._inventory or {}) do
+            if e.name == 'lockpick' then n = n + (e.count or 0) end
+        end
+        return n
+    end
+
+    --- RemoveMoney that raises on its second call, after taking the money or
+    --- before, as the case says.
+    local function secondRemoveMoneyRaises(src, afterTaking)
+        local p = Env.players[src]
+        local real, calls = p.Functions.RemoveMoney, 0
+        p.Functions.RemoveMoney = function(...)
+            calls = calls + 1
+            if calls < 2 then return real(...) end
+            if afterTaking then real(...) end
+            error('RemoveMoney exploded', 0)
+        end
+        return function() p.Functions.RemoveMoney = real end
+    end
+
+    local function removeItemRaises()
+        local real = exports.ox_inventory.RemoveItem
+        exports.ox_inventory.RemoveItem = function() error('RemoveItem exploded', 0) end
+        return function() exports.ox_inventory.RemoveItem = real end
+    end
+
+    local function place(s, f, baseline)
+        return s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CH.MODE.EXCLUSIVE, reward = { baseline = baseline },
+        })
+    end
+
+    local function conserved(s, before, label)
+        local after = world(s)
+        for _, source in ipairs({ 'cash', 'bank', 'dirty' }) do
+            eq(after[source], before[source], ('%s: %s moved %+d'):format(
+                label, source, after[source] - before[source]))
+        end
+    end
+
+    it('gives the cash back when the dirty money after it raises', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = world(s)
+        local restore = removeItemRaises()
+        local ran, c = pcall(place, s, f, { cash = 5000, dirty = 1000 })
+        restore()
+        falsy(ran and c, 'nothing is placed')
+        conserved(s, before, 'cash then dirty')
+
+        s.audit.flush()
+        local named
+        for _, row in ipairs(s.storage.readAudit(200)) do
+            if row.action == 'escrow_take_raised' then named = row end
+        end
+        truthy(named, 'the line that raised is named for staff')
+        eq(named.detail.source, 'dirty')
+    end)
+
+    it('gives the cash back when an item after it raises', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = world(s)
+        local restore = removeItemRaises()
+        local ran, c = pcall(place, s, f,
+            { cash = 5000, items = { { name = 'lockpick', count = 2 } } })
+        restore()
+        falsy(ran and c, 'nothing is placed')
+        conserved(s, before, 'cash then an item')
+        eq(lockpicks(1), 5, 'the item was never taken')
+    end)
+
+    it('gives the cash back when the bank after it raises before moving', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = world(s)
+        local restore = secondRemoveMoneyRaises(1, false)
+        local ran, c = pcall(place, s, f, { cash = 5000, bank = 2500 })
+        restore()
+        falsy(ran and c, 'nothing is placed')
+        conserved(s, before, 'cash then bank')
+    end)
+
+    it('holds the bank in escrow when it raised after the money moved', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = world(s)
+        local restore = secondRemoveMoneyRaises(1, true)
+        local ran, c = pcall(place, s, f, { cash = 5000, bank = 2500 })
+        restore()
+        truthy(ran and c, 'the balance says it was paid, so the contract stands')
+        conserved(s, before, 'bank taken, then a raise')
+    end)
+end)

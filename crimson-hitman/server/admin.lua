@@ -92,14 +92,16 @@ end
 ---@return boolean
 function Admin.allowed(src, ace, strict)
     if src == 0 then return true end
-    if IsPlayerAceAllowed(src, ace) == true then return true end
+    -- A BOOL native: FXServer answers a granted ACE with the integer 1, not
+    -- true, so this tests truthiness. `== true` refused everybody in game.
+    if IsPlayerAceAllowed(src, ace) then return true end
     if strict then return false end
 
     -- Nobody holds crimson.admin until somebody grants it, and the first
     -- thing an owner needs is the command that says why their app is
     -- empty. An ACE their admin group already carries opens the same door.
     for _, extra in ipairs(Config.Admin.ExtraAces or {}) do
-        if IsPlayerAceAllowed(src, extra) == true then return true end
+        if IsPlayerAceAllowed(src, extra) then return true end
     end
     return false
 end

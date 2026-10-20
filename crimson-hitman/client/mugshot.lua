@@ -20,6 +20,11 @@ local Mugshot = {}
 --- "not for the first thirty seconds".
 local lastRender = nil
 
+--- How fast a headshot goes to the server, in bytes a second. A full-size
+--- one is tens of KB, which FiveM says to send as a latent event rather
+--- than an ordinary one that holds up everything behind it.
+local MUGSHOT_BPS = 100000
+
 --- Render this player's headshot and hand it to the server.
 local function renderSelf()
     if GetResourceState('MugShotBase64') ~= 'started' then return false end
@@ -36,12 +41,17 @@ local function renderSelf()
     local ped = PlayerPedId()
     if not ped or ped == 0 then return false end
 
+    -- The background is left in unless the server owner asks otherwise
+    -- (Config.Mugshot.RemoveBackground): cutting it out loads a 2.6 MB
+    -- model in MugShotBase64's page for every render and never frees it.
+    local rules = Config and Config.Mugshot
+    local cutOut = type(rules) == 'table' and rules.RemoveBackground == true
     local ok, image = pcall(function()
-        return exports['MugShotBase64']:GetMugShotBase64(ped, true)
+        return exports['MugShotBase64']:GetMugShotBase64(ped, cutOut)
     end)
     if not ok or type(image) ~= 'string' then return false end
 
-    TriggerServerEvent('crimson-hitman:mugshot', image)
+    TriggerLatentServerEvent('crimson-hitman:mugshot', MUGSHOT_BPS, image)
     return true
 end
 

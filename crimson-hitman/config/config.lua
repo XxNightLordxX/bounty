@@ -565,10 +565,21 @@ Config.Kidnap = {
 Config.Mugshot = {
     MinRefreshMinutes = 5,
     RenderTimeoutMs = 8000,
+    --- Have MugShotBase64 cut the background out of the headshot. Off by
+    --- default: it loads a 2.6 MB person-segmentation model into the
+    --- TARGET's game for every render, never frees it, and the render is
+    --- set off by other players viewing a board that names them, so an
+    --- idle player gets a hitch they did nothing to cause, which does not
+    --- show in this resource's resmon. Off, the headshot keeps the game's
+    --- grey backdrop and comes at its full size (about 128 px).
+    RemoveBackground = false,
     --- A base64 headshot arrives from a player's client, so it is bounded
     --- and format-checked before it is cached and shown to anyone else.
-    --- A real MugShotBase64 headshot is comfortably under this.
-    MaxImageBytes = 49152,
+    --- A full-size headshot is tens of KB (an estimate until you see one in
+    --- game; one refused for size is logged as mugshot_too_large with its
+    --- bytes), and even one that would not compress at all is under this.
+    --- It travels both ways as a latent event, so a large one is paced.
+    MaxImageBytes = 98304,
     --- An explicit allowlist: a pattern match on the MIME type would also
     --- accept image/svg+xml, which is not a headshot.
     AllowedMime = {
@@ -654,7 +665,7 @@ Config.Advisory = {
     --- Job types that trigger an advisory when targeted.
     TriggerJobTypes = { leo = true, police = true, ems = true, fire = true },
     --- Job names that trigger one, for jobs with an unusual type.
-    TriggerJobNames = { doj = true, lawyer = true, ranger = true, sast = true, k9 = true },
+    TriggerJobNames = { doj = true, lawyer = true, ranger = true, sast = true, fib = true, k9 = true },
     --- Who receives the advisory. Law enforcement only by default; EMS are
     --- not a response unit for a contract killing.
     RecipientJobTypes = { leo = true, police = true },

@@ -572,7 +572,10 @@ describe('complexity: what the sampler asks for', function()
             pass()
             eq(counts.liveContracts, 1, 'one read of the running contracts a pass')
             eq(counts.allContracts, 0, 'and none of every contract kept')
-            eq(counts.readHitmen, board.made, 'one roster per running contract, as before')
+            -- Every roster in one read too: one each was 1 + N awaited
+            -- queries a second on mysql, for as long as the server ran.
+            eq(counts.liveHitmen, 1, 'one read of every running contract\'s hitmen')
+            eq(counts.readHitmen or 0, 0, 'and no roster read per contract')
             reset()
             pass()
             eq(counts.liveContracts, 1, 'and the same the next second')
