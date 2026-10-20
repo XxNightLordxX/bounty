@@ -162,6 +162,43 @@ local function shardPath(contractId)
     return directory() .. '/contracts/' .. contractId .. '.json'
 end
 
+--- Escrow lines and hitman rows by contract: [contract_id][id] = row.
+--- See the memory backend. Here they also serve shardOf, which gathered a
+--- contract's rows by walking every row in the store, on every shard write
+--- (a kill payout writes its shard several times).
+local escrowBy, hitmenBy = {}, {}
+
+--- Under the key db holds the row by, which is its id wherever this store
+--- wrote it; a row read from an older file is indexed by its key all the
+--- same, so nothing db holds is left out of a read.
+local function indexRow(index, row, key)
+    if type(row) ~= 'table' or row.contract_id == nil or key == nil then return end
+    local rows = index[row.contract_id]
+    if not rows then
+        rows = {}
+        index[row.contract_id] = rows
+    end
+    rows[key] = row
+end
+
+local function unindexRow(index, row, key)
+    local rows = type(row) == 'table' and row.contract_id ~= nil and index[row.contract_id]
+    if rows and rows[key] == row then
+        rows[key] = nil
+        if next(rows) == nil then index[row.contract_id] = nil end
+    end
+end
+
+--- Built from db itself, once a load is done. Not kept by absorb alone: the
+--- single-file layout from an older version puts escrow and hitmen straight
+--- into db, and then writes them out as shards through shardOf. An index
+--- that missed them wrote those shards with no escrow in them.
+local function reindexRows()
+    escrowBy, hitmenBy = {}, {}
+    for key, line in pairs(db.escrow or {}) do indexRow(escrowBy, line, key) end
+    for key, h in pairs(db.hitmen or {}) do indexRow(hitmenBy, h, key) end
+end
+
 --- Everything belonging to one contract, gathered for writing.
 local function shardOf(contractId)
     local shard = {
@@ -169,11 +206,11 @@ local function shardOf(contractId)
         escrow = {}, hitmen = {}, amendments = {}, messages = {}, mutes = {},
     }
 
-    for id, line in pairs(db.escrow) do
-        if line.contract_id == contractId then shard.escrow[id] = line end
+    for id, line in pairs(escrowBy[contractId] or {}) do
+        if db.escrow[id] == line then shard.escrow[id] = line end
     end
-    for id, hitman in pairs(db.hitmen) do
-        if hitman.contract_id == contractId then shard.hitmen[id] = hitman end
+    for id, hitman in pairs(hitmenBy[contractId] or {}) do
+        if db.hitmen[id] == hitman then shard.hitmen[id] = hitman end
     end
     for id, amendment in pairs(db.amendments) do
         if amendment.contract_id == contractId then shard.amendments[id] = amendment end
@@ -734,6 +771,7 @@ function JsonStore.open()
         end
 
         db = json.decode(json.encode(EMPTY))
+        escrowBy, hitmenBy = {}, {}
         dirtyShards, shardIds, quarantined, indexDirty = {}, {}, {}, true
         recordsDirty, recordsOnDisk = true, false
         auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {}, unread = {} }
@@ -764,6 +802,8 @@ function JsonStore.open()
         if db[key] == nil then db[key] = type(value) == 'table' and {} or value end
     end
     seq = tonumber(db.seq) or 0
+    -- The single-file layout below put escrow and hitmen straight into db.
+    reindexRows()
 
     -- Before either layout below writes an index: one that still carries the
     -- audit log, or the records, has to have them on disk elsewhere first.
@@ -830,6 +870,8 @@ function JsonStore.open()
                 }
             end
         end
+        -- Everything the shards brought in.
+        reindexRows()
     elseif type(decoded.contracts) == 'table' then
         -- The old single-file layout, from a version before this one. Load
         -- it as it stands and write it out sharded, keeping the original
@@ -1034,23 +1076,34 @@ end
 --- pending row pointing at it, and removing either would take that money
 --- with it.
 local function prunableContracts(cutoff, limit)
-    local holding, owing = {}, {}
-    for _, line in pairs(db.escrow) do
-        if line.state ~= 'settled' then holding[line.contract_id] = true end
-    end
-    for _, p in pairs(db.pending) do
-        if p.contract_id then owing[p.contract_id] = true end
-    end
-
     local TERMINAL = {
         completed = true, bailed_out = true, expired = true,
         cancelled = true, voided = true,
     }
 
-    local out = {}
+    -- The old enough ones first. Nearly every tick there are none, and the
+    -- escrow and pending walks below were done before finding that out.
+    local aged = {}
     for id, c in pairs(db.contracts) do
-        if TERMINAL[c.state] and c.resolved_at and c.resolved_at < cutoff
-            and not holding[id] and not owing[id] then
+        if TERMINAL[c.state] and c.resolved_at and c.resolved_at < cutoff then
+            aged[id] = true
+        end
+    end
+    if next(aged) == nil then return {} end
+
+    local holding, owing = {}, {}
+    for id in pairs(aged) do
+        for lineId, line in pairs(escrowBy[id] or {}) do
+            if db.escrow[lineId] == line and line.state ~= 'settled' then holding[id] = true end
+        end
+    end
+    for _, p in pairs(db.pending) do
+        if p.contract_id and aged[p.contract_id] then owing[p.contract_id] = true end
+    end
+
+    local out = {}
+    for id in pairs(aged) do
+        if not holding[id] and not owing[id] then
             out[#out + 1] = id
         end
     end
@@ -1073,12 +1126,14 @@ function JsonStore.prune()
 
     for i = 1, #ids do
         local id = ids[i]
-        for lineId, line in pairs(db.escrow) do
-            if line.contract_id == id then db.escrow[lineId] = nil end
+        for lineId, line in pairs(escrowBy[id] or {}) do
+            if db.escrow[lineId] == line then db.escrow[lineId] = nil end
         end
-        for hitmanId, hitman in pairs(db.hitmen) do
-            if hitman.contract_id == id then db.hitmen[hitmanId] = nil end
+        escrowBy[id] = nil
+        for hitmanId, hitman in pairs(hitmenBy[id] or {}) do
+            if db.hitmen[hitmanId] == hitman then db.hitmen[hitmanId] = nil end
         end
+        hitmenBy[id] = nil
         for amendmentId, amendment in pairs(db.amendments) do
             if amendment.contract_id == id then db.amendments[amendmentId] = nil end
         end
@@ -1418,6 +1473,16 @@ function JsonStore.allContracts()
     return out
 end
 
+--- Contracts still running, active or accepted. See the memory backend.
+function JsonStore.liveContracts()
+    local out = {}
+    for _, c in pairs(db.contracts) do
+        if c.state == 'active' or c.state == 'accepted' then out[#out + 1] = c end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 --- Advance the payout slot, only if it is still the one the caller acted on.
 --- See the memory backend for why claimSlot may not write back a snapshot.
 function JsonStore.advanceSlot(id, expectedSlot)
@@ -1453,7 +1518,9 @@ function JsonStore.writeEscrow(contractId, lines)
             existing.owed_to = incoming.owed_to
             existing.releasing_to = incoming.releasing_to
         else
+            if existing then unindexRow(escrowBy, existing, incoming.id) end
             db.escrow[incoming.id] = incoming
+            indexRow(escrowBy, incoming, incoming.id)
         end
     end
     touch(true, contractId)
@@ -1462,8 +1529,8 @@ end
 
 function JsonStore.readEscrow(contractId)
     local out = {}
-    for _, line in pairs(db.escrow) do
-        if line.contract_id == contractId then out[#out + 1] = line end
+    for id, line in pairs(escrowBy[contractId] or {}) do
+        if db.escrow[id] == line then out[#out + 1] = line end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
@@ -1483,6 +1550,18 @@ function JsonStore.orphanEscrow()
         end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+--- Every contract holding an escrow line that is not settled, as a set.
+--- See the memory backend.
+function JsonStore.unsettledEscrowContracts()
+    local out = {}
+    for _, line in pairs(db.escrow) do
+        if line.state ~= CH.ESCROW_STATE.SETTLED and line.contract_id ~= nil then
+            out[line.contract_id] = true
+        end
+    end
     return out
 end
 
@@ -1533,15 +1612,18 @@ end
 --- and an exclusive contract left `accepted` with nobody on it refused every
 --- later acceptance as locked.
 function JsonStore.addHitman(record)
+    local existing = db.hitmen[record.id]
+    if existing then unindexRow(hitmenBy, existing, record.id) end
     db.hitmen[record.id] = record
+    indexRow(hitmenBy, record, record.id)
     touch(true, record.contract_id)
     return true
 end
 
 function JsonStore.readHitmen(contractId)
     local out = {}
-    for _, h in pairs(db.hitmen) do
-        if h.contract_id == contractId then out[#out + 1] = h end
+    for id, h in pairs(hitmenBy[contractId] or {}) do
+        if db.hitmen[id] == h then out[#out + 1] = h end
     end
     table.sort(out, function(a, b)
         if a.accepted_at == b.accepted_at then return a.id < b.id end
@@ -1551,8 +1633,8 @@ function JsonStore.readHitmen(contractId)
 end
 
 function JsonStore.readHitman(contractId, cid)
-    for _, h in pairs(db.hitmen) do
-        if h.contract_id == contractId and h.hitman_cid == cid then return h end
+    for id, h in pairs(hitmenBy[contractId] or {}) do
+        if db.hitmen[id] == h and h.hitman_cid == cid then return h end
     end
     return nil
 end
@@ -1617,6 +1699,16 @@ function JsonStore.writeAmendment(a)
     return true
 end
 function JsonStore.readAmendment(id) return db.amendments[id] end
+
+--- Every contract with a proposal still open, as a set. See the memory
+--- backend.
+function JsonStore.openAmendmentContracts()
+    local out = {}
+    for _, a in pairs(db.amendments) do
+        if a.outcome == 'open' and a.contract_id ~= nil then out[a.contract_id] = true end
+    end
+    return out
+end
 
 function JsonStore.readOpenAmendments(contractId)
     local out = {}
@@ -1908,7 +2000,17 @@ function JsonStore.writeAudit(entry)
     -- second went, including the ones /ch-stuck is built from.
     local cutoff = auditCutoff()
     if cutoff then
-        while db.audit[1] and db.audit[1].ts < cutoff do table.remove(db.audit, 1) end
+        -- The aged rows are at the front, in the order they were written:
+        -- counted, then gone in one move. Removed one at a time from the
+        -- front, each shifted the whole log, and a flush that aged out a
+        -- hundred rows of a busy month's log took a hundred of those.
+        local log = db.audit
+        local n, aged = #log, 0
+        while aged < n and log[aged + 1].ts < cutoff do aged = aged + 1 end
+        if aged > 0 then
+            table.move(log, aged + 1, n, 1)
+            for i = n - aged + 1, n do log[i] = nil end
+        end
         -- A file goes once the whole of its day is past the age. The day
         -- the cutoff falls in keeps its older rows on disk until then; a
         -- start reads them back and leaves them out.

@@ -1346,17 +1346,38 @@ end
 local targetHandles = {}
 local targetSeq = 0
 
+--- The handle already minted for one searcher and one person:
+--- [searcher .. ':' .. target] = handle. Minting walked every live handle
+--- to find out whether there was one, and a browse page mints thirty: with
+--- a few players paging through the city, thousands of handles walked per
+--- page. Kept by dropHandle, the one way a handle goes.
+local handleOf = {}
+
+local function pairKey(searcherCid, targetCid)
+    return tostring(searcherCid) .. ':' .. tostring(targetCid)
+end
+
+local function dropHandle(handle)
+    local entry = targetHandles[handle]
+    if not entry then return end
+    targetHandles[handle] = nil
+    local key = pairKey(entry.searcher, entry.target)
+    if handleOf[key] == handle then handleOf[key] = nil end
+end
+
 function App.mintTargetHandle(searcherCid, targetCid)
-    for handle, entry in pairs(targetHandles) do
-        if entry.searcher == searcherCid and entry.target == targetCid then
-            entry.at = Util.monotonicMs()
-            return handle
-        end
+    local key = pairKey(searcherCid, targetCid)
+    local existing = handleOf[key]
+    local entry = existing and targetHandles[existing]
+    if entry and entry.searcher == searcherCid and entry.target == targetCid then
+        entry.at = Util.monotonicMs()
+        return existing
     end
 
     targetSeq = targetSeq + 1
     local handle = ('tg%08d'):format(targetSeq)
     targetHandles[handle] = { searcher = searcherCid, target = targetCid, at = Util.monotonicMs() }
+    handleOf[key] = handle
     return handle
 end
 
@@ -1365,7 +1386,7 @@ function App.resolveTargetHandle(searcherCid, handle)
     local entry = targetHandles[handle]
     if not entry or entry.searcher ~= searcherCid then return nil end
     if Util.monotonicMs() - entry.at > 600000 then
-        targetHandles[handle] = nil
+        dropHandle(handle)
         return nil
     end
     return entry.target
@@ -1377,7 +1398,7 @@ function App.sweepHandles()
     local removed = 0
     for handle, entry in pairs(targetHandles) do
         if entry.at < cutoff then
-            targetHandles[handle] = nil
+            dropHandle(handle)
             removed = removed + 1
         end
     end
@@ -1386,7 +1407,7 @@ end
 
 function App.clearPlayerHandles(cid)
     for handle, entry in pairs(targetHandles) do
-        if entry.searcher == cid or entry.target == cid then targetHandles[handle] = nil end
+        if entry.searcher == cid or entry.target == cid then dropHandle(handle) end
     end
 end
 

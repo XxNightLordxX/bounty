@@ -289,7 +289,8 @@ local function buildListing(viewerCid, page)
     page = math.floor(page)
     local pageSize = Config.Listing.PageSize
 
-    local all = Storage.allContracts()
+    -- Live contracts only: nothing else is ever listed (listedFor).
+    local all = Storage.liveContracts()
     local visible = {}
     for i = 1, #all do
         if listedFor(all[i], viewerCid) then visible[#visible + 1] = all[i] end

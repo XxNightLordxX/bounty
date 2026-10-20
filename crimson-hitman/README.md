@@ -102,6 +102,7 @@ contract) against what those players are carrying.
 | `Config.Immunity` | Playtime and session floors that protect new players from being farmed |
 | `Config.Targeting.AllowBrowseAll` / `AllowNearby` | How a client finds a target. Browsing everyone online is on (a roster of names, no positions). The nearby list is **off**: on, it puts names to the unmasked people around a player, through walls, and boot warns while it is (see *Placing a contract*) |
 | `Config.Notifications.ParanoidAlertJitter` | How long (1 to 10 minutes, drawn per contract) a new contract is kept from its target: their alert, their On me tab, `/cleanse` and the request for their headshot all wait for it, so none of them dates the placement |
+| `Config.Diagnostics.SlowJobMs` | A maintenance job (the tick's, or the death sampler's pass) slower than this many milliseconds (5) prints one console warning naming it, at most every five minutes per job; `0` turns it off. `/ch-diag` lists the slowest jobs either way |
 
 ### Dirty money
 
@@ -402,7 +403,7 @@ entry, and `/ch-contracts` lists it for any player.
 
 | Command | What it does |
 |---|---|
-| `/ch-diag [player id]` | Why the app is not showing something: runs the app's own reads as that player and says what each answered, plus the last faults their phone reported |
+| `/ch-diag [player id]` | Why the app is not showing something: runs the app's own reads as that player and says what each answered (including which medical resource, or QBox metadata, answered for their death state), plus the last faults their phone reported. Also lists the slowest maintenance jobs with their worst, average and last times |
 | `/ch-contracts <player id\|citizen id>` | A player's contracts, newest first, closed ones included while they are kept: each id, its state, their role and the target. Lists the ids for `/ch-timeline`, `/ch-void` and `/ch-whois`. Contracts they placed or took anonymously are left out unless you also hold `crimson.identity` |
 | `/ch-timeline <contract>` | One contract's state, escrow lines and audit trail |
 | `/ch-whois <contract>` | Who is really behind an anonymous creator or hitman. Needs `crimson.identity`, a separate ACE |
@@ -426,13 +427,23 @@ set crimson_hitman_webhook "https://discord.com/api/webhooks/..."
 Use `set`, never `setr`: `setr` sends the value to every player too. It
 mirrors financial movements and refused attempts, without identities, as one
 message per audit flush rather than one per row, and backs off when Discord
-says to. An older `config.lua` that still sets `Config.Audit.Webhook` gets a
+says to. Routine refusals are counted on one line rather than listed: rate
+limits, and hits on a target whose damage never showed (rounds into somebody
+already down, a second gun in the same fight). Hits on players no contract
+names are not looked at at all, so ordinary shootouts never reach it. An older `config.lua` that still sets `Config.Audit.Webhook` gets a
 warning at startup and the URL is not used: it has already been sent to
 every player, so regenerate it in Discord and move the new one to
 `server.cfg`.
 
 On the phone, tapping the build line at the bottom of the Ledger tab five times
 opens a diagnostics panel showing the page's recent requests and faults.
+
+Every maintenance job times itself: each job the ten-second tick runs, and the
+death sampler's pass every second. One that takes longer than
+`Config.Diagnostics.SlowJobMs` (5 ms as shipped) prints one console line
+naming it, at most once every five minutes per job; `0` turns that off.
+`/ch-diag` lists the five slowest with their numbers either way. The times are
+processor time (`os.clock`), so read them as "about this slow".
 
 ---
 

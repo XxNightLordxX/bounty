@@ -127,14 +127,18 @@ describe('contract expiry', function()
 
         -- A pass that would find something is never skipped: make it due and
         -- move the clock past the skip, which is what a real tick does.
+        -- The pass reads the live contracts (liveContracts), never the
+        -- whole table; either would be a read the skip exists to save.
         local reads = 0
-        local realAll = modules.storage.allContracts
+        local realAll, realLive = modules.storage.allContracts, modules.storage.liveContracts
         modules.storage.allContracts = function(...) reads = reads + 1 return realAll(...) end
+        modules.storage.liveContracts = function(...) reads = reads + 1 return realLive(...) end
 
         main.expire()
         eq(reads, 0, 'with nothing due and nobody moving, the table is not read')
 
         modules.storage.allContracts = realAll
+        modules.storage.liveContracts = realLive
     end)
 
     it('never skips past a deadline that has come due', function()
@@ -155,15 +159,18 @@ describe('contract expiry', function()
         -- gets. Without it a quiet server would stop looking entirely.
         eq(main.expire(), 0)
 
-        local reads = 0
-        local realAll = modules.storage.allContracts
-        modules.storage.allContracts = function(...) reads = reads + 1 return realAll(...) end
+        local reads, whole = 0, 0
+        local realAll, realLive = modules.storage.allContracts, modules.storage.liveContracts
+        modules.storage.allContracts = function(...) whole = whole + 1 return realAll(...) end
+        modules.storage.liveContracts = function(...) reads = reads + 1 return realLive(...) end
 
         Env.time = Env.time + Config.Limits.MaxDeadlineSkipSeconds + 2
         main.expire()
         eq(reads, 1, 'the pass must come back inside the ceiling')
+        eq(whole, 0, 'reading the live contracts, not every contract kept')
 
         modules.storage.allContracts = realAll
+        modules.storage.liveContracts = realLive
     end)
 
     it('never skips past a contract created after the last pass', function()
@@ -1142,5 +1149,240 @@ describe('stopping the resource in memory mode', function()
            'the tables go with the resource, so money owed and not handed over '
            .. 'here is money that no longer exists anywhere')
         local _ = main
+    end)
+end)
+
+describe('maintenance jobs that time themselves', function()
+    --- The tick's jobs and the sampler's pass, each timed with a clock the
+    --- test moves: a job "takes" what it moves the clock by.
+    local function clocked(modules)
+        local now = 0
+        modules.timing.clock = function() return now end
+        return function(ms) now = now + ms / 1000 end
+    end
+
+    local function capture(fn)
+        local said, realPrint = {}, _G.print
+        _G.print = function(...)
+            local parts = {}
+            for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+            said[#said + 1] = table.concat(parts, ' ')
+        end
+        local ok, err = pcall(fn)
+        _G.print = realPrint
+        if not ok then error(err, 0) end
+        return said
+    end
+
+    local function warnings(said, name)
+        local n = 0
+        for _, line in ipairs(said) do
+            if line:find('maintenance job "' .. name .. '" took', 1, true) then n = n + 1 end
+        end
+        return n
+    end
+
+    it('warns once about a slow job, and again only after a few minutes', function()
+        local main, modules = boot()
+        local spend = clocked(modules)
+        modules.photos.expire = function() spend(20) end
+
+        local said = capture(function() main.tick() end)
+        eq(warnings(said, 'photos.expire'), 1, table.concat(said, '\n'))
+        local line
+        for _, l in ipairs(said) do if l:find('photos.expire', 1, true) then line = l end end
+        truthy(line:find('20.0 ms', 1, true), line)
+        truthy(line:find('Config.Diagnostics.SlowJobMs', 1, true), 'names the setting: ' .. line)
+
+        said = capture(function()
+            for _ = 1, 5 do
+                Env.time = Env.time + 10
+                main.tick()
+            end
+        end)
+        eq(warnings(said, 'photos.expire'), 0, 'not on every tick')
+
+        Env.time = Env.time + modules.timing.WARN_EVERY_SECONDS
+        said = capture(function() main.tick() end)
+        eq(warnings(said, 'photos.expire'), 1, 'and again once the wait is over')
+        for _, l in ipairs(said) do
+            truthy(not l:find('maintenance job "audit.flush"', 1, true),
+                'a fast job never warns: ' .. l)
+        end
+    end)
+
+    it('says nothing with the warning switched off', function()
+        local main, modules = boot()
+        Config.Diagnostics.SlowJobMs = 0
+        local spend = clocked(modules)
+        modules.photos.expire = function() spend(500) end
+        local said = capture(function() main.tick() end)
+        eq(warnings(said, 'photos.expire'), 0)
+    end)
+
+    it('times the sampler\'s pass too', function()
+        local main, modules = boot()
+        local spend = clocked(modules)
+        local real = modules.storage.liveContracts
+        modules.storage.liveContracts = function() spend(12) return real() end
+        local thread = coroutine.wrap(Env.threads[1])
+        local realWait = _G.Wait
+        _G.Wait = coroutine.yield
+        local said = capture(function()
+            thread()   -- to its first wait
+            thread()   -- one pass
+        end)
+        _G.Wait = realWait
+        modules.storage.liveContracts = real
+        eq(warnings(said, 'death.sampler'), 1, table.concat(said, '\n'))
+    end)
+
+    it('lists the slowest jobs, with their numbers, in /ch-diag', function()
+        local main, modules = boot()
+        local spend = clocked(modules)
+        modules.photos.expire = function() spend(20) end
+        modules.ratelimit.sweep = function() spend(2) end
+        capture(function()
+            main.tick()
+            Env.time = Env.time + 10
+            modules.photos.expire = function() spend(10) end
+            main.tick()
+        end)
+        local out = table.concat(modules.admin.diagnose(0), '\n')
+        truthy(out:find('maintenance jobs, slowest first', 1, true), out)
+        local row = out:match('\n%s+(photos%.expire[^\n]*)')
+        truthy(row, out)
+        truthy(row:find('max%s+20%.00'), 'its worst run: ' .. row)
+        truthy(row:find('avg%s+15%.00'), 'its average: ' .. row)
+        truthy(row:find('last%s+10%.00'), 'its last: ' .. row)
+        truthy(row:find('runs 2', 1, true), row)
+        truthy(row:find('SLOW', 1, true), 'over the limit: ' .. row)
+        local first = out:find('photos.expire', 1, true)
+        local second = out:find('ratelimit.sweep', 1, true)
+        truthy(second and first < second, 'slowest first')
+        truthy(not out:match('ratelimit%.sweep[^\n]*SLOW'), 'a job under the limit is not marked')
+    end)
+
+    it('says when nothing has been timed yet', function()
+        local _, modules = boot()
+        local out = table.concat(modules.admin.diagnose(0), '\n')
+        truthy(out:find('maintenance jobs: not timed yet', 1, true), out)
+    end)
+
+    it('takes a setting that is not a number as the shipped 5 ms, and says so', function()
+        local said = capture(function()
+            for name in pairs(package.loaded) do
+                if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                    package.loaded[name] = nil
+                end
+            end
+            Env.reset()
+            Natives.resetResourceStates()
+            resetConfig()
+            Config.Database.Mode = 'memory'
+            Config.Diagnostics.SlowJobMs = 'fast'
+            require('server.main').start()
+        end)
+        eq(Config.Diagnostics.SlowJobMs, 5)
+        truthy(table.concat(said, '\n'):find('Diagnostics.SlowJobMs', 1, true), table.concat(said, '\n'))
+        resetConfig()
+    end)
+
+    it('fills the setting in for a config from before it existed', function()
+        boot()
+        resetConfig()
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        Env.reset()
+        Natives.resetResourceStates()
+        Config.Database.Mode = 'memory'
+        Config.Diagnostics = nil
+        capture(function() require('server.main').start() end)
+        eq(Config.Diagnostics.SlowJobMs, 5)
+        resetConfig()
+    end)
+end)
+
+describe('the photo retention on the tick', function()
+    it('runs every ten minutes, and every tick while it is still removing photos', function()
+        local main, modules = boot()
+        local calls, removing = 0, 0
+        modules.ledger.forgetOldPhotos = function()
+            calls = calls + 1
+            return 0, removing
+        end
+        main.tick()
+        eq(calls, 1, 'the first tick runs it')
+        Env.time = Env.time + 10
+        main.tick()
+        eq(calls, 1, 'not again ten seconds later')
+        Env.time = Env.time + 600
+        removing = 25
+        main.tick()
+        eq(calls, 2, 'again after ten minutes')
+        Env.time = Env.time + 10
+        removing = 0
+        main.tick()
+        eq(calls, 3, 'and the next tick, while it had photos to remove')
+        Env.time = Env.time + 10
+        main.tick()
+        eq(calls, 3, 'then back to every ten minutes')
+    end)
+end)
+
+describe('a medical resource without the server exports asked for', function()
+    --- qbx_medical's IsDead and IsLaststand are client exports. Asked on the
+    --- server, FiveM raises "No such export" and leaves a callback behind,
+    --- every time.
+    local function qbxMedical(modules)
+        Natives.resourceStates['sc-ambulance'] = 'missing'
+        Natives.resourceStates['qbx_medical'] = 'started'
+        local looked, real = 0, _G.exports
+        _G.exports = setmetatable({}, { __index = function(_, resource)
+            if resource ~= 'qbx_medical' then return real[resource] end
+            return setmetatable({}, { __index = function(_, method)
+                looked = looked + 1
+                error('No such export ' .. method .. ' in resource qbx_medical', 2)
+            end })
+        end })
+        return function() return looked end, function() _G.exports = real end
+    end
+
+    it('is asked once, read from QBox metadata after, and asked again when it restarts', function()
+        local _, modules = boot()
+        local f = fixture(modules)
+        local looked, restore = qbxMedical(modules)
+        local ok, err = pcall(function()
+            Env.players[2].PlayerData.metadata.isdead = true
+            for _ = 1, 5 do
+                local dead, _, resolved, by = modules.identity.deathState(2)
+                eq(dead, true, 'the metadata qbx_medical writes')
+                eq(resolved, true)
+                eq(by, 'metadata')
+            end
+            truthy(looked() <= 2, ('one failed lookup, not one a read: %d'):format(looked()))
+            local before = looked()
+            Env.handlers['onResourceStart']('qbx_medical')
+            modules.identity.deathState(2)
+            truthy(looked() > before, 'a restart may have brought the exports')
+            local out = table.concat(modules.admin.diagnose(0, 2), '\n')
+            truthy(out:find('death state: readable (dead=true, last stand=false), from QBox metadata',
+                1, true), out)
+        end)
+        restore()
+        Natives.resetResourceStates()
+        truthy(ok, tostring(err))
+        local _ = f
+    end)
+
+    it('names sc-ambulance in /ch-diag when it answers', function()
+        local _, modules = boot()
+        fixture(modules)
+        local out = table.concat(modules.admin.diagnose(0, 2), '\n')
+        truthy(out:find('death state: readable (dead=false, last stand=false), from sc-ambulance',
+            1, true), out)
     end)
 end)

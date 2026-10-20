@@ -212,7 +212,8 @@ describe('complexity: opening the board', function()
                 reset()
                 local listing = stack.projection.listing(board.creators[1].cid, 1)
                 into[1] = { visible = board.made, rows = #listing.contracts,
-                            escrow = counts.readEscrow, all = counts.allContracts }
+                            escrow = counts.readEscrow, all = counts.allContracts,
+                            live = counts.liveContracts }
             end)
             return into[1]
         end
@@ -244,7 +245,8 @@ describe('complexity: opening the board', function()
             ('each rendered row costs a fixed handful of escrow reads, got %.1f')
             :format(perRow))
 
-        eq(big.all, 1, 'and the contract table is read once, not once a page')
+        eq(big.live, 1, 'and the live contracts are read once, not once a page')
+        eq(big.all, 0, 'and never the whole table, finished contracts and all')
     end)
 
     --- A weak secondary check, and labelled as one. It exists to catch the
@@ -503,5 +505,431 @@ describe('json mode: what a kill payout writes', function()
             'what placing a contract writes to the index is the same with 5 characters in the '
             .. 'ledger and with 400')
         eq(bytes(big.claim, 'data/store.json'), 0, 'and a payout writes none of it')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- Framework lookups, row walks and round trips
+--------------------------------------------------------------------------
+
+--- Count every export call by resource and method. Calls go through the
+--- global `exports` on every use, so standing a counter in front of it sees
+--- all of them.
+local function countingExports()
+    local real = _G.exports
+    local counts = {}
+    _G.exports = setmetatable({}, { __index = function(_, resource)
+        local inner = real[resource]
+        return setmetatable({}, { __index = function(_, method)
+            local fn = inner[method]
+            return function(...)
+                local key = resource .. '.' .. method
+                counts[key] = (counts[key] or 0) + 1
+                return fn(...)
+            end
+        end })
+    end })
+    return counts, function() _G.exports = real end
+end
+
+--- Count the steps of every `pairs` walk: the rows a lookup touches.
+local function countingPairs()
+    local real = _G.pairs
+    local steps = 0
+    _G.pairs = function(t)
+        local f, s, k = real(t)
+        return function(tt, kk)
+            steps = steps + 1
+            return f(tt, kk)
+        end, s, k
+    end
+    return function() return steps end, function() _G.pairs = real end
+end
+
+--- The sampler's own loop, one pass at a time: the body startSampler runs
+--- every ConditionSampleMs, fetch and all, not watchTargets handed a list.
+local function samplerOf(stack)
+    stack.death.startSampler()
+    local thread = coroutine.wrap(Env.threads[#Env.threads])
+    local realWait = _G.Wait
+    local function step()
+        _G.Wait = coroutine.yield
+        local ok, err = pcall(thread)
+        _G.Wait = realWait
+        if not ok then error(err, 0) end
+    end
+    step()   -- to its first wait
+    return step
+end
+
+describe('complexity: what the sampler asks for', function()
+    --- The whole contract table holds every finished contract the retention
+    --- keeps. On mysql that was SELECT * of all of it, once a second.
+    it('reads the running contracts once a pass, never the whole table', function()
+        atScale(100, function(stack, board, counts, reset)
+            local pass = samplerOf(stack)
+            reset()
+            pass()
+            eq(counts.liveContracts, 1, 'one read of the running contracts a pass')
+            eq(counts.allContracts, 0, 'and none of every contract kept')
+            eq(counts.readHitmen, board.made, 'one roster per running contract, as before')
+            reset()
+            pass()
+            eq(counts.liveContracts, 1, 'and the same the next second')
+        end)
+    end)
+
+    --- The death state was read twice per target per pass: once for the
+    --- revive watch, once more for isTrulyDead, with nothing in between.
+    it('reads each target\'s death state once a pass', function()
+        atScale(20, function(stack, board)
+            local exportCounts, restore = countingExports()
+            local ok, err = pcall(stack.death.watchTargets, stack.storage.liveContracts())
+            restore()
+            truthy(ok, tostring(err))
+            eq(exportCounts['sc-ambulance.IsDead'], board.made, 'one dead read per contract')
+            eq(exportCounts['sc-ambulance.IsLaststand'], board.made, 'and one last-stand read')
+        end)
+    end)
+end)
+
+describe('complexity: a party who has logged off', function()
+    --- Contracts live up to two days with their clock paused while the
+    --- target is away, so a contract on somebody offline is the ordinary
+    --- state. Each lookup of them asked qbx_core for every online player, one
+    --- export each, carrying that player's whole record: the sampler did it
+    --- every second, and every board open and expiry pass again.
+    local function offlineCost(online)
+        local stack = newStack()
+        local out
+        withConfig(scaleLimits(), function()
+            local board = loadBoard(stack, 12)
+            -- A server that has been running: its sampler has looked its
+            -- targets up while they were here.
+            stack.death.watchTargets(stack.storage.liveContracts())
+            for i = 1, board.players do Env.removePlayer(2000 + i) end
+            for i = 1, online do
+                Env.addPlayer({ source = 5000 + i, citizenid = ('CROWD%04d'):format(i),
+                    license = ('license:crowd%d'):format(i), cash = 0, bank = 0 })
+            end
+            local exportCounts, restore = countingExports()
+            local ok, err = pcall(function()
+                local function lookups()
+                    local n = (exportCounts['qbx_core.GetPlayer'] or 0)
+                        + (exportCounts['qbx_core.GetPlayerByCitizenId'] or 0)
+                    for key in pairs(exportCounts) do exportCounts[key] = 0 end
+                    return n
+                end
+                lookups()
+                stack.death.watchTargets(stack.storage.liveContracts())
+                out = { sampler = lookups() }
+                stack.projection.listing(board.creators[1].cid, 1)
+                out.board = lookups()
+                stack.contracts.releaseIdleHolds()
+                out.holds = lookups()
+                out.offline = stack.identity.byCitizenId('TGT00001')
+            end)
+            restore()
+            if not ok then error(err, 0) end
+        end)
+        return out
+    end
+
+    it('costs the same framework lookups with 10 players online or 150', function()
+        local few, many = offlineCost(10), offlineCost(150)
+        eq(many.offline, nil, 'they are offline, and found to be')
+        eq(many.sampler, few.sampler,
+            ('a sampler pass made %d lookups with 150 online and %d with 10')
+            :format(many.sampler, few.sampler))
+        eq(many.board, few.board,
+            ('a board open made %d lookups with 150 online and %d with 10')
+            :format(many.board, few.board))
+        eq(many.holds, few.holds, 'and so does the idle-hold sweep')
+        truthy(many.sampler <= 12 * 2,
+            ('one or two lookups per contract, not one per player online: %d'):format(many.sampler))
+    end)
+
+    it('still finds somebody when the lookup export does not work on this build', function()
+        local stack = newStack()
+        fixture(stack)
+        local realExports = _G.exports
+        _G.exports = setmetatable({}, { __index = function(_, resource)
+            local inner = realExports[resource]
+            if resource ~= 'qbx_core' then return inner end
+            return setmetatable({}, { __index = function(_, method)
+                if method == 'GetPlayerByCitizenId' then
+                    -- Answers, but never with anybody: a build whose export
+                    -- does not take a citizen id this way.
+                    return function() return nil end
+                end
+                return inner[method]
+            end })
+        end })
+        local found = stack.identity.byCitizenId('TARGET01')
+        _G.exports = realExports
+        truthy(found, 'never seen to work, its nil is not trusted: the scan still runs')
+        eq(found.cid, 'TARGET01')
+    end)
+end)
+
+describe('complexity: hits on players no contract names', function()
+    --- Every hit between any two players went through attribution: both
+    --- resolved, a death-state read, a 50 ms poll, and 'rejected' audit rows
+    --- mirrored to the staff webhook.
+    it('asks the framework nothing and logs nothing for them', function()
+        local stack = newStack()
+        Env.addPlayer({ source = 31, citizenid = 'GANG0001', license = 'license:g1' })
+        Env.addPlayer({ source = 32, citizenid = 'GANG0002', license = 'license:g2' })
+        local queued = stack.audit.pending()
+        local exportCounts, restore = countingExports()
+        local ok, err = pcall(function()
+            for i = 1, 40 do
+                Env.players[32]._health = 200 - i
+                stack.death.recordDamage(31, 32, 123456)
+                stack.death.recordDamage(32, 31, 123456)
+            end
+            Env.advance(5)
+        end)
+        restore()
+        truthy(ok, tostring(err))
+        eq(exportCounts['qbx_core.GetPlayer'] or 0, 0, 'no lookup of either player')
+        eq(exportCounts['sc-ambulance.IsDead'] or 0, 0, 'no death-state read')
+        eq(stack.audit.pending(), queued, 'and no audit row')
+        eq(#Env.timers, 0, 'and no poll left running')
+    end)
+
+    --- Except somebody the server is watching come back from a death: a
+    --- hit that cuts their revive short is what makes it a revive, and the
+    --- protection after one is measured from it.
+    it('still looks at a hit on somebody the server has seen dead', function()
+        local stack = newStack()
+        Env.addPlayer({ source = 31, citizenid = 'GANG0001', license = 'license:g1' })
+        Env.addPlayer({ source = 32, citizenid = 'GANG0002', license = 'license:g2' })
+        Env.players[32].PlayerData.metadata.isdead = true
+        stack.death.onVictimReport(32)
+        truthy(stack.death.wasSeenDead('GANG0002'))
+        local before = stack.audit.pending()
+        stack.death.recordDamage(31, 32, 123456)
+        eq(stack.audit.pending(), before + 1,
+            'looked at: its first hit sets the baseline it is measured from')
+    end)
+
+    --- And a target from the moment their contract is accepted, before the
+    --- sampler's next pass has seen it.
+    it('looks at a hit on a target the moment their contract is taken', function()
+        local stack = newStack()
+        local f = fixture(stack)
+        local c = stack.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        truthy(stack.contracts.accept(f.hitman, c.id, false))
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 150
+        stack.death.recordDamage(3, 2, 123456)
+        truthy(stack.death.lastHit('HITMAN01', 'TARGET01'), 'the hit is on the record')
+    end)
+end)
+
+describe('complexity: rows a lookup walks', function()
+    --- readEscrow and readHitmen walked every row in the store for the one
+    --- contract asked about; the board prices every contract with one, and
+    --- recovery reads every contract kept.
+    it('reads one contract\'s lines and roster in the same steps at 10 contracts or 500', function()
+        local function walk(n)
+            local out
+            atScale(n, function(stack, board)
+                local id = stack.storage.liveContracts()[1].id
+                local steps, restore = countingPairs()
+                local ok, err = pcall(function()
+                    stack.storage.readEscrow(id)
+                    out = { escrow = steps() }
+                    stack.storage.readHitmen(id)
+                    out.hitmen = steps() - out.escrow
+                end)
+                restore()
+                if not ok then error(err, 0) end
+            end)
+            return out
+        end
+        local small, big = walk(10), walk(500)
+        eq(big.escrow, small.escrow, 'an escrow read walks its own contract\'s lines only')
+        eq(big.hitmen, small.hitmen, 'and a roster read its own contract\'s rows')
+    end)
+
+    --- The prune ran every tick and built its holding and owing sets over
+    --- every escrow line and pending row before finding nothing was old
+    --- enough, which in steady state is every tick.
+    it('prunes nothing without walking escrow when nothing is old enough', function()
+        atScale(200, function(stack, board)
+            local steps, restore = countingPairs()
+            local ok, err = pcall(stack.storage.prune)
+            restore()
+            truthy(ok, tostring(err))
+            truthy(steps() <= board.made + 1,
+                ('a prune with nothing due walked %d rows for %d contracts')
+                :format(steps(), board.made))
+        end)
+    end)
+
+    --- One handle per searcher and person shown, thirty minted per browse
+    --- page, and minting walked every live handle to look for one.
+    it('mints a target handle without walking the ones already live', function()
+        local stack = newStack()
+        for s = 1, 20 do
+            for t = 1, 100 do
+                stack.app.mintTargetHandle(('SEARCH%02d'):format(s), ('PERSON%03d'):format(t))
+            end
+        end
+        local steps, restore = countingPairs()
+        local again, fresh
+        local ok, err = pcall(function()
+            again = stack.app.mintTargetHandle('SEARCH01', 'PERSON001')
+            fresh = stack.app.mintTargetHandle('SEARCH01', 'PERSON999')
+        end)
+        restore()
+        truthy(ok, tostring(err))
+        eq(steps(), 0, 'two thousand live handles, none walked')
+        eq(stack.app.resolveTargetHandle('SEARCH01', again), 'PERSON001', 'the same handle again')
+        eq(stack.app.resolveTargetHandle('SEARCH01', fresh), 'PERSON999')
+        eq(stack.app.resolveTargetHandle('SEARCH02', again), nil, 'and only for its searcher')
+        stack.app.clearPlayerHandles('SEARCH01')
+        local after = stack.app.mintTargetHandle('SEARCH01', 'PERSON001')
+        truthy(after ~= again, 'a searcher who left gets a new one')
+        eq(stack.app.resolveTargetHandle('SEARCH01', again), nil)
+    end)
+end)
+
+describe('complexity: a start', function()
+    --- Recovery read escrow twice for every contract kept, and the amendment
+    --- index asked each one for its open proposals: on mysql, some four
+    --- awaited queries a contract before the app answered anybody.
+    local function boot()
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Config.Database.Mode = 'memory'
+        local main = require('server.main')
+        return main, main.start()
+    end
+
+    local function startCost(finished)
+        local out
+        local main, s = boot()
+        withConfig(scaleLimits(), function()
+            local f = fixture(s)
+            for i = 1, finished do
+                Env.addPlayer({ source = 100 + i, citizenid = ('GONE%04d'):format(i),
+                    license = ('license:gone%d'):format(i), cash = 0, bank = 0 })
+                local c, why = s.contracts.create(f.creator, { targetCid = ('GONE%04d'):format(i),
+                    reason = 'x', reward = { baseline = { cash = 100 } } })
+                truthy(c, 'contract ' .. i .. ': ' .. tostring(why))
+                truthy(s.contracts.cancel(f.creator, c.id), 'cancelled ' .. i)
+                -- Past the wait a creator who cancelled has before placing again.
+                Env.time = Env.time + 3600
+            end
+            local live = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+                reward = { baseline = { cash = 100 } } })
+            truthy(live, 'one running contract')
+            local counts, restore = countingStore(s.storage)
+            local ok, err = pcall(function()
+                main.recover()
+                s.amendments.reindex()
+            end)
+            restore()
+            if not ok then error(err, 0) end
+            out = { escrow = counts.readEscrow, amendments = counts.readOpenAmendments,
+                    contract = counts.readContract }
+        end)
+        return out
+    end
+
+    it('reads nothing more for a finished contract whose escrow is all settled', function()
+        local few, many = startCost(2), startCost(30)
+        eq(many.escrow, few.escrow,
+            ('recovery read escrow %d times with 30 finished contracts and %d with 2')
+            :format(many.escrow, few.escrow))
+        eq(many.contract, few.contract, 'nor re-read their rows')
+        eq(many.amendments, 0, 'the amendment index is one read, not one per contract')
+    end)
+end)
+
+describe('complexity: the audit flush on mysql', function()
+    local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+
+    local function mysqlAudit()
+        newStack()
+        Exec.install(Natives)
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local store = require('crimson-hitman.server.storage.mysql')
+        store.open()
+        package.loaded['crimson-hitman.server.audit'] = nil
+        local audit = require('crimson-hitman.server.audit')
+        audit.init(store)
+        return audit, store
+    end
+
+    local function inserts()
+        local n = 0
+        for _, sql in ipairs(Exec.statements) do
+            if sql:find('^INSERT INTO crimson_audit') then n = n + 1 end
+        end
+        return n
+    end
+
+    local function rows()
+        local n, seen = 0, {}
+        for _, row in pairs(Exec.tables.crimson_audit or {}) do
+            n = n + 1
+            seen[row.action] = (seen[row.action] or 0) + 1
+        end
+        return n, seen
+    end
+
+    --- One awaited INSERT a row, and the flush is the first job of the tick:
+    --- every job behind it waited on the database a row at a time.
+    it('writes a flush in a few statements, not one a row', function()
+        local audit = mysqlAudit()
+        for i = 1, 450 do audit.financial('row_' .. i, 'CREATOR1', 'ct1', { n = i }) end
+        Exec.statements = {}
+        eq(audit.flush(), 450)
+        eq(inserts(), 3, 'two hundred rows a statement')
+        local n, seen = rows()
+        eq(n, 450, 'every row written')
+        eq(seen.row_1, 1)
+        eq(seen.row_450, 1)
+    end)
+
+    --- One statement is all or nothing, so a batch the database refuses has
+    --- written none of itself: its rows go one by one, and only the one
+    --- that will not write is lost.
+    it('writes a refused batch row by row, once each', function()
+        local audit, store = mysqlAudit()
+        for i = 1, 10 do audit.financial('row_' .. i, 'CREATOR1', 'ct1', { n = i }) end
+        local realBatch, realOne = store.writeAuditBatch, store.writeAudit
+        store.writeAuditBatch = function() error('Data too long for column') end
+        store.writeAudit = function(entry)
+            if entry.action == 'row_4' then error('Data too long for column') end
+            return realOne(entry)
+        end
+        local written = audit.flush()
+        store.writeAuditBatch, store.writeAudit = realBatch, realOne
+        eq(written, 9)
+        local n, seen = rows()
+        local actions = {}
+        for action, count in pairs(seen) do
+            if action:find('^row_') then actions[#actions + 1] = action .. '=' .. count end
+        end
+        table.sort(actions)
+        eq(#actions, 9, 'nine rows: ' .. table.concat(actions, ' '))
+        for _, entry in ipairs(actions) do truthy(entry:find('=1$'), 'once each: ' .. entry) end
+        eq(seen.row_4, nil, 'the one it would not take')
+        eq(seen.audit_overflow, 1, 'and that one counted as dropped')
+        truthy(n == 10)
     end)
 end)

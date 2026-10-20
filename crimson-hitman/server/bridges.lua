@@ -210,6 +210,15 @@ function Bridges.install(modules)
         pcall(modules.death.noteDefib, src, targetId)
     end)
 
+    -- A medical resource starting again may be a version with the death-state
+    -- exports the one before did not have (Identity.deathState stops asking
+    -- one that has none). A local event: the engine raises it, no client can.
+    AddEventHandler('onResourceStart', function(name)
+        if modules.identity and modules.identity.forgetProvider then
+            modules.identity.forgetProvider(name)
+        end
+    end)
+
     -- A sentence starting or ending moves a contract's clock as a player
     -- arriving or leaving does. qbx_core announces every metadata write on
     -- the server; a local event, so no client can raise it.

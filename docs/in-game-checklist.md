@@ -247,7 +247,13 @@ uploads, and with neither. Restart the resource between them.
 - [ ] `resmon` for `crimson-hitman` stays near 0.01ms idle
 - [ ] With 10+ live contracts and the app open, it stays under 0.05ms
 - [ ] A kidnap countdown running does not spike it
-- [ ] No console spam during normal play
+- [ ] No console spam during normal play, and no
+      `maintenance job ... took ... ms` warning; `/ch-diag` lists the
+      slowest jobs, every one under `Config.Diagnostics.SlowJobMs` (5 ms)
+- [ ] With the staff webhook set, a gunfight between players no contract
+      names posts nothing to it
+- [ ] On qbx_medical (no sc-ambulance), `/ch-diag <id>` says the death state
+      came from QBox metadata, and a kill on a target still pays
 
 ---
 

@@ -12,6 +12,9 @@ local queue = {}
 local head, tail = 1, 0
 local dropped = 0
 
+--- Rows per INSERT where the store can write several at once (mysql).
+local BATCH_ROWS = 200
+
 function Audit.init(storage)
     Storage = storage
     queue, head, tail, dropped = {}, 1, 0, 0
@@ -66,6 +69,15 @@ function Audit.rejected(action, actorCid, contractId, detail)
     push('rejected', action, actorCid, contractId, detail)
 end
 
+--- Hits on a target whose damage never showed, or showed and could not be
+--- put down to one shooter: every round into somebody already down, every
+--- second gun in a fight. Routine in any firefight on a target, and listed
+--- they buried the lines the channel is for. Counted with the rest of the
+--- noise; the rows themselves are still in the log.
+local DAMAGE_NOISE = {
+    damage_unsupported = true, damage_ambiguous = true, damage_unattributed = true,
+}
+
 --- Mirror a line to the staff webhook (the crimson_hitman_webhook convar).
 ---
 --- Identity is deliberately absent: the webhook is a heads-up that something
@@ -82,6 +94,7 @@ local function mirrored(entry)
         or action:sub(1, 5) == 'gate_' then
         return 'noise'
     end
+    if DAMAGE_NOISE[action] then return 'hit' end
     return true
 end
 
@@ -107,12 +120,14 @@ local function mirrorBatch(rows)
     if type(url) ~= 'string' or url == '' then return false end
     if Util.monotonicMs() < backoffUntil then return false end
 
-    local lines, more, noise = {}, 0, 0
+    local lines, more, noise, hits = {}, 0, 0, 0
     for i = 1, #rows do
         local entry = rows[i]
         local kind = mirrored(entry)
         if kind == 'noise' then
             noise = noise + 1
+        elseif kind == 'hit' then
+            hits = hits + 1
         elseif kind then
             if #lines < MAX_LINES then
                 lines[#lines + 1] = ('`%s` · %s · contract %s'):format(
@@ -124,6 +139,7 @@ local function mirrorBatch(rows)
     end
     if more > 0 then lines[#lines + 1] = ('…and %d more'):format(more) end
     if noise > 0 then lines[#lines + 1] = ('%d refused request(s)'):format(noise) end
+    if hits > 0 then lines[#lines + 1] = ('%d hit(s) on targets not confirmed'):format(hits) end
     if #lines == 0 then return false end
 
     local content = table.concat(lines, '\n')
@@ -183,18 +199,41 @@ function Audit.flush(stopping)
     local batch, first, last = queue, head, tail
     queue, head, tail = {}, 1, 0
 
-    local written, drained = 0, {}
+    local drained = {}
     for i = first, last do
         local entry = batch[i]
         if entry then
-            if pcall(write, entry) then
-                written = written + 1
-            else
-                dropped = dropped + 1
-            end
             drained[#drained + 1] = entry
             batch[i] = nil
         end
+    end
+
+    local written = 0
+    local function one(entry)
+        if pcall(write, entry) then
+            written = written + 1
+        else
+            dropped = dropped + 1
+        end
+    end
+
+    -- Many rows a statement where the store can (mysql: one awaited round
+    -- trip a row held up every job behind this one). A batch the store
+    -- refuses wrote none of itself, so its rows go one at a time, and only
+    -- the row that will not write is dropped. Not at a stop: those rows are
+    -- handed over without waiting, one by one (writeAuditNoWait).
+    local several = not stopping and Storage.writeAuditBatch or nil
+    if several then
+        for from = 1, #drained, BATCH_ROWS do
+            local chunk = table.move(drained, from, math.min(#drained, from + BATCH_ROWS - 1), 1, {})
+            if pcall(several, chunk) then
+                written = written + #chunk
+            else
+                for k = 1, #chunk do one(chunk[k]) end
+            end
+        end
+    else
+        for k = 1, #drained do one(drained[k]) end
     end
     pcall(mirrorBatch, drained)
 

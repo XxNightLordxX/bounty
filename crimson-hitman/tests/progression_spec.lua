@@ -189,6 +189,28 @@ describe('staff webhook', function()
         truthy(#body < 2100, 'under Discord\'s limit: ' .. #body)
     end)
 
+    --- Every round into a downed target, every second gun in a fight on
+    --- one: routine, and listed they buried the lines the channel is for.
+    it('counts hits whose damage never showed rather than listing them', function()
+        local s = newStack()
+        fixture(s)
+        Natives.convars.crimson_hitman_webhook = HOOK
+        Natives.calls.http = {}
+        s.audit.financial('payout', 'HITMAN01', 'ct1', { amount = 5000 })
+        for _ = 1, 12 do s.audit.rejected('damage_unsupported', 'HITMAN01', nil, {}) end
+        for _ = 1, 3 do s.audit.rejected('damage_ambiguous', nil, nil, {}) end
+        s.audit.rejected('damage_out_of_range', 'HITMAN01', nil, {})
+        s.audit.flush()
+        Natives.convars.crimson_hitman_webhook = nil
+        eq(#Natives.calls.http, 1)
+        local body = tostring(Natives.calls.http[1].body)
+        truthy(body:find('15 hit(s) on targets not confirmed', 1, true), body)
+        falsy(body:find('damage_unsupported', 1, true), 'not listed: ' .. body)
+        truthy(body:find('damage_out_of_range', 1, true), 'a hit from out of range still is: ' .. body)
+        truthy(body:find('payout', 1, true), body)
+        eq(#s.storage.auditByAction('damage_unsupported'), 12, 'and every row is still in the log')
+    end)
+
     it('never puts a citizen id in the webhook body', function()
         local s = newStack()
         fixture(s)

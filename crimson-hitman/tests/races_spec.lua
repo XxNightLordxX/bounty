@@ -248,8 +248,9 @@ describe('RACE F3: the expiry pass writes back rows it read before it yielded', 
         Env.byCitizen['TARGET02'] = nil
 
         -- Reads return copies, as a database does.
-        local realAll = m.storage.allContracts
+        local realAll, realLive = m.storage.allContracts, m.storage.liveContracts
         m.storage.allContracts = function() return deepCopy(realAll()) end
+        m.storage.liveContracts = function() return deepCopy(realLive()) end
 
         -- The hitman's kill on B is verified while the pass is busy
         -- expiring A.
@@ -270,6 +271,7 @@ describe('RACE F3: the expiry pass writes back rows it read before it yielded', 
         m.storage.expireIfDue = realExpire
         truthy(fired, 'the claim ran inside the pass')
         m.storage.allContracts = realAll
+        m.storage.liveContracts = realLive
         print('  pass expired', expired)
         local rowB = deepCopy(m.storage.readContract(b.id))
         print('  B after the pass: next_slot', rowB.next_slot, 'slots_claimed', rowB.slots_claimed,

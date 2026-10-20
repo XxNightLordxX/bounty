@@ -1049,6 +1049,33 @@ describe('a photo kept for the client in the app, on this server', function()
         end
     end)
 
+    --- Each open read the file and encoded it again in Lua on the main
+    --- thread: tens of milliseconds at the default size, as often as the
+    --- open limit lets its owner tap.
+    it('is encoded once for repeated opens, and again once it is gone', function()
+        local s, _, _, handle = kept({ web = false })
+        local encodes, real = 0, Util.toBase64
+        Util.toBase64 = function(...) encodes = encodes + 1 return real(...) end
+        local ok, err = pcall(function()
+            for _ = 1, 4 do
+                local reply, events = call('openPhoto', 1, { handle = handle })
+                truthy(reply and reply.ok, tostring(reply and reply.err))
+                eq(Util.fromBase64(latentTo(events, 'crimson-hitman:photoImage')[1].args[1].src:sub(24)),
+                    JPEG, 'the same picture each time')
+            end
+            eq(encodes, 1, 'encoded on the first open only')
+            local reply = call('openPhoto', 2, { handle = handle })
+            eq(reply.err, CH.ERR.PHOTO_GONE, 'still nobody else\'s to open')
+            eq(encodes, 1)
+            truthy(call('photoDecision', 1, { handle = handle, choice = 'delete' }).ok)
+            Env.advance(30)   -- past the open limit
+            reply = call('openPhoto', 1, { handle = handle })
+            eq(reply.err, CH.ERR.PHOTO_GONE, 'deleted is deleted, cache or not')
+        end)
+        Util.toBase64 = real
+        truthy(ok, tostring(err))
+    end)
+
     it('is removed when the client deletes it', function()
         local s, _, _, handle = kept({ web = false })
         local keptFile = s.storage.readPhoto(handle).file

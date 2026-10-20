@@ -301,6 +301,23 @@ local function insert(sql, params)
     local columns = {}
     for column in list:gmatch('[%w_]+') do columns[#columns + 1] = column end
 
+    -- Several rows in one statement, VALUES (...),(...): each group a row,
+    -- its parameters in order. Not under ON DUPLICATE KEY UPDATE, whose
+    -- VALUES(col) are not row groups.
+    if not sql:find('ON DUPLICATE KEY UPDATE', 1, true) then
+        local groups = 0
+        for _ in (sql:match('VALUES%s*(.*)$') or ''):gmatch('%b()') do groups = groups + 1 end
+        if groups > 1 then
+            local single = sql:match('^(.-VALUES)') .. ' (' .. ('?,'):rep(#columns - 1) .. '?)'
+            for g = 0, groups - 1 do
+                local slice = {}
+                for i = 1, #columns do slice[i] = params[g * #columns + i] end
+                insert(single, slice)
+            end
+            return {}
+        end
+    end
+
     local row = {}
     for i = 1, #columns do
         local value = coerce(tableName, columns[i], params[i])
@@ -465,6 +482,20 @@ local function select_(sql, params)
     local out = {}
     for _, row in pairs(Exec.tables[tableName]) do
         if matches(row, conditions, params, 1) then out[#out + 1] = copy(row) end
+    end
+
+    -- SELECT DISTINCT col: that column alone, once per value.
+    local distinct = sql:match('^SELECT DISTINCT ([%w_]+) FROM')
+    if distinct then
+        local seen, only = {}, {}
+        for i = 1, #out do
+            local value = out[i][distinct]
+            if value ~= nil and not seen[value] then
+                seen[value] = true
+                only[#only + 1] = { [distinct] = value }
+            end
+        end
+        out = only
     end
 
     local orderBy = sql:match('ORDER BY ([%w_, ]+)')

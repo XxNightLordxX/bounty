@@ -261,6 +261,11 @@ local DEFAULTS = {
             MaxDirtyShardsPerFlush = 25,
         },
     },
+    --- A whole section a config from before it had is filled from
+    --- defaults.lua; this fills the key in one that has the section.
+    Diagnostics = {
+        SlowJobMs = 5,
+    },
 }
 
 --- A deep copy of a shipped default, so the live config and the fallback
@@ -584,6 +589,16 @@ local function validateConfig()
             Config.Completion.KeptPhotoDays = days
         end
     end
+
+    -- How slow a maintenance job may be before the console hears about it.
+    -- 0 turns the warning off; /ch-diag still lists the slowest jobs.
+    local slowMs = tonumber(Config.Diagnostics.SlowJobMs)
+    if not slowMs or slowMs ~= slowMs or slowMs < 0 then
+        warn[#warn + 1] = ('Diagnostics.SlowJobMs is %s, not a number of milliseconds (0 for '
+            .. 'no warning); using 5.'):format(tostring(Config.Diagnostics.SlowJobMs))
+        slowMs = 5
+    end
+    Config.Diagnostics.SlowJobMs = slowMs
 
     if Config.Audit.MaxQueueSize < 1 then
         warn[#warn + 1] = 'Audit.MaxQueueSize is below 1; the queue holds at least one row.'
@@ -958,6 +973,7 @@ function StartCrimsonHitman()
     local admin      = require('server.admin')
     local projection = require('server.projection')
     local app        = require('server.app')
+    local timing     = require('server.timing')
 
     audit.init(Storage)
     notify.init({ identity = identity })
@@ -968,7 +984,8 @@ function StartCrimsonHitman()
                      death = death })
     photos.init({ storage = Storage, audit = audit })
     ledger.init({ storage = Storage, photos = photos, notify = notify })
-    death.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit })
+    death.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
+                 timing = timing })
     photo.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
                  death = death, notify = notify, ledger = ledger })
     kidnap.init({ storage = Storage, identity = identity, contracts = contracts,
@@ -993,6 +1010,9 @@ function StartCrimsonHitman()
         informant = informant, amendments = amendments, comms = comms,
         projection = projection, mugshot = mugshot, progression = progression,
         app = app, admin = admin, photos = photos,
+        -- How long each tick job and sampler pass takes, for the console
+        -- warning and /ch-diag.
+        timing = timing,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -1076,8 +1096,19 @@ function Recover()
     local lastAlive = Storage.lastHeartbeat and Storage.lastHeartbeat() or nil
     if lastAlive and lastAlive >= now then lastAlive = nil end
 
+    -- The contracts still holding an escrow line that is not settled, in
+    -- one read. A finished contract whose lines are all settled has nothing
+    -- below to do: every step acts on a live or completing contract, or on
+    -- a line held or mid-release. Read for each of them anyway, on mysql
+    -- that was some four awaited queries per contract kept (thirty days of
+    -- them), with the app answering nobody until they were done.
+    local unsettled = Storage.unsettledEscrowContracts and Storage.unsettledEscrowContracts() or nil
+
     for i = 1, #contracts do
         local contract = contracts[i]
+        if unsettled and CH.TERMINAL[contract.state] and not unsettled[contract.id] then
+            goto continue
+        end
 
         if lastAlive and not contract.paused_since
             and (contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED
@@ -1192,6 +1223,8 @@ function Recover()
         if modules.escrow.recoverOwed then
             recovered = recovered + modules.escrow.recoverOwed(Storage.readEscrow(contract.id))
         end
+
+        ::continue::
     end
 
     -- Escrow whose contract was never stored: a crash between taking a new
@@ -1244,8 +1277,12 @@ local lastHostRefresh = 0
 ---
 --- Each job stands alone now. One that fails says so, on every tick, and the
 --- others still run.
+---
+--- And each is timed (server/timing.lua): one slower than
+--- Config.Diagnostics.SlowJobMs says so in the console, and /ch-diag lists
+--- the slowest.
 local function job(name, fn, ...)
-    local ok, err = pcall(fn, ...)
+    local ok, err = modules.timing.run(name, fn, ...)
     if not ok then
         print(('[crimson-hitman] maintenance job %q failed: %s'):format(name, tostring(err)))
     end
@@ -1270,6 +1307,27 @@ function RetryWaiting()
     return delivered
 end
 
+--- How often the photo retention runs while it has nothing to catch up on.
+--- Counted in days, so ten minutes late is nothing; every tick, it was an
+--- UPDATE across the whole ledger on mysql, which no index can serve.
+local FORGET_EVERY_SECONDS = 600
+local nextForget = 0
+
+--- The ledger's photo retention, at most every FORGET_EVERY_SECONDS. Back
+--- next tick while it is still removing photos: a pass takes a bounded
+--- number, and a backlog (retention just switched on, a long downtime)
+--- drains at the old rate.
+function ForgetOldPhotos()
+    local now = os.time()
+    if now < nextForget then return 0, 0 end
+    -- Marked before the call, like the host refresh: a pass that throws
+    -- is not retried every ten seconds.
+    nextForget = now + FORGET_EVERY_SECONDS
+    local forgotten, photos = modules.ledger.forgetOldPhotos()
+    if (tonumber(photos) or 0) > 0 then nextForget = 0 end
+    return forgotten, photos
+end
+
 function Tick()
     job('audit.flush', modules.audit.flush)
     job('amendments.expire', modules.amendments.expire)
@@ -1291,7 +1349,7 @@ function Tick()
     job('death.sweep', modules.death.sweep)
     job('ratelimit.sweep', modules.ratelimit.sweep)
     if Storage.prune then job('storage.prune', Storage.prune) end
-    job('ledger.forgetOldPhotos', modules.ledger.forgetOldPhotos)
+    job('ledger.forgetOldPhotos', ForgetOldPhotos)
     -- A kill photo opened and never saved or deleted: the phone closed
     -- mid-view. It goes as if the client had chosen Delete.
     job('photos.expire', modules.photos.expire)
@@ -1368,7 +1426,8 @@ function ExpireContracts()
     if not presenceChanged and now < nextDue then return 0 end
     presenceChanged = false
 
-    local contracts = Storage.allContracts()
+    -- Live contracts only, which is all the pass acts on.
+    local contracts = Storage.liveContracts()
     local resolved = 0
 
     -- The soonest future moment worth waking for. Starts far out and is
@@ -1581,6 +1640,7 @@ end)
 
 return {
     start = StartCrimsonHitman, recover = Recover, tick = Tick, expire = ExpireContracts,
+    forgetOldPhotos = ForgetOldPhotos,
     -- The expiry pass skips itself when nothing could have changed. These
     -- are how it is told that something did.
     markPresenceChanged = MarkPresenceChanged,

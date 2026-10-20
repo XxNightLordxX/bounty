@@ -197,7 +197,10 @@ end
 --- goes in the same step as the record lets go (closePhoto clears the
 --- name it was served by), so it is not served again even where the
 --- removal fails.
+local forgetUri
+
 local function release(held)
+    if type(held) == 'table' then forgetUri(held.id) end
     if type(held) ~= 'table' or held.kind ~= 'file' then return end
     local file = fileOf(held)
     if file then removeFile(file) end
@@ -312,6 +315,40 @@ local function dataUri(record)
     local bytes = readBytes(record)
     if not bytes then return nil end
     return 'data:' .. record.mime .. ';base64,' .. Util.toBase64(bytes)
+end
+
+--- The data URIs of the photos kept in the app opened most recently:
+--- [id] = { key, uri, used }. A kept photo opens as often as its owner
+--- likes, and each open read its file and encoded it again, in Lua on the
+--- main thread: tens of milliseconds a time at the default size, half a
+--- second at the largest, as fast as the open limit allows. Only ever read
+--- for its owner, after the ownership check, and dropped when the photo
+--- is let go of (release) or its file moves (the key names the file).
+local KEPT_URIS = 4
+local keptUris, uriUses = {}, 0
+
+forgetUri = function(id)
+    if id ~= nil then keptUris[id] = nil end
+end
+
+local function keptDataUri(record)
+    local key = tostring(record.file) .. ':' .. tostring(record.size) .. ':' .. tostring(record.mime)
+    uriUses = uriUses + 1
+    local hit = keptUris[record.id]
+    if hit and hit.key == key then
+        hit.used = uriUses
+        return hit.uri
+    end
+    local uri = dataUri(record)
+    if not uri then return nil end
+    local count, oldest = 0, nil
+    for id, entry in pairs(keptUris) do
+        count = count + 1
+        if not oldest or entry.used < keptUris[oldest].used then oldest = id end
+    end
+    if count >= KEPT_URIS and oldest then keptUris[oldest] = nil end
+    keptUris[record.id] = { key = key, uri = uri, used = uriUses }
+    return uri
 end
 
 --------------------------------------------------------------------------
@@ -582,7 +619,8 @@ function Photos.open(actor, rawHandle)
     if record.kind == 'url' and type(record.url) == 'string' then
         view = { handle = record.id, url = record.url }
     elseif record.kind == 'file' then
-        local image = dataUri(record)
+        local image
+        if kept then image = keptDataUri(record) else image = dataUri(record) end
         if not image then
             local contractId = record.contract_id
             if close(record, CH.PHOTO.DELETED) then

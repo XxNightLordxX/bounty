@@ -462,6 +462,97 @@ describe('storage conformance', function()
             eq(#b.store.readPending('HITMAN01'), 0, b.name)
         end
     end)
+
+    --- The sampler, the expiry pass and the board read these and nothing
+    --- else; recovery reads the whole table. A backend that let a finished
+    --- contract through, or left a running one out, would differ from the
+    --- others on exactly the contracts those passes act on.
+    it('lists the running contracts, and only those, in every backend', function()
+        for _, b in ipairs(backends()) do
+            local states = {
+                ct1 = CH.STATE.ACTIVE, ct2 = CH.STATE.ACCEPTED, ct3 = CH.STATE.COMPLETING,
+                ct4 = CH.STATE.COMPLETED, ct5 = CH.STATE.EXPIRED, ct6 = CH.STATE.ACCEPTED,
+            }
+            for id in pairs(states) do b.store.writeContract(contractFixture(id)) end
+            for id, state in pairs(states) do
+                if state ~= CH.STATE.ACTIVE then
+                    b.store.compareSetContractState(id, CH.STATE.ACTIVE, state)
+                end
+            end
+            local live = b.store.liveContracts()
+            local ids = {}
+            for i = 1, #live do ids[i] = live[i].id end
+            eq(table.concat(ids, ','), 'ct1,ct2,ct6', b.name .. ': by id, running only')
+            eq(#b.store.allContracts(), 6, b.name .. ': and the whole table still has them all')
+        end
+    end)
+
+    --- Read once at a start, in place of a read per contract kept.
+    it('names the contracts holding unsettled escrow or an open proposal, in every backend', function()
+        for _, b in ipairs(backends()) do
+            local function line(id, contractId, state)
+                return { id = id, contract_id = contractId, slot = 1, portion = 'baseline',
+                         source = 'cash', amount = 100, state = state }
+            end
+            b.store.writeEscrow('ct1', { line('ct1:1', 'ct1', CH.ESCROW_STATE.SETTLED),
+                                         line('ct1:2', 'ct1', CH.ESCROW_STATE.HELD) })
+            b.store.writeEscrow('ct2', { line('ct2:1', 'ct2', CH.ESCROW_STATE.SETTLED) })
+            b.store.writeEscrow('ct3', { line('ct3:1', 'ct3', CH.ESCROW_STATE.HELD) })
+            truthy(b.store.claimEscrowLine('ct3:1', CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+            local unsettled = b.store.unsettledEscrowContracts()
+            truthy(unsettled.ct1, b.name .. ': a held line among settled ones')
+            falsy(unsettled.ct2, b.name .. ': every line settled')
+            truthy(unsettled.ct3, b.name .. ': a line mid-release')
+
+            b.store.writeAmendment({ id = 'am1', contract_id = 'ct1', proposer = 'CREATOR1',
+                kind = 'bonus', payload = {}, approvals = {}, expires_at = os.time() + 60,
+                outcome = 'open' })
+            b.store.writeAmendment({ id = 'am2', contract_id = 'ct2', proposer = 'CREATOR1',
+                kind = 'bonus', payload = {}, approvals = {}, expires_at = os.time() + 60,
+                outcome = 'expired' })
+            local open = b.store.openAmendmentContracts()
+            truthy(open.ct1, b.name)
+            falsy(open.ct2, b.name .. ': a closed proposal is not open')
+        end
+    end)
+
+    --- readEscrow and readHitmen answer from a per-contract index in memory
+    --- and json now. A row written again under its id, or a contract's rows
+    --- pruned, must read exactly as before.
+    it('reads one contract\'s lines and roster exactly, through every rewrite, in every backend', function()
+        for _, b in ipairs(backends()) do
+            local function line(id, contractId, amount)
+                return { id = id, contract_id = contractId, slot = 1, portion = 'baseline',
+                         source = 'cash', amount = amount, state = CH.ESCROW_STATE.HELD }
+            end
+            b.store.writeEscrow('ct1', { line('ct1:2', 'ct1', 200), line('ct1:1', 'ct1', 100) })
+            b.store.writeEscrow('ct2', { line('ct2:1', 'ct2', 300) })
+            -- The same line again, as a separate copy: only its owed_to moves.
+            local again = line('ct1:1', 'ct1', 999)
+            again.owed_to = 'CREATOR1'
+            b.store.writeEscrow('ct1', { again })
+
+            local lines = b.store.readEscrow('ct1')
+            eq(#lines, 2, b.name)
+            eq(lines[1].id, 'ct1:1', b.name .. ': sorted by id')
+            eq(lines[1].amount, 100, b.name .. ': the amount is not the copy\'s to move')
+            eq(lines[1].owed_to, 'CREATOR1', b.name)
+            eq(#b.store.readEscrow('ct2'), 1, b.name)
+            eq(#b.store.readEscrow('ct9'), 0, b.name)
+
+            b.store.addHitman({ id = 'h1', contract_id = 'ct1', hitman_cid = 'HITMAN01',
+                state = 'active', accepted_at = 10 })
+            b.store.addHitman({ id = 'h2', contract_id = 'ct1', hitman_cid = 'HITMAN02',
+                state = 'active', accepted_at = 5 })
+            b.store.addHitman({ id = 'h3', contract_id = 'ct2', hitman_cid = 'HITMAN01',
+                state = 'active', accepted_at = 1 })
+            local roster = b.store.readHitmen('ct1')
+            eq(#roster, 2, b.name)
+            eq(roster[1].id, 'h2', b.name .. ': by acceptance')
+            eq(b.store.readHitman('ct2', 'HITMAN01').id, 'h3', b.name)
+            eq(b.store.readHitman('ct2', 'HITMAN02'), nil, b.name)
+        end
+    end)
 end)
 
 --- Retention, run against every backend, because a store that prunes a
@@ -2207,9 +2298,11 @@ describe('audit retention', function()
     --- the audit log: the cutoff became now, and every row older than the
     --- current second went, including what /ch-stuck is built from.
     it('keeps the log when set to 0, and prunes by age otherwise', function()
+        -- Memory too: it only ever appended to its log, for the life of the
+        -- process.
         for _, backend in ipairs(backends()) do
             local store = backend.store
-            if backend.name ~= 'memory' then
+            do
                 local function has(action)
                     for _, row in ipairs(store.readAudit(1000) or {}) do
                         if row.action == action then return true end
@@ -2230,6 +2323,31 @@ describe('audit retention', function()
                 truthy(has('new_row'), backend.name .. ': and a recent one kept')
             end
         end
+    end)
+
+    --- Aged rows left the front of the in-memory log one table.remove at a
+    --- time, each shifting the whole log. They go in one move now, and what
+    --- stays has to be exactly what stood behind them, in order.
+    it('drops every aged row at once and keeps the rest in order, in json and memory', function()
+        for _, backend in ipairs(backends()) do
+            if backend.name ~= 'mysql' then
+                local store = backend.store
+                Config.Audit.RetentionDays = 30
+                for i = 1, 7 do
+                    store.writeAudit({ ts = os.time() - (40 - i) * 86400, kind = 'financial',
+                        action = 'aged_' .. i, detail = {} })
+                end
+                for i = 1, 3 do
+                    store.writeAudit({ ts = os.time() - i, kind = 'financial',
+                        action = 'kept_' .. i, detail = {} })
+                end
+                if store.prune then store.prune() end
+                local actions = {}
+                for _, row in ipairs(store.readAudit(1000) or {}) do actions[#actions + 1] = row.action end
+                eq(table.concat(actions, ','), 'kept_1,kept_2,kept_3', backend.name)
+            end
+        end
+        Config.Audit.RetentionDays = 30
     end)
 end)
 

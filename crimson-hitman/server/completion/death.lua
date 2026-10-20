@@ -11,7 +11,7 @@ local Util = require_shared('util')
 
 local Death = {}
 
-local Storage, Identity, Contracts, Audit, Photo
+local Storage, Identity, Contracts, Audit, Photo, Timing
 
 --- Recent damage the server saw for itself: [victimCid] = { attackerCid, at, weapon, distance }
 local damage = {}
@@ -174,6 +174,8 @@ end
 function Death.init(deps)
     Storage, Identity, Contracts, Audit, Photo =
         deps.storage, deps.identity, deps.contracts, deps.audit, deps.photo
+    -- Optional: times each sampler pass for /ch-diag (server/timing.lua).
+    Timing = deps.timing
     damage, pending, hitBy = {}, {}, {}
     upSince, reviveClaims, lastHitAt = {}, {}, {}
     defibAt, lastUp, inflight, credited = {}, {}, {}, {}
@@ -194,6 +196,18 @@ end
 ---
 --- [cid] = { health = n, armour = n, at = ms }
 local condition = {}
+
+--- Players some live contract names as its target, by server id:
+--- [source] = cid. Rebuilt by every sampler pass (watchTargets), and added
+--- to by Death.watch the moment a contract is accepted, so a hit in the
+--- second before the next pass still counts.
+---
+--- What decides whether a hit is looked at at all. Every hit between any
+--- two players reached recordDamage: two framework lookups and a death-state
+--- read per round, a 50 ms poll on the victim, and 'rejected' audit rows,
+--- mirrored to the staff webhook, for every police shootout and gang fight
+--- in the city. Nothing reads damage on anybody no contract names.
+local watching = {}
 
 --- Read a player's current condition, server-side.
 local function readCondition(source)
@@ -439,6 +453,17 @@ end
 ---@param victimSource number
 ---@param weaponHash number|nil
 function Death.recordDamage(attackerSource, victimSource, weaponHash)
+    -- Nobody a live contract names: left alone, before anything is asked of
+    -- the framework. Unless the server is watching them come back from a
+    -- death (a revive cut short is a revive, which their next contract's
+    -- respawn protection is measured from), and that is asked only while
+    -- somebody is.
+    if not watching[victimSource] then
+        if next(seenDead) == nil and next(upSince) == nil then return end
+        local who = Identity.resolve(victimSource)
+        if not who or not (seenDead[who.cid] or upSince[who.cid]) then return end
+    end
+
     local attacker = Identity.resolve(attackerSource)
     local victim = Identity.resolve(victimSource)
     if not attacker or not victim then return end
@@ -586,6 +611,7 @@ end
 --- @param refresh boolean|nil update an existing baseline as well as seeding one
 function Death.watch(cid, source, refresh)
     if not cid or not source then return false end
+    watching[source] = cid
 
     -- The baseline is refreshed, not merely seeded: health and armour both
     -- recover over time, and a stale low baseline would make every later
@@ -619,12 +645,22 @@ function Death.startSampler()
     if sampling then return false end
     sampling = true
 
+    -- Live contracts only: the pass looks at nothing else, and the whole
+    -- table holds every finished contract the retention keeps (thirty days
+    -- of them as shipped). On mysql that was every row of it, every second.
+    local function pass()
+        Death.watchTargets(Storage.liveContracts())
+    end
+
     CreateThread(function()
         while true do
             Wait(Config.Completion.ConditionSampleMs or 1000)
-            local ok = pcall(function()
-                Death.watchTargets(Storage.allContracts())
-            end)
+            local ok
+            if Timing then
+                ok = Timing.run('death.sampler', pass)
+            else
+                ok = pcall(pass)
+            end
             -- A sampler that dies takes attribution with it, and silently.
             if not ok then
                 print('[crimson-hitman] condition sampler errored; retrying next tick')
@@ -704,6 +740,9 @@ function Death.watchTargets(contracts)
     local radius = (Config.Informant.ProximityRadius or 120.0)
     local radius2 = radius * radius
     local now = os.time()
+    -- Who is a target now. Swapped in whole at the end, so a pass that
+    -- throws part-way leaves the last complete one standing.
+    local targets = {}
 
     for i = 1, #contracts do
         local c = contracts[i]
@@ -711,6 +750,7 @@ function Death.watchTargets(contracts)
             local target = Identity.byCitizenId(c.target_cid)
             if target then
                 Death.watch(target.cid, target.source, true)
+                targets[target.source] = target.cid
                 watched = watched + 1
 
                 -- A target may die to something no hitman reported — a fall,
@@ -753,7 +793,9 @@ function Death.watchTargets(contracts)
                     -- from there.
                     if resolved and lastStand and not dead then defibAt[target.cid] = nil end
                 end
-                if Identity.isTrulyDead(target.source) then
+                -- isTrulyDead, from the reading above rather than a second
+                -- one: nothing yields in between, so it could only agree.
+                if resolved and dead and not (Config.Completion.RejectLastStand and lastStand) then
                     -- Seen dead before this is the same death: reported, or
                     -- already waiting on its report.
                     local fresh = not Death.wasSeenDead(target.cid)
@@ -781,6 +823,9 @@ function Death.watchTargets(contracts)
         end
     end
 
+    -- Death.watch added each of these as it went, and a contract accepted
+    -- while this pass ran is added by its own watch after the swap.
+    watching = targets
     return watched
 end
 
@@ -1016,7 +1061,9 @@ end
 ---@return integer opened
 function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoords)
     local opened = 0
-    local contracts = Storage.allContracts()
+    -- The contracts naming this victim, by the store's own index: every
+    -- death on the server came here, and it read the whole table.
+    local contracts = Storage.contractsNaming(victim.cid)
 
     for i = 1, #contracts do
         local contract = contracts[i]
@@ -1430,6 +1477,9 @@ function Death.clearPlayer(cid)
     downHits[cid] = nil
     polling[cid] = nil
     aliveAt[cid] = nil
+    for src, watchedCid in pairs(watching) do
+        if watchedCid == cid then watching[src] = nil end
+    end
     for key, record in pairs(pending) do
         if record.hitmanCid == cid then pending[key] = nil end
     end

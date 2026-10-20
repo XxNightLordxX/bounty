@@ -163,15 +163,12 @@ local function nameOf(data)
     return Util.sanitizeText(whole, 64) or 'Unknown'
 end
 
---- Resolve the acting player from the engine-supplied event source.
----@param source number
----@return table|nil actor { source, cid, account, name, job, player }
+--- The actor for a player record qbx_core has already handed back.
+---@param src number
+---@param player table|nil
+---@return table|nil actor
 ---@return string|nil err
-function Identity.resolve(source)
-    local src = tonumber(source)
-    if not src or src <= 0 then return nil, CH.ERR.NO_PLAYER end
-
-    local player = exports.qbx_core:GetPlayer(src)
+local function actorOf(src, player)
     if not player or not player.PlayerData then return nil, CH.ERR.NO_PLAYER end
 
     local data = player.PlayerData
@@ -190,6 +187,16 @@ function Identity.resolve(source)
         job     = data.job or { name = 'unemployed', type = 'none' },
         player  = player,
     }
+end
+
+--- Resolve the acting player from the engine-supplied event source.
+---@param source number
+---@return table|nil actor { source, cid, account, name, job, player }
+---@return string|nil err
+function Identity.resolve(source)
+    local src = tonumber(source)
+    if not src or src <= 0 then return nil, CH.ERR.NO_PLAYER end
+    return actorOf(src, exports.qbx_core:GetPlayer(src))
 end
 
 --- Account-level identifier, used for the anti-alt checks (§13.1).
@@ -410,6 +417,15 @@ function Identity.gate(source)
     return actor
 end
 
+--- Whether qbx_core's lookup export has handed back a verified player at
+--- least once since this resource started.
+---
+--- Until it has, its nil may be a build whose export does not answer this
+--- way, and the scan below is asked. Once it has, its nil is the answer:
+--- GetPlayerByCitizenId reads the same online-player table the scan walks
+--- (qbx_core server/functions.lua), so the scan can only agree with it.
+local lookupProven = false
+
 --- Look up an online player by citizen id. Returns nil when offline, which
 --- callers must treat as "not available", never as "does not exist".
 ---
@@ -417,6 +433,14 @@ end
 --- signature differs on this build, the scan below still finds the player.
 --- Identity resolution is load-bearing for every payout, so it does not get
 --- to depend on one export existing.
+---
+--- The scan is not run for somebody the export has said is offline. It asks
+--- qbx_core for every connected player, one export each, and each one
+--- carries that player's whole record across: for a contract on a target
+--- who has logged off, which is a contract's ordinary state for up to two
+--- days, the sampler paid that once a second, and the expiry pass and every
+--- board open paid it again, for every such contract. On a full server that
+--- was thousands of exports a second and a hitch on every one of them.
 ---@param cid string
 ---@return table|nil actor
 function Identity.byCitizenId(cid)
@@ -429,11 +453,19 @@ function Identity.byCitizenId(cid)
 
     if ok and player and player.PlayerData and player.PlayerData.source then
         -- Trust but verify: the returned record must still be the citizen we
-        -- asked for, and still connected.
-        if player.PlayerData.citizenid == cid then
-            return Identity.resolve(player.PlayerData.source)
+        -- asked for, and still connected. Built from the record in hand:
+        -- resolving the source again asked qbx_core for the same player a
+        -- second time.
+        local src = tonumber(player.PlayerData.source)
+        if player.PlayerData.citizenid == cid and src and src > 0 then
+            lookupProven = true
+            return actorOf(src, player)
         end
     end
+
+    -- Offline, by the export's own word. A missing or throwing export
+    -- (not ok), or one never yet seen to work, still falls to the scan.
+    if ok and player == nil and lookupProven then return nil end
 
     local players = GetPlayers() or {}
     for i = 1, #players do
@@ -470,17 +502,51 @@ function Identity.online()
     return out
 end
 
+--- Medical resources found running without the death-state exports this
+--- server asks them for, until they next start: [resource] = true.
+---
+--- qbx_medical is one. Its IsDead and IsLaststand are client exports
+--- (qbx_medical client/main.lua); its server exports nothing of the kind
+--- (server/main.lua: ResetHungerAndThirst, Revive, Heal, HealPartially,
+--- GetPlayerStatus), and writes the isdead and inlaststand metadata the
+--- fallback below reads instead. It stays in the providers list because the
+--- client reads that list to know a medical resource decides when its player
+--- is dead. Asked anyway, every read of a target's state, several a second
+--- per target from the sampler alone, went through FiveM's lookup for an
+--- export that is not there, and failed: the scheduler leaves a callback
+--- behind for good on every such miss, so it also leaked.
+local noExport = {}
+
+--- FiveM's own words for an export a resource does not have (scheduler.lua).
+local function missingExport(err)
+    return tostring(err):find('No such export', 1, true) ~= nil
+end
+
+--- A medical resource has started again, perhaps a version that does have
+--- the exports: ask it again. Wired from the bridges' onResourceStart.
+---@param resource string
+function Identity.forgetProvider(resource)
+    if resource then noExport[resource] = nil end
+end
+
 --- Server-side death state, read from whichever medical resource is present.
 --- Never trusts a client for this (§14.2).
+---
+--- The fourth value names what answered: a provider's resource, or
+--- 'metadata' for qbx_core's record. /ch-diag prints it.
 ---@param source number
----@return boolean dead, boolean lastStand, boolean resolved
+---@return boolean dead, boolean lastStand, boolean resolved, string|nil answeredBy
 function Identity.deathState(source)
     for _, provider in ipairs(Config.Completion.DeathStateProviders or {}) do
-        if GetResourceState(provider.resource) == 'started' then
-            local ok, dead = pcall(function() return exports[provider.resource][provider.dead](nil, source) end)
-            local ok2, last = pcall(function() return exports[provider.resource][provider.lastStand](nil, source) end)
+        local resource = provider.resource
+        if resource and not noExport[resource] and GetResourceState(resource) == 'started' then
+            local ok, dead = pcall(function() return exports[resource][provider.dead](nil, source) end)
+            local ok2, last = pcall(function() return exports[resource][provider.lastStand](nil, source) end)
             if ok and ok2 then
-                return dead == true, last == true, true
+                return dead == true, last == true, true, resource
+            end
+            if (not ok and missingExport(dead)) or (not ok2 and missingExport(last)) then
+                noExport[resource] = true
             end
         end
     end
@@ -489,7 +555,7 @@ function Identity.deathState(source)
     local player = exports.qbx_core:GetPlayer(source)
     local meta = player and player.PlayerData and player.PlayerData.metadata
     if meta then
-        return meta.isdead == true, meta.inlaststand == true, true
+        return meta.isdead == true, meta.inlaststand == true, true, 'metadata'
     end
 
     return false, false, false

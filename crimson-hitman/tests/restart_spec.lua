@@ -791,19 +791,22 @@ describe('audit rows written while a flush waits on the database', function()
     --- never counted as dropped.
     it('are written by the next flush', function()
         local _, s = boot('mysql')
-        local real = s.storage.writeAudit
+        local real, realBatch = s.storage.writeAudit, s.storage.writeAuditBatch
         local pushed = false
-        s.storage.writeAudit = function(entry)
+        local function during()
             if not pushed then
                 pushed = true
                 s.audit.financial('escrow_settle_lost', 'HITMAN01', 'ctX', { line = 'ctX:1' })
             end
-            return real(entry)
         end
+        s.storage.writeAudit = function(entry) during() return real(entry) end
+        -- mysql writes a flush a batch at a time, and the await is the batch's.
+        s.storage.writeAuditBatch = function(entries) during() return realBatch(entries) end
         s.audit.financial('first', 'A', 'ctX', {})
         s.audit.financial('second', 'A', 'ctX', {})
         s.audit.flush()
-        s.storage.writeAudit = real
+        s.storage.writeAudit, s.storage.writeAuditBatch = real, realBatch
+        truthy(pushed, 'a row was pushed while the flush waited')
         s.audit.flush()
 
         local seen = {}

@@ -16,7 +16,7 @@ local Util = require_shared('util')
 local Admin = {}
 
 local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit, Death, Photo
-local Informant, Kidnap, Mugshot, Photos
+local Informant, Kidnap, Mugshot, Photos, Timing
 
 function Admin.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
@@ -42,6 +42,31 @@ function Admin.init(deps)
 
     -- Only the timer refresh needs these, and only to age their clocks.
     Informant, Kidnap, Mugshot = deps.informant, deps.kidnap, deps.mugshot
+    -- How long the maintenance jobs take, which the diagnosis lists.
+    Timing = deps.timing
+end
+
+--- How many of the slowest maintenance jobs the diagnosis lists.
+local SLOWEST_SHOWN = 5
+
+--- The slowest maintenance jobs, with their numbers. A resource that is
+--- heavy on resmon says only that it is; this says which of its jobs.
+local function reportTiming(say)
+    if not (Timing and Timing.slowest) then return end
+    local slowest = Timing.slowest(SLOWEST_SHOWN)
+    local over = tonumber(Config.Diagnostics and Config.Diagnostics.SlowJobMs) or 0
+    if #slowest == 0 then
+        say('maintenance jobs: not timed yet (the first tick runs a few seconds after start)')
+        return
+    end
+    say(('maintenance jobs, slowest first (ms over the last %d runs; warning above %s):')
+        :format(Timing.WINDOW, over > 0 and (tostring(over) .. ' ms') or 'off'))
+    for i = 1, #slowest do
+        local job = slowest[i]
+        say(('  %-28s max %7.2f  avg %7.2f  last %7.2f  runs %d%s'):format(
+            job.name, job.max, job.avg, job.last, job.runs,
+            (over > 0 and job.max > over) and '  SLOW' or ''))
+    end
 end
 
 --------------------------------------------------------------------------
@@ -575,6 +600,9 @@ function Admin.diagnose(source, subjectId)
             .. 'them by hand and take their ids out of data/store.json')
     end
 
+    -- Server-wide, so before the player checks, which can stop early.
+    reportTiming(say)
+
     -- Who the player-specific checks run as.
     --
     -- This used to be the caller and only the caller, which made the whole
@@ -706,10 +734,14 @@ function Admin.diagnose(source, subjectId)
     -- and every photo of a genuine kill is refused as "the target was
     -- revived" — a kill that simply never works, with the fault two
     -- resources away and nothing naming it.
-    local dead, lastStand, resolved = Identity.deathState(subject)
+    local dead, lastStand, resolved, answeredBy = Identity.deathState(subject)
     if resolved then
-        say(('death state: readable (dead=%s, last stand=%s)')
-            :format(tostring(dead), tostring(lastStand)))
+        -- Which one answered: a medical resource's exports, or qbx_core's
+        -- metadata. qbx_medical is always the second, since its IsDead and
+        -- IsLaststand are client exports only.
+        say(('death state: readable (dead=%s, last stand=%s), from %s')
+            :format(tostring(dead), tostring(lastStand),
+                answeredBy == 'metadata' and 'QBox metadata' or tostring(answeredBy)))
     else
         say('death state: NOTHING COULD ANSWER')
         say('  -> no configured death provider responded and this player has no '

@@ -1119,6 +1119,15 @@ end
 --- exist in storage that this process never saw created.
 function Amendments.reindex()
     openContracts = {}
+    -- In one read where the store can: asking every contract kept for its
+    -- open proposals was a query per contract on mysql, at every start.
+    -- Only contracts the store still holds, as the walk below finds them.
+    if Storage.openAmendmentContracts then
+        for contractId in pairs(Storage.openAmendmentContracts()) do
+            if Storage.readContract(contractId) then openContracts[contractId] = true end
+        end
+        return openContracts
+    end
     local contracts = Storage.allContracts()
     for i = 1, #contracts do
         if #Storage.readOpenAmendments(contracts[i].id) > 0 then

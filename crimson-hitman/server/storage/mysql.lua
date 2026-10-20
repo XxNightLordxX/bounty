@@ -625,6 +625,18 @@ function MySQLStore.allContracts()
     return rows
 end
 
+--- Contracts still running, active or accepted, served by idx_state. See
+--- the memory backend. allContracts is SELECT * of the whole table, thirty
+--- days of finished contracts as shipped, and the sampler asked for it once
+--- a second: past a thousand rows oxmysql also printed its oversized-result
+--- warning, every second.
+function MySQLStore.liveContracts()
+    local rows = MySQL.query.await(
+        "SELECT * FROM crimson_contracts WHERE state IN ('active', 'accepted') ORDER BY id") or {}
+    for i = 1, #rows do hydrateContract(rows[i]) end
+    return rows
+end
+
 --- Contracts this player is involved in, as creator, target or hitman.
 --- The indexes for all three columns already exist, so this is the query
 --- the schema was designed for — rather than a full scan filtered in Lua.
@@ -893,6 +905,22 @@ end
 
 --- Escrow not yet settled whose contract does not exist; see the memory
 --- backend. Read once, at boot.
+--- Every contract holding an escrow line that is not settled, as a set.
+---
+--- Read once at boot, in one query served by idx_state. Recovery acts on
+--- nothing else of a finished contract, and it asked every contract the
+--- table keeps for its lines, twice, before the app answered anybody: some
+--- four awaited queries per contract, thirty days of them.
+function MySQLStore.unsettledEscrowContracts()
+    local rows = MySQL.query.await(
+        "SELECT DISTINCT contract_id FROM crimson_escrow WHERE state IN ('held', 'releasing')") or {}
+    local out = {}
+    for i = 1, #rows do
+        if rows[i].contract_id ~= nil then out[rows[i].contract_id] = true end
+    end
+    return out
+end
+
 function MySQLStore.orphanEscrow()
     local rows = MySQL.query.await([[
         SELECT * FROM crimson_escrow e
@@ -1094,6 +1122,18 @@ function MySQLStore.readAmendment(id)
     return hydrateAmendment(rows and rows[1])
 end
 
+--- Every contract with a proposal still open, as a set: one query at boot,
+--- where the amendment expiry's index asked every contract kept.
+function MySQLStore.openAmendmentContracts()
+    local rows = MySQL.query.await(
+        "SELECT DISTINCT contract_id FROM crimson_amendments WHERE outcome = 'open'") or {}
+    local out = {}
+    for i = 1, #rows do
+        if rows[i].contract_id ~= nil then out[rows[i].contract_id] = true end
+    end
+    return out
+end
+
 function MySQLStore.readOpenAmendments(contractId)
     local rows = MySQL.query.await(
         "SELECT * FROM crimson_amendments WHERE contract_id = ? AND outcome = 'open'",
@@ -1224,6 +1264,28 @@ end
 
 function MySQLStore.writeAudit(entry)
     MySQL.query.await(AUDIT_INSERT, auditParams(entry))
+    return true
+end
+
+--- Several rows in one INSERT, for the flush (Audit.flush chunks them).
+---
+--- writeAudit is one awaited round trip a row, and the flush is the tick's
+--- first job: a busy ten seconds (a kill payout alone writes eight rows,
+--- and the queue holds up to five thousand) kept every job after it waiting
+--- on the database a row at a time. One statement is all or nothing, so a
+--- batch the database refuses has written none of itself, and the flush
+--- writes those rows one by one instead.
+---@param entries table[]
+function MySQLStore.writeAuditBatch(entries)
+    if #entries == 0 then return true end
+    local groups, params = {}, {}
+    for i = 1, #entries do
+        local row = auditParams(entries[i])
+        groups[i] = '(?,?,?,?,?,?)'
+        for j = 1, 6 do params[#params + 1] = row[j] end
+    end
+    MySQL.query.await('INSERT INTO crimson_audit (ts, kind, action, actor_cid, contract_id, detail) '
+        .. 'VALUES ' .. table.concat(groups, ','), params)
     return true
 end
 

@@ -402,7 +402,13 @@ Config.Completion = {
     RejectLastStand    = true,
 
     --- Server-side death state providers, tried in order. Each entry is
-    --- { resource, deadExport, lastStandExport }.
+    --- { resource, deadExport, lastStandExport }. A started resource that
+    --- turns out not to have those exports on the server is not asked again
+    --- until it restarts, and its players' state is read from QBox metadata
+    --- instead. qbx_medical is one: IsDead and IsLaststand are client exports
+    --- there, and it writes the metadata. Keep it listed all the same, since
+    --- the client reads this list to know a medical resource decides when a
+    --- player is dead. /ch-diag says which one answered.
     DeathStateProviders = {
         { resource = 'sc-ambulance', dead = 'IsDead', lastStand = 'IsLaststand' },
         { resource = 'qbx_medical',  dead = 'IsDead', lastStand = 'IsLaststand' },
@@ -450,7 +456,9 @@ Config.Completion = {
     --- hit. Where it says nothing (sc-ambulance clears it within a tenth of a
     --- second), a slow sampler lets a hitman who lands one shot inherit
     --- whatever else happened to the target in between — a fall, a blast.
-    --- Bounded by the number of live contracts.
+    --- Bounded by the number of live contracts: each pass reads the running
+    --- contracts only, never the finished ones kept for the retention.
+    --- Hits on players no live contract names are not looked at at all.
     ConditionSampleMs = 1000,
     --- How far a hit is believed from, in metres. A hit from further, and
     --- a killer the target's game names from further, is dropped. Keep it
@@ -747,6 +755,9 @@ Config.Ledger = {
     --- Config.Completion.KeptPhotoDays), nor one in their phone's Photos
     --- through a link this server serves, which goes when they delete it
     --- there. Neither goes with its ledger row either.
+    ---
+    --- Looked at every ten minutes, and every tick while it still has old
+    --- photos to remove.
     PhotoRetentionDays = 7,
 }
 
@@ -859,10 +870,10 @@ Config.Audit = {
     --- them forever, which is what this did before it was a setting.
     ---
     --- Nothing pruned contracts, so every full scan in the resource walked
-    --- the server's whole history rather than its live board — the board
-    --- projection per player per board open, the death sampler once a
-    --- second, the bailout queue every tick — and all of them grew without
-    --- bound for the life of the database.
+    --- the server's whole history rather than its live board, and grew
+    --- without bound for the life of the database. The board, the death
+    --- sampler and the expiry pass read live contracts only now; recovery
+    --- at start still reads every contract kept.
     ---
     --- A contract is only ever removed once it is finished, past this age,
     --- holds no escrow line that is not settled, and owes nobody anything
@@ -880,7 +891,9 @@ Config.Audit = {
     --- `set`, never `setr`: setr sends the value to every player as well.
     --- Financial movements and rejected attempts are mirrored there as a
     --- heads-up; identity is never included, because anything sent to a
-    --- third party outlives this server's retention rules.
+    --- third party outlives this server's retention rules. Routine refusals
+    --- (rate limits, and hits on a target whose damage never showed) are
+    --- counted on one line rather than listed.
 }
 
 Config.AntiCollusion = {
@@ -953,6 +966,20 @@ Config.Admin = {
     --- is the largest table here and a staff command should not be able to
     --- pull an unbounded amount of it into memory.
     TimelineRows = 200,
+}
+
+--------------------------------------------------------------------------
+-- Diagnostics
+--------------------------------------------------------------------------
+
+Config.Diagnostics = {
+    --- Every maintenance job (the ten-second tick's, and the death
+    --- sampler's pass each second) times itself. One that takes longer than
+    --- this, in milliseconds, prints one warning in the server console
+    --- naming it, at most once every five minutes per job. 0 turns the
+    --- warning off. Either way /ch-diag lists the slowest jobs with their
+    --- worst, average and last times over their recent runs.
+    SlowJobMs = 5,
 }
 
 Config.Debug = false
