@@ -642,6 +642,11 @@ function Bridges.installCommands(modules)
     local Admin = modules.admin
     local names = Config.Admin.Commands
 
+    --- What a command that settles, voids or lists escrow says while boot
+    --- recovery runs (App.ready): what it would act on is not decided yet.
+    local RECOVERING = 'Still recovering from the restart: nothing is settled, voided or listed '
+        .. 'until that has finished. Try again in a moment.'
+
     --- Wrap a command in its permission check. A caller without the ACE is
     --- told the same thing whether or not the contract exists, so the
     --- command cannot be used to probe for ids.
@@ -729,11 +734,16 @@ function Bridges.installCommands(modules)
     command(names.void, Config.Admin.Ace, function(src, args)
         local reason = table.concat(args, ' ', math.min(2, #args + 1))
         local ok, err = Admin.void(src, args[1], reason)
+        if err == 'recovering' then return reply(src, RECOVERING) end
         reply(src, ok and 'Contract voided; escrow returned to the creator.'
                        or ('Could not void it: ' .. tostring(err)))
     end, true)
 
     command(names.stuck, Config.Admin.Ace, function(src)
+        -- Recovery is still putting back, leaving for staff and queuing what
+        -- the last shutdown left: listed now, a line it is about to deal
+        -- with read as stuck.
+        if modules.app and modules.app.ready == false then return reply(src, RECOVERING) end
         local lines = Admin.interrupted(src)
         if #lines == 0 then return reply(src, 'No interrupted releases.') end
 
@@ -768,6 +778,9 @@ function Bridges.installCommands(modules)
                     known = 'giving it stopped part-way, and nothing will try it again'
                 elseif line.why == 'unqueued' then
                     known = 'owed and in no retry queue, so nothing will give it'
+                elseif line.why == 'stalled_claim' then
+                    known = 'stalled claim: the claim that owed it raised before paying it, '
+                        .. 'so nothing will give it'
                 elseif line.why == 'stopped' then
                     known = 'a raise stopped it while it was being given'
                 elseif line.why == 'releasing' then
@@ -785,7 +798,7 @@ function Bridges.installCommands(modules)
                 -- Any other may have given more than the line says arrived:
                 -- a give stopped before the line recorded what of it had,
                 -- and pay alone would give that part again.
-                if line.why ~= 'raised' and line.why ~= 'unqueued' then
+                if line.why ~= 'raised' and not modules.escrow.NEVER_GIVEN[line.why] then
                     reply(src, ('    arrival unknown: check what they received, then pay the rest '
                         .. 'with /%s %s pay <amount>, or delivered'):format(names.settle, line.line))
                 end
@@ -794,6 +807,13 @@ function Bridges.installCommands(modules)
                 if line.why == 'unqueued' then
                     reply(src, ('    never given: only /%s %s pay settles it, to them')
                         :format(names.settle, line.line))
+                end
+                -- Its contract stays COMPLETING, which nothing but the next
+                -- start puts back; the payout need not wait for it.
+                if line.why == 'stalled_claim' then
+                    reply(src, ('    stalled claim: contract %s stays mid-claim until the next start, '
+                        .. 'and nothing of this was given: only /%s %s pay settles it, to them')
+                        :format(line.contract, names.settle, line.line))
                 end
             end
             reply(src, ('Whether such a give arrived cannot always be told, so check their '
@@ -850,6 +870,13 @@ function Bridges.installCommands(modules)
 
     command(names.settle, Config.Admin.Ace, function(src, args)
         local ok, err, detail = Admin.settleLine(src, args[1], args[2], args[3])
+        if err == 'recovering' then return reply(src, RECOVERING) end
+        if err == 'live' then
+            return reply(src, ('Not settled: contract %s is still live and this line is its own (a payout '
+                .. 'its next claim pays, a bonus or a stake), not one left for you. /%s %s closes a live '
+                .. 'contract and returns its escrow; /%s settles only what /%s lists.')
+                :format(tostring(detail), names.void, tostring(detail), names.settle, names.stuck))
+        end
         if ok and err == 'queued' and detail == 'refused' then
             return reply(src, ('Queued: they are in the city, but the give was refused (no room in their '
                 .. 'pockets, their account would not take it, or their inventory could not be read), '

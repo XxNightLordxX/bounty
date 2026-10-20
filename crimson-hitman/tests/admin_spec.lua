@@ -177,9 +177,15 @@ end)
 
 describe('interrupted releases', function()
     --- Reproduce what a shutdown mid-release leaves behind: a line claimed
-    --- but never settled, which recovery returns to `held` and logs.
+    --- but never settled, which recovery returns to `held` and logs. On a
+    --- contract that has closed (its ending's release was interrupted): a
+    --- line of a live one is that contract's, and /ch-settle refuses it.
+    --- Closed by hand, with its escrow still held, which only an ending the
+    --- server stopped leaves: a fixture, not the resource's output.
     local function stranded()
         local s, f, c = seeded()
+        rawset(s.storage, '__rawFixture', true)
+        truthy(s.storage.compareSetContractState(c.id, CH.STATE.ACTIVE, CH.STATE.CANCELLED))
         local line = s.storage.readEscrow(c.id)[1]
 
         truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
@@ -220,6 +226,8 @@ describe('interrupted releases', function()
             if l.portion == CH.PORTION.STAKE then stake = l end
         end
         truthy(stake, 'the hitman staked')
+        rawset(s.storage, '__rawFixture', true)
+        truthy(s.storage.compareSetContractState(c.id, CH.STATE.ACCEPTED, CH.STATE.CANCELLED))
         truthy(s.storage.claimEscrowLine(stake.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
         truthy(s.storage.claimEscrowLine(stake.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
         s.audit.financial('release_interrupted', 'HITMAN01', c.id, { line = stake.id, review = true })
@@ -351,6 +359,8 @@ describe('interrupted releases', function()
         })
         local lines = s.storage.readEscrow(c.id)
         eq(#lines, 2)
+        rawset(s.storage, '__rawFixture', true)
+        truthy(s.storage.compareSetContractState(c.id, CH.STATE.ACTIVE, CH.STATE.CANCELLED))
 
         truthy(s.admin.settleLine(0, lines[1].id, 'return'))
         eq(s.storage.readEscrowLine(lines[1].id).state, CH.ESCROW_STATE.SETTLED)
@@ -366,6 +376,28 @@ describe('interrupted releases', function()
             eq(err, CH.ERR.INVALID_INPUT)
         end
         eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.HELD, 'untouched')
+    end)
+
+    it('leaves a line of a live contract to it: listed by nothing, and voided instead', function()
+        local s, _, c = seeded()
+        local line = s.storage.readEscrow(c.id)[1]
+        truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+        truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
+        s.audit.financial('release_interrupted', 'HITMAN01', c.id,
+            { line = line.id, amount = line.amount, review = true })
+        s.audit.flush()
+        eq(#s.admin.interrupted(), 0, 'put back with nothing given, it is the contract\'s own')
+
+        local creator = money(1)
+        for _, how in ipairs({ 'return', 'pay' }) do
+            local ok, err, which = s.admin.settleLine(0, line.id, how)
+            falsy(ok, how)
+            eq(err, 'live', how)
+            eq(which, c.id)
+        end
+        eq(money(1), creator, 'nothing moved')
+        truthy(s.admin.void(0, c.id, 'closed by staff'))
+        eq(money(1) - creator, 5000, 'returned by the void')
     end)
 
     it('refuses to settle a line twice', function()
@@ -851,7 +883,10 @@ describe('what a staff command prints', function()
         -- Exactly what a shutdown mid-release leaves behind once the next
         -- start has recovered it: lines claimed for release and put back,
         -- and the audit row that records the interruption. The item line's
-        -- amount is the MySQL column default, not nil.
+        -- amount is the MySQL column default, not nil. Of a contract that
+        -- has closed: a live one's lines are its own, and not listed.
+        rawset(s.storage, '__rawFixture', true)
+        truthy(s.storage.compareSetContractState(c.id, CH.STATE.ACCEPTED, CH.STATE.CANCELLED))
         for _, line in ipairs(s.storage.readEscrow(c.id)) do
             s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD,
                 CH.ESCROW_STATE.RELEASING)
@@ -1204,7 +1239,7 @@ describe('lines left for staff', function()
         local line = s.storage.readEscrow(c.id)[1]
         local ok, why = s.admin.settleLine(0, line.id, 'delivered')
         falsy(ok, 'a line the normal paths still give is not settled unpaid')
-        eq(why, CH.ERR.INVALID_INPUT)
+        eq(why, 'live')
         eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.HELD)
     end)
 
@@ -1351,7 +1386,7 @@ describe('paying a line left for staff a set amount', function()
         local c2 = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 700 } } })
         local owed = s.storage.readEscrow(c2.id)[1]
-        eq(select(2, s.admin.settleLine(0, owed.id, 'pay', '700')), CH.ERR.INVALID_INPUT,
+        eq(select(2, s.admin.settleLine(0, owed.id, 'pay', '700')), 'live',
             'a line the normal paths still give')
         owed.owed_to = 'HITMAN01'
         s.storage.writeEscrow(c2.id, { owed })
@@ -1594,6 +1629,7 @@ end)
 describe('the party /ch-stuck names for an interrupted line', function()
     it('is whom the line is owed to now, not whom the log row named', function()
         local s, _, c = seeded()
+        truthy(s.storage.compareSetContractState(c.id, CH.STATE.ACTIVE, CH.STATE.CANCELLED))
         local line = s.storage.readEscrow(c.id)[1]
         truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
         truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
@@ -1619,6 +1655,7 @@ end)
 describe('a pay on a line already queued for whom it names', function()
     it('says whose queue it is in, from the line, and moves nothing', function()
         local s, _, c = seeded()
+        truthy(s.storage.compareSetContractState(c.id, CH.STATE.ACTIVE, CH.STATE.CANCELLED))
         local line = s.storage.readEscrow(c.id)[1]
         truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
         truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))

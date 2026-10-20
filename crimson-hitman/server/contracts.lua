@@ -1880,7 +1880,7 @@ end
 ---@return string|nil err
 ---@return table|nil result
 ---@param opts table|nil { deathAt = ms } when the claim rests on a recorded death
-function Contracts.claimSlot(contractId, hitmanCid, fulfilment, opts)
+local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.state ~= CH.STATE.ACCEPTED then return false, CH.ERR.BAD_STATE end
@@ -2047,6 +2047,18 @@ function Contracts.claimSlot(contractId, hitmanCid, fulfilment, opts)
         settled = baseline.settled + bonus.settled,
         pending = baseline.pending + bonus.pending,
     }
+end
+
+--- Claim the next unclaimed payout slot: see claimSlot above. Counted as a
+--- claim on the contract from before it takes the lock until it returns or
+--- raises (Escrow.whileClaiming), so a contract left COMPLETING by one that
+--- raised is told from one a claim is paying, and its owed lines are listed
+--- for staff instead of waiting unseen for the next start.
+---@return boolean ok
+---@return string|nil err
+---@return table|nil result
+function Contracts.claimSlot(contractId, hitmanCid, fulfilment, opts)
+    return Escrow.whileClaiming(contractId, claimSlot, contractId, hitmanCid, fulfilment, opts)
 end
 
 --------------------------------------------------------------------------

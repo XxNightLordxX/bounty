@@ -43,6 +43,14 @@ local wakes = {}
 --- it first (Escrow.parkStuck). Nothing else decides that.
 local inFlight = {}  -- { [lineId] = count }
 
+--- Contracts a claim in this process is paying (Contracts.claimSlot), by how
+--- many such calls run for each, counted from before the claim takes the
+--- contract (ACCEPTED -> COMPLETING) until it returns or raises
+--- (Escrow.whileClaiming). A contract COMPLETING that is not here has no
+--- claim paying it any more: the one that took it raised part-way, and it
+--- stays so until the next start (leftAs: 'stalled_claim').
+local claiming = {}  -- { [contractId] = count }
+
 --- The ox_inventory items that are a money account, by name; read once per
 --- start (accountItem).
 local accountItems = nil
@@ -53,6 +61,7 @@ function Escrow.init(storage, audit)
     lastTried = {}
     wakes = {}
     inFlight = {}
+    claiming = {}
     accountItems = nil
 end
 
@@ -989,20 +998,24 @@ end
 --- is the only one that moves anything (checked again once made). Otherwise only
 --- a line owed to somebody, in no retry queue, that nothing else in this
 --- process holds or asks for (a release that put it back holds it until it
---- is queued), and whose contract no claim holds (COMPLETING: claimSlot owes
---- a collection's lines before its release claims them, and treated as left
---- for staff in between, a hitman's payout was handed back to the client
---- while the claim reported it paid). Nothing gives such a line until the
---- next start queues it (Escrow.recoverOwed): 'stalled' when it still names
---- whom a give was going to (releasing_to), which may have reached them,
---- and 'unqueued' when it names none and nothing of it was given. A stake's
---- split (Escrow.reduceStake) is owed only once its stake stands where the
---- split left it, as recovery reads it: with the stake still whole, paying
---- the split paid the difference twice.
+--- is queued), and whose contract no claim in this process holds
+--- (COMPLETING with a claim in `claiming`: claimSlot owes a collection's
+--- lines before its release claims them, and treated as left for staff in
+--- between, a hitman's payout was handed back to the client while the claim
+--- reported it paid). Nothing gives such a line until the next start queues
+--- it (Escrow.recoverOwed): 'stalled' when it still names whom a give was
+--- going to (releasing_to), which may have reached them; 'stalled_claim'
+--- when it names none and its contract is COMPLETING with no claim running
+--- (the claim raised part-way, after owing it: given nothing, and the
+--- contract stays so until that start); and 'unqueued' when it names none
+--- otherwise, and nothing of it was given. A stake's split
+--- (Escrow.reduceStake) is owed only once its stake stands where the split
+--- left it, as recovery reads it: with the stake still whole, paying the
+--- split paid the difference twice.
 ---@param line table
 ---@param queues table|nil see Escrow.queued
 ---@param mine table|nil the claims of the call asking, which hold the line for it
----@return string|nil how 'parked' | 'stalled' | 'unqueued'
+---@return string|nil how 'parked' | 'stalled' | 'stalled_claim' | 'unqueued'
 local function leftAs(line, queues, mine)
     if Escrow.parked(line) then return 'parked' end
     if not line.owed_to or heldElsewhere(line.id, mine) or Escrow.queued(line, queues) then
@@ -1014,9 +1027,17 @@ local function leftAs(line, queues, mine)
         if stake == nil or stake.amount ~= mark.stakeNow then return nil end
     end
     local contract = line.contract_id and Storage.readContract(line.contract_id)
-    if contract and contract.state == CH.STATE.COMPLETING then return nil end
+    if contract and contract.state == CH.STATE.COMPLETING then
+        if claiming[line.contract_id] then return nil end
+        if not line.releasing_to then return 'stalled_claim' end
+    end
     return line.releasing_to and 'stalled' or 'unqueued'
 end
+
+--- The ways a line waits for staff (leftAs) of which nothing was given:
+--- owed and never handed to anybody, so settled only by paying whom it is
+--- owed to; neither handed back nor called delivered.
+Escrow.NEVER_GIVEN = { unqueued = true, stalled_claim = true }
 
 --- Why a staff settle of a line left for staff (Admin.settleLine, `unpark`)
 --- may not go on with the line as its claim found it, or nil. settleLine
@@ -1025,7 +1046,7 @@ end
 --- `pay 3000` queued the line, raised what had arrived from 2,000 to 4,000,
 --- and the player got 1,000 of the 3,000 A found missing. A `return` or a
 --- `delivered` (`ran`) only on a line whose give may have run: one nothing
---- of which was given ('unqueued') is paid to whom it is owed.
+--- of which was given (Escrow.NEVER_GIVEN) is paid to whom it is owed.
 ---@param line table as claimed
 ---@param give integer|nil the amount staff named
 ---@param ran boolean|nil only a line whose give may have run
@@ -1037,7 +1058,7 @@ local function unparkRefusal(line, give, ran, mine)
     if not left then
         return Escrow.queued(line, queues) and 'queued' or 'not_left'
     end
-    if ran and left == 'unqueued' then return 'pay_only' end
+    if ran and Escrow.NEVER_GIVEN[left] then return 'pay_only' end
     if give and Escrow.stillOwed(line) < give then return 'owes_less' end
     return nil
 end
@@ -1405,7 +1426,8 @@ end
 --- leftAs above.
 ---@param line table
 ---@param queues table|nil see Escrow.queued
----@return string|false how 'parked' | 'stalled' | 'unqueued', or false when it does not
+---@return string|false how 'parked' | 'stalled' | 'stalled_claim' | 'unqueued', or false
+--- when it does not
 function Escrow.leftForStaff(line, queues)
     return leftAs(line, queues, nil) or false
 end
@@ -1416,6 +1438,22 @@ end
 ---@return boolean
 function Escrow.inFlight(id)
     return inFlight[id] ~= nil
+end
+
+--- Run fn(...) as a claim on a contract (Contracts.claimSlot), counted in
+--- `claiming` from before it starts until it returns or raises: a contract
+--- COMPLETING that none is paying is one a claim left so when it raised.
+---@param contractId string
+---@param fn function
+---@return any ... what fn returns
+function Escrow.whileClaiming(contractId, fn, ...)
+    if contractId == nil then return fn(...) end
+    claiming[contractId] = (claiming[contractId] or 0) + 1
+    local out = table.pack(pcall(fn, ...))
+    local n = (claiming[contractId] or 1) - 1
+    claiming[contractId] = n > 0 and n or nil
+    if not out[1] then error(out[2], 0) end
+    return table.unpack(out, 2, out.n)
 end
 
 --- Do now what the next start would do (Recover) to a line `releasing` that

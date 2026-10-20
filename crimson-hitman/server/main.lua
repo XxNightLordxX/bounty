@@ -1169,19 +1169,28 @@ function Recover()
                 -- One that names nobody was never given, and goes on as
                 -- before. Every one of these is logged with everything staff
                 -- need to check it.
-                local parked = lines[j].releasing_to ~= nil
-                if parked then modules.escrow.parkInterrupted(lines[j]) end
-                Storage.claimEscrowLine(lines[j].id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD)
-                unstuck = unstuck + 1
-                print(('[crimson-hitman] escrow line %s was mid-release at shutdown; ' ..
-                       'returned to held%s')
-                       :format(tostring(lines[j].id), parked
-                           and ' and left for staff (/ch-stuck) — check whether it was already paid'
-                           or ''))
-                if modules.audit then
-                    modules.audit.financial('release_interrupted', lines[j].releasing_to,
-                        contract.id, { line = lines[j].id, amount = lines[j].amount,
-                                       review = true })
+                --
+                -- Through the claims in flight (Escrow.putBackStuck): read
+                -- afresh, held in flight while it is parked and put back, and
+                -- left alone if another call holds it. Put back from this
+                -- read, whatever had claimed it since, a staff pay giving it
+                -- was put back under its own give, queued again below and
+                -- paid twice. Staff commands wait for recovery (App.ready);
+                -- this holds even if one did not.
+                local stuck, read = modules.escrow.putBackStuck(lines[j].id)
+                if stuck then
+                    local parked = read.releasing_to ~= nil
+                    unstuck = unstuck + 1
+                    print(('[crimson-hitman] escrow line %s was mid-release at shutdown; ' ..
+                           'returned to held%s')
+                           :format(tostring(read.id), parked
+                               and ' and left for staff (/ch-stuck) — check whether it was already paid'
+                               or ''))
+                    if modules.audit then
+                        modules.audit.financial('release_interrupted', read.releasing_to,
+                            contract.id, { line = read.id, amount = read.amount,
+                                           review = true })
+                    end
                 end
             elseif line.state == CH.ESCROW_STATE.HELD and line.releasing_to
                 and not modules.escrow.parked(line) then

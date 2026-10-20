@@ -3237,3 +3237,326 @@ describe('a never-placed contract handed back while a staff return gives it', fu
         end)
     end
 end)
+
+--- A payout whose give the server stopped: its line `releasing`, naming the
+--- hitman, with nothing given (a raise right after the line named them), and
+--- its contract left COMPLETING. What a crash at that point leaves on disk,
+--- and on the running server a line no call holds any more.
+local function stoppedGiving(mode)
+    local main, s = boot(mode)
+    local f = fixture(s)
+    local c = s.contracts.create(f.creator, {
+        targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+        reward = { baseline = { cash = 5000 } },
+    })
+    truthy(c)
+    truthy(s.contracts.accept(f.hitman, c.id, false))
+    local line = s.storage.readEscrow(c.id)[1]
+    local write = s.storage.writeEscrow
+    s.storage.writeEscrow = function(id, lines)
+        local out = write(id, lines)
+        if type(lines) == 'table' and lines[1] and lines[1].id == line.id and lines[1].releasing_to then
+            s.storage.writeEscrow = write
+            error('process killed', 0)
+        end
+        return out
+    end
+    local hitman = money(3)
+    falsy(pcall(s.contracts.claimSlot, c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}))
+    s.storage.writeEscrow = write
+    local stored = s.storage.readEscrowLine(line.id)
+    eq(stored.state, CH.ESCROW_STATE.RELEASING)
+    eq(stored.releasing_to, f.hitman.cid)
+    falsy(s.escrow.inFlight(line.id))
+    eq(money(3), hitman, 'nothing given')
+    return main, s, f, c, line, hitman
+end
+
+--- Staff commands are registered before boot recovery runs, and on mysql it
+--- waits on the store at every step. A `/ch-settle <line> pay` typed while it
+--- had read a line `releasing` and not yet put it back put the line back
+--- itself (Escrow.parkStuck: nothing in flight held it), and gave it; recovery
+--- then put back the pay's live claim from what it had read, queued it again,
+--- and the hitman's login gave it a second time: 10,000 from a 5,000 line,
+--- while staff were told "Line settled". json and mysql boot again on the
+--- same disk; memory, which keeps nothing across a boot, runs recovery as the
+--- boot does (App.ready down until it has finished) on the stack it has.
+describe('a staff settle typed while boot recovery runs', function()
+    for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
+        it(mode .. ': is refused until recovery has finished, and the line is paid once', function()
+            local main, s, f, c, line, hitman = stoppedGiving(mode)
+
+            local store, app
+            if mode == 'memory' then
+                store, app = s.storage, s.app
+            else
+                rawset(s.storage, '__rawFixture', true)
+                forgetServerModules()
+                Env.events, Env.clientEvents, Env.notifications = {}, {}, {}
+                Env.handlers, Env.threads, Env.timers, Env.commands = {}, {}, {}, {}
+                Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+                Config.Database.Mode = mode
+                store = require('server.storage.' .. mode)
+            end
+
+            local claim, settle = store.claimEscrowLine, store.settleEscrowLine
+            local a, b, s2
+            store.claimEscrowLine = function(id, from, to)
+                if coroutine.running() == a and id == line.id and from == CH.ESCROW_STATE.RELEASING then
+                    coroutine.yield('putting back')
+                end
+                return claim(id, from, to)
+            end
+            store.settleEscrowLine = function(...)
+                if coroutine.running() == b then coroutine.yield('settling') end
+                return settle(...)
+            end
+            a = coroutine.create(function()
+                if mode == 'memory' then
+                    app.ready = false
+                    main.recover()
+                    app.ready = true
+                    s2 = s
+                else
+                    s2 = require('server.main').start()
+                end
+            end)
+            b = coroutine.create(function()
+                Env.commands[Config.Admin.Commands.settle](0, { line.id, 'pay' })
+                Env.commands[Config.Admin.Commands.void](0, { c.id, 'during recovery' })
+                Env.commands[Config.Admin.Commands.stuck](0, {})
+            end)
+
+            local ranA, stepA = coroutine.resume(a)
+            Env.console = {}
+            local ranB, stepB = coroutine.resume(b)
+            local said = table.concat(Env.console, '\n')
+            local ranA2, stepA2 = coroutine.resume(a)
+            local ranB2, stepB2 = true, nil
+            if coroutine.status(b) ~= 'dead' then ranB2, stepB2 = coroutine.resume(b) end
+            store.claimEscrowLine, store.settleEscrowLine = claim, settle
+            truthy(ranA, tostring(stepA))
+            eq(stepA, 'putting back', 'recovery never reached the line')
+            truthy(ranB, tostring(stepB))
+            truthy(ranA2, tostring(stepA2))
+            truthy(ranB2, tostring(stepB2))
+            eq(coroutine.status(a), 'dead')
+            truthy(s2, 'the boot finished')
+
+            local _, recovering = said:gsub('Still recovering from the restart', '')
+            eq(recovering, 3, 'settle, void and stuck all wait for recovery: ' .. said)
+            falsy(said:find('Line settled', 1, true), said)
+            eq(money(3), hitman, 'nothing given while recovery ran')
+
+            -- The hitman's login, then staff settle whatever is listed.
+            s2.escrow.retryPending(f.hitman.cid)
+            local rows = s2.admin.interrupted(0)
+            eq(#rows, 1, 'left for staff')
+            eq(rows[1].line, line.id)
+            truthy(s2.admin.settleLine(0, line.id, 'pay'))
+            for _ = 1, 3 do s2.escrow.retryPending(f.hitman.cid) end
+            eq(money(3) - hitman, 5000, 'the line, once')
+            eq(s2.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+            s2.audit.flush()
+            eq(#auditRows(s2, 'escrow_settle_lost'), 0)
+        end)
+    end
+end)
+
+--- And should one run anyway: recovery puts a line back only through the
+--- claims in flight (Escrow.putBackStuck), holding it while it does. A staff
+--- pay that put the line back and claimed it before recovery reached it
+--- keeps its claim, and the give it made is the only one; one landing while
+--- recovery puts it back is refused as locked. Put back from recovery's own
+--- read instead, the pay's live claim went back to held under it: its settle
+--- was lost, and the line was given again. Run on the running stack, where
+--- nothing holds staff back (App.ready).
+describe('boot recovery and a staff pay on the same line', function()
+    for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
+        for _, order in ipairs({ 'pay first', 'recovery first' }) do
+            it(mode .. ', ' .. order .. ': neither undoes the other, and the line is paid once', function()
+                local main, s, f, _, line, hitman = stoppedGiving(mode)
+                local claim, settle = s.storage.claimEscrowLine, s.storage.settleEscrowLine
+                local a, b
+                -- Pay first: recovery runs whole while the pay waits to
+                -- settle. Recovery first: the pay lands while recovery waits
+                -- to put the line back.
+                s.storage.claimEscrowLine = function(id, from, to)
+                    if order == 'recovery first' and coroutine.running() == a and id == line.id
+                        and from == CH.ESCROW_STATE.RELEASING then
+                        coroutine.yield('putting back')
+                    end
+                    return claim(id, from, to)
+                end
+                s.storage.settleEscrowLine = function(...)
+                    if coroutine.running() == b then coroutine.yield('settling') end
+                    return settle(...)
+                end
+                a = coroutine.create(function() main.recover() end)
+                b = coroutine.create(function() s.admin.settleLine(0, line.id, 'pay') end)
+                local first, second = b, a
+                if order == 'recovery first' then first, second = a, b end
+                local steps = {}
+                for _, co in ipairs({ first, second, first, second }) do
+                    if coroutine.status(co) ~= 'dead' then
+                        local ran, step = coroutine.resume(co)
+                        truthy(ran, tostring(step))
+                        steps[#steps + 1] = step
+                    end
+                end
+                s.storage.claimEscrowLine, s.storage.settleEscrowLine = claim, settle
+                eq(coroutine.status(a), 'dead')
+                eq(coroutine.status(b), 'dead')
+                eq(steps[1], order == 'pay first' and 'settling' or 'putting back',
+                    'the interleaving has to happen, or this measures nothing')
+
+                -- The hitman's logins, then staff pay whatever is listed.
+                for _ = 1, 3 do s.escrow.retryPending(f.hitman.cid) end
+                for _, row in ipairs(s.admin.interrupted(0)) do s.admin.settleLine(0, row.line, 'pay') end
+                for _ = 1, 3 do s.escrow.retryPending(f.hitman.cid) end
+                eq(money(3) - hitman, 5000, 'the line, once')
+                eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+                s.audit.flush()
+                eq(#auditRows(s, 'escrow_settle_lost'), 0, 'a pay\'s claim put back under it')
+            end)
+        end
+    end
+end)
+
+--- A held line owed to nobody on a live contract is that contract's own: the
+--- collection a hitman is about to claim. /ch-settle handed it back to the
+--- client on request, with or without a claim running, and the claim then
+--- succeeded paying the hitman nothing.
+describe('a staff settle of a line of a live contract', function()
+    local function accepted(mode)
+        local _, s = boot(mode)
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        return s, f, c, s.storage.readEscrow(c.id)[1]
+    end
+
+    for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
+        it(mode .. ': is refused on an accepted contract, which /ch-void closes', function()
+            local s, f, c, line = accepted(mode)
+            local creator, hitman = money(1), money(3)
+            for _, how in ipairs({ 'return', 'pay', 'delivered' }) do
+                local ok, err, which = s.admin.settleLine(0, line.id, how)
+                falsy(ok, how .. ' on a line of a live contract')
+                eq(err, 'live', how)
+                eq(which, c.id)
+            end
+            eq(money(1), creator, 'the hitman\'s collection handed back to the client')
+
+            Env.console = {}
+            Env.commands[Config.Admin.Commands.settle](0, { line.id, 'return' })
+            local said = table.concat(Env.console, '\n')
+            truthy(said:find(('/%s %s'):format(Config.Admin.Commands.void, c.id), 1, true), said)
+
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}))
+            eq(money(3) - hitman, 5000, 'its claim pays it')
+            eq(money(1), creator)
+        end)
+
+        -- Anywhere between the claim taking the contract and reading its
+        -- escrow; and, on mysql, which hands out copies, up to writing the
+        -- marks (memory and json mark the stored line as they read it).
+        local points = mode == 'mysql' and { 'readEscrow', 'writeEscrow' } or { 'readEscrow' }
+        for _, at in ipairs(points) do
+            it(mode .. ': is refused racing the claim (' .. at .. '), and the claim pays it', function()
+                local s, f, c, line = accepted(mode)
+                local creator, hitman = money(1), money(3)
+                local real, during = s.storage[at], nil
+                s.storage[at] = function(id, ...)
+                    if not during and id == c.id then
+                        local now = s.storage.readContract(c.id)
+                        if now and now.state == CH.STATE.COMPLETING then
+                            during = { state = now.state,
+                                       owed = s.storage.readEscrowLine(line.id).owed_to }
+                            during.returned = { s.admin.settleLine(0, line.id, 'return') }
+                        end
+                    end
+                    return real(id, ...)
+                end
+                local ok, err, result = s.contracts.claimSlot(c.id, f.hitman.cid,
+                    CH.FULFILMENT.ELIMINATION, {})
+                s.storage[at] = real
+                truthy(during, 'nothing landed while the claim held the contract')
+                eq(during.owed, nil, 'before the claim owed it to the hitman')
+                falsy(during.returned[1], 'handed back under the claim')
+                eq(during.returned[2], 'live')
+                truthy(ok, tostring(err))
+                eq(result.settled, 1)
+                eq(money(3) - hitman, 5000, 'its claim pays the hitman')
+                eq(money(1), creator)
+                eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+            end)
+        end
+    end
+end)
+
+--- A claim whose release raised after owing the payout (its queue entry for
+--- a hitman who is away, here) leaves the contract COMPLETING until the next
+--- start. Read as a claim still paying it, the payout was listed by nothing
+--- and /ch-settle answered locked while telling staff to look in /ch-stuck.
+describe('a claim that raised after owing its payout', function()
+    for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
+        it(mode .. ': is listed as a stalled claim, and pay settles it once', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local creator, hitman = money(1), money(3)
+            local away = Env.players[3]
+            Env.removePlayer(3)
+            local queue = s.storage.queuePending
+            s.storage.queuePending = function() error('connection lost', 0) end
+            falsy(pcall(s.contracts.claimSlot, c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}))
+            s.storage.queuePending = queue
+            eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETING, 'left mid-claim')
+            local line = s.storage.readEscrow(c.id)[1]
+            eq(line.state, CH.ESCROW_STATE.HELD)
+            eq(line.owed_to, f.hitman.cid)
+            eq(#s.storage.readPending(f.hitman.cid), 0, 'in no queue')
+
+            local rows = s.admin.interrupted(0)
+            eq(#rows, 1, 'listed for staff')
+            eq(rows[1].line, line.id)
+            eq(rows[1].why, 'stalled_claim')
+            Env.console = {}
+            Env.commands[Config.Admin.Commands.stuck](0, {})
+            local said = table.concat(Env.console, '\n')
+            truthy(said:find('stalled claim', 1, true), said)
+            truthy(said:find(('only /%s %s pay settles it'):format(Config.Admin.Commands.settle, line.id),
+                1, true), said)
+            falsy(said:find('arrival unknown', 1, true), said)
+
+            -- Nothing of it was given: neither handed back nor called delivered.
+            for _, how in ipairs({ 'return', 'delivered' }) do
+                local ok, err, whose = s.admin.settleLine(0, line.id, how)
+                falsy(ok, how)
+                eq(err, 'pay_only', how)
+                eq(whose, f.hitman.cid)
+            end
+
+            local ok, note, why = s.admin.settleLine(0, line.id, 'pay')
+            truthy(ok, tostring(note))
+            eq(note, 'queued')
+            eq(why, 'away')
+            eq(#s.admin.interrupted(0), 0)
+            Env.players[3], Env.byCitizen[f.hitman.cid] = away, 3
+            for _ = 1, 3 do s.escrow.retryPending(f.hitman.cid) end
+            eq(money(3) - hitman, 5000, 'given once, at their login')
+            eq(money(1), creator)
+            eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+        end)
+    end
+end)

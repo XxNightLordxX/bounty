@@ -184,12 +184,15 @@ end
 --- still names whom it was going to, so whether it moved anything cannot be
 --- told); 'unqueued' for a queue entry that raised before it was written, or
 --- one a login retry cleared under a staff pay that reused it, of which
---- nothing was given. Nothing gives either until the next start queues it or
---- leaves it for staff, so it is listed and settled as a line left for staff
---- already. Never one a call in this process holds or is about to queue,
---- nor one a claim on its contract has just owed and is about to pay.
+--- nothing was given; 'stalled_claim' for one a claim owed and raised before
+--- paying, leaving its contract COMPLETING with no claim running, of which
+--- nothing was given either. Nothing gives any of them until the next start
+--- queues it or leaves it for staff, so it is listed and settled as a line
+--- left for staff already. Never one a call in this process holds or is
+--- about to queue, nor one a claim running on its contract has just owed and
+--- is about to pay.
 ---@param queues table|nil see Escrow.queued
----@return string|nil how 'stalled' | 'unqueued'
+---@return string|nil how 'stalled' | 'stalled_claim' | 'unqueued'
 local function stalled(line, queues)
     if line.state ~= CH.ESCROW_STATE.HELD then return nil end
     local how = Escrow.leftForStaff(line, queues)
@@ -268,7 +271,8 @@ function Admin.interrupted(src)
     -- Held, owed lines nothing gives until the next start (stalled), read
     -- from the escrow itself, so none is ever in nobody's sight meanwhile.
     -- One still naming whom a give was going to may have reached them
-    -- ('stalled'); one that does not was given nothing ('unqueued').
+    -- ('stalled'); one that does not was given nothing ('unqueued', or
+    -- 'stalled_claim' on a contract a claim that raised left COMPLETING).
     local queues = {}
     for _, line in ipairs(Storage.owedHeldEscrow and Storage.owedHeldEscrow() or {}) do
         local how = not seen[line.id] and stalled(line, queues)
@@ -322,9 +326,15 @@ function Admin.interrupted(src)
         if lineId and not seen[lineId] then
             seen[lineId] = true
             local line = Storage.readEscrowLine(lineId)
+            local contract = line and contractOf(line.contract_id or row.contract_id)
             -- Only still-open ones: a line settled since is not a question
-            -- anybody needs to answer.
-            if line and line.state ~= CH.ESCROW_STATE.SETTLED then
+            -- anybody needs to answer. Held, and held by no call here: one a
+            -- release or retry is giving now is that call's. And not a line
+            -- of a contract still live: put back with nothing given, it is
+            -- that contract's own again, which /ch-settle refuses (/ch-void
+            -- closes the contract).
+            if line and line.state == CH.ESCROW_STATE.HELD and not Escrow.inFlight(lineId)
+                and not (contract and not CH.TERMINAL[contract.state]) then
                 local contractId = line.contract_id or row.contract_id
                 -- Whom it is owed to now, read off the line as /ch-settle
                 -- does: a return queued since is owed to the client, while
@@ -452,6 +462,17 @@ end
 -- Acting
 --------------------------------------------------------------------------
 
+--- Whether boot recovery is still running (App.ready). Staff commands are
+--- registered before it starts, and on mysql every step of it waits on the
+--- store, so a settle typed then ran in the middle of it: recovery put back,
+--- from what it had read, a line a staff pay was giving, then queued it
+--- again, and it was paid twice. Nothing that moves escrow by hand runs
+--- until recovery has finished.
+---@return boolean
+local function recovering()
+    return App ~= nil and App.ready == false
+end
+
 --- Close a contract and return everything to the creator.
 ---
 --- Routed through Contracts.resolve like every other ending, so stakes
@@ -460,6 +481,7 @@ end
 ---@return boolean ok
 ---@return string|nil err
 function Admin.void(src, contractId, reason)
+    if recovering() then return false, 'recovering' end
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
 
@@ -555,9 +577,11 @@ end
 ---@return boolean ok
 ---@return string|nil err
 ---@return string|integer|nil detail whose queue it is in ('already_queued'), whom only a
---- pay settles it to ('pay_only'), what it owes ('owes_less'), or for 'queued' why
---- it was not given: 'away' (not in the city) or 'refused' (the give was refused)
+--- pay settles it to ('pay_only'), what it owes ('owes_less'), the live contract it
+--- belongs to ('live'), or for 'queued' why it was not given: 'away' (not in the
+--- city) or 'refused' (the give was refused). 'recovering' while boot recovery runs.
 function Admin.settleLine(src, lineId, disposition, owner)
+    if recovering() then return false, 'recovering' end
     lineId = Util.toLineId(lineId)
     if not lineId then return false, CH.ERR.INVALID_INPUT end
     if disposition ~= 'pay' and disposition ~= 'return' and disposition ~= 'delivered' then
@@ -637,20 +661,35 @@ function Admin.settleLine(src, lineId, disposition, owner)
     end
 
     -- Owed to somebody, and neither left for staff nor queued: a call here
-    -- holds it, or is about to queue it (Escrow.inFlight); the claim on its
-    -- contract has just owed it and is about to pay it (COMPLETING); or it
+    -- holds it, or is about to queue it (Escrow.inFlight); a claim running on
+    -- its contract has just owed it and is about to pay it (COMPLETING); or it
     -- is a stake's split its stake does not stand behind yet. That call's,
     -- or the next start's. Treated as left for staff, a `return` in the
     -- moment between a claim owing the hitman's payout and paying it handed
     -- it to the client, and the claim reported it paid.
     if not parked and line.owed_to then return false, CH.ERR.LOCKED end
 
-    -- Nothing of it was given ('unqueued': owed, in no retry queue, and
-    -- naming no give that may have run), so it is paid to whom it is owed,
-    -- which gives it or queues it again, and settled no other way: handed
-    -- back, a hitman's payout that had only lost its queue entry went to the
-    -- client; called delivered, it settled with nothing given.
-    if left == 'unqueued' and disposition ~= 'pay' then
+    -- Any other line of a contract still live (ACTIVE, ACCEPTED, COMPLETING)
+    -- is that contract's own: a collection its next claim pays, a bonus, a
+    -- hitman's stake. Only a line left for staff (Escrow.leftForStaff:
+    -- parked, or stalled in any of its ways) is settled here, or one of a
+    -- contract closed or never stored. Owed to nobody, a `return` handed the
+    -- client the 5,000 a hitman was about to claim, before or while the claim
+    -- owed it to them, and the claim paid nothing. /ch-void closes a live
+    -- contract and returns its escrow through every rule an ending keeps. A
+    -- closed contract never opens again, so one read closed stays so for the
+    -- settle below.
+    if not parked and contract and not CH.TERMINAL[contract.state] then
+        return false, 'live', contract.id
+    end
+
+    -- Nothing of it was given (Escrow.NEVER_GIVEN: owed, in no retry queue,
+    -- and naming no give that may have run, or owed by a claim that raised
+    -- before paying it), so it is paid to whom it is owed, which gives it or
+    -- queues it again, and settled no other way: handed back, a hitman's
+    -- payout that had only lost its queue entry went to the client; called
+    -- delivered, it settled with nothing given.
+    if Escrow.NEVER_GIVEN[left] and disposition ~= 'pay' then
         return false, 'pay_only', partyFor(src, contract, line.owed_to)
     end
 
