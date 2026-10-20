@@ -2044,6 +2044,50 @@ do
 end
 
 --------------------------------------------------------------------------
+-- Every claim of an escrow line (held -> releasing) goes through claimLine.
+--
+-- /ch-stuck lists, and /ch-settle puts back, a `releasing` line that no
+-- call in this process holds, and the set of claims in flight is the only
+-- thing that says which those are. claimLine counts a claim in it before
+-- the claim is made. A staff `delivered` and a split being voided claimed
+-- straight from the store instead: a /ch-settle landing meanwhile put the
+-- live claim back as stuck and paid the line on top of the delivered.
+--------------------------------------------------------------------------
+
+do
+    local home = 'crimson-hitman/server/escrow.lua'
+    for _, path in ipairs(files) do
+        local src = read(path)
+        if src and path:find('/server/', 1, true) then
+            -- Comments out, keeping every line where it was.
+            src = src:gsub('(%-%-%[(=*)%[.-%]%2%])', function(c) return (c:gsub('[^\n]', '')) end)
+                :gsub('%-%-[^\n]*', '')
+            local from, to = nil, nil
+            if path == home then
+                from = src:find('local function claimLine%(')
+                to = from and src:find('\nend', from, true)
+            end
+            local at = 1
+            while true do
+                local s, e, args = src:find('claimEscrowLine%s*(%b())', at)
+                if not s then break end
+                at = e + 1
+                local held = args:find('ESCROW_STATE%.HELD')
+                local releasing = args:find('ESCROW_STATE%.RELEASING')
+                if held and releasing and held < releasing
+                    and not (from and to and s > from and s < to) then
+                    local _, lineNo = src:sub(1, s):gsub('\n', '')
+                    failures[#failures + 1] = ('%s:%d claims an escrow line from the store '
+                        .. 'directly. Claim it through claimLine (escrow.lua), which counts it '
+                        .. 'in flight first: a claim outside that set is one /ch-settle puts back '
+                        .. 'as stuck while it is still being settled.'):format(path, lineNo + 1)
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

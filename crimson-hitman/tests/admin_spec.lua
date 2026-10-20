@@ -2005,3 +2005,107 @@ describe('a held, owed line in no retry queue', function()
         eq(money(3) - hitman, 5000, 'paid once')
     end)
 end)
+
+--- admin_settle_line said what the line owed only when staff named an
+--- amount. A plain `pay` or `return` whose release then raised left no row
+--- saying what the line owed when staff settled it.
+describe('the record of a plain staff pay or return', function()
+    local function interrupted(arrived)
+        local s, f, c = seeded({ accept = true })
+        local line = s.storage.readEscrow(c.id)[1]
+        line.releasing_to = 'HITMAN01'
+        line.deliver_arrived = arrived
+        s.storage.writeEscrow(c.id, { line })
+        truthy(s.escrow.parkInterrupted(line))
+        return s, f, c, s.storage.readEscrowLine(line.id)
+    end
+
+    local function asked(s, contractId)
+        s.audit.flush()
+        local row
+        for _, r in ipairs(s.storage.auditForContract(contractId, 200)) do
+            if r.action == 'admin_settle_line' then row = r end
+        end
+        return row
+    end
+
+    it('says what the line owed for a pay with no amount', function()
+        local s, _, c, line = interrupted()
+        truthy(s.admin.settleLine(0, line.id, 'pay'))
+        local row = asked(s, c.id)
+        truthy(row)
+        eq(row.detail.amount, nil)
+        eq(row.detail.owed, 5000)
+    end)
+
+    it('says what the line owed for a return, less what had arrived', function()
+        local s, _, c, line = interrupted(2000)
+        truthy(s.admin.settleLine(0, line.id, 'return'))
+        eq(asked(s, c.id).detail.owed, 3000)
+    end)
+
+    it('says it for a release that raises, before anything moved', function()
+        local s, _, c, line = interrupted()
+        local settle = s.storage.settleEscrowLine
+        s.storage.settleEscrowLine = function() error('connection lost', 0) end
+        local _, ok, err = pcall(s.admin.settleLine, 0, line.id, 'return')
+        s.storage.settleEscrowLine = settle
+        falsy(ok)
+        eq(err, 'raised')
+        eq(asked(s, c.id).detail.owed, 5000)
+    end)
+
+    it('and for a delivered', function()
+        local s, _, c, line = interrupted(1000)
+        truthy(s.admin.settleLine(0, line.id, 'delivered'))
+        eq(asked(s, c.id).detail.owed, 4000)
+    end)
+end)
+
+--- A staff give refused to a player standing in the city (pockets full, or
+--- an account that would not take it) was answered "Queued: they are not in
+--- the city".
+describe('a staff give refused to a player in the city', function()
+    local function interrupted()
+        local s, f, c = seeded({ accept = true })
+        local line = s.storage.readEscrow(c.id)[1]
+        line.releasing_to = 'HITMAN01'
+        s.storage.writeEscrow(c.id, { line })
+        truthy(s.escrow.parkInterrupted(line))
+        return s, f, c, s.storage.readEscrowLine(line.id)
+    end
+
+    it('says the give was refused, not that they are away', function()
+        local s, _, _, line = interrupted()
+        Env.players[3]._refuseMoney = true
+        local ok, note, why = s.admin.settleLine(0, line.id, 'pay')
+        Env.players[3]._refuseMoney = nil
+        truthy(ok)
+        eq(note, 'queued')
+        eq(why, 'refused')
+
+        local s2, _, _, line2 = interrupted()
+        Env.aces[3] = { ['crimson.admin'] = true }
+        local cmd = commands(s2)
+        Env.chat = {}
+        Env.players[3]._refuseMoney = true
+        local ran, err = pcall(cmd[Config.Admin.Commands.settle], 3, { line2.id, 'pay' })
+        Env.players[3]._refuseMoney = nil
+        truthy(ran, tostring(err))
+        local out = said(3)
+        falsy(out:find('not in the city', 1, true), out)
+        truthy(out:find('refused', 1, true), out)
+        eq(#s2.storage.readPending('HITMAN01'), 1, 'and it is on their retry queue')
+    end)
+
+    it('still says they are away when they are', function()
+        local s, _, _, line = interrupted()
+        Env.aces[1] = { ['crimson.admin'] = true }
+        local cmd = commands(s)
+        Env.chat = {}
+        Env.removePlayer(3)
+        local ran, err = pcall(cmd[Config.Admin.Commands.settle], 1, { line.id, 'pay' })
+        truthy(ran, tostring(err))
+        truthy(said(1):find('not in the city', 1, true), said(1))
+    end)
+end)

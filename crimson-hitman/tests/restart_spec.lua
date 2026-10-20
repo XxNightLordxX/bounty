@@ -2977,3 +2977,263 @@ describe('a line a raise left releasing on the running server', function()
         end)
     end
 end)
+
+--- Staff `delivered` claimed its line outside the set of claims in flight.
+--- A `pay` landing while it waited on the store found the line `releasing`
+--- with nothing seeming to hold it, put that live claim back as a stuck line
+--- (Escrow.parkStuck), and paid it: 5,000 given for a payout staff had just
+--- found already with the hitman. Where the pay's give ran while the
+--- delivered settled, both staff were told the line was settled.
+describe('a staff delivered racing a staff pay', function()
+    for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
+        it(mode .. ': the pay landing inside the delivered\'s claim is refused', function()
+            local s, _, _, line, hitman = parkedPayout(mode)
+            local claim, fired, paid = s.storage.claimEscrowLine, false, nil
+            s.storage.claimEscrowLine = function(id, from, to)
+                local out = claim(id, from, to)
+                if not fired and id == line.id and from == CH.ESCROW_STATE.HELD then
+                    fired = true
+                    paid = { s.admin.settleLine(0, line.id, 'pay') }
+                end
+                return out
+            end
+            local ok, err = s.admin.settleLine(0, line.id, 'delivered')
+            s.storage.claimEscrowLine = claim
+            truthy(fired, 'the pay never landed inside the delivered')
+            falsy(paid[1], 'the pay went ahead under the delivered\'s claim')
+            eq(paid[2], CH.ERR.LOCKED)
+            truthy(ok, tostring(err))
+            eq(money(3), hitman, 'given for a payout staff found already there')
+            local stored = s.storage.readEscrowLine(line.id)
+            eq(stored.state, CH.ESCROW_STATE.SETTLED)
+            eq(stored.settled_by_staff, 'delivered')
+            falsy(s.escrow.inFlight(line.id))
+            s.audit.flush()
+            eq(#auditRows(s, 'escrow_settle_lost'), 0)
+        end)
+
+        it(mode .. ': a pay whose give would run while the delivered settles is refused', function()
+            local s, _, _, line, hitman = parkedPayout(mode)
+            local p = Env.players[3]
+            local add, claim = p.Functions.AddMoney, s.storage.claimEscrowLine
+            local a, b
+            s.storage.claimEscrowLine = function(id, from, to)
+                local out = claim(id, from, to)
+                if coroutine.running() == a and id == line.id and from == CH.ESCROW_STATE.HELD then
+                    coroutine.yield('claimed')
+                end
+                return out
+            end
+            p.Functions.AddMoney = function(...)
+                if coroutine.running() == b then coroutine.yield('giving') end
+                return add(...)
+            end
+            local delivered, paid
+            a = coroutine.create(function() delivered = { s.admin.settleLine(0, line.id, 'delivered') } end)
+            b = coroutine.create(function() paid = { s.admin.settleLine(0, line.id, 'pay') } end)
+            local ranA, stepA = coroutine.resume(a)
+            local ranB, stepB = coroutine.resume(b)
+            local ranA2, stepA2 = coroutine.resume(a)
+            local ranB2, stepB2 = true, nil
+            if coroutine.status(b) ~= 'dead' then ranB2, stepB2 = coroutine.resume(b) end
+            s.storage.claimEscrowLine, p.Functions.AddMoney = claim, add
+            truthy(ranA, tostring(stepA))
+            eq(stepA, 'claimed', 'the delivered never reached its claim')
+            truthy(ranB, tostring(stepB))
+            truthy(ranA2, tostring(stepA2))
+            truthy(ranB2, tostring(stepB2))
+            eq(coroutine.status(a), 'dead')
+            eq(coroutine.status(b), 'dead')
+
+            truthy(delivered[1], tostring(delivered[2]))
+            falsy(paid[1], 'both staff were told the line was settled')
+            eq(paid[2], CH.ERR.LOCKED)
+            eq(money(3), hitman, 'nothing given for a payout called delivered')
+            local stored = s.storage.readEscrowLine(line.id)
+            eq(stored.state, CH.ESCROW_STATE.SETTLED)
+            eq(stored.settled_by_staff, 'delivered')
+            s.audit.flush()
+            eq(#auditRows(s, 'escrow_settle_lost'), 0)
+        end)
+    end
+end)
+
+--- A write-ahead split voided at boot (Escrow.recoverOwed) was claimed
+--- outside the set of claims in flight, so /ch-stuck listed it as stuck
+--- `releasing` while it was being settled, and a /ch-settle put it back.
+describe('a split voided while staff look at it', function()
+    for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
+        it(mode .. ': is held in flight, and settled', function()
+            local _, s = boot(mode)
+            local stake = { id = 'ct00000009:1', contract_id = 'ct00000009', slot = 0,
+                portion = CH.PORTION.STAKE, staker = 'HITMAN01', source = 'bank',
+                amount = 2000, state = CH.ESCROW_STATE.HELD }
+            local owed = { id = 'owe00000009', contract_id = 'ct00000009', slot = 0,
+                portion = CH.PORTION.OWED, owed_to = 'HITMAN01', source = 'bank',
+                amount = 1000, state = CH.ESCROW_STATE.HELD,
+                metadata = { splitFrom = stake.id, stakeWas = 2000, stakeNow = 1000 } }
+            s.storage.writeEscrow('ct00000009', { stake, owed })
+
+            local claim, during = s.storage.claimEscrowLine, nil
+            s.storage.claimEscrowLine = function(id, from, to)
+                local out = claim(id, from, to)
+                if not during and id == owed.id and from == CH.ESCROW_STATE.HELD then
+                    during = { listed = s.admin.interrupted(0), inFlight = s.escrow.inFlight(id),
+                               parked = s.escrow.parkStuck(id) }
+                end
+                return out
+            end
+            s.escrow.recoverOwed(s.storage.readEscrow('ct00000009'))
+            s.storage.claimEscrowLine = claim
+            truthy(during, 'the split was never claimed')
+            truthy(during.inFlight, 'claimed outside the set of claims in flight')
+            eq(#during.listed, 0, 'listed as stuck while it was being settled')
+            falsy(during.parked, 'put back under its own claim')
+            local stored = s.storage.readEscrowLine(owed.id)
+            eq(stored.state, CH.ESCROW_STATE.SETTLED)
+            eq(stored.amount, 0)
+            falsy(s.escrow.inFlight(owed.id))
+            eq(#s.storage.readPending('HITMAN01'), 0)
+        end)
+    end
+end)
+
+--- claimSlot owes a collection's lines to the hitman before its release
+--- claims them. In that moment /ch-stuck listed the payout as owed and in
+--- no retry queue, and a staff `return` landing there handed the hitman's
+--- 5,000 to the client while the claim reported success. Outside it, a
+--- `return` on a payout that only lost its queue entry did the same.
+describe('a staff settle of a payout its claim has just owed', function()
+    local function claimable(mode)
+        local _, s = boot(mode)
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        return s, f, c, s.storage.readEscrow(c.id)[1]
+    end
+
+    for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
+        it(mode .. ': is not left for staff while the claim runs, and nothing is handed back', function()
+            local s, f, c, line = claimable(mode)
+            local hitman, creator = money(3), money(1)
+            local write, during = s.storage.writeEscrow, nil
+            s.storage.writeEscrow = function(id, lines)
+                local out = write(id, lines)
+                if not during and id == c.id and type(lines) == 'table' and lines[1]
+                    and lines[1].id == line.id and lines[1].owed_to == f.hitman.cid then
+                    during = {
+                        state = s.storage.readContract(c.id).state,
+                        listed = s.admin.interrupted(0),
+                        returned = { s.admin.settleLine(0, line.id, 'return') },
+                        delivered = { s.admin.settleLine(0, line.id, 'delivered') },
+                        paid = { s.admin.settleLine(0, line.id, 'pay') },
+                    }
+                end
+                return out
+            end
+            local ok, err = s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {})
+            s.storage.writeEscrow = write
+            truthy(during, 'nothing landed between the claim owing the payout and paying it')
+            eq(during.state, CH.STATE.COMPLETING)
+            truthy(ok, tostring(err))
+            eq(money(1), creator, 'the hitman\'s payout was handed back to the client')
+            falsy(during.returned[1])
+            eq(during.returned[2], CH.ERR.LOCKED)
+            eq(#during.listed, 0, '/ch-stuck listed a payout its claim was about to pay')
+            falsy(during.delivered[1])
+            eq(during.delivered[2], CH.ERR.LOCKED)
+            falsy(during.paid[1])
+            eq(during.paid[2], CH.ERR.LOCKED)
+            eq(money(3) - hitman, 5000, 'paid by its claim')
+            eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+        end)
+
+        it(mode .. ': one that lost its queue entry is paid to its hitman, never handed back', function()
+            local s, f, c, line = claimable(mode)
+            local hitman, creator = money(3), money(1)
+            local away = Env.players[3]
+            Env.removePlayer(3)
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}))
+            local entries = s.storage.readPending(f.hitman.cid)
+            eq(#entries, 1, 'queued for the hitman, who is away')
+            s.storage.clearPending(entries[1].id)
+
+            local rows = s.admin.interrupted(0)
+            eq(#rows, 1)
+            eq(rows[1].why, 'unqueued')
+            local ok, err, whose = s.admin.settleLine(0, line.id, 'return')
+            falsy(ok, 'an earned payout handed back to the client')
+            eq(err, 'pay_only')
+            eq(whose, f.hitman.cid)
+            ok, err = s.admin.settleLine(0, line.id, 'delivered')
+            falsy(ok, 'settled as delivered with nothing given')
+            eq(err, 'pay_only')
+            eq(money(1), creator)
+
+            local paid, note, why = s.admin.settleLine(0, line.id, 'pay')
+            truthy(paid)
+            eq(note, 'queued')
+            eq(why, 'away')
+            Env.players[3], Env.byCitizen[f.hitman.cid] = away, 3
+            s.escrow.retryPending(f.hitman.cid)
+            eq(money(3) - hitman, 5000, 'given to the hitman at their login')
+            eq(money(1), creator)
+            eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+            local _ = c
+        end)
+    end
+end)
+
+--- A contract a throw left unplaced is handed back by the tick
+--- (Contracts.retryStuckCreates). Its lines found `releasing` were put back
+--- as stuck whatever held them, so a staff return giving one at that moment
+--- had its claim put back under it: given, left for staff, and paid again
+--- by the next settle.
+describe('a never-placed contract handed back while a staff return gives it', function()
+    for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
+        it(mode .. ': leaves the live claim alone, and it is given once', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local before = money(1)
+            local writeContract, readContract = s.storage.writeContract, s.storage.readContract
+            local armed = false
+            s.storage.writeContract = function() armed = true; error('connection lost', 0) end
+            s.storage.readContract = function(...)
+                if armed then armed = false; error('connection lost', 0) end
+                return readContract(...)
+            end
+            falsy(pcall(s.contracts.create, f.creator, {
+                targetCid = 'TARGET01', reason = 'y', reward = { baseline = { bank = 7000 } },
+            }))
+            s.storage.writeContract, s.storage.readContract = writeContract, readContract
+            eq(money(1), before - 7000, 'taken')
+            local line = s.storage.orphanEscrow()[1]
+            truthy(line, 'held for a contract never placed')
+
+            local p = Env.players[1]
+            local add, fired = p.Functions.AddMoney, false
+            p.Functions.AddMoney = function(...)
+                if not fired then
+                    fired = true
+                    s.contracts.retryStuckCreates()
+                end
+                return add(...)
+            end
+            local ok, err = s.admin.settleLine(0, line.id, 'return')
+            p.Functions.AddMoney = add
+            truthy(fired, 'the hand-back never ran during the give')
+            truthy(ok, tostring(err))
+            eq(money(1), before, 'given back once')
+            local stored = s.storage.readEscrowLine(line.id)
+            eq(stored.state, CH.ESCROW_STATE.SETTLED, 'its claim was put back under it')
+            falsy(s.escrow.parked(stored))
+            eq(#s.admin.interrupted(0), 0, 'left for staff to pay again')
+            s.audit.flush()
+            eq(#auditRows(s, 'escrow_settle_lost'), 0)
+        end)
+    end
+end)

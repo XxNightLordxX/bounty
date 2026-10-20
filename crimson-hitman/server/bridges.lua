@@ -789,6 +789,12 @@ function Bridges.installCommands(modules)
                     reply(src, ('    arrival unknown: check what they received, then pay the rest '
                         .. 'with /%s %s pay <amount>, or delivered'):format(names.settle, line.line))
                 end
+                -- Never given, so neither handed back nor called delivered
+                -- (Admin.settleLine): paid to whom it is owed.
+                if line.why == 'unqueued' then
+                    reply(src, ('    never given: only /%s %s pay settles it, to them')
+                        :format(names.settle, line.line))
+                end
             end
             reply(src, ('Whether such a give arrived cannot always be told, so check their '
                 .. 'inventory or balance first. /%s <line> delivered if it is there (settled, '
@@ -844,6 +850,12 @@ function Bridges.installCommands(modules)
 
     command(names.settle, Config.Admin.Ace, function(src, args)
         local ok, err, detail = Admin.settleLine(src, args[1], args[2], args[3])
+        if ok and err == 'queued' and detail == 'refused' then
+            return reply(src, ('Queued: they are in the city, but the give was refused (no room in their '
+                .. 'pockets, their account would not take it, or their inventory could not be read), '
+                .. 'so it goes on their retry queue and is tried again while they are in the city and '
+                .. 'at their next login; see /%s.'):format(names.stuck))
+        end
         if ok and err == 'queued' then
             return reply(src, 'Queued: they are not in the city, so it is delivered at their next login.')
         end
@@ -861,6 +873,10 @@ function Bridges.installCommands(modules)
             return reply(src, ('Already queued for %s: it is theirs, given while they are in the city '
                 .. 'or at their next login. Nothing to settle.'):format(tostring(detail)))
         end
+        if err == 'pay_only' then
+            return reply(src, ('Not settled: nothing of it was given (owed to %s and in no retry queue), '
+                .. 'so only /%s <line> pay settles it, to them.'):format(tostring(detail), names.settle))
+        end
         if err == 'owes_less' then
             return reply(src, ('Not settled: the line now owes only %s, less than that amount; '
                 .. 'check again (/%s).'):format(tostring(detail), names.stuck))
@@ -873,6 +889,11 @@ function Bridges.installCommands(modules)
             return reply(src, ('Not settled: settling it raised an error (logged as admin_settle_raised, '
                 .. 'and in the console). Anything it left mid-give is left for staff; see /%s.')
                 :format(names.stuck))
+        end
+        if err == CH.ERR.LOCKED then
+            return reply(src, ('Not settled: something else is giving or settling it right now (a '
+                .. 'release, a login retry, the claim on its contract, another settle), or it is owed '
+                .. 'to somebody else; nothing moved. Check again with /%s.'):format(names.stuck))
         end
         reply(src, ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err)))
     end, true)

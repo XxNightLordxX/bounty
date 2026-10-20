@@ -1349,10 +1349,14 @@ end
 --- anybody else, and nobody else was ever shown the contract.
 ---
 --- Every line here was held under this key or by the boot, so one found
---- `releasing` is a release a crash or a throw stopped. Put back to held as
---- Recover does: paid on if it had not reached anybody yet, and left for
---- staff (/ch-stuck) if it may already have been, parked before it is put
---- back so no moment between the two leaves it to be given again.
+--- `releasing` that no call in this process holds (Escrow.putBackStuck) is
+--- a release a crash or a throw stopped. Put back to held as Recover does:
+--- paid on if it had not reached anybody yet, and left for staff
+--- (/ch-stuck) if it may already have been, parked before it is put back so
+--- no moment between the two leaves it to be given again. One a call still
+--- holds (a login retry, a staff settle: neither takes this key) is that
+--- call's: put back under it, a staff return's give went on, its settle was
+--- refused, and the line was left for staff to pay again.
 ---@param contractId string
 ---@return integer returned lines handed back or queued
 local function returnNeverPlaced(contractId)
@@ -1362,13 +1366,15 @@ local function returnNeverPlaced(contractId)
     local returned, reported = 0, nil
     for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
         -- Never given again on its own (Escrow.parkInterrupted): parked while
-        -- still `releasing`, then put back.
-        local interrupted = line.state == CH.ESCROW_STATE.RELEASING and line.releasing_to ~= nil
-        if interrupted then Escrow.parkInterrupted(line) end
-        if line.state == CH.ESCROW_STATE.RELEASING
-            and Storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD) then
+        -- still `releasing`, then put back, and only when nothing holds it.
+        local stuck, read = false, nil
+        if line.state == CH.ESCROW_STATE.RELEASING then
+            stuck, read = Escrow.putBackStuck(line.id)
+        end
+        if stuck then
+            line = read
             line.state = CH.ESCROW_STATE.HELD
-            if interrupted then
+            if line.releasing_to then
                 print(('[crimson-hitman] escrow line %s of a contract never placed was mid-release; '
                     .. 'returned to held and left for staff (/%s) — check whether it was already '
                     .. 'paid'):format(tostring(line.id), tostring(Config.Admin.Commands.stuck)))
