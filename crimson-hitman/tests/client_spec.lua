@@ -370,6 +370,23 @@ describe('the camera, on a phone that dies mid-upload', function()
         eq(Client.answerCount, 1)
     end)
 
+    --- lb-phone's flip is the UP key, one key from its shutter (RETURN), and
+    --- the photo goes to the client: flipped, it was the hitman's own face.
+    it('opens the rear camera with no way to flip to the selfie one', function()
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:takeVerificationPhoto', { id = 'ct00000001' })
+        tokenIssued()
+        local opened
+        for _, call in ipairs(Client.phone) do
+            if call.call == 'SetCameraComponent' then opened = call.spec end
+        end
+        truthy(opened, 'a camera was opened')
+        eq(opened.default.camera, 'rear')
+        eq(opened.permissions.flipCamera, false,
+            'lb-phone allows everything it is not told to refuse')
+    end)
+
     it('also works on a build that calls back through options.cb', function()
         -- lb-phone's own documentation gives the callback as a field of the
         -- options table. Builds seen in the wild read the second argument

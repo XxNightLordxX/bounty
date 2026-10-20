@@ -31,7 +31,7 @@ local DEFAULTS = {
         MaxResults = 8,
         AllowBrowseAll = true,
         BrowsePageSize = 30,
-        AllowNearby = true,
+        AllowNearby = false,
         NearbyRadius = 30.0,
         MaxNearby = 12,
         AllowProtectedJobTargets = true,
@@ -718,6 +718,14 @@ local function validateConfig()
             .. '(Limits.ExclusiveAttemptWindowSeconds; 0 turns that off too)')
             :format(Config.Limits.ExclusiveAttemptWindowSeconds)
     end
+    -- Shipped on until it was found to name anonymous parties, so a config
+    -- taken before then still has it on, and an operator who has never read
+    -- the comment has no reason to look.
+    if Config.Targeting.AllowNearby == true then
+        warn[#warn + 1] = ('Targeting.AllowNearby is on: any player with the app can list the names '
+            .. 'of the unmasked people within %s m of them, through walls. Read its comment in '
+            .. 'config.lua before leaving it on'):format(tostring(Config.Targeting.NearbyRadius))
+    end
     if Config.Relay.RequireMaskingForAnonymous == false then
         warn[#warn + 1] = 'Relay.RequireMaskingForAnonymous is off: on a phone that cannot hide '
             .. 'caller id, an anonymous party\'s calls are placed from their own number'
@@ -976,7 +984,7 @@ function StartCrimsonHitman()
     mugshot.init({ identity = identity, audit = audit })
     projection.init({ storage = Storage, identity = identity, escrow = escrow,
                       kidnap = kidnap, mugshot = mugshot, progression = progression,
-                      comms = comms, informant = informant })
+                      comms = comms, informant = informant, notify = notify })
 
     modules = {
         storage = Storage, identity = identity, ratelimit = ratelimit, audit = audit,

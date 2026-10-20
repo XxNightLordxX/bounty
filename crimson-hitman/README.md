@@ -100,6 +100,8 @@ contract) against what those players are carrying.
 | `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry |
 | `Config.Limits` | Contract caps, payouts, cooldowns |
 | `Config.Immunity` | Playtime and session floors that protect new players from being farmed |
+| `Config.Targeting.AllowBrowseAll` / `AllowNearby` | How a client finds a target. Browsing everyone online is on (a roster of names, no positions). The nearby list is **off**: on, it puts names to the unmasked people around a player, through walls, and boot warns while it is (see *Placing a contract*) |
+| `Config.Notifications.ParanoidAlertJitter` | How long (1 to 10 minutes, drawn per contract) a new contract is kept from its target: their alert, their On me tab, `/cleanse` and the request for their headshot all wait for it, so none of them dates the placement |
 
 ### Dirty money
 
@@ -118,7 +120,19 @@ face value would turn every contract into a risk-free laundering rail, so:
 
 **Placing a contract.** Search for a target, give a reason, choose exclusive
 or competitive, and build the reward from any mix of cash, bank, dirty money,
-items and weapons. Set how many payouts it has (how many times it can be
+items and weapons. The target is picked by name or from everyone online
+(`Config.Targeting.AllowBrowseAll`). A list of the people around you
+(`AllowNearby`) ships off, because the server knows where everyone is
+whatever the walls or the mask: on, it named the anonymous hitman to the
+target he was closing on, and the anonymous client to the hitman at a
+handover. Turned on, it leaves out anyone masked, invisible or in another
+routing bucket, gives distance only as "under 10m", "under 20m" and so on,
+and is closed to a player while they are on a live contract; a friend on
+no contract can still read the names around a target. Cash goes up as cash:
+the `money` item (and anything else in the `inventory:accounts` convar) is
+not offered as goods. On an anonymous contract an item that names you in its
+metadata (an ID, a phone with its number, a key with its owner) is refused,
+since the hitman would be handed it as it is. Set how many payouts it has (how many times it can be
 collected) — each payout is funded separately and all of it is escrowed up
 front. Optionally set a kidnapping bonus (a percentage on top, plus any items
 or weapons marked to pay only if the target is delivered alive), a buyout
@@ -298,6 +312,10 @@ and how many photos are on disk, kept in the app and served to phones, and
 how much space they take.
 
 **Counter-play.** A target can see the price on their head and buy it out.
+A new contract shows on their On me tab (and in `/cleanse`) when their
+alert arrives, one to ten minutes after it was placed
+(`Config.Notifications.ParanoidAlertJitter`), not the second it was placed;
+after a restart, at once.
 With a hitman on the contract, the buyout waits
 `Config.Bailout.ProcessingDelaySeconds` (2 minutes) so they can finish first,
 and longer for a kill already waiting for its photograph or a handover
@@ -357,7 +375,12 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
 - **Anonymity is enforced by omission.** An anonymous party's identity is
   never put in the payload, so there is nothing to find client-side. An
   anonymous client's contract stays on the board while they are offline, and
-  nothing a hitman can press says whether they are in the city.
+  nothing a hitman can press says whether they are in the city. No list
+  names the other side of a contract to a player on it, an item that names
+  an anonymous client is not handed to the hitman, and a target learns of a
+  new contract only when their alert's wait is over. Headshots are asked for
+  and accepted only where `MugShotBase64` runs on the server; the kill photo
+  is taken with the rear camera only.
 - **New players are protected.** Playtime and session floors, post-respawn
   immunity, per-target contract caps and re-listing cooldowns. A login event
   never restarts a session that is already running, so the session floor

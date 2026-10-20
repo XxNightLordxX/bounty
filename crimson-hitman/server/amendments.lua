@@ -243,6 +243,10 @@ addEscrowUnlocked = function(actor, contractId, rewardSpec)
 
     local lines, err = Escrow.validate(actor, rewardSpec, nil, held, worth)
     if not lines then return false, err end
+    -- As at creation (Escrow.namesOwner): a top-up is handed over the same way.
+    if contract.anon_creator and Escrow.namesOwner(actor, lines) then
+        return false, CH.ERR.ITEM_NAMES_OWNER
+    end
 
     -- Added value lands on the slot currently being competed for, so it is
     -- unambiguous which collection it sweetens.

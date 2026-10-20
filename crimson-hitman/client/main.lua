@@ -1054,8 +1054,12 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
         local opened, returned = phone('SetCameraComponent', function()
             return exports['lb-phone']:SetCameraComponent({
                 default = { type = 'Photo', flash = false, camera = 'rear' },
+                -- No flip to the selfie camera. The photo goes to the client,
+                -- and lb-phone's flip is one key (UP) away from its shutter
+                -- (RETURN): flipped, by accident or not, the hitman sends
+                -- the client his own face over the body.
                 permissions = {
-                    toggleFlash = true, flipCamera = true, takePhoto = true,
+                    toggleFlash = true, flipCamera = false, takePhoto = true,
                     takeVideo = false, takeLandscapePhoto = false,
                 },
                 -- Never saved to the hitman's own gallery. The photo is

@@ -55,6 +55,53 @@ describe('escrow validation', function()
         falsy(lines, 'handcuffs must never be escrowable')
     end)
 
+    --- On Qbox cash is the ox_inventory item 'money', kept in step with the
+    --- balance by the inventory:accounts convar. As an item it went past
+    --- Config.Sources.cash, its switch and its ceiling, and onto the board
+    --- as goods.
+    it('never takes cash as an item, blacklist or no blacklist', function()
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[1]._inventory[#Env.players[1]._inventory + 1] =
+            { name = 'money', count = 500, slot = 40 }
+        withConfig({ { Config, 'EscrowBlacklist', {} } }, function()
+            local lines, err = s.escrow.validate(f.creator, {
+                baseline = { items = { { name = 'money', count = 100 } } },
+            })
+            falsy(lines, 'cash went up as goods')
+            eq(err, CH.ERR.INVALID_REWARD)
+            lines = s.escrow.validate(f.creator, {
+                baseline = { items = { { name = 'Money', count = 100 } } },
+            })
+            falsy(lines, 'nor with a capital letter')
+            for _, row in ipairs(s.app.escrowableItems(f.creator)) do
+                falsy(row.name == 'money', 'and the picker offered it')
+            end
+        end)
+        withConfig({ { Config.Sources.cash, 'enabled', false } }, function()
+            falsy(s.escrow.validate(f.creator, {
+                baseline = { items = { { name = 'money', count = 100 } } },
+            }), 'a server with cash rewards switched off took cash all the same')
+        end)
+    end)
+
+    it('refuses every account the server keeps as an item', function()
+        local s = newStack()
+        local f = fixture(s)
+        Natives.convars['inventory:accounts'] = '["money", "casino_chips"]'
+        Env.players[1]._inventory[#Env.players[1]._inventory + 1] =
+            { name = 'casino_chips', count = 500, slot = 41 }
+        falsy(s.escrow.validate(f.creator, {
+            baseline = { items = { { name = 'casino_chips', count = 10 } } },
+        }), 'an account item named by the convar went up as goods')
+        for _, row in ipairs(s.app.escrowableItems(f.creator)) do
+            falsy(row.name == 'casino_chips', 'offered: ' .. row.name)
+        end
+        truthy(s.escrow.validate(f.creator, {
+            baseline = { items = { { name = 'lockpick', count = 1 } } },
+        }), 'and ordinary goods still go up')
+    end)
+
     it('snapshots weapon metadata rather than referencing a slot', function()
         local s = newStack()
         local f = fixture(s)

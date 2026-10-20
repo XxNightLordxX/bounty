@@ -50,7 +50,8 @@
     // touches a payout, and refetching the roster each time is a round trip
     // per rebuild against a rate limit — and a list that flickers away
     // under whoever was reading it.
-    browse: { scope: 'all', query: '', page: 1, data: null, pending: null, draw: null },
+    browse: { scope: 'all', query: '', page: 1, data: null, pending: null, draw: null,
+              nearbyClosed: false },
     // The Place form's own values. They used to live only in the DOM, so
     // anything that re-rendered — a tab change, a push, a late reply, the
     // sworn-officer dialog — silently emptied the form the player had built.
@@ -448,6 +449,11 @@
     // own; this is what is left, and it at least says it is about money.
     insufficient_funds: 'You do not have enough money for that.',
     invalid_reward: 'That reward does not add up.',
+    // Anonymous only: the item would go to the hitman with its own record
+    // of whose it is, so it is the item to take out, not the figures.
+    item_names_owner: 'One of those items carries your name or number, and '
+      + 'the hitman would be handed it as it is, which would give you away. '
+      + 'Leave it out.',
     invalid_input: 'Check what you entered.',
     server_error: 'Something broke on the server, not on your end. '
       + 'An admin can see what in the server console.',
@@ -2482,7 +2488,11 @@
       frame.appendChild(canvas);
       shade.appendChild(frame);
       var row = el('div', 'row');
+      // Not live until the client says the rear camera is on. Until then the
+      // render shows the ordinary game camera, which has the hitman in it,
+      // and a quick tap sent the client that.
       var shutter = el('button', 'primary', 'Take photo');
+      shutter.disabled = true;
       var cancel = el('button', 'ghost', 'Cancel');
       row.appendChild(shutter);
       row.appendChild(cancel);
@@ -2525,7 +2535,8 @@
       }
 
       post('verificationCamera', { on: true }).then(function (r) {
-        if (!r.ok) { finish({ ok: false, err: r.err || 'camera_unavailable' }); }
+        if (!r.ok) { finish({ ok: false, err: r.err || 'camera_unavailable' }); return; }
+        if (!settled) { shutter.disabled = false; }
       });
 
       // lb-phone takes the game render down itself when the phone is put
@@ -6085,7 +6096,12 @@
       var mine = ++seq;
       var query = browse.query;
 
-      if (!canBrowse && !canNearby) {
+      // The name search, where nothing else will find anybody: a server
+      // with both lists off, or one with only the nearby list while that is
+      // closed to this player (they are on a contract). Without the second,
+      // a client with one contract running had no way to pick a target for
+      // another.
+      if (!canBrowse && (!canNearby || browse.nearbyClosed)) {
         var minimum = settings().minQueryLength || 3;
         if (query.length < minimum) {
           browse.pending = null;
@@ -6110,6 +6126,7 @@
           if (mine !== seq) return;
           if (!r.ok) { return refused(r); }
           browse.data = r.data || { people: [] };
+          if (browse.scope === 'nearby') { browse.nearbyClosed = browse.data.closed === true; }
           if (browse.draw) { browse.draw(browse.data); }
         });
     }
@@ -6134,6 +6151,16 @@
       // reply straight off the wire, where an empty list is an object.
       var people = asList(rows);
       results.innerHTML = '';
+
+      // The server closes the nearby list to anyone on a live contract, so
+      // it cannot name the other side of it. Said, rather than reading as
+      // an empty street.
+      if (browse.scope === 'nearby' && paging && paging.closed) {
+        show(status, 'Nobody is listed near you while you are on a contract. '
+          + (canBrowse ? 'Look under Everyone.'
+            : 'Type at least ' + (settings().minQueryLength || 3) + ' letters of their name.'));
+        return;
+      }
 
       if (people.length === 0) {
         show(status, input.value
@@ -6187,8 +6214,9 @@
 
       var tags = el('span', 'person-tags');
       if (person.protected) { tags.appendChild(el('span', 'chip warn ico i-shield', 'Law')); }
+      // A band, never the figure: "under 20m" (app.lua, NEARBY_BAND).
       if (person.metres !== undefined && person.metres !== null) {
-        tags.appendChild(el('span', 'chip ico i-pin', person.metres + 'm'));
+        tags.appendChild(el('span', 'chip ico i-pin', 'under ' + person.metres + 'm'));
       }
       if (tags.children.length > 0) { pick.appendChild(tags); }
 

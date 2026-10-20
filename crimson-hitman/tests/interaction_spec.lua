@@ -991,6 +991,9 @@ describe('app pushes', function()
 
     it('nudges every party when a contract ends', function()
         local s, f, c = seeded({ bailout = 15000, accept = false })
+        -- Once the target has been shown it: inside the wait nothing tells
+        -- them it exists (anonymity_spec).
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         Env.clientEvents = {}
         truthy(s.bailout.buy(f.target, c.id))
 
@@ -2618,25 +2621,28 @@ describe('browsing for a target', function()
         eq(data.people[1].name, 'Ada Quill')
     end)
 
-    it('lists only who is close by, nearest first, in the nearby scope', function()
+    -- Nearby ships off (it names people: anonymity_spec); these turn it on.
+    it('lists only who is close by, nearest band first, in the nearby scope', function()
         local s = newStack()
         crowd(s)
-        local data = browse(1, { scope = 'nearby' }).data
-        truthy(#data.people > 0, 'somebody is standing right here')
+        withConfig({ { Config.Targeting, 'AllowNearby', true } }, function()
+            local data = browse(1, { scope = 'nearby' }).data
+            truthy(#data.people > 0, 'somebody is standing right here')
 
-        local names, last = {}, -1
-        for _, person in ipairs(data.people) do
-            names[person.name] = true
-            truthy(person.metres ~= nil, 'a nearby row carries a distance')
-            truthy(person.metres >= last,
-                ('out of order: %d after %d'):format(person.metres, last))
-            last = person.metres
-        end
+            local names, last = {}, -1
+            for _, person in ipairs(data.people) do
+                names[person.name] = true
+                truthy(person.metres ~= nil, 'a nearby row carries a distance')
+                truthy(person.metres >= last,
+                    ('out of order: %d after %d'):format(person.metres, last))
+                last = person.metres
+            end
 
-        truthy(names['Ada Quill'], 'standing on top of the browser')
-        truthy(names['Bo Renn'], 'ten metres away, inside the radius')
-        falsy(names['Cy Stark'],
-            'five hundred metres away is not nearby, whatever else is on the list')
+            truthy(names['Ada Quill'], 'standing on top of the browser')
+            truthy(names['Bo Renn'], 'ten metres away, inside the radius')
+            falsy(names['Cy Stark'],
+                'five hundred metres away is not nearby, whatever else is on the list')
+        end)
     end)
 
     it('reaches the whole city in the all scope, and only the street in nearby', function()
@@ -2644,11 +2650,21 @@ describe('browsing for a target', function()
         -- one thing worth holding is that the reach differs.
         local s = newStack()
         crowd(s)
-        local everyone = browse(1, { scope = 'all' }).data
-        local close = browse(1, { scope = 'nearby' }).data
-        truthy(everyone.total > close.total,
-            ('the city (%d) has to be bigger than the street (%d)')
-                :format(everyone.total, close.total))
+        withConfig({ { Config.Targeting, 'AllowNearby', true } }, function()
+            local everyone = browse(1, { scope = 'all' }).data
+            local close = browse(1, { scope = 'nearby' }).data
+            truthy(everyone.total > close.total,
+                ('the city (%d) has to be bigger than the street (%d)')
+                    :format(everyone.total, close.total))
+        end)
+    end)
+
+    it('lists nobody nearby on the server as shipped', function()
+        local s = newStack()
+        crowd(s)
+        local reply = browse(1, { scope = 'nearby' })
+        truthy(reply.ok, 'the handler still answers')
+        eq(#reply.data.people, 0, 'it is off unless the owner turns it on')
     end)
 
     it('answers with nothing when the server has browsing switched off', function()

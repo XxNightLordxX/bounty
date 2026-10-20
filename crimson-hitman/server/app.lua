@@ -164,6 +164,63 @@ local function sourceEnabled(name)
     return (source and source.enabled) == true
 end
 
+--------------------------------------------------------------------------
+-- Who the nearby list may name
+--------------------------------------------------------------------------
+
+--- Metres per distance band in the nearby list. A row says "under 10m",
+--- "under 20m", never the figure itself.
+local NEARBY_BAND = 10
+
+--- Whether somebody standing near the browser may be named to them.
+---
+--- Not anybody the server can see (§14.33). Out: a player in another
+--- routing bucket (an instanced interior, a staff session); an invisible
+--- one (noclip, spectating staff); and anyone wearing a mask, whose face is
+--- exactly what the list would have put a name to. A mask is the ped's
+--- mask component (1) not being the bare face (0), as on the freemode
+--- peds Qbox players use; an add-on ped model that draws something there
+--- counts as masked and is not listed. A native that cannot answer, on a
+--- server build without it, leaves the person off: an unlisted person
+--- costs a search by name, and a listed masked one cannot be taken back.
+---@param src number
+---@param ped number
+---@param bucket number the browser's own routing bucket
+---@return boolean
+local function nearbyNameable(src, ped, bucket)
+    if not ped or ped == 0 then return false end
+    local ok, theirs = pcall(GetPlayerRoutingBucket, src)
+    if not ok or theirs ~= bucket then return false end
+    local seen, visible = pcall(IsEntityVisible, ped)
+    if not seen or not visible then return false end
+    local read, mask = pcall(GetPedDrawableVariation, ped, 1)
+    if not read or mask ~= 0 then return false end
+    return true
+end
+
+--- Whether this player is on a live contract: placed it, holds it as a
+--- hitman, or is named on one they have been shown (Notify.shownToTarget,
+--- so the nearby list closing cannot date a placement the target's On me
+--- tab does not show yet). One indexed read of their own contracts.
+---@param actor table
+---@return boolean
+local function onLiveContract(actor)
+    local involved = deps.storage.contractsInvolving(actor.cid) or {}
+    for i = 1, #involved do
+        local c = involved[i]
+        if not CH.TERMINAL[c.state] then
+            if c.creator_cid == actor.cid then return true end
+            if c.target_cid == actor.cid then
+                if deps.notify.shownToTarget(c) then return true end
+            else
+                local mine = deps.storage.readHitman(c.id, actor.cid)
+                if mine and mine.state == 'active' then return true end
+            end
+        end
+    end
+    return false
+end
+
 --- Every handler body, by name.
 ---
 --- So the diagnosis can run the real thing rather than a reconstruction of
@@ -414,8 +471,10 @@ function App.register()
     -- alphabetical: this IS the roster §14.33 originally refused, and it is
     -- here because the server owner asked for it — see
     -- Config.Targeting.AllowBrowseAll, which turns it off. `nearby` is the
-    -- narrower one: who is within a few metres, nearest first, which is the
-    -- question a player looking at somebody across a car park actually has.
+    -- narrower one: who is within a few metres, which is the question a
+    -- player looking at somebody across a car park actually has. It ships
+    -- off (Config.Targeting.AllowNearby), and nearbyNameable and
+    -- onLiveContract say what it leaves out when it is on.
     --
     -- Both mint the same opaque, per-searcher, expiring handles as a name
     -- search, so a citizen id still never reaches a client, and both refuse
@@ -427,6 +486,20 @@ function App.register()
         if nearby and not Config.Targeting.AllowNearby then return { people = {}, total = 0 } end
         if not nearby and not Config.Targeting.AllowBrowseAll then return { people = {}, total = 0 } end
 
+        -- Closed to anyone on a live contract, whoever is standing there.
+        -- Every party has somebody on it the app keeps from them: a target
+        -- never learns the client or the hitmen, a hitman not an anonymous
+        -- client, a client not an anonymous hitman, and the hitman is not
+        -- told where the target is. A name and a distance through walls
+        -- gave all of it back: the target named the anonymous hitman closing
+        -- in, and the hitman named the anonymous client at the handover.
+        -- Leaving only those people off the list would not do: somebody
+        -- standing in plain sight and missing from it is the answer. Closed
+        -- whole, the list cannot depend on who is near.
+        if nearby and onLiveContract(actor) then
+            return { people = {}, total = 0, closed = true }
+        end
+
         -- A name typed into the browser narrows it without a round trip per
         -- keystroke, and without needing the full length a name search does:
         -- the list is already bounded, so this is a filter rather than a
@@ -434,11 +507,14 @@ function App.register()
         local needle = Util.sanitizeText(payload.query, 32)
         needle = needle and needle:lower() or nil
 
-        local origin
+        local origin, bucket
         if nearby then
             local ped = GetPlayerPed(actor.source)
             origin = ped and ped ~= 0 and GetEntityCoords(ped) or nil
             if not origin then return { people = {}, total = 0 } end
+            local ok, mine = pcall(GetPlayerRoutingBucket, actor.source)
+            if not ok then return { people = {}, total = 0 } end
+            bucket = mine
         end
 
         local found = {}
@@ -452,11 +528,11 @@ function App.register()
 
                 if nearby then
                     local theirPed = GetPlayerPed(candidate.source)
-                    local coords = theirPed and theirPed ~= 0 and GetEntityCoords(theirPed) or nil
-                    if coords then
-                        local metres = math.sqrt(Util.dist2(origin, coords))
+                    if nearbyNameable(candidate.source, theirPed, bucket) then
+                        local metres = math.sqrt(Util.dist2(origin, GetEntityCoords(theirPed)))
                         if metres <= Config.Targeting.NearbyRadius then
-                            found[#found + 1] = { actor = candidate, metres = metres }
+                            found[#found + 1] = { actor = candidate,
+                                band = math.floor(metres / NEARBY_BAND) + 1 }
                         end
                     end
                 else
@@ -465,16 +541,15 @@ function App.register()
             end
         end
 
-        if nearby then
-            -- The person you are looking at is the one you mean.
-            table.sort(found, function(a, b) return a.metres < b.metres end)
-        else
-            -- Stable and scannable, so paging through it means something.
-            table.sort(found, function(a, b)
-                if a.actor.name == b.actor.name then return a.actor.cid < b.actor.cid end
-                return a.actor.name < b.actor.name
-            end)
-        end
+        -- Stable and scannable, so paging through it means something. Nearby
+        -- goes by band first and then by name, never by the exact distance:
+        -- the order inside a band would otherwise be the rangefinder the
+        -- band exists to withhold.
+        table.sort(found, function(a, b)
+            if (a.band or 0) ~= (b.band or 0) then return (a.band or 0) < (b.band or 0) end
+            if a.actor.name == b.actor.name then return a.actor.cid < b.actor.cid end
+            return a.actor.name < b.actor.name
+        end)
 
         local total = #found
         local perPage = nearby and Config.Targeting.MaxNearby or Config.Targeting.BrowsePageSize
@@ -490,10 +565,11 @@ function App.register()
                 -- Whether the target is law enforcement is disclosed, so
                 -- nobody places a contract on an officer unaware (§7.5).
                 protected = deps.identity.isProtected(entry.actor),
-                -- Rounded: an exact figure is a rangefinder, and a rough one
-                -- is all it takes to tell two people with the same name
-                -- apart.
-                metres = entry.metres and math.floor(entry.metres + 0.5) or nil,
+                -- The far edge of their band, "under 20m": enough to tell
+                -- two people with the same name apart. It was the distance
+                -- to the metre, and asked again every second it tracked a
+                -- moving person through walls.
+                metres = entry.band and (entry.band * NEARBY_BAND) or nil,
             }
         end
 

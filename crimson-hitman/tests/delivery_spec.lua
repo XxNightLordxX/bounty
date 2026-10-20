@@ -519,6 +519,10 @@ describe('a push names the contract it is about', function()
 
     it('never names it to the target', function()
         local s, f, c = ready()
+        -- Once the target has been shown it: inside the wait nothing tells
+        -- them it exists, a push included (anonymity_spec).
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        Env.clientEvents = {}
         truthy(s.contracts.cancel(f.creator, c.id))
         local toTarget = pushes(2)
         eq(#toTarget, 1, 'the target is still nudged when it ends')

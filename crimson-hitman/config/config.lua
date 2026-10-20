@@ -60,9 +60,24 @@ Config.Sources = {
 Config.MaxContractValue = 1000000
 
 --- Items that may never be escrowed, whatever the creator selects.
+---
+--- An item reaches the hitman with its metadata, so list anything whose
+--- metadata names its owner: identity documents (ox_inventory's
+--- `identification` carries the holder's name and date of birth), phones
+--- kept as unique items (lb-phone's coloured `phone_*` names, each with its
+--- own number), bank cards, and keys or passes from other resources that
+--- store an owner or a plate. On an anonymous contract an item whose
+--- metadata names the client is refused anyway (it carries a name, an owner
+--- or a phone number), but on a named one it is handed over as it is.
+---
+--- `money` is cash: on Qbox the cash balance is that ox_inventory item.
+--- Every item named in the server's `inventory:accounts` convar (default
+--- '["money"]') is refused whether it is listed here or not, so cash only
+--- goes up through the cash source above, with its switch and its ceiling.
 Config.EscrowBlacklist = {
     ['phone'] = true, ['id_card'] = true, ['driver_license'] = true,
     ['weaponlicense'] = true, ['handcuffs'] = true,
+    ['identification'] = true, ['lawyerpass'] = true, ['money'] = true,
 }
 
 --- Kidnapping bonus. Percentage applies per money source; items are extra
@@ -512,6 +527,10 @@ Config.Kidnap = {
 -- Tracking, mugshots and listings (§14.22, §14.26, §14.33)
 --------------------------------------------------------------------------
 
+--- Headshots are rendered by each target's own phone with MugShotBase64.
+--- Without that resource started on the server, none is asked for and none
+--- is accepted: the board shows no faces rather than whatever picture a
+--- modified client sends.
 Config.Mugshot = {
     MinRefreshMinutes = 5,
     RenderTimeoutMs = 8000,
@@ -544,10 +563,10 @@ Config.Targeting = {
     --- them first. Somebody logging in becomes visible to everyone.
     ---
     --- What it still does not hand out: citizen ids (the list carries the
-    --- same opaque, per-searcher, expiring handles as a name search),
-    --- positions, jobs beyond the protected flag, or anything about players
-    --- sharing the browser's own account. It is rate-limited like every
-    --- other listing.
+    --- same opaque, per-searcher, expiring handles as a name search), where
+    --- anybody is (that is the nearby list below, which ships off), jobs
+    --- beyond the protected flag, or anything about players sharing the
+    --- browser's own account. It is rate-limited like every other listing.
     ---
     --- Set false to go back to requiring a typed name.
     AllowBrowseAll = true,
@@ -555,16 +574,30 @@ Config.Targeting = {
     --- render, so this bounds both.
     BrowsePageSize = 30,
 
-    --- Let a player list the people standing around them, nearest first.
+    --- Let a player list the names of the people standing around them.
     ---
-    --- Narrower than the roster above and useful on its own: when you are
-    --- looking at somebody across a car park, "who is near me" answers the
-    --- question directly, and the distance tells two people with the same
-    --- name apart.
-    AllowNearby = true,
+    --- Off, because what it gives away is more than it looks. The server
+    --- knows where everyone is, whatever the walls, the dark or the clothes,
+    --- so on it any player holding the app can put a name to anyone within
+    --- NearbyRadius, and ask again a second later as they move. A target
+    --- named the anonymous hitman closing in on them that way, a hitman
+    --- named the anonymous client standing beside him at a handover, and
+    --- anyone could name a masked robber.
+    ---
+    --- Turned on, it leaves out: players in another routing bucket, players
+    --- who are invisible (noclip, spectating staff), and anyone wearing a
+    --- mask. It is closed altogether, to the player asking, while they are
+    --- on a live contract: one they placed, one they hold, or one on them
+    --- that they have been shown (they can still pick a target by name, or
+    --- from everyone online). Distance goes out only as "under 10m",
+    --- "under 20m" and so on, and the list is ordered by that and by name.
+    --- What it cannot stop: a friend who is on no contract standing next to
+    --- a target and reading off the names around them. That is why it is
+    --- off.
+    AllowNearby = false,
     --- Metres. Roughly a street: close enough that you are looking at them.
     NearbyRadius = 30.0,
-    --- How many of the nearest to name, closest first.
+    --- How many names to list, nearest band first.
     MaxNearby = 12,
     --- Protected-job players may be targeted by default: putting a hit on a cop is
     --- legitimate criminal roleplay. What makes it fair is the advisory
@@ -726,6 +759,15 @@ Config.Notifications = {
     --- Seconds the target's alert waits after the contract is placed, drawn
     --- at random between these two, so it does not date the placement to
     --- the second for somebody who paid to stay unnamed (§14.40).
+    ---
+    --- The same wait, drawn once per contract, holds back everything else
+    --- the target could learn it from, whether or not ParanoidAlert is on:
+    --- the contract shows on their On me tab and in /cleanse only when it is
+    --- over, their headshot is not asked of their phone before then (so the
+    --- board shows no face for a new target until it is, unless one is
+    --- already cached), and the nearby list stays open to them meanwhile.
+    --- An officer whose department is advised at once is not held back.
+    --- Kept in memory: after a restart every contract shows at once.
     ParanoidAlertJitter = { min = 60, max = 600 },
     --- And at most one per target in this many minutes, however many
     --- contracts are placed on them, so neither do the alerts count them.

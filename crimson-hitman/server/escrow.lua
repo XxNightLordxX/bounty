@@ -31,11 +31,16 @@ local attempts = 0
 --- retry pass can tell whether anything arrived while it was running.
 local wakes = {}
 
+--- The ox_inventory items that are a money account, by name; read once per
+--- start (accountItem).
+local accountItems = nil
+
 function Escrow.init(storage, audit)
     Storage, Audit = storage, audit
     waiting = {}
     lastTried = {}
     wakes = {}
+    accountItems = nil
 end
 
 --- Remember that this player has a delivery queued, so the tick tries it
@@ -170,15 +175,40 @@ local function canonicalItem(name)
     return lower
 end
 
+--- Whether an item IS money: one of the accounts the server keeps as an
+--- inventory item.
+---
+--- On Qbox, cash is the item 'money'. qbx_core keeps the item and the cash
+--- balance in step, and ox_inventory moves the balance when the item
+--- moves, both by the list in the convar inventory:accounts (default
+--- '["money"]'). Offered as an item, cash went into escrow past
+--- Config.Sources.cash altogether, its switch and its ceiling, and showed
+--- on the board as goods: the hole closed for black_money (isDirtyItem),
+--- open for the other currency. Read from the same convar, so a server
+--- that keeps more accounts as items has all of them refused.
+local function accountItem(name)
+    if not accountItems then
+        accountItems = {}
+        local ok, list = pcall(function()
+            return json.decode(GetConvar('inventory:accounts', '["money"]'))
+        end)
+        if not ok or type(list) ~= 'table' then list = { 'money' } end
+        for _, item in pairs(list) do
+            if type(item) == 'string' then accountItems[canonicalItem(item)] = true end
+        end
+    end
+    return accountItems[canonicalItem(name)] == true
+end
+
 --- Whether a name is on the blacklist, compared the way the inventory
 --- compares names. An operator writing 'Handcuffs' in the config is covered
---- too.
+--- too. An item that is money is on it whatever the config says.
 local function blacklisted(name)
     local wanted = canonicalItem(name)
     for listed, on in pairs(Config.EscrowBlacklist or {}) do
         if on and canonicalItem(listed) == wanted then return true end
     end
-    return false
+    return accountItem(name)
 end
 
 local function isDirtyItem(name)
@@ -189,6 +219,71 @@ end
 -- The picker offers what the server will take, by the same rule.
 Escrow.blacklisted = blacklisted
 Escrow.isDirtyItem = isDirtyItem
+
+--- Metadata keys that say whose an item is, as the resources that write
+--- them spell them, compared without case.
+local OWNER_KEYS = {
+    citizenid = true, cid = true, owner = true, ownername = true,
+    name = true, firstname = true, lastname = true, fullname = true,
+    phonenumber = true, lbphonenumber = true, phone_number = true,
+    dob = true, birthdate = true, dateofbirth = true,
+}
+
+--- Whether any of these item lines would tell whoever receives it who put
+--- it up.
+---
+--- An item goes into escrow with its metadata, and comes out the other end
+--- with it, which is the point (§9.4). For an anonymous client that is a
+--- name tag: ox_inventory's `identification` carries the holder's name and
+--- date of birth, a unique lb-phone carries its number, and a bank card or
+--- a key from another resource carries its owner. The weapon path strips
+--- `registered` on delivery for exactly this reason (handedOver); an item
+--- cannot be stripped without breaking it, so it is refused instead.
+---
+--- Two tests: a key that names an owner, whatever it holds; and the
+--- client's own citizen id, name or phone number anywhere in a value,
+--- whatever the key (`identification` keeps the name under `type`).
+--- Weapons are left to handedOver. Only the items' own lines are read.
+---@param actor table the client
+---@param lines table[] from Escrow.validate
+---@return boolean
+function Escrow.namesOwner(actor, lines)
+    local needles = {}
+    local function want(value)
+        if type(value) == 'number' then value = tostring(math.floor(value)) end
+        if type(value) == 'string' and #value >= 3 then needles[#needles + 1] = value:lower() end
+    end
+    want(actor and actor.cid)
+    want(actor and actor.name)
+    local charinfo = actor and actor.player and actor.player.PlayerData
+        and actor.player.PlayerData.charinfo
+    if type(charinfo) == 'table' then want(charinfo.phone) end
+
+    local function carries(meta, depth)
+        if type(meta) ~= 'table' or depth > 4 then return false end
+        for key, value in pairs(meta) do
+            if type(key) == 'string' and OWNER_KEYS[key:lower()] and value ~= nil
+                and value ~= false and value ~= '' then
+                return true
+            end
+            if type(value) == 'table' then
+                if carries(value, depth + 1) then return true end
+            elseif type(value) == 'string' or type(value) == 'number' then
+                local text = tostring(value):lower()
+                for i = 1, #needles do
+                    if text:find(needles[i], 1, true) then return true end
+                end
+            end
+        end
+        return false
+    end
+
+    for i = 1, #(lines or {}) do
+        local line = lines[i]
+        if line.source == CH.SOURCE.ITEM and carries(line.metadata, 1) then return true end
+    end
+    return false
+end
 
 function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue)
     if type(spec) ~= 'table' then return nil, CH.ERR.INVALID_REWARD end

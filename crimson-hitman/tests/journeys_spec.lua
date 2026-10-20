@@ -196,6 +196,8 @@ describe('a target who has already paid to get out', function()
             reward = { baseline = { cash = 5000 } }, bailoutAmount = 20000,
         })
         truthy(c)
+        -- The target is shown it once the alert's wait is over.
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         truthy(s.contracts.accept(f.hitman, c.id), 'a hitman, so it queues')
 
         local before = Env.players[2].PlayerData.money.cash
@@ -233,6 +235,7 @@ describe('a target who has already paid to get out', function()
             reward = { baseline = { cash = 5000 } }, bailoutAmount = 20000,
         })
         truthy(c)
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         local view = (s.projection.onMe(f.target.cid) or {})[1]
         truthy(view, 'the target sees it')
         falsy(view.bailoutPaid, 'nothing has been paid')

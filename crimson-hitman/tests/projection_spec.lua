@@ -80,6 +80,8 @@ describe('projection', function()
 
     it('never shows a target the creator or the hitmen', function()
         local s, f, c = seeded({ accept = true, bailout = 15000 })
+        -- Shown to the target once the alert's wait is over (anonymity_spec).
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         local rows = s.projection.onMe('TARGET01')
         eq(#rows, 1)
         falsy(rows[1].creatorName, 'the target does not learn who wants them dead')
@@ -179,6 +181,8 @@ describe('target mugshots', function()
 
     it('asks the target to render their own headshot', function()
         local s, f, c = seededMug()
+        -- Not before the target is shown the contract (anonymity_spec).
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
         s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
 
         local asked = false
@@ -274,6 +278,32 @@ describe('target mugshots', function()
             s.mugshot.request('TARGET01')
         end
         falsy(s.mugshot.get('TARGET01'), 'a stale image must not be served indefinitely')
+    end)
+
+    --- Without the renderer the server still asked the target's phone for a
+    --- face and took whatever it sent back: an honest client gives up, and
+    --- a modified one put any picture it liked in front of every viewer.
+    it('asks no phone for a face, and takes none, without the renderer', function()
+        local s, f, c = seededMug()
+        Natives.resourceStates['MugShotBase64'] = 'missing'
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        Env.clientEvents = {}
+
+        local row = s.projection.contract(s.storage.readContract(c.id), 'HITMAN01')
+        s.projection.listing('HITMAN01', 1)
+        falsy(s.mugshot.request('TARGET01'))
+        for _, event in ipairs(Env.clientEvents) do
+            falsy(event.name == 'crimson-hitman:renderMugshot',
+                'asked a phone for a face on a server that renders none')
+        end
+
+        falsy(s.mugshot.store('TARGET01', VALID), 'a face nobody could have rendered was taken')
+        falsy(row.targetImageId)
+        falsy(s.mugshot.handleFor('TARGET01'), 'and none is shown to anyone')
+
+        -- The renderer back, the face works again.
+        Natives.resourceStates['MugShotBase64'] = 'started'
+        truthy(render(s, 'TARGET01'))
     end)
 
     it('does not re-render inside the refresh floor', function()

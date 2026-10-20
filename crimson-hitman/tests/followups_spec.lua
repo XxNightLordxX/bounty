@@ -27,7 +27,8 @@ local function mysqlStack()
     s.amendments.init({ storage = store, identity = s.identity, contracts = s.contracts,
         escrow = s.escrow, audit = s.audit, notify = s.notify })
     s.projection.init({ storage = store, identity = s.identity, escrow = s.escrow,
-        kidnap = s.kidnap, mugshot = s.mugshot, progression = s.progression })
+        kidnap = s.kidnap, mugshot = s.mugshot, progression = s.progression,
+        notify = s.notify })
     s.storage = store
     return s
 end

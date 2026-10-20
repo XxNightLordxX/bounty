@@ -589,7 +589,8 @@ describe('what opening the board costs', function()
         s.escrow.init(s.storage, s.audit)
         s.projection.init({ storage = s.storage, identity = s.identity,
                             escrow = s.escrow, kidnap = s.kidnap,
-                            mugshot = s.mugshot, progression = s.progression })
+                            mugshot = s.mugshot, progression = s.progression,
+                            notify = s.notify })
         return counts
     end
 

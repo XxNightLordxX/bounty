@@ -44,7 +44,8 @@ describe('starting on a config that predates a setting', function()
         eq(Config.Targeting.AllowBrowseAll, true,
             'a setting the operator never had is not a setting they turned off')
         eq(Config.Targeting.BrowsePageSize, 30)
-        eq(Config.Targeting.AllowNearby, true)
+        eq(Config.Targeting.AllowNearby, false,
+            'filled with what ships, and nearby ships off: it names people')
         eq(Config.Targeting.NearbyRadius, 30.0)
         eq(Config.Targeting.MaxNearby, 12)
         resetConfig()

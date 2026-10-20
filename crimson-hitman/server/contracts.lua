@@ -720,6 +720,11 @@ function Contracts.create(actor, req)
     local lines, slotCount
     lines, err, slotCount = Escrow.validate(actor, req.reward, bonusPercent)
     if not lines then return nil, err end
+    -- An item reaches the hitman with its metadata, and some of it names
+    -- the client: an anonymous one is refused it rather than unmasked.
+    if req.anonymous == true and Escrow.namesOwner(actor, lines) then
+        return nil, CH.ERR.ITEM_NAMES_OWNER
+    end
 
     local bailout, bailoutErr = Contracts.clampBailout(req.bailoutAmount, lines)
     if bailoutErr then return nil, bailoutErr end

@@ -4475,6 +4475,56 @@ async function main() {
     });
   })();
 
+  /* The nearby list as the server answers it now: closed to a player on a
+     live contract, so it cannot name the other side of it, and a distance
+     given as a band. */
+  await (async function nearbyAsAnswered() {
+    async function nearbyPicker(answer) {
+      const responses = {
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [],
+          settings: { allowBrowseAll: false, allowNearby: true, nearbyRadius: 30 } } },
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+        ledger: LEDGER,
+        browseTargets: answer
+      };
+      const app = boot(responses);
+      await settle(); await settle();
+      tab(app, 'place');
+      await settle(); await settle();
+      app.responses = responses;
+      return app;
+    }
+
+    const closed = await nearbyPicker({ ok: true,
+      data: { people: [], total: 0, closed: true } });
+    it('says the nearby list is closed while on a contract, not that the street is empty', function () {
+      const shown = closed.view.textContent;
+      truthy(shown.indexOf('while you are on a contract') !== -1, shown);
+      falsy(shown.indexOf('Nobody is standing near you') !== -1, shown);
+    });
+
+    // On a server with only the nearby list, closed it left a client with
+    // one contract running no way to pick the target of another.
+    closed.responses.searchTargets = { ok: true, data: [{ handle: 'tg00000002', name: 'Ann Ryder' }] };
+    const filter = closed.document.getElementById('target-query');
+    filter.value = 'Ann';
+    filter.oninput();
+    closed.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+    await settle(); await settle();
+    it('finds them by name instead', function () {
+      truthy(closed.sent.some(function (x) { return x.name === 'searchTargets' && x.body.query === 'Ann'; }),
+        'no name search was made');
+      truthy(closed.view.textContent.indexOf('Ann Ryder') !== -1, closed.view.textContent);
+    });
+
+    const banded = await nearbyPicker({ ok: true, data: { people: [
+      { handle: 'tg00000001', name: 'Ann Ryder', metres: 10 }
+    ], total: 1, page: 1, pages: 1 } });
+    it('gives a distance as the band it is in', function () {
+      truthy(banded.view.textContent.indexOf('under 10m') !== -1, banded.view.textContent);
+    });
+  })();
+
   /* A refused target list, answering after the form was rebuilt: it was
      written into the picker that asked, no longer on screen. */
   await (async function refusedListReachesTheScreen() {
@@ -6339,6 +6389,44 @@ async function main() {
       it('says the kill is verified', function () {
         truthy(app.notice().indexOf('Verified') !== -1, app.notice());
         drewCleanly(app, 'the viewfinder');
+      });
+    })();
+
+    /* The shutter waits for the client to say the rear camera is on. Until
+       then the render shows the ordinary game camera, with the hitman in
+       it, and a quick tap sent the client that. */
+    await (async function viewfinderWaitsForTheCamera() {
+      let cameraOn = null;
+      const { app, camera } = await viewfinderOpen({
+        verificationCamera: function (body) {
+          if (body.on) { return new Promise(function (resolve) { cameraOn = resolve; }); }
+          return { ok: true };
+        }
+      });
+      function shutterOf() {
+        return finder(app).all().filter(function (n) {
+          return n.tagName === 'BUTTON' && n.textContent === 'Take photo';
+        })[0];
+      }
+      it('keeps the shutter off until the rear camera is confirmed on', function () {
+        truthy(typeof cameraOn === 'function', 'the camera was asked for');
+        truthy(shutterOf().disabled, 'a tap now would photograph the game camera, hitman and all');
+      });
+      pressIn(finder(app), 'Take photo');
+      for (let i = 0; i < 4; i++) { await settle(); }
+      it('and a press meanwhile takes nothing', function () {
+        eq(camera.taken, 0);
+        falsy(app.sent.some(function (r) { return r.name === 'sendVerificationPhoto'; }));
+      });
+      cameraOn({ ok: true });
+      await settle(); await settle();
+      it('lets it be pressed once the camera is on, and then takes the photo', function () {
+        falsy(shutterOf().disabled, 'the camera is on');
+      });
+      await shoot(app);
+      it('sends the photo taken then', function () {
+        eq(camera.taken, 1);
+        eq(app.sent.filter(function (r) { return r.name === 'sendVerificationPhoto'; }).length, 1);
       });
     })();
 

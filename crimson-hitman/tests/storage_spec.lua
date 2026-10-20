@@ -818,7 +818,7 @@ describe('copy-on-read semantics', function()
         stack.photos.init({ storage = copying, audit = stack.audit })
         stack.ledger.init({ storage = copying, photos = stack.photos, notify = stack.notify })
         stack.projection.init({ storage = copying, identity = stack.identity,
-            escrow = stack.escrow, kidnap = stack.kidnap })
+            escrow = stack.escrow, kidnap = stack.kidnap, notify = stack.notify })
         stack.bailout.init({ storage = copying, identity = stack.identity,
             contracts = stack.contracts, escrow = stack.escrow,
             audit = stack.audit, notify = stack.notify })

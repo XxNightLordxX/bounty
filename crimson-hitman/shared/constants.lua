@@ -242,6 +242,11 @@ CH.ERR = {
     TOO_LITTLE_TIME  = 'too_little_time',
     INSUFFICIENT     = 'insufficient_funds',
     INVALID_REWARD   = 'invalid_reward',
+    --- An item put up on an anonymous contract says whose it is: a name,
+    --- a phone number, an owner (Escrow.namesOwner). Its own code because
+    --- invalid_reward is worded as figures that do not add up, and the
+    --- figures are fine; the item is the thing to take out.
+    ITEM_NAMES_OWNER = 'item_names_owner',
     INVALID_INPUT    = 'invalid_input',
 
     --- The handler crashed. Distinct from INVALID_INPUT, which used to

@@ -34,12 +34,19 @@ local trailing = {}
 --- again (Config.Notifications.ParanoidCooldownMinutes).
 local paranoidUntil = {}
 
+--- [contractId] = os.time() before which the contract is kept from its
+--- target (Notify.shownToTarget). In memory only: a restart forgets it and
+--- shows every contract at once, which costs nothing, since a restart is
+--- not the moment anybody placed one.
+local revealAt = {}
+
 function Notify.init(deps)
     Identity = deps.identity
     budgets, advisorySent = {}, {}
     lastPush, trailing = {}, {}
     waiting = {}
     paranoidUntil = {}
+    revealAt = {}
 end
 
 local function withinBudget(cid)
@@ -202,9 +209,12 @@ function Notify.pushParties(contract, hitmanCids, reason)
 
     -- The target's push names no contract. Their page re-reads everything,
     -- as every push used to make it, and learns nothing from the push that
-    -- the projection it reads does not already show them.
+    -- the projection it reads does not already show them. Nor any push at
+    -- all inside the wait before they are shown it (Notify.shownToTarget):
+    -- a contract withdrawn in the first minute would otherwise have rung a
+    -- phone whose On me tab never showed it.
     nudge(contract.creator_cid, contract.id)
-    nudge(contract.target_cid)
+    if Notify.shownToTarget(contract) then nudge(contract.target_cid) end
     for i = 1, #(hitmanCids or {}) do nudge(hitmanCids[i], contract.id) end
 
     return sent
@@ -219,18 +229,62 @@ end
 -- Contract lifecycle notifications
 --------------------------------------------------------------------------
 
+--- Seconds a new contract is kept from its target, drawn at random from
+--- Config.Notifications.ParanoidAlertJitter.
+---@return integer
+local function revealDelay()
+    local jitter = type(Config.Notifications.ParanoidAlertJitter) == 'table'
+        and Config.Notifications.ParanoidAlertJitter or {}
+    local low = math.max(0, math.floor(tonumber(jitter.min) or 0))
+    local high = math.max(low, math.floor(tonumber(jitter.max) or 0))
+    if high <= 0 then return 0 end
+    return math.random(low, high)
+end
+
 function Notify.contractCreated(contract, targetActor)
+    -- When the target first learns of it, by any route (§14.40).
+    --
+    -- The alert waited a few minutes so as not to date the placement, and
+    -- everything else told the target at once: the contract was on their
+    -- On me tab and in /cleanse the moment it was placed, and the creator's
+    -- own reply to placing it asked the target's client for a headshot. A
+    -- client that logs its events, or a player polling /cleanse, had the
+    -- second, and on an anonymous contract that second says the client was
+    -- in the city and acting. One wait, drawn here, now covers all of it,
+    -- and the alert arrives as the contract appears.
+    --
+    -- Except for an officer whose department is told now: the bulletin
+    -- dates it to the second for every officer online, so holding back
+    -- their own /cleanse would hide nothing and contradict it.
+    local delay = (contract.target_protected and Notify.advises('posted')) and 0
+        or revealDelay()
+    if delay > 0 then revealAt[contract.id] = os.time() + delay end
+
     -- The target's paranoid alert. Deliberately vague: it tells them
     -- something is wrong, not who or how much.
     -- An officer is told by the posting bulletin instead, unless none goes.
     if Config.Notifications.ParanoidAlert
         and (not contract.target_protected or not Notify.advises('posted')) then
-        Notify.paranoid(contract.target_cid)
+        Notify.paranoid(contract.target_cid, delay)
     end
 
     if contract.target_protected then
         Notify.advisory(contract, 'posted', targetActor)
     end
+end
+
+--- Whether the contract's target may be shown it yet: on their On me tab,
+--- in /cleanse, by a headshot asked of their client, or by Nearby closing
+--- to them. False only inside the wait contractCreated drew; a contract
+--- this process never saw placed is shown at once.
+---@param contract table
+---@return boolean
+function Notify.shownToTarget(contract)
+    local at = contract and revealAt[contract.id]
+    if not at then return true end
+    if os.time() < at then return false end
+    revealAt[contract.id] = nil
+    return true
 end
 
 --- The target's alert, some minutes after the placement and once per
@@ -242,23 +296,21 @@ end
 --- placement only roughly (Util.roundClock). And it went once per
 --- contract, so the count of alerts was the count of people paying.
 ---@param targetCid string
-function Notify.paranoid(targetCid)
+---@param delay integer|nil seconds to wait; drawn from the jitter when nil
+function Notify.paranoid(targetCid, delay)
     local now = os.time()
     if (paranoidUntil[targetCid] or 0) > now then return end
     paranoidUntil[targetCid] = now
         + math.max(0, (tonumber(Config.Notifications.ParanoidCooldownMinutes) or 0) * 60)
 
-    local jitter = type(Config.Notifications.ParanoidAlertJitter) == 'table'
-        and Config.Notifications.ParanoidAlertJitter or {}
-    local low = math.max(0, math.floor(tonumber(jitter.min) or 0))
-    local high = math.max(low, math.floor(tonumber(jitter.max) or 0))
+    local wait = tonumber(delay) or revealDelay()
 
     local function send()
         Notify.toCitizen(targetCid, 'Unsettling',
             'You feel eyes on you. A price has been put on your head.')
     end
-    if high <= 0 then return send() end
-    SetTimeout(math.random(low, high) * 1000, send)
+    if wait <= 0 then return send() end
+    SetTimeout(wait * 1000, send)
 end
 
 function Notify.contractAccepted(contract, hitmanRecord, activeHitmen)
@@ -638,6 +690,7 @@ function Notify.clearPlayer(cid)
 end
 
 function Notify.clearContract(contractId, contract)
+    revealAt[contractId] = nil
     for key in pairs(advisorySent) do
         if key:sub(1, #contractId + 1) == contractId .. ':' then advisorySent[key] = nil end
     end

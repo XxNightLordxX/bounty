@@ -315,7 +315,8 @@ function _G.mysqlStack()
                            audit = stack.audit, death = stack.death })
     stack.projection.init({ storage = store, identity = stack.identity,
                             escrow = stack.escrow, kidnap = stack.kidnap,
-                            mugshot = stack.mugshot, progression = stack.progression })
+                            mugshot = stack.mugshot, progression = stack.progression,
+                            notify = stack.notify })
     stack.kidnap.init({ storage = store, identity = stack.identity, contracts = stack.contracts,
                         audit = stack.audit, notify = stack.notify, ledger = stack.ledger })
     stack.storage = store

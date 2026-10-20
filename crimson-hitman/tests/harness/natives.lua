@@ -110,6 +110,24 @@ function Natives.install()
         if not p then return { x = 0.0, y = 0.0, z = 0.0 } end
         return p._coords
     end
+    -- What the nearby list reads about who is standing there: which routing
+    -- bucket they are in (0, the shared world, unless a test puts them in
+    -- an instance), whether their ped is visible (noclip and spectating
+    -- staff are not), and what is drawn in each clothing component, the
+    -- mask being component 1 and 0 the bare face. A fixture sets _bucket,
+    -- _invisible and _drawables on the player.
+    _G.GetPlayerRoutingBucket = function(src)
+        local p = Env.players[tonumber(src)]
+        return p and (p._bucket or 0) or 0
+    end
+    _G.IsEntityVisible = function(ped)
+        local p = Env.players[ped - 1000]
+        return p ~= nil and not p._invisible
+    end
+    _G.GetPedDrawableVariation = function(ped, component)
+        local p = Env.players[ped - 1000]
+        return p and p._drawables and p._drawables[component] or 0
+    end
     _G.GetEntityHealth = function(ped)
         local p = Env.players[ped - 1000]
         return p and p._health or 0

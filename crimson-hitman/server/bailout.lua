@@ -84,8 +84,10 @@ function Bailout.available(actor)
     local contracts = Storage.contractsNaming(actor.cid)
     for i = 1, #contracts do
         local c = contracts[i]
+        -- Not inside the alert's wait (Notify.shownToTarget), as On me does
+        -- not: listed at once, a target polling this dated the placement.
         if (c.state == CH.STATE.ACTIVE or c.state == CH.STATE.ACCEPTED)
-            and (c.bailout_amount or 0) > 0 then
+            and (c.bailout_amount or 0) > 0 and Notify.shownToTarget(c) then
             out[#out + 1] = {
                 id = c.id, amount = c.bailout_amount,
                 queued = c.bailout_queued_at ~= nil,

@@ -72,10 +72,23 @@ function Mugshot.byHandle(handle)
     return entry.data
 end
 
+--- Whether the headshot renderer is running on this server.
+---
+--- Read here, on the server, and not left to the client. Without it the
+--- server still asked every target's client for a face and took whatever
+--- came back: an honest client gives up when the renderer is absent, and a
+--- modified one answered with any picture it liked, which every viewer of
+--- a contract on that target was then shown, on a server that expected no
+--- faces at all. A resource the clients load is started on the server.
+local function rendererRunning()
+    return GetResourceState('MugShotBase64') == 'started'
+end
+
 --- Ask a player's own client for a fresh headshot, subject to the refresh
 --- floor. Returns whatever is cached right now; the new image arrives later.
 function Mugshot.request(cid)
     local entry = cache[cid]
+    if not rendererRunning() then return entry and entry.data or nil end
     local floor = (Config.Mugshot.MinRefreshMinutes or 5) * 60
     local timeout = (Config.Mugshot.RenderTimeoutMs or 8000) / 1000
 
@@ -126,6 +139,10 @@ function Mugshot.store(cid, image)
     -- can push a picture of its choosing into every viewer's listing without
     -- anything ever having requested a render.
     local entry = cache[cid]
+    if not rendererRunning() then
+        Audit.rejected('mugshot_no_renderer', cid, nil, {})
+        return false
+    end
     if not entry or not entry.pending then
         Audit.rejected('mugshot_unsolicited', cid, nil, {})
         return false

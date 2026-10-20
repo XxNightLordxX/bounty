@@ -242,6 +242,8 @@ describe('the fields whose presence is a rule', function()
             reason = 'x', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 } } })
         truthy(s.contracts.accept(f.hitman, c.id))
+        -- The target is shown it once the alert's wait is over.
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
 
         local own = (s.projection.mine(f.creator.cid) or {})[1]
         truthy(own, 'the creator should see their own contract')

@@ -24,6 +24,9 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] With a contract holding money in json mode, switch `Config.Database.Mode`
       to `mysql` and restart: it refuses, naming how many escrow lines json
       still holds. Switch back and it starts as before
+- [ ] With `MugShotBase64` stopped (`stop MugShotBase64`), a new contract's
+      target never gets a face on the board, and no `crimson-hitman:renderMugshot`
+      event reaches their client; started again, faces come back
 
 ## 2. Access
 
@@ -36,6 +39,19 @@ A staff account that can adjust money and spawn items makes this much faster.
 ## 3. Placing a contract
 
 - [ ] Target search finds a player by partial name, and does not list everyone
+- [ ] As shipped there is no **Within 30m** button, and boot printed
+      `nearby: off`. With `Config.Targeting.AllowNearby = true` (boot now
+      warns about it): a player standing beside you is listed as "under
+      10m"; put a mask on them and they are gone from the list; a player in
+      noclip or another routing bucket is never listed; and once you have
+      placed a contract, taken one, or seen one on you under On me, the
+      list says it is closed while you are on a contract
+- [ ] The item picker does not offer `money` (your cash) or `identification`
+- [ ] An anonymous contract funded with an item that names you (a unique
+      phone with its number, an engraved item, an ID-like card from another
+      resource) is refused with "One of those items carries your name or
+      number", and nothing leaves your inventory; the same item on a
+      contract placed under your name goes up
 - [ ] The reward builder shows your real cash, bank and dirty money
 - [ ] Placing a contract debits exactly what you selected — check all four:
       cash, bank, dirty money (`black_money`), an item, a weapon
@@ -77,11 +93,15 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] `/ch-diag` says which photo storage is in use (`server` as shipped)
 - [ ] On `'server'` storage, **Verify kill** opens the app's own viewfinder
       over the whole screen, showing the phone's rear camera, with **Take
-      photo** and **Cancel**; Cancel closes it and the game camera with it
+      photo** and **Cancel**; Cancel closes it and the game camera with it.
+      Take photo is greyed out until the rear camera is on (a moment), and
+      the hitman is never in the shot
 - [ ] Take photo sends it (the button reads "Sending…") and the viewfinder
       closes; a file appears in `crimson-hitman/data/photos/` and nothing new
       is in the hitman's Photos app or on the image host
-- [ ] On `'host'` storage, Verify kill opens lb-phone's camera instead
+- [ ] On `'host'` storage, Verify kill opens lb-phone's camera instead, on
+      the rear camera, and its flip key (UP) does not turn it to the selfie
+      camera
 - [ ] Photographing the body pays the base reward and closes that payout
 - [ ] The creator's completion notification says the photo is waiting under
       Ledger and can be seen once (it carries no photo itself)
@@ -180,7 +200,11 @@ uploads, and with neither. Restart the resource between them.
 
 ## 8. Counter-play
 
-- [ ] A target sees the contract in **On Me** with the buyout price
+- [ ] A target sees the contract in **On Me** with the buyout price, but
+      only once their "eyes on you" alert has arrived (one to ten minutes
+      after it was placed); before that On Me and `/cleanse` show nothing,
+      and the board shows no face for them unless one was already rendered.
+      Restart the resource inside that wait: it shows at once
 - [ ] Buying out closes the contract, returns escrow **and** premium to the creator
 - [ ] A cash-paid premium arrives as cash, not bank
 - [ ] Buying out is refused while a handover countdown is running

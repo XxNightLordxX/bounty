@@ -9,12 +9,12 @@ local Projection = {}
 
 local Util = require_shared('util')
 
-local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant
+local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify
 
 function Projection.init(deps)
-    Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant =
+    Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify =
         deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot, deps.progression,
-        deps.comms, deps.informant
+        deps.comms, deps.informant, deps.notify
 end
 
 --- Roles a viewer can hold relative to a contract. The role decides the key
@@ -120,8 +120,15 @@ function Projection.contract(contract, viewerCid)
         --
         -- The call is still made here, because asking is what schedules the
         -- refresh; only its return value is discarded.
+        --
+        -- Not before the target is shown the contract (Notify.shownToTarget).
+        -- Asking is an event to the target's own client, and the first ask
+        -- was the creator's own reply to placing it, so a client that logs
+        -- its events learned the second it was placed, which the alert's
+        -- wait exists to hide. A face already cached is still shown: reading
+        -- it sends nothing.
         targetImageId = Mugshot and (function()
-            Mugshot.request(contract.target_cid)
+            if Notify.shownToTarget(contract) then Mugshot.request(contract.target_cid) end
             return Mugshot.handleFor(contract.target_cid)
         end)() or nil,
         targetProtected = contract.target_protected or false,
@@ -578,7 +585,9 @@ local function buildOnMe(viewerCid)
     local out = {}
     for i = 1, #naming do
         local c = naming[i]
-        if not CH.TERMINAL[c.state] then
+        -- Not until the alert's wait is over (Notify.shownToTarget): listed
+        -- at once, the tab dated the placement for a target who looked.
+        if not CH.TERMINAL[c.state] and Notify.shownToTarget(c) then
             local row = Projection.contract(c, viewerCid)
             -- A target learns a price exists on them and what freedom costs.
             -- They do not learn who placed it, and never the hitman roster.
