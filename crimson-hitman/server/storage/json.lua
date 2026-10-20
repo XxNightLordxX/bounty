@@ -1576,6 +1576,20 @@ function JsonStore.parkedEscrow(limit)
     return out
 end
 
+--- Held escrow owed to somebody that still names whom a give was going
+--- to; see the memory backend.
+function JsonStore.namedHeldEscrow()
+    local out = {}
+    for _, line in pairs(db.escrow) do
+        if line.state == CH.ESCROW_STATE.HELD and line.owed_to ~= nil
+            and line.releasing_to ~= nil then
+            out[#out + 1] = line
+        end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
 --- Every contract holding an escrow line that is not settled, as a set.
 --- See the memory backend.
 function JsonStore.unsettledEscrowContracts()

@@ -1120,6 +1120,18 @@ function MySQLStore.parkedEscrow(limit)
     return rows
 end
 
+--- Held escrow owed to somebody that still names whom a give was going
+--- to; see the memory backend.
+function MySQLStore.namedHeldEscrow()
+    local rows = db.query([[
+        SELECT * FROM crimson_escrow
+        WHERE state = 'held' AND owed_to IS NOT NULL AND releasing_to IS NOT NULL
+        ORDER BY id
+    ]]) or {}
+    for i = 1, #rows do hydrateEscrow(rows[i]) end
+    return rows
+end
+
 --- The compare-and-set that makes double release impossible (§14.3).
 --- One statement, so the check and the write cannot be interleaved.
 function MySQLStore.claimEscrowLine(id, expected, next_)

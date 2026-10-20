@@ -1335,6 +1335,39 @@ describe('escrow left for staff', function()
             eq(ids(), 'ct00000002:1,ct00000002:5', b.name .. ': and its lines with it')
         end
     end)
+
+    --- A held line owed to somebody that still names whom a give was going
+    --- to: one a give stopped part-way on the running server is given by
+    --- nothing until the next start, so /ch-stuck lists it from the escrow.
+    it('finds held lines still naming a give\'s recipient in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ct00000004'))
+            local function line(n, fields)
+                local out = { id = 'ct00000004:' .. n, contract_id = 'ct00000004', slot = 1,
+                    portion = 'baseline', source = 'cash', amount = 100 * n, state = 'held' }
+                for k, v in pairs(fields) do out[k] = v end
+                return out
+            end
+            b.store.writeEscrow('ct00000004', {
+                line(1, { owed_to = 'HITMAN01', releasing_to = 'HITMAN01' }),
+                line(2, { owed_to = 'HITMAN01' }),
+                line(3, { releasing_to = 'HITMAN01' }),
+                line(4, { owed_to = 'CREATOR1', releasing_to = 'CREATOR1', deliver_raises = 3 }),
+                line(5, { owed_to = 'HITMAN01', releasing_to = 'HITMAN01' }),
+                line(6, { owed_to = 'HITMAN01', releasing_to = 'HITMAN01' }),
+            })
+            b.store.claimEscrowLine('ct00000004:5', CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING)
+            b.store.claimEscrowLine('ct00000004:6', CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING)
+            b.store.settleEscrowLine('ct00000004:6', 'HITMAN01')
+
+            local out = {}
+            for _, l in ipairs(b.store.namedHeldEscrow()) do out[#out + 1] = l.id end
+            eq(table.concat(out, ','), 'ct00000004:1,ct00000004:4',
+                b.name .. ': held, owed and naming a recipient, and nothing else')
+            eq(b.store.namedHeldEscrow()[1].releasing_to, 'HITMAN01', b.name)
+            eq(b.store.namedHeldEscrow()[1].amount, 100, b.name)
+        end
+    end)
 end)
 
 describe('indexed contract lookups agree across backends', function()
@@ -2370,6 +2403,7 @@ describe('every mysql statement is executable', function()
             function() m.readEscrowLine('c1:1') end,
             function() m.orphanEscrow() end,
             function() m.parkedEscrow(3) end,
+            function() m.namedHeldEscrow() end,
             function() m.claimEscrowLine('c1:1','held','releasing') end,
             function() m.setEscrowAmount('c1:1','releasing',50,100) end,
             function() m.settleEscrowLine('c1:1','A') end,

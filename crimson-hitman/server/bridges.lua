@@ -746,11 +746,13 @@ function Bridges.installCommands(modules)
 
         -- Lines left for staff (Escrow.parked): a give that kept raising with
         -- nothing arriving, raised with only part of it or no telling what
-        -- arrived, or was under way when the server stopped. Held, owed to
-        -- the player named, and given to nobody until settled here.
+        -- arrived, or was under way when the server stopped; and one a give
+        -- stopped part-way on the running server, which the next start would
+        -- leave for staff (stalled). Held, owed to the player named, and
+        -- given to nobody until settled here.
         if #parked > 0 then
-            reply(src, ('%d escrow line(s) raised an error when they were given, or were being '
-                .. 'given when the server stopped, and wait for you:'):format(#parked))
+            reply(src, ('%d escrow line(s) raised an error when they were given, or were stopped '
+                .. 'while being given, and wait for you:'):format(#parked))
             for i = 1, #parked do
                 local line = parked[i]
                 -- What is known: a part that arrived is on the line; why it
@@ -762,6 +764,8 @@ function Bridges.installCommands(modules)
                     known = 'raised, and what arrived could not be read'
                 elseif line.why == 'raised' then
                     known = ('raised %d times with nothing arriving'):format(line.raised)
+                elseif line.why == 'stalled' then
+                    known = 'giving it stopped part-way, and nothing will try it again'
                 end
                 if (line.arrived or 0) > 0 then
                     known = ('%s; %s of it arrived'):format(known, tostring(line.arrived))
@@ -770,12 +774,21 @@ function Bridges.installCommands(modules)
                     line.line, line.contract, tostring(line.portion), describeLine(line),
                     tostring(line.intended), known,
                     line.at and ('  (' .. os.date('%Y-%m-%d %H:%M', line.at) .. ')') or ''))
+                -- Only one that raised with nothing arriving is known to
+                -- have given nothing. Any other may have given more than the
+                -- line says arrived: a give stopped before the line recorded
+                -- what of it had, and pay alone would give that part again.
+                if line.why ~= 'raised' then
+                    reply(src, ('    arrival unknown: check what they received, then pay the rest '
+                        .. 'with /%s %s pay <amount>, or delivered'):format(names.settle, line.line))
+                end
             end
             reply(src, ('Whether such a give arrived cannot always be told, so check their '
                 .. 'inventory or balance first. /%s <line> delivered if it is there (settled, '
                 .. 'nothing given); /%s <line> pay if it is not (gives only what has not '
-                .. 'arrived); /%s <line> return to hand that back to whoever put it up instead')
-                :format(names.settle, names.settle, names.settle))
+                .. 'arrived), or /%s <line> pay <amount> to give exactly what is missing; '
+                .. '/%s <line> return to hand that back to whoever put it up instead')
+                :format(names.settle, names.settle, names.settle, names.settle))
         end
 
         if #interrupted > 0 then
@@ -826,6 +839,10 @@ function Bridges.installCommands(modules)
         local ok, err = Admin.settleLine(src, args[1], args[2], args[3])
         if ok and err == 'queued' then
             return reply(src, 'Queued: they are not in the city, so it is delivered at their next login.')
+        end
+        if err == 'parked' then
+            return reply(src, ('Not settled: giving it raised again, so it is left for staff again; '
+                .. 'see /%s.'):format(names.stuck))
         end
         reply(src, ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err)))
     end, true)

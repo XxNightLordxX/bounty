@@ -1247,3 +1247,356 @@ describe('lines left for staff', function()
         local _ = c
     end)
 end)
+
+--- A give the server stopped part-way left more with the player than the
+--- line records (the process died before afterRaise wrote what arrived), and
+--- the next start left it for staff knowing nothing of that part. `pay`
+--- gave the whole line less only what it recorded: 2,000 of a 5,000 payout
+--- there, and 5,000 more on top. Balances across a restart cannot say what
+--- arrived, so staff check, and give exactly what is missing.
+describe('paying a line left for staff a set amount', function()
+    local function commands(s)
+        Env.commands = {}
+        require('crimson-hitman.server.bridges').installCommands(s)
+        Env.chat = {}
+        return Env.commands
+    end
+
+    local function said(target)
+        local out = {}
+        for _, line in ipairs(Env.chat) do
+            if line.target == target then out[#out + 1] = line.text end
+        end
+        return table.concat(out, '\n')
+    end
+
+    local function picks(src)
+        local n = 0
+        for _, slot in ipairs(Env.players[src]._inventory or {}) do
+            if slot.name == 'lockpick' then n = n + slot.count end
+        end
+        return n
+    end
+
+    --- The seeded payout to the hitman, `part` of it credited as the give
+    --- began and the process died: left for staff at the next start
+    --- (Escrow.parkInterrupted), with nothing recorded as arrived.
+    local function interruptedAfter(part)
+        local s, f, c = seeded({ accept = true })
+        local line = s.storage.readEscrow(c.id)[1]
+        Env.players[3].PlayerData.money.cash = Env.players[3].PlayerData.money.cash + part
+        line.releasing_to = 'HITMAN01'
+        s.storage.writeEscrow(c.id, { line })
+        truthy(s.escrow.parkInterrupted(line))
+        line = s.storage.readEscrowLine(line.id)
+        eq(line.deliver_arrived, nil, 'the line does not know what arrived')
+        return s, f, c, line
+    end
+
+    local function settleRow(s, contractId)
+        s.audit.flush()
+        local row
+        for _, r in ipairs(s.storage.auditForContract(contractId, 200)) do
+            if r.action == 'admin_settle_line' then row = r end
+        end
+        return row
+    end
+
+    it('gives exactly the amount staff name, and counts the rest as arrived', function()
+        local s, _, c, line = interruptedAfter(2000)
+        local hitman = money(3)
+        local cmd = commands(s)
+        Env.aces[7] = { ['crimson.admin'] = true }
+        Env.addPlayer({ source = 7, citizenid = 'STAFF001', license = 'license:st' })
+        truthy(pcall(cmd[Config.Admin.Commands.settle], 7, { line.id, 'pay', '3000' }))
+        truthy(said(7):find('Line settled.', 1, true), said(7))
+        eq(money(3) - hitman, 3000, 'what staff found missing, and no more')
+
+        local stored = s.storage.readEscrowLine(line.id)
+        eq(stored.state, CH.ESCROW_STATE.SETTLED)
+        eq(stored.settled_to, 'HITMAN01')
+        eq(tonumber(stored.deliver_arrived), 2000, 'the rest is on the line as already with them')
+        local row = settleRow(s, c.id)
+        truthy(row, 'on the record')
+        eq(row.actor_cid, 'STAFF001')
+        eq(row.detail.amount, 3000, 'with the amount staff gave')
+        eq(row.detail.owed, 5000, 'and what the line said it still owed')
+
+        eq(select(2, s.admin.settleLine(0, line.id, 'pay', '1')), CH.ERR.ALREADY_SETTLED)
+        eq(money(3) - hitman, 3000, 'and never again')
+    end)
+
+    it('refuses an amount that is not a whole number of at least one, or over what is owed', function()
+        local s, f, c, line = interruptedAfter(0)
+        local hitman = money(3)
+        for _, bad in ipairs({ '0', '-5', '1.5', '1e3', '0x10', 'abc', '', ' 10', '5001',
+                               '99999999999999999999', 0, -1, 2.5, 5001, 0 / 0, math.huge }) do
+            local ok, err = s.admin.settleLine(0, line.id, 'pay', bad)
+            falsy(ok, 'must refuse ' .. tostring(bad))
+            eq(err, CH.ERR.INVALID_INPUT, tostring(bad))
+        end
+        eq(money(3), hitman, 'nothing given')
+        local stored = s.storage.readEscrowLine(line.id)
+        eq(stored.state, CH.ESCROW_STATE.HELD)
+        truthy(s.escrow.parked(stored), 'and still left for staff')
+
+        -- Only on a line left for staff: on any other, the normal paths give
+        -- it, and settling it short would lose the rest.
+        local c2 = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 700 } } })
+        local owed = s.storage.readEscrow(c2.id)[1]
+        owed.owed_to = 'HITMAN01'
+        s.storage.writeEscrow(c2.id, { owed })
+        s.storage.queuePending('HITMAN01', c2.id, owed.id)
+        eq(select(2, s.admin.settleLine(0, owed.id, 'pay', '700')), CH.ERR.INVALID_INPUT)
+        eq(s.storage.readEscrowLine(owed.id).state, CH.ESCROW_STATE.HELD)
+
+        -- All that it owes is an amount like any other.
+        truthy(s.admin.settleLine(0, line.id, 'pay', 5000))
+        eq(money(3) - hitman, 5000)
+        local _ = c
+    end)
+
+    it('counts an item line by the piece', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000, items = { { name = 'lockpick', count = 4 } } } } })
+        truthy(c, 'placed')
+        local item
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.source == 'item' then item = line end
+        end
+        -- One of the four reached the hitman as the server stopped.
+        table.insert(Env.players[3]._inventory, { name = 'lockpick', count = 1 })
+        item.releasing_to = 'HITMAN01'
+        s.storage.writeEscrow(c.id, { item })
+        truthy(s.escrow.parkInterrupted(item))
+        local held = picks(3)
+
+        eq(select(2, s.admin.settleLine(0, item.id, 'pay', '5')), CH.ERR.INVALID_INPUT,
+            'more than the line holds')
+        truthy(s.admin.settleLine(0, item.id, 'pay', '3'))
+        eq(picks(3) - held, 3, 'the three that were missing')
+        local stored = s.storage.readEscrowLine(item.id)
+        eq(stored.state, CH.ESCROW_STATE.SETTLED)
+        eq(tonumber(stored.deliver_arrived), 1)
+    end)
+
+    it('gives a player who is away exactly that amount at their next login', function()
+        local s, _, _, line = interruptedAfter(2000)
+        local hitman = money(3)
+        local away = Env.players[3]
+        Env.removePlayer(3)
+        local ok, note = s.admin.settleLine(0, line.id, 'pay', '3000')
+        truthy(ok)
+        eq(note, 'queued')
+        Env.players[3], Env.byCitizen.HITMAN01 = away, 3
+        for _ = 1, 3 do s.escrow.retryPending('HITMAN01') end
+        eq(money(3) - hitman, 3000, 'the amount, not the whole line')
+        eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+    end)
+
+    it('flags each line whose arrival is unknown, with the amount to pay', function()
+        local s, f, _, line = interruptedAfter(2000)
+        -- And one whose give raised with nothing arriving, which is known.
+        local c2 = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 700 } } })
+        local raised = s.storage.readEscrow(c2.id)[1]
+        local p = Env.players[3]
+        local real = p.Functions.AddMoney
+        p.Functions.AddMoney = function() error('AddMoney hook raised', 0) end
+        local ok, err = pcall(function()
+            for _ = 1, s.escrow.DELIVER_RAISE_LIMIT do
+                s.escrow.release(c2.id, 'HITMAN01', { line = raised.id }, 'test')
+            end
+        end)
+        p.Functions.AddMoney = real
+        truthy(ok, tostring(err))
+        truthy(s.escrow.parked(s.storage.readEscrowLine(raised.id)))
+        s.audit.flush()
+
+        local cmd = commands(s)
+        Env.aces[3] = { ['crimson.admin'] = true }
+        truthy(pcall(cmd[Config.Admin.Commands.stuck], 3, {}))
+        local out = said(3)
+        local hint = ('check what they received, then pay the rest with /%s %s pay <amount>, '
+            .. 'or delivered'):format(Config.Admin.Commands.settle, line.id)
+        truthy(out:find(hint, 1, true), out)
+        falsy(out:find(('/%s %s pay <amount>'):format(Config.Admin.Commands.settle, raised.id),
+            1, true), 'nothing arrived of the one that raised: ' .. out)
+    end)
+end)
+
+describe('a staff pay whose give raises again', function()
+    it('says it is left for staff again, not queued for a login that gives nothing', function()
+        local s, _, c = seeded({ accept = true })
+        local line = s.storage.readEscrow(c.id)[1]
+        line.releasing_to = 'HITMAN01'
+        s.storage.writeEscrow(c.id, { line })
+        truthy(s.escrow.parkInterrupted(line))
+        local hitman = money(3)
+
+        local p = Env.players[3]
+        local real = p.Functions.AddMoney
+        p.Functions.AddMoney = function(account, _, reason)
+            real(account, 1000, reason)
+            error('AddMoney hook raised', 0)
+        end
+        local ok, note = s.admin.settleLine(0, line.id, 'pay')
+        p.Functions.AddMoney = real
+        falsy(ok, 'not settled')
+        eq(note, 'parked')
+        truthy(s.escrow.parked(s.storage.readEscrowLine(line.id)), 'left for staff again')
+        eq(money(3) - hitman, 1000)
+
+        Env.commands = {}
+        require('crimson-hitman.server.bridges').installCommands(s)
+        Env.chat = {}
+        p.Functions.AddMoney = function(account, _, reason)
+            real(account, 500, reason)
+            error('AddMoney hook raised', 0)
+        end
+        Env.aces[3] = { ['crimson.admin'] = true }
+        truthy(pcall(Env.commands[Config.Admin.Commands.settle], 3, { line.id, 'pay' }))
+        p.Functions.AddMoney = real
+        truthy(said(3):find('left for staff again', 1, true), said(3))
+        truthy(said(3):find('/' .. Config.Admin.Commands.stuck, 1, true), said(3))
+        falsy(said(3):find('Queued', 1, true), said(3))
+
+        -- Paid the rest, once.
+        truthy(s.admin.settleLine(0, line.id, 'pay'))
+        eq(money(3) - hitman, 5000)
+    end)
+end)
+
+--- Settling a line left for staff reset its raise count before the release
+--- claimed it. A raise in between (a dropped database connection) left it
+--- held, owed, queued for nobody and no longer left for staff: no login gave
+--- it, and /ch-stuck listed nothing until the next restart.
+describe('a staff settle that raises before its release claims the line', function()
+    local function parkedLine()
+        local s, _, c = seeded({ accept = true })
+        local line = s.storage.readEscrow(c.id)[1]
+        local p = Env.players[3]
+        local real = p.Functions.AddMoney
+        p.Functions.AddMoney = function() error('AddMoney hook raised', 0) end
+        local ok, err = pcall(function()
+            for _ = 1, s.escrow.DELIVER_RAISE_LIMIT do
+                s.escrow.release(c.id, 'HITMAN01', { line = line.id }, 'test')
+            end
+        end)
+        p.Functions.AddMoney = real
+        truthy(ok, tostring(err))
+        truthy(s.escrow.parked(s.storage.readEscrowLine(line.id)), 'left for staff')
+        return s, c, line
+    end
+
+    for _, disposition in ipairs({ 'pay', 'return' }) do
+        it(disposition .. ': leaves it left for staff, and listed', function()
+            local s, _, line = parkedLine()
+            local hitman, creator = money(3), money(1)
+            local claim = s.storage.claimEscrowLine
+            s.storage.claimEscrowLine = function() error('connection lost', 0) end
+            falsy(pcall(s.admin.settleLine, 0, line.id, disposition))
+            s.storage.claimEscrowLine = claim
+
+            truthy(s.escrow.parked(s.storage.readEscrowLine(line.id)), 'still left for staff')
+            local listed
+            for _, row in ipairs(s.admin.interrupted(0)) do
+                if row.line == line.id then listed = row end
+            end
+            truthy(listed, '/ch-stuck shows it')
+            for _ = 1, 3 do s.escrow.retryPending('HITMAN01') end
+            eq(money(3), hitman, 'nothing gave it meanwhile')
+
+            truthy(s.admin.settleLine(0, line.id, disposition))
+            eq(money(3) - hitman + money(1) - creator, 5000, 'settled once')
+        end)
+    end
+end)
+
+--- Whatever else leaves a line held, owed, still naming whom its give was
+--- going to, and neither left for staff nor queued, is given by nothing
+--- until the next start, and was listed by nothing either.
+describe('a held line a give stopped part-way on the running server', function()
+    local function stalledLine()
+        local s, f, c = seeded({ accept = true })
+        local line = s.storage.readEscrow(c.id)[1]
+        line.owed_to, line.releasing_to = 'HITMAN01', 'HITMAN01'
+        s.storage.writeEscrow(c.id, { line })
+        return s, f, c, s.storage.readEscrowLine(line.id)
+    end
+
+    it('is listed for staff from the escrow itself, with the hint', function()
+        local s, _, c, line = stalledLine()
+        falsy(s.escrow.parked(line))
+        local rows = s.admin.interrupted(0)
+        eq(#rows, 1, 'listed')
+        eq(rows[1].line, line.id)
+        eq(rows[1].contract, c.id)
+        eq(rows[1].intended, 'HITMAN01')
+        eq(rows[1].why, 'stalled')
+
+        Env.aces[7] = { command = true }
+        Env.addPlayer({ source = 7, citizenid = 'STAFF001', license = 'license:st' })
+        eq(s.admin.interrupted(7)[1].intended, 'an operative', 'a role to staff who may not see who')
+
+        Env.commands = {}
+        require('crimson-hitman.server.bridges').installCommands(s)
+        Env.chat = {}
+        Env.aces[3] = { ['crimson.admin'] = true }
+        truthy(pcall(Env.commands[Config.Admin.Commands.stuck], 3, {}))
+        local out = said(3)
+        truthy(out:find(line.id, 1, true), out)
+        truthy(out:find(('/%s %s pay <amount>, or delivered'):format(
+            Config.Admin.Commands.settle, line.id), 1, true), out)
+    end)
+
+    it('is not listed once it is queued for its player', function()
+        local s, _, c, line = stalledLine()
+        eq(#s.admin.interrupted(0), 1, 'listed while nothing gives it')
+        s.storage.queuePending('HITMAN01', c.id, line.id)
+        eq(#s.admin.interrupted(0), 0, 'a login gives it now')
+    end)
+
+    it('is settled as a line left for staff', function()
+        local s, _, _, line = stalledLine()
+        local hitman = money(3)
+        local ok, err = s.admin.settleLine(0, line.id, 'delivered')
+        truthy(ok, tostring(err))
+        eq(money(3), hitman, 'nothing given')
+        eq(s.storage.readEscrowLine(line.id).settled_by_staff, 'delivered')
+
+        local s2, _, _, line2 = stalledLine()
+        hitman = money(3)
+        truthy(s2.admin.settleLine(0, line2.id, 'pay', '1500'))
+        eq(money(3) - hitman, 1500)
+    end)
+end)
+
+--- /ch-stuck named the party for a line caught mid-release from the log's
+--- release_interrupted row. A return queued for the client since owes it to
+--- the client, while the row still names the hitman.
+describe('the party /ch-stuck names for an interrupted line', function()
+    it('is whom the line is owed to now, not whom the log row named', function()
+        local s, _, c = seeded()
+        local line = s.storage.readEscrow(c.id)[1]
+        truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+        truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
+        s.audit.financial('release_interrupted', 'HITMAN01', c.id,
+            { line = line.id, amount = line.amount, review = true })
+        s.audit.flush()
+        eq(s.admin.interrupted(0)[1].intended, 'HITMAN01', 'whom the row names, while the line names nobody')
+
+        Env.removePlayer(1)
+        local ok, note = s.admin.settleLine(0, line.id, 'return')
+        truthy(ok)
+        eq(note, 'queued')
+        eq(s.storage.readEscrowLine(line.id).owed_to, 'CREATOR1')
+        local rows = s.admin.interrupted(0)
+        eq(#rows, 1)
+        eq(rows[1].intended, 'CREATOR1', 'owed to the client now')
+    end)
+end)

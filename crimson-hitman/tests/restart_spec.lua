@@ -2747,3 +2747,99 @@ describe('a login retry that gives nothing, then a restart', function()
         end)
     end
 end)
+
+--- A login retry whose credit raised with 2,000 of a 5,000 payout there,
+--- and the process died before the line recorded it: the next start left
+--- it for staff knowing nothing of the 2,000, and `pay` gave the hitman
+--- 7,000 from a 5,000 line. A balance across a restart cannot say what
+--- arrived, so staff check, and give exactly what is missing.
+describe('a give the server stopped after part of it arrived', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is flagged for staff, and paid exactly the rest', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local away = Env.players[3]
+            Env.removePlayer(3)
+            truthy(s.contracts.claimSlot(c.id, f.hitman.cid, CH.FULFILMENT.ELIMINATION, {}))
+            Env.players[3], Env.byCitizen[f.hitman.cid] = away, 3
+            local hitman = money(3)
+
+            -- The login's retry: 2,000 is credited and the hook raises, and
+            -- the process dies before the line records what arrived.
+            local p = Env.players[3]
+            local real = p.Functions.AddMoney
+            p.Functions.AddMoney = function(account, _, reason)
+                real(account, 2000, reason)
+                error('AddMoney hook raised', 0)
+            end
+            killBefore(s.storage, 1, function(name, _, lines)
+                return name == 'writeEscrow' and type(lines) == 'table' and lines[1] ~= nil
+                    and lines[1].deliver_before ~= nil
+            end)
+            falsy(pcall(s.escrow.retryPending, f.hitman.cid))
+            p.Functions.AddMoney = real
+            eq(money(3) - hitman, 2000, 'part of it arrived')
+
+            local _, s2 = restart(mode, s)
+            s2.audit.flush()
+            local line = s2.storage.readEscrow(c.id)[1]
+            truthy(s2.escrow.parked(line), 'left for staff')
+            eq(line.deliver_arrived, nil, 'knowing nothing of what arrived')
+
+            Env.commands = {}
+            require('crimson-hitman.server.bridges').installCommands(s2)
+            Env.chat = {}
+            Env.aces[3] = { ['crimson.admin'] = true }
+            truthy(pcall(Env.commands[Config.Admin.Commands.stuck], 3, {}))
+            local out = {}
+            for _, row in ipairs(Env.chat) do out[#out + 1] = row.text end
+            out = table.concat(out, '\n')
+            truthy(out:find(('check what they received, then pay the rest with /%s %s pay <amount>')
+                :format(Config.Admin.Commands.settle, line.id), 1, true), out)
+
+            -- What staff do: find 2,000 there, and give the 3,000 missing.
+            truthy(s2.admin.settleLine(0, line.id, 'pay', '3000'))
+            eq(money(3) - hitman, 5000, 'the line, once')
+            for _ = 1, 3 do s2.escrow.retryPending(f.hitman.cid) end
+            eq(money(3) - hitman, 5000)
+            eq(select(2, s2.admin.settleLine(0, line.id, 'pay')), CH.ERR.ALREADY_SETTLED)
+
+            local _, s3 = restart(mode, s2)
+            local stored = s3.storage.readEscrowLine(line.id)
+            eq(stored.state, CH.ESCROW_STATE.SETTLED)
+            eq(tonumber(stored.deliver_arrived), 2000, 'the part staff found is on the line')
+            local rows = auditRows(s3, 'admin_settle_line')
+            eq(#rows, 1)
+            eq(rows[1].detail.amount, 3000, 'and the amount in the log')
+        end)
+    end
+end)
+
+--- Staff settling a payout left for staff reset its raise count before the
+--- release claimed it, and a raise in between (a dropped connection) left it
+--- held, owed, queued for nobody and no longer left for staff: given by
+--- nothing, and listed by nothing, until the next restart.
+describe('a staff pay that raises before its release claims the line', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': leaves it left for staff and listed, and pays it once', function()
+            local s, f, _, line, hitman = parkedPayout(mode)
+            local claim = s.storage.claimEscrowLine
+            s.storage.claimEscrowLine = function() error('connection lost', 0) end
+            falsy(pcall(s.admin.settleLine, 0, line.id, 'pay'))
+            s.storage.claimEscrowLine = claim
+
+            truthy(s.escrow.parked(s.storage.readEscrowLine(line.id)), 'still left for staff')
+            eq(#s.admin.interrupted(), 1, 'and listed')
+            for _ = 1, 3 do s.escrow.retryPending(f.hitman.cid) end
+            eq(money(3), hitman, 'given by nothing meanwhile')
+            truthy(s.admin.settleLine(0, line.id, 'pay'))
+            eq(money(3) - hitman, 5000, 'paid once')
+        end)
+    end
+end)

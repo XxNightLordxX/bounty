@@ -938,7 +938,9 @@ end
 ---
 ---@param contractId string
 ---@param recipientCid string
----@param filter table|string|nil { slot = n, portion = s } — nil releases everything
+---@param filter table|string|nil { slot = n, portion = s } — nil releases everything.
+--- With `line`, also `unpark` (staff settling a line left for staff) and
+--- `give` (exactly that much of it); see below.
 ---@param reason string audit tag
 ---@param guard fun(line: table): boolean|nil called once per line, after it has
 --- been taken out of `held` and before anything moves. Returning false puts
@@ -1062,6 +1064,23 @@ function Escrow.release(contractId, recipientCid, filter, reason, guard)
                 -- the person it was going to — which is the case the whole
                 -- recovery path exists for.
                 line.releasing_to = recipientCid
+                -- A line left for staff that staff settle (Admin.settleLine,
+                -- `unpark`): its raise count starts again in this same write,
+                -- once the line is ours, so the give below tries it. Started
+                -- again before the claim, a raise in between left it held,
+                -- owed, queued for nobody and no longer left for staff: given
+                -- and listed by nothing until the next start. `give` hands
+                -- over exactly that much, at most what it still owes as it
+                -- stands now; the rest is what staff found already with them,
+                -- and is counted on the line as arrived (deliver_arrived).
+                if filter and filter.line and filter.unpark then
+                    line.deliver_raises = 0
+                    if filter.give then
+                        local owes = Escrow.stillOwed(line)
+                        line.deliver_arrived = math.max(0, math.floor(tonumber(line.deliver_arrived) or 0))
+                            + (owes - math.min(filter.give, owes))
+                    end
+                end
                 Storage.writeEscrow(contractId, { line })
 
                 local delivered = Escrow.deliver(recipientCid, line)
@@ -1176,6 +1195,22 @@ Escrow.DELIVER_RAISE_LIMIT = 3
 function Escrow.parked(line)
     return type(line) == 'table'
         and (tonumber(line.deliver_raises) or 0) >= Escrow.DELIVER_RAISE_LIMIT
+end
+
+--- How much of a line is still to be given, in what Escrow.deliver gives
+--- it in (money, an item's count, one weapon), less what is recorded as
+--- having arrived (deliver_arrived).
+---@param line table
+---@return integer
+function Escrow.stillOwed(line)
+    local total = line.amount
+    if line.source == CH.SOURCE.ITEM then
+        total = line.quantity
+    elseif line.source == CH.SOURCE.WEAPON then
+        total = 1
+    end
+    local already = math.max(0, math.floor(tonumber(line.deliver_arrived) or 0))
+    return math.max(0, math.floor(tonumber(total) or 0) - already)
 end
 
 --- How much of an item a player holds, read to check a give that raised
