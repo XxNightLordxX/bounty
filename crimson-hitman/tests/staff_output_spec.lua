@@ -600,10 +600,11 @@ describe('nothing in the admin panel names a command', function()
             'queued', 'requeued', 'parked', 'already_queued', 'pay_only', 'owes_less', 'not_left',
             'raised', CH.ERR.LOCKED, CH.ERR.NOT_FOUND, CH.ERR.ALREADY_SETTLED, CH.ERR.BUSY,
             'note_required', 'no_party', 'which_money', 'nothing_recorded', 'over_recorded',
-            'something_else' }
+            'being_resolved', 'unwritten', 'nothing_missing', 'not_yet', 'something_else' }
         for _, err in ipairs(errs) do
             for _, ok in ipairs({ true, false }) do
-                for _, detail in ipairs({ 'refused', 'ct00000001', { action = 'pay', parked = 1 } }) do
+                for _, detail in ipairs({ 'refused', 'ct00000001', { action = 'pay', parked = 1 },
+                                          'open', 'resolving' }) do
                     local said = {
                         s.admin.voidAnswer('ct00000001', ok, err, true),
                         s.admin.settleAnswer(ok, err, detail, true),
@@ -871,5 +872,94 @@ describe('what the money commands answer', function()
         truthy(s.admin.settleAnswer(false, 'owes_less', 4000):find('owes only 4000', 1, true))
         truthy(s.admin.reviewAnswer('rv1', false, 'no_party', 'payer, creator')
             :find('(payer, creator)', 1, true))
+    end)
+end)
+
+
+--- W131, W137: a resolution that raised part-way leaves the item being
+--- resolved with its decision on it. "/ch-review <id> finishes it" printed
+--- the usage line, and another action's words carried out the stored one:
+--- money moved under Dismiss. The id alone finishes it now, in the command
+--- and as the panel's one button, and nothing else does.
+describe('a review item left part-way resolved', function()
+    local function bank(src) return Env.players[src].PlayerData.money.bank end
+
+    local function stranded(s)
+        return s.review.open({ kind = 'bailout_refund_stranded', contract_id = 'ct00000001',
+            cids = { payer = 'TARGET01' }, amount = 5000, account = 'bank' })
+    end
+
+    local function leftResolving(s)
+        local id = stranded(s)
+        truthy(s.storage.setReviewState(id, 'open', 'resolving', {
+            resolution = { action = 'refund', cid = 'TARGET01',
+                lines = { { id = id .. ':1', source = 'bank', amount = 5000 } } },
+            resolved_by = 'console' }))
+        return id
+    end
+
+    local function said(key, args)
+        return table.concat(run(6, key, args).f8, '\n')
+    end
+
+    it('/ch-review <id> alone finishes it as decided, and another action is refused', function()
+        local s = stack()
+        local id = leftResolving(s)
+        local before = bank(2)
+        local out = said('review', { id, 'dismiss', 'nothing', 'owed' })
+        truthy(out:find('being resolved already', 1, true), out)
+        truthy(out:find(('/%s %s alone finishes it'):format(Config.Admin.Commands.review, id), 1, true), out)
+        eq(bank(2), before, 'nothing moved under a dismiss')
+        eq(s.storage.readReview(id).state, 'resolving')
+
+        out = said('review', { id })
+        truthy(out:find('Resolved', 1, true), out)
+        truthy(out:find('finished as decided', 1, true), out)
+        eq(bank(2) - before, 5000, 'finished as it was decided')
+        eq(s.storage.readReview(id).state, 'resolved')
+
+        local open = stranded(s)
+        out = said('review', { open })
+        truthy(out:find('Usage', 1, true), 'an open one still needs an action: ' .. out)
+        eq(s.storage.readReview(open).state, 'open')
+    end)
+
+    it('the panel finishes it with one button, and refuses another action on it', function()
+        local s = stack()
+        local id = leftResolving(s)
+        local before = bank(2)
+        local reply = ask(6, 'resolve', { id = id, action = 'dismiss', note = 'nothing owed after all' })
+        eq(reply.ok, false)
+        eq(reply.err, 'being_resolved')
+        truthy(reply.message:find('Finish as decided', 1, true), reply.message)
+        falsy(commandMention(reply.message), reply.message)
+        eq(bank(2), before, 'nothing moved under Dismiss')
+
+        reply = ask(6, 'resolve', { id = id, action = 'finish' })
+        eq(reply.ok, true, tostring(reply.message))
+        eq(bank(2) - before, 5000)
+        eq(ask(6, 'resolve', { id = id, action = 'finish' }).ok, false, 'once')
+        eq(bank(2) - before, 5000)
+    end)
+
+    it('a raise says whether anything was decided, from the item as it is after it', function()
+        local s = stack()
+        local id = stranded(s)
+        local real = s.storage.setReviewState
+        s.storage.setReviewState = function() error('connection lost', 0) end
+        local out = said('review', { id, 'refund', 'payer', '5000' })
+        s.storage.setReviewState = real
+        truthy(out:find('before anything was decided', 1, true), out)
+        falsy(out:find('finishes it', 1, true), 'nothing to finish: ' .. out)
+        eq(s.storage.readReview(id).state, 'open')
+
+        local realRelease = s.escrow.release
+        s.escrow.release = function() error('a payout hook raised', 0) end
+        out = said('review', { id, 'refund', 'payer', '5000' })
+        s.escrow.release = realRelease
+        truthy(out:find('part-way', 1, true), out)
+        truthy(out:find(('/%s %s finishes it'):format(Config.Admin.Commands.review, id), 1, true), out)
+        eq(s.storage.readReview(id).state, 'resolving')
+        truthy(said('review', { id }):find('Resolved', 1, true), 'and the id alone does')
     end)
 end)

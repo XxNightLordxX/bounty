@@ -441,49 +441,88 @@ describe('the events that leave money for staff', function()
         eq(listed[1].now.lines.missing, 1, 'which it does not')
     end)
 
-    it('a contract the store would neither write nor read back, closed once it answers', function()
+    --- S12 / W152: the contract is placed by the server from the copy the
+    --- item carries, its escrow held for it meanwhile, and no anonymity fee
+    --- was taken. Before: escrow and fee handed back on the row's absence,
+    --- and a fee taken for a contract that might never exist.
+    it('a contract the store would neither write nor read back is placed by the server', function()
         local s = newStack()
         local f = fixture(s)
         Config.Anonymity.CreatorFee = 500
-        local realWrite, realRead = s.storage.writeContract, s.storage.readContract
+        local bank = bankOf(1)
+        local realWrite, realRead = s.storage.insertContract, s.storage.readContract
         local down = false
-        s.storage.writeContract = function() down = true error('connection lost', 0) end
+        s.storage.insertContract = function() down = true error('connection lost', 0) end
         s.storage.readContract = function(...)
-            if down then error('connection lost', 0) end
+            if down then down = false error('connection lost', 0) end
             return realRead(...)
         end
-        pcall(s.contracts.create, f.creator, { targetCid = 'TARGET01', reason = 'x',
-            anonymous = true, reward = { baseline = { bank = 5000 } } })
-        s.storage.writeContract, s.storage.readContract = realWrite, realRead
+        falsy(pcall(s.contracts.create, f.creator, { targetCid = 'TARGET01', reason = 'x',
+            anonymous = true, reward = { baseline = { bank = 5000 } } }))
+        s.storage.insertContract, s.storage.readContract = realWrite, realRead
+        eq(bankOf(1) - bank, -5000, 'the reward is held, and no fee was taken for it')
         local items = only(s, 'contract_unrecorded')
-        eq(#items, 1, 'left for staff: a restart now would lose the fee')
-        eq(items[1].amount, 500, 'the fee')
-        eq(items[1].state, 'open')
+        eq(#items, 1, 'left for staff, and for the server')
+        eq(items[1].amount, nil, 'no fee to refund')
+        truthy(items[1].known.decide, 'with the whole contract to place it from')
+        local id = items[1].contract_id
+        -- The record is the server's to settle from, and names the anonymous
+        -- client: staff are told the server settles it instead.
+        local listed = s.admin.reviews(0)
+        eq(#listed, 1)
+        truthy(listed[1].settles, 'listed as one the server settles')
+        eq(listed[1].known.contract, nil, 'without the copy of the contract')
+        for _, text in pairs(listed[1].known) do
+            falsy(tostring(text):find('Vic Marlowe', 1, true), 'nor the client\'s name')
+        end
 
-        local bank = bankOf(1)
-        s.contracts.retryStuckCreates()
-        eq(bankOf(1) - bank, 5500, 'the store answers: escrow and fee handed back')
+        -- Boot keeps its escrow for it: a sweep before the server decides
+        -- hands nothing back.
+        eq(s.contracts.recoverNeverPlaced(), 0, 'its escrow was handed back before it was decided')
+        eq(bankOf(1) - bank, -5000)
+
+        Natives.calls.notifications = {}
+        eq(s.review.decide(), 1, 'the server settles it once the store answers')
+        local placed = s.storage.readContract(id)
+        eq(placed and placed.state, CH.STATE.ACTIVE, 'on the board')
+        eq(s.escrow.moneyValue(id), 5000, 'with its escrow')
+        eq(bankOf(1) - bank, -5000, 'and still no fee: placed late, not charged')
         local item = s.storage.readReview(items[1].id)
-        eq(item.state, 'resolved', 'and the question closed by the server')
-        eq(item.resolution.action, 'auto')
+        eq(item.state, 'resolved', 'closed by the server')
         eq(item.resolved_by, 'server')
+        falsy(s.escrow.claimRunning(id), 'and its escrow let go')
+        local told = false
+        for _, n in ipairs(Natives.calls.notifications) do
+            if tostring(n.title) == 'Contract placed' then told = true end
+        end
+        truthy(told, 'the client is told it is on the board')
+        s.audit.flush()
+        local unpaid = s.storage.auditByAction('anonymity_fee_unpaid', 10)
+        eq(#unpaid, 1, 'the fee not charged is on the record')
+        eq(unpaid[1].detail.reason, 'placed_late')
+        eq(s.review.decide(), 0, 'once')
     end)
 
-    it('an anonymity fee that could not be credited back', function()
+    --- W152 / W014: the fee is charged last, so a create that fails takes
+    --- none and leaves no fee row. Before: charged first, and refunded with
+    --- only the charge in the log, or lost to a restart.
+    it('an anonymous create that is not placed takes no fee, and leaves no fee row', function()
         local s = newStack()
         local f = fixture(s)
         Config.Anonymity.CreatorFee = 500
-        local realWrite = s.storage.writeContract
-        s.storage.writeContract = function() error('connection lost', 0) end
-        Env.players[1]._refuseMoney = true
-        pcall(s.contracts.create, f.creator, { targetCid = 'TARGET01', reason = 'x',
-            anonymous = true, reward = { baseline = { cash = 5000 } } })
-        Env.players[1]._refuseMoney = nil
-        s.storage.writeContract = realWrite
-        local items = only(s, 'anonymity_fee_refund_failed')
-        eq(#items, 1)
-        eq(items[1].amount, 500)
-        eq(items[1].cids.creator, 'CREATOR1')
+        local bank = bankOf(1)
+        local realWrite = s.storage.insertContract
+        s.storage.insertContract = function() error('connection lost', 0) end
+        local ran, placed, err = pcall(s.contracts.create, f.creator, { targetCid = 'TARGET01',
+            reason = 'x', anonymous = true, reward = { baseline = { bank = 5000 } } })
+        s.storage.insertContract = realWrite
+        truthy(ran, tostring(placed))
+        eq(placed, nil)
+        eq(err, CH.ERR.BAD_STATE, 'not stored, the read says so')
+        eq(bankOf(1), bank, 'the reward back, and no fee taken')
+        s.audit.flush()
+        eq(#s.storage.auditByAction('anonymity_fee', 10), 0, 'no fee row for a contract that does not exist')
+        eq(#only(s, 'anonymity_fee_refund_failed'), 0)
     end)
 
     it('escrow that could not be given back when a take failed', function()
@@ -515,6 +554,307 @@ describe('the events that leave money for staff', function()
         eq(#items, 1)
         eq(items[1].cids.recipient, 'CREATOR1')
         eq(items[1].known.delivered, true)
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- Payments the store did not confirm, settled by the server (S12, W130)
+--------------------------------------------------------------------------
+
+describe('payments the store did not confirm, settled by the server', function()
+    local function itemsOf(s, kind)
+        local found = {}
+        for _, item in ipairs(s.storage.reviewItems(false, 50)) do
+            if item.kind == kind then found[#found + 1] = item end
+        end
+        return found
+    end
+
+    --- A create whose escrow write raises (having landed, or not) and whose
+    --- read-back raises once.
+    local function unconfirmedTake(s, f, landed, req)
+        local realInsert, realRead = s.storage.insertEscrow, s.storage.readEscrow
+        local down = false
+        s.storage.insertEscrow = function(...)
+            if landed then realInsert(...) end
+            down = true
+            error('connection lost', 0)
+        end
+        s.storage.readEscrow = function(...)
+            if down then down = false error('connection lost', 0) end
+            return realRead(...)
+        end
+        local ran = pcall(s.contracts.create, f.creator, req or { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { bank = 5000 } } })
+        s.storage.insertEscrow, s.storage.readEscrow = realInsert, realRead
+        falsy(ran, 'the create raised')
+        local items = itemsOf(s, 'escrow_take_unverified')
+        eq(#items, 1, 'one item for staff, and for the server')
+        return items[1]
+    end
+
+    it('an escrow write that raised with a read-back that raised is handed back by the server', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = bankOf(1)
+        local item = unconfirmedTake(s, f, false)
+        eq(bankOf(1) - before, -5000, 'charged')
+        truthy(item.known.decide, 'with the whole record')
+        eq(#item.known.lines, 1)
+        eq(item.known.lines[1].amount, 5000)
+
+        eq(s.review.decide(), 1, 'the next tick settles it')
+        eq(bankOf(1), before, 'every line it took handed back')
+        local closed = s.storage.readReview(item.id)
+        eq(closed.state, 'resolved')
+        eq(closed.resolved_by, 'server')
+        local line = s.storage.readEscrowLine(item.known.lines[1].id)
+        eq(line and line.state, CH.ESCROW_STATE.SETTLED, 'through the line itself, written by the server')
+
+        s.contracts.retryStuckCreates()
+        s.contracts.recoverNeverPlaced()
+        eq(s.review.decide(), 0)
+        eq(bankOf(1), before, 'once')
+    end)
+
+    --- W130: the lines landed, the tick hands them back, and the item said
+    --- they were missing: Pay gave them a second time.
+    it('a take that landed is handed back by the tick and its item closed, so Pay gives nothing', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = bankOf(1)
+        local item = unconfirmedTake(s, f, true)
+        eq(s.contracts.retryStuckCreates(), 1, 'the store answers: handed back')
+        eq(bankOf(1), before)
+        eq(s.storage.readReview(item.id).state, 'resolved',
+            'closed once every line it names is in the store')
+        local ok, why = s.review.resolve(item.id, { action = 'pay', who = 'from' }, 'STAFF01')
+        falsy(ok)
+        eq(why, CH.ERR.ALREADY_SETTLED)
+        eq(s.review.decide(), 0)
+        eq(bankOf(1), before, 'not paid twice')
+    end)
+
+    it('staff Refund on one settles it through its own lines, whatever is typed', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = bankOf(1)
+        local item = unconfirmedTake(s, f, false)
+        local ok, why, detail = s.review.resolve(item.id,
+            { action = 'refund', who = 'from', amount = 99999 }, 'STAFF01')
+        truthy(ok, tostring(why))
+        eq(detail.action, 'settled')
+        truthy(detail.ignored, 'and says what was typed was not used')
+        eq(bankOf(1), before, 'what it took, back')
+        eq(s.storage.readEscrowLine(item.id .. ':1'), nil, 'no line of its own minted')
+        eq(s.storage.readReview(item.id).resolved_by, 'STAFF01')
+        eq(s.review.decide(), 0, 'off the server\'s list')
+
+        -- The take's own write, landing late, meets the line and changes it not.
+        s.storage.insertEscrow(item.contract_id, item.known.lines)
+        s.contracts.retryStuckCreates()
+        s.contracts.recoverNeverPlaced()
+        eq(bankOf(1), before, 'once')
+    end)
+
+    --- Never on absence (DESIGN O7): the write the caller gave up on lands
+    --- after the server settled it, and adds nothing.
+    it('mysql: a take that lands after the server settled it adds nothing', function()
+        local s = newStack()
+        local f = fixture(s)
+        local store = freshStore('mysql')
+        wire(s, store)
+        s.contracts.init({ storage = store, escrow = s.escrow, identity = s.identity, audit = s.audit,
+            notify = s.notify, progression = s.progression, death = s.death, review = s.review })
+        local before = bankOf(1)
+        local realInsert, realRead = store.insertEscrow, store.readEscrow
+        local held = false
+        store.insertEscrow = function(...)
+            store.insertEscrow = realInsert
+            Exec.lateNext = 1
+            held = true
+            return realInsert(...)
+        end
+        store.readEscrow = function(...)
+            if held then held = false error('connection lost', 0) end
+            return realRead(...)
+        end
+        local creating = Env.spawn(function()
+            return pcall(s.contracts.create, f.creator, { targetCid = 'TARGET01', reason = 'x',
+                reward = { baseline = { bank = 5000 } } })
+        end)
+        -- Its caller stops waiting, as a bounded await would.
+        Exec.late[1].promise:reject('timed out')
+        Env.runTimers()
+        store.readEscrow = realRead
+        truthy(creating.done)
+        falsy(creating.results[1], 'the create raised')
+        eq(bankOf(1) - before, -5000)
+        local item = itemsOf(s, 'escrow_take_unverified')[1]
+        truthy(item and item.known.decide)
+
+        eq(s.review.decide(), 1, 'the server writes it again and hands it back')
+        eq(bankOf(1), before)
+        eq(Exec.releaseLate(), 1, 'the original lands now')
+        local rows = 0
+        for _, row in pairs(Exec.tables.crimson_escrow or {}) do
+            if row.contract_id == item.contract_id then
+                rows = rows + 1
+                eq(row.state, CH.ESCROW_STATE.SETTLED, 'and leaves the settled line as it is')
+            end
+        end
+        eq(rows, 1, 'one line, not two')
+        s.contracts.retryStuckCreates()
+        s.contracts.recoverNeverPlaced()
+        eq(bankOf(1), before, 'the client whole, once')
+    end)
+
+    --- A buyout record the store would neither take nor read back.
+    local function unconfirmedBuyout(s, f, landed)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000 })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local realRecord, realRead = s.storage.recordBailout, s.storage.readContract
+        local down = false
+        s.storage.recordBailout = function(...)
+            if landed then realRecord(...) end
+            down = true
+            error('connection lost', 0)
+        end
+        s.storage.readContract = function(...)
+            if down then down = false error('connection lost', 0) end
+            return realRead(...)
+        end
+        falsy(pcall(s.bailout.buy, f.target, c.id))
+        s.storage.recordBailout, s.storage.readContract = realRecord, realRead
+        local item = itemsOf(s, 'bailout_unrecorded')[1]
+        truthy(item and item.known.decide, 'with the record it would have written')
+        return c, item
+    end
+
+    it('an unrecorded buyout waits while its contract is open, and is refunded once it ends without it', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = bankOf(2) + Env.players[2].PlayerData.money.cash
+        local c, item = unconfirmedBuyout(s, f, false)
+        local paid = before - bankOf(2) - Env.players[2].PlayerData.money.cash
+        truthy(paid > 0, 'charged')
+        -- A claim holds the contract: the record may still land.
+        truthy(s.storage.compareSetContractState(c.id, CH.STATE.ACCEPTED, CH.STATE.COMPLETING))
+        eq(s.review.decide(), 0)
+        eq(s.storage.readReview(item.id).state, 'open', 'waits')
+        eq(bankOf(2) + Env.players[2].PlayerData.money.cash, before - paid, 'nothing refunded yet')
+
+        -- It ends without the buyout: a closed contract's record never lands.
+        truthy(s.storage.compareSetContractState(c.id, CH.STATE.COMPLETING, CH.STATE.COMPLETED))
+        eq(s.review.decide(), 1)
+        eq(bankOf(2) + Env.players[2].PlayerData.money.cash, before, 'refunded')
+        eq(s.storage.readReview(item.id).state, 'resolved')
+        eq(s.review.decide(), 0)
+        eq(bankOf(2) + Env.players[2].PlayerData.money.cash, before, 'once')
+    end)
+
+    it('an unrecorded buyout whose record landed and settled is not refunded', function()
+        local s = newStack()
+        local f = fixture(s)
+        local before = bankOf(2) + Env.players[2].PlayerData.money.cash
+        local c, item = unconfirmedBuyout(s, f, true)
+        Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
+        eq(s.bailout.processQueue(), 1, 'it landed, so it settles as any buyout')
+        eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
+        local premium = s.storage.readEscrowLine(s.bailout.premiumLineId(c.id))
+        eq(premium.metadata.queued_at, item.known.fields.bailout_queued_at,
+            'the premium says which buyout paid it')
+
+        eq(s.review.decide(), 1)
+        eq(s.storage.readReview(item.id).state, 'resolved', 'settled: it was this buyout')
+        eq(bankOf(2) + Env.players[2].PlayerData.money.cash, before - 15000,
+            'the target paid for the buyout they got, once, and was not refunded it')
+    end)
+
+    --- An item from before this version: its record is only what it names.
+    it('an older item whose lines are all in the store gives nothing to Pay or Refund', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { bank = 5000 } } })
+        local line = s.storage.readEscrow(c.id)[1]
+        s.escrow.release(c.id, 'CREATOR1', { line = line.id }, 'test')
+        local before = bankOf(1)
+        local id = s.review.open({ kind = 'escrow_take_unverified', contract_id = c.id,
+            cids = { from = 'CREATOR1' },
+            items = { { id = line.id, source = 'bank', amount = 5000 } } })
+        local ok, why = s.review.resolve(id, { action = 'pay', who = 'from' }, 'STAFF01')
+        falsy(ok)
+        eq(why, 'nothing_missing')
+        ok, why = s.review.resolve(id, { action = 'refund', who = 'from', amount = 5000 }, 'STAFF01')
+        falsy(ok)
+        eq(why, 'nothing_missing')
+        eq(bankOf(1), before, 'nothing given')
+        eq(s.storage.readReview(id).state, 'open', 'left to dismiss')
+    end)
+
+    --- W138
+    it('an item the store has not taken yet answers that it can be resolved once it has', function()
+        local s = stackOn('memory')
+        local real = s.storage.writeReview
+        s.storage.writeReview = function() error('connection lost', 0) end
+        local id = stranded(s)
+        local ok, why = s.review.resolve(id, { action = 'refund', who = 'payer', amount = 5000 }, 'x')
+        s.storage.writeReview = real
+        falsy(ok)
+        eq(why, 'unwritten')
+        eq(s.review.stateOf(id), 'unwritten')
+        eq(s.review.retryUnwritten(), 1)
+        truthy(s.review.resolve(id, { action = 'refund', who = 'payer', amount = 5000 }, 'x'),
+            'and resolves once the store has it')
+    end)
+
+    --- W137 / W131: one left part-way is finished by asking for nothing
+    --- else; another action's words are refused rather than carried out.
+    it('a strict ask finishes one left being resolved only by asking for nothing else', function()
+        local s = stackOn('memory')
+        local id = stranded(s)
+        truthy(s.storage.setReviewState(id, 'open', 'resolving', {
+            resolution = { action = 'refund', cid = 'TARGET01',
+                lines = { { id = id .. ':1', source = 'bank', amount = 5000 } } },
+            resolved_by = 'STAFF01' }))
+        local before = bankOf(2)
+        local ok, why, detail = s.review.resolve(id, { action = 'dismiss', note = 'no' }, 'STAFF02',
+            { strict = true })
+        falsy(ok)
+        eq(why, 'being_resolved')
+        eq(detail.action, 'refund')
+        eq(detail.by, 'STAFF01')
+        eq(bankOf(2), before, 'a Dismiss carried out nothing')
+        local done, _, result = s.review.resolve(id, nil, 'STAFF02', { strict = true })
+        truthy(done)
+        truthy(result.continued)
+        eq(bankOf(2) - before, 5000, 'finished as decided')
+    end)
+
+    --- A record kept on this machine (resource KVP) when the store refused
+    --- an item, so a restart before the store answers does not lose it.
+    it('json: an item the store refused survives a restart and is written by the first tick', function()
+        local s = stackOn('json')
+        local real = s.storage.writeReview
+        s.storage.writeReview = function() error('disk refused', 0) end
+        local id = stranded(s)
+        s.storage.writeReview = real
+        eq(s.storage.readReview(id), nil, 'not in the store')
+
+        -- A new process on the same machine: nothing in memory.
+        wire(s, reopened('json', s.storage))
+        local listed = s.review.list()
+        eq(#listed, 1, 'kept across the restart')
+        eq(listed[1].id, id)
+        truthy(listed[1].unwritten)
+        truthy(listed[1].known.restored)
+        eq(s.review.retryUnwritten(), 1, 'the first tick writes it')
+        eq(s.storage.readReview(id).state, 'open')
+        wire(s, reopened('json', s.storage))
+        eq(#s.review.list(), 1, 'once, from the store')
+        falsy(s.review.list()[1].unwritten)
     end)
 end)
 

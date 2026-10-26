@@ -818,17 +818,22 @@ H.stuck = function(src)
     return true, nil, nil, { recovery = recovery, lines = lines, reviews = reviews }
 end
 
-local REVIEW_ACTIONS = { refund = true, pay = true, dismiss = true }
+local REVIEW_ACTIONS = { refund = true, pay = true, dismiss = true, finish = true }
 
 H.resolve = function(src, data)
     local id = Util.toId(data.id)
     if not id then return false, CH.ERR.INVALID_INPUT, 'Give a review item id.' end
     local action = REVIEW_ACTIONS[data.action] and data.action or nil
-    if not action then return false, CH.ERR.INVALID_INPUT, 'Say refund, pay or dismiss.' end
+    if not action then return false, CH.ERR.INVALID_INPUT, 'Say refund, pay, dismiss or finish.' end
     -- Built into the words the command takes, so it is resolved by exactly
     -- the path /ch-review resolves it by (Admin.resolveReview).
     local args = { action }
-    if action == 'dismiss' then
+    if action == 'finish' then
+        -- An item left being resolved, finished as it was decided: the id
+        -- alone, as /ch-review <id> takes it, and no other action's fields
+        -- (W137). One still open is refused there.
+        args = {}
+    elseif action == 'dismiss' then
         args[2] = shortText(data.note, 200)
     else
         local who = type(data.who) == 'string' and #data.who <= 32

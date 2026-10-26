@@ -16,10 +16,14 @@ function Bailout.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
         deps.storage, deps.identity, deps.contracts, deps.escrow, deps.audit, deps.notify
     -- Where a premium no rule here can settle is left for staff
-    -- (server/review.lua).
+    -- (server/review.lua), and the buyout whose record the store would not
+    -- confirm is settled by the server itself once it answers (S12).
     Review = deps.review
     Bailout.kidnap = deps.kidnap
     Bailout.death = deps.death
+    if Review and Review.DECIDERS then
+        Review.DECIDERS.bailout_unrecorded = function(item) return Bailout.decideUnrecorded(item) end
+    end
 end
 
 --- Leave a buyout's money for staff, where the review queue is wired.
@@ -145,36 +149,78 @@ end
 --- Write a paid buyout onto the contract. The target has been charged by
 --- now, and this record is the only thing that will settle or refund it.
 ---
+--- A compare-and-set (Storage.recordBailout): only on a contract still
+--- running whose queue is free. Refused, nothing was recorded and nothing
+--- can land later, so the premium goes back at once and false says so.
+---
 --- A write that raised (a dropped connection on mysql) left the premium in
 --- no pocket, no line and no queue. It may or may not have landed, as for
 --- a placed contract (Contracts.create), so the store decides: there, it is
 --- recorded; not there, the premium goes back and the error goes on. A read
---- that raises too decides nothing, and handing back a record that landed
---- would refund a buyout the tick then settles, so that raises with the
---- bailout_paid row saying what was taken.
+--- that raises too decides nothing: the item made before the write (S12,
+--- Review.prepare, kept on this machine on mysql) is opened, and the server
+--- writes the record again once the store answers and settles it from what
+--- that write says (Bailout.decideUnrecorded).
+---@return boolean recorded
 local function recordPaid(contractId, fields)
-    local wrote, err = pcall(Storage.setBailoutQueue, contractId, fields)
-    if wrote then return end
     local payer = fields.bailout_paid_by
+    local pending = Review and Review.prepare and Review.prepare({
+        kind = 'bailout_unrecorded', contract_id = contractId, cids = { payer = payer },
+        amount = fields.bailout_paid_amount, account = fields.bailout_paid_account,
+        known = { decide = true, fields = {
+            bailout_queued_at = fields.bailout_queued_at, bailout_paid_by = payer,
+            bailout_paid_amount = fields.bailout_paid_amount,
+            bailout_paid_account = fields.bailout_paid_account,
+        } },
+    }) or nil
+    local wrote, recorded = pcall(Storage.recordBailout, contractId, fields)
+    if wrote then
+        if pending then Review.discard(pending) end
+        if recorded then return true end
+        -- Another buyout is queued, or the contract closed, since it was
+        -- read: the premium back where it came from.
+        handBack(payer, contractId, fields.bailout_paid_amount, fields.bailout_paid_account,
+            'record_refused')
+        Audit.financial('bailout_refunded', payer, contractId,
+            { amount = fields.bailout_paid_amount, reason = 'record_refused' })
+        return false
+    end
+    local err = recorded
     Audit.financial('bailout_record_failed', payer, contractId,
         { amount = fields.bailout_paid_amount, error = tostring(err) })
     local read, stored = pcall(Storage.readContract, contractId)
     if not read then
         -- The double fault: the store would neither take the record nor
-        -- say whether it had. Nothing here can tell a buyout recorded (the
-        -- tick settles it) from one that is not (nothing ever refunds it),
-        -- so it is left for staff, and kept until they have looked: the
-        -- audit row above is pruned with the log.
-        leaveForStaff({
-            kind = 'bailout_unrecorded', contract_id = contractId, cids = { payer = payer },
-            amount = fields.bailout_paid_amount, account = fields.bailout_paid_account,
-            known = { error = tostring(err), read_error = tostring(stored) },
-        })
+        -- say whether it had. Never decided on absence: left for the server
+        -- to settle once the store answers, and listed for staff meanwhile.
+        if pending then
+            pending.known.error, pending.known.read_error = tostring(err), tostring(stored)
+            Review.open(pending)
+        else
+            leaveForStaff({
+                kind = 'bailout_unrecorded', contract_id = contractId, cids = { payer = payer },
+                amount = fields.bailout_paid_amount, account = fields.bailout_paid_account,
+                known = { error = tostring(err), read_error = tostring(stored) },
+            })
+        end
         error(stored, 0)
     end
-    if stored and stored.bailout_queued_at and stored.bailout_paid_by == payer then return end
+    if pending then Review.discard(pending) end
+    if stored and stored.bailout_queued_at and stored.bailout_paid_by == payer then return true end
     handBack(payer, contractId, fields.bailout_paid_amount, fields.bailout_paid_account, 'unrecorded')
     error(err, 0)
+end
+
+--- What a buy whose record was refused answers, from a fresh read: another
+--- buyout queued, or the contract closed. The premium is back already.
+---@return string err
+local function refusedRecord(contractId)
+    local read, now = pcall(Storage.readContract, contractId)
+    if read and now and now.bailout_queued_at
+        and (now.state == CH.STATE.ACTIVE or now.state == CH.STATE.ACCEPTED) then
+        return CH.ERR.BUYOUT_PENDING
+    end
+    return CH.ERR.ALREADY_SETTLED
 end
 
 local buyUnlocked
@@ -274,13 +320,15 @@ buyUnlocked = function(actor, contractId)
         -- already gone at this point, and a writeContract from any other
         -- handler holding an older copy of this row used to erase the queue
         -- on top of it: premium charged, nothing left to settle or refund it.
-        recordPaid(contract.id, {
+        if not recordPaid(contract.id, {
             bailout_queued_at = os.time(),
             bailout_paid_by = actor.cid,
             bailout_paid_amount = amount,
             bailout_paid_account = account,
             bailout_attempts = 0,
-        })
+        }) then
+            return false, refusedRecord(contract.id)
+        end
 
         Notify.toCitizen(contract.creator_cid, 'Contract challenged',
             'Your target is buying out the contract. It closes shortly.')
@@ -300,13 +348,15 @@ buyUnlocked = function(actor, contractId)
     -- buy's from before the first read (Bailout.buy), so the tick cannot
     -- settle it too in between, and nothing here can meet it busy after
     -- the charge.
-    recordPaid(contract.id, {
+    if not recordPaid(contract.id, {
         bailout_queued_at = os.time() - (Config.Bailout.ProcessingDelaySeconds or 0),
         bailout_paid_by = actor.cid,
         bailout_paid_amount = amount,
         bailout_paid_account = account,
         bailout_attempts = 0,
-    })
+    }) then
+        return false, refusedRecord(contract.id)
+    end
     return settleUnlocked(contractId, amount, actor.cid, account)
 end
 
@@ -364,7 +414,8 @@ end
 
 --- Owe one party a buyout's money under an id that comes from the contract,
 --- and hand it over. Idempotent: see settle.
-local function payOwed(contract, id, cid, amount, account, reason)
+---@param metadata table|nil kept on the line: a premium's says which buyout paid it
+local function payOwed(contract, id, cid, amount, account, reason, metadata)
     local existing = Storage.readEscrowLine(id)
     if not (existing and existing.id == id) then
         Storage.writeEscrow(contract.id, { {
@@ -376,6 +427,7 @@ local function payOwed(contract, id, cid, amount, account, reason)
             source = account == 'cash' and 'cash' or 'bank',
             amount = amount,
             state = CH.ESCROW_STATE.HELD,
+            metadata = metadata,
         } })
         Storage.queuePending(cid, contract.id, id)
         if Escrow and Escrow.noteWaiting then Escrow.noteWaiting(cid, true) end
@@ -481,7 +533,7 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
         payOwed(contract, Bailout.refundLineId(contractId, contract.bailout_queued_at),
             targetCid, amount, account, 'bailout_refund')
         Audit.financial('bailout_refunded', targetCid, contractId, { amount = amount, reason = err })
-        Bailout.clearQueue(contractId)
+        Bailout.clearQueue(contractId, contract.bailout_queued_at)
         return false, err
     end
 
@@ -495,15 +547,20 @@ settleUnlocked = function(contractId, amount, targetCid, account, opts)
     -- premium was paid again. Written under the contract's own id, the
     -- second write lands on the first line and changes nothing, and the
     -- line's state says whether it was handed over.
+    --
+    -- It says which buyout it was (the moment it was recorded, and by whom),
+    -- so a buyout whose record the store would not confirm can tell its own
+    -- premium from another's (Bailout.decideUnrecorded).
     payOwed(contract, Bailout.premiumLineId(contract.id), contract.creator_cid,
-        amount, account, 'bailout_premium')
+        amount, account, 'bailout_premium',
+        { queued_at = contract.bailout_queued_at, paid_by = contract.bailout_paid_by })
 
     Audit.financial('bailout_settled', targetCid, contractId, { amount = amount })
     Notify.toCitizen(contract.creator_cid, 'Contract closed',
         'Your target bought out the contract. Escrow and premium have been returned.',
         { bypassBudget = true })
 
-    Bailout.clearQueue(contractId)
+    Bailout.clearQueue(contractId, contract.bailout_queued_at)
     return true
 end
 
@@ -576,8 +633,15 @@ function Bailout.owe(cid, contractId, amount, account, reason, raise)
     return lineId
 end
 
-function Bailout.clearQueue(contractId)
-    return Storage.setBailoutQueue(contractId, nil)
+--- Clear a contract's buyout queue, only while it still holds the buyout
+--- recorded at `queuedAt` (Storage.clearBailout): a clear that lands late,
+--- or is asked twice, never clears a later buyout. Without `queuedAt`, as
+--- an older caller asks, whatever is queued.
+---@param contractId string
+---@param queuedAt integer|nil the buyout's bailout_queued_at
+function Bailout.clearQueue(contractId, queuedAt)
+    if queuedAt == nil then return Storage.setBailoutQueue(contractId, nil) end
+    return Storage.clearBailout(contractId, queuedAt)
 end
 
 --- Hand a queued buyout's premium straight back, without settling it.
@@ -633,11 +697,166 @@ function Bailout.returnQueued(contract, reason)
                       arrived = doubt and doubt.arrived },
         })
     end
-    Bailout.clearQueue(contract.id)
+    Bailout.clearQueue(contract.id, contract.bailout_queued_at)
     return paidTo ~= nil
 end
 
+--------------------------------------------------------------------------
+-- A buyout the server decides by itself
+--------------------------------------------------------------------------
+
+--- Hand a buyout's premium back to its payer under the refund line's own id
+--- (idempotent), and tell them. The contract it was for ended without it,
+--- or never recorded it.
+local function refundBuyout(contract, fields, why)
+    local payer = fields.bailout_paid_by
+    payOwed(contract, Bailout.refundLineId(contract.id, fields.bailout_queued_at), payer,
+        fields.bailout_paid_amount, fields.bailout_paid_account, 'bailout_refund')
+    Audit.financial('bailout_refunded', payer, contract.id,
+        { amount = fields.bailout_paid_amount, reason = why })
+    Notify.toCitizen(payer, 'Buyout refunded',
+        'Your buyout could not be completed, so your payment has been given back to you.',
+        { bypassBudget = true })
+end
+
+--- Whether this buyout's premium was paid: the premium line exists and says
+--- it was this buyout's (its metadata, written from this version on). nil
+--- when there is one that cannot say whose it was.
+local function premiumPaid(contractId, queuedAt)
+    local line = Storage.readEscrowLine(Bailout.premiumLineId(contractId))
+    if not line then return false end
+    local mark = type(line.metadata) == 'table' and line.metadata or nil
+    if not mark or mark.queued_at == nil then return nil end
+    return tonumber(mark.queued_at) == tonumber(queuedAt)
+end
+
+local function decideUnlocked(item, fields)
+    local contractId = item.contract_id
+    if Storage.recordBailout(contractId, fields) then
+        -- Recorded, or it was already: it settles as any buyout does.
+        Notify.toCitizen(fields.bailout_paid_by, 'Buyout recorded',
+            'Your buyout payment is on record now, and the contract closes once it settles. If '
+            .. 'it ends another way first, the payment comes back to you.', { bypassBudget = true })
+        return 'done', 'recorded: it settles as any buyout does'
+    end
+    local contract = Storage.readContract(contractId)
+    if contract and (contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED
+        or contract.state == CH.STATE.COMPLETING) then
+        -- Another buyout holds the queue, or a claim the contract: this
+        -- record may still land, so it is asked again on the next tick.
+        return 'wait', 'its contract is still open'
+    end
+    -- Closed: a terminal contract's compare-and-set never matches again, so
+    -- nothing lands after this.
+    local paid = premiumPaid(contractId, fields.bailout_queued_at)
+    if paid then return 'done', 'it was settled: the contract was bought out by it' end
+    if paid == nil and contract and contract.state == CH.STATE.BAILED_OUT then
+        return 'staff', 'its contract was bought out, and the premium paid does not say by which '
+            .. 'buyout'
+    end
+    refundBuyout(contract or { id = contractId }, fields, 'unrecorded')
+    return 'done', 'its contract ended without it, so the premium was refunded to the payer'
+end
+
+--- bailout_unrecorded, settled by the server from the record the item
+--- carries (S12): the record written again by its compare-and-set, then
+--- settled as any buyout, waited on while its contract is open, or refunded
+--- once the contract has ended without it. Under the keys a buy takes.
+---@param item table a review item
+---@return string verdict 'done' | 'wait' | 'staff'
+---@return string note
+function Bailout.decideUnrecorded(item)
+    local fields = type(item.known) == 'table' and item.known.fields or nil
+    local contractId = item.contract_id
+    if type(fields) ~= 'table' or not fields.bailout_queued_at or not fields.bailout_paid_by
+        or not contractId then
+        return 'staff', 'it does not carry the buyout\'s record'
+    end
+    local out = table.pack(Contracts.serialized({ 'contract:' .. contractId, 'settle:' .. contractId },
+        decideUnlocked, item, fields))
+    if out[1] == false and out[2] == CH.ERR.BUSY then return 'wait', 'its contract is busy' end
+    return table.unpack(out, 1, out.n)
+end
+
+--- When the console last said a queued buyout's settle raised, by contract.
+local raiseSaidAt = {}
+local RAISE_SAID_EVERY = 600
+
+--- A queued buyout that keeps raising as it settles, past
+--- Bailout.MaxSettleAttempts: decided as an unrecorded buyout is (W043). A
+--- blind refund could pay a target whose buyout already closed the
+--- contract. Still open: refunded and the queue cleared. Bought out with
+--- this buyout's premium paid: the queue cleared. Anything else: left for
+--- staff with what is known, and the queue cleared so it stops raising.
+local function giveUp(contract, attempts, err)
+    local now = Storage.readContract(contract.id)
+    if not now or now.bailout_queued_at ~= contract.bailout_queued_at then return 'settled' end
+    local fields = {
+        bailout_queued_at = now.bailout_queued_at, bailout_paid_by = now.bailout_paid_by,
+        bailout_paid_amount = now.bailout_paid_amount, bailout_paid_account = now.bailout_paid_account,
+    }
+    Audit.financial('bailout_retries_exhausted', now.bailout_paid_by, now.id,
+        { amount = now.bailout_paid_amount, attempts = attempts, raised = true })
+    if now.state == CH.STATE.ACTIVE or now.state == CH.STATE.ACCEPTED
+        or now.state == CH.STATE.COMPLETING then
+        refundBuyout(now, fields, 'settle_raised')
+        Bailout.clearQueue(now.id, now.bailout_queued_at)
+        return 'refunded'
+    end
+    if now.state == CH.STATE.BAILED_OUT and premiumPaid(now.id, now.bailout_queued_at) then
+        Bailout.clearQueue(now.id, now.bailout_queued_at)
+        return 'cleared'
+    end
+    leaveForStaff({
+        kind = 'bailout_settle_raised', contract_id = now.id,
+        cids = { payer = now.bailout_paid_by, creator = now.creator_cid },
+        amount = now.bailout_paid_amount, account = now.bailout_paid_account,
+        known = { state = now.state, attempts = attempts, error = tostring(err) },
+    })
+    Bailout.clearQueue(now.id, now.bailout_queued_at)
+    return 'staff'
+end
+
+--- A queued buyout's settle that raised: said (at most once a contract every
+--- RAISE_SAID_EVERY seconds), audited and counted on its row as a LOCKED
+--- wait is, and past Bailout.MaxSettleAttempts decided (giveUp).
+local function settleRaised(contract, err)
+    local attempts = (tonumber(contract.bailout_attempts) or 0) + 1
+    local now = os.time()
+    local say = not raiseSaidAt[contract.id] or now - raiseSaidAt[contract.id] >= RAISE_SAID_EVERY
+    if say then
+        raiseSaidAt[contract.id] = now
+        Log.always(('queued buyout on contract %s: settling it raised (%s); the other queued '
+            .. 'buyouts went on, and it is tried again on the next tick (%d of %d)')
+            :format(tostring(contract.id), Util.dbError(err), attempts,
+                Config.Bailout.MaxSettleAttempts or 10))
+    end
+    pcall(Audit.financial, 'bailout_settle_raised', contract.bailout_paid_by, contract.id,
+        { amount = contract.bailout_paid_amount, attempts = attempts, error = Util.dbError(err) })
+    if attempts < (Config.Bailout.MaxSettleAttempts or 10) then
+        pcall(Storage.setBailoutQueue, contract.id, {
+            bailout_queued_at = contract.bailout_queued_at,
+            bailout_paid_by = contract.bailout_paid_by,
+            bailout_paid_amount = contract.bailout_paid_amount,
+            bailout_paid_account = contract.bailout_paid_account,
+            bailout_attempts = attempts,
+        })
+        return
+    end
+    local ran, how = pcall(Contracts.serialized,
+        { 'contract:' .. contract.id, 'settle:' .. contract.id }, giveUp, contract, attempts, err)
+    if not ran and say then
+        Log.always(('queued buyout on contract %s: deciding it after %d raises raised too (%s); '
+            .. 'it is tried again on the next tick'):format(tostring(contract.id), attempts,
+            Util.dbError(how)))
+    end
+end
+
 --- Process queued buyouts whose delay has elapsed. Driven by the main tick.
+---
+--- Each in its own pcall (W043): one whose settle kept raising aborted the
+--- whole job at that item on every tick, so every buyout after it in the
+--- queue never settled, and it was never refunded itself.
 function Bailout.processQueue()
     local settled = 0
     local pending = readQueue()
@@ -645,9 +864,11 @@ function Bailout.processQueue()
     for i = 1, #pending do
         local contract = pending[i]
         if os.time() - contract.bailout_queued_at >= Config.Bailout.ProcessingDelaySeconds then
-            if Bailout.settle(contract.id, contract.bailout_paid_amount,
-                              contract.bailout_paid_by, contract.bailout_paid_account,
-                              { retryable = true }) then
+            local ran, ok = pcall(Bailout.settle, contract.id, contract.bailout_paid_amount,
+                contract.bailout_paid_by, contract.bailout_paid_account, { retryable = true })
+            if not ran then
+                settleRaised(contract, ok)
+            elseif ok then
                 settled = settled + 1
             end
         end

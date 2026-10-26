@@ -2539,16 +2539,17 @@ describe('a credit the framework refuses', function()
         eq(Env.players[3].PlayerData.money.bank, 46000)
     end)
 
-    it('records an anonymity fee it could not refund', function()
-        -- The last rollback in contract creation, where there is nothing
-        -- left to undo. Losing it quietly is the one thing that must not
-        -- happen: the row is what tells staff to put it back by hand.
+    it('takes no anonymity fee for a create whose escrow take fails, so none is owed back', function()
+        -- The fee used to be charged before the escrow, and refunded by the
+        -- last rollback in contract creation, which a refused credit left
+        -- for staff. It is charged once the contract is placed now (W152):
+        -- a create that fails has taken none, and nothing is owed back.
         local s = newStack()
         local f = fixture(s)
 
         withConfig({ { Config.Anonymity, 'CreatorFee', 2500 },
                      { Config.Anonymity, 'FeeAccount', 'bank' } }, function()
-            -- Make the escrow take fail after the fee has been charged.
+            local bank = Env.players[1].PlayerData.money.bank
             local realWrite = s.storage.writeEscrow
             s.storage.writeEscrow = function() return false end
             Env.players[1]._refuseMoney = true
@@ -2562,13 +2563,13 @@ describe('a credit the framework refuses', function()
             Env.players[1]._refuseMoney = false
 
             falsy(c, 'the contract must not exist: ' .. tostring(err))
+            eq(Env.players[1].PlayerData.money.bank, bank, 'no fee was taken from the fee account')
             s.audit.flush()
 
-            local seen = false
             for _, row in ipairs(s.storage.readAudit(200)) do
-                if row.action == 'anonymity_fee_refund_failed' then seen = true end
+                falsy(row.action == 'anonymity_fee' or row.action == 'anonymity_fee_refund_failed',
+                    'no fee charged, so none to refund: ' .. tostring(row.action))
             end
-            truthy(seen, 'a fee that could not be returned must be recorded')
         end)
     end)
 end)

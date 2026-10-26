@@ -256,6 +256,16 @@ local function matches(row, conditions, params, from)
             end
             if found ~= condition.exists then return false end
 
+        elseif condition.branches then
+            -- ( A OR B ... ): true when any branch, a conjunction, is.
+            local any = false
+            for _, branch in ipairs(condition.branches) do
+                if matches(row, branch, params, from) then
+                    any = true
+                    break
+                end
+            end
+            if not any then return false end
         elseif condition.notNull then
             if row[condition.column] == nil then return false end
         elseif condition.isNull then
@@ -305,6 +315,40 @@ local function unquote(value)
     return (value:gsub("^'", ''):gsub("'$", ''))
 end
 
+--- The inside of a term written wholly in one pair of parentheses, or nil:
+--- `(a OR b)` is, `(a) OR (b)` and `EXISTS (...)` are not.
+local function enclosed(term)
+    if term:sub(1, 1) ~= '(' or term:sub(-1) ~= ')' then return nil end
+    local depth = 0
+    for i = 1, #term do
+        local char = term:sub(i, i)
+        if char == '(' then depth = depth + 1 elseif char == ')' then depth = depth - 1 end
+        if depth == 0 and i < #term then return nil end
+    end
+    return term:sub(2, -2)
+end
+
+--- Split a clause on its top-level ORs, as andTerms does on ANDs; nil when
+--- there is none.
+local function orTerms(clause)
+    local terms, depth, start, i = {}, 0, 1, 1
+    while i <= #clause do
+        local char = clause:sub(i, i)
+        if char == '(' then depth = depth + 1
+        elseif char == ')' then depth = depth - 1
+        elseif depth == 0 and clause:sub(i, i + 3):upper() == ' OR ' then
+            terms[#terms + 1] = clause:sub(start, i - 1)
+            i = i + 3
+            start = i + 1
+        end
+        i = i + 1
+    end
+    if #terms == 0 then return nil end
+    terms[#terms + 1] = clause:sub(start)
+    for j = 1, #terms do terms[j] = terms[j]:match('^%s*(.-)%s*$') end
+    return terms
+end
+
 --- Parse one WHERE clause into conditions this executor can evaluate.
 ---
 --- Anything it cannot account for raises. It used to scan for `col = value`
@@ -318,6 +362,29 @@ local function parseConditions(clause, sql)
     if not clause then return conditions, 0 end
 
     for _, term in ipairs(andTerms(clause)) do
+        -- One parenthesised OR of conjunctions, as recordBailout's
+        -- `(bailout_queued_at IS NULL OR (bailout_queued_at = ? AND
+        -- bailout_paid_by = ?))`: each branch read as any WHERE is, its
+        -- values numbered after every `?` before it.
+        local inside = enclosed(term)
+        local alternatives = inside and orTerms(inside)
+        if alternatives then
+            local branches = {}
+            for _, alternative in ipairs(alternatives) do
+                local branch, bound = parseConditions(enclosed(alternative) or alternative, sql)
+                for _, condition in ipairs(branch) do
+                    if condition.subquery or condition.branches then
+                        error('mysql_exec: a subquery or a nested OR inside an OR is not '
+                            .. 'supported: ' .. tostring(sql))
+                    end
+                    if condition.index then condition.index = condition.index + index end
+                end
+                index = index + bound
+                branches[#branches + 1] = branch
+            end
+            conditions[#conditions + 1] = { branches = branches }
+            goto continue
+        end
         -- The OR in contractsInvolving is routed to its own handler; every
         -- other clause here is a conjunction, and treating an OR as one
         -- would silently narrow the result.
@@ -409,6 +476,7 @@ local function parseConditions(clause, sql)
         else
             error('mysql_exec: cannot read `' .. term .. '` in: ' .. tostring(sql))
         end
+        ::continue::
     end
 
     return conditions, index
@@ -581,10 +649,17 @@ local function update(sql, params)
     -- as an equality. Without these the row count comes back wrong, and the
     -- count is what callers act on.
     local requireSet, requireUnset = {}, {}
-    for column in whereClause:gmatch('([%w_]+) IS NOT NULL') do
+    -- Not inside a parenthesised OR, which parseConditions reads itself: a
+    -- `col IS NULL` there is one branch, not a condition on every row.
+    local outside = {}
+    for _, term in ipairs(andTerms(whereClause)) do
+        if not (enclosed(term) and orTerms(enclosed(term))) then outside[#outside + 1] = term end
+    end
+    local flatWhere = table.concat(outside, ' AND ')
+    for column in flatWhere:gmatch('([%w_]+) IS NOT NULL') do
         requireSet[#requireSet + 1] = column
     end
-    for column in whereClause:gmatch('([%w_]+) IS NULL') do
+    for column in flatWhere:gmatch('([%w_]+) IS NULL') do
         -- `IS NOT NULL` also matches here, so anything already required to be
         -- set is not also required to be unset.
         local alsoNotNull = false

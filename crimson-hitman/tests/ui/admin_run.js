@@ -1191,6 +1191,65 @@ async function main() {
     clean(app, 'a review resolved');
   })();
 
+  /* W137, W138: one left part-way and one not in the store yet. */
+  await (async function () {
+    const server = standardServer({
+      reviews: { ok: true, data: { items: [
+        { id: 'rv00000003', kind: 'bailout_refund_stranded', about: 'a buyout premium handed back reached nobody',
+          contract: 'ct00000003', parties: [{ role: 'payer', who: 'the target' }], amount: 5000, account: 'bank',
+          items: [], known: {}, now: { contract: 'cancelled' }, state: 'resolving',
+          resolution: { action: 'refund', cid: 'the target' }, resolved_by: 'console', created_at: NOW - 700 },
+        { id: 'rv00000004', kind: 'bailout_refund_stranded', about: 'a buyout premium handed back reached nobody',
+          contract: 'ct00000004', parties: [{ role: 'payer', who: 'the target' }], amount: 900, account: 'bank',
+          items: [], known: {}, now: {}, state: 'open', unwritten: true, created_at: NOW - 600 }
+      ] } },
+      resolve: { ok: true, message: 'Resolved: 1 line(s) given. It had been decided before a stop and was '
+        + 'finished as decided, not as asked now.', data: { detail: {} } }
+    });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('reviews');
+    await settled();
+    const resolving = app.byId('rv-rv00000003');
+    it('one left part-way says what was decided, with one button and no actions to choose', function () {
+      has(app.text(resolving), 'Being resolved: refund to the target by console');
+      eq(resolving.querySelectorAll('.seg-btn').length, 0, 'no Refund, Pay or Dismiss to pick');
+      falsy(app.text(resolving).indexOf('Resolved') !== -1 && app.text(resolving).indexOf('Being resolved') === -1,
+        'not labelled resolved');
+      eq(resolving.querySelectorAll('dt').filter(function (d) { return d.textContent === 'Resolved'; }).length, 0,
+        'no Resolved row');
+      truthy(app.button('Finish as decided', resolving));
+    });
+    const finish = app.button('Finish as decided', resolving);
+    app.click(finish);
+    await settled();
+    it('Finish as decided takes two clicks', function () {
+      eq(app.requests('resolve').length, 0);
+    });
+    app.click(finish);
+    await settled();
+    it('and sends the finish, with no other fields', function () {
+      eq(app.last('resolve').data, { id: 'rv00000003', action: 'finish' });
+    });
+
+    const unwritten = app.byId('rv-rv00000004');
+    it('one not in the store yet is drawn, every part of it off, saying why', function () {
+      has(app.text(unwritten), 'It can be resolved once the store has taken it, within a tick.');
+      eq(app.button('Refund it', unwritten).disabled, true);
+      unwritten.querySelectorAll('.seg-btn').forEach(function (b) { eq(b.disabled, true, b.textContent); });
+      eq(unwritten.querySelector('[data-bind="rv.rv00000004.amount"]').disabled, true);
+    });
+    const before = app.requests('resolve').length;
+    app.click(app.button('Refund it', unwritten));
+    app.click(app.button('Refund it', app.byId('rv-rv00000004')));
+    await settled();
+    it('and clicking it asks nothing', function () {
+      eq(app.requests('resolve').length, before);
+    });
+    clean(app, 'a review left part-way, and one not in the store');
+  })();
+
   /* ---- logs ---- */
   await (async function () {
     const app = boot(standardServer());

@@ -441,7 +441,9 @@ describe('a crash while a queued buyout is being settled', function()
 
             Env.advance(200)
             s.escrow.deliver = function() error('process killed') end
-            falsy(pcall(s.bailout.processQueue))
+            -- Each queued buyout settles in its own pcall (W043): the raise
+            -- stops this one, and the process dies here.
+            eq(s.bailout.processQueue(), 0, 'it stopped part-way')
 
             local main2, s2 = restart(mode, s)
             for _ = 1, 3 do Env.advance(20) main2.tick() end
@@ -482,7 +484,7 @@ describe('a crash after a queued buyout paid the premium', function()
 
             Env.advance(200)
             s.bailout.clearQueue = function() error('process killed') end
-            falsy(pcall(s.bailout.processQueue))
+            eq(s.bailout.processQueue(), 0, 'it stopped part-way')
 
             local main2, s2 = restart(mode, s)
             for _ = 1, 3 do Env.advance(20) main2.tick() end
@@ -1504,8 +1506,8 @@ describe('a crash part-way through accepting', function()
         truthy(c)
         local before = money(3)
         killAt(s, function(name, _, lines)
-            return name == 'writeEscrow' and type(lines) == 'table' and lines[1] ~= nil
-                and lines[1].portion == CH.PORTION.STAKE
+            return (name == 'writeEscrow' or name == 'insertEscrow') and type(lines) == 'table'
+                and lines[1] ~= nil and lines[1].portion == CH.PORTION.STAKE
         end)
         falsy(pcall(s.contracts.accept, f.hitman, c.id, false))
 
@@ -1740,8 +1742,8 @@ describe('a crash inside boot recovery itself', function()
         })
         local before = money(3)
         killAt(s, function(name, _, lines)
-            return name == 'writeEscrow' and type(lines) == 'table' and lines[1] ~= nil
-                and lines[1].portion == CH.PORTION.STAKE
+            return (name == 'writeEscrow' or name == 'insertEscrow') and type(lines) == 'table'
+                and lines[1] ~= nil and lines[1].portion == CH.PORTION.STAKE
         end)
         falsy(pcall(s.contracts.accept, f.hitman, c.id, false))
 
@@ -1949,7 +1951,7 @@ describe('a crash between taking a new contract\'s escrow and storing it', funct
         truthy(s.contracts.accept(f.hitman, live.id, false))
         local before, hitman = money(1), money(3)
         killAt(s, function(name, contractId)
-            return name == 'writeEscrow' and contractId ~= live.id
+            return (name == 'writeEscrow' or name == 'insertEscrow') and contractId ~= live.id
         end)
         -- On somebody else: one live contract per player on one target.
         Env.addPlayer({ source = 9, citizenid = 'TARGET02', license = 'license:t2',
@@ -2007,12 +2009,15 @@ describe('a crash between taking a new contract\'s escrow and storing it', funct
     it('mysql: dying while handing it back leaves it for staff, and it is paid once', function()
         local _, s, _, before = crashed('mysql')
 
-        -- The first boot dies once it has written whom the line is going to.
+        -- The first boot dies once it has written whom the line is going to
+        -- (the upsert that names it; the take's own insert, written again by
+        -- the server first, changes nothing).
         local realRun, dead = Exec.run, false
         Exec.run = function(sql, params)
             if dead then error('process dead', 0) end
             local out = realRun(sql, params)
-            if type(sql) == 'string' and sql:find('INSERT INTO crimson_escrow') then
+            if type(sql) == 'string' and sql:find('INSERT INTO crimson_escrow')
+                and sql:find('owed_to = VALUES', 1, true) then
                 dead = true
                 error('process killed', 0)
             end
@@ -2034,20 +2039,23 @@ describe('a crash between taking a new contract\'s escrow and storing it', funct
     end)
 
     --- Memory holds nothing across a restart, so the boot's sweep is run on
-    --- the same process. The store refuses the contract write and the read
-    --- after it, which is the one way a running server gets here.
+    --- the same process. The store takes the escrow and raises, and the read
+    --- after it raises too: a take nobody could confirm, which is how a
+    --- running server is left with escrow and no contract. (A contract whose
+    --- own row the store would not confirm is the server's to place.)
     local function refused(main, s, f, req)
-        local realWrite, realRead, down = s.storage.writeContract, s.storage.readContract, false
-        s.storage.writeContract = function()
+        local realInsert, realRead, down = s.storage.insertEscrow, s.storage.readEscrow, false
+        s.storage.insertEscrow = function(...)
+            realInsert(...)
             down = true
             error('mysql: connection lost', 0)
         end
-        s.storage.readContract = function(id)
-            if down then error('mysql: connection lost', 0) end
-            return realRead(id)
+        s.storage.readEscrow = function(...)
+            if down then down = false; error('mysql: connection lost', 0) end
+            return realRead(...)
         end
         falsy(pcall(s.contracts.create, f.creator, req))
-        s.storage.writeContract, s.storage.readContract = realWrite, realRead
+        s.storage.insertEscrow, s.storage.readEscrow = realInsert, realRead
     end
 
     it('memory: the sweep hands it back once, the weapon as it was', function()
@@ -2103,20 +2111,23 @@ describe('a crash between taking a new contract\'s escrow and storing it', funct
         eq(heldOn(s, c.id), '7000')
     end)
 
-    it('memory: the tick hands back the reward and the anonymity fee once the store answers', function()
+    it('memory: the tick hands back the reward once the store answers, and no fee was taken', function()
         local main, s = boot('memory')
         local f = fixture(s)
         Config.Anonymity.CreatorFee = 500
         local before = money(1)
         refused(main, s, f, { targetCid = 'TARGET01', reason = 'y', anonymous = true,
             reward = { baseline = { bank = 7000 } } })
-        eq(money(1), before - 7500, 'the fee and the reward were both taken')
+        eq(money(1), before - 7000, 'the reward was taken, and the fee is charged only once placed')
 
         main.tick()
         eq(money(1), before, 'not handed back while the server ran')
         main.tick()
         main.recover()
         eq(money(1), before, 'handed back a second time')
+        s.audit.flush()
+        eq(#s.storage.auditByAction('anonymity_fee', 10), 0,
+            'no fee charged for a contract that does not exist')
     end)
 
     --- Lines written before they said whose they were. Staff were told at
@@ -2590,7 +2601,7 @@ describe('a boot that dies while leaving a line for staff', function()
                 local _, s = boot(mode)
                 local f = fixture(s)
                 local before = money(1)
-                killAt(s, function(name) return name == 'writeEscrow' end)
+                killAt(s, function(name) return name == 'writeEscrow' or name == 'insertEscrow' end)
                 falsy(pcall(s.contracts.create, f.creator, {
                     targetCid = 'TARGET01', reason = 'y', reward = { baseline = { bank = 7000 } },
                 }))
@@ -2856,10 +2867,10 @@ describe('a buyout hand-back stranded part-way', function()
                 if prefix == 'owe' then return nil end
                 return realNext(prefix)
             end
-            local realQueue = s.storage.setBailoutQueue
-            s.storage.setBailoutQueue = function() error('the connection dropped', 0) end
+            local realRecord = s.storage.recordBailout
+            s.storage.recordBailout = function() error('the connection dropped', 0) end
             local ran = pcall(s.bailout.buy, f.target, c.id)
-            s.storage.setBailoutQueue = realQueue
+            s.storage.recordBailout = realRecord
             p.Functions.AddMoney = real
             falsy(ran, 'the record would not write')
             eq(money(2), before - 15000 + 6000, 'part of it back')
@@ -3373,17 +3384,25 @@ describe('a never-placed contract handed back while a staff return gives it', fu
             local _, s = boot(mode)
             local f = fixture(s)
             local before = money(1)
-            local writeContract, readContract = s.storage.writeContract, s.storage.readContract
+            -- A take the store landed and would not confirm: its lines are
+            -- those of a contract never placed. (A contract whose own row
+            -- went unconfirmed is the server's to place, and its escrow is
+            -- held for it meanwhile.)
+            local insertEscrow, readEscrow = s.storage.insertEscrow, s.storage.readEscrow
             local armed = false
-            s.storage.writeContract = function() armed = true; error('connection lost', 0) end
-            s.storage.readContract = function(...)
+            s.storage.insertEscrow = function(...)
+                insertEscrow(...)
+                armed = true
+                error('connection lost', 0)
+            end
+            s.storage.readEscrow = function(...)
                 if armed then armed = false; error('connection lost', 0) end
-                return readContract(...)
+                return readEscrow(...)
             end
             falsy(pcall(s.contracts.create, f.creator, {
                 targetCid = 'TARGET01', reason = 'y', reward = { baseline = { bank = 7000 } },
             }))
-            s.storage.writeContract, s.storage.readContract = writeContract, readContract
+            s.storage.insertEscrow, s.storage.readEscrow = insertEscrow, readEscrow
             eq(money(1), before - 7000, 'taken')
             local line = s.storage.orphanEscrow()[1]
             truthy(line, 'held for a contract never placed')
@@ -4357,9 +4376,13 @@ describe('a staff settle of a line of a contract still being placed', function()
                                 if seen == n then coroutine.yield(name) end
                             end
                             -- Up to the row's write, not what it calls itself.
-                            if mine and name == 'writeContract' then written = true end
+                            if mine and (name == 'writeContract' or name == 'insertContract') then
+                                written = true
+                            end
                             local out = table.pack(fn(...))
-                            if mine and name == 'writeEscrow' then taken = true end
+                            if mine and (name == 'writeEscrow' or name == 'insertEscrow') then
+                                taken = true
+                            end
                             return table.unpack(out, 1, out.n)
                         end
                     end
@@ -4542,5 +4565,206 @@ describe('an abandon the process died in', function()
         eq(s2.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'back on the board')
         eq(money(1) - client, 2000, 'the walked-away stake is the client\'s')
         eq(Env.players[3].PlayerData.money.bank, 48000, 'and not the walker\'s')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- A payment's recording write that never reached the database (S12)
+--------------------------------------------------------------------------
+
+--- The process dies before the statement that records money just taken is
+--- sent: the 'pre' phase of the restart probe, -8,500, -1,000, -12,000,
+--- -3,000 and -1,000 with no record before. The item the write would have
+--- opened is kept on this machine first (Review.prepare, resource KVP), and
+--- the next start settles it before recovery runs.
+describe('a payment\'s recording write that never went out, then a restart', function()
+    local function total()
+        local sum = 0
+        for _, src in ipairs({ 1, 2, 3 }) do sum = sum + money(src) end
+        return sum
+    end
+
+    --- Escrow the store holds and nobody has been paid yet.
+    local function held(s)
+        local sum = 0
+        for _, line in ipairs(s.storage.unsettledEscrow() or {}) do
+            if CH.MONEY_SOURCES[line.source] and line.source ~= CH.SOURCE.DIRTY then
+                sum = sum + (tonumber(line.amount) or 0)
+            end
+        end
+        return sum
+    end
+
+    local function placed(s, f, extra)
+        local req = { targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                      reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000 }
+        for k, v in pairs(extra or {}) do req[k] = v end
+        local c = s.contracts.create(f.creator, req)
+        truthy(c)
+        return c
+    end
+
+    local function takes(name, _, lines) return name == 'insertEscrow' and type(lines) == 'table' end
+    local function records(name) return name == 'recordBailout' end
+
+    local cases = {
+        { name = 'a create\'s escrow (one transaction)', setup = function() end, kill = takes,
+          run = function(s, f)
+              return s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+                  reward = { baseline = { cash = 5000, bank = 3500 } } })
+          end },
+        { name = 'an acceptance\'s stake', kill = takes,
+          setup = function(s, f) return placed(s, f, { penaltyAmount = 1000 }) end,
+          run = function(s, f, c) return s.contracts.accept(f.hitman, c.id, false) end },
+        { name = 'a queued buyout\'s record', kill = records,
+          setup = function(s, f)
+              local c = placed(s, f)
+              truthy(s.contracts.accept(f.hitman, c.id, false))
+              return c
+          end,
+          run = function(s, f, c) return s.bailout.buy(f.target, c.id) end },
+        { name = 'an instant buyout\'s record', kill = records,
+          setup = function(s, f) return placed(s, f) end,
+          run = function(s, f, c) return s.bailout.buy(f.target, c.id) end },
+        { name = 'a top-up', kill = takes,
+          setup = function(s, f) return placed(s, f) end,
+          run = function(s, f, c) return s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 3000 } }) end },
+        { name = 'a bonus raise', kill = takes,
+          setup = function(s, f) return placed(s, f, { bonusPercent = 10 }) end,
+          run = function(s, f, c)
+              return s.amendments.improve(f.creator, c.id, CH.AMENDMENT.RAISE_BONUS, { percent = 30 })
+          end },
+    }
+
+    for _, case in ipairs(cases) do
+        it('mysql: ' .. case.name .. ' is settled by the next start, and nothing is lost', function()
+            local _, s = boot('mysql')
+            local f = fixture(s)
+            Env.players[2].PlayerData.money.bank = 100000
+            local c = case.setup(s, f)
+            local players = total()
+            local before = players + held(s)
+            killBefore(s.storage, 1, case.kill)
+            pcall(case.run, s, f, c)
+            truthy(total() < players, 'charged, with nothing recorded for it')
+
+            local main2, s2 = restart('mysql', s)
+            Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
+            main2.tick()
+            eq(total() + held(s2), before, 'money conserved across the restart')
+            for _, item in ipairs(s2.storage.reviewItems(true, 10)) do
+                falsy(item.known and item.known.decide, 'left undecided: ' .. tostring(item.kind))
+            end
+        end)
+    end
+
+    --- Nothing after the write runs at all here: the await never answers (a
+    --- database gone mid-run, OXMYSQL.md §6) and staff restart the resource.
+    --- Only the record kept before the write was sent says what was taken.
+    it('mysql: a create whose escrow write never answers is settled by the next start', function()
+        local _, s = boot('mysql')
+        local f = fixture(s)
+        local before = money(1)
+        local realInsert = s.storage.insertEscrow
+        s.storage.insertEscrow = function(...)
+            Exec.down = true
+            return realInsert(...)
+        end
+        local creating = Env.spawn(function()
+            return s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+                reward = { baseline = { bank = 5000 } } })
+        end)
+        falsy(creating.done, 'parked on a database that does not answer')
+        eq(money(1), before - 5000, 'charged')
+        Exec.down = false
+        restart('mysql', s)
+        eq(money(1), before, 'handed back from the record kept before the write')
+    end)
+
+    --- W152: the anonymity fee is charged once the contract is placed.
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': an anonymous create cut off before its contract is written costs nothing', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            Config.Anonymity.CreatorFee = 500
+            local before = money(1)
+            killBefore(s.storage, 1, takes)
+            falsy(pcall(s.contracts.create, f.creator, { targetCid = 'TARGET01', reason = 'x',
+                anonymous = true, reward = { baseline = { bank = 7000 } } }))
+            eq(money(1), before - 7000, 'the reward taken, and no fee before the contract exists')
+            local main2 = restart(mode, s)
+            main2.tick()
+            eq(money(1), before, 'the reward back, and no fee lost')
+        end)
+
+        it(mode .. ': one cut off after it is placed is placed, and its fee taken once (pin)', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            Config.Anonymity.CreatorFee = 500
+            local before = money(1)
+            s.progression.onContractPlaced = function() error('process killed', 0) end
+            falsy(pcall(s.contracts.create, f.creator, { targetCid = 'TARGET01', reason = 'x',
+                anonymous = true, reward = { baseline = { bank = 7000 } } }))
+            local main2, s2 = restart(mode, s)
+            main2.tick()
+            eq(money(1), before - 7500, 'the reward held and the fee taken, once')
+            local live = s2.storage.contractsBy(f.creator.cid)
+            eq(#live, 1, 'placed')
+            eq(live[1].state, CH.STATE.ACTIVE)
+            eq(#s2.storage.reviewItems(true, 10), 0, 'nothing for staff')
+        end)
+    end
+end)
+
+--- W155: a review item is the only record of money no rule could settle,
+--- and a start in another mode began with an empty queue.
+describe('changing storage mode with money waiting for staff', function()
+    local function waiting(s)
+        return s.review.open({ kind = 'bailout_unrecorded', contract_id = 'ct00000077',
+            cids = { payer = 'TARGET01' }, amount = 25000, account = 'bank' })
+    end
+
+    it('json to mysql: refuses while the json store has an open review item, and names it', function()
+        local _, s = boot('json')
+        fixture(s)
+        local id = waiting(s)
+        Exec.install(Natives)
+        local ok, err = pcall(restart, 'mysql', s)
+        falsy(ok, 'the new mode\'s queue would start without it')
+        truthy(tostring(err):find('1 review item(s) waiting for staff', 1, true), tostring(err))
+        truthy(tostring(err):find(id, 1, true), 'named: ' .. tostring(err))
+        truthy(tostring(err):find('25000 bank', 1, true), 'with its money: ' .. tostring(err))
+    end)
+
+    it('mysql to json: refuses while crimson_review has an open item', function()
+        local _, s = boot('mysql')
+        fixture(s)
+        local id = waiting(s)
+        Natives.resourceStates['oxmysql'] = 'started'
+        local ok, err = pcall(restart, 'json', s)
+        falsy(ok)
+        truthy(tostring(err):find('mysql mode: 1 review item(s) waiting for staff', 1, true), tostring(err))
+        truthy(tostring(err):find(id, 1, true), tostring(err))
+    end)
+
+    it('a payment kept on this machine for mysql mode refuses a json start, and the switch leaves it', function()
+        local _, s = boot('mysql')
+        fixture(s)
+        local kept = s.review.prepare({ kind = 'bailout_unrecorded', contract_id = 'ct00000078',
+            cids = { payer = 'TARGET01' }, amount = 9000, account = 'bank',
+            known = { decide = true, fields = { bailout_queued_at = 1, bailout_paid_by = 'TARGET01',
+                bailout_paid_amount = 9000, bailout_paid_account = 'bank' } } })
+        local key = 'reviewKept:mysql:' .. kept.id
+        truthy(GetResourceKvpString(key), 'kept on this machine')
+        Natives.resourceStates['oxmysql'] = nil
+        local ok, err = pcall(restart, 'json', s)
+        falsy(ok, 'a start in json mode would carry it nowhere')
+        truthy(tostring(err):find('1 payment(s) kept on this machine for mysql mode', 1, true), tostring(err))
+        truthy(tostring(err):find(kept.id, 1, true), tostring(err))
+
+        Config.Database.AllowModeSwitch = true
+        local started = pcall(restart, 'json', s)
+        truthy(started, 'AllowModeSwitch starts it')
+        truthy(GetResourceKvpString(key), 'and leaves the key for mysql mode')
     end)
 end)

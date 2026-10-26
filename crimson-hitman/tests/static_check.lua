@@ -729,6 +729,10 @@ do
             .. 'ever reads one contract worth, through auditForContract',
         ['JsonStore.readAudit']        = 'the same, on the json backend',
         ['MySQLStore.readAudit']       = 'the same, on the mysql backend',
+        ['MySQLStore.writeContract']   = 'the contract upsert every backend has: a create '
+            .. 'writes its row through insertContract, which memory and json build on '
+            .. 'writeContract, and the conformance suite writes a contract back through it '
+            .. 'on all three',
         -- Client and shared.
         ['App.forgetRegistration']     = 'the client forgetting it registered the '
             .. 'app, so a test can watch the reconciler put it back',
@@ -1799,14 +1803,20 @@ do
         ['crimson_contracts.deadline_at']     = 'moves only through setDeadline and endPause',
         ['crimson_contracts.paused_ms']       = 'moves only through endPause',
         ['crimson_contracts.paused_since']    = 'moves only through startPause and endPause',
-        -- The buyout queue. Moves only through setBailoutQueue, because a
+        -- The buyout queue. Moves only through setBailoutQueue and the two
+        -- compare-and-sets beside it (recordBailout, clearBailout), because a
         -- caller writing back a copy it read before a buyout was paid used to
         -- erase the buyout: premium charged, nothing left to settle it.
-        ['crimson_contracts.bailout_queued_at']    = 'moves only through setBailoutQueue',
-        ['crimson_contracts.bailout_paid_by']      = 'moves only through setBailoutQueue',
-        ['crimson_contracts.bailout_paid_amount']  = 'moves only through setBailoutQueue',
-        ['crimson_contracts.bailout_paid_account'] = 'moves only through setBailoutQueue',
-        ['crimson_contracts.bailout_attempts']     = 'moves only through setBailoutQueue',
+        ['crimson_contracts.bailout_queued_at']    = 'moves only through setBailoutQueue, recordBailout '
+            .. 'and clearBailout',
+        ['crimson_contracts.bailout_paid_by']      = 'moves only through setBailoutQueue, recordBailout '
+            .. 'and clearBailout',
+        ['crimson_contracts.bailout_paid_amount']  = 'moves only through setBailoutQueue, recordBailout '
+            .. 'and clearBailout',
+        ['crimson_contracts.bailout_paid_account'] = 'moves only through setBailoutQueue, recordBailout '
+            .. 'and clearBailout',
+        ['crimson_contracts.bailout_attempts']     = 'moves only through setBailoutQueue, recordBailout '
+            .. 'and clearBailout',
         ['crimson_contracts.state']           = 'moves only through compareSetContractState, which '
             .. 'is guarded; writing it from a caller-held copy could resurrect a contract that '
             .. 'closed while the caller was reading',
@@ -1867,15 +1877,26 @@ do
         ['crimson_review.resolved_at']        = 'moves only through setReviewState',
     }
 
-    local sql = read('crimson-hitman/server/storage/mysql.lua')
-    if sql then
-        local seen = {}
+    --- What the rule finds in a source's statements: the findings, and every
+    --- column some statement inserts.
+    ---
+    --- A statement whose update clause is `id = id` changes nothing: it is an
+    --- insert that leaves a row already there alone (writeReview, and the
+    --- insert-if-absent writes a take and a create make, insertEscrow and
+    --- insertContract), and nothing it inserts is written again by it, so it
+    --- needs no IMMUTABLE entry. One that updates a column still lists every
+    --- other.
+    ---@return string[] found
+    ---@return table<string, boolean> seen
+    local function upsertFindings(sql, immutable)
+        local found, seen = {}, {}
         for statement in sql:gmatch('INSERT%s+INTO.-%]%]') do
             local table_ = statement:match('INSERT%s+INTO%s+([%w_]+)')
             local update = statement:match('ON DUPLICATE KEY UPDATE(.*)$')
             if table_ and update then
                 -- Comments inside the clause carry column names in prose.
                 update = update:gsub('%-%-[^\n]*', '')
+                local insertOnly = update:gsub('%]%]$', ''):match('^%s*id%s*=%s*id%s*$') ~= nil
 
                 local updated = {}
                 for name in update:gmatch('([%w_]+)%s*=') do updated[name] = true end
@@ -1884,20 +1905,45 @@ do
                 for name in (columns or ''):gmatch('[%w_]+') do
                     local key = table_ .. '.' .. name
                     seen[key] = true
-                    if not updated[name] and not IMMUTABLE[key] then
-                        failures[#failures + 1] = ('%s is inserted and then left out of the '
+                    if insertOnly then
+                        -- Nothing to discard: it writes a row once or not at all.
+                    elseif not updated[name] and not immutable[key] then
+                        found[#found + 1] = ('%s is inserted and then left out of the '
                             .. 'ON DUPLICATE KEY UPDATE list, so every write to it after the '
                             .. 'first is discarded on the backend that ships by default — '
                             .. 'silently, and only there. Add it to the update list, or to '
                             .. 'IMMUTABLE in static_check with the reason it never changes.')
                             :format(key)
-                    elseif updated[name] and IMMUTABLE[key] then
-                        failures[#failures + 1] = ('%s is named as deliberately immutable and '
+                    elseif updated[name] and immutable[key] then
+                        found[#found + 1] = ('%s is named as deliberately immutable and '
                             .. 'the statement updates it. One of the two is wrong.'):format(key)
                     end
                 end
             end
         end
+        return found, seen
+    end
+
+    -- The rule checked on its own samples first, so a clean run of it
+    -- means something: an insert-only statement with a column nobody
+    -- listed finds nothing, and an upsert that updates one column and
+    -- leaves another unlisted still finds that one.
+    local sample = table.concat({
+        'local A = [[\n    INSERT INTO crimson_x (id, a) VALUES (?,?)\n',
+        '    ON DUPLICATE KEY UPDATE id = id\n]]\n',
+        'local B = [[\n    INSERT INTO crimson_y (id, a, b) VALUES (?,?,?)\n',
+        '    ON DUPLICATE KEY UPDATE a = VALUES(a)\n]]\n',
+    })
+    local probe = upsertFindings(sample, { ['crimson_y.id'] = 'the key' })
+    if #probe ~= 1 or not probe[1]:find('crimson_y.b', 1, true) then
+        failures[#failures + 1] = ('the upsert column rule found %d thing(s) in its own sample, '
+            .. 'not the one unlisted column of the upsert: %s'):format(#probe, table.concat(probe, '; '))
+    end
+
+    local sql = read('crimson-hitman/server/storage/mysql.lua')
+    if sql then
+        local found, seen = upsertFindings(sql, IMMUTABLE)
+        for _, line in ipairs(found) do failures[#failures + 1] = line end
 
         for key in pairs(IMMUTABLE) do
             if not seen[key] then

@@ -1390,6 +1390,29 @@ describe('the panel\'s own dead ends', function()
         eq(#ask(6, 'stuck').data.lines, 0)
     end)
 
+    --- W138: an item the store has not taken yet was listed with a working
+    --- form, and resolving it answered that no item had that id.
+    it('an item not in the store yet answers that it can be resolved once it is', function()
+        local s = stack()
+        local real = s.storage.writeReview
+        s.storage.writeReview = function() error('connection lost', 0) end
+        local id = s.review.open({ kind = 'bailout_refund_stranded', contract_id = 'ct00000001',
+            cids = { payer = 'TARGET01' }, amount = 5000, account = 'bank' })
+        s.storage.writeReview = real
+        local listed = ask(6, 'reviews', {}).data.items
+        eq(#listed, 1)
+        truthy(listed[1].unwritten)
+        local before = money(2)
+        local reply = ask(6, 'resolve', { id = id, action = 'refund', who = 'payer', amount = 5000 })
+        eq(reply.ok, false)
+        eq(reply.err, 'unwritten')
+        eq(reply.message, 'It can be resolved once the store has taken it, within a tick. Nothing was given.')
+        eq(money(2), before)
+        s.review.retryUnwritten()
+        eq(ask(6, 'resolve', { id = id, action = 'refund', who = 'payer', amount = 5000 }).ok, true,
+            'and resolves once the store has it')
+    end)
+
     --- W139: a write that raised skipped the flush and the cache drop, and
     --- its row named no contract.
     it('a write that raises is on the record at once, with what it was about', function()

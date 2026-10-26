@@ -61,6 +61,10 @@ local inFlight = {}  -- { [lineId] = count }
 --- behind it.
 local claiming = {}  -- { [contractId] = count }
 
+--- The review item each take that could not be confirmed opened in this
+--- process, by contract (Escrow.unverifiedReview).
+local unverified = {}  -- { [contractId] = reviewId }
+
 --- The ox_inventory items that are a money account, by name; read once per
 --- start (accountItem).
 local accountItems = nil
@@ -74,6 +78,7 @@ function Escrow.init(storage, audit, review)
     wakes = {}
     inFlight = {}
     claiming = {}
+    unverified = {}
     accountItems = nil
 end
 
@@ -917,13 +922,38 @@ takeUnlocked = function(actor, contractId, lines)
         taken[#taken + 1] = line
     end
 
+    -- The item this take's failure would leave for staff, made now that the
+    -- money is taken and before the write that records it (S12): on mysql it
+    -- is kept on this machine at once, so a restart while the write waits
+    -- still has it, and the next start hands every line back as the server
+    -- settles it (Review.recoverSystem, the escrow_take_unverified decider).
+    -- Nothing yields between the charge above and here. It carries every
+    -- line whole (`known.lines`), which is what that decider writes again.
+    local pending
+    if Review and Review.prepare then
+        local listed = {}
+        for i = 1, #records do
+            listed[i] = forReview(records[i])
+            listed[i].metadata = nil
+        end
+        pending = Review.prepare({
+            kind = 'escrow_take_unverified', contract_id = contractId,
+            cids = { from = actor.cid }, items = listed,
+            known = { decide = true, lines = Util.copy(records), from = actor.cid },
+        })
+    end
+
     -- A write that failed may or may not have landed — a connection can drop
     -- after the commit, which a single statement reports by raising and a
     -- transaction by answering false — so it is not refunded blind: that
     -- paid the creator back and left the lines to be returned to them a
     -- second time. What the store holds decides, below. One that raised with
     -- nothing stored used to keep the creator's money with nothing held for it.
-    local wrote, ok = pcall(Storage.writeEscrow, contractId, records)
+    --
+    -- Insert-if-absent: the ids are new, so this stores what an upsert
+    -- would, and the same lines written again by the server, or this write
+    -- landing late, leave a line already there exactly as it is.
+    local wrote, ok = pcall(Storage.insertEscrow, contractId, records)
     if not wrote or not ok then
         Audit.rejected('escrow_write_failed', actor.cid, contractId,
             { error = not wrote and tostring(ok) or nil })
@@ -933,9 +963,9 @@ takeUnlocked = function(actor, contractId, lines)
             -- write is refusing the read too. Refunded blind, a copy that
             -- did land is paid back a second time (above; a stake by
             -- Contracts.recoverJoining), so the raise goes on to the caller
-            -- as before — but no longer with nothing to say what was taken.
-            -- The row names every line, so staff can return one the store
-            -- does not have.
+            -- as before, and the item prepared above is left: the server
+            -- writes the lines again once the store answers and hands each
+            -- back from what the store then holds (never on its absence).
             local charged = {}
             for i = 1, #records do
                 local r = records[i]
@@ -944,12 +974,10 @@ takeUnlocked = function(actor, contractId, lines)
             end
             Audit.financial('escrow_take_unverified', actor.cid, contractId,
                 { lines = charged, error = tostring(rows) })
-            local taken = {}
-            for i = 1, #records do taken[i] = forReview(records[i]) end
-            leaveForStaff({
-                kind = 'escrow_take_unverified', contract_id = contractId,
-                cids = { from = actor.cid }, items = taken, known = { error = tostring(rows) },
-            })
+            if pending then
+                pending.known.error = tostring(rows)
+                unverified[contractId] = Review.open(pending)
+            end
             error(rows, 0)
         end
         local present = {}
@@ -958,10 +986,14 @@ takeUnlocked = function(actor, contractId, lines)
         for i = 1, #records do
             if present[records[i].id] then any = true end
         end
+        if pending then Review.discard(pending) end
         if not any then
             rollback()
             return false, CH.ERR.BAD_STATE
         end
+    else
+        -- Answered: nothing left to keep, and before the read-back's await.
+        if pending then Review.discard(pending) end
     end
 
     -- Read back what was written. Ids are allocated from the lines the
@@ -1552,6 +1584,37 @@ end
 ---@return boolean
 function Escrow.claimRunning(contractId)
     return contractId ~= nil and claiming[contractId] ~= nil
+end
+
+--- Count a contract as claimed for as long as the server may still place
+--- it: a contract_unrecorded review item the server settles itself
+--- (server/review.lua) holds one count until it is decided or dismissed.
+--- Every gate on claimRunning (returnNeverPlaced, recoverNeverPlaced,
+--- finishEndings, /ch-settle refusing as locked) then leaves its lines
+--- alone, as during a create: handed back at boot, the server then placed a
+--- contract holding nothing.
+---@param contractId string
+function Escrow.holdClaim(contractId)
+    if not contractId then return end
+    claiming[contractId] = (claiming[contractId] or 0) + 1
+end
+
+--- Let go of one count Escrow.holdClaim took.
+---@param contractId string
+function Escrow.letClaim(contractId)
+    if not contractId or not claiming[contractId] then return end
+    local n = claiming[contractId] - 1
+    claiming[contractId] = n > 0 and n or nil
+end
+
+--- The id of the review item the last take on a contract opened when the
+--- store would not confirm its write, in this process (W130): the create it
+--- belonged to closes it once every line it names is in the store
+--- (Contracts.retryStuckCreates).
+---@param contractId string
+---@return string|nil reviewId
+function Escrow.unverifiedReview(contractId)
+    return contractId and unverified[contractId] or nil
 end
 
 --- Do now what the next start would do (Recover) to a line `releasing` that

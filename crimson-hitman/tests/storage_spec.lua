@@ -2810,6 +2810,11 @@ describe('every mysql statement is executable', function()
             function() m.setAdvised('c1', { advised_posted_at = 1 }) end,
             function() m.setAdvised('c1', { advised_hitmen = 2 }) end,
             function() m.writeEscrow('c1', { { id='c1:1', contract_id='c1', slot=1, portion='baseline', source='cash', amount=100, state='held' } }) end,
+            function() m.insertEscrow('c1', { { id='c1:1', contract_id='c1', slot=1, portion='baseline', source='cash', amount=100, state='held' } }) end,
+            function() m.insertEscrow('c1', { { id='c1:8', contract_id='c1', slot=1, portion='baseline', source='cash', amount=1, state='held' }, { id='c1:9', contract_id='c1', slot=1, portion='baseline', source='cash', amount=1, state='held' } }) end,
+            function() m.insertContract({ id='c1', creator_cid='A', target_cid='B', mode='exclusive', state='active', created_at=1 }) end,
+            function() m.recordBailout('c1', { bailout_queued_at=5, bailout_paid_by='B', bailout_paid_amount=10, bailout_paid_account='bank' }) end,
+            function() m.clearBailout('c1', 5) end,
             function() m.readEscrow('c1') end,
             function() m.readEscrowLine('c1:1') end,
             function() m.orphanEscrow() end,
@@ -3014,6 +3019,74 @@ describe('rewriting a contract', function()
                 eq(read[key], value, ('%s: %s was discarded on rewrite'):format(
                     b.name, key))
             end
+        end
+    end)
+end)
+
+--- S12: the writes a take and a create make, and a buyout's record, are
+--- written again by the server when the first went unanswered, and the
+--- first may still land after it. Each leaves what is already there alone.
+describe('insert-if-absent writes and the buyout compare-and-sets, in every backend', function()
+    it('insertContract leaves a contract already there exactly as it was', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ctins01'))
+            local changed = b.store.readContract('ctins01')
+            changed.penalty_amount, changed.resolution = 777, 'withdrawn'
+            b.store.writeContract(changed)
+            truthy(b.store.insertContract(contractFixture('ctins01')), b.name)
+            local read = b.store.readContract('ctins01')
+            eq(read.penalty_amount, 777, b.name .. ': the creation copy put the old penalty back')
+            eq(read.resolution, 'withdrawn', b.name)
+            truthy(b.store.insertContract(contractFixture('ctins02')), b.name)
+            truthy(b.store.readContract('ctins02'), b.name .. ': a new one is stored')
+        end
+    end)
+
+    it('insertEscrow leaves a line already there exactly as it was, and adds the new ones', function()
+        for _, b in ipairs(backends()) do
+            local function line(id)
+                return { id = id, contract_id = 'ctins03', slot = 1, portion = CH.PORTION.BASELINE,
+                         source = 'cash', amount = 100, state = CH.ESCROW_STATE.HELD,
+                         taken_from = 'CREATOR1' }
+            end
+            b.store.writeContract(contractFixture('ctins03'))
+            b.store.writeEscrow('ctins03', { line('ctins03:1') })
+            local moved = b.store.readEscrowLine('ctins03:1')
+            moved.owed_to, moved.releasing_to = 'HITMAN01', 'HITMAN01'
+            b.store.writeEscrow('ctins03', { moved })
+            truthy(b.store.claimEscrowLine('ctins03:1', CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+
+            truthy(b.store.insertEscrow('ctins03', { line('ctins03:1'), line('ctins03:2') }), b.name)
+            local read = b.store.readEscrowLine('ctins03:1')
+            eq(read.owed_to, 'HITMAN01', b.name .. ': whom it was owed to, wiped by the copy')
+            eq(read.releasing_to, 'HITMAN01', b.name .. ': whom it was going to, wiped by the copy')
+            eq(read.state, CH.ESCROW_STATE.RELEASING, b.name)
+            eq(#b.store.readEscrow('ctins03'), 2, b.name .. ': the new line is stored')
+        end
+    end)
+
+    it('recordBailout records a buyout, again as itself, and never over another or a closed contract', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ctbuy01'))
+            local ours = { bailout_queued_at = 100, bailout_paid_by = 'TARGET01',
+                           bailout_paid_amount = 5000, bailout_paid_account = 'bank' }
+            truthy(b.store.recordBailout('ctbuy01', ours), b.name .. ': recorded')
+            truthy(b.store.recordBailout('ctbuy01', ours), b.name .. ': already ours is recorded')
+            falsy(b.store.recordBailout('ctbuy01', { bailout_queued_at = 200, bailout_paid_by = 'TARGET01',
+                bailout_paid_amount = 9000, bailout_paid_account = 'cash' }), b.name .. ': a second one')
+            local read = b.store.readContract('ctbuy01')
+            eq(read.bailout_queued_at, 100, b.name)
+            eq(read.bailout_paid_amount, 5000, b.name)
+
+            falsy(b.store.clearBailout('ctbuy01', 200), b.name .. ': a clear for another buyout')
+            eq(b.store.readContract('ctbuy01').bailout_queued_at, 100, b.name .. ': cleared the wrong one')
+            truthy(b.store.clearBailout('ctbuy01', 100), b.name)
+            eq(b.store.readContract('ctbuy01').bailout_queued_at, nil, b.name)
+            falsy(b.store.clearBailout('ctbuy01', 100), b.name .. ': nothing left to clear')
+
+            truthy(b.store.compareSetContractState('ctbuy01', CH.STATE.ACTIVE, CH.STATE.CANCELLED))
+            falsy(b.store.recordBailout('ctbuy01', ours), b.name .. ': a closed contract')
+            eq(b.store.readContract('ctbuy01').bailout_queued_at, nil, b.name)
         end
     end)
 end)

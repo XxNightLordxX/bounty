@@ -1352,6 +1352,7 @@
         return { value: String(p.role), label: String(p.role) + ' · ' + String(p.who || '—') };
       });
     },
+    disabled: function (id) { return unwrittenItem(id); },
     value: function (id) {
       var chosen = S.forms['rv.' + id + '.who'];
       if (chosen) return chosen;
@@ -1365,6 +1366,7 @@
     options: function () {
       return [{ value: 'cash', label: 'cash' }, { value: 'bank', label: 'bank' }, { value: 'dirty', label: 'dirty money' }];
     },
+    disabled: function (id) { return unwrittenItem(id); },
     value: function (id) {
       return S.forms['rv.' + id + '.account'] || ((reviewItem(id) || {}).account) || 'bank';
     },
@@ -1374,6 +1376,11 @@
   function reviewItem(id) {
     return asList(S.reviews.items).filter(function (item) { return String(item.id) === String(id); })[0];
   }
+
+  /** Listed, and not in the store yet: resolving it then answers that the
+      store has not taken it, so its form is drawn and cannot be used. */
+  var UNWRITTEN_WHY = 'It can be resolved once the store has taken it, within a tick.';
+  function unwrittenItem(id) { return !!((reviewItem(id) || {}).unwritten); }
 
   /** The fresh list, with each item resolved here that it no longer lists
       kept where it was, marked resolved, so its answer stays in its card. */
@@ -1423,28 +1430,53 @@
     var hasGoods = asList(item.items).length > 0;
     var goods = S.forms['rv.' + id + '.goods'] === 'yes';
     var parties = asList(item.parties);
+    /* Not in the store yet (W138): drawn so staff see what it will take,
+       every part of it off, saying why. */
+    var off = item.unwritten === true;
+    var why = off ? UNWRITTEN_WHY : null;
     var fields;
     if (action === 'dismiss') {
       fields = field('rv.' + id + '.note', { class: 'is-grow', placeholder: 'Why (a note is required)',
-        maxlength: '200', 'aria-label': 'Note' });
+        maxlength: '200', 'aria-label': 'Note', disabled: off });
     } else if (action === 'pay') {
       fields = parties.length ? dropdown('rv-who:' + id) : h('p.note', 'The item names nobody to pay.');
     } else {
       fields = frag(parties.length ? dropdown('rv-who:' + id) : null,
-        hasGoods ? segmented('rv-goods', [{ value: 'no', label: 'An amount' },
-          { value: 'yes', label: 'Every item and weapon' }], goods ? 'yes' : 'no', { 'data-id': id }) : null,
+        hasGoods ? segmented('rv-goods', [{ value: 'no', label: 'An amount', disabled: off, title: why },
+          { value: 'yes', label: 'Every item and weapon', disabled: off, title: why }],
+          goods ? 'yes' : 'no', { 'data-id': id }) : null,
         goods ? null : field('rv.' + id + '.amount', { class: 'is-short', placeholder: 'Amount',
-          inputmode: 'numeric', 'aria-label': 'Amount' }),
+          inputmode: 'numeric', 'aria-label': 'Amount', disabled: off }),
         goods ? null : dropdown('rv-account:' + id));
     }
     var verbs = { refund: ['Refund it', 'Click again to refund'], pay: ['Pay it', 'Click again to pay'],
                   dismiss: ['Dismiss it', 'Click again to dismiss'] };
-    return h('div.rv-form',
-      segmented('rv-action', [{ value: 'refund', label: 'Refund' }, { value: 'pay', label: 'Pay' },
-        { value: 'dismiss', label: 'Dismiss' }], action, { 'data-id': id }),
+    return h('div.rv-form' + (off ? '.is-off' : ''),
+      off ? h('p.note', UNWRITTEN_WHY) : null,
+      segmented('rv-action', [{ value: 'refund', label: 'Refund', disabled: off, title: why },
+        { value: 'pay', label: 'Pay', disabled: off, title: why },
+        { value: 'dismiss', label: 'Dismiss', disabled: off, title: why }], action, { 'data-id': id }),
       h('div.inline-form.is-wide', fields,
-        writeBtn(action === 'dismiss' ? '' : '.is-primary', 'resolve', { 'data-id': id },
+        writeBtn(action === 'dismiss' ? '' : '.is-primary', 'resolve',
+          { 'data-id': id, disabled: off, title: why },
           verbs[action][0], verbs[action][1], action === 'dismiss' ? 'xmark' : 'hand-holding-dollar')));
+  }
+
+  /** An item a resolution stopped part-way through (W137): its decision is
+      on it and is the only thing that can finish it, so there is one button,
+      and no action to choose that would be carried out as another. */
+  function finishForm(item) {
+    var id = String(item.id);
+    return h('div.rv-form',
+      h('div.inline-form.is-wide',
+        writeBtn('.is-primary', 'resolve-finish', { 'data-id': id }, 'Finish as decided',
+          'Click again to finish', 'check')));
+  }
+
+  /** What a decision on an item says, in a line: what, to whom. */
+  function decisionText(resolution) {
+    var r = resolution || {};
+    return String(r.action || 'a decision') + (r.cid ? ' to ' + String(r.cid) : '');
   }
 
   function reviewList() {
@@ -1454,6 +1486,7 @@
     return frag(items.map(function (item) {
       var id = String(item.id);
       var open = item.state === 'open' || item.state === 'resolving';
+      var resolving = item.state === 'resolving';
       var now = item.now || {};
       var lines = now.lines;
       var answer = S.reviews.answers[id];
@@ -1463,6 +1496,12 @@
           h('span.sub', 'opened ' + when(item.created_at))),
         item.about ? h('p.about', String(item.about)) : null,
         item.unwritten ? h('p.note.is-warn', 'Not in the store yet: the server keeps it in memory until the store takes it.') : null,
+        item.settles && item.state === 'open' && !item.unwritten
+          ? h('p.note', 'The server settles this itself from its own record once the database answers. '
+            + 'Refund or Pay settles it the same way now; what is typed is not used.') : null,
+        resolving ? h('p.note.is-warn', 'Being resolved: ' + decisionText(item.resolution) + ' by '
+          + String(item.resolved_by || '—') + '. It stopped part-way, and Finish as decided carries out '
+          + 'that decision and nothing else.') : null,
         h('dl.facts',
           h('dt', 'Contract'), h('dd', item.contract ? h('button.link.mono', { type: 'button', 'data-act': 'contract',
             'data-id': String(item.contract) }, String(item.contract)) : '—'),
@@ -1477,10 +1516,10 @@
             now.contract ? 'contract ' + now.contract : 'contract unknown',
             now.buyout ? ' · buyout ' + now.buyout : '',
             lines ? ' · lines held ' + num(lines.held) + ', settled ' + num(lines.settled) + ', missing ' + num(lines.missing) : ''),
-          item.resolution ? h('dt', 'Resolved') : null,
-          item.resolution ? h('dd', detailText(item.resolution) + ' · by ' + String(item.resolved_by || '—')
+          item.resolution && !resolving ? h('dt', 'Resolved') : null,
+          item.resolution && !resolving ? h('dd', detailText(item.resolution) + ' · by ' + String(item.resolved_by || '—')
             + ' · ' + when(item.resolved_at)) : null),
-        open && canWrite() ? reviewForm(item) : null,
+        open && canWrite() ? (resolving ? finishForm(item) : reviewForm(item)) : null,
         answerBox(answer));
     }));
   }
@@ -2225,6 +2264,19 @@
     }
     if (!confirmed(node)) return;
     write('resolve', data, 'resolve:' + id, node).then(function (reply) {
+      if (!reply) return;
+      S.reviews.answers[id] = { ok: reply.ok === true, text: words(reply) };
+      toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (S.section === 'reviews') setHtml(byId('rv-list'), reviewList());
+      loadReviews(true);
+    });
+  };
+
+  ACTIONS['resolve-finish'] = function (node) {
+    var id = node.getAttribute('data-id');
+    if (!reviewItem(id)) return;
+    if (!confirmed(node)) return;
+    write('resolve', { id: id, action: 'finish' }, 'resolve:' + id, node).then(function (reply) {
       if (!reply) return;
       S.reviews.answers[id] = { ok: reply.ok === true, text: words(reply) };
       toast(words(reply), reply.ok ? 'ok' : 'error');

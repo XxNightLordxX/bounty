@@ -157,6 +157,10 @@ ConfigDefaults.Bonus = {
 --------------------------------------------------------------------------
 
 ConfigDefaults.Anonymity = {
+    --- Charged once the contract is placed, at the figure read when the
+    --- create began; a create that fails takes none. A creator who cannot
+    --- cover it on top of what the reward takes from FeeAccount is refused
+    --- before anything is taken.
     CreatorFee = 0,          -- flat fee, 0 = free
     HitmanFee  = 0,
     FeeAccount = 'bank',     -- 'cash' | 'bank'
@@ -222,6 +226,10 @@ ConfigDefaults.Bailout = {
     --- before giving up and refunding. A claim resolves within a tick or two,
     --- so this only matters when one was interrupted by a crash — and the
     --- target's premium is already spent, so it cannot wait forever.
+    --- Settling one that raises an error is counted the same way, and holds
+    --- up no other queued buyout; past this many it is refunded while its
+    --- contract is open, cleared where it bought the contract out and its
+    --- premium was paid, and otherwise left for staff (/ch-review).
     MaxSettleAttempts = 10,
 }
 
@@ -1004,10 +1012,12 @@ ConfigDefaults.Database = {
     --- Modes do not share data: a server switched from one to another
     --- starts with nothing in the new one. So it refuses to start while the
     --- mode it left still holds players' money — escrow not yet settled, or
-    --- payouts owed to somebody offline — and says where and how much: each
-    --- contract, what it holds and what clears it. Clear those in the old
-    --- mode first (README, Changing storage mode). Kill photo files kept
-    --- for the old mode are left alone too.
+    --- payouts owed to somebody offline, money waiting for staff in its
+    --- review queue, or a payment this machine keeps for that mode because
+    --- the database did not confirm it — and says where and how much: each
+    --- contract, what it holds and what clears it, and each review item.
+    --- Clear those in the old mode first (README, Changing storage mode).
+    --- Kill photo files kept for the old mode are left alone too.
     Mode = 'json',
     --- true starts in the mode above even though another mode still holds
     --- players' money. That money is then invisible from here and nothing

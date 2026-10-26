@@ -127,6 +127,18 @@ function Memory.writeContract(contract)
     return true
 end
 
+--- Store a new contract, and never write over one already there.
+---
+--- A create's row is written once. Asked again by the server for a create
+--- whose write was not confirmed (server/review.lua's deciders), an upsert
+--- put back the penalty, the buyout price and the resolution from the
+--- creation copy over a contract changed or withdrawn since; this leaves it
+--- as it is. Stored as writeContract stores a new one.
+function Memory.insertContract(contract)
+    if db.contracts[contract.id] then return true end
+    return Memory.writeContract(contract)
+end
+
 --- Take the last collection off a contract, guarded on the count still
 --- being the one the caller read.
 --- End a contract as expired only if it is still due: past its lifetime,
@@ -222,6 +234,38 @@ function Memory.setBailoutQueue(id, fields)
         c[BAILOUT_QUEUE[i]] = fields and fields[BAILOUT_QUEUE[i]] or nil
     end
     return true
+end
+
+--- Record a paid buyout, only on a contract still running whose queue is
+--- free or already holds this very buyout (the same moment and payer).
+---
+--- A compare-and-set, so a record written again by the server after its
+--- first write went unanswered (server/review.lua's deciders) can never
+--- land on a contract another buyout has queued, or one that has closed:
+--- true when it is recorded, or was already; false when it was refused.
+---@param fields table { bailout_queued_at, bailout_paid_by, bailout_paid_amount, bailout_paid_account }
+---@return boolean recorded
+function Memory.recordBailout(id, fields)
+    local c = db.contracts[id]
+    if not c or (c.state ~= 'active' and c.state ~= 'accepted') then return false end
+    if c.bailout_queued_at ~= nil and (c.bailout_queued_at ~= fields.bailout_queued_at
+        or c.bailout_paid_by ~= fields.bailout_paid_by) then
+        return false
+    end
+    return Memory.setBailoutQueue(id, {
+        bailout_queued_at = fields.bailout_queued_at, bailout_paid_by = fields.bailout_paid_by,
+        bailout_paid_amount = fields.bailout_paid_amount,
+        bailout_paid_account = fields.bailout_paid_account, bailout_attempts = 0,
+    })
+end
+
+--- Clear the buyout queue, only while it still holds the buyout recorded at
+--- `queuedAt`: a clear that lands late never clears a later buyout.
+---@return boolean cleared
+function Memory.clearBailout(id, queuedAt)
+    local c = db.contracts[id]
+    if not c or c.bailout_queued_at == nil or c.bailout_queued_at ~= queuedAt then return false end
+    return Memory.setBailoutQueue(id, nil)
 end
 
 --- Keep what an advisory bulletin said of one contract: any of the ADVISED
@@ -395,6 +439,22 @@ function Memory.writeEscrow(contractId, lines)
         end
     end
     return true
+end
+
+--- Store the lines a take confirms, each only where its id is not there yet.
+---
+--- A take's line ids are new, so this stores what writeEscrow would. Written
+--- again by the server after its first write went unanswered (server/
+--- review.lua's deciders), or landing late, it leaves a line already there
+--- exactly as it is: writeEscrow put back whom it was owed and going to from
+--- the take's copy, over a line that had moved since.
+function Memory.insertEscrow(contractId, lines)
+    local fresh = {}
+    for i = 1, #lines do
+        if db.escrow[lines[i].id] == nil then fresh[#fresh + 1] = lines[i] end
+    end
+    if #fresh == 0 then return true end
+    return Memory.writeEscrow(contractId, fresh)
 end
 
 function Memory.readEscrow(contractId)

@@ -1362,3 +1362,67 @@ describe('the least a contract may be worth', function()
         eq(reply.data and reply.data.min, 1000)
     end)
 end)
+
+--- W152, W008, W014: the creator's anonymity fee was charged before the
+--- escrow and the contract were written, so a process that died between
+--- them lost it with no record, and a refunded one left only its charge in
+--- the log. It is charged last now, once the contract exists.
+describe('the creator\'s anonymity fee, charged once the contract is placed', function()
+    local function bank() return Env.players[1].PlayerData.money.bank end
+    local function rows(s, action)
+        s.audit.flush()
+        return s.storage.auditByAction(action, 20) or {}
+    end
+
+    it('refuses a creator who cannot cover the reward and the fee, before anything is taken', function()
+        local s = newStack()
+        local f = fixture(s, { creatorBank = 5200 })
+        Config.Anonymity.CreatorFee = 500
+        local c, err = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            anonymous = true, reward = { baseline = { bank = 5000 } } })
+        falsy(c)
+        eq(err, CH.ERR.INSUFFICIENT)
+        eq(bank(), 5200, 'nothing taken')
+        eq(#rows(s, 'anonymity_fee'), 0, 'and no fee charged to be handed back')
+    end)
+
+    it('charges it once, with the amount and the account on its row', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Anonymity.CreatorFee = 500
+        local before = bank()
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            anonymous = true, reward = { baseline = { cash = 5000 } } })
+        truthy(c)
+        eq(before - bank(), 500)
+        local charged = rows(s, 'anonymity_fee')
+        eq(#charged, 1)
+        eq(charged[1].contract_id, c.id, 'for a contract that exists')
+        eq(charged[1].detail.amount, 500)
+        eq(charged[1].detail.account, 'bank')
+    end)
+
+    it('leaves the contract placed, anonymous and unpaid when the balance went in the moment since', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Anonymity.CreatorFee = 500
+        local realInsert = s.storage.insertContract
+        s.storage.insertContract = function(contract)
+            Env.players[1].PlayerData.money.bank = 0
+            return realInsert(contract)
+        end
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            anonymous = true, reward = { baseline = { cash = 5000 } } })
+        s.storage.insertContract = realInsert
+        truthy(c, 'placed')
+        local stored = s.storage.readContract(c.id)
+        eq(stored.state, CH.STATE.ACTIVE)
+        truthy(stored.anon_creator, 'and anonymous')
+        eq(bank(), 0, 'nobody overdrawn for it')
+        eq(#rows(s, 'anonymity_fee'), 0)
+        local unpaid = rows(s, 'anonymity_fee_unpaid')
+        eq(#unpaid, 1, 'the fee not charged is on the record')
+        eq(unpaid[1].detail.amount, 500)
+        eq(unpaid[1].detail.account, 'bank')
+    end)
+end)

@@ -478,9 +478,10 @@ describe('a top-up that a payout lands on', function()
         truthy(s.contracts.accept(f.hitman, c.id, false))
         local creatorBefore, hitmanBefore = money(1), money(3)
 
-        local real = s.storage.writeEscrow
+        -- The top-up's own write, which a take makes insert-if-absent.
+        local real = s.storage.insertEscrow
         local claimed = false
-        s.storage.writeEscrow = function(id, lines)
+        s.storage.insertEscrow = function(id, lines)
             local out = real(id, lines)
             if not claimed and lines[1] and lines[1].portion == CH.PORTION.BASELINE then
                 claimed = true
@@ -489,7 +490,7 @@ describe('a top-up that a payout lands on', function()
             return out
         end
         local ok, err = s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 5000 } })
-        s.storage.writeEscrow = real
+        s.storage.insertEscrow = real
         truthy(claimed)
         eq(money(1) - creatorBefore, -5000)
         eq(money(3) - hitmanBefore, 1000 + 5000, 'the collection, and the top-up with it')
@@ -517,9 +518,9 @@ describe('a top-up a payout queued for the hitman', function()
             local creatorBefore = money(1)
             Env.players[3]._refuseMoney = true
 
-            local real = s.storage.writeEscrow
+            local real = s.storage.insertEscrow
             local claimed = false
-            s.storage.writeEscrow = function(id, lines)
+            s.storage.insertEscrow = function(id, lines)
                 local out = real(id, lines)
                 if not claimed and lines[1] and lines[1].portion == CH.PORTION.BASELINE then
                     claimed = true
@@ -528,7 +529,7 @@ describe('a top-up a payout queued for the hitman', function()
                 return out
             end
             local ok, err = s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 5000 } })
-            s.storage.writeEscrow = real
+            s.storage.insertEscrow = real
             truthy(claimed)
 
             local topUp
@@ -566,10 +567,10 @@ describe('a top-up handed back while a claim queues it', function()
         -- The claim lands after the top-up is written, but pays slot 1 from
         -- the lines it read before it: the top-up is left held and unowed on
         -- a collection already paid, so the hand-back picks it.
-        local realWrite = s.storage.writeEscrow
+        local realWrite, realInsert = s.storage.writeEscrow, s.storage.insertEscrow
         local topUp
-        s.storage.writeEscrow = function(id, lines)
-            local out = realWrite(id, lines)
+        s.storage.insertEscrow = function(id, lines)
+            local out = realInsert(id, lines)
             if not topUp and lines[1] and lines[1].portion == CH.PORTION.BASELINE
                 and lines[1].amount == 500 then
                 topUp = lines[1].id
@@ -594,7 +595,7 @@ describe('a top-up handed back while a claim queues it', function()
             return realClaim(id, from, to)
         end
         local ok, err = s.amendments.addEscrow(f.creator, c.id, { baseline = { cash = 500 } })
-        s.storage.writeEscrow, s.storage.claimEscrowLine = realWrite, realClaim
+        s.storage.insertEscrow, s.storage.claimEscrowLine = realInsert, realClaim
         truthy(queued, 'the race was run')
 
         local line = s.storage.readEscrowLine(topUp)

@@ -1282,6 +1282,38 @@ end
 --- not there, is not owed: a payout handed over at once leaves its entry
 --- behind until the player's next login (Escrow.retryPending drops it).
 ---@return table|nil { contracts, lines, owed, unreadable = { { id, file } }, holding = { { id, contract, lines, hitmen } } }
+--- The review items still waiting for staff (open, or left part-way
+--- resolved), as inspect lists them for a start in another mode: each one's
+--- id, kind, contract, state, the money it records (its own amount and every
+--- line of money it names) and how many goods, oldest first.
+---@param reviews table|nil the store's reviews, by id
+---@return table[]
+local function openReviews(reviews)
+    local out = {}
+    for key, item in pairs(type(reviews) == 'table' and reviews or {}) do
+        if type(item) == 'table' and (item.state == 'open' or item.state == 'resolving') then
+            local money, goods = tonumber(item.amount) or 0, 0
+            for _, entry in ipairs(type(item.items) == 'table' and item.items or {}) do
+                if type(entry) == 'table' then
+                    if entry.source == 'item' or entry.source == 'weapon' then
+                        goods = goods + 1
+                    else
+                        money = money + (tonumber(entry.amount) or 0)
+                    end
+                end
+            end
+            out[#out + 1] = { id = tostring(item.id or key), kind = item.kind,
+                contract_id = item.contract_id, state = item.state, account = item.account,
+                money = math.floor(money), goods = goods, created_at = tonumber(item.created_at) or 0 }
+        end
+    end
+    table.sort(out, function(a, b)
+        if a.created_at ~= b.created_at then return a.created_at < b.created_at end
+        return a.id < b.id
+    end)
+    return out
+end
+
 function JsonStore.inspect()
     -- Each file as open() would find it: the last complete write of one
     -- that is missing or torn (recoverFile), read where it lies.
@@ -1373,11 +1405,16 @@ function JsonStore.inspect()
     end
     table.sort(out.holding, function(a, b) return tostring(a.id) < tostring(b.id) end)
 
-    local pending = index.pending
-    if pending == nil then
+    local pending, reviews = index.pending, index.reviews
+    if pending == nil or reviews == nil then
         local records = readJson(recordsPath())
-        pending = records and records.pending or nil
+        if pending == nil then pending = records and records.pending or nil end
+        if reviews == nil then reviews = records and records.reviews or nil end
     end
+    -- Money waiting for staff in the review queue (W155): an item is the only
+    -- record of a payment no rule could settle, and the new mode's queue
+    -- starts empty.
+    out.reviews = openReviews(reviews)
     for _, p in pairs(type(pending) == 'table' and pending or {}) do
         if type(p) == 'table' then
             local line = lines[p.line_id]
@@ -1992,6 +2029,13 @@ function JsonStore.writeContract(c)
     return true
 end
 
+--- Store a new contract, and never write over one already there; see the
+--- memory backend.
+function JsonStore.insertContract(c)
+    if db.contracts[c.id] then return true end
+    return JsonStore.writeContract(c)
+end
+
 --- End a contract as expired only if it is still due: past its lifetime,
 --- or past a deadline whose clock is running. The expiry pass decides on
 --- a read, and a deadline the client extended in the await after it was
@@ -2089,6 +2133,29 @@ function JsonStore.setBailoutQueue(id, fields)
     return true
 end
 
+--- Record a paid buyout, a compare-and-set; see the memory backend.
+function JsonStore.recordBailout(id, fields)
+    local c = db.contracts[id]
+    if not c or (c.state ~= 'active' and c.state ~= 'accepted') then return false end
+    if c.bailout_queued_at ~= nil and (c.bailout_queued_at ~= fields.bailout_queued_at
+        or c.bailout_paid_by ~= fields.bailout_paid_by) then
+        return false
+    end
+    return JsonStore.setBailoutQueue(id, {
+        bailout_queued_at = fields.bailout_queued_at, bailout_paid_by = fields.bailout_paid_by,
+        bailout_paid_amount = fields.bailout_paid_amount,
+        bailout_paid_account = fields.bailout_paid_account, bailout_attempts = 0,
+    })
+end
+
+--- Clear the buyout queue only while it holds the buyout recorded at
+--- `queuedAt`; see the memory backend.
+function JsonStore.clearBailout(id, queuedAt)
+    local c = db.contracts[id]
+    if not c or c.bailout_queued_at == nil or c.bailout_queued_at ~= queuedAt then return false end
+    return JsonStore.setBailoutQueue(id, nil)
+end
+
 --- Keep what an advisory bulletin said of one contract; see the memory
 --- backend.
 local ADVISED_FIELD = { advised_posted_at = true, advised_hitmen = true }
@@ -2173,6 +2240,17 @@ function JsonStore.writeEscrow(contractId, lines)
     end
     touch(true, contractId)
     return true
+end
+
+--- Store a take's lines, each only where its id is not there yet; see the
+--- memory backend.
+function JsonStore.insertEscrow(contractId, lines)
+    local fresh = {}
+    for i = 1, #lines do
+        if db.escrow[lines[i].id] == nil then fresh[#fresh + 1] = lines[i] end
+    end
+    if #fresh == 0 then return true end
+    return JsonStore.writeEscrow(contractId, fresh)
 end
 
 function JsonStore.readEscrow(contractId)

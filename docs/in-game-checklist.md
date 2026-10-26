@@ -729,6 +729,28 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Resolve a review item twice: the second says it is already resolved, and
       the player is paid once. After the first, the item stays in the list,
       marked resolved with the answer in it, until you press Refresh
+- [ ] Leave a review item being resolved (stop the resource while a refund
+      from **Needs review** is handing over). Its card says *Being resolved:
+      refund ... by ...* with one **Finish as decided** button and no
+      Refund, Pay or Dismiss; `/ch-review <id> dismiss x` answers that it is
+      being resolved already and moves nothing; `/ch-review <id>` alone (or
+      the button) finishes it, and the player is paid once
+- [ ] With a `json` store, make the records file read-only and leave an item
+      for staff: **Needs review** lists it as not in the store yet, its form
+      drawn off, saying it can be resolved once the store has taken it;
+      restore the file and, within a tick, it resolves as usual
+- [ ] With `Config.Anonymity.CreatorFee` set, place an anonymous contract:
+      the fee leaves the fee account only once the contract is on the board.
+      Place one you cannot cover with the fee on top: refused, nothing taken
+- [ ] Switch `Config.Database.Mode` with an item still open in the review
+      queue: the start refuses and names it (id, kind, contract, money);
+      resolve it in the old mode, then switch
+- [ ] On the test server in `mysql` mode, stop MariaDB for 30 seconds while
+      placing a contract, then start it again: within a minute the console
+      says *review ... settled by the server*, and the contract is on the
+      board with its escrow (the client is told), or its reward is back. Do
+      it again and restart the resource while MariaDB is stopped: the same
+      payment is settled once the database answers
 - [ ] On the `crimson.identity` account, resolve a review item on an anonymous
       contract by role. Then, on the account without it, open **Needs review**,
       All, and run `/ch-review all`: whom it paid reads as *the client*, never a

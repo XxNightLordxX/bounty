@@ -1161,6 +1161,39 @@ local function heldList(holding, mode, more)
     return out
 end
 
+--- The review items another mode keeps for staff (W155), up to SWITCH_LISTED
+--- of them, one a line: its id, kind and contract, the money it records,
+--- and what clears it. `mode` is the mode keeping them.
+---@param reviews table[] { id, kind, contract_id, state, account, money, goods } from inspect
+---@param mode string
+---@param more boolean|nil the store has more than it listed
+---@return string[]
+local function reviewLines(reviews, mode, more)
+    local out = {}
+    for i = 1, math.min(#reviews, SWITCH_LISTED) do
+        local r = reviews[i]
+        local what = {}
+        if (tonumber(r.money) or 0) > 0 then
+            what[#what + 1] = ('%d%s'):format(math.floor(r.money), r.account and (' ' .. r.account) or '')
+        end
+        if (tonumber(r.goods) or 0) > 0 then
+            what[#what + 1] = ('%d item(s) or weapon(s)'):format(r.goods)
+        end
+        out[#out + 1] = ('  - review %s (%s) on contract %s: %s; %s, resolved with /%s in %s mode')
+            :format(tostring(r.id), tostring(r.kind), tostring(r.contract_id),
+                #what > 0 and table.concat(what, ', ') or 'no money recorded',
+                r.state == 'resolving' and 'being resolved' or 'waiting for staff',
+                tostring(Config.Admin.Commands.review), mode)
+    end
+    local beyond = more or (#reviews - SWITCH_LISTED)
+    if beyond == true then
+        out[#out + 1] = '  - and more review items not listed'
+    elseif beyond > 0 then
+        out[#out + 1] = ('  - and %d more review item(s) not listed'):format(beyond)
+    end
+    return out
+end
+
 --- Refuse to start where another storage mode still holds players' money.
 ---
 --- Modes do not share data. A server switched from json to mysql (which the
@@ -1192,10 +1225,19 @@ local function refuseModeSwitch()
         local folder = Config.Database.Json.Directory or 'data'
         if ok and held then
             local unreadable = held.unreadable or {}
-            if held.lines > 0 or held.owed > 0 or #unreadable > 0 then
+            local reviews = held.reviews or {}
+            if held.lines > 0 or held.owed > 0 or #unreadable > 0 or #reviews > 0 then
                 if held.lines > 0 or held.owed > 0 then
                     found[#found + 1] = ('json mode: %d escrow line(s) and %d payout(s) owed, in %s/')
                         :format(held.lines, held.owed, folder)
+                end
+                -- Money waiting for staff: an item is the only record of a
+                -- payment no rule could settle, and this mode's queue would
+                -- start without it (W155).
+                if #reviews > 0 then
+                    found[#found + 1] = ('json mode: %d review item(s) waiting for staff, in %s/')
+                        :format(#reviews, folder)
+                    for _, text in ipairs(reviewLines(reviews, 'json')) do listed[#listed + 1] = text end
                 end
                 if #unreadable > 0 then
                     local files = {}
@@ -1216,12 +1258,45 @@ local function refuseModeSwitch()
     -- nothing there to find, and asking would wait on a connection forever.
     if mode ~= 'mysql' and GetResourceState('oxmysql') == 'started' and MySQL then
         local ok, held = pcall(CrimsonBoot.require('server.storage.mysql').inspect)
-        if ok and held and (held.lines > 0 or held.owed > 0) then
-            found[#found + 1] = ('mysql mode: %d escrow line(s) and %d payout(s) owed, in the '
-                .. 'crimson_* tables'):format(held.lines, held.owed)
+        local reviews = ok and held and held.reviews or {}
+        if ok and held and (held.lines > 0 or held.owed > 0 or #reviews > 0) then
+            if held.lines > 0 or held.owed > 0 then
+                found[#found + 1] = ('mysql mode: %d escrow line(s) and %d payout(s) owed, in the '
+                    .. 'crimson_* tables'):format(held.lines, held.owed)
+            end
+            if #reviews > 0 then
+                found[#found + 1] = ('mysql mode: %d%s review item(s) waiting for staff, in '
+                    .. 'crimson_review'):format(#reviews, held.moreReviews and ' or more' or '')
+                for _, text in ipairs(reviewLines(reviews, 'mysql', held.moreReviews)) do
+                    listed[#listed + 1] = text
+                end
+            end
             for _, text in ipairs(heldList(held.holding, 'mysql', held.more)) do
                 listed[#listed + 1] = text
             end
+        end
+    end
+
+    -- Payments this machine keeps for another mode (resource KVP): caught
+    -- by a database that stopped answering, and settled only by a start in
+    -- the mode they were kept for. Started here, they would be carried
+    -- nowhere.
+    local kept = CrimsonBoot.require('server.review').keptElsewhere(mode)
+    local modes = {}
+    for keptMode in pairs(kept) do modes[#modes + 1] = keptMode end
+    table.sort(modes)
+    for _, keptMode in ipairs(modes) do
+        found[#found + 1] = ('%d payment(s) kept on this machine for %s mode')
+            :format(#kept[keptMode], keptMode)
+        for i, item in ipairs(kept[keptMode]) do
+            if i > SWITCH_LISTED then
+                listed[#listed + 1] = ('  - and %d more kept on this machine not listed')
+                    :format(#kept[keptMode] - SWITCH_LISTED)
+                break
+            end
+            listed[#listed + 1] = ('  - review %s (%s) on contract %s: kept on this machine; a start '
+                .. 'in %s mode settles it or lists it for staff'):format(tostring(item.id),
+                tostring(item.kind), tostring(item.contract_id), keptMode)
         end
     end
 
@@ -1486,6 +1561,19 @@ function StartCrimsonHitman()
     -- maintenance tick and those commands), and the commands say what
     -- happened instead: only a restart once the cause is fixed runs
     -- recovery again.
+    --
+    -- First, the payments a database that stopped answering left undecided
+    -- (S12, server/review.lua): every one the store or this machine's KVP
+    -- keeps with its whole record is settled by the server from it now,
+    -- before recovery, and the contract the server may still place holds its
+    -- escrow, so recovery does not hand back what the server then places.
+    -- One that cannot be decided yet stays for the maintenance tick.
+    local decidedOk, decideErr = pcall(review.recoverSystem)
+    if not decidedOk then
+        Log.always(('settling the payments the database did not confirm failed: %s; each is '
+            .. 'tried again by the maintenance tick (/%s)'):format(Util.dbError(decideErr),
+            tostring(Config.Admin.Commands.stuck)))
+    end
     local recovered, recoverErr = pcall(Recover)
     if not recovered then
         app.recoveryFailed = true
@@ -1873,6 +1961,8 @@ local MONEY_JOBS = {
     ['escrow.retryWaiting'] = true, ['contracts.finishEndings'] = true,
     ['contracts.retryStuckCreates'] = true, ['contracts.retryStuckJoins'] = true,
     ['contracts.releaseIdleHolds'] = true,
+    -- A payment the database did not confirm, which the server settles.
+    ['review.decide'] = true,
 }
 
 local function job(name, fn, ...)
@@ -2011,6 +2101,9 @@ function Tick()
     end
     -- An item for staff the store would not take when it was opened.
     if modules.review then job('review.retryUnwritten', modules.review.retryUnwritten) end
+    -- And a payment the database did not confirm, settled by the server
+    -- from its whole record once the database answers (S12).
+    if modules.review and modules.review.decide then job('review.decide', modules.review.decide) end
     job('expireContracts', ExpireContracts)
     -- A closed contract whose ending raised before it handed its escrow
     -- over: finished as the next start would (Contracts.finishEndings).

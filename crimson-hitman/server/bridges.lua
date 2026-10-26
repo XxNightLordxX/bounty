@@ -1037,7 +1037,11 @@ function Bridges.installCommands(modules)
         if #said > 0 then reply(src, '    now: ' .. table.concat(said, '; ')) end
 
         if item.unwritten then
-            reply(src, '    the store has not taken this yet; it is written once it answers')
+            reply(src, '    the store has not taken this yet; it is written once it answers, within '
+                .. 'a tick, and can be resolved then')
+        elseif item.settles and item.state == 'open' then
+            reply(src, ('    the server settles this itself from its own record once the database '
+                .. 'answers; /%s %s pay <role> settles it the same way now'):format(names.review, item.id))
         elseif item.state == 'resolving' then
             reply(src, ('    being resolved (%s, by %s) and stopped part-way: /%s %s finishes it as decided')
                 :format(tostring(item.resolution and item.resolution.action), tostring(item.resolved_by),

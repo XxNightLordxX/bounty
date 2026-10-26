@@ -936,6 +936,12 @@ function Admin.reviewAnswer(id, ok, err, detail, panel)
             return 'Dismissed. Nothing was given.' .. (r.continued
                 and ' It had been decided so before a stop, and is finished now.' or '')
         end
+        -- One carrying its whole record, settled as the server settles it.
+        if r.action == 'settled' then
+            return ('Settled as the server settles it, from its own record: %s.%s')
+                :format(tostring(r.note or 'done'), r.ignored
+                    and ' What was typed was not used: the record says what was taken.' or '')
+        end
         return ('Resolved: %d line(s) given, %d owed and given while they are in '
             .. 'the city or at their next login, %d left for %s (giving raised). %s')
             :format(r.settled or 0, r.pending or 0, r.parked or 0,
@@ -959,11 +965,38 @@ function Admin.reviewAnswer(id, ok, err, detail, panel)
         nothing_recorded = 'It records nothing of that to give; use pay, or items for goods.',
         over_recorded = ('That is more than it records (%s); refund at most that.')
             :format(tostring(detail)),
-        raised = panel and ('Resolving it raised an error (in the console). It is left being '
-                .. 'resolved, with the decision on it: resolve it again in Needs review to finish it '
-                .. 'as decided.')
-            or ('Resolving it raised an error (in the console). It is left being resolved, '
-                .. 'with the decision on it: /%s %s finishes it.'):format(names.review, tostring(id)),
+        -- Worded from the item's state read after the raise (W131): one
+        -- still open had nothing decided on it.
+        raised = (detail == 'open' and ('Resolving it raised an error (in the console) before '
+                .. 'anything was decided: it is still open, and nothing was given. Try again once '
+                .. 'the cause is fixed.'))
+            or (detail == 'resolving' and (panel and ('Resolving it raised an error (in the '
+                .. 'console) part-way. It is left being resolved, with the decision on it: Finish as '
+                .. 'decided on its card in Needs review finishes it.')
+                or ('Resolving it raised an error (in the console) part-way. It is left being '
+                .. 'resolved, with the decision on it: /%s %s finishes it.')
+                    :format(names.review, tostring(id))))
+            or (panel and 'Resolving it raised an error (in the console). Look at it again in Needs '
+                .. 'review: one being resolved is finished with Finish as decided; one still open had '
+                .. 'nothing decided.'
+            or ('Resolving it raised an error (in the console). Look at it again (/%s): one being '
+                .. 'resolved is finished with /%s %s; one still open had nothing decided.')
+                    :format(names.review, names.review, tostring(id))),
+        being_resolved = (function()
+            local r = type(detail) == 'table' and detail or {}
+            local decided = ('as decided before (%s, by %s)'):format(tostring(r.action or 'a decision'),
+                tostring(r.by or 'staff'))
+            return panel and ('It is being resolved already, %s. Finish as decided on its card in '
+                    .. 'Needs review finishes it; nothing was given now.'):format(decided)
+                or ('It is being resolved already, %s. /%s %s alone finishes it; nothing was given '
+                    .. 'now.'):format(decided, names.review, tostring(id))
+        end)(),
+        unwritten = 'It can be resolved once the store has taken it, within a tick. Nothing was given.',
+        nothing_missing = 'The store has every line it names, held or handed back already, so '
+            .. 'nothing of it is missing and nothing was given. Dismiss it with a note once you '
+            .. 'have checked.',
+        not_yet = ('Not settled yet: %s. The server settles it itself once it can; nothing was '
+            .. 'given.'):format(type(detail) == 'string' and detail or 'it cannot be decided yet'),
     }
     if why[err] then return why[err] end
     if panel then
@@ -971,7 +1004,8 @@ function Admin.reviewAnswer(id, ok, err, detail, panel)
     end
     return ('Usage: /%s [all] | /%s <id> refund <citizenid|role> <amount> '
         .. '[cash|bank|dirty] | refund <citizenid|role> items | pay <citizenid|role> | '
-        .. 'dismiss <note>'):format(names.review, names.review)
+        .. 'dismiss <note> | /%s <id> alone finishes one being resolved as decided')
+        :format(names.review, names.review, names.review)
 end
 
 --- The log written now, and on json to the disk as well, rather than at the
@@ -1600,6 +1634,19 @@ local function namesOfParties(names, contract, hitmen)
     end
 end
 
+--- What an item says it knows, for staff: without the record the server
+--- settles it from (server/review.lua, `known.decide`), which is a copy of
+--- the contract, the lines or the queue fields as they were written.
+local RECORD_KEYS = { contract = true, lines = true, fields = true, hold = true,
+                      decide = true, fee_not_charged = true }
+local function copyKnown(known)
+    local out = {}
+    for k, v in pairs(known) do
+        if not RECORD_KEYS[k] then out[k] = v end
+    end
+    return out
+end
+
 --- The review queue as staff read it (server/review.lua): the open items,
 --- or with `all` the latest ones resolved too.
 ---
@@ -1651,7 +1698,13 @@ function Admin.reviews(src, all)
         if type(paid) == 'string' and paid ~= '' and not names[paid] then
             names[paid] = Admin.partyRole(contract, paid)
         end
-        local items, known = item.items, item.known
+        -- The whole record an item carries for the server (the contract a
+        -- create was writing, a take's lines, a buyout's queue fields) is
+        -- the server's to settle it from, not something staff decide by, and
+        -- it names an anonymous client wherever its contract is not stored.
+        -- Staff are told the server settles it instead.
+        local known = type(item.known) == 'table' and copyKnown(item.known) or item.known
+        local items = item.items
         if not canIdentify then
             items, known = shownWithout(items, names), shownWithout(known, names)
             resolution = shownWithout(resolution, names)
@@ -1663,6 +1716,7 @@ function Admin.reviews(src, all)
             state = item.state, created_at = item.created_at, resolution = resolution,
             resolved_by = item.resolved_by, resolved_at = item.resolved_at,
             unwritten = item.unwritten,
+            settles = type(item.known) == 'table' and item.known.decide == true or nil,
         }
     end
     Audit.staff(canIdentify and 'admin_review_identified' or 'admin_review', callerCid(src), nil,
@@ -1687,8 +1741,13 @@ function Admin.resolveReview(src, id, args)
     if not Review then return false, CH.ERR.NOT_FOUND end
     args = type(args) == 'table' and args or {}
     local action = type(args[1]) == 'string' and args[1]:lower() or nil
-    local decision = { action = action }
-    if action == 'dismiss' then
+    -- The id alone (W131): an item left being resolved is finished as it was
+    -- decided, which /ch-stuck and the raise's answer say it does. An open
+    -- one is refused as before, since it still needs an action.
+    local decision = action and { action = action } or nil
+    if action == nil then
+        decision = nil
+    elseif action == 'dismiss' then
         decision.note = table.concat(args, ' ', 2)
     elseif action == 'pay' then
         decision.who = args[2]
@@ -1712,15 +1771,18 @@ function Admin.resolveReview(src, id, args)
     end
 
     local who = callerCid(src) or (src == 0 and 'console') or ('player ' .. tostring(src))
-    local ran, ok, err, detail = pcall(Review.resolve, id, decision, who)
+    -- Strict: an item left being resolved is finished only by asking for
+    -- nothing else, never by another action's words (W137).
+    local ran, ok, err, detail = pcall(Review.resolve, id, decision, who, { strict = true })
     if not ran then
-        -- Left `resolving`, with the decision on it: the next ask, or the
-        -- next start, finishes it from the lines it already wrote.
+        -- Left `resolving`, with the decision on it, where the decision was
+        -- written before the raise: the next ask, or the next start,
+        -- finishes it from the lines it already wrote. Said as it is now.
         Audit.financial('review_resolve_raised', who, nil,
             { review = id, action = action, error = tostring(ok) })
         logNow()
         Log.always(('resolving review %s raised: %s'):format(tostring(id), tostring(ok)))
-        return false, 'raised'
+        return false, 'raised', Review.stateOf and Review.stateOf(id) or nil
     end
     return ok, err, detail
 end

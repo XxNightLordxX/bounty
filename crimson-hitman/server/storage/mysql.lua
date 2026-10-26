@@ -8,6 +8,13 @@ local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local MySQLStore = {}
 
+--- Every statement here waits on another process, which may never answer
+--- (OXMYSQL.md §6). The review queue reads this to keep the item a payment's
+--- recording write would open in resource KVP before that write is sent
+--- (Review.prepare), so a restart while it waits loses no record of money
+--- already taken.
+MySQLStore.remote = true
+
 local seq = 0
 
 --- Every oxmysql await this file makes goes through `db`, so the time spent
@@ -757,17 +764,47 @@ local INSPECT_LISTED = 10
 --- A queued payout counts only while the line it names is not settled: one
 --- handed over at once leaves its row behind until the player's next login,
 --- and that is not money anybody is owed.
----@return table { lines, owed, holding = { { id, contract, lines, hitmen } }, more }
+---
+--- And the review items still waiting for staff (open, or left part-way
+--- resolved), the first INSPECT_LISTED of them, with the money each records:
+--- an item is the only record of a payment no rule could settle, and the
+--- new mode's queue starts empty.
+---@return table { lines, owed, holding = { { id, contract, lines, hitmen } }, more, reviews }
 function MySQLStore.inspect()
     local rows = db.query([[
         SELECT TABLE_NAME FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME IN ('crimson_escrow', 'crimson_pending', 'crimson_contracts', 'crimson_hitmen')
+          AND TABLE_NAME IN ('crimson_escrow', 'crimson_pending', 'crimson_contracts', 'crimson_hitmen',
+                             'crimson_review')
     ]]) or {}
     local have = {}
     for i = 1, #rows do have[tostring(rows[i].TABLE_NAME or rows[i].table_name)] = true end
 
-    local out = { lines = 0, owed = 0, holding = {} }
+    local out = { lines = 0, owed = 0, holding = {}, reviews = {} }
+    if have.crimson_review then
+        local items = db.query([[
+            SELECT * FROM crimson_review WHERE state IN ('open', 'resolving')
+            ORDER BY created_at LIMIT ?
+        ]], { INSPECT_LISTED + 1 }) or {}
+        for i = 1, math.min(#items, INSPECT_LISTED) do
+            local item = items[i]
+            local decoded, lines = pcall(json.decode, item.items or '')
+            local money, goods = tonumber(item.amount) or 0, 0
+            for _, entry in ipairs(decoded and type(lines) == 'table' and lines or {}) do
+                if type(entry) == 'table' then
+                    if entry.source == 'item' or entry.source == 'weapon' then
+                        goods = goods + 1
+                    else
+                        money = money + (tonumber(entry.amount) or 0)
+                    end
+                end
+            end
+            out.reviews[#out.reviews + 1] = { id = item.id, kind = item.kind,
+                contract_id = item.contract_id, state = item.state, account = item.account,
+                money = math.floor(money), goods = goods }
+        end
+        if #items > INSPECT_LISTED then out.moreReviews = true end
+    end
     if have.crimson_escrow then
         out.lines = tonumber(db.scalar(
             "SELECT COUNT(*) FROM crimson_escrow WHERE state <> 'settled'")) or 0
@@ -858,6 +895,20 @@ end
 -- Contracts
 --------------------------------------------------------------------------
 
+--- A contract's columns in the order writeContract and insertContract list
+--- them.
+local function contractParams(c)
+    return {
+        c.id, c.creator_cid, c.creator_account, c.creator_name, c.target_cid, c.target_account,
+        c.target_name, c.target_protected and 1 or 0, c.target_job, c.reason, c.mode, c.state,
+        c.anon_creator and 1 or 0, c.fulfilment_rule, c.bonus_percent or 0, c.bailout_amount or 0,
+        c.penalty_amount or 0, c.payout_slots or 1, c.slots_claimed or 0, c.next_slot or 1,
+        c.created_at, c.deadline_at, c.expires_at, c.paused_ms or 0, c.paused_since,
+        c.bailout_queued_at, c.bailout_paid_by, c.bailout_paid_amount, c.bailout_paid_account,
+        c.bailout_attempts or 0, c.resolved_at, c.resolution,
+    }
+end
+
 --- Persist a contract's fields. `state` is intentionally absent from the
 --- UPDATE clause: it changes only through compareSetContractState, so a
 --- caller writing a copy it read before a transition cannot revert it. This
@@ -916,15 +967,32 @@ function MySQLStore.writeContract(c)
             -- only through setBailoutQueue, so a caller writing back a copy
             -- it read before a buyout was paid cannot erase the buyout.
             resolved_at = VALUES(resolved_at), resolution = VALUES(resolution)
-    ]], {
-        c.id, c.creator_cid, c.creator_account, c.creator_name, c.target_cid, c.target_account,
-        c.target_name, c.target_protected and 1 or 0, c.target_job, c.reason, c.mode, c.state,
-        c.anon_creator and 1 or 0, c.fulfilment_rule, c.bonus_percent or 0, c.bailout_amount or 0,
-        c.penalty_amount or 0, c.payout_slots or 1, c.slots_claimed or 0, c.next_slot or 1,
-        c.created_at, c.deadline_at, c.expires_at, c.paused_ms or 0, c.paused_since,
-        c.bailout_queued_at, c.bailout_paid_by, c.bailout_paid_amount, c.bailout_paid_account,
-        c.bailout_attempts or 0, c.resolved_at, c.resolution,
-    })
+    ]], contractParams(c))
+    return true
+end
+
+--- Store a new contract, and never write over one already there.
+---
+--- writeContract's insert, with an update clause that changes nothing: the
+--- id was confirmed unused when it was minted, so this stores what that
+--- would, and the server writing it again after the first write went
+--- unanswered (server/review.lua's deciders), or the first landing late,
+--- meets the row and leaves it. writeContract's update clause put back the
+--- penalty, the buyout price and the resolution from the creation copy over
+--- a contract changed or withdrawn since.
+function MySQLStore.insertContract(c)
+    db.query([[
+        INSERT INTO crimson_contracts
+            (id, creator_cid, creator_account, creator_name, target_cid, target_account,
+             target_name, target_protected, target_job, reason, mode, state, anon_creator,
+             fulfilment_rule, bonus_percent,
+             bailout_amount, penalty_amount, payout_slots, slots_claimed, next_slot,
+             created_at, deadline_at, expires_at, paused_ms, paused_since,
+             bailout_queued_at, bailout_paid_by, bailout_paid_amount, bailout_paid_account,
+             bailout_attempts, resolved_at, resolution)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE id = id
+    ]], contractParams(c))
     return true
 end
 
@@ -959,6 +1027,40 @@ function MySQLStore.setBailoutQueue(id, fields)
             WHERE id = ?
         ]], { id })
     end
+    return (tonumber(affected) or 0) > 0
+end
+
+--- Record a paid buyout, only on a contract still running whose queue is
+--- free or already holds this very buyout (the same moment and payer).
+---
+--- A compare-and-set, so the record the server writes again after the first
+--- write went unanswered (server/review.lua's deciders), or the first landing
+--- late, never lands on a contract another buyout has queued or one that has
+--- closed. Matched rows, as oxmysql's update answers them (OXMYSQL.md §3): a
+--- row already holding this buyout counts, so "already ours" is true.
+---@return boolean recorded
+function MySQLStore.recordBailout(id, fields)
+    local affected = db.update([[
+        UPDATE crimson_contracts
+        SET bailout_queued_at = ?, bailout_paid_by = ?, bailout_paid_amount = ?,
+            bailout_paid_account = ?, bailout_attempts = 0
+        WHERE id = ? AND state IN ('active', 'accepted')
+          AND (bailout_queued_at IS NULL OR (bailout_queued_at = ? AND bailout_paid_by = ?))
+    ]], { fields.bailout_queued_at, fields.bailout_paid_by, fields.bailout_paid_amount,
+          fields.bailout_paid_account, id, fields.bailout_queued_at, fields.bailout_paid_by })
+    return (tonumber(affected) or 0) > 0
+end
+
+--- Clear the buyout queue, only while it still holds the buyout recorded at
+--- `queuedAt`: a clear that lands late never clears a later buyout.
+---@return boolean cleared
+function MySQLStore.clearBailout(id, queuedAt)
+    local affected = db.update([[
+        UPDATE crimson_contracts
+        SET bailout_queued_at = NULL, bailout_paid_by = NULL, bailout_paid_amount = NULL,
+            bailout_paid_account = NULL, bailout_attempts = 0
+        WHERE id = ? AND bailout_queued_at = ?
+    ]], { id, queuedAt })
     return (tonumber(affected) or 0) > 0
 end
 
@@ -1258,6 +1360,38 @@ function MySQLStore.writeEscrow(contractId, lines)
     local queries = {}
     for i = 1, #lines do
         queries[i] = { query = ESCROW_UPSERT, values = escrowParams(contractId, lines[i]) }
+    end
+    return db.transaction(queries) ~= false
+end
+
+--- ESCROW_UPSERT's insert, with an update clause that changes nothing.
+---
+--- A take's line ids are new, so this stores what the upsert would. Written
+--- again by the server after the first write went unanswered (server/
+--- review.lua's deciders), or the first landing late, it leaves a line
+--- already there as it is: the upsert put back whom it was owed and going
+--- to from the take's copy, over a line that had moved since, and whom it is
+--- going to is what boot recovery reads as "may have reached them".
+local ESCROW_INSERT = [[
+    INSERT INTO crimson_escrow
+        (id, contract_id, slot, line_portion, source, amount, item, quantity, metadata,
+         staker, inv_slot, owed_to, releasing_to, state, derived, taken_from, deliver_raises,
+         deliver_before, deliver_arrived)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON DUPLICATE KEY UPDATE id = id
+]]
+
+--- Store a take's lines, each only where its id is not there yet: one line
+--- one statement, several in one transaction, as writeEscrow does.
+function MySQLStore.insertEscrow(contractId, lines)
+    if #lines == 0 then return true end
+    if #lines == 1 then
+        db.query(ESCROW_INSERT, escrowParams(contractId, lines[1]))
+        return true
+    end
+    local queries = {}
+    for i = 1, #lines do
+        queries[i] = { query = ESCROW_INSERT, values = escrowParams(contractId, lines[i]) }
     end
     return db.transaction(queries) ~= false
 end

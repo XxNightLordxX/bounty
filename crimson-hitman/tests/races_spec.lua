@@ -663,17 +663,25 @@ describe('RACE F9b: the client edits once the staking hitman\'s row exists', fun
     local function run(make) return function()
         local s, f, c, original = deadlineRace(make)
         unkeyed(s)
-        local realWrite = s.storage.writeEscrow
+        -- The stake's write: a take's is insert-if-absent (insertEscrow).
+        local realWrite, realInsert = s.storage.writeEscrow, s.storage.insertEscrow
         local revised, why
-        s.storage.writeEscrow = function(contractId, lines)
+        local function first(lines)
             if revised == nil and lines[1] and lines[1].portion == CH.PORTION.STAKE then
                 revised, why = s.contracts.revise(f.creator, c.id, { deadlineSeconds = 600 })
             end
+        end
+        s.storage.writeEscrow = function(contractId, lines)
+            first(lines)
             return realWrite(contractId, lines)
+        end
+        s.storage.insertEscrow = function(contractId, lines)
+            first(lines)
+            return realInsert(contractId, lines)
         end
         local ok, err = s.contracts.accept(f.hitman, c.id, false,
             { checkDisclosure = true, disclosed = 1000, shownDeadline = original })
-        s.storage.writeEscrow = realWrite
+        s.storage.writeEscrow, s.storage.insertEscrow = realWrite, realInsert
         falsy(revised, 'the deadline was cut under a hitman part-way through staking')
         eq(why, CH.ERR.CONTRACT_TAKEN)
         truthy(ok, tostring(err))
@@ -1315,17 +1323,26 @@ describe('RACE F19: a delivery lands on a bonus raise', function()
             reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } } } },
         })
         truthy(s.contracts.accept(f.hitman, c.id, false))
-        local real, fired = s.storage.writeEscrow, false
-        s.storage.writeEscrow = function(contractId, lines)
-            local r = table.pack(real(contractId, lines))
+        -- The bonus top-up's write: a take's is insert-if-absent (insertEscrow).
+        local real, realInsert, fired = s.storage.writeEscrow, s.storage.insertEscrow, false
+        local function after(lines)
             if not fired and lines[1] and lines[1].portion == CH.PORTION.BONUS and lines[1].derived then
                 fired = true
                 truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.KIDNAPPING, {}))
             end
+        end
+        s.storage.writeEscrow = function(contractId, lines)
+            local r = table.pack(real(contractId, lines))
+            after(lines)
+            return table.unpack(r, 1, r.n)
+        end
+        s.storage.insertEscrow = function(contractId, lines)
+            local r = table.pack(realInsert(contractId, lines))
+            after(lines)
             return table.unpack(r, 1, r.n)
         end
         local ok, err = s.amendments.improve(f.creator, c.id, CH.AMENDMENT.RAISE_BONUS, { percent = 20 })
-        s.storage.writeEscrow = real
+        s.storage.writeEscrow, s.storage.insertEscrow = real, realInsert
         truthy(fired, 'the delivery never landed')
         local slot2 = 0
         for _, l in ipairs(s.storage.readEscrow(c.id)) do
@@ -2140,5 +2157,138 @@ describe('a saturated pause clock', function()
         Exec.run('UPDATE crimson_contracts SET paused_ms = ? WHERE id = ?', { 2147483647, c.id })
         truthy(s.contracts.accept(f.hitman, c.id, false,
             { checkDisclosure = true, disclosed = 1000, shownDeadline = original }))
+    end)
+end)
+
+--- W043: the queue settled its buyouts in one loop with nothing around each,
+--- so one whose settle kept raising stopped every one after it on every
+--- tick, and was never refunded itself: MaxSettleAttempts counted only a
+--- contract held by a claim. Each settles in its own pcall now, a raise is
+--- counted on the row, and past the bound it is decided as an unrecorded
+--- buyout is.
+describe('a queued buyout whose settle keeps raising', function()
+    --- Two contracts on two targets, each taken and bought out, queued.
+    local function twoQueued()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Bailout.MaxSettleAttempts = 3
+        Env.addPlayer({ source = 9, citizenid = 'TARGET02', license = 'license:t2',
+            cash = 0, bank = 100000, firstname = 'Kit', lastname = 'Bell' })
+        local targets = { [f.target.cid] = 2, TARGET02 = 9 }
+        local ids = {}
+        for _, target in ipairs({ f.target, s.identity.resolve(9) }) do
+            local c = s.contracts.create(f.creator, { targetCid = target.cid, reason = 'x',
+                mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } },
+                bailoutAmount = 15000 })
+            truthy(c)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local ok, err, queued = s.bailout.buy(target, c.id)
+            truthy(ok, tostring(err))
+            truthy(queued, 'queued behind the hitman')
+            ids[#ids + 1] = c.id
+        end
+        table.sort(ids)
+        local first, second = ids[1], ids[2]
+        local payer = targets[s.storage.readContract(first).target_cid]
+        Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
+        return s, f, first, second, payer
+    end
+
+    local function tick(s, n)
+        for _ = 1, n do s.bailout.processQueue() end
+    end
+
+    it('holds up no other, and is refunded once past the bound while its contract is open', function()
+        local s, _, first, second, payer = twoQueued()
+        local before = money(payer)
+        local realResolve = s.contracts.resolve
+        s.contracts.resolve = function(id, ...)
+            if id == first then error('an ending hook raised', 0) end
+            return realResolve(id, ...)
+        end
+        eq(s.bailout.processQueue(), 1, 'the other one settles')
+        eq(s.storage.readContract(second).state, CH.STATE.BAILED_OUT)
+        eq(s.storage.readContract(first).bailout_attempts, 1, 'the raise is counted on its row')
+        tick(s, 2)
+        local row = s.storage.readContract(first)
+        eq(row.state, CH.STATE.ACCEPTED, 'still open')
+        eq(row.bailout_queued_at, nil, 'decided: no longer queued')
+        eq(money(payer) - before, 15000, 'its payer refunded')
+        tick(s, 3)
+        eq(money(payer) - before, 15000, 'once')
+        s.contracts.resolve = realResolve
+        s.audit.flush()
+        truthy(#s.storage.auditByAction('bailout_settle_raised', 10) >= 1, 'each raise on the record')
+    end)
+
+    it('past the bound, one that bought the contract out with its premium paid is cleared', function()
+        local s, f, first = twoQueued()
+        local prem = s.bailout.premiumLineId(first)
+        local realRelease = s.escrow.release
+        s.escrow.release = function(id, cid, filter, ...)
+            if type(filter) == 'table' and filter.line == prem then error('a payout hook raised', 0) end
+            return realRelease(id, cid, filter, ...)
+        end
+        tick(s, 3)
+        s.escrow.release = realRelease
+        local row = s.storage.readContract(first)
+        eq(row.state, CH.STATE.BAILED_OUT)
+        eq(row.bailout_queued_at, nil, 'cleared')
+        local line = s.storage.readEscrowLine(prem)
+        eq(line.state, CH.ESCROW_STATE.HELD, 'the premium owed to the client, once')
+        local creator = money(1)
+        s.escrow.retryPending(f.creator.cid)
+        eq(money(1) - creator, 15000, 'and handed over')
+        eq(#s.storage.reviewItems(true, 10), 0, 'nothing for staff')
+    end)
+
+    it('past the bound, one that bought the contract out with no premium paid is left for staff', function()
+        local s, _, first = twoQueued()
+        local prem = s.bailout.premiumLineId(first)
+        local realWrite = s.storage.writeEscrow
+        s.storage.writeEscrow = function(id, lines)
+            if lines[1] and lines[1].id == prem then error('the store refused it', 0) end
+            return realWrite(id, lines)
+        end
+        tick(s, 3)
+        s.storage.writeEscrow = realWrite
+        local row = s.storage.readContract(first)
+        eq(row.state, CH.STATE.BAILED_OUT)
+        eq(row.bailout_queued_at, nil, 'cleared, so it stops raising')
+        local items = s.storage.reviewItems(true, 10)
+        eq(#items, 1, 'left for staff')
+        eq(items[1].kind, 'bailout_settle_raised')
+        eq(items[1].amount, 15000)
+        eq(items[1].contract_id, first)
+        truthy(items[1].cids.payer and items[1].cids.creator, 'naming the payer and the client')
+    end)
+end)
+
+
+--- S12 / DESIGN G5: a buyout's record is a compare-and-set. One the store
+--- answered and refused (another buyout queued, the contract closed, since
+--- the buy read it) can never land later, so the premium goes back at once
+--- and the buy says which.
+describe('a buyout whose record the store refuses', function()
+    it('hands the premium back and says another buyout is pending', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000 })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local before = money(2)
+        local real = s.storage.recordBailout
+        s.storage.recordBailout = function(id)
+            -- Somebody else's buyout lands in the await before ours.
+            s.storage.setBailoutQueue(id, { bailout_queued_at = os.time() - 5, bailout_paid_by = 'OTHER01',
+                bailout_paid_amount = 15000, bailout_paid_account = 'bank' })
+            return false
+        end
+        local ok, err = s.bailout.buy(f.target, c.id)
+        s.storage.recordBailout = real
+        falsy(ok)
+        eq(err, CH.ERR.BUYOUT_PENDING)
+        eq(money(2), before, 'the premium back at once')
+        eq(s.storage.readContract(c.id).bailout_paid_by, 'OTHER01', 'the other buyout left as it was')
     end)
 end)
