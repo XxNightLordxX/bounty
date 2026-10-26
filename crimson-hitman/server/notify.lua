@@ -469,8 +469,13 @@ function Notify.contractCompleted(contract, hitmanRecord, proof, result)
     -- The photo is mentioned only while there is one: with StorePhotos off,
     -- pointing at the Ledger sent the client looking for a picture that was
     -- never kept.
+    -- And with kill photos switched off (Config.Completion.KillPhotos) a
+    -- photograph is not mentioned even to say there is none: there never is.
     local body
-    if delivered then
+    if delivered and not Util.killPhotos() then
+        body = 'Your contract was fulfilled by live delivery: the target was handed over '
+            .. 'in person.'
+    elseif delivered then
         body = 'Your contract was fulfilled by live delivery. There is no '
             .. 'photograph — the target was handed over in person.'
     elseif kept then

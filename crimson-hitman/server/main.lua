@@ -3,6 +3,8 @@
 --- Wires the modules together, validates the configuration at boot, and owns
 --- the only recurring timer in the resource besides the kidnap countdown.
 
+local Util = CrimsonBoot.requireShared('util')
+
 local Storage
 local modules = {}
 
@@ -145,6 +147,11 @@ local DEFAULTS = {
         --- here is: a city that never chose kills does not get them back
         --- by having an older config. Checked below.
         Fulfilment = 'alive',
+        --- Kill photos at all. Absent on every config from before the
+        --- switch, and filled with what ships, as the rule above is: off,
+        --- so nothing asks an image host anything on a server that never
+        --- chose to. Checked below.
+        KillPhotos = false,
         --- Where kill photos are kept, and how long one stays open. Absent
         --- on a config from before the client's one view existed; the
         --- storage is checked below, the open time read by the tick.
@@ -170,6 +177,11 @@ local DEFAULTS = {
     Bailout = {
         BlockWhileIncapacitated = true,
     },
+    --- Headshots at all. Absent on every config from before the switch,
+    --- whose headshots were on. Checked below.
+    Mugshot = {
+        Enabled = true,
+    },
     --- Added to a section every config has. Absent read as 0, which is off:
     --- on every upgraded server an exclusive contract could still be held
     --- by somebody who never went near the target.
@@ -182,6 +194,10 @@ local DEFAULTS = {
         -- Absent read as off, and two one-dollar contracts filled a target's
         -- MaxActiveContractsPerTarget on every server that upgraded.
         MinContractReward = 1000,
+        -- How many times one contract can be collected. Filled, not
+        -- refused, now that it is a choice of 1, 2 or 3 with a shipped
+        -- answer; checked below.
+        MaxPayoutSlots = 1,
         JailZone = { x = 1693.3, y = 2569.5, radius = 300 },
     },
     --- Absent read as off, and an anonymous client calling a named operative
@@ -427,7 +443,6 @@ local function validateConfig(quiet)
         { 'Limits', 'MaxAcceptedPerHitman' },
         { 'Limits', 'MaxActiveContractsPerTarget' },
         { 'Limits', 'MaxHitmenPerContract' },
-        { 'Limits', 'MaxPayoutSlots' },
         { 'Limits', 'MaxEscrowLines' },
         { 'Limits', 'MaxDeadlineSkipSeconds' },
         { 'Limits', 'SlotCooldownSeconds' },
@@ -524,9 +539,22 @@ local function validateConfig(quiet)
         fatal[#fatal + 1] = 'Bailout MinMultiplier is above MaxMultiplier; no premium could ever be valid'
     end
 
-    if Config.Limits.MaxPayoutSlots < 1 then
-        fatal[#fatal + 1] = 'Config.Limits.MaxPayoutSlots must be at least 1'
+    -- How many times one contract can be collected: 1, 2 or 3. Anything
+    -- else is read as the nearest of those and said so, rather than
+    -- refusing to start: a contract collected four times is not something
+    -- this server offers, and a 0 is an owner who meant once.
+    local slots = tonumber(Config.Limits.MaxPayoutSlots)
+    if not slots or slots ~= slots or slots < 1 or slots > 3 or math.floor(slots) ~= slots then
+        local nearest = (not slots or slots ~= slots) and 1
+            or math.max(1, math.min(3, math.floor(slots + 0.5)))
+        warn[#warn + 1] = ('Limits.MaxPayoutSlots is %s; it has to be 1, 2 or 3 (how many '
+            .. 'times one contract can be collected). Using %d.')
+            :format(type(Config.Limits.MaxPayoutSlots) == 'string'
+                and ('"' .. Config.Limits.MaxPayoutSlots .. '"')
+                or tostring(Config.Limits.MaxPayoutSlots), nearest)
+        slots = nearest
     end
+    Config.Limits.MaxPayoutSlots = math.tointeger(slots) or slots
 
     if Config.Ledger.Depth > Config.Ledger.MaxDepthHardCap then
         warn[#warn + 1] = ('Ledger.Depth (%d) exceeds the hard cap (%d); the cap wins')
@@ -570,6 +598,24 @@ local function validateConfig(quiet)
             .. '\'either\'. Using \'alive\': contracts are completed only by a live handover.')
             :format(type(fulfilment) == 'string' and ('"' .. fulfilment .. '"') or tostring(fulfilment))
         Config.Completion.Fulfilment = CH.FULFILMENT_RULE.ALIVE
+    end
+
+    -- Kill photos at all, and target headshots at all. Read as plain
+    -- truths everywhere, so anything but true or false is said and read
+    -- as off, the side that takes and keeps nothing: a string 'true' is
+    -- not an owner who chose to keep pictures.
+    for _, switch in ipairs({
+        { section = 'Completion', key = 'KillPhotos',
+          off = 'no kill photo is taken or kept, and Verify kill completes at the scene' },
+        { section = 'Mugshot', key = 'Enabled', off = 'no target headshot is asked for or shown' },
+    }) do
+        local value = Config[switch.section][switch.key]
+        if type(value) ~= 'boolean' then
+            warn[#warn + 1] = ('%s.%s is %s, not true or false; it is read as false: %s.')
+                :format(switch.section, switch.key, type(value) == 'string'
+                    and ('"' .. value .. '"') or tostring(value), switch.off)
+            Config[switch.section][switch.key] = false
+        end
     end
 
     -- Where kill photos are kept. A misspelling is not a third place: it
@@ -620,8 +666,13 @@ local function validateConfig(quiet)
     -- else must be an https:// address the phone can load, and one that is
     -- not is dropped here, with the reason, rather than handed to phones as
     -- links that lead nowhere.
+    --
+    -- Not with kill photos off (Config.Completion.KillPhotos): nothing is
+    -- served then, and a warning about the address would send the owner to
+    -- set up something that is never used. It is checked again where it is
+    -- read (Photos.publicBase), so turning photos on later is safe.
     local publicUrl = Config.Completion.PhotoPublicUrl
-    if publicUrl ~= nil and publicUrl ~= '' then
+    if publicUrl ~= nil and publicUrl ~= '' and Config.Completion.KillPhotos == true then
         local checked = CrimsonBoot.require('server.photos').checkBase(publicUrl)
         if not checked then
             warn[#warn + 1] = ('Completion.PhotoPublicUrl is %s; it has to be an https:// '
@@ -993,9 +1044,12 @@ local function optionalIntegrations()
         and Config.Relay.CallExport and Config.Relay.CallExport.resource then
         add(Config.Relay.CallExport.resource, 'placing masked calls between parties')
     end
-    -- Headshots have no enable switch: without a renderer the board simply
-    -- shows no faces, which is a degradation rather than a failure.
-    add('MugShotBase64', 'target headshots on the board', false)
+    -- Without a renderer the board simply shows no faces, which is a
+    -- degradation rather than a failure. With headshots switched off
+    -- (Config.Mugshot.Enabled) nothing asks it anything, so it is not one.
+    if Config.Mugshot.Enabled ~= false then
+        add('MugShotBase64', 'target headshots on the board', false)
+    end
 
     return out
 end
@@ -1196,7 +1250,10 @@ function StartCrimsonHitman()
     -- Kill photo files no record names any more. Before the app answers:
     -- a photo is written to its file a moment before its record, and a
     -- sweep that ran alongside a kill being verified would remove that one.
-    local swept, sweepErr = pcall(photos.sweepFiles)
+    -- Only while there are kill photos at all (Photos.inUse): with them off
+    -- and none kept, data/photos is not touched.
+    local swept, sweepErr = true, nil
+    if photos.inUse() then swept, sweepErr = pcall(photos.sweepFiles) end
     if not swept then
         print(('[crimson-hitman] the sweep of kill photo files failed: %s'):format(tostring(sweepErr)))
     end
@@ -1558,12 +1615,18 @@ function Tick()
     job('amendments.expire', modules.amendments.expire)
     job('bailout.processQueue', modules.bailout.processQueue)
     job('escrow.retryWaiting', RetryWaiting)
-    job('photo.sweep', modules.photo.sweep)
+    -- Kill photos switched off (Config.Completion.KillPhotos): nothing below
+    -- that is about them runs while none is kept, and nothing ever asks an
+    -- image host. One kept from before still expires as usual.
+    local photosInUse = modules.photos.inUse()
+    if Util.killPhotos() or modules.photo.tokenCount() > 0 then
+        job('photo.sweep', modules.photo.sweep)
+    end
 
     local now = os.time()
     -- Only where photos come from a host. On 'server' storage the
-    -- allowlist is never consulted.
-    if Config.Completion.PhotoStorage == 'host'
+    -- allowlist is never consulted, and with kill photos off nothing is.
+    if Util.killPhotos() and Config.Completion.PhotoStorage == 'host'
         and now - lastHostRefresh >= (Config.Completion.PhotoHostRefreshSeconds or 300) then
         -- Marked done whether or not the read succeeds: retrying a
         -- cross-resource config read every ten seconds because it failed
@@ -1574,13 +1637,15 @@ function Tick()
     job('death.sweep', modules.death.sweep)
     job('ratelimit.sweep', modules.ratelimit.sweep)
     if Storage.prune then job('storage.prune', Storage.prune) end
-    job('ledger.forgetOldPhotos', ForgetOldPhotos)
-    -- A kill photo opened and never saved or deleted: the phone closed
-    -- mid-view. It goes as if the client had chosen Delete.
-    job('photos.expire', modules.photos.expire)
-    -- A photo kept in the app past Config.Completion.KeptPhotoDays, where
-    -- that is set.
-    job('photos.forgetKept', modules.photos.forgetKept)
+    if photosInUse then
+        job('ledger.forgetOldPhotos', ForgetOldPhotos)
+        -- A kill photo opened and never saved or deleted: the phone closed
+        -- mid-view. It goes as if the client had chosen Delete.
+        job('photos.expire', modules.photos.expire)
+        -- A photo kept in the app past Config.Completion.KeptPhotoDays,
+        -- where that is set.
+        job('photos.forgetKept', modules.photos.forgetKept)
+    end
     local app = CrimsonBoot.require('server.app')
     -- Who may have the app on their phone. Recomputed here rather than
     -- trusted to a job-change event whose name has differed across

@@ -514,3 +514,137 @@ describe('a claim does not erase what happened while it ran', function()
         end
     end)
 end)
+
+--------------------------------------------------------------------------
+-- How many times a contract can be collected: 1, 2 or 3, shipped 1
+--------------------------------------------------------------------------
+
+describe('collections as the owner chooses them (Config.Limits.MaxPayoutSlots)', function()
+    --- The setting as config.lua and defaults.lua ship it, read from the
+    --- files themselves: the suite runs at 3 (tests/run.lua).
+    local function shipped(path)
+        local source = read_file(path)
+        return tonumber(source:match('MaxPayoutSlots%s*=%s*(%d+)'))
+    end
+
+    it('ships as 1 in config.lua and defaults.lua', function()
+        eq(shipped('crimson-hitman/config/config.lua'), 1, 'config.lua')
+        eq(shipped('crimson-hitman/config/defaults.lua'), 1, 'defaults.lua')
+        local main = require('crimson-hitman.server.main')
+        eq(main.configDefaults.Limits.MaxPayoutSlots, 1, 'and what boot fills in for a config without it')
+    end)
+
+    it('places a contract collected once at 1, and refuses a second collection', function()
+        local s = newStack()
+        local f = fixture(s)
+        withConfig({ { Config.Limits, 'MaxPayoutSlots', 1 } }, function()
+            local once = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+            })
+            truthy(once, 'one collection is the contract')
+            eq(once.payout_slots, 1)
+
+            Env.addPlayer({ source = 4, citizenid = 'TARGET04', license = 'license:t4',
+                firstname = 'Ola', lastname = 'Berg' })
+            local twice, err = s.contracts.create(f.creator, {
+                targetCid = 'TARGET04', reason = 'x',
+                reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 1000 } } } },
+            })
+            falsy(twice, 'a second collection is not offered at 1')
+            eq(err, CH.ERR.INVALID_REWARD)
+        end)
+    end)
+
+    it('tells the Place form the server\'s number, so at 1 it offers no more', function()
+        local s = newStack()
+        fixture(s)
+        withConfig({ { Config.Limits, 'MaxPayoutSlots', 1 } }, function()
+            _G.source = 1
+            Env.clientEvents = {}
+            Env.events['crimson-hitman:rewardOptions']({ __rid = 1 })
+            _G.source = nil
+            local reply
+            for _, event in ipairs(Env.clientEvents) do
+                if event.name == 'crimson-hitman:result' then reply = event.args[1] end
+            end
+            truthy(reply and reply.ok, 'the form reads the wallet')
+            eq(reply.data.caps.slots, 1)
+        end)
+    end)
+
+    it('lets a contract placed with more collections keep them after the number comes down', function()
+        local s, f, c = seeded()
+        truthy(c)
+        eq(c.payout_slots, 3)
+        withConfig({ { Config.Limits, 'MaxPayoutSlots', 1 } }, function()
+            eq(s.storage.readContract(c.id).payout_slots, 3, 'the contract keeps its three')
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION),
+                'the first collection is paid')
+            eq(s.storage.readContract(c.id).next_slot, 2, 'and the second is still on offer')
+
+            -- The last collection given back, which a proposal names by
+            -- number: three, above the 1 in force now.
+            local proposal, err = s.amendments.propose(f.creator, c.id,
+                CH.AMENDMENT.REDUCE_REWARD, { slot = 3 })
+            truthy(proposal, 'the third is still the contract\'s to give back: ' .. tostring(err))
+        end)
+    end)
+
+    --- The start-up checks, run quietly as the panel runs them.
+    local function checked(value)
+        local main = require('crimson-hitman.server.main')
+        resetConfig()
+        Config.Limits.MaxPayoutSlots = value
+        local ok, fatal, warn = main.validateConfig(true)
+        local result = Config.Limits.MaxPayoutSlots
+        resetConfig()
+        return ok, result, table.concat(warn or {}, '\n'), table.concat(fatal or {}, '\n')
+    end
+
+    it('takes 1, 2 and 3 as they are, saying nothing', function()
+        for _, value in ipairs({ 1, 2, 3 }) do
+            local ok, result, warned = checked(value)
+            truthy(ok)
+            eq(result, value)
+            falsy(warned:find('MaxPayoutSlots', 1, true), 'no warning for ' .. value .. ': ' .. warned)
+        end
+    end)
+
+    it('reads anything else as the nearest of them, with a warning, rather than refusing to start', function()
+        local cases = {
+            { 0, 1 }, { -4, 1 }, { 5, 3 }, { 20, 3 }, { 2.4, 2 }, { 2.6, 3 }, { 0.5, 1 },
+            { math.huge, 3 }, { 'two', 1 }, { true, 1 },
+        }
+        for _, case in ipairs(cases) do
+            local ok, result, warned, fatal = checked(case[1])
+            truthy(ok, tostring(case[1]) .. ' does not stop the start: ' .. fatal)
+            eq(result, case[2], tostring(case[1]))
+            truthy(warned:find('Limits.MaxPayoutSlots', 1, true)
+                and warned:find('1, 2 or 3', 1, true),
+                tostring(case[1]) .. ' is said at the start: ' .. warned)
+        end
+    end)
+
+    it('fills it in as 1 for a config that does not have it', function()
+        local ok, result, warned = checked(nil)
+        truthy(ok)
+        eq(result, 1)
+        falsy(warned:find('MaxPayoutSlots', 1, true), 'filled, not corrected: ' .. warned)
+    end)
+
+    it('is held to 1 to 3 in the admin panel', function()
+        local s = newStack()
+        for _, value in ipairs({ 0, 4, 5, 20, 2.5, -1 }) do
+            local accepted, err = s.settings.check('Limits.MaxPayoutSlots', value)
+            eq(accepted, nil, tostring(value))
+            eq(err, 'invalid_value', tostring(value))
+        end
+        for _, value in ipairs({ 1, 2, 3 }) do
+            eq(s.settings.check('Limits.MaxPayoutSlots', value), value, tostring(value))
+        end
+        local entry = s.settings.entry('Limits.MaxPayoutSlots')
+        eq(entry.min, 1)
+        eq(entry.max, 3)
+    end)
+end)

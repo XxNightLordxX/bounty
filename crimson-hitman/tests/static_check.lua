@@ -718,7 +718,6 @@ do
         ['Bridges.accessMemoSize']     = 'that the access memo does not grow without bound',
         ['Mugshot.get']                = 'the stored image, without going through a handle',
         ['Notify.clearPush']           = 'the push cooldown, so a test can send twice',
-        ['Photo.tokenCount']           = 'how many photo tokens are outstanding',
         ['RateLimit.count']            = 'how many buckets are held, so a test can watch them expire',
         ['Mugshot.count']              = 'how many faces are cached, so a test can watch the '
             .. 'cache let go of players who left',

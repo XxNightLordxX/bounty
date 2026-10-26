@@ -384,6 +384,9 @@ async function main() {
     let submission = null;
     const app = boot({
       list: BOARD, mine: MINE, ledger: LEDGER,
+      // A server that lets a contract be collected up to three times
+      // (Config.Limits.MaxPayoutSlots), so the count is offered.
+      rewardOptions: { ok: true, data: { cash: 100000, bank: 50000, dirty: 0, caps: { slots: 3 } } },
       searchTargets: { ok: true, data: [{ handle: 'tg00000001', name: 'Dana Reyes', protected: false }] },
       create: function (body) { submission = body; return { ok: true, data: {} }; }
     });
@@ -393,6 +396,7 @@ async function main() {
     const tabs = app.document.querySelectorAll('.tab');
     const place = tabs.filter(function (t) { return t.dataset.tab === 'place'; })[0];
     place.onclick();
+    await settle(); await settle();
 
     it('renders the create form', function () {
       truthy(app.document.getElementById('slots-count'), 'payout count field');
@@ -2356,9 +2360,9 @@ async function main() {
       { name: 'WEAPON_PISTOL', label: 'Pistol', slot: 3, serial: 'C123' },
       { name: 'WEAPON_PISTOL', label: 'Pistol', slot: 4, serial: 'F456' }
     ],
-    // Deliberately not 5: the form's own fallback is 5, so a fixture of 5
+    // Deliberately not 1: the form's own fallback is 1, so a fixture of 1
     // would pass whether or not the ceiling came from the server at all.
-    caps: { maxStacks: 3, maxPerStack: 100, maxWeapons: 2, slots: 7 }
+    caps: { maxStacks: 3, maxPerStack: 100, maxWeapons: 2, slots: 3 }
   };
 
   function placeForm(overrides) {
@@ -2627,9 +2631,9 @@ async function main() {
     await settle(); await settle();
 
     it('offers as many payouts as the server allows', function () {
-      eq(app.document.getElementById('slots-count').max, 7,
+      eq(app.document.getElementById('slots-count').max, 3,
         'the ceiling comes from the config, not from the form');
-      truthy(GOODS.caps.slots !== 5,
+      truthy(GOODS.caps.slots !== 1,
         'and the fixture must differ from the fallback or this proves nothing');
     });
 
@@ -2809,6 +2813,42 @@ async function main() {
     });
   })();
 
+  /* Config.Limits.MaxPayoutSlots as it ships, 1: each contract is
+     collected once, and the form says nothing about collecting it again. */
+  await (async function collectedOnce() {
+    const app = placeForm({
+      rewardOptions: { ok: true, data: Object.assign({}, GOODS,
+        { caps: Object.assign({}, GOODS.caps, { slots: 1 }) }) }
+    });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    it('shows no extra-collection controls where a contract is collected once', function () {
+      falsy(app.document.getElementById('slots-count'), 'no payout count');
+      falsy(app.document.getElementById('slots-ceiling'), 'no note about the most allowed');
+      const text = app.view.textContent;
+      falsy(text.indexOf('how many times it can be collected') !== -1, text);
+      falsy(text.indexOf('More hitmen may accept than there are payouts') !== -1, text);
+      falsy(text.indexOf('Payout 1') !== -1, 'the one reward is not numbered: ' + text);
+      truthy(app.document.getElementById('slot-cash-1'), 'the reward itself is still set here');
+    });
+
+    pick(app, 'slot-cash-1', 6000);
+    pick(app, 'target-handle', 'tg00000001');
+    pick(app, 'reason', 'Unpaid debt');
+    press(app, 'place-submit');
+    await settle(); await settle();
+
+    it('places it with one collection', function () {
+      const sent = app.submitted();
+      truthy(sent, 'the contract went to the server');
+      eq(sent.reward.slots.length, 1);
+      eq(sent.reward.slots[0].baseline.cash, 6000);
+    });
+  })();
+
   await (async function noGoodsToOffer() {
     const app = placeForm({
       rewardOptions: { ok: true, data: { cash: 500, bank: 0, dirty: 0, items: [], weapons: [], caps: {} } }
@@ -2818,10 +2858,11 @@ async function main() {
       .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
     await settle(); await settle();
 
-    it('falls back rather than offering an unbounded field', function () {
+    it('falls back to one collection rather than offering what the server may refuse', function () {
       // caps.slots is absent in this fixture, which is what a server too old
       // to send it looks like.
-      eq(app.document.getElementById('slots-count').max, 5);
+      falsy(app.document.getElementById('slots-count'), 'no count to choose');
+      falsy(app.view.textContent.indexOf('Payout 1') !== -1, 'and no numbered payout');
     });
 
     it('shows no picker at all when there is nothing to stake', function () {
@@ -2944,7 +2985,7 @@ async function main() {
     async function openPlace(responses) {
       const app = boot(Object.assign({
         list: BOARD, mine: MINE, ledger: LEDGER,
-        rewardOptions: { ok: true, data: { cash: 100000, bank: 0, dirty: 0, caps: {} } },
+        rewardOptions: { ok: true, data: { cash: 100000, bank: 0, dirty: 0, caps: { slots: 3 } } },
         browseTargets: CITY
       }, responses || {}));
       await settle(); await settle();
@@ -6723,6 +6764,105 @@ async function main() {
           });
         });
       }
+    })();
+
+    /* ---------- with kill photos off (Config.Completion.KillPhotos) ----------
+       The server checks the scene itself: no camera, no viewfinder, no
+       photo step, and nothing the hitman reads says to photograph anything. */
+    function boardWithoutPhotos(extra) {
+      return { ok: true, data: { page: 1, pages: 1, contracts: [],
+        settings: Object.assign({ killPhotos: false, fulfilment: 'either',
+          kidnap: { radius: 12, seconds: 30 } }, extra || {}) } };
+    }
+    const NEW_HITMAN = { ok: true, data: { entries: [], kept: [], record: { completed: 0 } } };
+    const CAMERA = ['takeVerificationPhoto', 'sendVerificationPhoto', 'verificationCamera'];
+
+    await (async function verifiedAtTheScene() {
+      const app = boot({
+        list: boardWithoutPhotos(), mine: mineWithAJob(), ledger: NEW_HITMAN,
+        verifyKill: { ok: true, data: { settled: 1, pending: 0 } }
+      });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle();
+      const howTo = app.view.textContent;
+      click(app, 'Verify kill');
+      await settle(); await settle();
+
+      it('verifies a kill at the scene with no camera, viewfinder or photo step', function () {
+        const asked = app.sent.filter(function (x) { return x.name === 'verifyKill'; });
+        eq(asked.length, 1, 'the server is asked to check the scene');
+        eq(asked[0].body.id, 'ct00000001');
+        CAMERA.forEach(function (name) {
+          falsy(app.sent.some(function (x) { return x.name === name; }), name + ' was never asked for');
+        });
+        falsy(app.view.all().some(function (n) { return n.tagName === 'CANVAS'; }), 'no viewfinder drawn');
+        truthy(app.notice().indexOf('Verified. Payment released.') !== -1, app.notice());
+      });
+
+      it('tells a new hitman to tap Verify kill at the body, not to photograph it', function () {
+        truthy(howTo.indexOf('tap Verify kill before they are revived') !== -1, howTo);
+        falsy(howTo.toLowerCase().indexOf('photo') !== -1, howTo);
+      });
+    })();
+
+    await (async function refusalsSayNothingOfAPhoto() {
+      for (const err of ['no_kill_to_verify', 'photo_too_far', 'photo_revived',
+                         'photo_still_down', 'rate_limited']) {
+        const app = boot({
+          list: boardWithoutPhotos(), mine: mineWithAJob(), ledger: NEW_HITMAN,
+          verifyKill: { ok: false, err: err }
+        });
+        await settle(); await settle();
+        tab(app, 'mine');
+        await settle();
+        click(app, 'Verify kill');
+        await settle(); await settle();
+        const said = app.notice();
+        it('words ' + err + ' for a kill checked at the scene', function () {
+          truthy(said.length > 0, 'something is said');
+          falsy(said.toLowerCase().indexOf('photo') !== -1, 'no photo where none is taken: ' + said);
+          falsy(app.view.textContent.toLowerCase().indexOf('photograph') !== -1,
+            'nor on the card: ' + app.view.textContent);
+        });
+      }
+    })();
+
+    await (async function followsTheServerWhenItSwitched() {
+      // The page read "off", the server has turned photos on since.
+      const turnedOn = boot({
+        list: boardWithoutPhotos(), mine: mineWithAJob(), ledger: NEW_HITMAN,
+        verifyKill: { ok: false, err: 'photo_required' },
+        takeVerificationPhoto: { ok: true, data: { settled: 1, pending: 0 } }
+      });
+      await settle(); await settle();
+      tab(turnedOn, 'mine');
+      await settle();
+      click(turnedOn, 'Verify kill');
+      await settle(); await settle(); await settle();
+
+      // The page read "on", the server has turned them off since: the
+      // camera is refused unread, and the scene is checked instead.
+      const turnedOff = boot({
+        list: boardWithoutPhotos({ killPhotos: true }), mine: mineWithAJob(), ledger: NEW_HITMAN,
+        takeVerificationPhoto: { ok: false, err: 'photo_gone' },
+        verifyKill: { ok: true, data: { settled: 1, pending: 0 } }
+      });
+      await settle(); await settle();
+      tab(turnedOff, 'mine');
+      await settle();
+      click(turnedOff, 'Verify kill');
+      await settle(); await settle(); await settle();
+
+      it('opens the camera after all where the server asks for a photo', function () {
+        truthy(turnedOn.sent.some(function (x) { return x.name === 'takeVerificationPhoto'; }));
+        truthy(turnedOn.notice().indexOf('Verified') !== -1, turnedOn.notice());
+      });
+      it('checks the scene where the server has stopped taking photos', function () {
+        truthy(turnedOff.sent.some(function (x) { return x.name === 'verifyKill'; }));
+        truthy(turnedOff.notice().indexOf('Verified') !== -1, turnedOff.notice());
+        falsy(turnedOff.notice().indexOf('That photo is gone') !== -1, turnedOff.notice());
+      });
     })();
 
     /* ---------- the viewfinder, on a server that keeps its photos ----------

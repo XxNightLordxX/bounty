@@ -11,6 +11,11 @@
 --- 'server' the app's own viewfinder takes it and the client sends the
 --- picture itself, which is checked here and kept as a file on this server;
 --- no image host and no allowlist are involved.
+---
+--- And none at all with Config.Completion.KillPhotos off: Verify kill is
+--- then completed at the scene on the server's own facts alone
+--- (Photo.verifyAtScene), no token is issued, and nothing here asks
+--- lb-phone or an image host anything.
 
 local Util = CrimsonBoot.requireShared('util')
 
@@ -20,6 +25,10 @@ local Storage, Identity, Contracts, Audit, Death, Notify, Ledger
 
 --- [token] = { contractId, hitmanCid, victimCid, coords, issuedAt, used }
 local tokens = {}
+--- Kills being verified without a photo right now, by contract and hitman:
+--- [contractId .. ':' .. hitmanCid] = true. The claim awaits on mysql, and
+--- the same request sent again in that gap would pass every check too.
+local verifying = {}
 --- Where a photo may come from. Two kinds, as lb-phone itself keeps them:
 --- domains, which also cover every subdomain (lb-phone's
 --- Config.UploadWhitelistedDomains, plus Config.Completion.ExtraPhotoHosts),
@@ -41,7 +50,11 @@ function Photo.init(deps)
         deps.storage, deps.identity, deps.contracts, deps.audit,
         deps.death, deps.notify, deps.ledger
     tokens = {}
-    Photo.loadAllowedHosts()
+    verifying = {}
+    -- Not with kill photos off: the list says where a photo may come from,
+    -- and lb-phone is not asked for it while none can. Read when they are
+    -- turned on (Bridges' settings hook) and by the tick after that.
+    if Util.killPhotos() then Photo.loadAllowedHosts() end
 end
 
 --- Where kill photos go: 'server' or 'host'. Checked at startup, so
@@ -322,21 +335,109 @@ local function downedInReach(actor, contractId)
         GetEntityCoords(GetPlayerPed(victim.source))) <= range * range
 end
 
---- Issue a capture token for a pending completion. One live token per
---- hitman-contract pair: requesting another invalidates the first, so a
---- hitman cannot bank tokens for later.
----@return string|nil token
----@return string|nil err
-function Photo.issue(actor, contractId)
-    contractId = Util.toId(contractId)
-    if not contractId then return nil, CH.ERR.INVALID_INPUT end
+--------------------------------------------------------------------------
+-- The scene
+--------------------------------------------------------------------------
 
-    -- A contract placed for a live delivery only has no kill to verify, ever.
-    -- Said first and plainly to a hitman on it: "no kill is waiting, finish
-    -- them and take the photo" is the one thing that can never pay on it.
-    -- Its rule is a term they were shown when they took it. Anybody else is
-    -- told what they were always told, that there is no kill of theirs, so
-    -- an id is not a way to ask whether a contract still exists.
+--- The server's own facts about a kill being claimed, checked where the
+--- hitman stands now: they are at the scene, the kill they are claiming
+--- still stands, and the target is still dead or inside the proof window.
+--- The same for a photo (Photo.submit) and for a kill verified without one
+--- (Photo.verifyAtScene).
+---@param actor table
+---@param proof table { contractId, victimCid, coords, diedAt, issuedAt }
+---@return boolean ok
+---@return string|nil err
+---@return boolean|nil spent the proof can never succeed now, and a token for it goes
+local function atTheScene(actor, proof)
+    -- The hitman must be at the scene. Position is read server-side; a
+    -- client claiming to be somewhere is not consulted.
+    --
+    -- The scene is where the body was when the death was recorded, or where
+    -- it is now. A body keeps moving after that: a dead driver's car rolls
+    -- on, a passenger is driven off, friends carry it, a stretcher takes it.
+    -- Measured only from the first, a hitman standing over the body was told
+    -- to stand over the body. Where it is now is read only for a victim who
+    -- is online and still dead, and the kill must still stand (below), so
+    -- nothing can be claimed that could not be before.
+    local hitmanCoords = GetEntityCoords(GetPlayerPed(actor.source))
+    local radius = Config.Completion.PhotoRadius
+    local near = Util.dist2(hitmanCoords, proof.coords) <= radius * radius
+    if not near then
+        local body = Identity.byCitizenId(proof.victimCid)
+        near = body ~= nil and Identity.isTrulyDead(body.source)
+            and Util.dist2(hitmanCoords, GetEntityCoords(GetPlayerPed(body.source))) <= radius * radius
+    end
+    if not near then
+        Audit.rejected('photo_out_of_range', actor.cid, proof.contractId, {})
+        return false, CH.ERR.PHOTO_TOO_FAR
+    end
+
+    -- The kill this proof is for must still stand: a revive clears it
+    -- (Death.onRevived), and a token outlived it. A target revived and then
+    -- gone offline, or dead again of something else, passed the check
+    -- below, and the hitman was paid for a kill that had been undone.
+    local stillPending = Death.getPending(proof.contractId, actor.cid)
+    if not stillPending then
+        Audit.rejected('photo_kill_undone', actor.cid, proof.contractId, {})
+        return false, CH.ERR.PHOTO_REVIVED, true
+    end
+    -- A newer kill of theirs took its place: the target got up and this
+    -- hitman put them down again. That one needs its own photograph, and
+    -- being told they had been brought back read as the kill being lost.
+    if proof.diedAt and stillPending.at ~= proof.diedAt then
+        Audit.rejected('photo_kill_replaced', actor.cid, proof.contractId, {})
+        return false, CH.ERR.TOKEN_INVALID, true
+    end
+
+    -- Still dead? A target revived between the kill and the photo was not
+    -- eliminated (§7.4) — but a short proof window follows the death itself,
+    -- because players respawn in seconds and the hitman standing over the
+    -- body should not lose a kill they made to the respawn button.
+    local victim = Identity.byCitizenId(proof.victimCid)
+    if victim and not Identity.isTrulyDead(victim.source) then
+        local sinceDeath = (Util.monotonicMs() - (proof.diedAt or proof.issuedAt)) / 1000
+        -- On the ground again, not on their feet: a defibrillator takes
+        -- them from dead to last stand. Not a kill until they are finished,
+        -- and not a revive either, so the kill is kept and the hitman told
+        -- what to do. Refused as revived, the kill was thrown away with the
+        -- target still lying there.
+        local _, down, known = Identity.deathState(victim.source)
+        if sinceDeath > (Config.Completion.ProofWindowSeconds or 0) and known and down then
+            Audit.rejected('photo_target_down', actor.cid, proof.contractId, {})
+            return false, CH.ERR.PHOTO_STILL_DOWN
+        end
+        -- Up, but not yet for long enough to be a revive: the moment a
+        -- defibrillator leaves before last stand reads the same way. The
+        -- kill is the revive's to void, once it is one; thrown away here,
+        -- on one reading, it went with the target still on the ground.
+        if sinceDeath > (Config.Completion.ProofWindowSeconds or 0)
+            and Death.wasSeenDead(proof.victimCid) then
+            Audit.rejected('photo_target_not_dead', actor.cid, proof.contractId, {})
+            return false, CH.ERR.PHOTO_NOT_DEAD
+        end
+        if sinceDeath > (Config.Completion.ProofWindowSeconds or 0) then
+            Audit.rejected('photo_target_revived', actor.cid, proof.contractId,
+                { since = math.floor(sinceDeath) })
+            Death.clearPending(proof.contractId, actor.cid)
+            return false, CH.ERR.PHOTO_REVIVED, true
+        end
+    end
+    return true
+end
+
+--- What a hitman with no kill to prove on a contract is told, the same
+--- whether a photo would be taken or not.
+---
+--- A contract placed for a live delivery only has no kill to verify, ever.
+--- Said first and plainly to a hitman on it: "no kill is waiting, finish
+--- them and take the photo" is the one thing that can never pay on it. Its
+--- rule is a term they were shown when they took it. Anybody else is told
+--- what they were always told, that there is no kill of theirs, so an id is
+--- not a way to ask whether a contract still exists.
+---@return table|nil record the kill waiting for proof, when there is one
+---@return string|nil err
+local function pendingKill(actor, contractId)
     local contract = Storage.readContract(contractId)
     if contract and Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
         local hitman = Storage.readHitman(contractId, actor.cid)
@@ -355,6 +456,75 @@ function Photo.issue(actor, contractId)
         if downedInReach(actor, contractId) then return nil, CH.ERR.PHOTO_STILL_DOWN end
         return nil, CH.ERR.NO_KILL_TO_VERIFY
     end
+    return record
+end
+
+--- Verify a kill without a photo, where kill photos are switched off
+--- (Config.Completion.KillPhotos): at the scene, on the server's own facts
+--- alone, and claim a payout slot if they hold.
+---
+--- Everything Photo.submit checks except the picture: a kill the server
+--- itself attributed to this hitman (Death, with ProofWindowSeconds,
+--- RequireObservedDamage and RejectLastStand applied there), the hitman
+--- standing at the scene now, the kill still standing and the target still
+--- dead or inside the proof window (atTheScene). Nothing is kept for the
+--- client but their ledger row: no photo, no file, no link.
+---
+--- Refused with kill photos on, where the photo is one of the checks: a
+--- page asking this there is told to take one (PHOTO_REQUIRED).
+---@param actor table resolved from the event source
+---@param rawId any the contract
+---@return boolean ok
+---@return string|nil err
+---@return table|nil result the claim's own answer (Contracts.claimSlot)
+function Photo.verifyAtScene(actor, rawId)
+    if Util.killPhotos() then return false, CH.ERR.PHOTO_REQUIRED end
+    local contractId = Util.toId(rawId)
+    if not contractId then return false, CH.ERR.INVALID_INPUT end
+
+    local record, err = pendingKill(actor, contractId)
+    if not record then return false, err end
+
+    local standing, sceneErr = atTheScene(actor, {
+        contractId = contractId, victimCid = record.victimCid, coords = record.coords,
+        diedAt = record.at, issuedAt = record.at,
+    })
+    if not standing then return false, sceneErr end
+
+    -- One claim on a kill at a time, as one on a token (Photo.submit).
+    local key = contractId .. ':' .. actor.cid
+    if verifying[key] then return false, CH.ERR.BUSY end
+    verifying[key] = true
+    local ran, ok, claimErr, result = pcall(Contracts.claimSlot,
+        contractId, actor.cid, CH.FULFILMENT.ELIMINATION, { deathAt = record.at })
+    verifying[key] = nil
+    if not ran then error(ok, 0) end
+
+    if not ok then
+        Audit.rejected('kill_claim_failed', actor.cid, contractId, { reason = claimErr })
+        return false, claimErr
+    end
+
+    Death.clearPending(contractId, actor.cid)
+    Audit.action('kill_verified_at_scene', actor.cid, contractId, {})
+
+    local contract = Storage.readContract(contractId)
+    Ledger.record(contract, actor.cid, nil, CH.FULFILMENT.ELIMINATION, result)
+    Notify.contractCompleted(contract, actor, {}, result)
+    return true, nil, result
+end
+
+--- Issue a capture token for a pending completion. One live token per
+--- hitman-contract pair: requesting another invalidates the first, so a
+--- hitman cannot bank tokens for later.
+---@return string|nil token
+---@return string|nil err
+function Photo.issue(actor, contractId)
+    contractId = Util.toId(contractId)
+    if not contractId then return nil, CH.ERR.INVALID_INPUT end
+
+    local record, err = pendingKill(actor, contractId)
+    if not record then return nil, err end
 
     for token, existing in pairs(tokens) do
         if existing.contractId == contractId and existing.hitmanCid == actor.cid then
@@ -469,82 +639,10 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
     -- a kill already undone, was decoded in full and only then refused, as
     -- often as it was sent. Now only a hitman standing at a kill that still
     -- stands gets that far.
-    --
-    -- The hitman must be at the scene. Position is read server-side; a
-    -- client claiming to be somewhere is not consulted.
-    --
-    -- The scene is where the body was when the death was recorded, or where
-    -- it is now. A body keeps moving after that: a dead driver's car rolls
-    -- on, a passenger is driven off, friends carry it, a stretcher takes it.
-    -- Measured only from the first, a hitman standing over the body was told
-    -- to stand over the body. Where it is now is read only for a victim who
-    -- is online and still dead, and the kill must still stand (below), so
-    -- nothing can be claimed that could not be before.
-    local hitmanCoords = GetEntityCoords(GetPlayerPed(actor.source))
-    local radius = Config.Completion.PhotoRadius
-    local near = Util.dist2(hitmanCoords, record.coords) <= radius * radius
-    if not near then
-        local body = Identity.byCitizenId(record.victimCid)
-        near = body ~= nil and Identity.isTrulyDead(body.source)
-            and Util.dist2(hitmanCoords, GetEntityCoords(GetPlayerPed(body.source))) <= radius * radius
-    end
-    if not near then
-        Audit.rejected('photo_out_of_range', actor.cid, record.contractId, {})
-        return false, CH.ERR.PHOTO_TOO_FAR
-    end
-
-    -- The kill this token was issued for must still stand: a revive clears
-    -- it (Death.onRevived), and the token outlived it. A target revived and
-    -- then gone offline, or dead again of something else, passed the check
-    -- below, and the hitman was paid for a kill that had been undone.
-    local stillPending = Death.getPending(record.contractId, actor.cid)
-    if not stillPending then
-        Audit.rejected('photo_kill_undone', actor.cid, record.contractId, {})
-        tokens[token] = nil
-        return false, CH.ERR.PHOTO_REVIVED
-    end
-    -- A newer kill of theirs took its place: the target got up and this
-    -- hitman put them down again. That one needs its own photograph, and
-    -- being told they had been brought back read as the kill being lost.
-    if record.diedAt and stillPending.at ~= record.diedAt then
-        Audit.rejected('photo_kill_replaced', actor.cid, record.contractId, {})
-        tokens[token] = nil
-        return false, CH.ERR.TOKEN_INVALID
-    end
-
-    -- Still dead? A target revived between the kill and the photo was not
-    -- eliminated (§7.4) — but a short proof window follows the death itself,
-    -- because players respawn in seconds and the hitman standing over the
-    -- body should not lose a kill they made to the respawn button.
-    local victim = Identity.byCitizenId(record.victimCid)
-    if victim and not Identity.isTrulyDead(victim.source) then
-        local sinceDeath = (Util.monotonicMs() - (record.diedAt or record.issuedAt)) / 1000
-        -- On the ground again, not on their feet: a defibrillator takes
-        -- them from dead to last stand. Not a kill until they are finished,
-        -- and not a revive either, so the kill is kept and the hitman told
-        -- what to do. Refused as revived, the kill was thrown away with the
-        -- target still lying there.
-        local _, down, known = Identity.deathState(victim.source)
-        if sinceDeath > (Config.Completion.ProofWindowSeconds or 0) and known and down then
-            Audit.rejected('photo_target_down', actor.cid, record.contractId, {})
-            return false, CH.ERR.PHOTO_STILL_DOWN
-        end
-        -- Up, but not yet for long enough to be a revive: the moment a
-        -- defibrillator leaves before last stand reads the same way. The
-        -- kill is the revive's to void, once it is one; thrown away here,
-        -- on one reading, it went with the target still on the ground.
-        if sinceDeath > (Config.Completion.ProofWindowSeconds or 0)
-            and Death.wasSeenDead(record.victimCid) then
-            Audit.rejected('photo_target_not_dead', actor.cid, record.contractId, {})
-            return false, CH.ERR.PHOTO_NOT_DEAD
-        end
-        if sinceDeath > (Config.Completion.ProofWindowSeconds or 0) then
-            Audit.rejected('photo_target_revived', actor.cid, record.contractId,
-                { since = math.floor(sinceDeath) })
-            Death.clearPending(record.contractId, actor.cid)
-            tokens[token] = nil
-            return false, CH.ERR.PHOTO_REVIVED
-        end
+    local standing, sceneErr, spent = atTheScene(actor, record)
+    if not standing then
+        if spent then tokens[token] = nil end
+        return false, sceneErr
     end
 
     -- The token is spent only once the slot is actually claimed. Burning it

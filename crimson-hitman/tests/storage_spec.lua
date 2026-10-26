@@ -397,6 +397,7 @@ describe('storage conformance', function()
     it('keeps a kill photo record and its one view in every backend', function()
         for _, b in ipairs(backends()) do
             local store = b.store
+            falsy(store.anyPhoto(), b.name .. ': an empty store holds no photo')
             store.writePhoto({ id = 'ph00000000aa', contract_id = 'ct1', slot = 2,
                 owner_cid = 'CREATOR1', kind = 'url', url = 'https://cdn.fivemanage.com/a.png',
                 state = CH.PHOTO.PENDING, created_at = 1000 })
@@ -404,6 +405,7 @@ describe('storage conformance', function()
                 owner_cid = 'CREATOR2', kind = 'url', url = 'https://cdn.fivemanage.com/b.png',
                 state = CH.PHOTO.PENDING, created_at = 2000 })
 
+            truthy(store.anyPhoto(), b.name .. ': and one written is one held')
             local read = store.readPhoto('ph00000000aa')
             truthy(read, b.name .. ': written and read back')
             eq(read.owner_cid, 'CREATOR1', b.name)
@@ -2537,6 +2539,7 @@ describe('every mysql statement is executable', function()
             function() m.keepPhoto('ph1', 'open', nil) end,
             function() m.photosOpenedBefore(10, 5, 'kept') end,
             function() m.photoTotals() end,
+            function() m.anyPhoto() end,
             function() m.deletePhoto('ph1') end,
             function() m.writeReview({ id='rv1', kind='bailout_refund_stranded', contract_id='c1', cids={ payer='A' }, amount=100, account='bank', known={ arrived=0 }, created_at=1, state='open' }) end,
             function() m.readReview('rv1') end,

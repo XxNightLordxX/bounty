@@ -213,9 +213,13 @@ Config.Limits = {
     MinContractReward            = 1000,
     MaxHitmenPerContract        = 5,
 
-    --- How many times one contract may be collected. Each slot carries its
-    --- own reward set and all of them are escrowed at creation.
-    MaxPayoutSlots               = 5,
+    --- How many times one contract can be collected: 1, 2 or 3.
+    --- 1 = each contract is collected once; 2 or 3 allows more. Each
+    --- collection carries its own reward and all of them are escrowed when
+    --- the contract is placed. Contracts already placed keep the number
+    --- they were placed with. Anything outside 1 to 3 is read as the
+    --- nearest of them, with a warning at startup.
+    MaxPayoutSlots               = 1,
     --- Ceiling on escrow lines in one contract, across every payout, both
     --- portions and any later top-up. The per-payout limits multiply: five
     --- payouts, two portions and ten item stacks each is a hundred and sixty
@@ -395,7 +399,26 @@ Config.Completion = {
     --- warning at startup. /ch-diag says which is in use.
     Fulfilment = 'alive',
 
-    --- Where kill photos are kept: 'server' (the default) or 'host'.
+    --- Kill photos at all: true or false (false, as shipped).
+    ---
+    --- false: this resource never takes, uploads, downloads, keeps or
+    --- serves a kill photo, and never asks Fivemanage or any other image
+    --- host anything for one. Under 'alive' (as shipped) a kill photo is
+    --- never used anyway. Under 'either', Verify kill completes the
+    --- contract at the scene on the server's own checks (ProofWindowSeconds,
+    --- RequireObservedDamage, RejectLastStand and the rest), with no camera
+    --- and no picture. PhotoStorage, the other Photo* settings below,
+    --- ExtraPhotoHosts and Config.Ledger.StorePhotos then do not apply.
+    --- Photos kept before it was turned off stay until they expire as
+    --- usual, and their client can still open each one once.
+    ---
+    --- true: a kill is verified with a photo, kept as PhotoStorage says.
+    --- /ch-diag says which is in use; the admin panel switches it without
+    --- a restart.
+    KillPhotos = false,
+
+    --- Where kill photos are kept: 'server' (the default) or 'host'. Read
+    --- only with KillPhotos = true.
     ---
     --- 'server' needs no image host at all. The hitman takes the photo in
     --- this app's own viewfinder (lb-phone's game camera, drawn inside the
@@ -611,6 +634,11 @@ Config.Kidnap = {
 --- is accepted: the board shows no faces rather than whatever picture a
 --- modified client sends.
 Config.Mugshot = {
+    --- Target headshots on the board at all. false: no headshot is ever
+    --- asked of a target's game, one a client sends anyway is refused
+    --- unread, none is kept, and every card shows the usual placeholder.
+    --- The admin panel switches it without a restart.
+    Enabled = true,
     MinRefreshMinutes = 5,
     RenderTimeoutMs = 8000,
     --- Have MugShotBase64 cut the background out of the headshot. Off by
@@ -829,8 +857,10 @@ Config.Informant = {
 Config.Ledger = {
     Depth = 10,
     MaxDepthHardCap = 25,
-    --- Whether a kill photo is kept for the client who placed the contract.
-    --- Only they ever see it: never the hitman, never the target. Off, the
+    --- Whether a kill photo is kept for the client who placed the contract
+    --- (only with Config.Completion.KillPhotos = true; with it off no photo
+    --- is ever taken). Only they ever see it: never the hitman, never the
+    --- target. Off, the
     --- client is told their contract was fulfilled and there is no photo to
     --- open, and on 'server' storage the photo is never written to disk.
     StorePhotos = true,

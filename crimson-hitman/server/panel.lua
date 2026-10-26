@@ -479,6 +479,9 @@ local function buildOverview()
     out.storage = Config.Database.Mode
     out.fulfilment = Util.placingRule()
     out.photoStorage = Config.Completion.PhotoStorage
+    -- Kill photos at all (Config.Completion.KillPhotos): off, where they
+    -- are kept says nothing.
+    out.killPhotos = Config.Completion.KillPhotos == true
     out.slowest = deps.timing and deps.timing.slowest(5) or {}
     out.slowMs = tonumber(Config.Diagnostics.SlowJobMs) or 0
     out.warnings = diagWarnings()

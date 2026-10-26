@@ -28,6 +28,10 @@ local MUGSHOT_BPS = 100000
 --- Render this player's headshot and hand it to the server.
 local function renderSelf()
     if GetResourceState('MugShotBase64') ~= 'started' then return false end
+    -- Headshots switched off (Config.Mugshot.Enabled): the server asks for
+    -- none, and this game renders none if asked all the same.
+    local rules = Config and Config.Mugshot
+    if type(rules) == 'table' and rules.Enabled == false then return false end
 
     -- A floor here as well as on the server: a client cannot be made to
     -- render in a loop by a flood of requests.
@@ -44,7 +48,6 @@ local function renderSelf()
     -- The background is left in unless the server owner asks otherwise
     -- (Config.Mugshot.RemoveBackground): cutting it out loads a 2.6 MB
     -- model in MugShotBase64's page for every render and never frees it.
-    local rules = Config and Config.Mugshot
     local cutOut = type(rules) == 'table' and rules.RemoveBackground == true
     local ok, image = pcall(function()
         return exports['MugShotBase64']:GetMugShotBase64(ped, cutOut)

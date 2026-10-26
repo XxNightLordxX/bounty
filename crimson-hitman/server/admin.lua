@@ -1380,11 +1380,13 @@ function Admin.diagnose(source, subjectId, later)
     for _, c in ipairs(okLive and live or {}) do
         if Util.fulfilmentRule(c) ~= placing then other = other + 1 end
     end
-    -- Whether a kill photo can be taken at all: under 'alive' only while a
-    -- contract placed under 'either' is still live. The photo section below
-    -- gives no advice when none can, since every line of it is about
-    -- setting up something nothing uses.
-    local photosUsed = placing == CH.FULFILMENT_RULE.EITHER or other > 0
+    -- Whether a kill photo can be taken at all: never with kill photos
+    -- switched off (Config.Completion.KillPhotos), and under 'alive' only
+    -- while a contract placed under 'either' is still live. The photo
+    -- section below gives no advice when none can, since every line of it
+    -- is about setting up something nothing uses.
+    local killPhotos = Util.killPhotos()
+    local photosUsed = killPhotos and (placing == CH.FULFILMENT_RULE.EITHER or other > 0)
     -- Neither line below carries the '->' this report marks something to
     -- act on with: there is nothing to do about a setting that is unused.
     if placing == CH.FULFILMENT_RULE.ALIVE then
@@ -1403,12 +1405,25 @@ function Admin.diagnose(source, subjectId, later)
                 .. 'photos taken before and still waiting for or kept by their clients')
         end
     else
-        say('completion: either (Config.Completion.Fulfilment): a kill, verified with a '
-            .. 'photo, or a handover to the client completes a contract')
+        say(('completion: either (Config.Completion.Fulfilment): a kill, verified %s, or a '
+            .. 'handover to the client completes a contract')
+            :format(killPhotos and 'with a photo' or 'at the scene with no photo'))
         if other > 0 then
             say(('  %d live contract(s) were placed under \'alive\' and are completed only by '
                 .. 'a handover until they end'):format(other))
         end
+    end
+
+    -- Kill photos at all, said in so many words: an owner who switched them
+    -- off has the answer to "why did nothing ask Fivemanage" here.
+    if killPhotos then
+        say('Kill photos: on (Config.Completion.KillPhotos)')
+    else
+        say('Kill photos: off')
+        say('  Config.Completion.KillPhotos is false: no kill photo is taken, uploaded, kept or '
+            .. 'served, and no image host is asked anything. Verify kill (under \'either\') '
+            .. 'completes at the scene on the server\'s own checks. PhotoStorage, the other '
+            .. 'Photo* settings, ExtraPhotoHosts and Config.Ledger.StorePhotos do not apply.')
     end
 
     -- Writes that did not read back as what was written.
@@ -1746,7 +1761,9 @@ function Admin.diagnose(source, subjectId, later)
     -- it told an owner on the shipped 'alive' to set a public address or an
     -- upload host, right under the line saying those settings are unused.
     local storage = Photo and Photo.storage and Photo.storage() or 'server'
-    if not photosUsed then
+    if not killPhotos then
+        say('photo settings: not used (kill photos are off); nothing here needs setting up')
+    elseif not photosUsed then
         say('photo settings: not used (live transfer only); nothing here needs setting up')
     elseif storage == 'host' then
         say('photo storage: host (lb-phone\'s camera uploads to the phone\'s image host; '

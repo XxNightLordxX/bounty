@@ -8,6 +8,11 @@
 --- Refreshes are event-driven — the target's client reports an appearance
 --- change — with a floor so a player toggling clothing cannot force renders
 --- in a loop.
+---
+--- And none at all with Config.Mugshot.Enabled off: no render is asked
+--- for, none is taken, none is kept, and every card shows the usual
+--- placeholder. Read at every use, so the admin panel's switch applies at
+--- once.
 
 local Mugshot = {}
 
@@ -45,8 +50,16 @@ function Mugshot.init(deps)
     handleSeq = 0
 end
 
+--- Whether target headshots are on at all (Config.Mugshot.Enabled).
+---@return boolean
+function Mugshot.enabled()
+    local rules = Config.Mugshot
+    return type(rules) ~= 'table' or rules.Enabled ~= false
+end
+
 --- The cached image for a citizen, or nil if none has been rendered yet.
 function Mugshot.get(cid)
+    if not Mugshot.enabled() then return nil end
     local entry = cache[cid]
     return entry and entry.data or nil
 end
@@ -54,6 +67,7 @@ end
 --- The handle of the citizen's current image, or nil if there is none.
 --- This is what a projection carries instead of forty kilobytes of base64.
 function Mugshot.handleFor(cid)
+    if not Mugshot.enabled() then return nil end
     local entry = cache[cid]
     return entry and entry.data and entry.id or nil
 end
@@ -62,7 +76,7 @@ end
 --- been replaced by a newer render or dropped — the app then simply shows no
 --- headshot, which is what it does before the first render anyway.
 function Mugshot.byHandle(handle)
-    if type(handle) ~= 'string' then return nil end
+    if not Mugshot.enabled() or type(handle) ~= 'string' then return nil end
     local cid = byHandle[handle]
     if not cid then return nil end
     local entry = cache[cid]
@@ -87,6 +101,8 @@ end
 --- Ask a player's own client for a fresh headshot, subject to the refresh
 --- floor. Returns whatever is cached right now; the new image arrives later.
 function Mugshot.request(cid)
+    -- Switched off: nobody's game is asked for anything.
+    if not Mugshot.enabled() then return nil end
     local entry = cache[cid]
     if not rendererRunning() then return entry and entry.data or nil end
     local floor = (Config.Mugshot.MinRefreshMinutes or 5) * 60
@@ -139,6 +155,7 @@ function Mugshot.store(cid, image)
     -- can push a picture of its choosing into every viewer's listing without
     -- anything ever having requested a render.
     local entry = cache[cid]
+    if not Mugshot.enabled() then return false end
     if not rendererRunning() then
         Audit.rejected('mugshot_no_renderer', cid, nil, {})
         return false
@@ -213,6 +230,19 @@ function Mugshot.clearRefreshFloor()
         aged = aged + 1
     end
     return aged
+end
+
+--- Forget every headshot kept, for headshots being switched off from the
+--- admin panel (Bridges' settings hook): none is kept while they are off.
+---@return integer forgotten
+function Mugshot.clearAll()
+    local forgotten = 0
+    for cid, entry in pairs(cache) do
+        dropHandle(entry)
+        cache[cid] = nil
+        forgotten = forgotten + 1
+    end
+    return forgotten
 end
 
 function Mugshot.clearPlayer(cid)

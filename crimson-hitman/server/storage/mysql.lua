@@ -1857,6 +1857,13 @@ function MySQLStore.photosOpenedBefore(cutoff, limit, state)
     ]], { state or 'open', cutoff, limit or 200 }) or {}
 end
 
+--- Whether any photo record is kept at all, in any state (Photos.anyStored).
+--- One row by the primary key, never a count of the table.
+function MySQLStore.anyPhoto()
+    local rows = db.query('SELECT id FROM crimson_photos LIMIT 1') or {}
+    return rows[1] ~= nil
+end
+
 function MySQLStore.readPhotoByPublic(publicId)
     if type(publicId) ~= 'string' then return nil end
     local rows = db.query('SELECT * FROM crimson_photos WHERE public_id = ?',

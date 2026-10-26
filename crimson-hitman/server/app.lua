@@ -315,6 +315,30 @@ end
 --- empty — which is exactly what happened, for days.
 App.handlers = {}
 
+--- The kill photo's requests, refused unread while kill photos are switched
+--- off (Config.Completion.KillPhotos): a token, a photo sent with one, and
+--- opening or deciding on a photo kept for the client. Answered as a photo
+--- nobody has (PHOTO_GONE), the same to everyone, before the gate or the
+--- payload is looked at; only the request's own id is read, to answer it.
+---
+--- Opening and deciding stay open while any photo is still kept from
+--- before (Photos.inUse): such a photo keeps its expiry, and its client can
+--- still open it once. A token and a photo are refused whatever is kept:
+--- nothing new is taken.
+local PHOTO_REQUESTS = {
+    requestPhotoToken = 'new', submitPhoto = 'new',
+    openPhoto = 'kept', photoDecision = 'kept',
+}
+
+---@param name string
+---@return boolean refused
+local function photosOff(name)
+    local kind = PHOTO_REQUESTS[name]
+    if not kind or Util.killPhotos() then return false end
+    if kind == 'kept' and deps.photos and deps.photos.inUse() then return false end
+    return true
+end
+
 local function handler(name, action, fn)
     App.handlers[name] = fn
 
@@ -341,6 +365,11 @@ local function handler(name, action, fn)
             -- not a refusal anybody sees — it is the app sitting there
             -- doing nothing for a quarter of a minute, once per click.
             return App.reply(src, name, false, CH.ERR.RATE_LIMITED, nil,
+                type(payload) == 'table' and tonumber(payload.__rid) or nil)
+        end
+
+        if photosOff(name) then
+            return App.reply(src, name, false, CH.ERR.PHOTO_GONE, nil,
                 type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
 
@@ -963,6 +992,18 @@ function App.register()
         return result
     end)
 
+    -- Verify kill with kill photos switched off (Config.Completion.KillPhotos):
+    -- the kill is completed at the scene on the server's own facts, with no
+    -- camera and no picture (Photo.verifyAtScene), and answered as a photo
+    -- submission is. In the token's bucket, since it is the same act a
+    -- token request is. With kill photos on it is refused as
+    -- photo_required, and the page opens the camera instead.
+    handler('verifyKill', 'photo', function(actor, payload)
+        local ok, err, result = deps.photo.verifyAtScene(actor, payload.id)
+        if not ok then return false, err end
+        return result
+    end)
+
     -- The client's one look at a kill photo, asked for by handle from the
     -- Ledger. Asked for, and never inferred from the ledger being read: the
     -- page reads the ledger on every refresh.
@@ -1304,6 +1345,9 @@ function App.register()
     -- earlier, it is let go of then.
     RegisterNetEvent('crimson-hitman:photoArrived', function(handle)
         local src = source
+        -- Nothing is on its way to anybody with kill photos off and none
+        -- kept (photosOff): ignored unread.
+        if photosOff('openPhoto') and not photoSending[src] then return end
         if not App.floodOk(src, 'photoArrived') then return end
         local sending = photoSending[src]
         if sending and type(handle) == 'string' and sending.handle == handle then

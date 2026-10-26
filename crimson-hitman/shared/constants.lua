@@ -323,6 +323,10 @@ CH.ERR = {
     --- unguessable names. The photo is still open; the page offers to keep
     --- it in the app instead.
     PHOTO_NO_LINK    = 'photo_no_link',
+    --- Verify kill without a photo asked of a server that takes kill photos
+    --- (Config.Completion.KillPhotos): the photo is one of the checks there,
+    --- so the page opens the camera instead.
+    PHOTO_REQUIRED   = 'photo_required',
     LOCKED           = 'locked',
     -- Something else is being done to the same contract, or by the same
     -- player, in this instant; or the resource is still starting. Nothing

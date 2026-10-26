@@ -113,10 +113,14 @@ describe('escrow validation', function()
         eq(lines[1].metadata.ammo, 12, 'ammo captured')
     end)
 
+    -- Three payouts, the most Config.Limits.MaxPayoutSlots takes. Ten
+    -- stacks on each portion of each is exactly the shipped ceiling of
+    -- sixty, so it is brought down to forty here, where the per-payout
+    -- limits alone still allow more than it.
     it('caps the total number of escrow lines in one contract', function()
         local s = newStack()
-        -- Twenty distinct stacks, enough to build a contract of a hundred
-        -- lines across five payouts if nothing stopped it.
+        -- Twenty distinct stacks, enough to build a contract of sixty lines
+        -- across three payouts if nothing stopped it.
         local carried = {}
         for i = 1, 20 do
             carried[i] = { name = 'part_' .. i, count = 500, slot = i, label = 'Part ' .. i }
@@ -129,22 +133,24 @@ describe('escrow validation', function()
             return { baseline = { items = list } }
         end
 
-        -- Five payouts of ten stacks: fifty lines, inside the ceiling.
-        local lines, err = s.escrow.validate(f.creator, {
-            slots = { payoutOf(10), payoutOf(10), payoutOf(10), payoutOf(10), payoutOf(10) },
-        })
-        truthy(lines, 'fifty lines should validate, got ' .. tostring(err))
-        eq(#lines, 50)
+        withConfig({ { Config.Limits, 'MaxEscrowLines', 40 } }, function()
+            -- Three payouts of ten stacks: thirty lines, inside the ceiling.
+            local lines, err = s.escrow.validate(f.creator, {
+                slots = { payoutOf(10), payoutOf(10), payoutOf(10) },
+            })
+            truthy(lines, 'thirty lines should validate, got ' .. tostring(err))
+            eq(#lines, 30)
 
-        -- The same again with a bonus portion on each doubles it, and the
-        -- per-payout limits alone would allow every one of them.
-        local doubled = {}
-        for i = 1, 5 do
-            doubled[i] = { baseline = payoutOf(10).baseline, bonus = payoutOf(10).baseline }
-        end
-        lines, err = s.escrow.validate(f.creator, { slots = doubled })
-        falsy(lines, 'a hundred lines in one contract must be refused')
-        eq(err, CH.ERR.INVALID_REWARD)
+            -- The same again with a bonus portion on each doubles it, and
+            -- the per-payout limits alone would allow every one of them.
+            local doubled = {}
+            for i = 1, 3 do
+                doubled[i] = { baseline = payoutOf(10).baseline, bonus = payoutOf(10).baseline }
+            end
+            lines, err = s.escrow.validate(f.creator, { slots = doubled })
+            falsy(lines, 'sixty lines in one contract must be refused over a ceiling of forty')
+            eq(err, CH.ERR.INVALID_REWARD)
+        end)
     end)
 
     it('counts a top-up against the lines the contract already holds', function()
@@ -157,24 +163,25 @@ describe('escrow validation', function()
 
         local list = {}
         for i = 1, 10 do list[i] = { name = 'part_' .. i, count = 1 } end
-        local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x',
-            reward = { slots = {
-                { baseline = { items = list } }, { baseline = { items = list } },
-                { baseline = { items = list } }, { baseline = { items = list } },
-                { baseline = { items = list } },
-            } },
-        })
-        truthy(c, 'fifty lines is a legal contract')
-        eq(#s.storage.readEscrow(c.id), 50)
+        withConfig({ { Config.Limits, 'MaxEscrowLines', 40 } }, function()
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x',
+                reward = { slots = {
+                    { baseline = { items = list } }, { baseline = { items = list } },
+                    { baseline = { items = list } },
+                } },
+            })
+            truthy(c, 'thirty lines is a legal contract')
+            eq(#s.storage.readEscrow(c.id), 30)
 
-        -- Ten more is inside the ceiling; the eleventh set is not.
-        truthy(s.amendments.addEscrow(f.creator, c.id, { baseline = { items = list } }),
-            'sixty lines is still allowed')
-        local ok, err = s.amendments.addEscrow(f.creator, c.id,
-            { baseline = { items = { { name = 'part_11', count = 1 } } } })
-        falsy(ok, 'a top-up must not walk past the ceiling one line at a time')
-        eq(err, CH.ERR.INVALID_REWARD)
+            -- Ten more is inside the ceiling; the eleventh set is not.
+            truthy(s.amendments.addEscrow(f.creator, c.id, { baseline = { items = list } }),
+                'forty lines is still allowed')
+            local ok, err = s.amendments.addEscrow(f.creator, c.id,
+                { baseline = { items = { { name = 'part_11', count = 1 } } } })
+            falsy(ok, 'a top-up must not walk past the ceiling one line at a time')
+            eq(err, CH.ERR.INVALID_REWARD)
+        end)
     end)
 
     it('refuses to stage the same physical weapon in two payouts', function()

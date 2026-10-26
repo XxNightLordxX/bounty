@@ -453,6 +453,9 @@ function Bridges.install(modules)
     -- headshot, so the image arrives from them and is bounded on arrival.
     RegisterNetEvent('crimson-hitman:mugshot', function(image)
         local src = source
+        -- Headshots switched off (Config.Mugshot.Enabled): refused before
+        -- anything about the sender or the picture is looked at.
+        if not modules.mugshot.enabled() then return end
         if not modules.app.floodOk(src, 'mugshot') then return end
         local actor = modules.identity.resolve(src)
         if not actor then return end
@@ -462,6 +465,8 @@ function Bridges.install(modules)
 
     RegisterNetEvent('crimson-hitman:appearanceChanged', function()
         local src = source
+        -- Nothing is kept to go stale while headshots are off.
+        if not modules.mugshot.enabled() then return end
         if not modules.app.floodOk(src, 'appearanceChanged') then return end
         local actor = modules.identity.resolve(src)
         if not actor then return end
@@ -625,9 +630,17 @@ function Bridges.install(modules)
             if key == 'HideAppFromBlockedJobs' or key == 'BlockOffDuty' then
                 for src in pairs(lastAccess) do lastAccess[src] = nil end
                 Bridges.refreshAccess()
-            elseif key == 'Completion.PhotoStorage' and Config.Completion.PhotoStorage == 'host'
+            elseif (key == 'Completion.PhotoStorage' or key == 'Completion.KillPhotos')
+                and Config.Completion.KillPhotos == true
+                and Config.Completion.PhotoStorage == 'host'
                 and modules.photo and modules.photo.loadAllowedHosts then
+                -- Kill photos turned on, or moved to a host: the list of
+                -- hosts is read now, which nothing did while they were off.
                 pcall(modules.photo.loadAllowedHosts)
+            elseif key == 'Mugshot.Enabled' and Config.Mugshot.Enabled == false and modules.mugshot then
+                -- Headshots turned off: none is kept, and every card shows
+                -- the placeholder from its next refresh.
+                modules.mugshot.clearAll()
             end
         end
     end

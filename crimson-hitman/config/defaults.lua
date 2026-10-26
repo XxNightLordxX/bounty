@@ -214,9 +214,10 @@ ConfigDefaults.Limits = {
     MinContractReward            = 1000,
     MaxHitmenPerContract        = 5,
 
-    --- How many times one contract may be collected. Each slot carries its
-    --- own reward set and all of them are escrowed at creation.
-    MaxPayoutSlots               = 5,
+    --- How many times one contract can be collected: 1, 2 or 3.
+    --- 1 = each contract is collected once; 2 or 3 allows more. Each
+    --- collection carries its own reward, all escrowed at creation.
+    MaxPayoutSlots               = 1,
     --- Ceiling on escrow lines in one contract, across every payout, both
     --- portions and any later top-up. The per-payout limits multiply: five
     --- payouts, two portions and ten item stacks each is a hundred and sixty
@@ -392,7 +393,13 @@ ConfigDefaults.Completion = {
     --- warning at startup. /ch-diag says which is in use.
     Fulfilment = 'alive',
 
-    --- Where kill photos are kept: 'server' (the default) or 'host'.
+    --- Kill photos at all: false (as shipped) never takes, uploads, keeps or
+    --- serves one, and Verify kill (under 'either') completes at the scene
+    --- on the server's own checks; true verifies a kill with a photo.
+    KillPhotos = false,
+
+    --- Where kill photos are kept: 'server' (the default) or 'host'. Read
+    --- only with KillPhotos = true.
     ---
     --- 'server' needs no image host at all. The hitman takes the photo in
     --- this app's own viewfinder (lb-phone's game camera, drawn inside the
@@ -605,6 +612,8 @@ ConfigDefaults.Kidnap = {
 --- is accepted: the board shows no faces rather than whatever picture a
 --- modified client sends.
 ConfigDefaults.Mugshot = {
+    --- Target headshots at all. false: none is asked for, kept or shown.
+    Enabled = true,
     MinRefreshMinutes = 5,
     RenderTimeoutMs = 8000,
     --- Have MugShotBase64 cut the background out of the headshot. Off by

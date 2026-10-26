@@ -184,6 +184,17 @@ local ACTIONS = {
                    not_participant = true },
       why = 'proof is for a kill the server saw, whatever state the contract is in' },
 
+    -- With kill photos off, as they ship (Config.Completion.KillPhotos): on,
+    -- every cell would be the one photo_required refusal, saying nothing
+    -- about the contract's state.
+    { name = 'verifyKill', source = 3,
+      setup = function() Config.Completion.KillPhotos = false end,
+      payload = function(c) return { id = c.id } end,
+      allowed = {},   -- needs an attributed kill, which no fixture here has
+      refusals = { no_kill_to_verify = true, invalid_input = true,
+                   not_participant = true },
+      why = 'proof is for a kill the server saw, whatever state the contract is in' },
+
     { name = 'addEscrow', source = 1,
       payload = function(c) return { id = c.id, reward = { baseline = { cash = 1000 } } } end,
       allowed = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true },
@@ -263,6 +274,8 @@ describe('every action against every contract state', function()
 
             it(('%s on a %s contract'):format(action.name, state), function()
                 local s, f, c = inState(state)
+                -- What a row needs of the config, set after the stack resets it.
+                if action.setup then action.setup(s) end
                 local before = snapshot(s, c)
                 local reply = call(s, action.name, action.source, action.payload(c))
 

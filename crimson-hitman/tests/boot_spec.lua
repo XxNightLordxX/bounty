@@ -423,7 +423,7 @@ describe('starting on a configuration with a hole in it', function()
     end
 
     it('refuses to start when a number it does arithmetic on is missing', function()
-        local ok, err = bootExpectingFailure('Limits', 'MaxPayoutSlots', nil)
+        local ok, err = bootExpectingFailure('Limits', 'MaxHitmenPerContract', nil)
         falsy(ok, 'a missing limit must stop startup, not the first player who hits it')
         truthy(err:find('invalid configuration', 1, true), err)
     end)

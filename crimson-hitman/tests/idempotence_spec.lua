@@ -667,6 +667,31 @@ describe('submitting the same photo token twice', function()
     end)
 end)
 
+describe('verifying the same kill twice with kill photos off', function()
+    it('pays for the kill once', function()
+        local s, f, c = seeded()
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Config.Completion.KillPhotos = false
+
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = (Env.players[2]._health or 200) - 60
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        eq(s.death.onVictimReport(2), 1, 'the kill is attributed')
+
+        local first, second = replay(s, 'verifyKill', function()
+            return s.photo.verifyAtScene(f.hitman, c.id)
+        end)
+        truthy(first[1], tostring(first[2]))
+        falsy(second[1], 'the kill is claimed')
+        eq(second[2], CH.ERR.NO_KILL_TO_VERIFY,
+            'the same answer as asking before there was a kill: there is none now')
+        eq(Env.players[3].PlayerData.money.cash, 5000 + 5000, 'one baseline')
+        eq(#s.storage._raw().ledger, 3, 'and one set of ledger entries')
+    end)
+end)
+
 --------------------------------------------------------------------------
 -- Kidnap countdowns
 --------------------------------------------------------------------------
@@ -782,7 +807,7 @@ describe('what this file leaves out', function()
     local TESTED = {
         accept = true, cancel = true, abandon = true, bailout = true,
         withdrawReward = true, propose = true, respondAmendment = true,
-        informant = true, submitPhoto = true, armKidnap = true,
+        informant = true, submitPhoto = true, verifyKill = true, armKidnap = true,
         muteThread = true,
     }
 

@@ -764,6 +764,11 @@ function Memory.readPhoto(id)
     return db.photos[id]
 end
 
+--- Whether any photo record is kept at all, in any state (Photos.anyStored).
+function Memory.anyPhoto()
+    return next(db.photos) ~= nil
+end
+
 --- Records matching `keep`, oldest first, at most `limit` of them.
 local function photosWhere(keep, limit)
     local out = {}

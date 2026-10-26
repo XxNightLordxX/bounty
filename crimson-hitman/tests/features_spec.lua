@@ -420,3 +420,288 @@ describe('limits, changed from the panel', function()
         eq(Env.players[1].PlayerData.money.cash, cash, 'and nothing more, nowhere else')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Kill photos and headshots, switched off
+--------------------------------------------------------------------------
+
+--- Fire a handler the way a client does and hand back the reply.
+local function reply(name, src, payload)
+    local fire = Env.events['crimson-hitman:' .. name]
+    if not fire then return { ok = false, err = 'NO SUCH HANDLER' } end
+    Env.clientEvents = {}
+    _G.source = src
+    local fired, err = pcall(fire, payload or {})
+    _G.source = nil
+    if not fired then return { ok = false, err = 'THREW: ' .. tostring(err) } end
+    for _, event in ipairs(Env.clientEvents) do
+        if event.name == 'crimson-hitman:result' then return event.args[1] end
+    end
+    return { ok = false, err = 'NO REPLY' }
+end
+
+--- A contract under 'either', taken, and its target killed by the hitman,
+--- who is standing over the body.
+local function killedHere(s, f, opts)
+    opts = opts or {}
+    local c = place(s, f, opts)
+    truthy(c, 'the contract has to exist')
+    truthy(s.contracts.accept(f.hitman, c.id, false))
+    Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+    Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+    Env.players[2]._health = 140
+    s.death.recordDamage(3, 2, 123456)
+    Env.players[2].PlayerData.metadata.isdead = true
+    s.death.onVictimReport(2)
+    return c
+end
+
+describe('Verify kill with kill photos off', function()
+    it('completes the contract at the scene, on the server\'s checks alone, with no picture', function()
+        local s, f = stack()
+        turn(s, 'Completion.KillPhotos', false)
+        local c = killedHere(s, f)
+        local before = Env.players[3].PlayerData.money.cash
+
+        local answer = reply('verifyKill', 3, { id = c.id })
+        truthy(answer.ok, 'verified: ' .. tostring(answer.err))
+        eq(Env.players[3].PlayerData.money.cash, before + 5000, 'the hitman is paid')
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
+        eq(s.photo.tokenCount(), 0, 'no token was ever issued')
+        eq(#s.storage.photosOf('CREATOR1'), 0, 'and no photo kept')
+        falsy(s.storage.readLedger('CREATOR1', 10)[1].photo_ref)
+
+        local ledger = reply('ledger', 1, {})
+        truthy(ledger.ok)
+        falsy(ledger.data.entries[1].photo, 'the client\'s ledger offers no photo')
+        local said = {}
+        for _, data in ipairs(Natives.calls.notifications) do
+            said[#said + 1] = tostring(data.title) .. ': ' .. tostring(data.content)
+        end
+        local text = table.concat(said, '\n')
+        truthy(text:find('Your contract was fulfilled', 1, true), text)
+        falsy(text:lower():find('photo', 1, true), 'and nothing told anybody about a photo: ' .. text)
+    end)
+
+    it('holds it to the scene: too far is too far, a revive past the window undoes it', function()
+        local s, f = stack()
+        turn(s, 'Completion.KillPhotos', false)
+        local c = killedHere(s, f)
+        Env.players[3]._coords = { x = 160.0, y = 100.0, z = 30.0 }
+        eq(reply('verifyKill', 3, { id = c.id }).err, CH.ERR.PHOTO_TOO_FAR)
+
+        -- Up and about past the proof window: not an elimination.
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2].PlayerData.metadata.isdead = false
+        Env.advance(Config.Completion.ProofWindowSeconds + 5)
+        Env.gameTimer = (Env.gameTimer or 0) + (Config.Completion.ProofWindowSeconds + 5) * 1000
+        local answer = reply('verifyKill', 3, { id = c.id })
+        falsy(answer.ok, 'a kill undone is not paid')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'and the contract is still open')
+    end)
+
+    it('never completes a contract placed for a live delivery', function()
+        local s, f = stack()
+        turn(s, 'Completion.KillPhotos', false)
+        turn(s, 'Completion.Fulfilment', 'alive')
+        local c = killedHere(s, f)
+        eq(reply('verifyKill', 3, { id = c.id }).err, CH.ERR.KILL_NOT_ALLOWED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
+    end)
+
+    it('is refused where kill photos are on, so the photo stays one of the checks', function()
+        local s, f = stack()
+        local c = killedHere(s, f)
+        eq(reply('verifyKill', 3, { id = c.id }).err, CH.ERR.PHOTO_REQUIRED)
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'nothing was paid without one')
+        truthy(reply('requestPhotoToken', 3, { id = c.id }).ok, 'the camera is the way in')
+    end)
+
+    it('takes effect at the next tap, both ways, with no restart', function()
+        local s, f = stack()
+        local c = killedHere(s, f)
+        turn(s, 'Completion.KillPhotos', false)
+        eq(reply('requestPhotoToken', 3, { id = c.id }).err, CH.ERR.PHOTO_GONE)
+        eq(s.projection.listing('HITMAN01', 1).settings.killPhotos, false,
+            'and the page is told, so it opens no camera')
+        turn(s, 'Completion.KillPhotos', true)
+        truthy(reply('requestPhotoToken', 3, { id = c.id }).ok)
+        eq(s.projection.listing('HITMAN01', 1).settings.killPhotos, true)
+    end)
+end)
+
+describe('target headshots switched off', function()
+    local VALID_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
+
+    local function asked(events, target)
+        for _, event in ipairs(events or {}) do
+            if event.name == 'crimson-hitman:renderMugshot'
+                and (target == nil or event.target == target) then
+                return true
+            end
+        end
+        return false
+    end
+
+    it('asks no game for a render, and the board carries no face', function()
+        local s, f = stack()
+        turn(s, 'Mugshot.Enabled', false)
+        local c = place(s, f)
+        truthy(c)
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        Env.clientEvents = {}
+        local board = reply('list', 3, { page = 1 })
+        truthy(board.ok)
+        falsy(asked(Env.clientEvents), 'no render was asked of anybody')
+        for _, row in ipairs(board.data.contracts) do
+            eq(row.targetImageId, nil, 'every card shows the placeholder')
+        end
+        -- Sanity: on again, the same look asks.
+        turn(s, 'Mugshot.Enabled', true)
+        Env.clientEvents = {}
+        reply('list', 3, { page = 1 })
+        truthy(asked(Env.clientEvents, 2), 'with them on, the target\'s game is asked')
+    end)
+
+    it('refuses a headshot sent anyway before reading it, and keeps nothing', function()
+        local s = stack()
+        s.bridges.install(s)
+        s.mugshot.request('TARGET01')
+        turn(s, 'Mugshot.Enabled', false)
+        local stored, floods = 0, 0
+        local realStore, realFlood = s.mugshot.store, s.app.floodOk
+        s.mugshot.store = function(...) stored = stored + 1 return realStore(...) end
+        s.app.floodOk = function(...) floods = floods + 1 return realFlood(...) end
+        local ok, err = pcall(function()
+            _G.source = 2
+            Env.events['crimson-hitman:mugshot'](VALID_IMAGE)
+            _G.source = nil
+        end)
+        _G.source = nil
+        s.mugshot.store, s.app.floodOk = realStore, realFlood
+        truthy(ok, tostring(err))
+        eq(stored, 0, 'the picture is never handed to the store')
+        eq(floods, 0, 'nor is the sender even counted')
+        eq(s.mugshot.count(), 0, 'and nothing is kept')
+        eq(s.mugshot.handleFor('TARGET01'), nil)
+    end)
+
+    it('forgets every headshot kept when it is turned off', function()
+        local s = stack()
+        s.bridges.install(s)
+        s.mugshot.request('TARGET01')
+        truthy(s.mugshot.store('TARGET01', VALID_IMAGE))
+        local handle = s.mugshot.handleFor('TARGET01')
+        truthy(handle)
+        turn(s, 'Mugshot.Enabled', false)
+        eq(s.mugshot.count(), 0, 'none is kept while they are off')
+        eq(s.mugshot.byHandle(handle), nil, 'and a card holding the old handle gets nothing')
+        eq(reply('mugshotImage', 1, { id = handle }).err, CH.ERR.NOT_FOUND)
+    end)
+end)
+
+describe('kill photos off, from the first start', function()
+    --- The real boot path (main.lua), as boot_spec runs it, with the photo
+    --- settings given: an upload host the photos would use and a public
+    --- address that would be warned about.
+    local function bootWith(killPhotos)
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Config.Database.Mode = 'memory'
+        Config.Completion.KillPhotos = killPhotos
+        Config.Completion.Fulfilment = 'either'
+        Config.Completion.PhotoStorage = 'host'
+        Config.Completion.ExtraPhotoHosts = {}
+        Config.Completion.PhotoPublicUrl = 'not an address'
+        Env.console = {}
+        local main = require('server.main')
+        return main, main.start()
+    end
+
+    --- Every lookup of lb-phone's config made from the photo modules while
+    --- fn runs, by the file that made it. Calls placed by the relay ask it
+    --- too, for whether a call can be masked; those are not about photos.
+    local function photoLookups(fn)
+        local phone = exports['lb-phone']
+        local realLookup, realConfig = phone.GetConfig, Natives.phoneConfig
+        local from = {}
+        phone.GetConfig = function(...)
+            -- The whole stack, since the photo modules ask in a tail call.
+            local stack = debug.traceback()
+            local file = stack:match('(server/completion/photo%.lua)')
+                or stack:match('(server/photos%.lua)')
+            if file then from[#from + 1] = file end
+            return realLookup(...)
+        end
+        -- An empty allow list, so the warning that every photo would be
+        -- refused has something to say if anything asks.
+        Natives.phoneConfig = {}
+        local ok, err = pcall(fn)
+        phone.GetConfig, Natives.phoneConfig = realLookup, realConfig
+        truthy(ok, tostring(err))
+        return from
+    end
+
+    it('asks lb-phone nothing about upload hosts: not at start, not on the tick, not in /ch-diag', function()
+        local said
+        local off = photoLookups(function()
+            local main, modules = bootWith(false)
+            fixture(modules)
+            Env.advance((Config.Completion.PhotoHostRefreshSeconds or 300) + 1)
+            main.tick()
+            modules.admin.diagnose(0)
+            modules.admin.diagnose(0, 1)
+            said = table.concat(Env.console, '\n')
+        end)
+        eq(#off, 0, 'looked up from: ' .. table.concat(off, ', '))
+        for _, word in ipairs({ 'ExtraPhotoHosts', 'PhotoPublicUrl', 'web_baseUrl', 'upload host' }) do
+            falsy(said:find(word, 1, true), 'nothing at start about ' .. word .. ': ' .. said)
+        end
+
+        -- The same start with them on asks, and warns: what the spy and the
+        -- console would have caught.
+        local onSaid
+        local on = photoLookups(function()
+            local main, modules = bootWith(true)
+            fixture(modules)
+            Env.advance((Config.Completion.PhotoHostRefreshSeconds or 300) + 1)
+            main.tick()
+            modules.admin.diagnose(0, 1)
+            onSaid = table.concat(Env.console, '\n')
+        end)
+        truthy(#on > 0, 'with kill photos on, the photo modules ask lb-phone')
+        truthy(onSaid:find('PhotoPublicUrl', 1, true), onSaid)
+        truthy(onSaid:find('upload host', 1, true), onSaid)
+    end)
+
+    it('does not touch data/photos', function()
+        bootWith(false)
+        eq(Natives.files['data/photos/.mode'], nil, 'not even to say which mode it is')
+        falsy(Natives.dirs['data/photos'])
+        bootWith(true)
+        truthy(Natives.files['data/photos/.mode'], 'with them on the start-up sweep marks it')
+    end)
+
+    it('says so in /ch-diag', function()
+        local _, modules = bootWith(false)
+        fixture(modules)
+        local text = table.concat(modules.admin.diagnose(0), '\n')
+        truthy(text:find('\nKill photos: off\n', 1, true), 'from the console as well: ' .. text)
+        text = table.concat(modules.admin.diagnose(0, 1), '\n')
+        truthy(text:find('\nKill photos: off\n', 1, true), text)
+        truthy(text:find('photo settings: not used (kill photos are off)', 1, true), text)
+        falsy(text:find('photo hosts:', 1, true), 'nothing about hosts nobody asks')
+        local _, again = bootWith(true)
+        fixture(again)
+        text = table.concat(again.admin.diagnose(0, 1), '\n')
+        truthy(text:find('Kill photos: on', 1, true), text)
+        truthy(text:find('photo hosts:', 1, true), text)
+    end)
+end)

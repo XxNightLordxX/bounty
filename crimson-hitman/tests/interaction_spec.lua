@@ -2173,53 +2173,58 @@ describe('topping up a contract that has paid out', function()
         return list
     end
 
+    -- Three payouts, the most Config.Limits.MaxPayoutSlots takes, so the
+    -- ceiling is brought down to forty for these: thirty held is the
+    -- ceiling minus ten, as fifty of sixty was across five payouts.
     it('does not count what it has already paid out', function()
         local s = newStack()
         local f = fixture(s, { creatorInventory = carrying() })
         Env.players[3].PlayerData.money.bank = 50000
 
-        -- Fifty lines across five payouts: at the ceiling minus ten.
-        local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
-            reward = { slots = {
-                { baseline = { items = itemList(10) } }, { baseline = { items = itemList(10) } },
-                { baseline = { items = itemList(10) } }, { baseline = { items = itemList(10) } },
-                { baseline = { items = itemList(10) } },
-            } },
-            penaltyAmount = 5000,
-        })
-        truthy(c)
-        truthy(s.contracts.accept(f.hitman, c.id, false))
+        withConfig({ { Config.Limits, 'MaxEscrowLines', 40 } }, function()
+            -- Thirty lines across three payouts: at the ceiling minus ten.
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { slots = {
+                    { baseline = { items = itemList(10) } }, { baseline = { items = itemList(10) } },
+                    { baseline = { items = itemList(10) } },
+                } },
+                penaltyAmount = 5000,
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
 
-        -- One payout collected: ten of those lines are settled now, and the
-        -- hitman's stake is a line the creator never put up.
-        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+            -- One payout collected: ten of those lines are settled now, and
+            -- the hitman's stake is a line the creator never put up.
+            truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
 
-        local ok, err = s.amendments.addEscrow(f.creator,
-            c.id, { baseline = { items = itemList(10) } })
-        truthy(ok, 'a top-up on a contract that has paid out must not be refused: '
-            .. tostring(err))
+            local ok, err = s.amendments.addEscrow(f.creator,
+                c.id, { baseline = { items = itemList(10) } })
+            truthy(ok, 'a top-up on a contract that has paid out must not be refused: '
+                .. tostring(err))
+        end)
     end)
 
     it('still refuses one that would take it past the ceiling', function()
         local s = newStack()
         local f = fixture(s, { creatorInventory = carrying() })
-        local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'x',
-            reward = { slots = {
-                { baseline = { items = itemList(10) } }, { baseline = { items = itemList(10) } },
-                { baseline = { items = itemList(10) } }, { baseline = { items = itemList(10) } },
-                { baseline = { items = itemList(10) } },
-            } },
-        })
-        truthy(c)
+        withConfig({ { Config.Limits, 'MaxEscrowLines', 40 } }, function()
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x',
+                reward = { slots = {
+                    { baseline = { items = itemList(10) } }, { baseline = { items = itemList(10) } },
+                    { baseline = { items = itemList(10) } },
+                } },
+            })
+            truthy(c)
 
-        -- Fifty held plus ten is the ceiling exactly; the next ten is over.
-        truthy(s.amendments.addEscrow(f.creator, c.id, { baseline = { items = itemList(10) } }))
-        local ok, err = s.amendments.addEscrow(f.creator,
-            c.id, { baseline = { items = { { name = 'part_11', count = 1 } } } })
-        falsy(ok, 'the ceiling still holds')
-        eq(err, CH.ERR.INVALID_REWARD)
+            -- Thirty held plus ten is the ceiling exactly; the next one is over.
+            truthy(s.amendments.addEscrow(f.creator, c.id, { baseline = { items = itemList(10) } }))
+            local ok, err = s.amendments.addEscrow(f.creator,
+                c.id, { baseline = { items = { { name = 'part_11', count = 1 } } } })
+            falsy(ok, 'the ceiling still holds')
+            eq(err, CH.ERR.INVALID_REWARD)
+        end)
     end)
 end)
 

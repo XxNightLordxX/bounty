@@ -204,7 +204,14 @@ function settingsView(extra) {
         choices: ['alive', 'either'], live: true, inflight: 'Each contract keeps its rule.', value: 'alive',
         default: 'alive', source: 'config' },
       { key: 'Relay.Enabled', group: 'Messages and calls', label: 'Messages ' + XSS, kind: 'switch', live: true,
-        value: true, default: true, source: 'config', ignored: 'has to be on or off' }
+        value: true, default: true, source: 'config', ignored: 'has to be on or off' },
+      { key: 'Completion.KillPhotos', group: 'Completion', label: 'Kill photos', kind: 'switch', live: true,
+        inflight: 'Read at the next Verify kill, with no restart.', value: false, default: false,
+        source: 'config' },
+      { key: 'Completion.PhotoStorage', group: 'Completion', label: 'Where kill photos are kept',
+        kind: 'choice', choices: ['server', 'host'], live: true, value: 'server', default: 'server',
+        source: 'config', inflight: 'Photos already kept stay where they are.',
+        inactive: 'Does not apply while kill photos are off (Completion.KillPhotos).' }
     ],
     limits: [
       { key: 'Limits.MaxAcceptedPerHitman', group: 'Contract limits', label: 'Contracts a hitman may hold',
@@ -438,6 +445,7 @@ async function main() {
       has(app.main(), '7.20 ms');
       has(app.main(), 'photo hosts: 0', 'the diagnosis warnings');
       has(app.main(), '400.0 KB', 'served photos, with their size');
+      has(app.main(), 'On, kept on server', 'where kill photos are kept, while they are on');
     });
     it('posts to its own resource, as GetParentResourceName names it', function () {
       truthy(app.urls[0].indexOf('https://crimson-hitman-renamed/adminRequest') === 0, app.urls[0]);
@@ -583,11 +591,13 @@ async function main() {
 
   await (async function () {
     const app = boot(standardServer({ overview: overview({ slowest: [], warnings: [], stuck: undefined,
-      photos: undefined, recovery: 'recovering', contracts: { total: 0, byState: {} } }) }));
+      photos: undefined, recovery: 'recovering', contracts: { total: 0, byState: {} },
+      killPhotos: false }) }));
     app.open(access({ recovery: 'recovering' }));
     await settled();
     it('reads empty lists sent as {} and a recovering server without throwing', function () {
       clean(app, 'empty overview');
+      has(app.main(), 'Kill photosOff', 'kill photos switched off, said as that');
       has(app.main(), 'Not listed while the server is recovering');
       has(app.main(), 'No job has run yet');
       has(app.main(), 'Nothing that wants doing');
@@ -1298,6 +1308,12 @@ async function main() {
       has(app.text(app.byId('st-row-App.DefaultInstalled')), 'applies after restart');
       has(app.text(app.byId('st-row-Relay.Enabled')), 'not applied');
       has(app.text(app.byId('st-row-Sources.cash.enabled')), 'Under way:');
+      has(app.text(app.byId('st-row-Completion.PhotoStorage')), 'does not apply now',
+        'a key whose switch is off says so beside it');
+      has(app.text(app.byId('st-row-Completion.PhotoStorage')),
+        'Does not apply while kill photos are off');
+      lacks(app.text(app.byId('st-row-Completion.KillPhotos')), 'does not apply now',
+        'and the switch itself does not');
     });
     app.click(app.byId('st-row-Sources.cash.enabled').querySelector('.switch'));
     await settled();

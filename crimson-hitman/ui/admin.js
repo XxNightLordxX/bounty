@@ -812,7 +812,8 @@
         tile('Server', h('dl.facts',
           h('dt', 'Storage'), h('dd', String(o.storage || '—')),
           h('dt', 'New contracts'), h('dd', RULE_LABEL[o.fulfilment] || String(o.fulfilment || '—')),
-          h('dt', 'Kill photos kept on'), h('dd', String(o.photoStorage || '—')),
+          h('dt', 'Kill photos'), h('dd', o.killPhotos === false ? 'Off'
+            : 'On, kept on ' + String(o.photoStorage || '—')),
           h('dt', 'Recovery'), h('dd', o.recovery === 'ready' ? 'Finished'
             : o.recovery === 'recovering' ? 'Still running' : 'FAILED'),
           h('dt', 'Settings changed here'), h('dd', h('button.link', { type: 'button', 'data-act': 'section',
@@ -1725,9 +1726,14 @@
         h('p.st-title', h('b', String(entry.label || key)),
           overridden ? h('span.chip.is-panel', 'changed from the panel') : null,
           entry.live === false ? h('span.chip.is-warn', 'applies after restart') : null,
-          entry.ignored ? h('span.chip.is-error', 'not applied') : null),
+          entry.ignored ? h('span.chip.is-error', 'not applied') : null,
+          entry.inactive ? h('span.chip.is-warn', 'does not apply now') : null),
         h('code.st-key', 'Config.' + key),
         entry.about ? h('p.st-about', String(entry.about)) : null,
+        // A key whose switch is off (the catalogue's `needs`): said beside
+        // it, so a staff member is not left changing something that does
+        // nothing.
+        entry.inactive ? h('p.st-about.is-warn', String(entry.inactive)) : null,
         entry.readonly ? h('p.st-about.is-warn', String(entry.readonly)) : null,
         entry.destroys && !entry.readonly
           ? h('p.st-about.is-warn', 'Lowering it deletes for good, so saving a lower value takes two clicks.') : null,

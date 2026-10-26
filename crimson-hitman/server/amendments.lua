@@ -11,6 +11,11 @@ local Amendments = {}
 
 local Storage, Contracts, Escrow, Audit, Notify
 
+--- The most collections a slot number in a proposal is read up to. Not a
+--- limit on contracts: a contract keeps the count it was placed with, under
+--- whatever Config.Limits.MaxPayoutSlots said then.
+local SLOTS_CEILING = 1000
+
 --- Contract ids known to carry an open proposal. Walking every contract ever
 --- created on each tick means a query per contract, forever; proposals are
 --- rare and short-lived, so tracking the few that exist gives the same
@@ -812,7 +817,12 @@ function Amendments.sanitize(kind, payload, actor)
         clean.raise = (kind == CH.AMENDMENT.RAISE_PENALTY) or nil
 
     elseif kind == CH.AMENDMENT.REDUCE_REWARD then
-        clean.slot = Util.toPositive(payload.slot, Config.Limits.MaxPayoutSlots)
+        -- Bounded by a ceiling of its own, not by Config.Limits.MaxPayoutSlots:
+        -- a contract keeps the number of collections it was placed with, so
+        -- one placed with five before the setting came down to 1 to 3 can
+        -- still give its fifth back. Which slot it may be is the contract's
+        -- question (checkAgainst).
+        clean.slot = Util.toPositive(payload.slot, SLOTS_CEILING)
         if not clean.slot then return nil, CH.ERR.INVALID_INPUT end
 
     elseif kind == CH.AMENDMENT.CANCEL or kind == CH.AMENDMENT.WITHDRAW then

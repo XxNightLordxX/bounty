@@ -1446,3 +1446,117 @@ describe('what /ch-diag says about saving photos kept on this server', function(
         truthy(ok, tostring(err))
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Kill photos switched off (Config.Completion.KillPhotos = false)
+--------------------------------------------------------------------------
+
+describe('kill photos switched off', function()
+    --- A payload that writes down every key read from it.
+    local function watched(fields)
+        local read = {}
+        return setmetatable({}, { __index = function(_, key)
+            read[#read + 1] = tostring(key)
+            return fields[key]
+        end }), read
+    end
+
+    it('refuses every photo request unread, as a photo nobody has, and writes nothing', function()
+        local s, _, c = killed()
+        Config.Completion.KillPhotos = false
+        local gates = 0
+        local realGate = s.identity.gate
+        s.identity.gate = function(...) gates = gates + 1 return realGate(...) end
+
+        local requests = {
+            { 'requestPhotoToken', 3, { id = c.id } },
+            { 'submitPhoto', 3, { token = 'tk00000000000001', image = uri('image/jpeg', JPEG) } },
+            { 'submitPhoto', 3, { token = 'tk00000000000001', url = 'https://cdn.fivemanage.com/p.png' } },
+            { 'openPhoto', 1, { handle = 'ph00000000000001' } },
+            { 'photoDecision', 1, { handle = 'ph00000000000001', choice = 'save' } },
+        }
+        local ok, err = pcall(function()
+            for i, req in ipairs(requests) do
+                req[3].__rid = 70 + i
+                local payload, read = watched(req[3])
+                local reply = call(req[1], req[2], payload)
+                truthy(reply, req[1] .. ' is answered')
+                eq(reply.ok, false, req[1])
+                eq(reply.err, CH.ERR.PHOTO_GONE, req[1] .. ' is answered as a photo nobody has')
+                eq(reply.rid, 70 + i, req[1] .. ' answers the request it was asked')
+                eq(table.concat(read, ','), '__rid',
+                    req[1] .. ' reads nothing of what was sent but the id it answers')
+            end
+            arrived(1, 'ph00000000000001')
+        end)
+        s.identity.gate = realGate
+        truthy(ok, tostring(err))
+        eq(gates, 0, 'nor asks who is asking')
+        eq(s.photo.tokenCount(), 0, 'no token is issued')
+        eq(#photoFiles(), 0, 'no photo file is written')
+        falsy(Natives.dirs['data/photos'], 'and data/photos is not made')
+        eq(#s.storage.photosOf('CREATOR1'), 0, 'nor any photo record')
+    end)
+
+    it('keeps no photo however a kill is verified, and makes no folder for one', function()
+        local s, f, c = killed()
+        Config.Completion.KillPhotos = false
+        local ok, err = s.photo.verifyAtScene(f.hitman, c.id)
+        truthy(ok, tostring(err))
+        eq(#photoFiles(), 0)
+        falsy(Natives.dirs['data/photos'])
+        falsy(s.storage.readLedger('CREATOR1', 10)[1].photo_ref, 'the client row names no photo')
+        eq(#s.storage.photosOf('CREATOR1'), 0)
+        -- And a picture that reached the store's door anyway is not kept.
+        eq(s.photos.keep(s.storage.readContract(c.id), 1,
+            { kind = 'file', data = JPEG, mime = 'image/jpeg' }), nil)
+        eq(#photoFiles(), 0)
+    end)
+
+    it('lets a photo kept before they were turned off be opened once by its owner, and expire', function()
+        local s, _, _, handle, file = photographed()
+        Config.Completion.KillPhotos = false
+        truthy(s.photos.inUse(), 'a photo is still kept, so what looks after it still runs')
+        local reply = call('openPhoto', 1, { handle = handle })
+        truthy(reply and reply.ok, 'its owner opens it: ' .. tostring(reply and reply.err))
+        landed(1, handle)
+        eq(call('openPhoto', 1, { handle = handle }).err, CH.ERR.PHOTO_GONE, 'once')
+        eq(call('openPhoto', 2, { handle = handle }).err, CH.ERR.PHOTO_GONE, 'and only its owner')
+
+        -- Left open past the time to decide, it goes as it always did.
+        Env.advance(Config.Completion.PhotoOpenSeconds + 1)
+        eq(s.photos.expire(), 1, 'the expiry still runs')
+        eq(Natives.files[file], nil, 'and its file goes')
+
+        -- Its record goes with the retention, and then nothing is kept.
+        Env.advance(Config.Ledger.PhotoRetentionDays * 86400 + 61)
+        s.ledger.forgetOldPhotos()
+        Env.advance(61)
+        falsy(s.photos.inUse(), 'with none kept and none taken, nothing about photos runs')
+        eq(call('openPhoto', 1, { handle = handle }).err, CH.ERR.PHOTO_GONE)
+    end)
+
+    it('serves nothing over HTTP, even a photo saved to a phone\'s Photos before', function()
+        local _, _, _, _, _, _, name = savedByLink()
+        eq(Natives.httpRequest('GET', '/p/' .. name .. '.jpg').status, 200, 'served while on')
+        Config.Completion.KillPhotos = false
+        local reads = {}
+        local realLoad = _G.LoadResourceFile
+        _G.LoadResourceFile = function(res, path)
+            reads[#reads + 1] = path
+            return realLoad(res, path)
+        end
+        local answers = {
+            Natives.httpRequest('GET', '/p/' .. name .. '.jpg'),
+            Natives.httpRequest('GET', '/p/' .. ('0'):rep(22) .. '.webp'),
+            Natives.httpRequest('POST', '/x'),
+            Natives.httpRequest('GET', '/'),
+        }
+        _G.LoadResourceFile = realLoad
+        for i, got in ipairs(answers) do
+            eq(got.status, 404, 'request ' .. i)
+            eq(got.body, 'Not found.', 'request ' .. i)
+        end
+        eq(#reads, 0, 'and reads no file to say so')
+    end)
+end)

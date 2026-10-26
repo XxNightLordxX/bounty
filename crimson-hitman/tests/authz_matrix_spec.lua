@@ -475,6 +475,22 @@ MATRIX.submitPhoto = {
     why = 'a photo token is bound to the hitman it was issued to',
 }
 
+MATRIX.verifyKill = {
+    -- Kill photos off, as they ship: Verify kill is the server checking the
+    -- scene, with no token to bind it. Every role stands over the body, so
+    -- the kill being the caller's own is the only thing left to refuse them.
+    arrange = function(w)
+        eliminate(w)
+        Config.Completion.KillPhotos = false
+        for _, name in ipairs(ROLES) do
+            Env.players[CAST[name].source]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        end
+    end,
+    payload = function(w, role, contract) return { id = contract.id } end,
+    expect = only('hitman', CH.ERR.NO_KILL_TO_VERIFY),
+    why = 'a kill verified at the scene belongs to the hitman the server saw make it',
+}
+
 -- The client's kill photo -----------------------------------------------
 
 --- The held contract's kill, photographed by its hitman: a photo waiting

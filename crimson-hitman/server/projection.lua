@@ -374,6 +374,11 @@ local function buildListing(viewerCid, page)
             -- or 'either'. Each contract carries its own as `fulfilment`,
             -- which is what decides it once placed.
             fulfilment = Util.placingRule(),
+            -- Whether a kill is verified with a photo at all
+            -- (Config.Completion.KillPhotos). Off, Verify kill asks the
+            -- server to check the scene and opens no camera, and nothing
+            -- the hitman reads says to photograph anything.
+            killPhotos = Util.killPhotos(),
             -- Whether officers are really told, at each stage. A contract on
             -- an officer is marked whatever this says, and the page's warnings
             -- said "their department has been advised" on a server that

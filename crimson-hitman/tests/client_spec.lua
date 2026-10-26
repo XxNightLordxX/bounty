@@ -1700,6 +1700,15 @@ describe('rendering your own headshot', function()
             .. 'the rest of the session')
     end)
 
+    it('renders nothing with headshots switched off, even when asked', function()
+        booted()
+        withConfig({ { Config.Mugshot, 'Enabled', false } }, function()
+            truthy(Client.fire('crimson-hitman:renderMugshot'))
+            eq(#Natives.calls.mugshots, 0, 'the renderer is not called')
+            eq(#sentImages(), 0, 'and nothing is sent')
+        end)
+    end)
+
     it('does nothing on a server with no renderer installed', function()
         booted()
         Natives.resourceStates['MugShotBase64'] = 'missing'

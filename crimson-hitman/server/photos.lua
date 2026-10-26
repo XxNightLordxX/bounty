@@ -89,8 +89,44 @@ local SERVED_PATH = '^/p/([%w_-]+)%.(%a+)$'
 --- the '/<resource name>/' every link starts with says already.
 Photos.MARKER = 'X-Crimson-Hitman'
 
+--- Whether the store holds any photo record, as last asked, and when:
+--- Photos.anyStored. nil until asked.
+local anyHeld, anyAskedAt = nil, 0
+
+--- How long an answer to "is any photo kept" stands before the store is
+--- asked again. The jobs that read it run every ten seconds, and on mysql
+--- each asking is a query.
+local ANY_EVERY_SECONDS = 60
+
 function Photos.init(deps)
     Storage, Audit = deps.storage, deps.audit
+    anyHeld, anyAskedAt = nil, 0
+end
+
+--- Whether the store holds any kill photo record at all, in any state.
+---
+--- With kill photos switched off (Config.Completion.KillPhotos) nothing
+--- makes a new one, so this only goes from yes to no, as the ones kept
+--- from before expire. Asked of the store at most once a minute; a photo
+--- kept here says yes at once. A store that cannot answer counts as yes,
+--- so a kept photo is never left without its expiry.
+---@return boolean
+function Photos.anyStored()
+    local now = os.time()
+    if anyHeld ~= nil and now - anyAskedAt < ANY_EVERY_SECONDS then return anyHeld end
+    anyAskedAt = now
+    local ok, any = pcall(function() return Storage.anyPhoto() end)
+    anyHeld = not ok or any == true
+    return anyHeld
+end
+
+--- Whether anything about kill photos has to run: they are on, or some are
+--- still kept from before they were turned off. The start-up sweep of
+--- photo files, the retention, and the expiry of photos left open run only
+--- then, and the requests about a photo are refused unread otherwise.
+---@return boolean
+function Photos.inUse()
+    return Util.killPhotos() or Photos.anyStored()
 end
 
 --- The resource's folder on disk, or nil where this server cannot say.
@@ -258,6 +294,9 @@ function Photos.keep(contract, slot, capture)
         return nil
     end
     if not (Config.Ledger and Config.Ledger.StorePhotos) then return nil end
+    -- Nor with kill photos off (Config.Completion.KillPhotos): no file is
+    -- written and no record made, whatever reached here.
+    if not Util.killPhotos() then return nil end
 
     local record = {
         contract_id = contract.id, slot = tonumber(slot) or 1,
@@ -293,6 +332,7 @@ function Photos.keep(contract, slot, capture)
     end
 
     Storage.writePhoto(record)
+    anyHeld, anyAskedAt = true, os.time()
     return id
 end
 
@@ -520,6 +560,10 @@ function Photos.serveHttp(req, res)
         })
         res.send('Not found.')
     end
+
+    -- With kill photos off (Config.Completion.KillPhotos) nothing is
+    -- served, to anybody: every request is the same 404, unread.
+    if not Util.killPhotos() then return notFound() end
 
     if type(req) ~= 'table' or req.method ~= 'GET' or type(req.path) ~= 'string'
         or #req.path > 200 then
@@ -1017,6 +1061,9 @@ end
 --- never outlive a restart, so its files are swept by whatever comes next.
 ---@return integer removed
 function Photos.sweepFiles()
+    -- Kill photos off and none kept: data/photos is not touched at all,
+    -- not even to write which mode it belongs to.
+    if not Photos.inUse() then return 0 end
     local base = resourceRoot()
     if not base then return 0 end
 

@@ -119,11 +119,26 @@ A staff account that can adjust money and spawn items makes this much faster.
 
 ## 4. Payouts
 
+`Config.Limits.MaxPayoutSlots` ships as 1: each contract is collected once.
+
+- [ ] As shipped, the Place form has no **Payouts** count, no note about
+      more hitmen than payouts, and its one reward is headed **Reward**, not
+      "Payout 1"; the placed contract's card says nothing of payouts
+- [ ] In the admin panel (**Features, limits & settings → Limits**), the
+      setting takes 1, 2 or 3 and refuses 0 and 4. Set it to 3: the next
+      Place form offers a count of up to 3 (reopen the Place tab), and the
+      checks below run
+- [ ] With `MaxPayoutSlots = 7` in `config.lua`, the start warns that it has
+      to be 1, 2 or 3 and uses 3; with `0`, it uses 1
 - [ ] A 3-payout contract escrows all three reward sets at creation
 - [ ] The board shows "Payout 1 of 3" and payout 1's reward
 - [ ] Four hitmen can all accept a 3-payout contract
 - [ ] After the first claim, the board shows payout 2's reward
 - [ ] After the third claim the contract closes and the fourth hitman gets nothing
+- [ ] Place a 3-payout contract, then set the setting back to 1 in the panel:
+      the contract still shows "Payout 1 of 3", pays all three collections,
+      and its client can still give the last one back (**Propose change →
+      Give back the last payout**); a new contract offers one collection only
 
 ## 4a. Live transfer only (as shipped)
 
@@ -156,14 +171,49 @@ delivering the target alive to the client. Run these before changing it.
       says `completion: either`, and counts any contract still open from the
       step above as placed under `'alive'`: a kill on that one still pays
       nothing. Place a new contract with a 50% kidnapping bonus: a kill
-      photographed with **Verify kill** pays the baseline and the bonus goes
-      back to the client; on a second one, a handover pays baseline plus
-      bonus
+      verified with **Verify kill** (no camera, kill photos being off as
+      shipped) pays the baseline and the bonus goes back to the client; on a
+      second one, a handover pays baseline plus bonus
 
 ## 5. Elimination
 
 Only on contracts placed under `'either'`: run this section on a copy with
-`Config.Completion.Fulfilment = 'either'`.
+`Config.Completion.Fulfilment = 'either'`, first as shipped (kill photos
+off, 5a), then with `Config.Completion.KillPhotos = true` for the rest.
+
+### 5a. Pictures off (as shipped)
+
+`Config.Completion.KillPhotos = false`: no kill photo is ever taken, kept or
+served, and no image host is asked anything.
+
+- [ ] `/ch-diag` prints `Kill photos: off`, and `photo settings: not used
+      (kill photos are off)`; the start printed nothing about
+      `ExtraPhotoHosts`, `PhotoPublicUrl` or `web_baseUrl`
+- [ ] `crimson-hitman/data/photos/` gains no file, not even `.mode`, through
+      a start, a kill and a restart
+- [ ] Kill the target and tap **Verify kill** standing over the body: no
+      camera and no viewfinder opens, the button reads "Verifying…" for a
+      moment, and the app says "Verified. Payment released."; the payout is
+      paid and the hitman's first-job hint said to tap Verify kill at the
+      body, with nothing about a photograph
+- [ ] Tap it again from 20 m away on a second kill: "You are too far from the
+      body"; let the target respawn and wait past
+      `ProofWindowSeconds` (60 s): the kill no longer pays
+- [ ] The client's completion notice says the contract was fulfilled and
+      nothing about a photo; their Ledger row has no **View photo**
+- [ ] With a link to a photo saved before (on a server that had them on),
+      `https://<address>/crimson-hitman/p/<name>.webp` answers "Not found."
+- [ ] In the admin panel, **Kill photos** is under **Features → Completion**,
+      and **Where kill photos are kept** and **Keep kill photos for the
+      client** say they do not apply now. Turn **Kill photos** on there:
+      the next Verify kill opens the camera, without a restart; turn it off
+      again and restart: it is still off
+- [ ] **Target headshots** off in the panel: the board's cards show the
+      placeholder face from the next refresh, and a target's game is not
+      asked for a render (no MugShotBase64 hitch on the target); on again,
+      faces come back. Restart: the switch is as you left it
+
+### 5b. Kill photos on
 
 - [ ] Hitman kills target with a firearm → hitman can request the camera
 - [ ] The same from 300-400 m with a sniper rifle → the kill is credited

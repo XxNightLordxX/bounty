@@ -99,6 +99,26 @@ CONFIG_DEFAULTS.Completion.Fulfilment = 'either'
 --- (contracts_spec, reward_edit_spec), which cover the shipped figure.
 CONFIG_DEFAULTS.Limits.MinContractReward = 0
 
+--- And with kill photos on, though the resource ships them off
+--- (Config.Completion.KillPhotos = false).
+---
+--- The same reason as the two above: the specs that photograph a kill are
+--- about what the photo claims, the token and the scene, and they exist
+--- only where a photo is taken. What only the shipped 'off' does — Verify
+--- kill at the scene, every photo request refused unread, nothing written —
+--- is the business of the specs that set it (features_spec,
+--- server_photos_spec), which cover the shipped value explicitly.
+CONFIG_DEFAULTS.Completion.KillPhotos = true
+
+--- And three collections a contract, the most the setting takes, though
+--- the resource ships 1 (Config.Limits.MaxPayoutSlots).
+---
+--- The multi-payout specs place contracts collected two or three times; at
+--- 1 every one of them is refused at creation. 3 is a value the start-up
+--- checks accept as it is, so a spec that boots this config is told
+--- nothing about it. The shipped 1 is the business of slots_spec.
+CONFIG_DEFAULTS.Limits.MaxPayoutSlots = 3
+
 --- Restore in place, recursing into tables that exist in both. Assigning a
 --- fresh table would leave anything holding a subtable — a module that did
 --- `local rules = Config.Sources.item` at load — looking at a detached copy.

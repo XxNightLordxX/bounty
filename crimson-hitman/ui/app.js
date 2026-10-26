@@ -510,6 +510,10 @@
       + 'reward instead.',
     // Not a fault. The poller stops on this and says the handover ended.
     no_handover: 'That handover is not running.',
+    // A page that thought kill photos were off, on a server that takes
+    // them. verifyKill opens the camera on this rather than saying it.
+    photo_required: 'This server verifies a kill with a photo. Tap Verify kill again '
+      + 'to take it.',
     // A token outlived by a newer kill, replaced by a second tap, or lost to
     // a restart: in every case the body can still be photographed.
     token_invalid: 'That verification is no longer valid. Take a new photo of '
@@ -2564,11 +2568,15 @@
     // new hitman the one thing that would never pay. What it does instead
     // is said, since a kill still happens: they come back, and the contract
     // is still open.
+    // With kill photos off (settings().killPhotos) nothing is photographed:
+    // Verify kill is checked at the scene.
     var text = aliveOnly(contract)
       ? 'This one pays only for delivering them alive. A kill does not complete '
         + 'it, and it stays open if they die. To deliver, ' + deliver
       : 'Kill: a downed target is not dead. Finish them, then stand over '
-        + 'the body and tap Verify kill to photograph it before they are revived. '
+        + (settings().killPhotos === false
+          ? 'the body and tap Verify kill before they are revived. '
+          : 'the body and tap Verify kill to photograph it before they are revived. ')
         + 'Alive: ' + deliver;
     // Nobody can be met who cannot be found.
     if (contract.creatorAnonymous && settings().relay !== false) {
@@ -2779,16 +2787,47 @@
      limit's reassurance that "the kill is still yours" is untrue for those. */
   var noKillOn = {};
 
-  function verifyKill(contract) {
-    delete state.lastRefusal[contract.id];
-    // Returned, so `once` knows when the camera and the upload are done.
+  /* With the camera: a token, then lb-phone's camera or the viewfinder,
+     then the claim. */
+  function withPhoto(contract) {
     return post('takeVerificationPhoto', { id: contract.id }).then(function (r) {
       // A server that keeps its photos itself answers with the viewfinder
       // to open rather than with the claim. The claim comes back once the
       // photo taken in it has been sent.
       if (r.ok && r.data && r.data.viewfinder) { return viewfinder(contract, r.data); }
       return r;
-    }).then(function (r) {
+    });
+  }
+
+  /* Without one, where the server takes no kill photos
+     (Config.Completion.KillPhotos): it checks the scene and answers with
+     the claim. No camera, no viewfinder, nothing photographed. */
+  function atTheScene(contract) {
+    return post('verifyKill', { id: contract.id });
+  }
+
+  function verifyKill(contract) {
+    delete state.lastRefusal[contract.id];
+    // Which the server does is in its settings. One switched since they
+    // were read answers the other way's own refusal, a camera with no
+    // token (photo_gone) or a scene that needs a photo (photo_required),
+    // and the other way is tried once, so the tap still does what it says.
+    // Whatever answered last decides the words: with no photo taken,
+    // nothing here says to photograph anything.
+    var noPhoto = settings().killPhotos === false;
+    // Returned, so `once` knows when the camera and the upload are done.
+    var asked = noPhoto
+      ? atTheScene(contract).then(function (r) {
+        if (r.ok || r.err !== 'photo_required') { return r; }
+        noPhoto = false;
+        return withPhoto(contract);
+      })
+      : withPhoto(contract).then(function (r) {
+        if (r.ok || r.err !== 'photo_gone') { return r; }
+        noPhoto = true;
+        return atTheScene(contract);
+      });
+    return asked.then(function (r) {
       if (!r.ok) {
         /* Two codes mean something different on this path than in the shared
            table, and both reach a hitman standing over a body they have just
@@ -2820,8 +2859,25 @@
             + 'count.',
           rate_limited: 'Too many attempts just now. Wait a few seconds and '
             + (noKill ? 'try again.'
-              : 'photograph them again; the kill is still yours to claim.')
+              : noPhoto ? 'tap Verify kill again; the kill is still yours to claim.'
+                : 'photograph them again; the kill is still yours to claim.')
         };
+        // The refusals that speak of a photo, said for a kill checked at
+        // the scene where no photo is taken.
+        if (noPhoto) {
+          here.no_kill_to_verify = 'No kill on this contract is waiting to be verified. '
+            + 'Down is not dead: if they are on the ground, finish them. Then stand '
+            + 'over the body and tap Verify kill, soon after the kill. If you only '
+            + 'just finished them, give it a few seconds and try again.';
+          here.photo_too_far = 'You are too far from the body. Stand over them and tap '
+            + 'Verify kill again.';
+          here.photo_revived = 'They were brought back before you verified the kill, so '
+            + 'this is not an elimination any more.';
+          here.photo_still_down = 'They are down, not dead. Finish them, then tap Verify '
+            + 'kill.';
+          here.token_invalid = 'That kill is no longer the one to verify. Stand over the '
+            + 'body and tap Verify kill again.';
+        }
         // Kept on the card as well as said: the notice is read by someone
         // just back from the camera, and it is the only thing that says
         // what to fix before the kill runs out.
@@ -5186,19 +5242,26 @@
 
     var pay = formSection('Payment');
 
-    var slots = drafted(numberInput('slots', 1), 'slots', '1');
-    slots.min = 1;
-    // The server's ceiling, not a number typed here: raising MaxPayoutSlots
-    // in the config used to leave the form refusing to go past five.
-    slots.max = (state.wallet && state.wallet.caps && state.wallet.caps.slots) || 5;
-    slots.onchange = function () { state.draft.slots = slots.value; renderSlots(); };
-    pay.appendChild(labelled('Payouts (how many times it can be collected)', slots));
-    var ceilingNote = el('div', 'hint');
-    ceilingNote.id = 'slots-ceiling';
-    pay.appendChild(ceilingNote);
-    pay.appendChild(el('div', 'hint',
-      'Every payout is funded and escrowed up front. More hitmen may accept than there are ' +
-      'payouts — the first to finish are paid.'));
+    // How many times a contract can be collected, only where the server
+    // allows more than once (Config.Limits.MaxPayoutSlots, 1 to 3). At 1,
+    // as shipped, there is nothing to choose, and nothing about further
+    // collections is drawn at all.
+    if (slotCeiling() > 1) {
+      var slots = drafted(numberInput('slots', 1), 'slots', '1');
+      slots.min = 1;
+      // The server's ceiling, not a number typed here: raising
+      // MaxPayoutSlots in the config used to leave the form refusing to go
+      // past five.
+      slots.max = slotCeiling();
+      slots.onchange = function () { state.draft.slots = slots.value; renderSlots(); };
+      pay.appendChild(labelled('Payouts (how many times it can be collected)', slots));
+      var ceilingNote = el('div', 'hint');
+      ceilingNote.id = 'slots-ceiling';
+      pay.appendChild(ceilingNote);
+      pay.appendChild(el('div', 'hint',
+        'Every payout is funded and escrowed up front. More hitmen may accept than there are ' +
+        'payouts — the first to finish are paid.'));
+    }
     // The least a contract may be worth (caps.minValue, 0 for none), said
     // where the money is set rather than in a refusal once it is all filled
     // in. The bonus counts towards it, as it does towards the ceiling.
@@ -5362,11 +5425,21 @@
      one would still have sent a contract that differed from the one on
      screen — both read it from here. */
   function payoutCount() {
-    var ceiling = parseInt(state.wallet && state.wallet.caps
-      && state.wallet.caps.slots, 10) || 5;
+    var ceiling = slotCeiling();
     var count = parseInt(state.draft.slots, 10);
     if (!count || count < 1) { return 1; }
     return Math.min(count, ceiling);
+  }
+
+  /* How many times the server lets one contract be collected
+     (caps.slots, Config.Limits.MaxPayoutSlots). While the wallet is being
+     read again (every visit to this tab), the last figure the server gave;
+     once, where it has never said: a field offering more than the server
+     takes builds a contract it refuses. */
+  function slotCeiling() {
+    var told = parseInt(state.wallet && state.wallet.caps && state.wallet.caps.slots, 10);
+    if (told > 0) { state.slotCeiling = told; }
+    return state.slotCeiling || 1;
   }
 
   function renderSlots() {
@@ -5378,7 +5451,10 @@
     // field shows is what is being built.
     var typed = parseInt(state.draft.slots, 10);
     var note = document.getElementById('slots-ceiling');
-    if (typed > count) {
+    // Only against a figure the server has given: a draft is not cut down
+    // to a guess while the wallet is being read again.
+    var told = !!(state.wallet && state.wallet.caps && state.wallet.caps.slots);
+    if (typed > count && told) {
       state.draft.slots = String(count);
       var field = document.getElementById('slots-count');
       if (field) { field.value = String(count); }
@@ -5399,7 +5475,8 @@
     box.innerHTML = '';
     for (var i = 1; i <= count; i++) {
       var slot = el('div', 'slot');
-      slot.appendChild(el('h4', null, 'Payout ' + i));
+      // Numbered only where there can be more than one.
+      slot.appendChild(el('h4', null, slotCeiling() > 1 ? 'Payout ' + i : 'Reward'));
 
       var caps = (state.wallet && state.wallet.caps) || {};
       var split = el('div', 'split');
@@ -5987,6 +6064,8 @@
     var labels = { cash: 'Cash', bank: 'Bank', dirty: 'Dirty money' };
 
     var slots = draftSlots();
+    // Named by number only where there can be more than one payout.
+    var numbered = slotCeiling() > 1;
     for (var i = 1; i <= slots.length; i++) {
       var baseline = slots[i - 1].baseline;
       // Held to the server's ceiling here, where the field can be named:
@@ -5994,7 +6073,7 @@
       for (var src in labels) {
         var cap = Number(caps[src]);
         if (baseline[src] && cap > 0 && baseline[src] > cap) {
-          return say('Payout ' + i + ': ' + labels[src] + ' is at most '
+          return say((numbered ? 'Payout ' + i + ': ' : '') + labels[src] + ' is at most '
             + money(cap) + ' on this server.');
         }
       }
@@ -6003,10 +6082,11 @@
       // do not: the server refuses a payout whose kill half is empty.
       if (!baseline.cash && !baseline.bank && !baseline.dirty
           && !baseline.items && !baseline.weapons) {
+        var which = numbered ? 'Payout ' + i : 'The reward';
         return say(slots[i - 1].bonus
-          ? 'Payout ' + i + ' pays nothing for a kill. Put something in it '
+          ? which + ' pays nothing for a kill. Put something in it '
             + 'that is not marked alive only.'
-          : 'Payout ' + i + ' has no reward in it.');
+          : numbered ? which + ' has no reward in it.' : 'There is no reward in it yet.');
       }
     }
 

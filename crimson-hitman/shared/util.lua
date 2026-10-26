@@ -267,6 +267,17 @@ function Util.placingRule()
     return CH.FULFILMENT_RULE.ALIVE
 end
 
+--- Whether kill photos exist on this server at all
+--- (Config.Completion.KillPhotos). Read at every use, so the admin panel's
+--- switch applies to the next action. Checked at boot, so anything but true
+--- here is a config changed under a running server, read as off, as the
+--- boot check reads it.
+---@return boolean
+function Util.killPhotos()
+    local completion = Config and Config.Completion
+    return type(completion) == 'table' and completion.KillPhotos == true
+end
+
 --- Count digits, used to blunt phone numbers and addresses in free text (§14.30).
 function Util.digitCount(text)
     local n = 0

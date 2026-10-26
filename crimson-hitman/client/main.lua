@@ -312,6 +312,8 @@ local CLIENT_SETTINGS = {
     ['Targeting.AllowNearby'] = 'boolean',
     -- Whether a headshot this game renders has its background cut out.
     ['Mugshot.RemoveBackground'] = 'boolean',
+    -- Whether this game renders a headshot at all.
+    ['Mugshot.Enabled'] = 'boolean',
     -- Whether the app goes on the home screen when it is next added.
     ['App.DefaultInstalled'] = 'boolean',
 }
@@ -519,6 +521,9 @@ local UI_EVENTS = {
     'rewardOptions', 'mugshotImage',
     'create', 'accept', 'abandon', 'cancel', 'revise',
     'armKidnap', 'kidnapProgress',
+    -- Verify kill with kill photos off (Config.Completion.KillPhotos): no
+    -- token and no picture, so nothing here is held back from the page.
+    'verifyKill',
     'bailout', 'informant',
     'addEscrow', 'rewardBreakdown', 'withdrawReward',
     'improve', 'propose', 'respondAmendment', 'amendments',

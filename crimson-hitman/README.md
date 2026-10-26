@@ -19,8 +19,20 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   separate bonus. `'either'` turns kills back on. Each contract keeps the rule
   it was placed under, and `/ch-diag` says which is in use (see *Live transfer
   only*).
-- **The kill photo** is the client's alone and seen once, then saved to the
-  phone's Photos or deleted. On `'server'` storage (the default) it is taken in
+- **Collections:** how many times one contract can be collected
+  (`Config.Limits.MaxPayoutSlots`) is your choice of 1, 2 or 3, and ships as 1:
+  each contract is collected once, and the Place form shows nothing about
+  collecting it again. Anything outside 1 to 3 is read as the nearest of them,
+  with a warning at startup; the admin panel takes 1 to 3. Contracts already
+  placed keep the number they were placed with.
+- **Pictures off:** `Config.Completion.KillPhotos` ships `false`, so the
+  resource never takes, uploads, keeps or serves a kill photo and never asks
+  Fivemanage or any image host anything; under `'either'`, Verify kill
+  completes at the scene on the server's own checks. `Config.Mugshot.Enabled`
+  switches target headshots off the same way. Both are in the admin panel's
+  Features, live and kept across restarts (see *Turning pictures off*).
+- **The kill photo** (with `Config.Completion.KillPhotos = true`) is the
+  client's alone and seen once, then saved to the phone's Photos or deleted. On `'server'` storage (the default) it is taken in
   the app's own viewfinder and kept on this server, so no image host is needed;
   Save to Photos uses a link this server serves, lb-phone's own upload, or
   keeps the photo in the app.
@@ -191,6 +203,7 @@ copy at the next start, and the console names it (see `data/README.md`).
 | Setting | Why it matters |
 |---|---|
 | `Config.Completion.Fulfilment` | How a contract is completed. `'alive'` (as shipped) is live transfer only, because this city wants roleplay before anybody is killed: a kill never completes a contract, the whole reward is paid on delivery, and there is no kidnapping bonus. `'either'` lets a kill complete one too, and pays the bonus on top of a live handover. Each contract keeps the rule it was placed under, so a change reaches new contracts only. Anything else is read as `'alive'`, with a warning at startup. See *Live transfer only* below; `/ch-diag` says which is in use |
+| `Config.Completion.KillPhotos` | Whether kill photos exist at all (`false`, as shipped). Off, the resource never takes, uploads, downloads, keeps or serves one and never asks lb-phone or any image host about one; under `'either'`, Verify kill completes at the scene on the server's own checks, with no camera. `PhotoStorage`, the other `Photo*` settings, `ExtraPhotoHosts` and `Config.Ledger.StorePhotos` then do not apply, and the admin panel says so beside them. Anything but `true` or `false` is read as `false`, with a warning at startup. See *Turning pictures off* below; `/ch-diag` prints `Kill photos: off` |
 | `Config.Completion.PhotoStorage` | Where kill photos are kept. `'server'` (as shipped) needs no image host: the hitman takes the photo in the app's own viewfinder and it is kept as a file in `crimson-hitman/data/photos/`, which the server must be able to write to. `'host'` uses lb-phone's own camera and the image host it uploads to, keeping only the link. Either way only the client who placed the contract sees the photo, once (see *The kill photo* below). `/ch-diag` says which is in use |
 | `Config.Completion.PhotoMaxSide` / `PhotoMaxBytes` | `'server'` storage only: the app shrinks each kill photo until its longest side is at most this many pixels (1280) and it weighs at most this many bytes (600000; at most 1500000), and the server refuses anything bigger. FXServer moves a photo at about 150 KB a second, so the default takes about four seconds each way. The server also decodes each photo when it arrives and encodes it again when the client opens it, on its main thread and roughly in proportion to its size: about 80 ms each at the default and a fifth of a second at 1500000, each a single hitch (estimates; measure yours with the in-game checklist) |
 | `Config.Completion.PhotoPublicUrl` | `'server'` storage only: the public **https** address this server serves photos from when a client saves one to their phone's Photos, such as `'https://photos.example.com/crimson-hitman'`. Unset (as shipped), the server's `web_baseUrl` is used. Add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. See *No image host?* below; `/ch-diag` says which address is used and whether lb-phone takes it |
@@ -201,10 +214,12 @@ copy at the next start, and the console names it (see `data/README.md`).
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who cannot open the app. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit |
 | `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry |
 | `Config.Limits` | Contract caps, payouts, cooldowns |
+| `Config.Limits.MaxPayoutSlots` | How many times one contract can be collected: `1` (as shipped; each contract is collected once), `2` or `3`. At 1 the Place form shows no extra-collection controls at all; at 2 or 3 the creator chooses how many, each funded and escrowed up front. Anything outside 1 to 3, or not a whole number, is read as the nearest of them with a warning at startup; the admin panel takes 1 to 3. Contracts already placed keep the number they were placed with, and can still give their last collection back |
 | `Config.Limits.MinContractReward` | The least a new contract's reward may be worth in money (1000 as shipped; `0` turns it off): cash, bank and dirty money summed across every payout, the kidnapping bonus included. Items and weapons do not count, since nothing prices them. A contract worth less is refused (`reward_too_small`) and the app says the figure, on the Place form before anything is typed and in the refusal; a reward cannot be taken back out below it either, by Withdraw part or by giving back a payout. Without it two one-dollar contracts fill a target's `Config.Limits.MaxActiveContractsPerTarget` and nobody else can list them until both close. Anything that is not a whole number of dollars is read as 1000, and one above `Config.MaxContractValue` is held to it, with a warning at startup |
 | `Config.Immunity` | Playtime and session floors that protect new players from being farmed |
 | `Config.Targeting.AllowBrowseAll` / `AllowNearby` | How a client finds a target. Browsing everyone online is on (a roster of names, no positions). The nearby list is **off**: on, it puts names to the unmasked people around a player, through walls, and boot warns while it is (see *Placing a contract*) |
 | `Config.Notifications.ParanoidAlertJitter` | How long (1 to 10 minutes, drawn per contract) a new contract is kept from its target: their alert, their On me tab, `/cleanse` and the request for their headshot all wait for it, so none of them dates the placement |
+| `Config.Mugshot.Enabled` | Target headshots on the board (`true`, as shipped). Off, no headshot is ever asked of a target's game, one a client sends anyway is refused before it is read, none is kept, and every card shows the usual placeholder. Anything but `true` or `false` is read as `false`, with a warning at startup |
 | `Config.Mugshot.RemoveBackground` | Whether target headshots have their background cut out (`false`, as shipped). On, `MugShotBase64` loads a 2.6 MB model into the target's game for every render and never frees it, set off by other players viewing a board that names them; off, the headshot keeps the game's grey backdrop |
 | `Config.Diagnostics.SlowJobMs` | A maintenance job (the tick's, or the death sampler's pass) slower than this many milliseconds (5) prints one console warning naming it, at most every five minutes per job; `0` turns it off. `/ch-diag` lists the slowest jobs either way |
 
@@ -327,7 +342,10 @@ the handover, as described at the end of this paragraph, for the whole
 reward. A kill does nothing for it, however it happens; **Verify kill** is
 not offered, and the server refuses one with `kill_not_allowed`. On a
 contract placed under `'either'`, kill the target, tap **Verify kill** and
-photograph the body for the baseline, standing within `Config.Completion.PhotoRadius` (5 m)
+(with `Config.Completion.KillPhotos` on) photograph the body for the
+baseline; with kill photos off, as shipped, the tap itself is the
+verification and there is no camera (see *Turning pictures off*). Either way
+you stand within `Config.Completion.PhotoRadius` (5 m)
 of where it lay when they died, or of where it lies now if it has moved
 since (a car rolling on, a body carried off) while they are still dead. On `'server'` storage the app opens its own
 viewfinder over the screen, showing the phone's rear camera: point it at the
@@ -465,6 +483,41 @@ photo handler gives carries an `X-Crimson-Hitman` header). Anything else
 answering — an address without `/crimson-hitman`, a proxy that does not pass
 it on — is named; no answer at all is a warning, since some networks cannot
 reach their own public address from inside while phones can.
+
+**Turning pictures off.** `Config.Completion.KillPhotos = false` (as shipped)
+turns kill photos off completely. The resource then never takes, uploads,
+downloads, keeps or serves one, and never talks to Fivemanage or any other
+image host for one:
+
+- the hitman's Verify kill (offered only under `'either'`) opens no camera
+  and no viewfinder: the server checks the scene itself, on the same rules a
+  photo is held to (`PhotoRadius`, `ProofWindowSeconds`,
+  `RequireObservedDamage`, `RejectLastStand`, a revive undoing the kill), and
+  pays the collection there and then;
+- every photo upload, latent photo event and photo request is refused before
+  anything sent with it is read, with the same answer as a photo nobody has;
+  no file is written and `data/photos/` is not touched;
+- nothing asks lb-phone for its upload hosts, and the start says nothing about
+  `ExtraPhotoHosts`, `PhotoPublicUrl` or `web_baseUrl`;
+- the photo link route answers `404` to every request, so a photo saved to a
+  phone's Photos by link stops loading;
+- the Ledger, the notices and the client's cards say nothing about a photo;
+- `/ch-diag` prints `Kill photos: off`, and the admin panel marks
+  `Config.Completion.PhotoStorage` and `Config.Ledger.StorePhotos` as not
+  applying.
+
+A photo kept before they were turned off keeps its normal expiry, and its
+client can still open it once; the start-up sweep of photo files and the
+retention run only while such a photo is kept.
+
+`Config.Mugshot.Enabled = false` turns target headshots off the same way: no
+render is ever asked of a target's game, a headshot a client sends anyway is
+refused before it is read, nothing is kept (those already kept are forgotten
+the moment it is switched off), and every card shows the usual placeholder.
+
+Both switches are under **Features** in the admin panel (`/hitmanadmin`),
+take effect at the next action that reads them, with no restart, and are
+kept across restarts like every other setting there.
 
 **Notifications.** Every notice the resource sends (an acceptance, the
 photo waiting under Ledger, a target's alert, a stake forfeited, the advisory

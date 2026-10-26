@@ -54,10 +54,20 @@ local AT_USE = 'Read each time it is used, so it applies to the next check, incl
 local CAP = 'Lowering it below what is in use now never cancels anything: it only refuses '
     .. 'new ones over it.'
 
+--- What the panel says beside a key whose `needs` switch is off.
+local NEEDS_OFF = {
+    ['Completion.KillPhotos'] = 'Does not apply while kill photos are off (Completion.KillPhotos): '
+        .. 'no kill photo is taken or kept, so this changes nothing until they are on again.',
+    ['Mugshot.Enabled'] = 'Does not apply while target headshots are off (Mugshot.Enabled): '
+        .. 'none is rendered, so this changes nothing until they are on again.',
+}
+
 --- Every key the panel may show, in the order it shows them.
 ---
 --- kind: 'switch' (on/off), 'choice' (one of `choices`), 'number' (with
---- min, max and `integer`), 'list' (job names). section: 'features' or
+--- min, max and `integer`), 'list' (job names). needs is a switch this key
+--- means nothing without: while it is off the panel says so beside the key
+--- (`inactive`, from NEEDS_OFF). section: 'features' or
 --- 'limits'. live = false is a key kept and applied at the next start (or
 --- the next time what reads it runs), and said so. client = true is a key
 --- players' games read too, sent to them when it changes. readonly is the
@@ -103,7 +113,16 @@ local CATALOGUE = {
       choices = { 'alive', 'either' }, label = 'How contracts are completed',
       about = '\'alive\': live handover only. \'either\': a photographed kill or a handover.',
       inflight = 'Each contract keeps the rule it was placed under; this changes new contracts only.' },
+    { key = 'Completion.KillPhotos', section = 'features', group = 'Completion', kind = 'switch',
+      label = 'Kill photos',
+      about = 'Off: no kill photo is ever taken, uploaded, kept or served, and no image host is '
+          .. 'asked anything. Under \'either\', Verify kill completes at the scene on the '
+          .. 'server\'s own checks.',
+      inflight = 'Read at the next Verify kill, with no restart. A photo already kept stays until '
+          .. 'it expires as usual, and its client can still open it once; off, links to photos '
+          .. 'saved to a phone\'s Photos stop loading.' },
     { key = 'Completion.PhotoStorage', section = 'features', group = 'Completion', kind = 'choice',
+      needs = 'Completion.KillPhotos',
       choices = { 'server', 'host' }, label = 'Where kill photos are kept',
       about = '\'server\': in this resource\'s data folder. \'host\': lb-phone\'s image host.',
       inflight = 'Photos already kept stay where they are and open as before; a photo token '
@@ -116,6 +135,7 @@ local CATALOGUE = {
       about = 'The killer a victim names must also be in the server\'s own damage log.',
       inflight = AT_USE },
     { key = 'Ledger.StorePhotos', section = 'features', group = 'Completion', kind = 'switch',
+      needs = 'Completion.KillPhotos',
       label = 'Keep kill photos for the client',
       about = 'The client who placed the contract can open its kill photo once.',
       inflight = 'Photos already kept stay openable; kills verified while it is off keep none.' },
@@ -164,7 +184,14 @@ local CATALOGUE = {
       kind = 'switch', label = 'Law enforcement may be targeted',
       about = 'Off refuses new contracts on protected jobs.',
       inflight = 'Contracts already on protected targets run on; only new ones are refused.' },
+    { key = 'Mugshot.Enabled', section = 'features', group = 'Targeting', kind = 'switch',
+      label = 'Target headshots', client = true,
+      about = 'Faces on the board, rendered by each target\'s own game. Off: none is asked for, '
+          .. 'one sent anyway is refused unread, and cards show the placeholder.',
+      inflight = 'Read at the next card drawn, with no restart: turned off, the headshots kept '
+          .. 'are forgotten at once.' },
     { key = 'Mugshot.RemoveBackground', section = 'features', group = 'Targeting', kind = 'switch',
+      needs = 'Mugshot.Enabled',
       label = 'Cut the background out of headshots', client = true,
       about = 'Loads a segmentation model into the target\'s game for each render.',
       inflight = 'Headshots already cached keep the background they were made with.' },
@@ -282,8 +309,10 @@ local CATALOGUE = {
       kind = 'number', integer = true, min = 1, max = 50, label = 'Operatives on one contract',
       inflight = CAP },
     { key = 'Limits.MaxPayoutSlots', section = 'limits', group = 'Contract limits',
-      kind = 'number', integer = true, min = 1, max = 20, label = 'Payouts one contract may carry',
-      inflight = CAP },
+      kind = 'number', integer = true, min = 1, max = 3,
+      label = 'Times one contract can be collected (1 to 3)',
+      inflight = 'New contracts only: each contract keeps the number it was placed with. At 1 the '
+          .. 'Place form shows no extra collections.' },
     { key = 'Limits.MaxEscrowLines', section = 'limits', group = 'Contract limits',
       kind = 'number', integer = true, min = 1, max = 500, label = 'Escrow lines in one contract',
       inflight = CAP },
@@ -952,6 +981,8 @@ function Settings.view()
             source = override and 'panel' or 'config',
             by = override and override.by or nil, at = override and override.at or nil,
             ignored = skipped and skipped.why or nil,
+            inactive = entry.needs and read(Config, entry.needs) ~= true
+                and NEEDS_OFF[entry.needs] or nil,
         }
         if override then out.overrides = out.overrides + 1 end
         local list = out[entry.section]

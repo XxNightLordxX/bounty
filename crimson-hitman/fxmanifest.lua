@@ -41,8 +41,10 @@ server_scripts {
     'server/main.lua',
 }
 
--- Kill photos are never one of the page's files. On 'server' photo storage
--- (the default) they are written to data/photos/ by the server, which must
+-- Kill photos are never one of the page's files, and with
+-- Config.Completion.KillPhotos = false (as shipped) there are none at all:
+-- nothing below is written or served. With them on, on 'server' photo
+-- storage (the default) they are written to data/photos/ by the server, which must
 -- be able to write there, and reach the client's phone as a latent event
 -- when they open one. A photo the client saves to their phone's Photos is
 -- served read-only by this resource's own HTTP handler (SetHttpHandler, in

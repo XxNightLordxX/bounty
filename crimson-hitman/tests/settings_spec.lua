@@ -443,6 +443,42 @@ describe('settings changed from the panel, across a restart', function()
                 eq(row.default, true, 'and what config.lua says beside it')
             end)
 
+            it('keep kill photos and headshots switched off across a restart', function()
+                local s = stack()
+                local store = freshStore(name)
+                local settings = settingsOn(s, store)
+                truthy(settings.set('Completion.KillPhotos', false, 'ADMIN001'))
+                truthy(settings.set('Mugshot.Enabled', false, 'ADMIN001'))
+                eq(Config.Completion.KillPhotos, false, 'in force at once')
+                eq(Config.Mugshot.Enabled, false)
+
+                resetConfig()
+                eq(Config.Completion.KillPhotos, true, 'the config as the suite runs it')
+                eq(Config.Mugshot.Enabled, true)
+                settings = settingsOn(s, reopened(name, store))
+                eq(settings.boot(), 2, 'both applied at the next start')
+                eq(Config.Completion.KillPhotos, false)
+                eq(Config.Mugshot.Enabled, false)
+                local rows = {}
+                for _, r in ipairs(settings.view().features) do rows[r.key] = r end
+                eq(rows['Completion.KillPhotos'].source, 'panel')
+                eq(rows['Mugshot.Enabled'].source, 'panel')
+                truthy(rows['Completion.PhotoStorage'].inactive,
+                    'where photos are kept is marked as not applying')
+                truthy(rows['Ledger.StorePhotos'].inactive, 'and so is keeping them')
+                truthy(rows['Mugshot.RemoveBackground'].inactive, 'and the headshot\'s background')
+                falsy(rows['Completion.Fulfilment'].inactive, 'and nothing that still applies')
+
+                -- Back on from the panel, and that is what the next start finds.
+                truthy(settings.set('Completion.KillPhotos', true, 'ADMIN001'))
+                resetConfig()
+                settings = settingsOn(s, reopened(name, store))
+                settings.boot()
+                eq(Config.Completion.KillPhotos, true)
+                eq(Config.Mugshot.Enabled, false)
+                resetConfig()
+            end)
+
             it('stay reset after a restart', function()
                 local s = stack()
                 local store = freshStore(name)

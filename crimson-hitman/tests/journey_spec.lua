@@ -295,6 +295,26 @@ describe('proving the kill', function()
         ok('photoDecision', 1, { handle = photo.handle, choice = 'save' })
     end)
 
+    it('verifies a kill at the scene with no photo where kill photos are off', function()
+        local s, f, c = seeded()
+        ok('accept', 3, { id = c.id, anonymous = false })
+        Config.Completion.KillPhotos = false
+
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = (Env.players[2]._health or 200) - 60
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.onVictimReport(2)
+
+        -- ui/app.js atTheScene — post('verifyKill', { id })
+        local claimed = ok('verifyKill', 3, { id = c.id })
+        truthy(claimed, 'the claim comes back as a photo submission\'s would')
+        local ledger = ok('ledger', 1, {})
+        falsy(ledger.entries[1] and ledger.entries[1].photo,
+            'and the client row offers no photo, because none was taken')
+    end)
+
     it('serves the face the card asks for, by the handle it was given', function()
         local s, f, c = seeded()
         local handle = faceHandle(s, 'TARGET01')
@@ -555,14 +575,18 @@ describe('how many separate rewards one contract may hold', function()
         eq(reply.data.caps.maxLines, Config.Limits.MaxEscrowLines)
     end)
 
-    --- The reason this is reachable rather than theoretical.
-    it('is a ceiling the shipped caps can overshoot', function()
-        local perPayout = 3                                   -- cash, bank, dirty
+    --- The reason this is reachable rather than theoretical: at the most
+    --- collections Config.Limits.MaxPayoutSlots takes (3, as the suite
+    --- runs; 1 ships), each with a kill's half and a live delivery's half
+    --- under 'either', both of which take money, items and weapons.
+    it('is a ceiling the caps can overshoot at the most collections allowed', function()
+        eq(Config.Limits.MaxPayoutSlots, 3, 'the suite places contracts at the most the setting takes')
+        local perPortion = 3                                  -- cash, bank, dirty
             + (Config.Sources.item.maxStacks or 0)
             + (Config.Sources.weapon.max or 0)
-        local worst = perPayout * Config.Limits.MaxPayoutSlots
+        local worst = perPortion * 2 * Config.Limits.MaxPayoutSlots
         truthy(worst > Config.Limits.MaxEscrowLines,
-            ('the shipped caps allow %d lines against a ceiling of %d. If that '
+            ('the caps allow %d lines against a ceiling of %d. If that '
              .. 'is no longer true this test is stale rather than wrong, but '
              .. 'the form still has to honour the ceiling it is sent.')
                 :format(worst, Config.Limits.MaxEscrowLines))
