@@ -679,6 +679,31 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       contract by role. Then, on the account without it, open **Needs review**,
       All, and run `/ch-review all`: whom it paid reads as *the client*, never a
       citizen id
+- [ ] On the `crimson.identity` account, dismiss a review item on an anonymous
+      contract with a note naming the client by citizen id and by name. On the
+      account without it, the note reads *the client (Anonymous)* in **Needs
+      review**, the **Logs** and the contract's timeline, and in `/ch-review all`
+- [ ] `/ch-settle <line> return <citizenid>` on a line `/ch-stuck` says does
+      not say whose it is: a citizen id typed in lower case reaches the player
+      (it settles to them, in capitals), a typo answers *nobody on this server
+      has that citizen id; check how it is spelt* and nothing moves, and the
+      panel's **Return to** answers the same. A player who is away but has a
+      character still gets it at their next login
+- [ ] `/ch-review <id> pay client` (a word that is neither a role the item
+      names nor anybody's citizen id) is refused, naming the item's roles, and
+      the item stays open; `pay Payer` pays the payer
+- [ ] A line nothing of which was given (*in no retry queue*, or a *stalled
+      claim*) shows only **Pay** in the panel; `/ch-settle <line> pay 100` on
+      it is refused, and `pay` gives the whole line
+- [ ] Void a contract with `/ch-void <id> <reason>` and restart the resource
+      straight away (before the next tick): the contract's timeline still has
+      `admin_void` with who and why. `/ch-void` with nothing after it answers
+      its usage, a made-up id *No contract has that id*, and a second void of
+      the same contract *Already closed*; none of them shows a code such as
+      `invalid_input`
+- [ ] `/ch-settle <line> pay <amount>` above what the line owes answers how
+      much it still owes, and a second settle of a settled line *Already
+      settled, by another settle or its own ending*
 - [ ] In **Features & limits**, **Limits & settings**, type 1 into *Days an
       unopened kill photo is kept* and press Enter: nothing is saved, the row says
       what lowering it deletes, and Save turns brass; only a second click on Save

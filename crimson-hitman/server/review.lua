@@ -275,14 +275,46 @@ end
 -- Resolving
 --------------------------------------------------------------------------
 
+--- How a citizen id staff typed is checked (Admin.knownCitizenId, handed
+--- over by Admin.init): the form the server keeps it in, or nil when nobody
+--- here has it. Until it is, a decision names its party by role alone.
+local knownCitizenId = nil
+
+--- Check typed citizen ids with `fn`: (typed, lines) -> cid|nil.
+---@param fn function|nil
+function Review.useResolver(fn)
+    knownCitizenId = type(fn) == 'function' and fn or nil
+end
+
+--- The roles an item records, in order, as one line of text.
+local function rolesOf(item)
+    local roles = {}
+    for role in pairs(type(item.cids) == 'table' and item.cids or {}) do roles[#roles + 1] = role end
+    table.sort(roles)
+    return table.concat(roles, ', ')
+end
+
 --- The citizen id a decision names: a role the item records ('payer',
---- 'creator', ...), or a citizen id typed out. A role is how staff who may
---- not see who is behind an anonymous party still resolve one.
+--- 'creator', ...; in any case), or the citizen id of somebody this server
+--- has, as typed or in capitals (knownCitizenId). A role is how staff who
+--- may not see who is behind an anonymous party still resolve one. Any
+--- other word was taken as a citizen id as it stood: 'client', 'Payer' or
+--- 'target01' resolved the item to a line owed and queued for an id no
+--- character has, which nothing ever gave and nothing could move. Whom the
+--- item's own escrow lines were taken from counts as known.
+---@return string|nil cid
 local function partyOf(item, who)
     if type(who) ~= 'string' or who == '' then return nil end
     local cids = type(item.cids) == 'table' and item.cids or {}
     if cids[who] then return cids[who] end
-    return Util.toCitizenId(who)
+    if cids[who:lower()] then return cids[who:lower()] end
+    if not knownCitizenId then return nil end
+    local lines = {}
+    if item.contract_id then
+        local ok, found = pcall(Storage.readEscrow, item.contract_id)
+        if ok then lines = found or {} end
+    end
+    return (knownCitizenId(who, lines))
 end
 
 --- The money an item records in one source: its own amount where it is in
@@ -370,7 +402,7 @@ local function planFor(item, decision)
     if action ~= 'refund' and action ~= 'pay' then return nil, CH.ERR.INVALID_INPUT end
 
     local cid = partyOf(item, decision.who)
-    if not cid then return nil, 'no_party' end
+    if not cid then return nil, 'no_party', rolesOf(item) end
 
     local entries
     if action == 'pay' then

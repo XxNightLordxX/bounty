@@ -562,6 +562,41 @@ function Identity.byCitizenId(cid)
     return nil
 end
 
+--- What qbx_core's offline lookup said of a citizen id, kept a while:
+--- [cid] = { exists = boolean, at = Util.monotonicMs() }. The staff tools ask
+--- it of every line owed to somebody away while the admin panel's overview
+--- is open, and each answer is a read of qbx_core's players table.
+local characterSeen = {}
+local CHARACTER_KNOWN_MS = 600000   -- a character found: ten minutes
+local CHARACTER_NONE_MS = 60000     -- none found: a minute
+
+--- Whether a character with exactly this citizen id exists on the server,
+--- in the city or away, by qbx_core's own record: its GetOfflinePlayer
+--- export (qbx_core server/player.lua), which reads the players table and
+--- answers nil for an id no character has. Exact: the table's collation
+--- matches 'creator1' to CREATOR1's row, and the citizen id that row holds
+--- is what is compared. nil when qbx_core could not be asked (an export
+--- missing on this build, or one that raised), which is never "nobody".
+---@param cid string
+---@return boolean|nil exists
+function Identity.characterExists(cid)
+    cid = Util.toCitizenId(cid)
+    if not cid then return false end
+    local now = Util.monotonicMs()
+    local seen = characterSeen[cid]
+    if seen and now - seen.at < (seen.exists and CHARACTER_KNOWN_MS or CHARACTER_NONE_MS) then
+        return seen.exists
+    end
+    local ok, player = pcall(function()
+        return exports.qbx_core:GetOfflinePlayer(cid)
+    end)
+    if not ok then return nil end
+    local data = type(player) == 'table' and player.PlayerData or nil
+    local exists = type(data) == 'table' and data.citizenid == cid
+    characterSeen[cid] = { exists = exists, at = now }
+    return exists
+end
+
 --- Every online player, resolved. Used for advisories and presence checks.
 ---@return table[] actors
 --- Everyone connected that this resource can describe.

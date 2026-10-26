@@ -173,8 +173,8 @@ function contractDetail(extra, identity) {
       { line: 'ct00000001:2', contract: 'ct00000001', amount: 8000, source: 'bank', portion: 'baseline',
         intended: 'operative Ghost', why: 'unknown', raised: 1, arrived: 2000, at: NOW - 600,
         actions: ['pay', 'pay_amount', 'return', 'delivered'] },
-      { line: 'ct00000001:9', contract: 'ct00000001', amount: 300, source: 'cash', portion: 'baseline',
-        orphan: true, actions: ['return_owner'] },
+      { line: 'ct00000001:9', contract: 'ct00000001', amount: 300, source: 'cash', portion: 'owed',
+        intended: 'a citizen id no character has', why: 'owed_to_nobody', actions: ['return_owner'] },
       { line: 'ct00000001:8', contract: 'ct00000001', amount: 100, source: 'cash', portion: 'stake',
         why: 'ending_unfinished', unfinished: true, actions: [] }
     ],
@@ -190,7 +190,11 @@ function stuckList(extra) {
       intended: 'operative Ghost', why: 'unknown', raised: 1, arrived: 2000, at: NOW - 600,
       actions: ['pay', 'pay_amount', 'return', 'delivered'] },
     { line: 'owe00000003', contract: 'ct00000004', amount: 900, source: 'cash', portion: 'owed',
-      intended: XSS, why: 'unqueued', raised: 0, actions: ['pay', 'pay_amount'] },
+      intended: XSS, why: 'unqueued', raised: 0, actions: ['pay'] },
+    { line: 'ct00000005:1', contract: 'ct00000005', amount: 900, source: 'cash', portion: 'baseline',
+      intended: 'operative Ghost', why: 'interrupted', raised: 3, actions: ['pay', 'pay_amount', 'return', 'delivered'] },
+    { line: 'ct00000006:1', contract: 'ct00000006', amount: 500, source: 'cash', portion: 'baseline',
+      intended: '(nobody)', why: 'never_given_release', raised: 0, actions: ['return'] },
     { line: 'ct00000009:1', contract: 'ct00000009', amount: 300, source: 'cash', portion: 'baseline',
       orphan: true, actions: ['return_owner'] },
     { line: 'ct00000008:1', contract: 'ct00000008', amount: 100, source: 'cash', portion: 'stake',
@@ -1546,7 +1550,7 @@ async function main() {
       has(app.main(), 'owe00000003');
       has(app.main(), 'ct00000009:1');
       has(app.main(), 'ending unfinished; it settles itself within a minute');
-      has(app.main(), '3 left for you to settle, of 4 listed');
+      has(app.main(), '5 left for you to settle, of 6 listed');
       has(app.main(), 'Arrival unknown');
       has(app.main(), 'Never given: only Pay settles it');
       has(app.main(), '2 money events no rule could settle wait in the review queue');
@@ -1556,6 +1560,20 @@ async function main() {
         return li.classList.contains('stuck-line') && app.text(li).indexOf(id) !== -1;
       })[0];
     };
+    it('a line nothing of which was given offers only Pay, with no amount to write the rest off', function () {
+      eq(item('owe00000003').querySelectorAll('button').filter(function (b) {
+        return b.getAttribute('data-act') === 'settle';
+      }).map(function (b) { return b.getAttribute('data-how'); }), ['pay']);
+      has(app.text(item('owe00000003')), 'Never given: only Pay settles it, to them, in full.');
+      lacks(app.text(item('owe00000003')), 'Arrival unknown');
+    });
+    it('one left mid-release before it named anyone says nothing arrived and that Return puts it back', function () {
+      const li = item('ct00000006:1');
+      has(app.text(li), 'nothing of it was given');
+      has(app.text(li), 'Return puts it back to its contract');
+      lacks(app.text(li), 'Arrival unknown');
+      lacks(app.text(li), 'Never given');
+    });
     const delivered = app.button('Delivered', item('ct00000001:2'));
     app.click(delivered);
     await settled();
@@ -1572,19 +1590,19 @@ async function main() {
       truthy(app.requests('stuck').length >= 2, 'read again');
       lacks(app.main(), 'ct00000001:2', 'a settled line leaves the list');
     });
-    app.click(app.button('Pay amount', item('owe00000003')));
+    app.click(app.button('Pay amount', item('ct00000005:1')));
     await settled();
     it('Pay amount asks for an amount first, beside the line, and sends nothing', function () {
       eq(app.requests('settle').length, 1);
-      has(app.text(item('owe00000003')), 'An amount is a whole number of at least 1.');
+      has(app.text(item('ct00000005:1')), 'An amount is a whole number of at least 1.');
     });
-    app.type(item('owe00000003').querySelector('[data-bind="dr.amount.owe00000003"]'), '400');
-    const payAmount = app.button('Pay amount', item('owe00000003'));
+    app.type(item('ct00000005:1').querySelector('[data-bind="dr.amount.ct00000005:1"]'), '400');
+    const payAmount = app.button('Pay amount', item('ct00000005:1'));
     app.click(payAmount);
     app.click(payAmount);
     await settled();
     it('and pays that amount once it has one', function () {
-      eq(app.last('settle').data, { line: 'owe00000003', disposition: 'pay', amount: 400 });
+      eq(app.last('settle').data, { line: 'ct00000005:1', disposition: 'pay', amount: 400 });
     });
     app.click(app.$$('button').filter(function (b) {
       return b.getAttribute('data-act') === 'contract' && b.getAttribute('data-id') === 'ct00000004';

@@ -771,6 +771,24 @@ function Natives.exportsProxy()
             local src = Env.byCitizen[cid]
             return src and Env.players[src] or nil
         end,
+        --- qbx_core's offline lookup (server/player.lua): a character from
+        --- the players table, in the city or away, or nil when none has the
+        --- id. Matched without regard to case, as the table's
+        --- utf8mb4_unicode_ci collation matches it, and answered with the
+        --- citizen id the row holds. Natives.noOfflineLookup is a build
+        --- without the export.
+        GetOfflinePlayer = function(_, cid)
+            if Natives.noOfflineLookup then
+                error('No such export GetOfflinePlayer in resource qbx_core', 0)
+            end
+            if type(cid) ~= 'string' then return nil end
+            for known in pairs(Env.characters or {}) do
+                if known:upper() == cid:upper() then
+                    return { PlayerData = { citizenid = known }, Offline = true }
+                end
+            end
+            return nil
+        end,
         --- One field of a loaded character's metadata, by server id or
         --- citizen id as qbx_core's resolvePlayer takes either; nil when
         --- nobody is loaded there. Natives.noGetMetadata is a qbx_core

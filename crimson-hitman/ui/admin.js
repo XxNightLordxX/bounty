@@ -731,7 +731,8 @@
     interrupted: 'stopped while being given', unknown: 'arrival unknown', raised: 'raised, nothing arrived',
     stalled: 'stopped part-way', unqueued: 'in no retry queue', stalled_claim: 'stalled claim',
     stopped: 'stopped by a raise', releasing: 'left mid-release', ending_unfinished: 'ending unfinished',
-    orphan: 'contract never stored'
+    orphan: 'contract never stored', never_given_release: 'left mid-release, never given',
+    owed_to_nobody: 'owed to nobody', owed_to_unchecked: 'owed to an id not checked'
   };
 
   function tile(title, body, cls) {
@@ -1036,9 +1037,17 @@
     stalled_claim: 'stalled claim: the claim that owed it raised before paying it, so nothing will give it',
     stopped: 'a raise stopped it while it was being given',
     releasing: 'left mid-release by a call that raised, and nothing is finishing it',
+    never_given_release: 'left mid-release by a call that raised before it named anyone, so nothing of it was given',
     ending_unfinished: 'ending unfinished; it settles itself within a minute'
   };
   var NEVER_GIVEN = { unqueued: true, stalled_claim: true };
+
+  /** Whether nothing of a line was given, so only Pay settles it: one the
+      server says so of, or one left mid-release before it named anyone
+      that is owed to somebody. */
+  function neverGiven(entry) {
+    return !!NEVER_GIVEN[entry.why] || (entry.why === 'never_given_release' && !!entry.owed);
+  }
   var SETTLES = {
     queued: 'queued for them since: nothing to settle',
     return_owner: 'does not say whose it is: return it to a citizen id once you know who put it up',
@@ -1049,10 +1058,22 @@
   function stuckWhy(entry) {
     if (entry.unfinished) return WHY_LONG.ending_unfinished;
     if (entry.orphan) return 'escrow of a contract never stored, and it does not say whose it is';
+    if (entry.why === 'owed_to_nobody') {
+      return 'owed and queued to a citizen id no character has, so nothing will give it: return it '
+        + 'to the citizen id it should go to';
+    }
+    if (entry.why === 'owed_to_unchecked') {
+      return 'owed and queued to a citizen id the server could not check (qbx_core did not answer), '
+        + 'so it stays queued for them and is not moved';
+    }
     if (entry.raised !== undefined && entry.raised !== null) {
       var text = entry.why === 'raised' ? 'raised ' + num(entry.raised) + ' times with nothing arriving'
         : (WHY_LONG[entry.why] || 'why is no longer in the log');
       if (Number(entry.arrived) > 0) text += '; ' + num(entry.arrived) + ' of it arrived';
+      if (entry.why === 'never_given_release' && !entry.owed) {
+        text += '; owed to nobody, so Return puts it back to its contract, which keeps it while it '
+          + 'is live and hands it back once it is closed';
+      }
       return text;
     }
     return 'was mid-release at a shutdown: ' + (SETTLES[entry.settles] || SETTLES['return']);
@@ -1098,7 +1119,7 @@
       Stuck escrow it names its contract, which opens its view. */
   function stuckItem(entry, where) {
     var unknownArrival = entry.raised !== undefined && entry.raised !== null && entry.why !== 'raised'
-      && !NEVER_GIVEN[entry.why] && !entry.unfinished;
+      && entry.why !== 'never_given_release' && !NEVER_GIVEN[entry.why] && !entry.unfinished;
     var answer = where === 'stuck' ? S.stuck.answers[String(entry.line)] : null;
     return h('li.stuck-line',
       h('p.stuck-head', h('span.mono', String(entry.line)), ' ', h('b', holds(entry)),
@@ -1112,7 +1133,7 @@
       h('p.stuck-why', stuckWhy(entry)),
       unknownArrival ? h('p.note.is-warn', 'Arrival unknown: check what they received, then pay the rest '
         + 'with Pay amount, or Delivered.') : null,
-      NEVER_GIVEN[entry.why] ? h('p.note', 'Never given: only Pay settles it, to them.') : null,
+      neverGiven(entry) ? h('p.note', 'Never given: only Pay settles it, to them, in full.') : null,
       stuckActions(entry, where),
       answerBox(answer));
   }

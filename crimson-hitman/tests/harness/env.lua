@@ -148,6 +148,9 @@ function Env.addPlayer(opts)
 
     Env.players[src] = player
     Env.byCitizen[opts.citizenid] = src
+    -- A character the server has, as qbx_core's players table keeps it:
+    -- still there once they log off (GetOfflinePlayer).
+    Env.characters[opts.citizenid] = true
     return player
 end
 
@@ -183,6 +186,10 @@ function Env.reset()
     Env.time = 1700000000
     Env.gameTimer = 0
     Env.players, Env.byCitizen = {}, {}
+    -- Every character qbx_core's players table holds, in the city or away,
+    -- by citizen id: each player added, and any a test adds for one who is
+    -- away and was never in the city here.
+    Env.characters = {}
     Env.events, Env.clientEvents, Env.notifications = {}, {}, {}
     Env.commands, Env.chat, Env.aces, Env.consoleOut = {}, {}, {}, {}
     Env.handlers = {}

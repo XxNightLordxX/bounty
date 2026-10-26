@@ -173,6 +173,58 @@ describe('voiding a contract', function()
         end
         truthy(found, 'a staff action nobody can review is not accountable')
     end)
+
+    --- W133: written only after the ending, and only queued, a void whose
+    --- ending raised part-way left no row saying staff did it or why.
+    it('writes who did it and why before anything moves, and keeps it when the ending raises', function()
+        local s, f, c = seeded()
+        local before = money(1)
+        local told = {}
+        local tell = s.notify.toCitizen
+        s.notify.toCitizen = function(cid, title, ...)
+            told[#told + 1] = { cid = cid, title = title }
+            return tell(cid, title, ...)
+        end
+        local release = s.escrow.release
+        s.escrow.release = function() error('connection lost', 0) end
+        local ok, err, detail = s.admin.void(0, c.id, 'duplicate listing')
+        s.escrow.release = release
+        s.notify.toCitizen = tell
+
+        falsy(ok)
+        eq(err, 'raised')
+        eq(detail, 'closed', 'its ending wrote the closed state before it raised')
+        eq(s.storage.readContract(c.id).state, CH.STATE.VOIDED)
+        -- In the store at once, not in the queue.
+        local rows = s.storage.auditByAction('admin_void', 10)
+        eq(#rows, 1, 'on the record without waiting for the tick')
+        eq(rows[1].detail.reason, 'duplicate listing')
+        eq(#s.storage.auditByAction('admin_void_raised', 10), 1)
+        local creatorTold = false
+        for _, t in ipairs(told) do
+            if t.cid == 'CREATOR1' and t.title == 'Contract voided' then creatorTold = true end
+        end
+        truthy(creatorTold, 'the client is told their contract was closed')
+        truthy(s.admin.voidAnswer(c.id, ok, err, nil, detail):find('within a minute', 1, true))
+
+        -- And the maintenance tick finishes the ending: the escrow comes back.
+        s.contracts.finishEndings()
+        eq(money(1) - before, 5000)
+    end)
+
+    it('says nothing changed when its ending raised before closing it', function()
+        local s, _, c = seeded()
+        local resolve = s.contracts.resolve
+        s.contracts.resolve = function() error('connection lost', 0) end
+        local ok, err, detail = s.admin.void(0, c.id, 'checked')
+        s.contracts.resolve = resolve
+        falsy(ok)
+        eq(err, 'raised')
+        eq(detail, 'open')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE)
+        truthy(s.admin.voidAnswer(c.id, ok, err, nil, detail):find('still open', 1, true))
+        eq(#s.storage.auditByAction('admin_void_raised', 10), 1)
+    end)
 end)
 
 describe('interrupted releases', function()
@@ -969,7 +1021,7 @@ describe('what a staff command prints', function()
         Env.chat = {}
         truthy(pcall(cmd[Config.Admin.Commands.void], 3, { 'ct-nope' }),
             'a void of a contract that is not there must not throw')
-        truthy(said(3):find('Could not void it'), said(3))
+        truthy(said(3):find('Nothing was voided', 1, true), said(3))
     end)
 
     it('prints interrupted releases, including property and a missing timestamp', function()
@@ -1471,9 +1523,15 @@ describe('paying a line left for staff a set amount', function()
         local hitman = money(3)
         for _, bad in ipairs({ '0', '-5', '1.5', '1e3', '0x10', 'abc', '', ' 10', '5001',
                                '99999999999999999999', 0, -1, 2.5, 5001, 0 / 0, math.huge }) do
-            local ok, err = s.admin.settleLine(0, line.id, 'pay', bad)
+            local ok, err, detail = s.admin.settleLine(0, line.id, 'pay', bad)
             falsy(ok, 'must refuse ' .. tostring(bad))
-            eq(err, CH.ERR.INVALID_INPUT, tostring(bad))
+            -- Over what is owed (W135): the sentence that names the figure.
+            if bad == '5001' or bad == 5001 then
+                eq(err, 'owes_less', tostring(bad))
+                eq(detail, 5000, 'with what it owes')
+            else
+                eq(err, CH.ERR.INVALID_INPUT, tostring(bad))
+            end
         end
         eq(money(3), hitman, 'nothing given')
         local stored = s.storage.readEscrowLine(line.id)
@@ -1518,7 +1576,7 @@ describe('paying a line left for staff a set amount', function()
         truthy(s.escrow.parkInterrupted(item))
         local held = picks(3)
 
-        eq(select(2, s.admin.settleLine(0, item.id, 'pay', '5')), CH.ERR.INVALID_INPUT,
+        eq(select(2, s.admin.settleLine(0, item.id, 'pay', '5')), 'owes_less',
             'more than the line holds')
         truthy(s.admin.settleLine(0, item.id, 'pay', '3'))
         eq(picks(3) - held, 3, 'the three that were missing')

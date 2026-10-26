@@ -662,3 +662,210 @@ describe('nothing in the admin panel names a command', function()
         eq(#found, 0, 'a command named as /ch-: ' .. table.concat(found, ', '))
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Money staff send by hand, and what the money commands answer
+--------------------------------------------------------------------------
+
+describe('money staff send to a citizen id they type', function()
+    --- A held line of a contract never stored, as escrow written before
+    --- lines said whose they were leaves one: it names nobody.
+    local function orphan(s, id, extra)
+        local contractId = id:match('^([^:]+)')
+        local line = { id = id, contract_id = contractId, slot = 1, portion = CH.PORTION.BASELINE,
+            source = 'bank', amount = 700, state = CH.ESCROW_STATE.HELD }
+        for k, v in pairs(extra or {}) do line[k] = v end
+        s.storage.writeEscrow(contractId, { line })
+        return line
+    end
+    local function bank(src) return Env.players[src].PlayerData.money.bank end
+    local function text(out) return table.concat(out.f8, '\n') end
+
+    it('A01: /ch-settle return takes only a citizen id somebody has, as the server keeps it', function()
+        local s = stack()
+        orphan(s, 'ct00000099:1')
+        orphan(s, 'ct00000098:1')
+        orphan(s, 'ct00000097:1')
+        -- Owed to an id no character has, as an older build left one: that
+        -- it is some line's owed_to does not vouch for it.
+        orphan(s, 'ct00000096:1', { portion = CH.PORTION.OWED, owed_to = 'GHOST001' })
+        s.storage.queuePending('GHOST001', 'ct00000096', 'ct00000096:1')
+        local before = bank(1)
+
+        for _, typo in ipairs({ 'craetor1', 'GHOST001' }) do
+            local out = run(6, 'settle', { 'ct00000098:1', 'return', typo })
+            truthy(text(out):find('nobody on this server has that citizen id', 1, true), text(out))
+            local line = s.storage.readEscrowLine('ct00000098:1')
+            eq(line.state, CH.ESCROW_STATE.HELD, typo .. ': nothing moved')
+            eq(line.owed_to, nil, typo .. ': owed to nobody still')
+            local queued = #s.storage.readPending(typo)
+                + (typo:upper() ~= typo and #s.storage.readPending(typo:upper()) or 0)
+            eq(queued, typo == 'GHOST001' and 1 or 0, typo .. ': nothing more queued for it')
+        end
+
+        local out = run(6, 'settle', { 'ct00000099:1', 'return', 'creator1' })
+        local line = s.storage.readEscrowLine('ct00000099:1')
+        eq(line.state, CH.ESCROW_STATE.SETTLED, text(out))
+        eq(line.settled_to, 'CREATOR1', 'in the form the server keeps it')
+        eq(bank(1) - before, 700)
+
+        -- Away, and never a party to anything here: qbx_core's offline
+        -- lookup knows the character.
+        Env.characters['OFFLINE1'] = true
+        run(6, 'settle', { 'ct00000097:1', 'return', 'offline1' })
+        eq(s.storage.readEscrowLine('ct00000097:1').owed_to, 'OFFLINE1')
+        eq(#s.storage.readPending('OFFLINE1'), 1, 'queued for their next login')
+    end)
+
+    it('A01: the panel\'s Return to checks the id the same way', function()
+        local s = stack()
+        orphan(s, 'ct00000099:1')
+        local reply = ask(6, 'settle', { line = 'ct00000099:1', disposition = 'return', owner = 'craetor1' })
+        eq(reply.ok, false)
+        eq(reply.err, 'no_such_player')
+        truthy(reply.message:find('check how it is spelt', 1, true), reply.message)
+        eq(s.storage.readEscrowLine('ct00000099:1').state, CH.ESCROW_STATE.HELD)
+        eq(ask(6, 'settle', { line = 'ct00000099:1', disposition = 'return', owner = 'creator1' }).ok, true)
+        eq(s.storage.readEscrowLine('ct00000099:1').settled_to, 'CREATOR1')
+    end)
+
+    it('A01: without qbx_core\'s offline lookup, an id nobody here has is refused, and says why', function()
+        local s = stack()
+        orphan(s, 'ct00000099:1')
+        Natives.noOfflineLookup = true
+        local ok, err, detail = s.admin.settleLine(6, 'ct00000099:1', 'return', 'AWAY0001')
+        Natives.noOfflineLookup = nil
+        falsy(ok)
+        eq(err, 'no_such_player')
+        eq(detail, 'unchecked')
+        truthy(s.admin.settleAnswer(ok, err, detail):find('Try again when they are in the city', 1, true))
+        eq(s.storage.readEscrowLine('ct00000099:1').state, CH.ESCROW_STATE.HELD)
+    end)
+
+    it('W129: /ch-review takes a role the item names, or an id somebody has, and nothing else', function()
+        local s = stack()
+        local id = s.review.open({ kind = 'bailout_refund_stranded', contract_id = 'ct00000001',
+            cids = { payer = 'TARGET01' }, amount = 5000, account = 'bank' })
+        for _, word in ipairs({ 'client', 'target02', 'not-a-cid' }) do
+            local out = run(6, 'review', { id, 'pay', word })
+            truthy(text(out):find('a role the item names (payer)', 1, true), word .. ': ' .. text(out))
+            eq(s.storage.readReview(id).state, 'open', word .. ': still open')
+        end
+        eq(s.storage.readEscrowLine(id .. ':1'), nil, 'no line owed to a word nobody has')
+
+        local before = bank(2)
+        local out = run(6, 'review', { id, 'pay', 'Payer' })
+        eq(s.storage.readReview(id).state, 'resolved', text(out))
+        eq(bank(2) - before, 5000, 'paid to the payer the item names')
+
+        -- And an id typed in lower case is the player the server knows.
+        local other = s.review.open({ kind = 'bailout_refund_stranded', contract_id = 'ct00000001',
+            cids = { payer = 'TARGET01' }, amount = 100, account = 'bank' })
+        truthy(s.admin.resolveReview(0, other, { 'pay', 'target01' }))
+        eq(s.storage.readReview(other).resolution.cid, 'TARGET01')
+    end)
+
+    it('W129: lists a line owed and queued to an id nobody has, and moves it to the right one', function()
+        local s = stack()
+        -- Left so before ids were checked: returned to 'creator1'.
+        orphan(s, 'ct00000099:1', { owed_to = 'creator1' })
+        s.storage.queuePending('creator1', 'ct00000099', 'ct00000099:1')
+        Env.removePlayer(1)
+
+        local listed = ask(6, 'stuck').data.lines
+        eq(#listed, 1)
+        eq(listed[1].why, 'owed_to_nobody')
+        eq(table.concat(listed[1].actions, ','), 'return_owner')
+        eq(listed[1].intended, 'a citizen id no character has', 'not the id, without crimson.identity')
+        eq(ask(8, 'stuck').data.lines[1].intended, 'creator1', 'the id, with it')
+        local out = run(6, 'stuck')
+        truthy(text(out):find('owed and queued to a citizen id no character has', 1, true), text(out))
+        truthy(text(out):find('ct00000099:1 return <citizenid>', 1, true), text(out))
+
+        -- Pay has nobody to go to, and a typo is refused as before.
+        out = run(6, 'settle', { 'ct00000099:1', 'pay' })
+        truthy(text(out):find('so nothing would ever give it', 1, true), text(out))
+        out = run(6, 'settle', { 'ct00000099:1', 'return', 'craetor1' })
+        truthy(text(out):find('nobody on this server has that citizen id', 1, true), text(out))
+
+        out = run(6, 'settle', { 'ct00000099:1', 'return', 'CREATOR1' })
+        truthy(text(out):find('Re-pointed', 1, true), text(out))
+        local line = s.storage.readEscrowLine('ct00000099:1')
+        eq(line.owed_to, 'CREATOR1')
+        eq(line.state, CH.ESCROW_STATE.HELD, 'away, so held for their login')
+        eq(#s.storage.readPending('CREATOR1'), 1, 'queued for them, once')
+        eq(#s.storage.readPending('creator1'), 0, 'and no longer for nobody')
+        s.audit.flush()
+        local rows = s.storage.auditByAction('admin_settle_repointed', 10)
+        eq(#rows, 1, 'on the record')
+        eq(rows[1].detail.from, 'creator1')
+        eq(rows[1].detail.to, 'CREATOR1')
+        eq(#ask(6, 'stuck').data.lines, 0, 'and no longer waiting for staff')
+    end)
+
+    it('W129: one whose id could not be checked is listed so, and not moved', function()
+        local s = stack()
+        orphan(s, 'ct00000099:1', { owed_to = 'creator1' })
+        s.storage.queuePending('creator1', 'ct00000099', 'ct00000099:1')
+        Natives.noOfflineLookup = true
+        local listed = s.admin.interrupted(0, true)
+        local ok, err = s.admin.settleLine(0, 'ct00000099:1', 'return', 'CREATOR1')
+        Natives.noOfflineLookup = nil
+        eq(#listed, 1)
+        eq(listed[1].why, 'owed_to_unchecked')
+        falsy(ok)
+        eq(err, 'unchecked')
+        eq(s.storage.readEscrowLine('ct00000099:1').owed_to, 'creator1', 'left where it was')
+    end)
+end)
+
+describe('what the money commands answer', function()
+    it('W135: puts every refusal of a void or a settle into a sentence with a next step', function()
+        local s, f = stack()
+        local c = place(s, f)
+        local function said(key, args)
+            return table.concat(run(6, key, args).f8, '\n')
+        end
+        local cases = {
+            { 'void', {}, 'Usage: /' .. Config.Admin.Commands.void },
+            { 'void', { 'ct99999999' }, 'No contract has that id' },
+            { 'settle', {}, 'Usage: /' .. Config.Admin.Commands.settle },
+            { 'settle', { 'ct99999999:1', 'pay' }, 'No escrow line has that id' },
+            { 'settle', { c.id .. ':1', 'nonsense' }, 'Usage: /' .. Config.Admin.Commands.settle },
+        }
+        for _, case in ipairs(cases) do
+            local out = said(case[1], case[2])
+            truthy(out:find(case[3], 1, true), case[1] .. ': ' .. out)
+            falsy(out:find('invalid_input', 1, true) or out:find('not_found', 1, true), out)
+        end
+        truthy(s.admin.void(0, c.id, 'checked'))
+        local again = said('void', { c.id })
+        truthy(again:find('Already closed', 1, true), again)
+        falsy(again:find('already_settled', 1, true), again)
+
+        -- Every code a void or a settle answers is a sentence, both ways,
+        -- never the fallback that says the code.
+        local codes = {
+            settle = { CH.ERR.INVALID_INPUT, CH.ERR.NOT_FOUND, CH.ERR.ALREADY_SETTLED, CH.ERR.LOCKED,
+                'no_such_player', 'owed_to_nobody', 'unchecked', 'return_only', 'pay_only',
+                'owes_less', 'raised', 'live', 'ending_unfinished', 'already_queued', 'not_left' },
+            void = { CH.ERR.INVALID_INPUT, CH.ERR.NOT_FOUND, CH.ERR.ALREADY_SETTLED, CH.ERR.LOCKED,
+                'raised', 'stalled_claim' },
+        }
+        for _, panel in ipairs({ false, true }) do
+            for _, err in ipairs(codes.settle) do
+                local line = s.admin.settleAnswer(false, err, 5000, panel)
+                falsy(line:find('(' .. err .. ')', 1, true), err .. ' said raw: ' .. line)
+            end
+            for _, err in ipairs(codes.void) do
+                for _, detail in ipairs({ 'closed', 'open' }) do
+                    local line = s.admin.voidAnswer(c.id, false, err, panel, detail)
+                    falsy(line:find('(' .. err .. ')', 1, true), err .. ' said raw: ' .. line)
+                end
+            end
+        end
+        truthy(s.admin.settleAnswer(false, 'owes_less', 4000):find('owes only 4000', 1, true))
+        truthy(s.admin.reviewAnswer('rv1', false, 'no_party', 'payer, creator')
+            :find('(payer, creator)', 1, true))
+    end)
+end)

@@ -2411,6 +2411,84 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 35. Every error's text kept for staff is cleaned where it is stored
+--------------------------------------------------------------------------
+-- oxmysql's message lists every value the statement was sent, and a write
+-- of a contract sends the client's citizen id, licence and name: kept whole
+-- in an audit row (contract_write_failed and every row that keeps an
+-- `error`), an anonymous client was named to every staff member who read the
+-- log or the contract's timeline. Every row goes through Audit's queue
+-- (server/audit.lua push), which keeps an error's text as Util.dbError cuts
+-- it, so no caller can store one whole; nothing but Audit writes the log;
+-- and a review item keeps its own `known.error` the same way (Review.open).
+
+do
+    --- What is wrong with how a source keeps error text, or nil.
+    local function auditKeepsWhole(auditSrc)
+        local push = auditSrc:match('local function push%(.-\nend\n') or ''
+        if not push:find('detail = cleaned%(detail%)') then
+            return 'server/audit.lua push no longer stores a row\'s detail as cleaned(detail)'
+        end
+        local clean = auditSrc:match('local function cleaned%(.-\nend\n') or ''
+        if not clean:find('Util.dbError(', 1, true) then
+            return 'server/audit.lua cleaned no longer passes an error\'s text through Util.dbError'
+        end
+        return nil
+    end
+
+    --- Files that write the log without going through Audit's queue.
+    local function writersBesideAudit(sources)
+        local out = {}
+        for path, src in pairs(sources) do
+            if not path:find('server/audit%.lua$') and not path:find('server/storage/') then
+                for line in src:gmatch('[^\n]+') do
+                    if not line:match('^%s*%-%-') and line:find('%.writeAudit') then
+                        out[#out + 1] = path
+                        break
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    -- Not vacuous: each finds what its subject put back would be.
+    if not auditKeepsWhole('local function cleaned(detail)\n    return detail\nend\n'
+        .. 'local function push(kind)\n    queue[1] = { detail = cleaned(detail) or {} }\nend\n') then
+        failures[#failures + 1] = 'the error-text check no longer finds a cleaned() without '
+            .. 'Util.dbError, so a clean run of it means nothing'
+    end
+    if not auditKeepsWhole('local function cleaned(detail)\n    return Util.dbError(detail)\nend\n'
+        .. 'local function push(kind)\n    queue[1] = { detail = detail or {} }\nend\n') then
+        failures[#failures + 1] = 'the error-text check no longer finds a push that stores the '
+            .. 'detail as it came, so a clean run of it means nothing'
+    end
+    local probe = writersBesideAudit({ ['crimson-hitman/server/x.lua'] = 'Storage.writeAudit(row)' })
+    if #probe ~= 1 then
+        failures[#failures + 1] = 'the error-text check no longer finds a file writing the log '
+            .. 'beside Audit, so a clean run of it means nothing'
+    end
+
+    local auditSrc = read('crimson-hitman/server/audit.lua') or ''
+    local why = auditKeepsWhole(auditSrc)
+    if why then
+        failures[#failures + 1] = why .. ': an error kept in an audit row keeps the values its '
+            .. 'statement was sent, an anonymous client\'s citizen id, licence and name among them'
+    end
+    local sources = {}
+    for _, path in ipairs(files) do sources[path] = read(path) or '' end
+    for _, path in ipairs(writersBesideAudit(sources)) do
+        failures[#failures + 1] = ('%s writes the audit log itself, past Audit\'s queue, which '
+            .. 'is where an error\'s text is cleaned (Util.dbError)'):format(path)
+    end
+    local reviewSrc = read('crimson-hitman/server/review.lua') or ''
+    if not reviewSrc:find('known[key] = Util.dbError(known[key])', 1, true) then
+        failures[#failures + 1] = 'server/review.lua Review.open no longer keeps known.error and '
+            .. 'known.read_error as Util.dbError cuts them'
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

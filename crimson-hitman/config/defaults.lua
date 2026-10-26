@@ -1091,7 +1091,9 @@ ConfigDefaults.Admin = {
     Ace = 'crimson.admin',
     --- Reading who is behind an anonymous party is gated separately, because
     --- it is a different kind of act from reading a history. Give it to fewer
-    --- people than the one above.
+    --- people than the one above. Without it, every staff view names each
+    --- party by their place on the contract, in notes and errors as well, and
+    --- an anonymous party's name as Anonymous.
     IdentityAce = 'crimson.identity',
     --- Extra ACEs that also open the admin commands.
     ---

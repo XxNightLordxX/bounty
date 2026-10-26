@@ -22,6 +22,7 @@
 --- with, and only new actions are refused, with CH.ERR.FEATURE_OFF (or the
 --- feature's own code) and words on the page. No switch here strands money.
 
+local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 
 local Settings = {}
@@ -766,7 +767,7 @@ local function setKey(key, raw, staff, actorCid)
         wrote, writeErr = pcall(Storage.writeSetting, key, copyOf(value), staff, at)
     end
     if not wrote then
-        return false, 'store_failed', tostring(writeErr)
+        return false, 'store_failed', Util.dbError(writeErr)
     end
 
     write(Config, key, stored(entry, value))
@@ -821,7 +822,7 @@ local function resetKey(key, staff, actorCid)
         if not ok then return false, 'invalid_value', reason end
     end
     local wrote, writeErr = pcall(Storage.deleteSetting, key)
-    if not wrote then return false, 'store_failed', tostring(writeErr) end
+    if not wrote then return false, 'store_failed', Util.dbError(writeErr) end
 
     local old = current(entry)
     write(Config, key, stored(entry, defaults[key]))
@@ -845,7 +846,7 @@ end
 
 local function resetEvery(staff, actorCid)
     local wrote, writeErr = pcall(Storage.clearSettings)
-    if not wrote then return false, 'store_failed', tostring(writeErr) end
+    if not wrote then return false, 'store_failed', Util.dbError(writeErr) end
     local keys, changes = {}, {}
     for key in pairs(overrides) do keys[#keys + 1] = key end
     for key in pairs(ignored) do if not overrides[key] then keys[#keys + 1] = key end end

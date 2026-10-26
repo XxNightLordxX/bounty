@@ -20,6 +20,49 @@ function Audit.init(storage)
     queue, head, tail, dropped = {}, 1, 0, 0
 end
 
+--- Detail fields that hold an error's text, at any depth (and any key that
+--- ends in `_error`).
+local ERROR_KEYS = { error = true, err = true }
+
+--- A row's detail with every error's text as it is kept (Util.dbError): the
+--- server's own words and the start of the statement, never the values it
+--- was sent. oxmysql's message carries every parameter as JSON, and a write
+--- of a contract sends the client's citizen id, licence and name with it:
+--- kept whole, an anonymous client was named to every staff member who read
+--- the log, the contract's timeline or the review history. Cleaned here, in
+--- the one place every row passes, so no caller can keep one whole; the
+--- console still prints the whole of it where it was raised. Copied where it
+--- changes, never the caller's table.
+---@param detail any
+---@param depth integer|nil
+---@return any
+local function cleaned(detail, depth)
+    if type(detail) ~= 'table' or (depth or 0) > 3 then return detail end
+    local out
+    for key, value in pairs(detail) do
+        local clean = value
+        if type(value) == 'string' and (ERROR_KEYS[key]
+            or (type(key) == 'string' and key:find('_error$') ~= nil)) then
+            clean = Util.dbError(value)
+        elseif type(value) == 'table' then
+            clean = cleaned(value, (depth or 0) + 1)
+        end
+        if clean ~= value then
+            if not out then
+                out = {}
+                for k, v in pairs(detail) do out[k] = v end
+            end
+            out[key] = clean
+        end
+    end
+    return out or detail
+end
+
+--- The same, for a row already in the store: one written before its error
+--- was cleaned here still holds the values, and the admin panel shows staff
+--- who may not see who is behind an anonymous party the cleaned form.
+Audit.cleaned = cleaned
+
 --- Append to the queue.
 ---
 --- Eviction advances a head index rather than shifting the whole table:
@@ -39,7 +82,7 @@ local function push(kind, action, actorCid, contractId, detail)
     tail = tail + 1
     queue[tail] = {
         ts = os.time(), kind = kind, action = action,
-        actor_cid = actorCid, contract_id = contractId, detail = detail or {},
+        actor_cid = actorCid, contract_id = contractId, detail = cleaned(detail) or {},
     }
 end
 

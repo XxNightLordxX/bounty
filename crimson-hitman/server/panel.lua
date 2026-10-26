@@ -202,30 +202,63 @@ local CID_KEYS = {
     proposer = true, declined_by = true, actor = true, who = true,
 }
 
+--- How a party's account (a licence) is shown to staff who may not see who
+--- is behind an anonymous party: it is never shown at all.
+local ACCOUNT_SHOWN = '(an account)'
+
+--- Every occurrence of each of `needles` in `text`, replaced with what it
+--- maps to, the longest first so one that contains another goes whole.
+---@param text string
+---@param needles table [string] = replacement
+---@return string
+local function scrubbed(text, needles)
+    local order = {}
+    for needle in pairs(needles) do
+        if type(needle) == 'string' and #needle >= 3 then order[#order + 1] = needle end
+    end
+    table.sort(order, function(a, b) return #a > #b end)
+    for _, needle in ipairs(order) do
+        if text:find(needle, 1, true) then
+            text = text:gsub(needle:gsub('%W', '%%%0'), (needles[needle]:gsub('%%', '%%%%')))
+        end
+    end
+    return text
+end
+
 --- How one staff member is shown the people of one contract.
 ---
 --- With IdentityAce, as they are. Without it, every citizen id is the
 --- party's place on the contract ('the client', 'the target', 'operative
 --- <alias>', or '(a player)' for anybody else, as /ch-stuck says it), and
---- the name of a party who paid to stay anonymous is 'Anonymous'.
+--- the name of a party who paid to stay anonymous is 'Anonymous'. Wherever
+--- it is written, not only as a whole value: a staff note naming the client,
+--- or a database error carrying the statement's values (one stored before
+--- Audit cleaned them), named them inside a sentence. Every account (a
+--- licence) is left out the same way, and an error's text is shown as Audit
+--- keeps it now (Audit.cleaned).
 ---@param canIdentify boolean
 ---@param contract table|nil
 ---@param hitmen table[]|nil
 local function redactor(canIdentify, contract, hitmen)
-    local labels, hidden = {}, {}
+    local labels, hidden, needles = {}, {}, {}
     if contract then
         if contract.target_cid then labels[contract.target_cid] = 'the target' end
         if contract.creator_cid then labels[contract.creator_cid] = 'the client' end
         if contract.anon_creator == true and contract.creator_name then
             hidden[contract.creator_name] = true
         end
+        if contract.creator_account then needles[contract.creator_account] = ACCOUNT_SHOWN end
+        if contract.target_account then needles[contract.target_account] = ACCOUNT_SHOWN end
     end
     for _, hitman in ipairs(hitmen or {}) do
         if hitman.hitman_cid and not labels[hitman.hitman_cid] then
             labels[hitman.hitman_cid] = ('operative %s'):format(tostring(hitman.alias or '?'))
         end
         if hitman.anon == true and hitman.hitman_name then hidden[hitman.hitman_name] = true end
+        if hitman.hitman_account then needles[hitman.hitman_account] = ACCOUNT_SHOWN end
     end
+    for cid, label in pairs(labels) do needles[cid] = label end
+    for name in pairs(hidden) do needles[name] = 'Anonymous' end
 
     local r = { canIdentify = canIdentify }
 
@@ -242,8 +275,9 @@ local function redactor(canIdentify, contract, hitmen)
         return name
     end
 
-    --- Anything read from the log, copied, with every citizen id and every
-    --- anonymous name in it put the way this staff member may see them.
+    --- Anything read from the log, copied, with every citizen id, account
+    --- and anonymous name in it put the way this staff member may see them,
+    --- whole values and inside text alike.
     local function value(key, v)
         if type(v) == 'table' then
             local out = {}
@@ -254,7 +288,10 @@ local function redactor(canIdentify, contract, hitmen)
         if labels[v] then return labels[v] end
         if hidden[v] then return 'Anonymous' end
         if CID_KEYS[key] and v:match('^[%u%d]+$') and #v >= 3 then return '(a player)' end
-        return v
+        -- An error's text as Audit keeps it now: a row stored before it
+        -- cleaned them still holds the statement's values.
+        if key ~= nil then v = deps.audit.cleaned({ [key] = v })[key] end
+        return scrubbed(v, needles)
     end
     r.value = value
     return r
@@ -384,7 +421,7 @@ local CONSOLE_ONLY = {
 local function diagWarnings()
     local ok, lines = pcall(deps.admin.diagnose, 0, nil, nil, { panel = true })
     if not ok or type(lines) ~= 'table' then
-        return { ('the diagnosis itself raised: %s'):format(tostring(lines)) }
+        return { ('the diagnosis itself raised: %s'):format(Util.dbError(lines)) }
     end
     local out = {}
     for _, line in ipairs(lines) do
@@ -406,12 +443,23 @@ end
 --- item's pay): it was put up by nobody it could go back to, and
 --- Admin.settleLine refuses every return of one, so the button only ever
 --- answered invalid_input.
+---
+--- Only Pay for a line nothing of which was given (Escrow.NEVER_GIVEN, and
+--- one left mid-release before it named anyone that is owed to somebody):
+--- Pay amount there gave the player the amount typed and wrote the rest
+--- off as arrived. One of those owed to nobody takes Return alone, which
+--- puts it back to its contract. A line owed and queued to a citizen id no
+--- character has takes Return to, which moves it to the right one; one
+--- where that could not be checked, nothing.
 local function settleActions(entry)
     if entry.unfinished then return {} end
     if entry.orphan then return { 'return_owner' } end
+    if entry.why == 'owed_to_nobody' then return { 'return_owner' } end
+    if entry.why == 'owed_to_unchecked' then return {} end
     local owed = entry.portion == CH.PORTION.OWED
     if entry.raised ~= nil then
-        if deps.escrow.NEVER_GIVEN[entry.why] then return { 'pay', 'pay_amount' } end
+        if deps.escrow.NEVER_GIVEN[entry.why] then return { 'pay' } end
+        if entry.why == 'never_given_release' then return entry.owed and { 'pay' } or { 'return' } end
         if owed then return { 'pay', 'pay_amount', 'delivered' } end
         return { 'pay', 'pay_amount', 'return', 'delivered' }
     end
@@ -715,8 +763,8 @@ H.void = function(src, data)
     local id = Util.toId(data.id)
     if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
     local reason = shortText(data.reason, 120)
-    local ok, err = deps.admin.void(src, id, reason)
-    return ok, err, deps.admin.voidAnswer(id, ok, err, true)
+    local ok, err, detail = deps.admin.void(src, id, reason)
+    return ok, err, deps.admin.voidAnswer(id, ok, err, true, detail), { detail = detail }
 end
 
 local DISPOSITIONS = { pay = true, ['return'] = true, delivered = true }
@@ -735,9 +783,10 @@ H.settle = function(src, data)
             return false, CH.ERR.INVALID_INPUT, 'An amount is a whole number of at least 1.'
         end
     elseif disposition == 'return' and data.owner ~= nil then
-        -- In the server's form: returned to 'creator01', a line went to a
-        -- citizen id nobody has, owed and queued for a login that never comes.
-        extra = typedCitizenId(data.owner)
+        -- Checked by the settle itself, as the command's is: in the form the
+        -- server keeps it, and only one somebody here has
+        -- (Admin.knownCitizenId).
+        extra = Util.toCitizenId(data.owner)
         if not extra then return false, CH.ERR.INVALID_INPUT, 'That is not a citizen id.' end
     end
     local ok, err, detail = deps.admin.settleLine(src, line, disposition, extra)
@@ -1135,22 +1184,30 @@ function Panel.handle(src, payload)
 
     local ran, ok, err, message, result = pcall(H[op], src, data)
     if not ran then
-        deps.audit.rejected('admin_panel_error', staffOf(src), nil, { op = op, error = tostring(ok) })
+        -- What it was asked to act on, and why, so the contract's timeline
+        -- and the log say which one a raised void or settle was about.
+        local about = Util.toId(data.id) or Util.toLineId(data.line)
+        deps.audit.rejected('admin_panel_error', staffOf(src),
+            op == 'void' and Util.toId(data.id) or nil, { op = op, error = tostring(ok), id = about,
+            reason = shortText(data.reason, 120) })
         -- A write that raised may have moved money part-way, so the console
         -- hears of it whatever Config.Debug says; a read only with it on.
         -- Either is kept for the diagnosis, which is where this sends staff.
         local say = level == WRITE and Log.always or Log.debug
         say(('the admin panel\'s %s raised: %s'):format(op, tostring(ok)))
-        return answer(false, CH.ERR.SERVER_ERROR,
-            'That raised an error on the server. Run the diagnosis, under Tools, to read it.')
     end
     if level == WRITE then
         -- Whatever it moved shows in the next overview and search, not
-        -- ones cached from before it.
+        -- ones cached from before it: one that raised part-way included.
         overviewCache, contractsCache = nil, nil
-        -- Every write on the record at once, not at the next flush.
+        -- Every write on the record at once, not at the next flush, the
+        -- row saying it raised with the rest.
         pcall(deps.audit.flush)
         if deps.storage.flush then pcall(deps.storage.flush) end
+    end
+    if not ran then
+        return answer(false, CH.ERR.SERVER_ERROR,
+            'That raised an error on the server. Run the diagnosis, under Tools, to read it.')
     end
     return answer(ok, err, message, result)
 end

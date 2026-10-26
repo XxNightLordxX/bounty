@@ -230,7 +230,9 @@ describe('a crash in the middle of an ending', function()
 
             -- Staff void it; the process dies before any line moves.
             s.escrow.release = function() error('process killed') end
-            falsy(pcall(s.admin.void, 0, c.id, 'x'))
+            -- Answered, not raised (W133): the ending's raise is caught,
+            -- recorded and said.
+            eq(select(2, s.admin.void(0, c.id, 'x')), 'raised')
 
             local _, s2 = restart(mode, s)
             eq(s2.storage.readContract(c.id).state, CH.STATE.VOIDED)
@@ -2293,7 +2295,7 @@ describe('a line caught mid-release, past the log\'s retention', function()
             -- Voided by staff: paying the client back, the process dies
             -- between the credit and the settle.
             s.storage.settleEscrowLine = function() error('process killed', 0) end
-            falsy(pcall(s.admin.void, 0, c.id, 'test'))
+            eq(select(2, s.admin.void(0, c.id, 'test')), 'raised', 'answered, not raised')
             eq(money(1) - before, 5000, 'the credit landed')
 
             local _, s2 = restart(mode, s)
@@ -4123,7 +4125,7 @@ describe('an ending that raised before handing its escrow over', function()
             truthy(s.contracts.accept(f.hitman, c.id, false))
             local creator, hitman = money(1), money(3)
             local release, raised = stakeRaises(s, c.id)
-            falsy(pcall(s.admin.void, 0, c.id, 'staff'), 'the void raised')
+            eq(select(2, s.admin.void(0, c.id, 'staff')), 'raised', 'the void raised')
             s.escrow.release = release
             truthy(raised())
             eq(s.storage.readContract(c.id).state, CH.STATE.VOIDED)
@@ -4384,6 +4386,40 @@ describe('a kill not yet verified when the server restarts', function()
             eq(s2.storage.readContract(c.id).state, CH.STATE.COMPLETED)
             eq(reply('verifyKill', 3, { id = c.id }).ok, false, 'and not again')
             eq(money(3) - before.hitman, 5000)
+        end)
+    end
+end)
+
+--- W133: a void's record was only queued, and a crash before the tick lost
+--- who voided the contract and why; one whose ending raised wrote nothing.
+describe('a staff void whose ending raises, then a crash', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': keeps who voided it and why, and the escrow still comes back', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            truthy(c)
+            local creator = money(1)
+            local release = s.escrow.release
+            s.escrow.release = function() error('connection lost', 0) end
+            local ok, err, detail = s.admin.void(0, c.id, 'duplicate listing')
+            s.escrow.release = release
+            falsy(ok)
+            eq(err, 'raised')
+            eq(detail, 'closed')
+
+            -- The process dies before the tick: nothing else flushed.
+            local main2, s2 = restart(mode, s)
+            local rows = s2.storage.auditByAction('admin_void', 10)
+            eq(#rows, 1, mode .. ': who voided it is lost with the queue')
+            eq(rows[1].detail.reason, 'duplicate listing')
+            eq(#s2.storage.auditByAction('admin_void_raised', 10), 1)
+            eq(s2.storage.readContract(c.id).state, CH.STATE.VOIDED)
+            main2.tick()
+            eq(money(1) - creator, 5000, 'the ending is finished: the escrow is back')
         end)
     end
 end)

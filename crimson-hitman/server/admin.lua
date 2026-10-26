@@ -46,8 +46,10 @@ function Admin.init(deps)
     -- How long the maintenance jobs take, which the diagnosis lists.
     Timing = deps.timing
     -- The review queue: money no rule here could settle, which /ch-stuck
-    -- lists and /ch-review resolves.
+    -- lists and /ch-review resolves. A citizen id typed into a resolution
+    -- is checked as a return's is (Admin.knownCitizenId).
     Review = deps.review
+    if Review and Review.useResolver then Review.useResolver(Admin.knownCitizenId) end
     -- What staff changed from the admin panel, which the diagnosis lists.
     Settings = deps.settings
 end
@@ -212,6 +214,101 @@ local function stalled(line, queues)
     return how ~= 'parked' and how or nil
 end
 
+--- Whether a citizen id is the client, the target or an operative of a
+--- contract the store keeps, exactly as written: on mysql the lookup's
+--- collation also finds 'creator1' for CREATOR1, so the row decides.
+---@param cid string
+---@return boolean
+local function partyOnRecord(cid)
+    for _, contract in ipairs(Storage.contractsInvolving(cid) or {}) do
+        if contract.creator_cid == cid or contract.target_cid == cid then return true end
+        local hitman = Storage.readHitman(contract.id, cid)
+        if hitman and hitman.hitman_cid == cid then return true end
+    end
+    return false
+end
+
+--- Whether one of `lines` was taken from this citizen id (taken_from, or a
+--- stake's staker).
+local function tookFrom(cid, lines)
+    for _, line in ipairs(lines or {}) do
+        if line.taken_from == cid or (line.portion == CH.PORTION.STAKE and line.staker == cid) then
+            return true
+        end
+    end
+    return false
+end
+
+--- A citizen id staff typed, in the form the server keeps it, or nil when
+--- nobody here has it.
+---
+--- Money a staff member sends by hand (a return to whom a line does not
+--- name, a review item paid to somebody) goes where they type, and a typo
+--- sent it to a citizen id no character has: owed and queued for a login
+--- that never comes, listed by nothing, with no undo. So the id has to be
+--- known: in the city now (Identity.byCitizenId); the client, target or an
+--- operative of a contract the store keeps; the one one of `lines` was
+--- taken from; or a character qbx_core's offline lookup finds
+--- (Identity.characterExists). Tried as typed, then in capitals, which
+--- qbx_core's ids are. Never an id that is only some line's owed_to, or a
+--- queue entry's: those are what staff typed before, and one misspelt then
+--- would vouch for itself.
+---@param typed any
+---@param lines table[]|nil escrow lines whose taker counts as known
+---@return string|nil cid
+---@return string|nil why 'unchecked' when nobody in the city or on record has it and qbx_core
+--- could not be asked about characters who are away
+function Admin.knownCitizenId(typed, lines)
+    local cid = Util.toCitizenId(typed)
+    if not cid then return nil end
+    local forms = { cid }
+    if cid:upper() ~= cid then forms[2] = cid:upper() end
+    for _, form in ipairs(forms) do
+        if Identity.byCitizenId(form) or tookFrom(form, lines) or partyOnRecord(form) then
+            return form
+        end
+    end
+    local unchecked = false
+    for _, form in ipairs(forms) do
+        local exists = Identity.characterExists(form)
+        if exists then return form end
+        if exists == nil then unchecked = true end
+    end
+    return nil, unchecked and 'unchecked' or nil
+end
+
+--- Whether a held line owed to somebody is owed to a citizen id no
+--- character has: one staff typed wrong before ids were checked
+--- (Admin.knownCitizenId), queued for a login that never comes. Asked
+--- cheaply first (in the city, a party to its own contract, the one it was
+--- taken from), then of qbx_core's offline lookup. nil when that could not
+--- be asked, which is never "nobody".
+---@param line table
+---@param contract table|nil the line's own contract
+---@param hitmen table[]|nil its operatives
+---@return boolean|nil nobody
+local function owedToNobody(line, contract, hitmen)
+    local cid = line.owed_to
+    if not cid then return false end
+    if contract and (contract.creator_cid == cid or contract.target_cid == cid) then return false end
+    for _, hitman in ipairs(hitmen or {}) do
+        if hitman.hitman_cid == cid then return false end
+    end
+    if tookFrom(cid, { line }) or Identity.byCitizenId(cid) then return false end
+    local exists = Identity.characterExists(cid)
+    if exists == nil then return nil end
+    return not exists
+end
+
+--- How a citizen id no character has is named to `src`: as it is to staff
+--- who may see who is behind an anonymous party, and to the rest as what it
+--- is. It may be an anonymous party's own id typed in the wrong case.
+local function nobodyFor(src, cid)
+    local canIdentify = src == nil or src == 0
+        or Admin.allowed(src, Config.Admin.IdentityAce, true)
+    return canIdentify and cid or 'a citizen id no character has'
+end
+
 --- Every interrupted release still open, and who it was paying.
 ---
 --- Read in one pass over the log's release_interrupted rows. It asked the
@@ -233,7 +330,7 @@ function Admin.interrupted(src, quiet)
     local canIdentify = src == nil or src == 0
         or Admin.allowed(src, Config.Admin.IdentityAce, true)
     local rows = Storage.auditByAction('release_interrupted', 1000) or {}
-    local out, seen, contracts = {}, {}, {}
+    local out, seen, contracts, hitmen = {}, {}, {}, {}
 
     local function contractOf(contractId)
         local contract = contracts[contractId]
@@ -242,6 +339,12 @@ function Admin.interrupted(src, quiet)
             contracts[contractId] = contract
         end
         return contract or nil
+    end
+    local function hitmenOf(contractId)
+        if hitmen[contractId] == nil then
+            hitmen[contractId] = contractOf(contractId) and Storage.readHitmen(contractId) or {}
+        end
+        return hitmen[contractId]
     end
 
     -- Lines left for staff (Escrow.parked): a give that kept raising with
@@ -292,10 +395,31 @@ function Admin.interrupted(src, quiet)
     -- One still naming whom a give was going to may have reached them
     -- ('stalled'); one that does not was given nothing ('unqueued', or
     -- 'stalled_claim' on a contract a claim that raised left COMPLETING).
+    --
+    -- And one owed and queued to a citizen id no character has
+    -- ('owed_to_nobody', owedToNobody): typed wrong by staff before ids were
+    -- checked, it waits for a login that never comes, and only a return to
+    -- the right citizen id moves it. Where qbx_core could not be asked
+    -- whether anybody has that id ('owed_to_unchecked'), listed so staff
+    -- know, and moved by nothing: a real player who is away is never taken
+    -- off a payout.
     local queues = {}
     for _, line in ipairs(Storage.owedHeldEscrow and Storage.owedHeldEscrow() or {}) do
         local how = not seen[line.id] and stalled(line, queues)
-        if how then
+        local nobody = false
+        if not how and not seen[line.id] and not Escrow.parked(line)
+            and not Escrow.inFlight(line.id) and Escrow.queued(line, queues) then
+            nobody = owedToNobody(line, contractOf(line.contract_id), hitmenOf(line.contract_id))
+        end
+        if nobody ~= false then
+            seen[line.id] = true
+            out[#out + 1] = {
+                line = line.id, contract = line.contract_id, amount = line.amount,
+                source = line.source, item = line.item, quantity = line.quantity,
+                portion = line.portion, intended = nobodyFor(src, line.owed_to),
+                why = nobody and 'owed_to_nobody' or 'owed_to_unchecked',
+            }
+        elseif how then
             seen[line.id] = true
             local intended = line.owed_to
             if not canIdentify then
@@ -327,10 +451,19 @@ function Admin.interrupted(src, quiet)
             if not canIdentify or intended == nil then
                 intended = Admin.partyRole(contractOf(line.contract_id), intended)
             end
+            -- Left so before it named whom it was going to (no releasing_to,
+            -- a read that raised right after the claim): nothing of it was
+            -- given, so there is no arrival to check ('never_given_release').
+            -- Owed to somebody, only a pay settles it, to them; owed to
+            -- nobody, there is nobody to pay, and a return puts it back to
+            -- its contract (`owed`).
+            local unnamed = not line.releasing_to
             out[#out + 1] = {
                 line = line.id, contract = line.contract_id, amount = line.amount,
                 source = line.source, item = line.item, quantity = line.quantity,
-                portion = line.portion, intended = intended, why = 'releasing',
+                portion = line.portion, intended = intended,
+                why = unnamed and 'never_given_release' or 'releasing',
+                owed = unnamed and line.owed_to ~= nil or nil,
                 raised = tonumber(line.deliver_raises) or 0,
                 arrived = tonumber(line.deliver_arrived), before = tonumber(line.deliver_before),
             }
@@ -585,8 +718,9 @@ end
 ---@param ok boolean
 ---@param err string|nil
 ---@param panel boolean|nil worded for the admin panel
+---@param detail any for 'raised': 'closed' when the contract closed before its ending raised
 ---@return string
-function Admin.voidAnswer(id, ok, err, panel)
+function Admin.voidAnswer(id, ok, err, panel, detail)
     local names = Config.Admin.Commands
     if err == 'recovering' then return Admin.RECOVERING end
     if err == 'recovery_failed' then return Admin.RECOVERY_FAILED end
@@ -608,8 +742,37 @@ function Admin.voidAnswer(id, ok, err, panel)
             .. '(or completes it, if that was its last collection), and /%s %s closes it then.')
             :format(tostring(id), names.stuck, names.settle, names.void, tostring(id))
     end
-    return ok and 'Contract voided; escrow returned to the creator.'
-        or ('Could not void it: ' .. tostring(err))
+    if ok then return 'Contract voided; escrow returned to the creator.' end
+    -- The ending raised part-way (Admin.void): closed already, or not.
+    if err == 'raised' then
+        if detail == 'closed' then
+            return ('Voided, but its ending raised an error part-way (in the console): contract %s '
+                .. 'is closed, and the server finishes that ending itself within a minute, returning '
+                .. 'its escrow to the creator. Nothing for you to do.'):format(tostring(id))
+        end
+        return ('Not voided: closing contract %s raised an error (in the console), and it is still '
+            .. 'open, its escrow held. Try again in a moment.'):format(tostring(id))
+    end
+    if err == CH.ERR.INVALID_INPUT then
+        if panel then return 'Not voided: give a contract id, as ct00000001.' end
+        return ('Usage: /%s <contract id> [reason]. Nothing was voided.'):format(names.void)
+    end
+    if err == CH.ERR.NOT_FOUND then
+        if panel then
+            return 'No contract has that id; nothing was voided. Find it in Contracts.'
+        end
+        return ('No contract has that id; nothing was voided. %s'):format(names.contracts
+            and ('/%s <player id|citizen id> lists a player\'s contracts.'):format(names.contracts)
+            or ('/%s <id> shows a contract.'):format(names.timeline))
+    end
+    if err == CH.ERR.ALREADY_SETTLED then
+        return 'Already closed, by its own ending or another void; nothing was voided or returned again.'
+    end
+    if err == CH.ERR.LOCKED then
+        return 'Not voided yet: a claim or its ending is running on it right now; nothing moved. '
+            .. 'Try again in a moment.'
+    end
+    return ('Could not void it (%s); nothing was voided.'):format(tostring(err))
 end
 
 --- What a settle says (Admin.settleLine).
@@ -671,10 +834,11 @@ function Admin.settleAnswer(ok, err, detail, panel)
     if err == 'pay_only' then
         if panel then
             return ('Not settled: nothing of it was given (owed to %s and in no retry queue), '
-                .. 'so only Pay settles it, to them.'):format(tostring(detail))
+                .. 'so only Pay, of the whole line, settles it, to them.'):format(tostring(detail))
         end
         return ('Not settled: nothing of it was given (owed to %s and in no retry queue), '
-            .. 'so only /%s <line> pay settles it, to them.'):format(tostring(detail), names.settle)
+            .. 'so only /%s <line> pay, with no amount, settles it, to them.')
+            :format(tostring(detail), names.settle)
     end
     if err == 'owes_less' then
         return ('Not settled: the line now owes only %s, less than that amount; '
@@ -694,7 +858,65 @@ function Admin.settleAnswer(ok, err, detail, panel)
             .. 'release, a login retry, the claim on its contract, another settle), or it is owed '
             .. 'to somebody else; nothing moved. Check again with %s.'):format(stuck)
     end
-    return ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err))
+    -- A citizen id typed for a return (Admin.knownCitizenId).
+    if err == 'no_such_player' then
+        if detail == 'unchecked' then
+            return 'Not settled: nobody in the city or on record here has that citizen id, and '
+                .. 'qbx_core could not be asked about characters who are away; nothing moved. Try '
+                .. 'again when they are in the city.'
+        end
+        return 'Not settled: nobody on this server has that citizen id; check how it is spelt. '
+            .. 'Nothing moved.'
+    end
+    -- Owed and queued to a citizen id no character has (owedToNobody).
+    if err == 'owed_to_nobody' then
+        return ('Not settled: it is owed and queued to %s, so nothing would ever give it. Return '
+            .. 'it to the citizen id it should go to: %s.'):format(tostring(detail or
+                'a citizen id no character has'), panel and 'Return to'
+                or ('/%s <line> return <citizenid>'):format(names.settle))
+    end
+    if ok and err == 'repointed' then
+        local now = detail == 'given' and 'given to them now'
+            or (detail == 'refused' and ('on their retry queue: they are in the city, but the give was '
+                .. 'refused (no room in their pockets, or their account would not take it)'))
+            or 'delivered at their next login'
+        return ('Re-pointed: it was owed to a citizen id no character has, and is owed to them '
+            .. 'instead, %s.'):format(now)
+    end
+    if err == 'unchecked' then
+        return 'Not settled: whether anybody has the citizen id it is owed to could not be '
+            .. 'checked (qbx_core did not answer), so it stays queued for them. Nothing moved.'
+    end
+    -- Left mid-release before it named anyone (Admin.settleLine).
+    if ok and err == 'put_back' then
+        return ('Put back: it was left mid-release before it named anyone, so nothing of it was '
+            .. 'given; it is contract %s\'s own again (a payout its next claim pays, a bonus or a '
+            .. 'stake), and nothing is left to settle.'):format(tostring(detail))
+    end
+    if err == 'return_only' then
+        return ('Not settled: it was left mid-release before it named anyone and is owed to '
+            .. 'nobody, so there is nobody to pay; only %s settles it, putting it back to its '
+            .. 'contract. Nothing moved.'):format(panel and 'Return'
+                or ('/%s <line> return'):format(names.settle))
+    end
+    if err == CH.ERR.ALREADY_SETTLED then
+        return ('Already settled, by another settle or its own ending; nothing moved. %s.')
+            :format(panel and 'Refresh Stuck escrow' or ('Check %s again'):format(stuck))
+    end
+    if err == CH.ERR.NOT_FOUND then
+        return ('No escrow line has that id; nothing moved. %s lists every line waiting for you.')
+            :format(stuck)
+    end
+    if err == CH.ERR.INVALID_INPUT then
+        if panel then
+            return 'Not settled: that is not how this line settles; nothing moved. Stuck escrow '
+                .. 'shows each line with the buttons that settle it.'
+        end
+        return ('Usage: /%s <line> pay [amount] | return [citizenid, only for a line that does '
+            .. 'not say whose it is] | delivered. Nothing moved; %s lists each line with what '
+            .. 'settles it.'):format(names.settle, stuck)
+    end
+    return ok and 'Line settled.' or ('Could not settle it (%s); nothing moved.'):format(tostring(err))
 end
 
 --- What resolving a review item says (Admin.resolveReview).
@@ -728,7 +950,11 @@ function Admin.reviewAnswer(id, ok, err, detail, panel)
         [CH.ERR.LOCKED] = 'Something else resolved or began resolving it meanwhile; look again.',
         note_required = panel and 'Say why in the note: a dismissal gives nothing, and the note is '
             .. 'the record of why.' or ('Say why: /' .. names.review .. ' <id> dismiss <note>.'),
-        no_party = 'Name who it goes to: a citizen id, or a role the item names.',
+        no_party = (type(detail) == 'string' and detail ~= '')
+            and ('Name who it goes to: a role the item names (%s), or the citizen id of a player '
+                .. 'this server has. Nothing was given.'):format(detail)
+            or 'Name who it goes to: a role the item names, or the citizen id of a player this '
+                .. 'server has. Nothing was given.',
         which_money = 'It records more than one kind of money: say which (cash, bank or dirty).',
         nothing_recorded = 'It records nothing of that to give; use pay, or items for goods.',
         over_recorded = ('That is more than it records (%s); refund at most that.')
@@ -748,6 +974,14 @@ function Admin.reviewAnswer(id, ok, err, detail, panel)
         .. 'dismiss <note>'):format(names.review, names.review)
 end
 
+--- The log written now, and on json to the disk as well, rather than at the
+--- next tick: a staff settlement or void is the record of money moved by
+--- hand, and a crash inside the flush interval lost it with the queue.
+local function logNow()
+    Audit.flush()
+    if Storage.flush then pcall(Storage.flush) end
+end
+
 --- Close a contract and return everything to the creator.
 ---
 --- Routed through Contracts.resolve like every other ending, so stakes
@@ -755,7 +989,10 @@ end
 --- not a special case in the money paths and must never become one.
 ---@return boolean ok
 ---@return string|nil err 'recovering' / 'recovery_failed' until boot recovery has
---- finished, and 'stalled_claim' for a contract mid-claim with no claim running
+--- finished, 'stalled_claim' for a contract mid-claim with no claim running, and
+--- 'raised' when its ending raised
+---@return string|nil detail for 'raised': 'closed' when the contract was closed before
+--- the raise (the maintenance tick finishes its ending), 'open' when it was not
 function Admin.void(src, contractId, reason)
     local waiting = recovering()
     if waiting then return false, waiting end
@@ -800,12 +1037,49 @@ function Admin.void(src, contractId, reason)
     -- Everything else is unchanged: resolve treats every terminal alike
     -- except BAILED_OUT and EXPIRED, so the escrow still comes back to the
     -- creator in full and the hitmen still get their stakes.
-    local ok, err = Contracts.resolve(contractId, CH.STATE.VOIDED,
-        contract.creator_cid, nil, 'voided_by_staff')
-    if not ok then return false, err end
+    --
+    -- Who voided it and why are on the record, and the log written, before
+    -- anything moves, as a staff settle's are (admin_settle_line). Written
+    -- after the ending, an ending that raised part-way (a dropped
+    -- connection) left the contract voided, its escrow handed back later by
+    -- the maintenance tick, and no row saying a staff member did it or why;
+    -- and one that went through was only queued, lost with the queue in a
+    -- crash inside the flush interval.
+    local who = callerCid(src)
+    local why = Util.sanitizeText(reason, 120) or 'none given'
+    Audit.financial('admin_void', who, contractId, { reason = why })
+    logNow()
 
-    Audit.financial('admin_void', callerCid(src), contractId,
-        { reason = Util.sanitizeText(reason, 120) or 'none given' })
+    local ran, ok, err = pcall(function()
+        return Contracts.resolve(contractId, CH.STATE.VOIDED, contract.creator_cid, nil,
+            'voided_by_staff')
+    end)
+    if not ran then
+        -- Read again: an ending that raised after writing the closed state
+        -- is finished by the maintenance tick (Contracts.finishEndings), and
+        -- the contract is closed for good; one that raised before it is
+        -- still open, and nothing was voided.
+        Audit.financial('admin_void_raised', who, contractId, { reason = why, error = tostring(ok) })
+        logNow()
+        Log.always(('voiding contract %s raised: %s'):format(tostring(contractId), tostring(ok)))
+        local read, now = pcall(Storage.readContract, contractId)
+        if read and now and now.state == CH.STATE.VOIDED then
+            if Photos then pcall(Photos.forgetContract, contractId) end
+            pcall(Notify.toCitizen, contract.creator_cid, 'Contract voided',
+                'Staff closed your contract. Your escrow is on its way back to you.',
+                { bypassBudget = true })
+            return false, 'raised', 'closed'
+        end
+        return false, 'raised', 'open'
+    end
+    if not ok then
+        -- Refused (a claim running on it, or closed meanwhile): nothing
+        -- moved, and the row above says it was asked for.
+        Audit.financial('admin_void_refused', who, contractId, { refused = err })
+        logNow()
+        return false, err
+    end
+    logNow()
 
     -- A collection paid before the void left its kill photo waiting for the
     -- client. A contract staff had to close is not one whose photo should
@@ -818,14 +1092,6 @@ function Admin.void(src, contractId, reason)
         { bypassBudget = true })
 
     return true
-end
-
---- The log written now, and on json to the disk as well, rather than at the
---- next tick: a staff settlement is the record of money moved by hand, and
---- a crash inside the flush interval lost it with the queue.
-local function logNow()
-    Audit.flush()
-    if Storage.flush then pcall(Storage.flush) end
 end
 
 --- Whom a line is owed to, as /ch-stuck names them to `src`: a role to
@@ -855,6 +1121,47 @@ local function settleRaised(who, line, disposition, recipient, err)
     return false, 'raised'
 end
 
+--- Move a line owed and queued to a citizen id no character has
+--- (owedToNobody) to one somebody here has (Admin.knownCitizenId): it is
+--- owed to them instead, given now if they are in the city and queued for
+--- them if not, and the entry that waited for nobody goes. On the record,
+--- and the log written, before it moves (admin_settle_repointed), and what
+--- came of it after (admin_settle_result). Through the normal release path,
+--- filtered to this one line and checked on it as claimed: still owed to
+--- the id it was read owed to.
+---@return boolean ok
+---@return string|nil err 'repointed' | 'no_such_player' | 'raised' | 'locked'
+---@return string|nil detail 'given' | 'away' | 'refused' for 'repointed'; 'unchecked' for
+--- 'no_such_player' when qbx_core could not be asked
+local function repointLine(src, line, owner)
+    local known, why = Admin.knownCitizenId(owner, Storage.readEscrow(line.contract_id))
+    if not known then return false, 'no_such_player', why end
+    local from, who = line.owed_to, callerCid(src)
+    Audit.financial('admin_settle_repointed', who, line.contract_id,
+        { line = line.id, from = from, to = known })
+    logNow()
+
+    local ran, raised, result = pcall(Escrow.release, line.contract_id, known, { line = line.id },
+        'admin_return', function(claimed) return claimed.owed_to == from end)
+    if not ran then return settleRaised(who, line, 'return', known, raised) end
+
+    -- The entry it waited in for nobody, once it is owed to them instead.
+    local now = Storage.readEscrowLine(line.id)
+    if now and now.owed_to ~= from then
+        for _, entry in ipairs(Storage.readPending(from) or {}) do
+            if entry.line_id == line.id then Storage.clearPending(entry.id) end
+        end
+    end
+    local settled, pending = result.settled or 0, result.pending or 0
+    Audit.financial('admin_settle_result', who, line.contract_id,
+        { line = line.id, disposition = 'return', recipient = known, repointed = true,
+          settled = settled, pending = pending, given = result.given, owed = result.owed })
+    logNow()
+    if settled > 0 then return true, 'repointed', 'given' end
+    if pending > 0 then return true, 'repointed', (result.away or 0) > 0 and 'away' or 'refused' end
+    return false, CH.ERR.LOCKED
+end
+
 --- Settle one interrupted line deliberately: either to the person it was
 --- being paid to, or back to the contract's creator, or, for a line left for
 --- staff (Escrow.parked), as already delivered to the person it was being
@@ -878,7 +1185,13 @@ end
 --- belongs to ('live'), the closed contract whose ending has still to hand it over
 --- ('ending_unfinished'), or for 'queued' why it was not given: 'away' (not in the
 --- city) or 'refused' (the give was refused). 'recovering' while boot recovery runs,
---- and 'recovery_failed' once it has raised.
+--- and 'recovery_failed' once it has raised. 'no_such_player' for a citizen id nobody
+--- here has (detail 'unchecked' when qbx_core could not be asked); 'owed_to_nobody'
+--- for a line queued to one (detail how it is named), which a `return <citizenid>`
+--- moves ('repointed', detail 'given' | 'away' | 'refused'), and 'unchecked' when
+--- that could not be told; 'put_back' (ok) for a line left mid-release before it
+--- named anyone, now its live contract's own again (detail the contract), and
+--- 'return_only' for a pay or a delivered on one that is owed to nobody either.
 function Admin.settleLine(src, lineId, disposition, owner)
     local waiting = recovering()
     if waiting then return false, waiting end
@@ -908,10 +1221,47 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- so by one that raised after its claim, and /ch-stuck lists it: what
     -- the next start would do is done now (Escrow.parkStuck), and it is
     -- settled as it then stands. One a call still holds is that call's.
+    -- One left so before it named anyone (no releasing_to) was given
+    -- nothing; owed to nobody either, there is nobody a pay or a delivered
+    -- could be to, and only a return puts it back to its contract, which
+    -- keeps it while it is live (`put_back`).
+    local putBack = false
     if line.state == CH.ESCROW_STATE.RELEASING then
+        local unnamed = not line.releasing_to
+        if unnamed and not line.owed_to and disposition ~= 'return' and not Escrow.inFlight(lineId) then
+            return false, 'return_only'
+        end
         if not Escrow.parkStuck(lineId) then return false, CH.ERR.LOCKED end
         line = Storage.readEscrowLine(lineId)
         if not line or line.state ~= CH.ESCROW_STATE.HELD then return false, CH.ERR.LOCKED end
+        putBack = unnamed
+    end
+
+    local contract = Storage.readContract(line.contract_id)
+
+    -- Whether it is left for staff (Escrow.leftForStaff). A held line owed
+    -- to somebody that nothing gives (stalled) is settled as one left for
+    -- staff: the next start would queue it or leave it so.
+    local queues = {}
+    local left = Escrow.leftForStaff(line, queues)
+    local parked = left ~= false
+
+    -- Queued for whom it is owed to (a 'return' to an offline client, say):
+    -- theirs already, given at their next login or while they are in the
+    -- city, so there is nothing to settle and the answer says whose it is.
+    -- Refused as locked because the log's release_interrupted row named
+    -- somebody else, staff told by /ch-stuck to pay it were turned away
+    -- from a line that needed nothing. Unless no character has the citizen
+    -- id it is owed to (owedToNobody): typed wrong before ids were checked,
+    -- that login never comes, and a return to the right citizen id is what
+    -- moves it (repointLine).
+    if not parked and line.owed_to and Escrow.queued(line, queues) then
+        local nobody = owedToNobody(line, contract,
+            contract and Storage.readHitmen(contract.id) or nil)
+        if nobody and owner then return repointLine(src, line, owner) end
+        if nobody then return false, 'owed_to_nobody', nobodyFor(src, line.owed_to) end
+        if nobody == nil and owner then return false, 'unchecked' end
+        return false, 'already_queued', partyFor(src, contract, line.owed_to)
     end
 
     -- A contract that was never stored has no row, and its lines still say
@@ -923,9 +1273,15 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- contract it is about, which may never have been stored (a take that
     -- could not be confirmed), and left for staff it was listed by /ch-stuck
     -- and refused here as not found, with nothing else that ever gives it.
-    local contract = Storage.readContract(line.contract_id)
+    -- Where staff say is a citizen id somebody here has
+    -- (Admin.knownCitizenId), in the form the server keeps it: returned to
+    -- 'creator1', or to a typo, a line went to an id no character has, owed
+    -- and queued for a login that never comes.
     if owner then
         if contract or not namesNobody(line) then return false, CH.ERR.INVALID_INPUT end
+        local known, why = Admin.knownCitizenId(owner, Storage.readEscrow(line.contract_id))
+        if not known then return false, 'no_such_player', why end
+        owner = known
     elseif not contract and not line.taken_from and not line.owed_to then
         return false, CH.ERR.NOT_FOUND
     end
@@ -947,22 +1303,6 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- money: returned "to the creator", an interrupted stake was handed to
     -- the one party it was never theirs to take. A line owed to somebody
     -- has no payer this can name.
-    --
-    -- A held line owed to somebody that nothing gives (stalled) is settled
-    -- as one left for staff: the next start would queue it or leave it so.
-    local queues = {}
-    local left = Escrow.leftForStaff(line, queues)
-    local parked = left ~= false
-
-    -- Queued for whom it is owed to (a 'return' to an offline client, say):
-    -- theirs already, given at their next login or while they are in the
-    -- city, so there is nothing to settle and the answer says whose it is.
-    -- Refused as locked because the log's release_interrupted row named
-    -- somebody else, staff told by /ch-stuck to pay it were turned away
-    -- from a line that needed nothing.
-    if not parked and Escrow.queued(line, queues) then
-        return false, 'already_queued', partyFor(src, contract, line.owed_to)
-    end
 
     -- Owed to somebody, and neither left for staff nor queued: a call here
     -- holds it, or is about to queue it (Escrow.inFlight); a claim running on
@@ -983,7 +1323,10 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- contract and returns its escrow through every rule an ending keeps. A
     -- closed contract never opens again, so one read closed stays so for the
     -- settle below.
+    -- One left mid-release before it named anyone, put back just now, is
+    -- that contract's own again: settled, as far as staff go.
     if not parked and contract and not CH.TERMINAL[contract.state] then
+        if putBack then return true, 'put_back', contract.id end
         return false, 'live', contract.id
     end
 
@@ -1018,9 +1361,15 @@ function Admin.settleLine(src, lineId, disposition, owner)
     end
 
     -- What it still owes as read, on the record of every settle (below).
+    -- An amount only on a line left for staff, at most what it owes, and on
+    -- one nothing of which was given all of it: on those an amount short of
+    -- what it owes gave the player that much, counted the rest as arrived
+    -- though it never reached anybody, and settled the line.
     local owed = Escrow.stillOwed(line)
-    if amount and (not parked or amount > owed) then
-        return false, CH.ERR.INVALID_INPUT
+    if amount and not parked then return false, CH.ERR.INVALID_INPUT end
+    if amount and amount > owed then return false, 'owes_less', owed end
+    if amount and Escrow.NEVER_GIVEN[left] and amount < owed then
+        return false, 'pay_only', partyFor(src, contract, line.owed_to)
     end
     local recipient
     if disposition == 'pay' or disposition == 'delivered' then
@@ -1189,21 +1538,66 @@ end
 --- paid, and every reader of the history saw who was behind the party. And
 --- no metadata: a weapon's `registered` is its owner's character name, which
 --- Escrow strips from a weapon handed over for the same reason (handedOver).
+---
+--- `names` holds more than citizen ids: the name of a party who paid to stay
+--- anonymous, and every account (a licence), each replaced wherever it is
+--- written, a staff note included. And an error's text is shown as the queue
+--- keeps it now (Util.dbError): an item opened before that held oxmysql's
+--- whole message, with the client's citizen id, licence and name in the
+--- values it lists.
 ---@param value any
----@param names table [cid] = how it is shown
-local function shownWithout(value, names)
+---@param names table [cid, name or account] = how it is shown
+---@param key any the field `value` is under
+local function shownWithout(value, names, key)
     if type(value) == 'string' then
-        for cid, label in pairs(names) do
-            value = value:gsub(cid:gsub('%W', '%%%0'), (label:gsub('%%', '%%%%')))
+        if key == 'error' or key == 'read_error' then value = Util.dbError(value) end
+        local order = {}
+        for needle in pairs(names) do
+            if #needle >= 3 then order[#order + 1] = needle end
+        end
+        -- The longest first, so one that contains another goes whole.
+        table.sort(order, function(a, b) return #a > #b end)
+        for _, needle in ipairs(order) do
+            value = value:gsub(needle:gsub('%W', '%%%0'), (names[needle]:gsub('%%', '%%%%')))
         end
         return value
     end
     if type(value) ~= 'table' then return value end
     local out = {}
     for k, inner in pairs(value) do
-        if k ~= 'metadata' then out[k] = shownWithout(inner, names) end
+        if k ~= 'metadata' then out[k] = shownWithout(inner, names, k) end
     end
     return out
+end
+
+--- Everything about a contract's parties that names who they are: each
+--- party's citizen id as their place on it (Admin.partyRole), whether or not
+--- the item names them, the name of each party who paid to stay anonymous,
+--- and every account. Added to `names` (shownWithout) as how each is shown.
+---@param names table
+---@param contract table|nil
+---@param hitmen table[]|nil
+local function namesOfParties(names, contract, hitmen)
+    if contract then
+        for _, cid in pairs({ contract.creator_cid, contract.target_cid }) do
+            if type(cid) == 'string' then names[cid] = Admin.partyRole(contract, cid) end
+        end
+        if contract.anon_creator == true and type(contract.creator_name) == 'string' then
+            names[contract.creator_name] = 'Anonymous'
+        end
+        for _, account in pairs({ contract.creator_account, contract.target_account }) do
+            if type(account) == 'string' then names[account] = '(an account)' end
+        end
+    end
+    for _, hitman in ipairs(hitmen or {}) do
+        if type(hitman.hitman_cid) == 'string' and not names[hitman.hitman_cid] then
+            names[hitman.hitman_cid] = Admin.partyRole(contract, hitman.hitman_cid)
+        end
+        if hitman.anon == true and type(hitman.hitman_name) == 'string' then
+            names[hitman.hitman_name] = 'Anonymous'
+        end
+        if type(hitman.hitman_account) == 'string' then names[hitman.hitman_account] = '(an account)' end
+    end
 end
 
 --- The review queue as staff read it (server/review.lua): the open items,
@@ -1225,12 +1619,14 @@ function Admin.reviews(src, all)
     if not Review then return {} end
     local canIdentify = src == nil or src == 0
         or Admin.allowed(src, Config.Admin.IdentityAce, true)
-    local contracts = {}
+    local contracts, hitmenOf = {}, {}
     local function contractOf(id)
         if not id then return nil end
         if contracts[id] == nil then
             local ok, found = pcall(Storage.readContract, id)
             contracts[id] = ok and found or false
+            local okH, list = pcall(Storage.readHitmen, id)
+            hitmenOf[id] = okH and list or {}
         end
         return contracts[id] or nil
     end
@@ -1239,6 +1635,7 @@ function Admin.reviews(src, all)
     for _, item in ipairs(Review.list(all, 50)) do
         local parties, roles, names = {}, {}, {}
         local contract = contractOf(item.contract_id)
+        if not canIdentify then namesOfParties(names, contract, hitmenOf[item.contract_id]) end
         for role in pairs(type(item.cids) == 'table' and item.cids or {}) do roles[#roles + 1] = role end
         table.sort(roles)
         for _, role in ipairs(roles) do

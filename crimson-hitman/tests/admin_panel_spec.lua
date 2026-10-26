@@ -619,7 +619,7 @@ describe('contracts in the admin panel', function()
         eq(money(3), before, 'delivered gives nothing')
         eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
         eq(ask(6, 'settle', { line = line.id, disposition = 'pay' }).message,
-            s.admin.settleAnswer(false, CH.ERR.ALREADY_SETTLED), 'and once only')
+            s.admin.settleAnswer(false, CH.ERR.ALREADY_SETTLED, nil, true), 'and once only')
         eq(ask(6, 'settle', { line = line.id, disposition = 'pay', amount = 0 }).err,
             CH.ERR.INVALID_INPUT, 'an amount is at least 1')
     end)
@@ -729,6 +729,140 @@ describe('the review queue in the admin panel', function()
             s.admin.reviewAnswer(id, false, 'note_required', nil, true))
         eq(ask(6, 'resolve', { id = id, action = 'pay' }).err, 'no_party')
         eq(ask(6, 'resolve', { id = id, action = 'dismiss', note = 'checked by hand' }).ok, true)
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- What staff without crimson.identity read in errors and notes
+--------------------------------------------------------------------------
+
+describe('errors and notes, to staff who may not unmask', function()
+    --- oxmysql's message for a statement the database refused, as its await
+    --- raises it: the statement, every value it was sent, the server's words.
+    local function refusal(values)
+        return 'crimson-hitman/server/timing.lua:41: crimson-hitman was unable to execute a query!\n'
+            .. 'Query: \n        INSERT INTO crimson_contracts\n            (id, creator_cid, '
+            .. 'creator_account, creator_name, anon_creator)\n        VALUES (?, ?, ?, ?, ?)\n'
+            .. json.encode(values) .. '\nLock wait timeout exceeded; try restarting transaction'
+    end
+
+    --- Who the anonymous client is, in every form a leak could take.
+    local WHO = { 'CREATOR1', 'license:aaa', 'Vic Marlowe' }
+
+    --- Every line the staff commands print to a source, and every answer
+    --- the panel's reads give it.
+    local function everythingShown(s, src, contractId)
+        local shown = {
+            ask(src, 'reviews', { all = true }), ask(src, 'logs', { limit = 100 }),
+            ask(src, 'logs', { contract = contractId, limit = 100 }),
+            ask(src, 'contract', { id = contractId }), ask(src, 'stuck'),
+        }
+        for _, args in ipairs({ { 'review', { 'all' } }, { 'review', {} }, { 'stuck', {} } }) do
+            Env.chat = {}
+            Env.commands[Config.Admin.Commands[args[1]]](src, args[2])
+            for _, line in ipairs(Env.chat) do shown[#shown + 1] = line.text end
+        end
+        return shown
+    end
+
+    local function anonymousArmed(s, f, landed)
+        -- Both refuse, oxmysql-style, with the parameter JSON: the write, and
+        -- (where it did not land) the read that asks whether it did.
+        local write, readContract = s.storage.writeContract, s.storage.readContract
+        local armed = false
+        s.storage.writeContract = function(contract)
+            if landed then write(contract) end
+            armed = not landed
+            error(refusal({ contract.id, contract.creator_cid, contract.creator_account,
+                contract.creator_name, contract.anon_creator }), 0)
+        end
+        s.storage.readContract = function(id)
+            if armed then error(refusal({ id }), 0) end
+            return readContract(id)
+        end
+        local ran, c = pcall(s.contracts.create, f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, anonymous = true,
+        })
+        s.storage.writeContract, s.storage.readContract = write, readContract
+        return ran, c
+    end
+
+    it('A07: never names an anonymous client through the error a contract write raised', function()
+        local s, f = stack()
+        local ran = anonymousArmed(s, f, false)
+        falsy(ran, 'the create raises: the store would neither write it nor say whether it had')
+        local item = s.storage.reviewItems(true, 10)[1]
+        truthy(item and item.kind == 'contract_unrecorded', 'left for staff')
+
+        for _, src in ipairs({ 6, 7 }) do
+            local shown = everythingShown(s, src, item.contract_id)
+            for _, who in ipairs(WHO) do
+                falsy(mentions(shown, who), ('%s reaches source %d'):format(who, src))
+            end
+        end
+        -- Who may unmask reads the driver's words, cleaned of the values.
+        local rows = ask(8, 'logs', { action = 'contract_write_failed', limit = 10 }).data.rows
+        eq(#rows, 1)
+        truthy(rows[1].detail.error:find('Lock wait timeout exceeded', 1, true), rows[1].detail.error)
+        falsy(rows[1].detail.error:find('Vic Marlowe', 1, true), 'kept without the values')
+    end)
+
+    it('A07: nor through one a write that landed raised, in the contract\'s view and the log', function()
+        local s, f = stack()
+        local ran, c = anonymousArmed(s, f, true)
+        truthy(ran and c, 'placed: the store has it')
+        eq(s.storage.readContract(c.id).anon_creator, true)
+        for _, src in ipairs({ 6, 7 }) do
+            local shown = everythingShown(s, src, c.id)
+            for _, who in ipairs(WHO) do
+                falsy(mentions(shown, who), ('%s reaches source %d'):format(who, src))
+            end
+        end
+    end)
+
+    it('A07: nor through an error stored whole before rows were cleaned', function()
+        local s, f = stack()
+        local c = place(s, f, { anonymous = true })
+        -- As an older build left them: the row and the item hold it all.
+        s.storage.writeAudit({ ts = os.time(), kind = 'financial', action = 'contract_write_failed',
+            actor_cid = 'CREATOR1', contract_id = c.id,
+            detail = { error = refusal({ c.id, 'CREATOR1', 'license:aaa', 'Vic Marlowe', true }) } })
+        s.storage.writeReview({ id = 'rv00000077', kind = 'contract_unrecorded', contract_id = c.id,
+            cids = { creator = 'CREATOR1' }, state = 'open', created_at = os.time(),
+            known = { error = refusal({ c.id, 'CREATOR1', 'license:aaa', 'Vic Marlowe', true }),
+                      read_error = 'read raised for license:aaa' } })
+        for _, src in ipairs({ 6, 7 }) do
+            local shown = everythingShown(s, src, c.id)
+            for _, who in ipairs(WHO) do
+                falsy(mentions(shown, who), ('%s reaches source %d'):format(who, src))
+            end
+        end
+        truthy(mentions(ask(8, 'reviews', {}).data.items, 'license:aaa'),
+            'crimson.identity reads what was stored, as it was')
+    end)
+
+    it('A10: scrubs a staff note naming the anonymous client from the log and the timeline', function()
+        local s, f = stack()
+        local c = place(s, f, { anonymous = true, accept = true, anonHitman = true })
+        local id = s.review.open({ kind = 'escrow_settle_lost', contract_id = c.id,
+            cids = { recipient = 'HITMAN01' } })
+        eq(ask(8, 'resolve', { id = id, action = 'dismiss',
+            note = 'refunded CREATOR1 (Vic Marlowe) by hand; told Rook Ash' }).ok, true)
+        for _, src in ipairs({ 6, 7 }) do
+            local shown = everythingShown(s, src, c.id)
+            for _, who in ipairs({ 'CREATOR1', 'Vic Marlowe', 'HITMAN01', 'Rook Ash' }) do
+                falsy(mentions(shown, who), ('%s reaches source %d'):format(who, src))
+            end
+        end
+        local timeline = ask(6, 'contract', { id = c.id }).data.timeline
+        local note
+        for _, row in ipairs(timeline) do
+            if row.action == 'review_resolved' then note = row.detail.note end
+        end
+        eq(note, 'refunded the client (Anonymous) by hand; told Anonymous', 'the note, scrubbed')
+        truthy(mentions(ask(8, 'contract', { id = c.id }).data.timeline, 'Vic Marlowe'),
+            'crimson.identity reads it as written')
     end)
 end)
 
@@ -1035,5 +1169,249 @@ describe('settings and tools in the admin panel', function()
         eq(flushed.ok, true)
         truthy(flushed.data.written >= 1, 'what was queued is written')
         eq(#stored(s, 'queued_row'), 1)
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- What the panel offers for each line staff settle, against the server
+--------------------------------------------------------------------------
+
+--- Every kind of line Admin.interrupted lists, built the way the server
+--- leaves it, on a stack of its own: the contract placed and accepted, its
+--- 5,000 baseline line in the state the kind names. Each returns the line's
+--- id.
+local function raw(s) rawset(s.storage, '__rawFixture', true) end
+local function baselineOf(s, c) return s.storage.readEscrow(c.id)[1] end
+local function closeAs(s, c, from, to)
+    raw(s)
+    truthy(s.storage.compareSetContractState(c.id, from, to))
+end
+local function owe(s, c, extra)
+    local line = baselineOf(s, c)
+    for k, v in pairs(extra) do line[k] = v end
+    s.storage.writeEscrow(c.id, { line })
+    return line
+end
+
+local LINE_KINDS = {
+    { name = 'raised', why = 'raised', offers = 'pay,pay_amount,return,delivered', build = function(s, f)
+        local c = place(s, f, { accept = true })
+        local line = baselineOf(s, c)
+        local p = Env.players[3]
+        local real = p.Functions.AddMoney
+        p.Functions.AddMoney = function() error('AddMoney hook raised', 0) end
+        for _ = 1, s.escrow.DELIVER_RAISE_LIMIT do
+            pcall(s.escrow.release, c.id, 'HITMAN01', { line = line.id }, 'test')
+        end
+        p.Functions.AddMoney = real
+        return line.id
+    end },
+    { name = 'interrupted', why = 'interrupted', offers = 'pay,pay_amount,return,delivered',
+      build = function(s, f)
+        local c = place(s, f, { accept = true })
+        local line = owe(s, c, { releasing_to = 'HITMAN01' })
+        truthy(s.escrow.parkInterrupted(line))
+        return line.id
+    end },
+    { name = 'stalled', why = 'stalled', offers = 'pay,pay_amount,return,delivered', build = function(s, f)
+        local c = place(s, f, { accept = true })
+        return owe(s, c, { owed_to = 'HITMAN01', releasing_to = 'HITMAN01' }).id
+    end },
+    { name = 'unqueued', why = 'unqueued', offers = 'pay', build = function(s, f)
+        local c = place(s, f, { accept = true })
+        return owe(s, c, { owed_to = 'HITMAN01' }).id
+    end },
+    { name = 'stalled claim', why = 'stalled_claim', offers = 'pay', build = function(s, f)
+        local c = place(s, f, { accept = true })
+        closeAs(s, c, CH.STATE.ACCEPTED, CH.STATE.COMPLETING)
+        return owe(s, c, { owed_to = 'HITMAN01' }).id
+    end },
+    { name = 'releasing, named', why = 'releasing', offers = 'pay,pay_amount,return,delivered',
+      build = function(s, f)
+        local c = place(s, f, { accept = true })
+        local line = baselineOf(s, c)
+        truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+        line = s.storage.readEscrowLine(line.id)
+        line.releasing_to = 'HITMAN01'
+        s.storage.writeEscrow(c.id, { line })
+        return line.id
+    end },
+    { name = 'releasing, unnamed and owed', why = 'never_given_release', offers = 'pay',
+      build = function(s, f)
+        local c = place(s, f, { accept = true })
+        closeAs(s, c, CH.STATE.ACCEPTED, CH.STATE.COMPLETING)
+        local line = owe(s, c, { owed_to = 'HITMAN01' })
+        truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+        return line.id
+    end },
+    { name = 'releasing, unnamed and owed to nobody', why = 'never_given_release', offers = 'return',
+      build = function(s, f)
+        local c = place(s, f, { accept = true })
+        local line = baselineOf(s, c)
+        truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+        return line.id
+    end },
+    { name = 'ending unfinished', why = 'ending_unfinished', offers = '', build = function(s, f)
+        local c = place(s, f, { accept = true })
+        closeAs(s, c, CH.STATE.ACCEPTED, CH.STATE.CANCELLED)
+        return baselineOf(s, c).id
+    end },
+    { name = 'mid-release at a shutdown, pay or return', settles = 'pay_or_return', offers = 'pay,return',
+      build = function(s, f)
+        local c = place(s, f, { accept = true })
+        closeAs(s, c, CH.STATE.ACCEPTED, CH.STATE.CANCELLED)
+        local line = owe(s, c, { releasing_to = 'HITMAN01' })
+        s.audit.financial('release_interrupted', 'HITMAN01', c.id, { line = line.id, review = true })
+        s.audit.flush()
+        return line.id
+    end },
+    { name = 'mid-release at a shutdown, queued since', settles = 'queued', offers = '',
+      build = function(s, f)
+        local c = place(s, f, { accept = true })
+        closeAs(s, c, CH.STATE.ACCEPTED, CH.STATE.CANCELLED)
+        local line = owe(s, c, { owed_to = 'HITMAN01' })
+        s.storage.queuePending('HITMAN01', c.id, line.id)
+        s.audit.financial('release_interrupted', 'HITMAN01', c.id, { line = line.id, review = true })
+        s.audit.flush()
+        return line.id
+    end },
+    { name = 'never stored, naming nobody', orphan = true, offers = 'return_owner', build = function(s)
+        s.storage.writeEscrow('ct00000099', { { id = 'ct00000099:1', contract_id = 'ct00000099',
+            slot = 1, portion = CH.PORTION.BASELINE, source = 'cash', amount = 5000,
+            state = CH.ESCROW_STATE.HELD } })
+        return 'ct00000099:1'
+    end },
+    { name = 'owed and queued to a citizen id nobody has', why = 'owed_to_nobody', offers = 'return_owner',
+      build = function(s)
+        s.storage.writeEscrow('ct00000099', { { id = 'ct00000099:1', contract_id = 'ct00000099',
+            slot = 1, portion = CH.PORTION.BASELINE, source = 'cash', amount = 5000,
+            owed_to = 'creator1', state = CH.ESCROW_STATE.HELD } })
+        s.storage.queuePending('creator1', 'ct00000099', 'ct00000099:1')
+        return 'ct00000099:1'
+    end },
+}
+
+--- Every button a stuck line can have, and the settle it sends.
+local SETTLES = {
+    pay = function(s, id) return s.admin.settleLine(0, id, 'pay') end,
+    pay_amount = function(s, id)
+        local line = s.storage.readEscrowLine(id)
+        return s.admin.settleLine(0, id, 'pay', tostring(s.escrow.stillOwed(line) - 1))
+    end,
+    ['return'] = function(s, id) return s.admin.settleLine(0, id, 'return') end,
+    return_owner = function(s, id) return s.admin.settleLine(0, id, 'return', 'CREATOR1') end,
+    delivered = function(s, id) return s.admin.settleLine(0, id, 'delivered') end,
+}
+local BUTTONS = { 'pay', 'pay_amount', 'return', 'return_owner', 'delivered' }
+
+describe('every line the panel lists for staff, settled from what it offers', function()
+    --- W192: the buttons were tested only against hand-written replies,
+    --- one of which offered the money-losing Pay amount. Here each real
+    --- kind is built, listed by the real stuck op, and every button it
+    --- offers is accepted by Admin.settleLine, every one it does not
+    --- offer refused, with nothing moved.
+    for _, kind in ipairs(LINE_KINDS) do
+        it(kind.name .. ': offers ' .. (kind.offers ~= '' and kind.offers or 'nothing'), function()
+            local s, f = stack()
+            local id = kind.build(s, f)
+            local entry
+            for _, listed in ipairs(ask(6, 'stuck').data.lines or {}) do
+                if listed.line == id then entry = listed end
+            end
+            truthy(entry, 'listed by Stuck escrow')
+            if kind.why then eq(entry.why, kind.why) end
+            if kind.settles then eq(entry.settles, kind.settles) end
+            if kind.orphan then truthy(entry.orphan) end
+            eq(table.concat(entry.actions, ','), kind.offers)
+        end)
+
+        for _, button in ipairs(BUTTONS) do
+            local offered = (',' .. kind.offers .. ','):find(',' .. button .. ',', 1, true) ~= nil
+            it(('%s: %s is %s'):format(kind.name, button, offered and 'accepted' or 'refused'), function()
+                local s, f = stack()
+                local id = kind.build(s, f)
+                local before = { money(1), money(3) }
+                local ok, err = SETTLES[button](s, id)
+                if offered then
+                    eq(ok, true, button .. ' answered ' .. tostring(err))
+                else
+                    eq(ok, false, button .. ' went through: ' .. tostring(err))
+                    eq(money(1), before[1], 'nothing given to the client')
+                    eq(money(3), before[2], 'nothing given to the hitman')
+                end
+            end)
+        end
+    end
+end)
+
+describe('the panel\'s own dead ends', function()
+    --- W186: the never-given line's drawer said "only Pay" beside a Pay
+    --- amount box that paid part of it and wrote the rest off.
+    it('a never-given line offers only Pay, and refuses an amount from the panel and the command', function()
+        local s, f = stack()
+        local c = place(s, f, { accept = true })
+        local line = owe(s, c, { owed_to = 'HITMAN01', portion = CH.PORTION.OWED })
+        local view = ask(6, 'contract', { id = c.id }).data
+        eq(#view.stuck, 1)
+        eq(table.concat(view.stuck[1].actions, ','), 'pay', 'no Pay amount')
+        local before = money(3)
+        local reply = ask(6, 'settle', { line = line.id, disposition = 'pay', amount = 1000 })
+        eq(reply.ok, false)
+        eq(reply.err, 'pay_only')
+        Env.chat = {}
+        Env.commands[Config.Admin.Commands.settle](6, { line.id, 'pay', '1000' })
+        eq(select(2, s.admin.settleLine(6, line.id, 'pay', '1000')), 'pay_only')
+        eq(money(3), before, 'nothing given')
+        local stored = s.storage.readEscrowLine(line.id)
+        eq(stored.state, CH.ESCROW_STATE.HELD, 'still owed in full')
+        eq(tonumber(stored.deliver_arrived) or 0, 0, 'nothing written off as arrived')
+        eq(ask(6, 'settle', { line = line.id, disposition = 'pay' }).ok, true, 'Pay settles it')
+        eq(money(3) - before, 5000, 'all of it')
+    end)
+
+    --- W191: listed with every button and an "Arrival unknown" note, and
+    --- each button answered that it was not staff's to settle.
+    it('a line left mid-release before it named anyone says nothing arrived, and what settles it', function()
+        local s, f = stack()
+        local c = place(s, f, { accept = true })
+        local line = baselineOf(s, c)
+        truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+        local entry = ask(6, 'stuck').data.lines[1]
+        eq(entry.why, 'never_given_release')
+        eq(entry.owed, nil, 'owed to nobody')
+        eq(table.concat(entry.actions, ','), 'return')
+        local reply = ask(6, 'settle', { line = line.id, disposition = 'pay' })
+        eq(reply.err, 'return_only')
+        reply = ask(6, 'settle', { line = line.id, disposition = 'return' })
+        eq(reply.ok, true, tostring(reply.message))
+        eq(reply.err, 'put_back')
+        truthy(reply.message:find('nothing of it was given', 1, true), reply.message)
+        eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.HELD, 'its contract\'s own again')
+        eq(#ask(6, 'stuck').data.lines, 0)
+    end)
+
+    --- W139: a write that raised skipped the flush and the cache drop, and
+    --- its row named no contract.
+    it('a write that raises is on the record at once, with what it was about', function()
+        local s, f = stack()
+        local c = place(s, f)
+        ask(6, 'overview')
+        local reads, real = 0, s.storage.allContracts
+        s.storage.allContracts = function(...) reads = reads + 1 return real(...) end
+        local readContract = s.storage.readContract
+        s.storage.readContract = function() error('connection lost', 0) end
+        local reply = ask(6, 'void', { id = c.id, reason = 'duplicate listing' })
+        s.storage.readContract = readContract
+        eq(reply.ok, false)
+        eq(reply.err, CH.ERR.SERVER_ERROR)
+        local rows = stored(s, 'admin_panel_error')
+        eq(#rows, 1, 'in the store, not the queue')
+        eq(rows[1].contract_id, c.id, 'on the contract\'s timeline')
+        eq(rows[1].detail.id, c.id)
+        eq(rows[1].detail.reason, 'duplicate listing')
+        eq(s.audit.pending(), 0, 'nothing left in the queue')
+        ask(6, 'overview')
+        s.storage.allContracts = real
+        eq(reads, 1, 'the overview is read again, not served from before the write')
     end)
 end)

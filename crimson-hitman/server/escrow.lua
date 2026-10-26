@@ -1116,7 +1116,8 @@ Escrow.NEVER_GIVEN = { unqueued = true, stalled_claim = true }
 --- `pay 3000` queued the line, raised what had arrived from 2,000 to 4,000,
 --- and the player got 1,000 of the 3,000 A found missing. A `return` or a
 --- `delivered` (`ran`) only on a line whose give may have run: one nothing
---- of which was given (Escrow.NEVER_GIVEN) is paid to whom it is owed.
+--- of which was given (Escrow.NEVER_GIVEN) is paid to whom it is owed, and
+--- in full (`give` short of what it owes is 'pay_only' there).
 --- 'locked' when another call asks for it, or a claim or ending runs on its
 --- contract: that one's for now, and listed again once it is done, where
 --- 'not_left' told staff it was no longer theirs at all.
@@ -1137,6 +1138,9 @@ local function unparkRefusal(line, give, ran, mine)
     end
     if ran and Escrow.NEVER_GIVEN[left] then return 'pay_only' end
     if give and Escrow.stillOwed(line) < give then return 'owes_less' end
+    -- Paid in part, one nothing of which was given counted the rest as
+    -- arrived, though it reached nobody, and settled.
+    if give and Escrow.NEVER_GIVEN[left] and give < Escrow.stillOwed(line) then return 'pay_only' end
     return nil
 end
 

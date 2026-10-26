@@ -995,9 +995,9 @@ function Bridges.installCommands(modules)
 
     command(names.void, Config.Admin.Ace, function(src, args)
         local reason = table.concat(args, ' ', math.min(2, #args + 1))
-        local ok, err = Admin.void(src, args[1], reason)
+        local ok, err, detail = Admin.void(src, args[1], reason)
         -- In the words the admin panel uses too (Admin.voidAnswer).
-        reply(src, Admin.voidAnswer(args[1], ok, err))
+        reply(src, Admin.voidAnswer(args[1], ok, err, nil, detail))
     end, true, true)
 
     --- One review item in words (Admin.reviews), for /ch-stuck and /ch-review.
@@ -1081,9 +1081,11 @@ function Bridges.installCommands(modules)
             return
         end
 
-        local interrupted, nameless, parked, unfinished = {}, {}, {}, {}
+        local interrupted, nameless, parked, unfinished, nobody = {}, {}, {}, {}, {}
         for i = 1, #lines do
+            local why = lines[i].why
             local list = (lines[i].unfinished and unfinished) or (lines[i].orphan and nameless)
+                or ((why == 'owed_to_nobody' or why == 'owed_to_unchecked') and nobody)
                 or (lines[i].raised and parked) or interrupted
             list[#list + 1] = lines[i]
         end
@@ -1135,6 +1137,9 @@ function Bridges.installCommands(modules)
                     known = 'a raise stopped it while it was being given'
                 elseif line.why == 'releasing' then
                     known = 'left mid-release by a call that raised, and nothing is finishing it'
+                elseif line.why == 'never_given_release' then
+                    known = 'left mid-release by a call that raised before it named anyone, so '
+                        .. 'nothing of it was given'
                 end
                 if (line.arrived or 0) > 0 then
                     known = ('%s; %s of it arrived'):format(known, tostring(line.arrived))
@@ -1148,14 +1153,22 @@ function Bridges.installCommands(modules)
                 -- Any other may have given more than the line says arrived:
                 -- a give stopped before the line recorded what of it had,
                 -- and pay alone would give that part again.
-                if line.why ~= 'raised' and not modules.escrow.NEVER_GIVEN[line.why] then
+                if line.why ~= 'raised' and line.why ~= 'never_given_release'
+                    and not modules.escrow.NEVER_GIVEN[line.why] then
                     reply(src, ('    arrival unknown: check what they received, then pay the rest '
                         .. 'with /%s %s pay <amount>, or delivered'):format(names.settle, line.line))
                 end
                 -- Never given, so neither handed back nor called delivered
-                -- (Admin.settleLine): paid to whom it is owed.
-                if line.why == 'unqueued' then
+                -- (Admin.settleLine): paid to whom it is owed, in full.
+                if line.why == 'unqueued' or (line.why == 'never_given_release' and line.owed) then
                     reply(src, ('    never given: only /%s %s pay settles it, to them')
+                        :format(names.settle, line.line))
+                end
+                -- Owed to nobody either: there is nobody to pay, and a
+                -- return puts it back to its contract.
+                if line.why == 'never_given_release' and not line.owed then
+                    reply(src, ('    owed to nobody: /%s %s return puts it back to its contract, '
+                        .. 'which keeps it while it is live and hands it back once it is closed')
                         :format(names.settle, line.line))
                 end
                 -- Its contract stays COMPLETING, which nothing but the next
@@ -1166,12 +1179,44 @@ function Bridges.installCommands(modules)
                         :format(line.contract, names.settle, line.line))
                 end
             end
+            -- A return only where one of them takes it: never a line owed to
+            -- somebody (a review payout, a buyout's premium), which nobody
+            -- put up, and never one nothing of which was given.
+            local returnable = false
+            for i = 1, #parked do
+                local line = parked[i]
+                if line.portion ~= CH.PORTION.OWED and not modules.escrow.NEVER_GIVEN[line.why]
+                    and line.why ~= 'never_given_release' then
+                    returnable = true
+                end
+            end
             reply(src, ('Whether such a give arrived cannot always be told, so check their '
                 .. 'inventory or balance first. /%s <line> delivered if it is there (settled, '
                 .. 'nothing given); /%s <line> pay if it is not (gives only what has not '
-                .. 'arrived), or /%s <line> pay <amount> to give exactly what is missing; '
-                .. '/%s <line> return to hand that back to whoever put it up instead')
-                :format(names.settle, names.settle, names.settle, names.settle))
+                .. 'arrived), or /%s <line> pay <amount> to give exactly what is missing%s')
+                :format(names.settle, names.settle, names.settle, returnable
+                    and ('; /%s <line> return to hand that back to whoever put it up instead (not '
+                        .. 'for a line owed to somebody, which nobody put up)'):format(names.settle)
+                    or ''))
+        end
+
+        -- Lines owed and queued to a citizen id no character has
+        -- (Admin.interrupted): typed wrong before ids were checked.
+        if #nobody > 0 then
+            reply(src, ('%d escrow line(s) are owed and queued to a citizen id no character has, '
+                .. 'so nothing will give them:'):format(#nobody))
+            for i = 1, #nobody do
+                local line = nobody[i]
+                reply(src, ('  %s  contract %s  %s %s  owed to %s'):format(line.line, line.contract,
+                    tostring(line.portion), describeLine(line), tostring(line.intended)))
+                if line.why == 'owed_to_unchecked' then
+                    reply(src, '    could not be checked: qbx_core did not say whether anybody has '
+                        .. 'that citizen id, so it stays queued for them and is not moved')
+                else
+                    reply(src, ('    /%s %s return <citizenid> moves it to the citizen id it should '
+                        .. 'go to'):format(names.settle, line.line))
+                end
+            end
         end
 
         if #interrupted > 0 then
