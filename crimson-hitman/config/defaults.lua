@@ -68,11 +68,12 @@ ConfigDefaults.HideAppFromBlockedJobs = true
 --- read-only screen: the contracts on them, and the contracts on other
 --- whitelisted-job members, each with no more than the law enforcement
 --- advisory says (the name and job, when it was posted, open or taken by
---- how many hitmen, when it runs out). Never who placed it, a hitman, the
---- reason, a location, a photo or the reward. On a contract on them they
---- also get the buyout a civilian target gets in On me, through the same
---- server path as that button and /cleanse. Nothing else in the app answers
---- them. A job change moves a player in or out of it at once.
+--- how many hitmen, when it runs out at the latest). Never who placed it,
+--- a hitman, the reason, a location, a photo or the reward. On a contract
+--- on them they also get the buyout a civilian target gets in On me,
+--- through the same server path as that button and /cleanse. Nothing else
+--- in the app answers them. A job change moves a player in or out of it at
+--- once.
 ConfigDefaults.WhitelistedView = {
     Enabled = true,     -- true = whitelisted jobs get that one screen; false = the app is closed to them, as HideAppFromBlockedJobs says
 }

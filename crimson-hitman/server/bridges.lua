@@ -737,11 +737,12 @@ local Notify
 
 --- A line as it is shown: FiveM's colour codes (^0 to ^9) taken out, since
 --- names, aliases and reasons in it are player-written, and one ending in
---- ^1 would colour everything printed after it.
+--- ^1 would colour everything printed after it. Until none is left
+--- (Log.plain): one pass turned '^^11' into a live '^1'.
 ---@param line any
 ---@return string
 local function plain(line)
-    return (tostring(line):gsub('%^%d', ''))
+    return Log.plain(line)
 end
 Bridges.plainLine = plain
 
@@ -903,7 +904,19 @@ function Bridges.installCommands(modules)
         -- console, which is the one place that never refuses an owner.
         -- With somewhere to say what comes back later: whether the public
         -- photo address reaches this resource is asked over the network.
-        local lines = Admin.diagnose(src, args[1], function(line) reply(src, line) end)
+        --
+        -- And the subject's own page log, which arrives as a list: sent in
+        -- as few events as it fits (Bridges.sendOutput), not one per line.
+        local lines = Admin.diagnose(src, args[1], function(said)
+            if type(said) ~= 'table' then return reply(src, said) end
+            if src == 0 then
+                for i = 1, #said do reply(0, said[i]) end
+                return
+            end
+            local clean = {}
+            for i = 1, #said do clean[i] = plain(said[i]) end
+            Bridges.sendOutput(src, clean, false)
+        end)
         for i = 1, #lines do reply(src, lines[i]) end
     end)
 
@@ -1261,15 +1274,23 @@ function Bridges.installCommands(modules)
     -- off: Config.Bailout.Enabled can be turned on from the admin panel, and
     -- a command registered only at a start with it on never came back.
     --
-    -- Its answer goes to the player's F8 console, as every command's does
-    -- (Bridges.runCommand).
+    -- Its answer goes to the player in chat, as it always has. It is a
+    -- player's command, not staff's (Config.Admin.Commands alone answer in
+    -- F8): mostly an officer or a medic the app is closed to, who looks for
+    -- the answer where they typed it, and whose phone may show no notice
+    -- from an app it does not have.
     if Config.Bailout.Command then
+        local function answer(src, line)
+            line = plain(line)
+            if src == 0 then return Log.console(line) end
+            TriggerClientEvent('chat:addMessage', src, { args = { 'CRIMSON', line } })
+        end
         local function cleanse(src, args)
             if src == 0 then
-                return reply(src, 'This is for a player buying out a contract on themselves.')
+                return answer(src, 'This is for a player buying out a contract on themselves.')
             end
             if not Config.Bailout.Enabled then
-                return reply(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.BAILOUT_OFF])
+                return answer(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.BAILOUT_OFF])
             end
 
             local actor = modules.identity.resolve(src)
@@ -1288,7 +1309,7 @@ function Bridges.installCommands(modules)
             -- exactly what it said was refused as "Slow down."
             local function slowDown(bucket)
                 local wait = modules.ratelimit.retryAfter(actor, bucket) or 0
-                return reply(src, wait > 0
+                return answer(src, wait > 0
                     and ('Slow down. Try again in %d second(s).'):format(wait)
                     or 'Slow down.')
             end
@@ -1296,16 +1317,16 @@ function Bridges.installCommands(modules)
 
             local open = modules.bailout.available(actor)
             if #open == 0 then
-                return reply(src, 'Nothing is out on you.')
+                return answer(src, 'Nothing is out on you.')
             end
 
             if not args[1] then
-                reply(src, ('%d contract(s) on you can be bought out:'):format(#open))
+                answer(src, ('%d contract(s) on you can be bought out:'):format(#open))
                 for i = 1, #open do
-                    reply(src, ('  %s  $%d%s'):format(open[i].id, open[i].amount,
+                    answer(src, ('  %s  $%d%s'):format(open[i].id, open[i].amount,
                         open[i].queued and '  (already paid, closing shortly)' or ''))
                 end
-                return reply(src, ('Buy one out with /%s <id>'):format(Config.Bailout.Command))
+                return answer(src, ('Buy one out with /%s <id>'):format(Config.Bailout.Command))
             end
 
             -- Not while boot recovery runs (App.ready), like every app request.
@@ -1314,10 +1335,10 @@ function Bridges.installCommands(modules)
             -- console has told staff (BOOT RECOVERY FAILED).
             if modules.app and modules.app.ready == false then
                 if modules.app.recoveryFailed then
-                    return reply(src, 'The server\'s contract system failed to start, and staff have '
+                    return answer(src, 'The server\'s contract system failed to start, and staff have '
                         .. 'been told. Nothing was charged.')
                 end
-                return reply(src, 'The server is still starting. Try again in a moment.')
+                return answer(src, 'The server is still starting. Try again in a moment.')
             end
             if not modules.ratelimit.check(actor, 'bailout') then return slowDown('bailout') end
 
@@ -1327,13 +1348,19 @@ function Bridges.installCommands(modules)
                 -- as the app's own handler does. And in words: the command
                 -- printed the raw code, "Could not buy it out: incapacitated".
                 modules.ratelimit.refund(actor, 'bailout')
-                return reply(src, 'Could not buy it out: '
+                return answer(src, 'Could not buy it out: '
                     .. (CLEANSE_REFUSALS[err] or tostring(err)))
             end
-            reply(src, 'Paid. The contract closes shortly.')
+            answer(src, 'Paid. The contract closes shortly.')
         end
         RegisterCommand(Config.Bailout.Command, function(src, args)
-            Bridges.runCommand(src, cleanse, args or {})
+            local ok, err = pcall(cleanse, src, args or {})
+            if not ok then
+                Log.debug(('the buyout command run by player %s raised: %s')
+                    :format(tostring(src), tostring(err)))
+                answer(src, 'That raised an error on the server; staff can see what in the '
+                    .. 'diagnosis.')
+            end
         end, false)
     end
 

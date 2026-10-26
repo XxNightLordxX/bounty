@@ -1449,6 +1449,16 @@ async function main() {
       truthy(text.indexOf('Operative #1') !== -1, 'under the alias, never a name');
     });
 
+    it('calls the person who placed it that, a message signed "Client" before included', function () {
+      const who = app.view.all().filter(function (n) {
+        return n._className === 'who';
+      }).map(function (n) { return n.textContent; });
+      eq(who.join(' | '), 'The person who placed it | Operative #1');
+      truthy(app.view.textContent.indexOf('with the person who placed it') !== -1,
+        app.view.textContent);
+      falsy(app.view.textContent.indexOf('Client') !== -1, app.view.textContent);
+    });
+
     it('marks which messages are the viewer own', function () {
       const mine = app.view.all().filter(function (n) {
         return n._className && n._className.indexOf('msg mine') !== -1;
@@ -2819,7 +2829,7 @@ async function main() {
   await (async function collectedOnce() {
     const app = placeForm({
       rewardOptions: { ok: true, data: Object.assign({}, GOODS,
-        { caps: Object.assign({}, GOODS.caps, { slots: 1 }) }) }
+        { caps: Object.assign({}, GOODS.caps, { slots: 1, minValue: 1000 }) }) }
     });
     await settle(); await settle();
     app.document.querySelectorAll('.tab')
@@ -2834,6 +2844,16 @@ async function main() {
       falsy(text.indexOf('More hitmen may accept than there are payouts') !== -1, text);
       falsy(text.indexOf('Payout 1') !== -1, 'the one reward is not numbered: ' + text);
       truthy(app.document.getElementById('slot-cash-1'), 'the reward itself is still set here');
+    });
+
+    it('says nothing about payouts in the Payment section, the least reward included', function () {
+      const payment = app.view.all().filter(function (n) {
+        return n.tagName === 'SECTION' && n.textContent.indexOf('Payment') === 0;
+      })[0];
+      truthy(payment, 'a Payment section');
+      const text = payment.textContent;
+      truthy(text.indexOf('cash, bank and dirty money in the reward.') !== -1, text);
+      falsy(/payout/i.test(text), 'a payout named where there is one collection: ' + text);
     });
 
     pick(app, 'slot-cash-1', 6000);
@@ -9728,6 +9748,25 @@ async function main() {
       falsy(text.indexOf('Vic') !== -1, 'an anonymous placer is named: ' + text);
       noClientNoPhoto(text, 'the how-to');
     });
+    // Not a first-job hint on these: a hitman with jobs behind them (some
+    // finished under 'either') was shown only the "Alive only" chip.
+    const seasoned = boot({ list: boardWith('alive', [], NO_PHOTOS),
+      ledger: { ok: true, data: { entries: [], record: { completed: 4, placed: 0, survived: 0,
+        standing: 'Known' } } },
+      mine: { ok: true, data: { created: [], accepted: [heldFrom({ creatorName: undefined,
+        creatorAnonymous: true })], onMe: [] } },
+      amendments: { ok: true, data: [] } });
+    await settle(); await settle(); await settle();
+    tab(seasoned, 'mine');
+    await settle(); await settle();
+    it('alive: the how-to is on the card for a hitman who has finished contracts before', function () {
+      const text = seasoned.view.textContent;
+      truthy(text.indexOf('take them to the person who placed this contract, get within 10 m of '
+        + 'that person, tap Deliver alive and hold for 30 seconds.') !== -1, text);
+      truthy(text.indexOf('The person who placed it is anonymous — use Message to agree where '
+        + 'to meet.') !== -1, text);
+      noClientNoPhoto(text, 'the how-to');
+    });
     const quietPlacer = await workingOn(heldFrom({ creatorName: undefined, creatorAnonymous: true }),
       { killPhotos: false, relay: false });
     it('alive, anonymous placer, no messages: nothing offers Message', function () {
@@ -9966,7 +10005,8 @@ async function main() {
       truthy(text.indexOf('Contracts on whitelisted jobs') !== -1, text);
       ['Olive Ward', 'Police', 'Colin Hart', 'SAST', 'Oona Fell', 'EMS',
        'Taken by 2 hitmen', 'Open — no hitman yet', 'Posted 25 min ago',
-       'Posted 3h ago', 'Posted 2 min ago', 'Lapses in 2h'].forEach(function (want) {
+       'Posted 3h ago', 'Posted 2 min ago', 'Lapses within 2h',
+       'Runs out within '].forEach(function (want) {
         truthy(text.indexOf(want) !== -1, '"' + want + '" is on screen: ' + text);
       });
       eq(app.view.all().filter(function (n) { return n.tagName === 'IMG'; }).length, 0,

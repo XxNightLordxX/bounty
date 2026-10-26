@@ -2038,14 +2038,25 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- Everything above is what the page has already volunteered. This asks
     -- for the rest: the requests it made, what came back, and anything it
     -- caught. The answer does not arrive in this report — it comes back
-    -- through the ordinary reporting path a moment later and lands in the
-    -- console and the audit log — so the report says so rather than leaving
-    -- a reader waiting for something that is not coming.
+    -- through the ordinary reporting path a moment later — so the report
+    -- says so rather than leaving a reader waiting for something that is
+    -- not coming. It goes where the rest of this answer went (App.expectDump):
+    -- the F8 console of the staff member who ran it, their open admin panel,
+    -- or the server console. Never only the server console: staff without
+    -- access to it never saw it, and with Config.Debug off it was the one
+    -- line a staff command still printed there.
     if subject then
-        if App and App.expectDump then App.expectDump(subject) end
+        local function toAsker(said)
+            if later then return later(said) end
+            local list = type(said) == 'table' and said or { said }
+            for i = 1, #list do
+                if source == 0 then Log.console(list[i]) else Log.debug(list[i]) end
+            end
+        end
+        if App and App.expectDump then App.expectDump(subject, toAsker) end
         TriggerClientEvent('crimson-hitman:askDiagnostics', subject)
         say(('  asked player %s\'s app for its own log; if it is open, the '
-            .. 'answer follows in the server console within a second or two.')
+            .. 'answer follows here within a second or two.')
             :format(tostring(subject)))
     end
 

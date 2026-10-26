@@ -39,11 +39,20 @@ Log.BOOT_KEPT = 120
 --- job failing every tick) is counted on the one it repeats, not kept twice.
 Log.KEPT = 40
 
+--- Log.always lines kept from after the start, in a list of their own: the
+--- debug lines a player can cause (a page fault report, worded by the page)
+--- cannot push money left for staff or a failed write out of what the
+--- diagnosis lists. Only another Log.always line takes the oldest one's
+--- place.
+Log.KEPT_ALWAYS = 40
+
 local problems = {}    -- { text = string, count = integer, printed = boolean }[] this start
 local reported = false -- whether this start has said its one summary line
 local booting = true   -- until Log.started(): lines go to `boot`
 local boot = {}        -- string[] what the start said, in order
-local recent = {}      -- { text = string, at = number|nil, times = integer }[] newest last
+local recent = {}      -- { text, key, at, times, seq }[] Log.debug lines, newest last
+local loud = {}        -- { text, key, at, times, seq }[] Log.always lines, newest last
+local seq = 0          -- the order lines were kept in, across both lists
 
 --- Whether Debug output is on, read at every line.
 ---@return boolean
@@ -57,27 +66,43 @@ local function now()
     return nil
 end
 
+--- A line as it is shown: FiveM's colour codes (^0 to ^9) taken out,
+--- until none is left. Names, reasons and what a page reports are
+--- player-written, and one ending in ^1 would colour everything printed
+--- after it; a single pass turned '^^11' into a live '^1'.
+---@param text any
+---@return string
+function Log.plain(text)
+    local out, n = tostring(text), 0
+    repeat out, n = out:gsub('%^%d', '') until n == 0
+    return out
+end
+
 --- The one print in the resource.
 local function emit(text)
     print(PREFIX .. text)
 end
 
---- Keep a line for the diagnosis.
-local function keep(text)
+--- Keep a line for the diagnosis, in `list` (recent or loud) bounded to
+--- `cap`. The same line again, or one with the same key (player-worded
+--- lines, kept as one counted entry), is counted on the one it repeats.
+local function keep(text, list, cap, key)
     if booting then
         if #boot < Log.BOOT_KEPT then boot[#boot + 1] = text end
         return
     end
-    for i = #recent, 1, -1 do
-        if recent[i].text == text then
-            local entry = table.remove(recent, i)
-            entry.times, entry.at = entry.times + 1, now()
-            recent[#recent + 1] = entry
+    seq = seq + 1
+    for i = #list, 1, -1 do
+        local entry = list[i]
+        if (key and entry.key == key) or (not key and not entry.key and entry.text == text) then
+            table.remove(list, i)
+            entry.text, entry.times, entry.at, entry.seq = text, entry.times + 1, now(), seq
+            list[#list + 1] = entry
             return
         end
     end
-    recent[#recent + 1] = { text = text, at = now(), times = 1 }
-    while #recent > Log.KEPT do table.remove(recent, 1) end
+    list[#list + 1] = { text = text, key = key, at = now(), times = 1, seq = seq }
+    while #list > cap do table.remove(list, 1) end
 end
 
 --- How many settings this start found that need attention, each problem
@@ -102,15 +127,20 @@ end
 --- or left for staff, and a write that failed or read back wrong.
 ---@param text string
 function Log.always(text)
+    text = Log.plain(text)
     emit(text)
-    keep(text)
+    keep(text, loud, Log.KEPT_ALWAYS)
 end
 
 --- Printed only with Debug on, and kept for the diagnosis either way.
 ---@param text string
-function Log.debug(text)
+---@param key string|nil lines with the same key are kept as one entry, the
+--- newest text counted on it: a line worded by a player (a page fault
+--- report) could otherwise fill what is kept with lines of its own
+function Log.debug(text, key)
+    text = Log.plain(text)
     if Log.debugOn() then emit(text) end
-    keep(text)
+    keep(text, recent, Log.KEPT, key)
 end
 
 --- A configuration problem. In full with Debug on; with it off, counted for
@@ -121,6 +151,7 @@ end
 ---@param text string as it is printed, without the [crimson-hitman] prefix
 ---@param count integer|nil how many settings it names (default 1)
 function Log.problem(text, count)
+    text = Log.plain(text)
     for i = 1, #problems do
         if problems[i].text == text then return end
     end
@@ -138,6 +169,7 @@ end
 --- no longer listed by the diagnosis, nor counted.
 ---@param text string as it was given to Log.problem
 function Log.dropProblem(text)
+    text = Log.plain(text)
     for i = #problems, 1, -1 do
         if problems[i].text == text then table.remove(problems, i) end
     end
@@ -171,12 +203,12 @@ end
 --- that ran it, whatever Debug says.
 ---@param line string
 function Log.console(line)
-    print(line)
+    print(Log.plain(line))
 end
 
 --- A start begins: what an earlier one found and said is forgotten.
 function Log.beginStart()
-    problems, boot, recent = {}, {}, {}
+    problems, boot, recent, loud = {}, {}, {}, {}
     reported, booting = false, true
 end
 
@@ -191,13 +223,19 @@ function Log.clearProblems()
 end
 
 --- What is kept, for the diagnosis: copies, so nothing outside changes them.
+--- `recent` is both lists of what came after the start, in the order the
+--- lines were said.
 ---@return table { problems = string[], count = integer, boot = string[], recent = { text, at, times }[], debug = boolean }
 function Log.view()
     local out = { problems = {}, count = counted(), boot = {}, recent = {}, debug = Log.debugOn() }
     for i = 1, #problems do out.problems[i] = problems[i].text end
     for i = 1, #boot do out.boot[i] = boot[i] end
-    for i = 1, #recent do
-        out.recent[i] = { text = recent[i].text, at = recent[i].at, times = recent[i].times }
+    local both = {}
+    for i = 1, #recent do both[#both + 1] = recent[i] end
+    for i = 1, #loud do both[#both + 1] = loud[i] end
+    table.sort(both, function(a, b) return a.seq < b.seq end)
+    for i = 1, #both do
+        out.recent[i] = { text = both[i].text, at = both[i].at, times = both[i].times }
     end
     return out
 end

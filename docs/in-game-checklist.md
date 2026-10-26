@@ -32,6 +32,13 @@ A staff account that can adjust money and spawn items makes this much faster.
       F8, nothing in chat, and a notice says *Printed to your F8 console*.
       Typed in chat as `/ch-diag`, the same. A player without it is told "Not
       authorised" and how to grant it, in F8 too
+- [ ] With another character's app open, run `ch-diag <their id>` in F8: the
+      report says the answer follows here, and a moment later their app's log
+      (*player N's app sent its log …*, each line *page: …*) prints in your F8,
+      nothing in the server console. **Run the diagnosis** in the admin panel
+      with their id: the log appears under the report there instead
+- [ ] As a player, type `/cleanse` in chat: its answer (*Nothing is out on
+      you.*, or the list) is in chat, not F8, with no F8 notice
 - [ ] **mysql mode only** (`Config.Database.Mode = 'mysql'`, on a copy of the
       server): the console says `started in mysql mode`; the `crimson_*`
       tables exist in the database as InnoDB and `utf8mb4` (`SHOW TABLE STATUS
@@ -93,9 +100,12 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] Place a contract on the SAST character from a civilian (named, with a
       buyout price). Once their alert has arrived (or at once, with the
       threat advisory on), it is under **Contracts on you**: their name and
-      job, *Posted … ago*, *Open — no hitman yet*, *Lapses in …* and
-      **Buy out — $…**. The FIB character sees it under **Contracts on
-      whitelisted jobs**, with no buyout button
+      job, *Posted … ago*, *Open — no hitman yet*, *Lapses within …* (the
+      contract's lifetime, about 48h as shipped) and **Buy out — $…**. The
+      FIB character sees it under **Contracts on whitelisted jobs**, with
+      *Runs out within …* and no buyout button
+- [ ] Log the civilian who placed it off for a few minutes, then back on:
+      neither officer's *within …* jumps up when they come back
 - [ ] Neither screen shows the placer's name, an operative, the reason, a
       location, a face or the reward. A contract on a civilian is not on it,
       and nothing says how many there are
@@ -222,14 +232,19 @@ and nothing mentions a photo while `Config.Completion.KillPhotos` is off.
 - [ ] The accept dialog says *This contract only pays when you bring the
       target, alive, to the person who placed it. Killing them does not
       count.*
-- [ ] The hitman's card has **Deliver alive** alone, and a hitman who has
-      never finished one reads *Bring them in alive: cuff them or get them
+- [ ] The hitman's card has **Deliver alive** alone, and reads (for a
+      hitman with jobs behind them too, not only a first one) *Bring them in alive: cuff them or get them
       into your vehicle, take them to the person who placed this contract, get
       within 12 m of that person, tap Deliver alive and hold for 30 seconds.
       Killing them does not count — they respawn and the contract stays
       open.* On an anonymous contract it adds *The person who placed it is
       anonymous — use Message to agree where to meet.*; on a named one it
       names them
+- [ ] As the hitman, open **Message** on that contract: the thread reads
+      *with the person who placed it*, and the placer's messages, their phone
+      notices (*The person who placed it: …*) and a call request (*The person
+      who placed a contract you took wants to speak with you about it.*) never
+      say "Client"
 - [ ] As the placer, once a hitman takes it: the phone notice and your card
       under Mine say *A hitman took your contract. They'll bring the target to
       you alive — stay in the city and watch your messages.* When the

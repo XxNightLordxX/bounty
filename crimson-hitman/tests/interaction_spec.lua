@@ -429,8 +429,55 @@ describe('masked relay', function()
 
         local thread = s.comms.read(f.hitman, c.id, nil)
         eq(#thread, 2)
-        eq(thread[1].alias, 'Client')
+        eq(thread[1].alias, 'The person who placed it')
         eq(thread[2].alias, 'Operative #1')
+    end)
+
+    --- A hitman on an alive-only contract arranges the handover here, and
+    --- was shown "Client" everywhere: the thread, every message, the notice
+    --- of each one and of a call. Nobody new to the app knew who that was.
+    it('calls the person who placed it that, never "Client", in the thread, its notices and calls', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, anonymous = true,
+        })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+
+        local mine = s.comms.threads(f.hitman, c.id)
+        eq(#mine, 1)
+        eq(mine[1].alias, 'The person who placed it', 'the hitman\'s thread')
+
+        Natives.calls.notifications = {}
+        local theirs = s.comms.threads(f.creator, c.id)
+        truthy(s.comms.send(f.creator, c.id, theirs[1].handle, 'meet me at the pier'))
+        local said = Natives.calls.notifications[#Natives.calls.notifications]
+        truthy(said, 'the hitman was told')
+        eq(said.content, 'The person who placed it: meet me at the pier', 'the message notice')
+
+        local read = s.comms.read(f.hitman, c.id, nil)
+        eq(read[1].alias, 'The person who placed it', 'the message signed')
+
+        -- One stored before the placer was called that is read the same.
+        s.storage.writeMessage({ contract_id = c.id, thread_id = c.id .. '|HITMAN01',
+            from_cid = 'CREATOR1', from_alias = 'Client', body = 'old one', sent_at = os.time() })
+        local again = s.comms.read(f.hitman, c.id, nil)
+        eq(again[#again].alias, 'The person who placed it', 'a message from before')
+
+        -- And a call, named the same way, with what it is about. A named
+        -- hitman can be rung, so the placer's request is sent to them.
+        s.comms.resetCallCache()
+        Natives.calls.notifications = {}
+        truthy(s.comms.requestCall(f.creator, c.id, theirs[1].handle))
+        local call = Natives.calls.notifications[#Natives.calls.notifications]
+        truthy(call, 'the hitman was told of the call')
+        eq(call.content, 'The person who placed a contract you took wants to speak with you about it.')
+
+        for _, text in ipairs({ mine[1].alias, said.content, read[1].alias, call.content }) do
+            falsy(text:find('Client', 1, true), 'a bare "Client": ' .. text)
+        end
     end)
 
     it('never returns the other partys identity', function()

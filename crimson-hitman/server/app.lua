@@ -528,22 +528,30 @@ function App.recentPageFaults()
     return out
 end
 
---- Pages a staff member has asked for their log, and until when the answer
---- is taken. [source] = os.time() deadline.
+--- Pages a staff member has asked for their log, until when the answer is
+--- taken, and where it goes: { untilAt = os.time() deadline, deliver =
+--- fun(lines: string[]) } by source.
 ---
 --- The page says it was asked, and the page is a browser any player can
 --- script: the printed log was a way to write to the server console on
---- demand, several lines at a time. It prints only for a page that was.
+--- demand, several lines at a time. It goes anywhere only for a page that
+--- was, and then only to whoever asked: their F8 console, their open admin
+--- panel, or the server console that ran the diagnosis.
 local dumpsAsked = {}
 local DUMP_ANSWER_SECONDS = 30
 
---- Note that this player's page has been asked for its log.
-function App.expectDump(src)
+--- Note that this player's page has been asked for its log, and where its
+--- answer goes.
+---@param src number|nil the player whose page was asked
+---@param deliver fun(lines: string[])|nil where the answer goes: the
+--- requester's F8, panel or console (Admin.diagnose). Without it the answer
+--- is kept for the diagnosis and printed only with Config.Debug on.
+function App.expectDump(src, deliver)
     local now = os.time()
-    for asked, until_ in pairs(dumpsAsked) do
-        if until_ < now then dumpsAsked[asked] = nil end
+    for asked, entry in pairs(dumpsAsked) do
+        if entry.untilAt < now then dumpsAsked[asked] = nil end
     end
-    if src then dumpsAsked[src] = now + DUMP_ANSWER_SECONDS end
+    if src then dumpsAsked[src] = { untilAt = now + DUMP_ANSWER_SECONDS, deliver = deliver } end
 end
 
 --------------------------------------------------------------------------
@@ -1261,30 +1269,57 @@ function App.register()
         local stack = Util.sanitizeText(payload.stack, 900)
         local build = Util.sanitizeText(payload.build, 40)
 
-        -- The log a staff member asked for with the diagnosis, which was
-        -- promised to them in the server console: printed whatever
-        -- Config.Debug says, once, as a command's answer is. One line per
-        -- event, as the page recorded them.
+        -- The log a staff member asked for with the diagnosis: sent to
+        -- whoever asked (App.expectDump), once, as the rest of the
+        -- command's answer is. Never Log.always: that is for money and
+        -- failed writes, and a page's log is neither.
+        local asked = dumpsAsked[actor.source]
         local requested = what == 'page diagnostics' and where == 'requested'
-            and (dumpsAsked[actor.source] or 0) >= os.time()
+            and asked ~= nil and asked.untilAt >= os.time()
         if requested then dumpsAsked[actor.source] = nil end
-        local say = requested and Log.always or Log.debug
 
-        -- Audited always, and kept for the diagnosis (app faults, below), so
-        -- with Config.Debug off a fault still reaches somebody who can fix
-        -- the page without a console line per report.
-        say(('the app reported a fault: %s (%s, build %s, %s)')
-            :format(what, where or 'nowhere named', build or 'unknown', actor.cid))
-
-        -- The stack only under Config.Debug, or when it was asked for. It is
-        -- what actually locates the fault, and it is also several lines of
-        -- console per report — which on a busy server, from a page that
-        -- breaks for everyone at once, is the console gone. Kept in the audit
-        -- row either way, so turning the switch on is about where it is
-        -- convenient to read, not about whether it was recorded.
-        if (Config.Debug or requested) and stack and stack ~= '' then
+        -- Everything here was written by a browser any player can script,
+        -- so every line it makes is marked as the page's (shared/log.lua
+        -- takes colour codes out of each): a line of its stack could
+        -- otherwise read as one of this resource's own.
+        local stackLines = {}
+        if stack and stack ~= '' then
             for line in (stack .. ' || '):gmatch('(.-) || ') do
-                if line ~= '' then say(('  %s'):format(line)) end
+                if line ~= '' then stackLines[#stackLines + 1] = line end
+            end
+        end
+
+        if requested then
+            local lines = { ('player %s\'s app sent its log (build %s, %s):')
+                :format(tostring(actor.source), build or 'unknown', actor.cid) }
+            for i = 1, #stackLines do lines[#lines + 1] = '  page: ' .. stackLines[i] end
+            if #stackLines == 0 then lines[#lines + 1] = '  page: nothing recorded' end
+            for i = 1, #lines do lines[i] = Log.plain(lines[i]) end
+            local sent = false
+            if type(asked.deliver) == 'function' then
+                sent = pcall(asked.deliver, lines)
+            end
+            if not sent then
+                for i = 1, #lines do Log.debug(lines[i], 'page-log') end
+            end
+        else
+            -- Kept as one counted entry however it is worded: one player
+            -- sending reports of their own wording must not push anything
+            -- else out of what the diagnosis lists (shared/log.lua).
+            Log.debug(('the app reported a fault: %s (%s, build %s, %s)')
+                :format(what, where or 'nowhere named', build or 'unknown', actor.cid), 'page-fault')
+
+            -- The stack only under Config.Debug. It is what actually locates
+            -- the fault, and it is also several lines of console per report
+            -- — which on a busy server, from a page that breaks for everyone
+            -- at once, is the console gone. Kept in the audit row either way,
+            -- so turning the switch on is about where it is convenient to
+            -- read, not about whether it was recorded.
+            if Config.Debug then
+                for i = 1, #stackLines do
+                    Log.debug(('  page stack from %s: %s'):format(actor.cid, stackLines[i]),
+                        'page-fault-stack')
+                end
             end
         end
 

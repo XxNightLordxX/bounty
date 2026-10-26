@@ -149,12 +149,17 @@ describe('a staff command\'s answer', function()
         eq(#out.notices, 1)
     end)
 
-    it('goes to F8 for the buyout command too', function()
+    -- The players' buyout command is not one of Config.Admin.Commands: a
+    -- target the app is closed to looks for its answer where they typed it.
+    it('leaves the players\' buyout command answering in chat, not in F8', function()
         stack()
         local out = run(2, 'bailout')
-        truthy(#out.f8 > 0, 'it answered')
-        eq(#out.chat, 0, 'not in chat')
-        eq(#out.notices, 1)
+        eq(#out.f8, 0, 'nothing in F8')
+        eq(out.events, 0)
+        eq(#out.notices, 0, 'no "Printed to your F8 console" notice')
+        eq(#out.chat, 1, 'its answer in chat')
+        eq(out.chat[1].target, 2, 'to whoever ran it')
+        eq(out.chat[1].args[1].args[2], 'Nothing is out on you.')
     end)
 
     it('takes the colour codes out of what players wrote', function()
@@ -170,6 +175,99 @@ describe('a staff command\'s answer', function()
         local console = table.concat(run(0, 'whois', { c.id }).console, '\n')
         falsy(console:find('%^%d'), 'or the server console: ' .. console)
         eq(s.bridges.plainLine('a^1b^9c^x^'), 'abc^x^', 'only ^ and a digit')
+    end)
+
+    -- One pass took the inner code out of '^^11' and left the outer one
+    -- live: '^1Vic' in staff F8, colouring the rest of the line.
+    it('takes nested colour codes out until none is left', function()
+        local s, f = stack()
+        eq(s.bridges.plainLine('^^11Dana ^^^222x'), 'Dana x')
+        eq(s.bridges.plainLine('^^^111Vic'), 'Vic')
+        eq(s.bridges.plainLine('^^1'), '^', 'a caret with no digit after it is text')
+        Env.players[1].PlayerData.charinfo.firstname = '^^11Vic'
+        f.creator = s.identity.resolve(1)
+        local c = place(s, f)
+        local said = table.concat(run(8, 'whois', { c.id }).f8, '\n')
+        truthy(said:find('Vic Marlowe', 1, true), said)
+        falsy(said:find('%^%d'), 'a colour code reached F8: ' .. said)
+        local console = table.concat(run(0, 'whois', { c.id }).console, '\n')
+        falsy(console:find('%^%d'), 'or the server console: ' .. console)
+    end)
+end)
+
+describe('the page log the diagnosis asks a player\'s app for', function()
+    --- Player 2's page answering what it was asked, as it does.
+    local function pageAnswers(src, stackText)
+        _G.source = src
+        local ok, err = pcall(Env.events['crimson-hitman:pageError'], {
+            what = 'page diagnostics', where = 'requested', stack = stackText, build = 'test' })
+        _G.source = nil
+        truthy(ok, tostring(err))
+    end
+
+    local function sent(name, target)
+        local out = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == name then
+                eq(event.target, target, 'sent to whoever asked, and nobody else')
+                out[#out + 1] = event
+            end
+        end
+        return out
+    end
+
+    it('goes to the F8 console of the staff member who asked, never the server console', function()
+        local s = stack()
+        s.app.init(s)
+        Config.Debug = false
+        local asked = run(6, 'diagnose', { '2' })
+        local report = table.concat(asked.f8, '\n')
+        truthy(report:find('the answer follows here', 1, true), report)
+        falsy(report:find('server console within', 1, true), report)
+
+        Env.clientEvents, Env.console = {}, {}
+        pageAnswers(2, '1.0s post list || 1.2s ^^11reply list ok')
+        local events = sent('crimson-hitman:commandOutput', 6)
+        eq(#events, 1, 'the whole log in one event')
+        local said = table.concat(events[1].args[1], '\n')
+        truthy(said:find('page: 1.0s post list', 1, true), said)
+        truthy(said:find('page: 1.2s reply list ok', 1, true), said)
+        falsy(said:find('%^%d'), 'a colour code reached F8: ' .. said)
+        eq(#Env.console, 0, 'nothing in the server console: ' .. table.concat(Env.console, '\n'))
+    end)
+
+    it('goes to the open admin panel of the staff member who ran the diagnosis there', function()
+        local s = stack()
+        s.app.init(s)
+        Config.Debug = false
+        local reply = ask(6, 'diag', { subject = 2 })
+        truthy(reply and reply.ok, tostring(reply and reply.message))
+        local report = table.concat(reply.data.lines, '\n')
+        truthy(report:find('the answer follows here', 1, true), report)
+
+        Env.clientEvents, Env.console = {}, {}
+        pageAnswers(2, 'first event || second event')
+        local lines = {}
+        for _, event in ipairs(sent('crimson-hitman:adminPush', 6)) do
+            eq(event.args[1].kind, 'diag')
+            lines[#lines + 1] = event.args[1].line
+        end
+        local said = table.concat(lines, '\n')
+        truthy(said:find('page: first event', 1, true) and said:find('page: second event', 1, true), said)
+        eq(#sent('crimson-hitman:commandOutput', 6), 0, 'not to F8')
+        eq(#Env.console, 0, 'nor the server console')
+    end)
+
+    it('is printed in the server console when the console asked, whatever Debug says', function()
+        local s = stack()
+        s.app.init(s)
+        Config.Debug = false
+        run(0, 'diagnose', { '2' })
+        Env.clientEvents, Env.console = {}, {}
+        pageAnswers(2, 'first event || second event')
+        local said = table.concat(Env.console, '\n')
+        truthy(said:find('page: first event', 1, true) and said:find('page: second event', 1, true), said)
+        eq(#sent('crimson-hitman:commandOutput', 6), 0)
     end)
 end)
 

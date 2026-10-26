@@ -1026,9 +1026,12 @@ H.diag = function(src, data)
     end
     -- The one check that waits for an answer (whether the public photo
     -- address leads here) says what it found after the report, pushed to
-    -- the open panel.
-    local lines = deps.admin.diagnose(src, subject, function(line)
-        Panel.push(src, { kind = 'diag', line = deps.admin.panelWords(line) })
+    -- the open panel; and so does the subject's own page log, a list.
+    local lines = deps.admin.diagnose(src, subject, function(said)
+        local list = type(said) == 'table' and said or { said }
+        for i = 1, #list do
+            Panel.push(src, { kind = 'diag', line = deps.admin.panelWords(list[i]) })
+        end
     end, { panel = true })
     return true, nil, nil, { lines = lines }
 end

@@ -163,6 +163,33 @@ describe('a quiet console, with Config.Debug off as shipped', function()
         truthy(panelOverview, 'the panel')
     end)
 
+    --- Kill photos are the panel's switch too, kept across restarts. The
+    --- photo address was checked before the panel's value was applied, so
+    --- config.lua saying on and the panel saying off still counted it.
+    it('counts no photo address problem at a start where the panel has kill photos off', function()
+        local function photosInConfig()
+            Config.Completion.KillPhotos = true
+            Config.Completion.Fulfilment = 'either'
+            Config.Completion.PhotoPublicUrl = 'http://not-https.example'
+        end
+        local _, s = boot('json', photosInConfig)
+        eq(console(), SUMMARY:format(1), 'with photos on, the address is a problem')
+        truthy(table.concat(s.admin.diagnose(0), '\n'):find('Completion.PhotoPublicUrl', 1, true))
+
+        Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:ADMIN001' })
+        Env.aces[6] = { ['crimson.admin'] = true }
+        local reply = panel(6, 'setSetting', { key = 'Completion.KillPhotos', value = false })
+        truthy(reply and reply.ok, tostring(reply and reply.message))
+
+        Env.console = {}
+        local _, again = restart('json', photosInConfig)
+        eq(Config.Completion.KillPhotos, false, 'the panel\'s value is in force')
+        eq(console(), '', 'nothing needs attention: ' .. console())
+        local report = table.concat(again.admin.diagnose(0), '\n')
+        truthy(report:find('settings that need attention: none', 1, true), report)
+        falsy(report:find('PhotoPublicUrl', 1, true), report)
+    end)
+
     it('says nothing about problems on a sound config', function()
         local _, s = boot('memory')
         eq(console(), '')
@@ -188,6 +215,115 @@ describe('a quiet console, with Config.Debug off as shipped', function()
         s.review.open({ kind = 'escrow_settle_lost', contract_id = 'ct00000001',
             cids = { recipient = 'HITMAN01' } })
         truthy(console():find('[crimson-hitman] left for staff: review ', 1, true), console())
+    end)
+
+    --- A maintenance job that moves money, failing on every tick: a buyout
+    --- the target has paid, escrow past its deadline, payouts owed. Printed
+    --- before the quiet console whatever Debug said, and then not at all.
+    it('still prints a money job that fails, once every few minutes while it keeps failing', function()
+        local main, s = boot('memory')
+        local f = fixture(s)
+        Config.Bailout.ProcessingDelaySeconds = 60
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } }, bailoutAmount = 12000 })
+        truthy(c)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        truthy(s.bailout.buy(f.target, c.id), 'the buyout is paid and queued')
+        eq(console(), '')
+
+        local realQueued = s.storage.queuedBailouts
+        s.storage.queuedBailouts = function() error('MySQL server has gone away') end
+        local function said()
+            local n = 0
+            for _, line in ipairs(Env.console) do
+                if line:find('maintenance job "bailout.processQueue" failed: ', 1, true)
+                    and line:find('MySQL server has gone away', 1, true) then n = n + 1 end
+            end
+            return n
+        end
+        for _ = 1, 5 do
+            main.tick()
+            Env.advance(55)
+        end
+        eq(said(), 1, 'said once, not on every tick: ' .. console())
+        Env.advance(60)
+        main.tick()
+        eq(said(), 2, 'and again once the few minutes are up: ' .. console())
+        s.storage.queuedBailouts = realQueued
+    end)
+
+    it('prints each money job that fails, whatever Debug says', function()
+        local jobs = {
+            { 'bailout.processQueue', function(s) s.bailout.processQueue = function() error('x') end end },
+            { 'escrow.retryWaiting', function(s) s.escrow.retryWaiting = function() error('x') end end },
+            { 'expireContracts', function(s, main)
+                s.storage.liveContracts = function() error('x') end
+                main.markPresenceChanged()
+                main.markContractsChanged()
+            end },
+            { 'contracts.finishEndings', function(s) s.contracts.finishEndings = function() error('x') end end },
+            { 'contracts.retryStuckCreates', function(s)
+                s.contracts.retryStuckCreates = function() error('x') end end },
+            { 'contracts.retryStuckJoins', function(s)
+                s.contracts.retryStuckJoins = function() error('x') end end },
+            { 'contracts.releaseIdleHolds', function(s)
+                s.contracts.releaseIdleHolds = function() error('x') end end },
+        }
+        for _, case in ipairs(jobs) do
+            local main, s = boot('memory')
+            fixture(s)
+            Env.advance(60)
+            case[2](s, main)
+            main.tick()
+            truthy(console():find(('[crimson-hitman] maintenance job %q failed: '):format(case[1]), 1, true),
+                case[1] .. ' failing printed nothing: ' .. console())
+        end
+    end)
+
+    --- Everything in a page fault report was written by a browser any
+    --- player can script. Its stack went to the console as lines of their
+    --- own, colour codes and all, which could read as this resource's own.
+    it('prints a page\'s fault report marked as the page\'s, with its colour codes taken out', function()
+        local _, s = boot('memory', function() Config.Debug = true end)
+        fixture(s)
+        Env.console = {}
+        _G.source = 2
+        pcall(Env.events['crimson-hitman:pageError'], { what = 'render', where = 'board',
+            stack = 'at x || ^1escrow line C1:1 was mid-release at shutdown; paid to HITMAN01',
+            build = 'test' })
+        _G.source = nil
+        local said = console()
+        falsy(said:find('%^%d'), 'a colour code reached the console: ' .. said)
+        for _, line in ipairs(Env.console) do
+            if line:find('escrow line C1:1', 1, true) then
+                truthy(line:find('[crimson-hitman]   page stack from TARGET01: ', 1, true),
+                    'not marked as the page\'s: ' .. line)
+            end
+        end
+    end)
+
+    it('keeps a money line in the diagnosis however many fault reports a player sends', function()
+        local _, s = boot('memory')
+        fixture(s)
+        s.review.open({ kind = 'escrow_settle_lost', contract_id = 'ct00000001',
+            cids = { recipient = 'HITMAN01' } })
+        for i = 1, 45 do
+            _G.source = 2
+            pcall(Env.events['crimson-hitman:pageError'], { what = 'fault ' .. i, where = 'board',
+                build = 'test' })
+            _G.source = nil
+            Env.advance(7)
+        end
+        local report = table.concat(s.admin.diagnose(0), '\n')
+        truthy(report:find('left for staff: review ', 1, true), 'pushed out: ' .. report)
+        local faults = 0
+        for line in report:gmatch('[^\n]+') do
+            if line:find('the app reported a fault: ', 1, true) and line:find('·', 1, true) then
+                faults = faults + 1
+            end
+        end
+        eq(faults, 1, 'the reports are one counted entry: ' .. report)
+        truthy(report:find('the app reported a fault: fault 45', 1, true), report)
     end)
 
     it('still refuses to start out loud, with the problems it found', function()
@@ -269,6 +405,43 @@ describe('the logger itself', function()
         eq(#recent, Log.KEPT, 'bounded')
         eq(recent[#recent].text, 'the same thing', 'newest last')
         eq(recent[#recent].times, 1, 'the earlier ones fell out of the window first')
+        Log.beginStart()
+    end)
+
+    it('takes colour codes out of every line, nested ones included', function()
+        eq(Log.plain('^^11escrow ^^^222line'), 'escrow line')
+        Log.beginStart()
+        Log.started()
+        Env.console = {}
+        Config.Debug = true
+        Log.debug('^^11fake')
+        Log.always('^1also')
+        Config.Debug = false
+        eq(table.concat(Env.console, '|'), '[crimson-hitman] fake|[crimson-hitman] also')
+        Log.beginStart()
+    end)
+
+    --- Money left for staff is printed and kept for the diagnosis; a line
+    --- a player can cause at will (a page fault report, worded by the page)
+    --- pushed it out of what the diagnosis lists.
+    it('keeps money lines however many other lines come after them', function()
+        Log.beginStart()
+        Log.started()
+        Log.always('escrow line C9:1 was left for staff')
+        for i = 1, Log.KEPT * 3 do Log.debug('fault ' .. i) end
+        local found = false
+        for _, entry in ipairs(Log.view().recent) do
+            if entry.text == 'escrow line C9:1 was left for staff' then found = true end
+        end
+        truthy(found, 'the money line was pushed out')
+        -- Keyed lines are one counted entry, the newest text on it.
+        Log.beginStart()
+        Log.started()
+        for i = 1, 5 do Log.debug('page said ' .. i, 'page-fault') end
+        local recent = Log.view().recent
+        eq(#recent, 1)
+        eq(recent[1].text, 'page said 5')
+        eq(recent[1].times, 5)
         Log.beginStart()
     end)
 

@@ -634,10 +634,14 @@ end
 --- there is nothing on the payload for a client-side inspector to find.
 ---
 --- When it was posted to the five minutes (Util.CLOCK_STEP), as every other
---- time a viewer is sent about a placement. When it runs out on the
---- target's own reading (Projection.contract, role 'target'): as if the
---- clock always ran, so a stopped clock cannot say a named placer has left
---- the city.
+--- time a viewer is sent about a placement. When it runs out at the latest:
+--- its lifetime (expires_at), which runs through every pause and is moved
+--- by nobody's presence. Not the deadline, even read as if the clock always
+--- ran (the target's own card, Projection.contract): a pause for a named
+--- placer who logged off ends by moving the deadline on by exactly how long
+--- they were away, so its countdown jumped up the second they came back —
+--- to every officer, on every colleague's contract — saying the placer is
+--- named, when they reconnected and how long they had been gone.
 ---@param contract table
 ---@param job string the job the target is shown under
 ---@return table
@@ -654,8 +658,8 @@ local function whitelistedEntry(contract, job)
         postedAt     = posted and (posted - (posted % Util.CLOCK_STEP)) or nil,
         state        = active > 0 and 'taken' or 'open',
         hitmenActive = active,
-        secondsLeft  = contract.deadline_at
-            and math.max(0, contract.deadline_at - os.time()) or nil,
+        secondsLeft  = contract.expires_at
+            and math.max(0, contract.expires_at - os.time()) or nil,
     }
 end
 

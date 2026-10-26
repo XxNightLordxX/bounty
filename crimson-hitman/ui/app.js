@@ -477,8 +477,8 @@
     // the figure where the reply or the Place form carries it (failText);
     // this is what is left when neither does.
     reward_too_small: 'A contract here has to be worth more in money than that: '
-      + 'cash, bank and dirty money across every payout. Items and weapons do '
-      + 'not count towards it.',
+      + 'cash, bank and dirty money in the reward. Items and weapons do not '
+      + 'count towards it.',
     // Anonymous only: the item would go to the hitman with its own record
     // of whose it is, so it is the item to take out, not the figures.
     item_names_owner: 'One of those items carries your name or number, and '
@@ -1432,6 +1432,8 @@
       var least = Number(result.data && result.data.min)
         || Number(state.wallet && state.wallet.caps && state.wallet.caps.minValue) || 0;
       if (least > 0) { return minRewardText(least); }
+      return 'A contract here has to be worth more in money than that: ' + moneyCounted()
+        + ' Items and weapons do not count towards it.';
     }
 
     // A kill on a contract only a live handover completes: what to do
@@ -1446,8 +1448,15 @@
      for placing under it or taking a reward back out below it. */
   function minRewardText(least) {
     return 'A contract here has to be worth at least ' + money(least) + ' in money: '
-      + 'cash, bank and dirty money across every payout. Items and weapons do '
-      + 'not count towards it.';
+      + moneyCounted() + ' Items and weapons do not count towards it.';
+  }
+
+  /* What counts as money in a reward. "Across every payout" only where a
+     contract can be collected more than once (Config.Limits.MaxPayoutSlots):
+     at 1, as shipped, the form says nothing about further collections. */
+  function moneyCounted() {
+    return 'cash, bank and dirty money '
+      + (slotCeiling() > 1 ? 'across every payout.' : 'in the reward.');
   }
 
   /* ---------- actions already running ----------------------------------
@@ -2010,9 +2019,10 @@
       var refused = state.lastRefusal[contract.id];
       if (refused) { row.appendChild(el('div', 'hint is-refusal', refused)); }
 
-      // How each one is done, for a hitman who has never finished a
-      // contract. Every rule was only learned by tapping and failing, in a
-      // notice that is gone in seconds. Worded for this contract's rule.
+      // How it is done: on an alive-only contract always, otherwise for a
+      // hitman who has never finished one. Every rule was only learned by
+      // tapping and failing, in a notice that is gone in seconds. Worded
+      // for this contract's rule.
       var firstJob = howToFinish(contract);
       if (firstJob) { row.appendChild(firstJob); }
       var held = exclusiveReminder(contract);
@@ -2618,12 +2628,16 @@
     chooseAnonymity();
   }
 
-  /* The rules of finishing, shown until the hitman has finished one. Their
-     record comes with the ledger, which loads with every refresh; until it
-     has, nothing is drawn rather than a line that vanishes a moment later. */
+  /* The rules of finishing. On a contract only a live handover completes,
+     on every card, whoever is holding it: the distance, the hold, who the
+     target is brought to and how to find them are what this contract asks,
+     not a lesson a hitman learns once — one who had finished contracts
+     under 'either' was shown only the "Alive only" chip. A contract a kill
+     can finish too keeps the first-job hint it had, shown until the hitman
+     has finished one. Their record comes with the ledger, which loads with
+     every refresh; until it has, that one is not drawn rather than a line
+     that vanishes a moment later. */
   function howToFinish(contract) {
-    var record = state.ledger && state.ledger.record;
-    if (!record || record.completed !== 0) { return null; }
     // On a contract a kill cannot finish, the kill's half of this told a
     // new hitman the one thing that would never pay. What it does instead
     // is said, since a kill still happens: they come back, and the contract
@@ -2632,6 +2646,8 @@
     if (aliveOnly(contract)) {
       return el('div', 'hint', deliverAliveSteps() + placerLine(contract));
     }
+    var record = state.ledger && state.ledger.record;
+    if (!record || record.completed !== 0) { return null; }
     // A contract a kill can finish too keeps the words it had.
     var kidnap = settings().kidnap || {};
     var deliver = 'restrain them or get them into your vehicle, bring them '
@@ -3683,6 +3699,10 @@
       return { text: 'Clock stopped · ' + left + ' left', warn: false };
     }
     var close = seconds < (Number(settings().stakeWindowMinutes) || 30) * 60;
+    if (contract.atLatest) {
+      return { text: (contract.role === 'target' ? 'Lapses within ' : 'Runs out within ') + left,
+               warn: false };
+    }
     if (contract.role === 'creator') { return { text: 'Runs out in ' + left, warn: close }; }
     if (contract.role === 'target') { return { text: 'Lapses in ' + left, warn: close }; }
     if (contract.role === 'hitman' && contract.penaltyAmount > 0 && close) {
@@ -4998,7 +5018,7 @@
      other whitelisted-job members. Each entry is what the server sent and
      no more, which is what the law enforcement advisory already says: who
      it is on and their job, when it was posted, open or taken, and when it
-     runs out. No photo is drawn, ever: the monogram stands where a face
+     runs out at the latest. No photo is drawn, ever: the monogram stands where a face
      would be. On a contract on them, and only there, the buyout On me
      offers a civilian target (appendBuyout). */
   function viewJobView(view) {
@@ -5212,9 +5232,14 @@
        the wrong one. The target names the contract; the line under it
        names the other party. Each is one line and cuts off rather than
        wrapping, so a long name cannot push Back and Call apart. */
-    var withWhom = t.thread && t.thread.alias
-      ? t.thread.alias + (t.thread.name ? ' (' + t.thread.name + ')' : '')
-      : (t.contract.role === 'hitman' ? 'the person who placed it' : null);
+    // A hitman's thread is with the person who placed the contract, said
+    // as that: the server called them "Client", which a player new to the
+    // app could not place.
+    var placerSide = t.contract.role === 'hitman';
+    var withWhom = placerSide ? 'the person who placed it'
+      : t.thread && t.thread.alias
+        ? t.thread.alias + (t.thread.name ? ' (' + t.thread.name + ')' : '')
+        : null;
     var about = el('div', 'hint');
     if (t.contract.targetName) {
       about.appendChild(el('div', 'about', t.contract.targetName));
@@ -5273,7 +5298,10 @@
     var thread = el('div', 'thread');
     t.messages.forEach(function (m) {
       var msg = el('div', 'msg' + (m.mine ? ' mine' : ''));
-      msg.appendChild(el('div', 'who', m.alias));
+      // Signed by the placer, to a hitman: a message stored before the
+      // server named them so still carries "Client".
+      msg.appendChild(el('div', 'who', placerSide && !m.mine && (!m.alias || m.alias === 'Client')
+        ? 'The person who placed it' : m.alias));
       msg.appendChild(el('div', null, m.body));
       thread.appendChild(msg);
     });
@@ -6348,7 +6376,7 @@
     for (var held in labels) {
       var have = Number(wallet[held]);
       if (need[held] > 0 && isFinite(have) && need[held] > have) {
-        return say(labels[held] + ' across every payout'
+        return say(labels[held] + (numbered ? ' across every payout' : ' in the reward')
           + (bonusPct > 0 ? ', with the ' + bonusPct + '% kidnapping bonus taken now on top,' : '')
           + (creatorFee > 0 && held === creatorFeeAccount
             ? ' plus the ' + money(creatorFee) + ' anonymity fee,' : '')
@@ -6379,8 +6407,9 @@
     var maxLines = (state.wallet && state.wallet.caps && state.wallet.caps.maxLines) || Infinity;
     if (lines > maxLines) {
       return say('This contract holds ' + lines + ' separate rewards and this '
-        + 'server takes at most ' + maxLines + '. Use fewer payouts, or take '
-        + 'some of the items and weapons back out.');
+        + 'server takes at most ' + maxLines + '. ' + (numbered
+          ? 'Use fewer payouts, or take some of the items and weapons back out.'
+          : 'Take some of the items and weapons back out.'));
     }
 
     var protectedTarget = state.draft.targetProtected === true;
@@ -7289,6 +7318,12 @@
     state.jobView = data;
     asList(data.onYou).forEach(function (entry) {
       if (entry && typeof entry === 'object') { entry.role = 'target'; }
+    });
+    // Each clock here is the contract's lifetime, the latest it can run
+    // (Projection.whitelistedView): said as "within", since it may end
+    // sooner.
+    asList(data.onYou).concat(asList(data.colleagues)).forEach(function (entry) {
+      if (entry && typeof entry === 'object') { entry.atLatest = true; }
     });
     stampClocks(data.onYou);
     stampClocks(data.colleagues);

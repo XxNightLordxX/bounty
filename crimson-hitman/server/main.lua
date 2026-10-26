@@ -431,6 +431,37 @@ end
 ---@return boolean ok
 ---@return string[]|nil fatal with `quiet`
 ---@return string[]|nil warn with `quiet`
+--- The public address photos kept on this server are saved to a phone's
+--- Photos from. Unset is the default (web_baseUrl is used); anything else
+--- must be an https:// address the phone can load, and one that is not is
+--- dropped, with the reason, rather than handed to phones as links that
+--- lead nowhere.
+---
+--- Not with kill photos off (Config.Completion.KillPhotos): nothing is
+--- served then, and a warning about the address would send the owner to
+--- set up something that is never used. That switch is also the admin
+--- panel's, kept across restarts, so a start checks this after the panel's
+--- settings are applied (StartCrimsonHitman): read before, a config.lua
+--- saying on and a panel saying off still counted the address as a setting
+--- that needs attention. It is checked again where it is read
+--- (Photos.publicBase), so turning photos on later is safe.
+---@param warn string[] where a problem is added
+local function checkPhotoAddress(warn)
+    local publicUrl = Config.Completion.PhotoPublicUrl
+    if publicUrl ~= nil and publicUrl ~= '' and Config.Completion.KillPhotos == true then
+        local checked = CrimsonBoot.require('server.photos').checkBase(publicUrl)
+        if not checked then
+            warn[#warn + 1] = ('Completion.PhotoPublicUrl is %s; it has to be an https:// '
+                .. 'address such as \'https://photos.example.com/crimson-hitman\', with no '
+                .. 'query. Ignoring it.'):format(type(publicUrl) == 'string'
+                    and ('"' .. publicUrl .. '"') or tostring(publicUrl))
+            Config.Completion.PhotoPublicUrl = nil
+        else
+            Config.Completion.PhotoPublicUrl = checked
+        end
+    end
+end
+
 local function validateConfig(quiet)
     local fatal, warn = {}, {}
     -- What is worth knowing and wrong with nothing: printed with
@@ -684,29 +715,11 @@ local function validateConfig(quiet)
         Config.Completion.PhotoOpenSeconds = openFor
     end
 
-    -- The public address photos kept on this server are saved to a phone's
-    -- Photos from. Unset is the default (web_baseUrl is used); anything
-    -- else must be an https:// address the phone can load, and one that is
-    -- not is dropped here, with the reason, rather than handed to phones as
-    -- links that lead nowhere.
-    --
-    -- Not with kill photos off (Config.Completion.KillPhotos): nothing is
-    -- served then, and a warning about the address would send the owner to
-    -- set up something that is never used. It is checked again where it is
-    -- read (Photos.publicBase), so turning photos on later is safe.
-    local publicUrl = Config.Completion.PhotoPublicUrl
-    if publicUrl ~= nil and publicUrl ~= '' and Config.Completion.KillPhotos == true then
-        local checked = CrimsonBoot.require('server.photos').checkBase(publicUrl)
-        if not checked then
-            warn[#warn + 1] = ('Completion.PhotoPublicUrl is %s; it has to be an https:// '
-                .. 'address such as \'https://photos.example.com/crimson-hitman\', with no '
-                .. 'query. Ignoring it.'):format(type(publicUrl) == 'string'
-                    and ('"' .. publicUrl .. '"') or tostring(publicUrl))
-            Config.Completion.PhotoPublicUrl = nil
-        else
-            Config.Completion.PhotoPublicUrl = checked
-        end
-    end
+    -- The public address photos are served from (checkPhotoAddress). At a
+    -- start it is checked after the admin panel's settings are applied,
+    -- since whether kill photos are on may be the panel's to say; a
+    -- candidate the panel checks has its own value in it already.
+    if quiet then checkPhotoAddress(warn) end
 
     -- How long a photo kept in the app lasts. Unset keeps it until its
     -- owner deletes it; a number of days must be above zero, since zero
@@ -1174,6 +1187,12 @@ function StartCrimsonHitman()
                     check = checkCandidate })
     settings.boot()
 
+    -- The photo address, against whether kill photos are on now the panel's
+    -- settings are in force (checkPhotoAddress).
+    local photoWarn = {}
+    checkPhotoAddress(photoWarn)
+    for _, message in ipairs(photoWarn) do Log.problem('warning: ' .. message) end
+
     local identity   = CrimsonBoot.require('server.identity')
     local ratelimit  = CrimsonBoot.require('server.ratelimit')
     local audit      = CrimsonBoot.require('server.audit')
@@ -1563,12 +1582,37 @@ end
 -- Maintenance tick
 --------------------------------------------------------------------------
 
+--- How often a failure that needs staff (a write or money job below, or
+--- the tick itself) is printed again when it fails on every tick: once a
+--- few minutes, as a slow job is (server/timing.lua), so a database that
+--- has gone away does not fill the console. Every failure in between is
+--- still counted on the line the diagnosis keeps, and printed with Debug on.
+local FAILURE_SAID_EVERY_SECONDS = 300
+local failureSaidAt = {} -- [job name] = os.time() it was last printed
+
+--- Say a failure that needs staff, at most once every
+--- FAILURE_SAID_EVERY_SECONDS for the same job.
+---@param name string the job, or 'tick' for the tick as a whole
+---@param text string
+local function sayFailure(name, text)
+    local now = os.time()
+    local last = failureSaidAt[name]
+    if last and now - last < FAILURE_SAID_EVERY_SECONDS then
+        return Log.debug(text)
+    end
+    failureSaidAt[name] = now
+    Log.always(text)
+end
+
 function StartTick()
     CreateThread(function()
         while true do
             Wait(Config.Audit.FlushIntervalMs or 10000)
+            -- The whole tick failing is every job above not run: escrow,
+            -- buyouts and the flush with it. Said whatever Config.Debug
+            -- says, at most once every few minutes (sayFailure).
             local ok, err = pcall(Tick)
-            if not ok then Log.debug('tick error: ' .. tostring(err)) end
+            if not ok then sayFailure('tick', 'maintenance tick error: ' .. tostring(err)) end
         end
     end)
 end
@@ -1586,26 +1630,44 @@ local lastHostRefresh = 0
 --- thing that threw was usually still there next tick, it kept skipping them
 --- for the life of the process while the resource looked healthy.
 ---
---- Each job stands alone now. One that fails says so, on every tick, and the
---- others still run.
+--- Each job stands alone now. One that fails says so, and the others still
+--- run.
 ---
 --- And each is timed (server/timing.lua): one slower than
 --- Config.Diagnostics.SlowJobMs says so in the console, and /ch-diag lists
 --- the slowest.
 --- Jobs whose failure is a write that did not happen, so data could be
---- lost: said whatever Config.Debug says. Any other job's failure is said
---- with Debug on, and kept for the diagnosis either way (shared/log.lua).
+--- lost, or money at risk (MONEY_JOBS): said whatever Config.Debug says, at
+--- most once every FAILURE_SAID_EVERY_SECONDS each. Any other job's failure
+--- is said with Debug on. Every one is kept for the diagnosis either way
+--- (shared/log.lua).
 local WRITE_JOBS = {
     ['audit.flush'] = true, ['storage.flush'] = true, ['storage.heartbeat'] = true,
     -- The review queue's items the store would not take when they opened.
     ['review.retryUnwritten'] = true,
 }
 
+--- Jobs whose failure is money at risk or left stuck: a buyout the target
+--- has already paid, escrow held past a deadline or the lifetime, payouts
+--- owed, an ending that raised, a placement or an acceptance a throw left
+--- part-way, an exclusive hold nobody is working. Said whatever
+--- Config.Debug says, like a failed write.
+local MONEY_JOBS = {
+    ['bailout.processQueue'] = true, ['expireContracts'] = true,
+    ['escrow.retryWaiting'] = true, ['contracts.finishEndings'] = true,
+    ['contracts.retryStuckCreates'] = true, ['contracts.retryStuckJoins'] = true,
+    ['contracts.releaseIdleHolds'] = true,
+}
+
 local function job(name, fn, ...)
     local ok, err = modules.timing.run(name, fn, ...)
     if not ok then
-        local say = WRITE_JOBS[name] and Log.always or Log.debug
-        say(('maintenance job %q failed: %s'):format(name, tostring(err)))
+        local text = ('maintenance job %q failed: %s'):format(name, tostring(err))
+        if WRITE_JOBS[name] or MONEY_JOBS[name] then
+            sayFailure(name, text)
+        else
+            Log.debug(text)
+        end
     end
     return ok
 end

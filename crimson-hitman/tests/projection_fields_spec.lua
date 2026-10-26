@@ -47,6 +47,9 @@ local CONDITIONAL = {
     kidnapProgress = 'the page fills this in, not the projection',
     -- Stamped by the page as the reply lands, to count the clock down from.
     clockReadAt = 'the page fills this in, not the projection',
+    -- Marked by the page on the whitelisted-job view's entries, whose clock
+    -- is the lifetime: "within", since the contract may end sooner.
+    atLatest = 'the page fills this in, on the whitelisted-job view only',
     -- Never on the target's card: a named client's absence is what stops it.
     clockStopped = 'every role but the target',
     -- Who the hitman is on it, drawn on their own card. Nobody else is one.

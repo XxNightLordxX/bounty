@@ -20,9 +20,12 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   turns kills back on. Each contract keeps the rule it was placed under, and
   `/ch-diag` says which is in use (see *Live transfer only*).
 - **Plain words for it:** the board card, the accept dialog, the hitman's
-  how-to, every Deliver alive refusal, the Place form, the placer's own card
-  and the phone notices say who the target is brought to — *the person who
-  placed this contract*, never "the client" — and that this person has to be
+  how-to (on every alive-only card they hold, not only their first), every
+  Deliver alive refusal, the Place form, the placer's own card, the phone
+  notices and the message thread (its header, each message, its notice and a
+  call, all from *The person who placed it*) say who the target is brought
+  to — *the person who placed this contract*, never "the client" — and that
+  this person has to be
   in the city and within `Config.Kidnap.Radius` metres for the
   `Config.Kidnap.CountdownSeconds` hold, with both figures read from your
   config. Contracts placed under `'either'` keep their old words.
@@ -78,12 +81,17 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   refresh that had `/hitmanadmin` is `/ch-refresh` now.
 - **Staff commands in F8:** a `/ch-*` command run by a player prints its whole
   answer in that player's F8 console, never in chat, with one notice on their
-  screen saying so (*Printed to your F8 console*); the buyout command does the
-  same. Run from the server console, it prints there as before.
+  screen saying so (*Printed to your F8 console*). That includes the page log
+  `ch-diag <player>` asks the player's app for, which arrives a moment later:
+  it goes to whoever asked (their F8, their open admin panel, or the server
+  console that ran it), never only to the server console. Run from the server
+  console, a command prints there as before. The players' buyout command
+  (`/cleanse`) still answers in chat.
 - **Quiet console:** with `Config.Debug = false` (as shipped) a normal start
   and normal play print nothing at all. Only refusing to start, money left for
-  staff (the review queue, a stuck escrow line, an ending that raised) and a
-  write that failed are printed; the settings a start finds wrong are counted
+  staff (the review queue, a stuck escrow line, an ending that raised, a
+  maintenance job that moves money failing) and a write that failed are
+  printed; the settings a start finds wrong are counted
   in one line (*N setting(s) need attention; run ch-diag …*). `ch-diag`, and
   **Run the diagnosis** in the panel, list everything a quiet console left out
   (see *Console output*). `Config.Debug` is in the panel's Features too.
@@ -649,9 +657,13 @@ other whitelisted-job members.*
 
 Each entry carries no more than the law enforcement advisory already says:
 the target's name and job, when it was posted (to the five minutes), open or
-taken by how many hitmen, and when it runs out. Never who placed it (named or
-anonymous), any hitman, the reason, a location, a photo or headshot, or the
-reward. A contract on anybody else is never shown or counted. Like On me, a
+taken by how many hitmen, and when it runs out at the latest (*Runs out
+within 47h*). That last is the contract's lifetime
+(`Config.Limits.ContractLifetimeSeconds`), which no one's presence moves: the
+hitmen's deadline stops while a named placer is offline and jumps on when they
+come back, so a countdown read from it would tell every officer when the
+placer reconnected. Never who placed it (named or anonymous), any hitman, the
+reason, a location, a photo or headshot, or the reward. A contract on anybody else is never shown or counted. Like On me, a
 new contract appears once its target may be shown it (their alert's wait, or
 at once where a bulletin has already gone out). With nothing to show it says
 *No contracts on you or other whitelisted-job members.*
@@ -779,8 +791,10 @@ Run them in your **F8 console** in game, or use the buttons in the **admin
 panel** (`/hitmanadmin`), where every one of them is a button. A command run in
 game prints its whole answer in your F8 console, never in chat, in order, with
 one notice on your screen (*Printed to your F8 console*) for when you typed it
-in chat; the buyout command (`/cleanse`) answers a player the same way. Run
-from the server console, every one prints there, whatever `Config.Debug` says.
+in chat. Run from the server console, every one prints there, whatever
+`Config.Debug` says. The players' buyout command (`Config.Bailout.Command`,
+`/cleanse`) is not a staff command: it answers the player in chat, as it always
+has.
 
 All work from the server console except `/hitmanadmin`, which opens a page in
 game. In game they need the `crimson.admin` ACE
@@ -854,14 +868,18 @@ line this resource prints is one of three kinds.
 
 | Kind | Printed | What |
 |---|---|---|
-| **Always** | Whatever `Config.Debug` says | Refusing to start (`FATAL`, `failed to start`, waiting for `qbx_core` or `ox_inventory`); money at risk or left for staff (a review item opened, a stuck or parked escrow line, an ending or a handover claim that raised, `BOOT RECOVERY FAILED`, contracts that could not be loaded, starting over money another storage mode holds); a write that failed or read back wrong (a `json` file that could not be written, was torn or is missing, a kill photo that could not be written or reads back short) |
+| **Always** | Whatever `Config.Debug` says | Refusing to start (`FATAL`, `failed to start`, waiting for `qbx_core` or `ox_inventory`); money at risk or left for staff (a review item opened, a stuck or parked escrow line, an ending or a handover claim that raised, `BOOT RECOVERY FAILED`, contracts that could not be loaded, starting over money another storage mode holds, a maintenance job that moves money failing: the buyout queue, expiry, owed payouts, unfinished endings, placements and acceptances left part-way, idle holds, or the tick as a whole); a write that failed or read back wrong (a `json` file that could not be written, was torn or is missing, a kill photo that could not be written or reads back short, the audit or storage flush failing). A job that fails on every tick is printed once every five minutes, each failure in between counted in the diagnosis |
 | **Settings that need attention** | One line at the end of a start with `Config.Debug` off: `[crimson-hitman] N setting(s) need attention; run ch-diag (F8 or the server console) or open /hitmanadmin to see them`, and nothing when there are none. Each in full with it on | Every startup warning about `config.lua` (a value read as the nearest it may be, a setting your config lacks, counted once for each, an integration you configured that is not running, an admin panel setting not applied). One found later (an empty photo host list on the first tick) says the line again with the new count |
-| **Everything else** | Only with `Config.Debug` on | The integration list, start progress (`started in json mode`), finished migrations, photo sweeps, photo host list changes, slow and failing maintenance jobs, the settings changed from the panel in force, the `json` size advice, page faults players' phones report, notes (memory mode, the playtime rule reading QBox metadata) |
+| **Everything else** | Only with `Config.Debug` on | The integration list, start progress (`started in json mode`), finished migrations, photo sweeps, photo host list changes, slow maintenance jobs and failing ones that move no money, the settings changed from the panel in force, the `json` size advice, page faults players' phones report (marked *page stack from …*, with colour codes taken out), notes (memory mode, the playtime rule reading QBox metadata) |
 
 Nothing is lost: `ch-diag` (in F8 or the server console) and **Run the
 diagnosis** in the admin panel list the settings that need attention in full,
 everything the start said and the newest forty lines since, each repeated line
-counted once. The panel's overview shows the settings that need attention
+counted once. The lines printed whatever Debug says are kept in a list of their
+own, so nothing a player can cause (page fault reports, counted as one entry)
+pushes money left for staff out of it. FiveM colour codes (`^0` to `^9`) are
+taken out of every line, so a name or a page's report cannot colour the
+console. The panel's overview shows the settings that need attention
 among what the diagnosis says wants doing. In game, players' F8 consoles show
 nothing from this resource but a staff command's own answer; `Config.Debug` on
 also prints the client's own notes there (an lb-phone export missing, say).

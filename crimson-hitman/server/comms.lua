@@ -102,6 +102,17 @@ function Comms.clearHitman(contractId, hitmanCid)
     end
 end
 
+--- What a hitman sees the person who placed the contract called: in the
+--- thread, on every message they sign, and in the phone notice of a message
+--- or a call. Never "Client": a player new to the app did not know who that
+--- was, on the one rule this server runs on (the target is brought to this
+--- person, alive).
+local PLACER_ALIAS = 'The person who placed it'
+Comms.PLACER_ALIAS = PLACER_ALIAS
+
+--- The alias messages were signed with before, still on stored rows.
+local OLD_PLACER_ALIAS = 'Client'
+
 --- A thread is one creator-hitman pair. In competitive mode the creator has
 --- a separate thread per hitman, and hitmen never see each other.
 local function threadId(contractId, hitmanCid)
@@ -134,7 +145,7 @@ function Comms.context(actor, contractId, threadHandle)
         if not hitman or hitman.state ~= 'active' then return nil, CH.ERR.NOT_PARTICIPANT end
         return {
             contract = contract, role = 'creator', hitmanCid = hitman.hitman_cid,
-            threadId = threadId(contractId, hitman.hitman_cid), alias = 'Client',
+            threadId = threadId(contractId, hitman.hitman_cid), alias = PLACER_ALIAS,
         }
     end
 
@@ -246,8 +257,14 @@ function Comms.read(actor, contractId, threadHandle)
     local keep = tonumber(Config.Relay.MaxMessagesPerThread) or 0
     local first = (keep > 0 and #rows > keep) and (#rows - keep + 1) or 1
     for i = first, #rows do
+        -- The placer's, by who sent it: one stored before they were called
+        -- this was signed "Client".
+        local alias = rows[i].from_alias
+        if rows[i].from_cid == ctx.contract.creator_cid or alias == OLD_PLACER_ALIAS then
+            alias = PLACER_ALIAS
+        end
         out[#out + 1] = {
-            alias = rows[i].from_alias,
+            alias = alias,
             body  = rows[i].body,
             at    = rows[i].sent_at,
             mine  = rows[i].from_cid == actor.cid,
@@ -285,7 +302,7 @@ function Comms.threads(actor, contractId)
 
     local hitman = Storage.readHitman(contract.id, actor.cid)
     if hitman and hitman.state == 'active' then
-        return { { handle = handleFor(actor.cid, contract.id, actor.cid), alias = 'Client' } }
+        return { { handle = handleFor(actor.cid, contract.id, actor.cid), alias = PLACER_ALIAS } }
     end
 
     return {}
@@ -369,11 +386,17 @@ function Comms.requestCall(actor, contractId, threadHandle)
     end
 
     if reason ~= 'both_anonymous' then
+        -- The person who placed it is named as that, with what "it" is: a
+        -- hitman told "Client is calling you" did not know who that was.
+        local caller = ctx.role == 'creator'
+            and 'The person who placed a contract you took' or ctx.alias
         local told = Notify.toCitizen(recipient,
             placed and 'Incoming call' or 'Call request',
             placed
-                and ('%s is calling you about a contract.'):format(ctx.alias)
-                or  ('%s wants to speak with you about a contract.'):format(ctx.alias))
+                and ('%s is calling you about %s.'):format(caller,
+                    ctx.role == 'creator' and 'it' or 'a contract')
+                or  ('%s wants to speak with you about %s.'):format(caller,
+                    ctx.role == 'creator' and 'it' or 'a contract'))
 
         -- A named party who was not told either: logged off, or past their
         -- notice budget. The page said "they have been told you want to

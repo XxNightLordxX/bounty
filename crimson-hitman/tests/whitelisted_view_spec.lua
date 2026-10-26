@@ -149,6 +149,43 @@ describe('the whitelisted-job view', function()
         truthy(byName['Colin Hart'].secondsLeft > 0, 'and when it runs out')
     end)
 
+    --- The deadline stops while a named placer is offline and is moved on
+    --- by exactly how long they were away when they come back (the expiry
+    --- pass: Storage.startPause, then Storage.endPause). Read from it, the
+    --- countdown jumped up the second they reconnected, for every officer
+    --- and every colleague's contract: the placer is named, when they came
+    --- back and how long they were gone.
+    it('counts down by wall time alone, with no jump when a named placer comes back', function()
+        local w = world()
+        local function left()
+            local data = view()
+            local out = {}
+            for _, entry in ipairs(data.colleagues) do out[entry.targetName] = entry.secondsLeft end
+            out.own = data.onYou[1].secondsLeft
+            return out
+        end
+        local before = left()
+        truthy(before['Colin Hart'] and before['Colin Hart'] > 0, 'a clock to read')
+
+        -- CREATOR1 (named) logs off; the expiry pass stops both clocks.
+        local since = os.time()
+        for _, id in ipairs({ w.colleague.id, w.mine.id }) do
+            truthy(w.s.storage.startPause(id, since))
+        end
+        Env.advance(600)
+        -- Back: the deadline moves on by the 600 s they were away.
+        local deadline = w.s.storage.readContract(w.colleague.id).deadline_at
+        for _, id in ipairs({ w.colleague.id, w.mine.id }) do
+            truthy(w.s.storage.endPause(id, since, 600))
+        end
+        eq(w.s.storage.readContract(w.colleague.id).deadline_at, deadline + 600, 'the deadline moved')
+        Env.advance(70)
+
+        local after = left()
+        eq(before['Colin Hart'] - after['Colin Hart'], 670, 'a colleague\'s clock fell by wall time')
+        eq(before.own - after.own, 670, 'and their own')
+    end)
+
     it('carries no more than the advisory: no placer, hitman, reason, place, photo or reward', function()
         local w = world()
         -- A named placer and a named hitman on the officer's own contract,
