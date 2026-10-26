@@ -365,6 +365,24 @@ describe('admin panel writes while the server recovers', function()
             eq(reply.message, s.admin.RECOVERY_FAILED, op)
         end
     end)
+
+    --- W132: the refresh itself waits too, so the button and the command
+    --- (bridges' /ch-refresh, which has no gate of its own) cannot drift.
+    it('has the refresh refuse by itself, in the same words, with nothing moved', function()
+        local s, f = stack()
+        local c = place(s, f)
+        local deadline = s.storage.readContract(c.id).deadline_at
+        Env.advance(600)
+        for _, case in ipairs({ { false, 'recovering', s.admin.RECOVERING },
+                                { true, 'recovery_failed', s.admin.RECOVERY_FAILED } }) do
+            s.app.ready, s.app.recoveryFailed = false, case[1]
+            local lines, err = s.admin.refreshTimers(6)
+            eq(err, case[2])
+            eq(#lines, 1)
+            eq(lines[1], case[3])
+        end
+        eq(s.storage.readContract(c.id).deadline_at, deadline, 'nothing was refreshed')
+    end)
 end)
 
 --------------------------------------------------------------------------

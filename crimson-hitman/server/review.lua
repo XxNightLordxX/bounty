@@ -116,6 +116,40 @@ function Review.open(spec)
     -- eleven random characters is not, as near as makes no difference.
     if not minted or not id then id = Util.randomId('rv') end
 
+    -- What went wrong, as the store said it: oxmysql's message carries the
+    -- whole statement and every value it was sent, players' data included,
+    -- and a whole one could be more than the item's own column holds. Its
+    -- own words and the start of the statement (Util.dbError).
+    local known = copyOf(spec.known or {})
+    for _, key in ipairs({ 'error', 'read_error' }) do
+        if known[key] ~= nil and type(known[key]) ~= 'boolean' then
+            known[key] = Util.dbError(known[key])
+        end
+    end
+
+    -- On mysql the goods go into one TEXT column (Storage.MAX_TEXT_BYTES).
+    -- An item too big for it was never written, kept only in this process
+    -- and lost at the next restart. Kept without the goods' metadata
+    -- instead: the ids, sources, names and counts staff decide by are
+    -- all still there, and lookNow reads only the ids.
+    local items = spec.items
+    local limit = Storage.MAX_TEXT_BYTES
+    if limit and type(items) == 'table' then
+        local encoded, text = pcall(json.encode, items)
+        if not encoded or type(text) ~= 'string' or #text > limit then
+            local trimmed = {}
+            for i, entry in ipairs(items) do
+                local copy = copyOf(entry)
+                if type(copy) == 'table' and copy.metadata ~= nil then
+                    copy.metadata = nil
+                    copy.metadata_omitted = true
+                end
+                trimmed[i] = copy
+            end
+            items = trimmed
+        end
+    end
+
     local item = {
         id = id,
         kind = tostring(spec.kind),
@@ -123,8 +157,8 @@ function Review.open(spec)
         cids = spec.cids or {},
         amount = tonumber(spec.amount) and math.floor(tonumber(spec.amount)) or nil,
         account = spec.account,
-        items = spec.items,
-        known = spec.known or {},
+        items = items,
+        known = known,
         created_at = os.time(),
         state = Review.STATE.OPEN,
     }
@@ -139,7 +173,7 @@ function Review.open(spec)
         Log.always(('left for staff: review %s (%s) on contract %s, but the store would '
             .. 'not take it (%s); it is kept here and written once the store answers. Until then '
             .. 'it exists only in this process: %s')
-            :format(id, item.kind, tostring(item.contract_id), tostring(err),
+            :format(id, item.kind, tostring(item.contract_id), Util.dbError(err),
                 encoded and text or '(could not be encoded)'))
     end
     pcall(Audit.financial, 'review_opened', firstParty(item.cids), item.contract_id,

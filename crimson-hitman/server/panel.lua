@@ -1015,7 +1015,10 @@ H.resetSettings = function(src)
 end
 
 H.refresh = function(src)
-    local lines = deps.admin.refreshTimers(src)
+    local lines, waiting = deps.admin.refreshTimers(src)
+    -- Refused before this is reached (WAITS_FOR_RECOVERY), and by the
+    -- refresh itself as well, in the same words.
+    if waiting then return false, waiting, lines[1] end
     return true, nil, table.concat(lines, ' '), { lines = lines }
 end
 

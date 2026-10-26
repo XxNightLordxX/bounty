@@ -947,6 +947,15 @@ local function unpausedDeadline(contract)
     return contract.deadline_at - (contract.paused_ms or 0) / 1000
 end
 
+--- Whether a contract's pause total has stopped at the most its mysql
+--- column holds (MySQLStore.endPause holds it to 2,147,483,647 ms, 24.86
+--- days). Never on json or memory, whose totals do not stop.
+---@param contract table
+---@return boolean
+local function pauseSaturated(contract)
+    return (tonumber(contract.paused_ms) or 0) >= 2147483647
+end
+
 --- Why a stake cannot be taken on this contract's clock, or nil.
 ---
 --- A stake on a contract about to run out is a stake handed to the client:
@@ -1035,6 +1044,10 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     -- Kept by value: on the memory store `contract` is the stored row
     -- itself, and would read whatever the deadline is moved to next.
     local checkedDeadline = unpausedDeadline(contract)
+    -- And the deadline as stored, for a contract whose pause total has
+    -- stopped counting (pauseSaturated), where the net figure cannot show
+    -- a cut.
+    local checkedRaw, checkedSaturated = contract.deadline_at, pauseSaturated(contract)
 
     -- A player may not take one on themselves, their own contract, or a contract
     -- created by another of their own characters (§13.1).
@@ -1326,6 +1339,17 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         -- awaits pushes the deadline out by its length and would hide a cut
         -- no larger than that.
         local nowDeadline = unpausedDeadline(now)
+        -- On a pause total that has stopped at its ceiling, a pause ending
+        -- still moves the deadline out but no longer adds to the total, so
+        -- the net figure would read a pause as a deadline moved out and hide
+        -- a cut. Any change to the deadline is refused there instead.
+        local saturated = checkedSaturated or pauseSaturated(now)
+        if stake > 0 and saturated and now.deadline_at ~= checkedRaw then
+            unwind('deadline_moved')
+            Audit.rejected('deadline_moved', actor.cid, contractId,
+                { was = checkedRaw, now = now.deadline_at, saturated = true })
+            return false, CH.ERR.TERMS_CHANGED
+        end
         if stake > 0 and checkedDeadline and nowDeadline
             and nowDeadline < checkedDeadline then
             unwind('deadline_moved')
@@ -1897,7 +1921,13 @@ function Contracts.moveDeadline(contractId, rule, attempts)
         local was = current.deadline_at
         local target = rule(current)
         if target == was then return target, was end
-        if Storage.setDeadline(contractId, was, target) then return target, was end
+        if Storage.setDeadline(contractId, was, target) then
+            -- The expiry pass skips itself until the soonest deadline it
+            -- last saw, and one brought in by Edit or an agreed change
+            -- waited out the old one, past its own: told, as a create is.
+            if Contracts.onChanged then Contracts.onChanged() end
+            return target, was
+        end
     end
     return nil
 end

@@ -1674,3 +1674,137 @@ describe('an item name written in odd case', function()
         eq(stored, 'lockpick')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- What mysql's columns hold (S04, S05)
+--------------------------------------------------------------------------
+
+--- A stack whose store is the mysql backend on the statement executor,
+--- which refuses what strict MariaDB refuses.
+local function onMysql()
+    local s = newStack()
+    local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+    Exec.install(Natives)
+    package.loaded['crimson-hitman.server.storage.mysql'] = nil
+    local store = require('crimson-hitman.server.storage.mysql')
+    store.open()
+    s.audit.init(store)
+    s.review.init({ storage = store, escrow = s.escrow, audit = s.audit })
+    s.escrow.init(store, s.audit, s.review)
+    s.progression.init({ storage = store, identity = s.identity, audit = s.audit })
+    s.contracts.init({ storage = store, escrow = s.escrow, identity = s.identity,
+                       audit = s.audit, notify = s.notify, progression = s.progression,
+                       death = s.death, review = s.review })
+    s.amendments.init({ storage = store, identity = s.identity, contracts = s.contracts,
+                        escrow = s.escrow, audit = s.audit, notify = s.notify })
+    s.storage = store
+    return s
+end
+
+local function onJson()
+    local s = newStack()
+    package.loaded['crimson-hitman.server.storage.json'] = nil
+    Natives.files = {}
+    local store = require('crimson-hitman.server.storage.json')
+    store.open()
+    s.audit.init(store)
+    s.review.init({ storage = store, escrow = s.escrow, audit = s.audit })
+    s.escrow.init(store, s.audit, s.review)
+    s.contracts.init({ storage = store, escrow = s.escrow, identity = s.identity,
+                       audit = s.audit, notify = s.notify, progression = s.progression,
+                       death = s.death, review = s.review })
+    s.amendments.init({ storage = store, identity = s.identity, contracts = s.contracts,
+                        escrow = s.escrow, audit = s.audit, notify = s.notify })
+    s.storage = store
+    return s
+end
+
+local function carried(src, name)
+    local n = 0
+    for _, e in ipairs(Env.players[src]._inventory or {}) do
+        if e.name == name then n = n + (e.count or 0) end
+    end
+    return n
+end
+
+describe('a give that raised for a player holding more than an INT', function()
+    --- deliver_before records their balance before the give; past
+    --- 2,147,483,647 the write raised, Escrow.deliver raised with it, and
+    --- the raise was never counted, so the bounded retry never engaged.
+    it('still counts its raise (mysql)', function()
+        local s = onMysql()
+        fixture(s)
+        local hitman = Env.players[3]
+        hitman.PlayerData.money.cash = 3e9
+        s.storage.writeEscrow('ct00000031', { {
+            id = 'ct00000031:1', slot = 1, portion = CH.PORTION.BASELINE, source = 'cash',
+            amount = 500, state = CH.ESCROW_STATE.HELD, owed_to = 'HITMAN01',
+        } })
+        local line = s.storage.readEscrowLine('ct00000031:1')
+        local real = hitman.Functions.AddMoney
+        hitman.Functions.AddMoney = function() error('AddMoney hook raised', 0) end
+        local ran, delivered = pcall(s.escrow.deliver, 'HITMAN01', line)
+        hitman.Functions.AddMoney = real
+        truthy(ran, 'the give\'s record raised: ' .. tostring(delivered))
+        falsy(delivered, 'nothing arrived')
+        local after = s.storage.readEscrowLine('ct00000031:1')
+        eq(tonumber(after.deliver_raises), 1, 'the raise is counted')
+        eq(tonumber(after.deliver_before), 2147483647, 'with the balance held to the column')
+    end)
+end)
+
+describe('an item whose metadata a TEXT column cannot hold', function()
+    local function bigInventory()
+        return { { name = 'lockpick', count = 1, slot = 1,
+                   metadata = { note = ('n'):rep(70000) } } }
+    end
+    local REWARD = { baseline = { cash = 1000, items = { { name = 'lockpick', count = 1 } } } }
+
+    --- S05: refused by the store after the take, rolled back, and answered
+    --- bad_state, with the whole 70 KB in the console.
+    it('is refused by name before anything is taken (mysql)', function()
+        local s = onMysql()
+        local f = fixture(s, { creatorInventory = bigInventory() })
+        local cash = Env.players[1].PlayerData.money.cash
+        local c, err = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = REWARD })
+        falsy(c, 'placed')
+        eq(err, CH.ERR.ITEM_TOO_LARGE)
+        eq(carried(1, 'lockpick'), 1, 'the creator keeps the item')
+        eq(Env.players[1].PlayerData.money.cash, cash, 'and their cash')
+        local moved = 0
+        for _, call in ipairs(Natives.calls.inventory or {}) do
+            if call.name == 'lockpick' then moved = moved + 1 end
+        end
+        eq(moved, 0, 'nothing was taken to be given back')
+    end)
+
+    it('is refused the same way as a top-up (mysql)', function()
+        local s = onMysql()
+        local f = fixture(s, { creatorInventory = bigInventory() })
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000 } } })
+        truthy(c, 'a cash contract')
+        local cash = Env.players[1].PlayerData.money.cash
+        local ok, err = s.amendments.addEscrow(f.creator, c.id,
+            { baseline = { items = { { name = 'lockpick', count = 1 } } } })
+        falsy(ok)
+        eq(err, CH.ERR.ITEM_TOO_LARGE)
+        eq(carried(1, 'lockpick'), 1)
+        eq(Env.players[1].PlayerData.money.cash, cash)
+    end)
+
+    it('is placed on json, which keeps it whole', function()
+        local s = onJson()
+        local f = fixture(s, { creatorInventory = bigInventory() })
+        local c, err = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = REWARD })
+        truthy(c, tostring(err))
+        eq(carried(1, 'lockpick'), 0, 'in escrow')
+        local found
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.item == 'lockpick' then found = line end
+        end
+        eq(#found.metadata.note, 70000, 'metadata and all')
+    end)
+end)

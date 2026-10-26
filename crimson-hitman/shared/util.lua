@@ -186,6 +186,40 @@ function Util.sanitizeText(text, maxLength)
     return text
 end
 
+--- The most of a database error that is kept or printed.
+Util.DB_ERROR_MAX = 300
+
+--- A database error short enough to keep on a record and to print, with
+--- none of the values the statement was sent.
+---
+--- oxmysql's await raises its whole message (OXMYSQL.md §5): the statement,
+--- then every parameter as JSON on a line of its own, then the server's own
+--- words. The parameters are players' data (citizen ids, character names, a
+--- reason, an item's whole metadata), and a review item kept that whole
+--- message in the store, where 70 KB of metadata made the item itself too big
+--- for its column. Kept: the server's words (the last line) and the first 60
+--- characters of the statement, at most DB_ERROR_MAX characters, never the
+--- parameters line. Anything else is cut to the same length.
+---@param err any
+---@return string
+function Util.dbError(err)
+    local text = tostring(err)
+    local query = text:find('\nQuery: ', 1, true)
+    local last = text:match('.*()\n')
+    local before = last and text:sub(1, last - 1):match('.*()\n')
+    if query and text:find('was unable to execute a query!', 1, true)
+        and before and before > query then
+        local statement = text:sub(query + 8, before - 1):gsub('%s+', ' ')
+            :gsub('^%s+', ''):sub(1, 60)
+        text = ('%s (statement: %s)'):format(text:sub(last + 1), statement)
+    end
+    text = text:gsub('%c', ' '):gsub('%s+', ' '):gsub('^%s*(.-)%s*$', '%1')
+    if #text > Util.DB_ERROR_MAX then
+        text = Util.toValidUtf8(text:sub(1, Util.DB_ERROR_MAX))
+    end
+    return text
+end
+
 --- A time on the clock rounded up to the next five minutes.
 ---
 --- A deadline set from the moment something happened carries that moment

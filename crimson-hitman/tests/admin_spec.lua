@@ -2249,3 +2249,84 @@ describe('a staff give refused to a player in the city', function()
         truthy(said(1):find('not in the city', 1, true), said(1))
     end)
 end)
+
+--- S01: one contract the store refused stopped the refresh at it, and
+--- every contract after it kept its old timers.
+describe('the timer refresh past a contract the store refuses', function()
+    it('refreshes the others, and says which it could not', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Limits.MaxActiveContractsPerTarget = 5
+        Config.Limits.MaxActiveContractsPerCreator = 5
+        local ids = {}
+        for i = 1, 2 do
+            local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x' .. i,
+                mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+            truthy(c)
+            ids[#ids + 1] = c.id
+        end
+        local listed = s.storage.allContracts()
+        local refused = listed[1].id
+        local other = refused == ids[1] and ids[2] or ids[1]
+        local was = s.storage.readContract(other).expires_at
+
+        Env.advance(3600)
+        local setFields = s.storage.setContractFields
+        s.storage.setContractFields = function(id, fields)
+            if id == refused then
+                error("crimson-hitman was unable to execute a query!\nQuery: UPDATE crimson_contracts"
+                    .. " SET expires_at = ? WHERE id = ?\n[1,\"x\"]\nLock wait timeout exceeded", 0)
+            end
+            return setFields(id, fields)
+        end
+        local ran, lines = pcall(s.admin.refreshTimers, 0)
+        s.storage.setContractFields = setFields
+
+        truthy(ran, 'the refresh stopped at the first contract: ' .. tostring(lines))
+        truthy(s.storage.readContract(other).expires_at > was, 'the other one was refreshed')
+        local text = table.concat(lines, '\n')
+        truthy(text:find(('1 contract(s) could not be refreshed, because the store refused a write '
+            .. '(the server console says why), and may be refreshed only part-way: %s.')
+            :format(refused), 1, true), text)
+        truthy(text:find('1 live contract(s) given a full deadline and lifetime', 1, true),
+            'the count is of those refreshed: ' .. text)
+    end)
+end)
+
+--- W132: every other staff write waits for boot recovery, and the panel's
+--- refresh button did; the command did not, and moved every live clock
+--- while recovery was still deciding on them, or after it had failed.
+describe('the timer refresh while the server recovers', function()
+    local function run(s)
+        Env.commands = {}
+        require('crimson-hitman.server.bridges').installCommands(s)
+        local out, real = {}, print
+        _G.print = function(...) out[#out + 1] = tostring((...)) end
+        local ok, err = pcall(Env.commands[Config.Admin.Commands.refresh], 0, {})
+        _G.print = real
+        if not ok then error(err) end
+        return table.concat(out, '\n')
+    end
+
+    for _, case in ipairs({
+        { name = 'while recovery runs', failed = false, words = 'RECOVERING' },
+        { name = 'after recovery failed', failed = true, words = 'RECOVERY_FAILED' },
+    }) do
+        it('answers ' .. case.name .. ' with the recovery sentence, and changes nothing', function()
+            local s, f, c = seeded()
+            local before = s.storage.readContract(c.id)
+            local deadline, lifetime = before.deadline_at, before.expires_at
+            Env.advance(600)
+            for _ = 1, 200 do s.ratelimit.check(f.creator, 'create') end
+            s.app.ready, s.app.recoveryFailed = false, case.failed
+            local out = run(s)
+            s.app.ready, s.app.recoveryFailed = nil, nil
+            truthy(out:find(s.admin[case.words], 1, true), out)
+            falsy(out:find('Timers refreshed', 1, true), out)
+            local after = s.storage.readContract(c.id)
+            eq(after.deadline_at, deadline, 'no deadline moved')
+            eq(after.expires_at, lifetime, 'no lifetime moved')
+            eq(s.ratelimit.check(f.creator, 'create'), false, 'no bucket refilled')
+        end)
+    end
+end)

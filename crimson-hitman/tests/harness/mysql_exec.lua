@@ -505,10 +505,23 @@ local function update(sql, params)
         sql:match('^UPDATE ([%w_]+) SET (.-) WHERE (.*)$')
     if not tableName then return {} end
 
-    -- Assignments first, then the WHERE, which is the parameter order.
+    -- Assignments first, then the WHERE, which is the parameter order. Split
+    -- on the commas between assignments only, not the ones inside a call.
+    local parts, depth, part = {}, 0, {}
+    for ch in (setClause .. ','):gmatch('.') do
+        if ch == ',' and depth == 0 then
+            parts[#parts + 1] = table.concat(part)
+            part = {}
+        else
+            if ch == '(' then depth = depth + 1 elseif ch == ')' then depth = depth - 1 end
+            part[#part + 1] = ch
+        end
+    end
     local assignments, index = {}, 0
-    for column, value in setClause:gmatch("([%w_]+)%s*=%s*([^,]+)") do
-        local trimmed = value:match('^%s*(.-)%s*$')
+    for _, text in ipairs(parts) do
+        local column, value = text:match('^%s*([%w_]+)%s*=%s*(.-)%s*$')
+        if not column then error('mysql_exec: cannot read the assignment ' .. text) end
+        local trimmed = value
         -- `col = col + 1`, which a real database evaluates against the row.
         -- Stored as a literal it would put the text of the expression into
         -- the column, which is exactly the kind of difference this exists
@@ -516,8 +529,17 @@ local function update(sql, params)
         local source, delta = trimmed:match('^([%w_]+)%s*([%+%-]%s*%d+)$')
         -- And `col = col + ?`, the same with the amount bound.
         local boundSource, sign = trimmed:match('^([%w_]+)%s*([%+%-])%s*%?$')
+        -- And `col = LEAST(col + ?, n)`: the sum held to a ceiling, worked
+        -- out before it is held, as MariaDB adds in BIGINT first.
+        local leastSource, leastCap = trimmed:match('^LEAST%(%s*([%w_]+)%s*%+%s*%?%s*,%s*(%-?%d+)%s*%)$')
 
-        if boundSource then
+        if leastSource then
+            index = index + 1
+            assignments[#assignments + 1] = {
+                column = column, relative = leastSource, index = index,
+                cap = tonumber(leastCap),
+            }
+        elseif boundSource then
             index = index + 1
             assignments[#assignments + 1] = {
                 column = column, relative = boundSource, index = index,
@@ -588,6 +610,7 @@ local function update(sql, params)
                         if assignment.negate then delta = -delta end
                     end
                     value = { (tonumber(current(assignment.relative)) or 0) + delta }
+                    if assignment.cap and value[1] > assignment.cap then value = { assignment.cap } end
                 else
                     local literal = assignment.literal
                     local bound = literal == nil

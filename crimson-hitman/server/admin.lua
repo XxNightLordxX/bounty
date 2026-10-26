@@ -2129,9 +2129,17 @@ end
 ---
 --- Every run is written to the audit log. A server where somebody quietly
 --- reset the cooldowns is a server whose history stops explaining itself.
+---
+--- Not while boot recovery runs, nor after it failed (Admin.notRecovered),
+--- as every other staff write: it ends pauses and moves every live
+--- deadline, which recovery is still deciding on.
 ---@param src number
 ---@return string[] lines
+---@return string|nil err 'recovering' / 'recovery_failed', when it did nothing
 function Admin.refreshTimers(src)
+    local waiting = recovering()
+    if waiting then return { Admin.notRecovered() }, waiting end
+
     local now = os.time()
     local counts = {}
 
@@ -2153,12 +2161,16 @@ function Admin.refreshTimers(src)
         tonumber(Config.Immunity.AfterBailoutSeconds) or 0) + 1
 
     counts.deadlines, counts.resolved, counts.slots, counts.proposals = 0, 0, 0, 0
+    counts.failed = 0
 
-    local contracts = Storage.allContracts()
-    for i = 1, #contracts do
+    -- One contract at a time, each in a pcall: one the store refuses (a
+    -- pause past what its column holds, a write that does not land) is
+    -- counted and named, and the rest are still refreshed.
+    local failed = {}
+    local function refreshOne(listed)
         -- As it stands now, not as the list had it (see below). One gone
         -- since has nothing left to refresh.
-        local contract = Storage.readContract(contracts[i].id) or {}
+        local contract = Storage.readContract(listed.id) or {}
         local live = contract.state == CH.STATE.ACTIVE
             or contract.state == CH.STATE.ACCEPTED
             or contract.state == CH.STATE.COMPLETING
@@ -2230,6 +2242,17 @@ function Admin.refreshTimers(src)
         end
     end
 
+    local contracts = Storage.allContracts()
+    for i = 1, #contracts do
+        local ok, err = pcall(refreshOne, contracts[i])
+        if not ok then
+            counts.failed = counts.failed + 1
+            failed[#failed + 1] = tostring(contracts[i].id)
+            Log.always(('timer refresh: contract %s could not be refreshed (%s); the others were')
+                :format(tostring(contracts[i].id), Util.dbError(err)))
+        end
+    end
+
     -- The expiry pass caches the soonest deadline it needs to wake for. It
     -- was computed against the old ones, so without this the next pass is
     -- skipped and the refresh looks like it did nothing.
@@ -2238,7 +2261,7 @@ function Admin.refreshTimers(src)
     Audit.staff('admin_timers_refreshed', callerCid(src), nil, counts)
     Audit.flush()
 
-    return {
+    local lines = {
         ('Timers refreshed. %d rate-limit bucket(s) and %d flood counter(s) cleared.')
             :format(counts.buckets, counts.flood),
         ('%d live contract(s) given a full deadline and lifetime; %d slot cooldown(s) '
@@ -2256,6 +2279,15 @@ function Admin.refreshTimers(src)
             :format(tostring(Config.Immunity.MinTargetPlaytimeHours)),
         'Purchase and slot COUNTS are untouched, and no countdown was advanced.',
     }
+    if counts.failed > 0 then
+        -- Right after the live count, which leaves these out: each may be
+        -- refreshed part-way (the lifetime, say, and not the deadline).
+        table.insert(lines, 3, ('%d contract(s) could not be refreshed, because the store refused '
+            .. 'a write (the server console says why), and may be refreshed only part-way: %s.')
+            :format(counts.failed, table.concat(failed, ', ', 1, math.min(#failed, 10))
+                .. (#failed > 10 and (' and %d more'):format(#failed - 10) or '')))
+    end
+    return lines
 end
 
 return Admin

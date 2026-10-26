@@ -1566,3 +1566,148 @@ describe('switching mode away from a json store', function()
         end
     end)
 end)
+
+--- What mysql mode's columns hold, which json and memory do not share
+--- (S04, S26): money in INT, the reason and relay texts in VARCHAR(255).
+--- A setting past either let through what the store then refused.
+describe('settings held to what mysql mode\'s columns hold', function()
+    --- The start-up checks, run quietly as the panel runs them, in a mode.
+    local function checked(mode, set)
+        local main = require('crimson-hitman.server.main')
+        resetConfig()
+        Config.Database.Mode = mode
+        set()
+        local ok, fatal, warn = main.validateConfig(true)
+        local after = {
+            maxValue = Config.MaxContractValue, cash = Config.Sources.cash.max,
+            informant = Config.Informant.Cost, reason = Config.Reason.MaxLength,
+            relay = Config.Relay.MaxLength,
+        }
+        resetConfig()
+        return ok, after, table.concat(warn or {}, '\n'), table.concat(fatal or {}, '\n')
+    end
+
+    it('holds money ceilings to an INT column in mysql mode, with a warning', function()
+        local function huge()
+            Config.MaxContractValue = 5e9
+            Config.Sources.cash.max = 3e9
+            Config.Informant.Cost = 2147483648
+        end
+        local ok, after, warned, fatal = checked('mysql', huge)
+        truthy(ok, fatal)
+        eq(after.maxValue, 2147483647)
+        eq(after.cash, 2147483647)
+        eq(after.informant, 2147483647)
+        truthy(warned:find('Config.MaxContractValue is 5000000000; mysql mode keeps money in INT '
+            .. 'columns, which hold at most 2147483647. Using 2147483647.', 1, true), warned)
+        truthy(warned:find('Config.Sources.cash.max is 3000000000', 1, true), warned)
+        truthy(warned:find('Config.Informant.Cost is 2147483648', 1, true), warned)
+
+        ok, after, warned = checked('json', huge)
+        truthy(ok)
+        eq(after.maxValue, 5e9, 'json keeps any figure')
+        eq(after.cash, 3e9)
+        falsy(warned:find('INT columns', 1, true), warned)
+    end)
+
+    it('leaves a ceiling at or under the column alone', function()
+        local ok, after, warned = checked('mysql', function() Config.MaxContractValue = 2147483647 end)
+        truthy(ok)
+        eq(after.maxValue, 2147483647)
+        falsy(warned:find('INT columns', 1, true), warned)
+    end)
+
+    it('holds Reason.MaxLength and Relay.MaxLength to 255 in mysql mode', function()
+        local function long()
+            Config.Reason.MaxLength = 300
+            Config.Relay.MaxLength = 400
+        end
+        local ok, after, warned = checked('mysql', long)
+        truthy(ok)
+        eq(after.reason, 255)
+        eq(after.relay, 255)
+        truthy(warned:find('Config.Reason.MaxLength is 300; mysql mode keeps that text in '
+            .. 'crimson_contracts.reason and crimson_ledger.reason, which hold at most 255 '
+            .. 'characters. Using 255.', 1, true), warned)
+        truthy(warned:find('Config.Relay.MaxLength is 400; mysql mode keeps that text in '
+            .. 'crimson_messages.body', 1, true), warned)
+
+        ok, after, warned = checked('json', long)
+        eq(after.reason, 300, 'json keeps it')
+        eq(after.relay, 400)
+        falsy(warned:find('MaxLength is', 1, true), warned)
+    end)
+end)
+
+describe('the 2038 warning', function()
+    local function opened(at)
+        local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+        Exec.install(Natives)
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local store = require('crimson-hitman.server.storage.mysql')
+        local said, realPrint = {}, _G.print
+        _G.print = function(...) said[#said + 1] = tostring((...)) end
+        Env.time = at
+        local ok, err = pcall(store.open)
+        _G.print = realPrint
+        Env.time = 1700000000
+        truthy(ok, tostring(err))
+        return table.concat(said, '\n')
+    end
+
+    --- S22: every time column is a signed INT of seconds, and every insert
+    --- is refused from 2038-01-19. Said from a year before, at every start.
+    it('is said at every start from a year before 2038-01-19, and not earlier', function()
+        local from = 2147483647 - 365 * 86400
+        local said = opened(from)
+        truthy(said:find('the crimson_* tables keep times as signed INT, which runs out on '
+            .. '2038-01-19; update crimson-hitman before then', 1, true), said)
+        truthy(opened(from + 86400):find('runs out on 2038-01-19', 1, true), 'and the start after')
+        local before = opened(from - 1)
+        falsy(before:find('2038', 1, true), 'not a second earlier: ' .. before)
+    end)
+end)
+
+--- W090: the number caps every retry pass, the login one and the one
+--- every 30 seconds alike, and at 0 no owed payout was ever tried.
+describe('PendingEscrow.MaxRetriesPerLogin below 1', function()
+    local function bootWith(value)
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        package.loaded['server.main'] = nil
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Config.Database.Mode = 'memory'
+        Config.PendingEscrow.MaxRetriesPerLogin = value
+        local main = require('server.main')
+        return main, main.start()
+    end
+
+    it('is read as 1, with a problem line, and owed payouts are delivered', function()
+        local _, s = bootWith(0)
+        eq(Config.PendingEscrow.MaxRetriesPerLogin, 1)
+        local problems = table.concat(require('crimson-hitman.shared.log').view().problems, '\n')
+        truthy(problems:find('PendingEscrow.MaxRetriesPerLogin is 0', 1, true), problems)
+        truthy(problems:find('Using 1.', 1, true), problems)
+
+        -- A refund owed to a client who is away when staff void it.
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } } })
+        truthy(c)
+        local client = Env.players[1]
+        Env.removePlayer(1)
+        truthy(s.admin.void(0, c.id, 'staff'))
+        eq(#s.storage.readPending('CREATOR1'), 1, 'owed while they are away')
+        Env.players[1] = client
+        Env.byCitizen['CREATOR1'] = 1
+        local before = client.PlayerData.money.cash
+        eq(s.escrow.retryPending('CREATOR1'), 1, 'handed over when they are back')
+        eq(client.PlayerData.money.cash - before, 5000)
+    end)
+end)

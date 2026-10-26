@@ -484,6 +484,10 @@
     item_names_owner: 'One of those items carries your name or number, and '
       + 'the hitman would be handed it as it is, which would give you away. '
       + 'Leave it out.',
+    // mysql mode only: the item's own data is more than the escrow table
+    // holds. Refused before anything was taken.
+    item_too_large: 'One of those items carries more data than this server can hold '
+      + 'in escrow. Leave it out.',
     invalid_input: 'Check what you entered.',
     server_error: 'Something broke on the server, not on your end. '
       + 'An admin can see what in the server console.',

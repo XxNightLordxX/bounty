@@ -74,6 +74,14 @@ A staff account that can adjust money and spawn items makes this much faster.
       kept in memory: <id>`, the other contract's file changes, and closing
       the editor lets the next flush write it. **Flush the audit log** in the
       admin panel meanwhile says the store did not save and names the file
+- [ ] mysql mode, on a copy: set `Config.MaxContractValue = 5000000000` and
+      `Config.Reason.MaxLength = 300` and restart. The start counts both among
+      the settings that need attention, and `ch-diag` says each is held to
+      2147483647 and 255. Put them back
+- [ ] mysql mode, on a copy: put an item whose metadata is larger than 64 KB
+      (a note item with a very long text, if your server has one) into a new
+      contract's reward: the app says the item carries more data than the
+      server can hold in escrow, and the item and the money stay with you
 - [ ] mysql mode, on a copy: `SHOW INDEX FROM crimson_audit` lists
       `idx_audit_action`, `crimson_contracts` `idx_resolved` and
       `crimson_messages` `idx_message_contract` after the first start of
@@ -557,6 +565,12 @@ uploads, and with neither. Restart the resource between them.
       through the character and spawn selector, finds "Contract expired" in
       their phone's notification list once they have spawned
 - [ ] A target who never downloaded the app still gets "eyes on you"
+- [ ] With a staked contract held, let its deadline pass, then log the client
+      (or the target) out within a few seconds: the contract expires at the
+      next pass and the stake goes to the client; it is not paused
+- [ ] A target sentenced at the station with a contract on them and driven to
+      the prison: within a minute of arriving inside `Config.Limits.JailZone`
+      the deadline stops (the hitman's card shows the clock stopped)
 - [ ] A contract disappears from the board when the target logs out
 - [ ] It reappears when they return, with escrow intact
 - [ ] Restarting the resource mid-contract loses nothing

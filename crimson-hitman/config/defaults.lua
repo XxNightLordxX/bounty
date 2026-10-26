@@ -114,6 +114,11 @@ ConfigDefaults.Sources = {
 }
 
 --- Total escrow value ceiling across all sources, money-equivalent.
+---
+--- In mysql mode every amount is kept in an INT column, which holds at most
+--- 2147483647. So there this, each source's max above, Bailout.AbsoluteMax,
+--- Penalty.MaxAmount, the anonymity fees and Informant.Cost are held to
+--- 2147483647, with a warning at startup; json keeps any figure.
 ConfigDefaults.MaxContractValue = 1000000
 
 --- Items that may never be escrowed, whatever the creator selects.
@@ -796,6 +801,8 @@ ConfigDefaults.Advisory = {
 
 ConfigDefaults.Reason = {
     Mode = 'freetext',          -- 'preset' | 'freetext' | 'off'
+    --- Characters. In mysql mode at most 255, the reason columns' size;
+    --- above it is read as 255, with a warning at startup.
     MaxLength = 140,
     MaxDigits = 6,
     Presets = {
@@ -807,6 +814,8 @@ ConfigDefaults.Reason = {
 
 ConfigDefaults.Relay = {
     Enabled = true,
+    --- Characters per message. In mysql mode at most 255, the message
+    --- column's size; above it is read as 255, with a warning at startup.
     MaxLength = 200,
     --- The newest messages a thread keeps; older ones go as new ones
     --- arrive. Every read sends the whole thread to a phone, and a thread
@@ -962,7 +971,11 @@ ConfigDefaults.Database = {
     --- start asks information_schema what is there and creates or alters
     --- only what is missing, so a database user without CREATE and ALTER
     --- starts on tables imported from install/sql/crimson_hitman.sql; what
-    --- it cannot add, the console names, with the statement to run.
+    --- it cannot add, the console names, with the statement to run. Its
+    --- columns hold money up to 2147483647 a figure, reason and message
+    --- text up to 255 characters, and times until 2038-01-19; the start
+    --- holds settings to the first two and warns from a year before the
+    --- third (README, Install).
     ---
     --- Modes do not share data: a server switched from one to another
     --- starts with nothing in the new one. So it refuses to start while the
@@ -1000,6 +1013,10 @@ ConfigDefaults.Database = {
 }
 
 ConfigDefaults.PendingEscrow = {
+    --- How many owed payouts one retry pass tries: the pass at a player's
+    --- login and the one every 30 seconds for a player still online, both.
+    --- At least 1: below it no owed payout would ever be delivered, so it is
+    --- read as 1, with a warning at startup.
     MaxRetriesPerLogin = 5,
     --- Randomised slightly in code so a reconnect wave does not converge.
     LoginRetryDelayMs = 5000,

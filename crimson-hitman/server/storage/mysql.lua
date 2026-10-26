@@ -834,6 +834,14 @@ function MySQLStore.open()
 
     local highest = db.scalar('SELECT COUNT(*) FROM crimson_contracts') or 0
     seq = tonumber(highest) or 0
+
+    -- Every time column is a signed INT of seconds, which runs out at
+    -- 2038-01-19 03:14:07 UTC: from then every insert is refused. Said at
+    -- every start from a year before, so there is time to update.
+    if os.time() >= 2147483647 - 365 * 86400 then
+        Log.always('the crimson_* tables keep times as signed INT, which runs out on '
+            .. '2038-01-19; update crimson-hitman before then')
+    end
     return true
 end
 
@@ -1161,10 +1169,20 @@ function MySQLStore.startPause(id, at)
     return (tonumber(affected) or 0) > 0
 end
 
+--- The pause total is kept in milliseconds in an INT, which holds 24.86
+--- days of them, and the panel allows a 30-day lifetime. Past it strict
+--- mode refused the statement, the pause never ended, and the raise stopped
+--- the expiry pass at this contract for every contract after it. So the
+--- total stops at the ceiling: MariaDB adds in BIGINT before LEAST, so the
+--- sum itself is never refused. The deadline still moves by the whole
+--- pause; only the banked total (unpausedDeadline, the accept guard's net
+--- figure) stops counting, and Contracts.accept refuses any deadline change
+--- on a contract whose total has stopped.
 function MySQLStore.endPause(id, since, seconds)
     local affected = db.update([[
         UPDATE crimson_contracts
-        SET deadline_at = deadline_at + ?, paused_ms = paused_ms + ?, paused_since = NULL
+        SET deadline_at = deadline_at + ?, paused_ms = LEAST(paused_ms + ?, 2147483647),
+            paused_since = NULL
         WHERE id = ? AND paused_since = ?
     ]], { seconds, seconds * 1000, id, since })
     return (tonumber(affected) or 0) > 0
@@ -1222,7 +1240,11 @@ local function escrowParams(contractId, l)
         -- change. See MySQLStore.orphanEscrow.
         l.taken_from,
         l.deliver_raises,
-        l.deliver_before,
+        -- The recipient's whole balance before a give that raised, which
+        -- can be past what an INT holds. Refused, the raise was never
+        -- counted and the line was left releasing. Held to the column
+        -- here; the exact figure is in the escrow_deliver_raised row.
+        l.deliver_before and math.max(-2147483648, math.min(2147483647, l.deliver_before)),
         l.deliver_arrived,
     }
 end
@@ -1786,6 +1808,14 @@ end
 
 --- Rows the admin panel's log reads per round trip, and at most per page.
 local AUDIT_BATCH, AUDIT_SCAN_ROWS = 500, 5000
+
+--- The most a TEXT column holds, in bytes. crimson_escrow.metadata stores
+--- exactly what escrowParams encodes (escaping happens only in the
+--- statement text), so an item whose encoded metadata is longer is refused
+--- by Escrow.validate before anything is taken, and a review item that
+--- would not fit is kept without its goods' metadata (Review.open). Only
+--- this store sets it.
+MySQLStore.MAX_TEXT_BYTES = 65535
 
 --- How many audit rows past the retention age one prune removes. One
 --- statement for the whole backlog (a first start with retention on, or

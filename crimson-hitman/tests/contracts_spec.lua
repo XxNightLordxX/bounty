@@ -1098,6 +1098,52 @@ describe('a reason over the length limit', function()
     end)
 end)
 
+--- S26: in mysql mode the reason is kept in VARCHAR(255) columns, and a
+--- Reason.MaxLength above that let the reason rules take a reason the store
+--- then refused: the contract was taken, rolled back and answered bad_state.
+describe('a reason past what mysql mode\'s column holds', function()
+    local function onMysql()
+        local s = newStack()
+        local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+        Exec.install(Natives)
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local store = require('crimson-hitman.server.storage.mysql')
+        store.open()
+        s.audit.init(store)
+        s.review.init({ storage = store, escrow = s.escrow, audit = s.audit })
+        s.escrow.init(store, s.audit, s.review)
+        s.contracts.init({ storage = store, escrow = s.escrow, identity = s.identity,
+                           audit = s.audit, notify = s.notify, progression = s.progression,
+                           death = s.death, review = s.review })
+        s.storage = store
+        return s
+    end
+
+    it('is refused by the reason rules, not by the store, on the strict executor', function()
+        local s = onMysql()
+        local f = fixture(s)
+        Config.Database.Mode = 'mysql'
+        Config.Reason.MaxLength = 300
+        require('crimson-hitman.server.main').validateConfig(true)
+        eq(Config.Reason.MaxLength, 255, 'held to the column')
+
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = string.rep('\208\150', 300),
+            reward = { baseline = { cash = 1000 } },
+        })
+        falsy(c)
+        eq(err, CH.ERR.INVALID_INPUT, 'the reason rules\' answer, not the store\'s bad_state')
+        eq(Env.players[1].PlayerData.money.cash, 100000, 'nothing was taken')
+
+        c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = string.rep('\208\150', 255),
+            reward = { baseline = { cash = 1000 } },
+        })
+        truthy(c, 'and 255 characters are stored: ' .. tostring(err))
+        eq(utf8.len(s.storage.readContract(c.id).reason), 255)
+    end)
+end)
+
 --- Config.Limits.MinContractReward: the least a contract's reward may be
 --- worth in money. Two one-dollar contracts filled a target's
 --- MaxActiveContractsPerTarget, and nobody else could list them until both

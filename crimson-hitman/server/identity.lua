@@ -379,6 +379,18 @@ function Identity.protectedBy(actor)
     return nil
 end
 
+--- Whether a player's record holds a sentence ('injail' metadata above 0),
+--- wherever they are standing. Not whether they are in prison: that is
+--- Identity.isJailed, which also needs them inside the prison grounds.
+---@param actor table
+---@return boolean
+function Identity.serving(actor)
+    local data = actor and actor.player and actor.player.PlayerData
+    local meta = data and data.metadata
+    local left = type(meta) == 'table' and tonumber(meta.injail) or nil
+    return left ~= nil and left > 0
+end
+
 --- Whether a player is in prison: serving a sentence, and inside the prison.
 ---
 --- sc-police and the QBox prison scripts keep the time left in the 'injail'
@@ -390,10 +402,7 @@ end
 ---@param actor table
 ---@return boolean
 function Identity.isJailed(actor)
-    local data = actor and actor.player and actor.player.PlayerData
-    local meta = data and data.metadata
-    local left = type(meta) == 'table' and tonumber(meta.injail) or nil
-    if not left or left <= 0 then return false end
+    if not Identity.serving(actor) then return false end
 
     local zone = Config.Limits.JailZone
     if type(zone) ~= 'table' or not tonumber(zone.x) or not tonumber(zone.y)

@@ -585,3 +585,99 @@ describe('the staff commands for the review queue', function()
         eq(s.storage.readReview(id).resolved_by, 'STAFF007')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- What an item keeps of a database error, and goods too big for a column
+--------------------------------------------------------------------------
+
+--- oxmysql's message, as its await raises it: the statement over several
+--- lines, every value it was sent, then the server's own words.
+local function oxmysqlError(values)
+    return 'crimson-hitman/server/timing.lua:41: crimson-hitman was unable to execute a query!\n'
+        .. 'Query: \n        INSERT INTO crimson_escrow\n            (id, contract_id, slot, '
+        .. 'line_portion, source, amount, item, quantity, metadata)\n        VALUES (?,?,?)\n'
+        .. values .. "\nData too long for column 'metadata' at row 1"
+end
+
+describe('Util.dbError', function()
+    local Util = require('crimson-hitman.shared.util')
+
+    it('keeps the server\'s words and the start of the statement, never the values', function()
+        local text = Util.dbError(oxmysqlError('["ct1:1","CREATOR1","Vic Marlowe",{"note":"'
+            .. ('n'):rep(100000) .. '"}]'))
+        truthy(#text <= 300, 'at most 300 characters: ' .. #text)
+        truthy(text:find("Data too long for column 'metadata' at row 1", 1, true), text)
+        truthy(text:find('INSERT INTO crimson_escrow (id, contract_id', 1, true), text)
+        for _, value in ipairs({ 'CREATOR1', 'Vic Marlowe', 'nnnn' }) do
+            falsy(text:find(value, 1, true), 'none of the values it was sent: ' .. value)
+        end
+    end)
+
+    it('cuts anything else to the same length, on one line', function()
+        eq(Util.dbError('connection lost'), 'connection lost')
+        eq(Util.dbError(nil), 'nil')
+        local long = Util.dbError(('x'):rep(1000) .. '\nmore')
+        eq(#long, 300)
+        falsy(long:find('\n', 1, true))
+    end)
+end)
+
+describe('an item for staff that would not fit its column', function()
+    for _, name in ipairs(BACKENDS) do
+        --- S05: oxmysql's whole message, 100 KB of metadata in its values,
+        --- was kept as the item's error, and on mysql that made the item
+        --- itself too big to write: kept only in this process until a
+        --- restart lost it.
+        it(name .. ': keeps a 100 KB error at most 300 characters, with no values', function()
+            local s = stackOn(name)
+            local id = s.review.open({
+                kind = 'escrow_take_unverified', contract_id = 'ct00000041',
+                cids = { from = 'CREATOR1' },
+                items = { { id = 'ct00000041:1', source = 'cash', amount = 1000 } },
+                known = { error = oxmysqlError('["ct00000041:1","CREATOR1","' .. ('v'):rep(100000) .. '"]'),
+                          read_error = 'the store did not answer' },
+            })
+            local item = s.storage.readReview(id)
+            truthy(item, 'written to the store')
+            truthy(#item.known.error <= 300, 'trimmed: ' .. #item.known.error)
+            truthy(item.known.error:find("Data too long for column 'metadata'", 1, true), item.known.error)
+            falsy(item.known.error:find('CREATOR1', 1, true), 'none of the values')
+            eq(item.known.read_error, 'the store did not answer')
+        end)
+    end
+
+    it('mysql: is stored without its goods\' metadata, and every id it names', function()
+        local s = stackOn('mysql')
+        local said, realPrint = {}, _G.print
+        _G.print = function(...) said[#said + 1] = tostring((...)) end
+        local id = s.review.open({
+            kind = 'escrow_take_unverified', contract_id = 'ct00000042',
+            cids = { from = 'CREATOR1' },
+            items = {
+                { id = 'ct00000042:1', source = 'item', item = 'lockpick', quantity = 1,
+                  metadata = { note = ('n'):rep(40000) } },
+                { id = 'ct00000042:2', source = 'item', item = 'radio', quantity = 1,
+                  metadata = { note = ('r'):rep(40000) } },
+            },
+        })
+        _G.print = realPrint
+        local item = s.storage.readReview(id)
+        truthy(item, 'written, not kept only in this process: ' .. table.concat(said, '\n'))
+        eq(#item.items, 2)
+        eq(item.items[1].id, 'ct00000042:1')
+        eq(item.items[2].item, 'radio')
+        eq(item.items[1].metadata, nil)
+        eq(item.items[1].metadata_omitted, true, 'and says so')
+        eq(s.review.retryUnwritten(), 0, 'nothing left waiting')
+    end)
+
+    it('json: keeps the metadata whole', function()
+        local s = stackOn('json')
+        local id = s.review.open({
+            kind = 'escrow_take_unverified', contract_id = 'ct00000043',
+            items = { { id = 'ct00000043:1', source = 'item', item = 'lockpick', quantity = 1,
+                        metadata = { note = ('n'):rep(70000) } } },
+        })
+        eq(#s.storage.readReview(id).items[1].metadata.note, 70000)
+    end)
+end)

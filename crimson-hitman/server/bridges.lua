@@ -689,6 +689,13 @@ function Bridges.install(modules)
                 -- Headshots turned off: none is kept, and every card shows
                 -- the placeholder from its next refresh.
                 modules.mugshot.clearAll()
+            elseif (key == 'Limits.PauseWhileTargetJailed' or key:sub(1, 15) == 'Limits.JailZone')
+                and modules.scheduler then
+                -- Who counts as in prison changed, as a sentence starting
+                -- does: the next tick runs the expiry pass, rather than the
+                -- one after the longest skip, by when the deadline of a
+                -- target already inside could have gone.
+                modules.scheduler.presenceChanged()
             end
         end
     end

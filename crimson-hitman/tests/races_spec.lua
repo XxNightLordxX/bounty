@@ -2057,3 +2057,50 @@ describe('RACE: a retry claims a line another retry just left part of with them'
         eq(money(3) - before, 5000, 'and staff pay only the rest')
     end)
 end)
+
+--- S01's clamp has a cost: once a contract's pause total has stopped at
+--- what its INT column holds, a pause ending still moves the deadline out
+--- but no longer adds to the total, and the net figure the acceptance
+--- compares (unpausedDeadline) reads it as the deadline moved out. A cut
+--- landing in the same awaits was hidden behind it.
+describe('a saturated pause clock', function()
+    it('refuses a stake whose deadline moved at all while it was taken (mysql)', function()
+        local s, f, c, original = deadlineRace(mysqlStack)
+        local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+        Exec.run('UPDATE crimson_contracts SET paused_ms = ? WHERE id = ?', { 2147483647, c.id })
+        local before = money(3)
+
+        local realCount = s.storage.countHitmanContracts
+        local fired, revised = false, nil
+        s.storage.countHitmanContracts = function(...)
+            if not fired then
+                fired = true
+                -- Brought in half an hour while nobody holds it, and an
+                -- hour's pause ending in the same awaits.
+                revised = s.contracts.revise(f.creator, c.id, { deadlineSeconds = 9000 })
+                local at = os.time() - 3600
+                s.storage.startPause(c.id, at)
+                s.storage.endPause(c.id, at, 3600)
+            end
+            return realCount(...)
+        end
+        local ok, err = s.contracts.accept(f.hitman, c.id, false,
+            { checkDisclosure = true, disclosed = 1000, shownDeadline = original })
+        s.storage.countHitmanContracts = realCount
+
+        truthy(fired and revised, 'the edit landed')
+        eq(s.storage.readContract(c.id).paused_ms, 2147483647, 'the total did not move')
+        falsy(ok, 'staked on a deadline nobody could tell had been cut')
+        eq(err, CH.ERR.TERMS_CHANGED)
+        eq(money(3), before, 'and the stake came back')
+        falsy(holding(s, c), 'and nobody holds the contract')
+    end)
+
+    it('still takes a stake on a saturated clock nothing moved (mysql)', function()
+        local s, f, c, original = deadlineRace(mysqlStack)
+        local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+        Exec.run('UPDATE crimson_contracts SET paused_ms = ? WHERE id = ?', { 2147483647, c.id })
+        truthy(s.contracts.accept(f.hitman, c.id, false,
+            { checkDisclosure = true, disclosed = 1000, shownDeadline = original }))
+    end)
+end)

@@ -430,3 +430,286 @@ describe('a photo token after the kill was undone', function()
         eq(Env.players[3].PlayerData.money.cash, before)
     end)
 end)
+
+--------------------------------------------------------------------------
+-- The expiry pass (main.lua ExpireContracts)
+--------------------------------------------------------------------------
+
+--- main.lua's own start on memory. `configure` runs after the config is
+--- reset and before the start, as a server.cfg's config would.
+local function bootMain(configure)
+    for name in pairs(package.loaded) do
+        if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+            package.loaded[name] = nil
+        end
+    end
+    package.loaded['server.main'] = nil
+    Env.reset()
+    Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+    Natives.resetResourceStates()
+    resetConfig()
+    Config.Database.Mode = 'memory'
+    if configure then configure() end
+    local main = require('server.main')
+    return main, main.start()
+end
+
+local function worth(src)
+    local m = Env.players[src].PlayerData.money
+    return m.cash + m.bank
+end
+
+--- A staked contract a hitman holds, with a pass run since.
+local function heldContract(configure)
+    local main, s = bootMain(function()
+        if configure then configure() end
+    end)
+    Config.Limits.ExclusiveIdleReleaseSeconds = 0
+    Config.Limits.ExclusiveAttemptWindowSeconds = 0
+    local f = fixture(s)
+    local c = s.contracts.create(f.creator, {
+        targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+        reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+    })
+    truthy(c, 'placed')
+    truthy(s.contracts.accept(f.hitman, c.id), 'held')
+    main.markPresenceChanged()
+    main.expire()
+    return main, s, f, c
+end
+
+--- What the log kept after the start: Log.always lines among them.
+local function said()
+    local out = {}
+    for _, entry in ipairs(require('crimson-hitman.shared.log').view().recent) do
+        out[#out + 1] = entry.text
+    end
+    return table.concat(out, '\n')
+end
+
+describe('the expiry pass past a contract the store refuses', function()
+    --- S01: an endPause the database refused (a pause total past its INT
+    --- column) raised out of the pass at that contract, every pass, and no
+    --- contract after it was expired, paused or resumed.
+    it('expires the others in the same pass, and names the one it could not update', function()
+        local main, s = bootMain()
+        Config.Limits.MaxActiveContractsPerTarget = 5
+        Config.Limits.MaxActiveContractsPerCreator = 5
+        local f = fixture(s)
+        local a = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        local b = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'y',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        truthy(a and b, 'two contracts')
+        -- The first one paused, so the pass ends its pause; the second one
+        -- simply overdue.
+        local rowA = s.storage.readContract(a.id)
+        rowA.paused_since = os.time() - 60
+        s.storage.writeContract(rowA)
+        local rowB = s.storage.readContract(b.id)
+        rowB.deadline_at = os.time() - 5
+        s.storage.writeContract(rowB)
+
+        local live, endPause = s.storage.liveContracts, s.storage.endPause
+        s.storage.liveContracts = function()
+            local rows = live()
+            table.sort(rows, function(x, y) return x.id == a.id and y.id ~= a.id end)
+            return rows
+        end
+        s.storage.endPause = function(id, ...)
+            if id == a.id then
+                error("crimson-hitman was unable to execute a query!\nQuery: UPDATE crimson_contracts"
+                    .. " SET deadline_at = deadline_at + ?\n[60,60000,\"x\",1]\n"
+                    .. "Out of range value for column 'paused_ms' at row 1", 0)
+            end
+            return endPause(id, ...)
+        end
+        main.markPresenceChanged()
+        local ran, err = pcall(main.expire)
+        s.storage.liveContracts, s.storage.endPause = live, endPause
+
+        truthy(ran, 'the pass did not stop at the first contract: ' .. tostring(err))
+        eq(s.storage.readContract(b.id).state, CH.STATE.EXPIRED, 'the second one is expired by the same pass')
+        eq(s.storage.readContract(a.id).state, CH.STATE.ACTIVE, 'the first left as it was')
+        local text = said()
+        truthy(text:find(('expiry pass: contract %s could not be updated'):format(a.id), 1, true), text)
+        truthy(text:find("Out of range value for column 'paused_ms'", 1, true), 'in the store\'s words: ' .. text)
+        falsy(text:find('60000', 1, true), 'and none of the values it was sent: ' .. text)
+    end)
+
+    it('says so once in ten minutes, and tries it again within a minute', function()
+        local main, s = bootMain()
+        local f = fixture(s)
+        local a = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
+        local row = s.storage.readContract(a.id)
+        row.paused_since = os.time() - 60
+        s.storage.writeContract(row)
+        local endPause, tries = s.storage.endPause, 0
+        s.storage.endPause = function() tries = tries + 1 error('refused', 0) end
+        main.markPresenceChanged()
+        main.expire()
+        eq(tries, 1)
+        Env.advance(30)
+        main.expire()
+        eq(tries, 1, 'not on every tick')
+        Env.advance(31)
+        main.expire()
+        eq(tries, 2, 'again within a minute, with nobody arriving or leaving')
+        local n = 0
+        for line in said():gmatch('[^\n]+') do
+            if line:find('could not be updated', 1, true) then n = n + 1 end
+        end
+        eq(n, 1, 'one console line, not one a minute')
+        s.storage.endPause = endPause
+    end)
+
+    --- The flag that a player came or went was cleared before the read, so
+    --- a read that raised forgot the logoff until the next deadline.
+    it('keeps a logoff it was woken for when the read of the contracts raises', function()
+        local main, s, _, c = heldContract()
+        Env.removePlayer(2)
+        main.markPresenceChanged()
+        local live = s.storage.liveContracts
+        s.storage.liveContracts = function() error('the store did not answer', 0) end
+        falsy(pcall(main.expire), 'the read raised')
+        s.storage.liveContracts = live
+        main.expire()
+        truthy(s.storage.readContract(c.id).paused_since,
+            'the next pass still acts on the target having gone')
+    end)
+end)
+
+describe('a party gone in the seconds after the deadline, as this resource ships', function()
+    local Shipped = require('crimson-hitman.tests.harness.shipped')
+
+    --- W077: a pause begun after the deadline turned the expiry into a
+    --- lifetime ending, which hands the stake back, and left the hitman on
+    --- a card saying Due now they could not work.
+    it('expires the contract and forfeits the stake, whoever left', function()
+        local main, s, _, c = heldContract(Shipped.apply)
+        eq(s.storage.readContract(c.id).fulfilment_rule, CH.FULFILMENT_RULE.ALIVE)
+        local hitman = worth(3)
+        local row = s.storage.readContract(c.id)
+        Env.advance(row.deadline_at - os.time() + 5)
+        -- The person who placed it (named) disconnects five seconds after
+        -- the deadline, before the pass comes round.
+        Env.removePlayer(1)
+        main.markPresenceChanged()
+        main.expire()
+        local after = s.storage.readContract(c.id)
+        eq(after.state, CH.STATE.EXPIRED, 'expired, not paused')
+        eq(after.paused_since, nil, 'no pause began after the deadline')
+        eq(worth(3), hitman, 'the hitman ran out of time: no stake back')
+        local stake
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.portion == CH.PORTION.STAKE then stake = line end
+        end
+        truthy(stake.state == CH.ESCROW_STATE.SETTLED or stake.owed_to == 'CREATOR1',
+            'the stake is the client\'s, owed to them while they are away')
+    end)
+
+    it('still pauses for a party gone before the deadline', function()
+        local main, s, _, c = heldContract(Shipped.apply)
+        Env.removePlayer(1)
+        main.markPresenceChanged()
+        main.expire()
+        truthy(s.storage.readContract(c.id).paused_since, 'paused while the client is away')
+    end)
+end)
+
+describe('a sentence the pass cannot count yet', function()
+    local function jailedAt(x, y, minutes)
+        Env.players[2].PlayerData.metadata.injail = minutes
+        Env.players[2]._coords = { x = x, y = y, z = 45.0 }
+    end
+
+    --- W076: the hook woke one pass while the target was still outside the
+    --- prison, and the next one came at the deadline, too late to pause.
+    it('pauses the clock within a minute of the target reaching the prison', function()
+        local main, s, _, c = heldContract()
+        local row = s.storage.readContract(c.id)
+        Env.advance(row.deadline_at - os.time() - 420)
+        main.markPresenceChanged()
+        main.expire()
+        -- Sentenced at the station, seven minutes before the deadline.
+        jailedAt(0.0, 0.0, 60)
+        Env.handlers['qbx_core:server:onSetMetaData']('injail', 0, 60, 2)
+        main.expire()
+        falsy(s.storage.readContract(c.id).paused_since, 'not in the prison yet')
+
+        Env.advance(15)
+        local zone = Config.Limits.JailZone
+        jailedAt(zone.x + 10.0, zone.y - 10.0, 60)
+        local pausedAfter
+        for i = 1, 6 do
+            Env.advance(10)
+            main.expire()
+            if not pausedAfter and s.storage.readContract(c.id).paused_since then pausedAfter = i * 10 end
+        end
+        truthy(pausedAfter, 'paused once they were inside')
+        truthy(pausedAfter <= 60, 'within a minute of arriving: ' .. tostring(pausedAfter))
+        Env.advance(600)
+        main.markPresenceChanged()
+        main.expire()
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'and not expired while they serve')
+    end)
+
+    it('pauses within one pass of the switch being turned on from the admin panel', function()
+        local main, s, _, c = heldContract()
+        Config.Limits.PauseWhileTargetJailed = false
+        local zone = Config.Limits.JailZone
+        jailedAt(zone.x, zone.y, 60)
+        main.markPresenceChanged()
+        main.expire()
+        falsy(s.storage.readContract(c.id).paused_since, 'the switch is off')
+
+        truthy(s.settings.set('Limits.PauseWhileTargetJailed', true, 'Staff', 'STAFF001'))
+        main.expire()
+        truthy(s.storage.readContract(c.id).paused_since,
+            'the next pass, not the one after the longest skip')
+    end)
+end)
+
+describe('the expiry pass kept in step', function()
+    --- W079: a deadline brought in by Edit waited out the soonest deadline
+    --- the pass had last seen.
+    it('acts on a deadline brought in by Edit at the next pass after it', function()
+        local main, s = bootMain()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 1000 } },
+        })
+        truthy(c)
+        main.markPresenceChanged()
+        main.expire()
+        truthy(s.contracts.revise(f.creator, c.id, { deadlineSeconds = 300 }))
+        local due = s.storage.readContract(c.id).deadline_at
+        Env.advance(due - os.time() + 2)
+        main.expire()
+        eq(s.storage.readContract(c.id).state, CH.STATE.EXPIRED, 'expired seconds after its new deadline')
+    end)
+
+    it('tries a due contract again on the next tick when its ending was refused', function()
+        local main, s, _, c = heldContract()
+        local row = s.storage.readContract(c.id)
+        Env.advance(row.deadline_at - os.time() + 1)
+        local resolve, refused = s.contracts.resolve, false
+        s.contracts.resolve = function(...)
+            if not refused then
+                refused = true
+                return false, CH.ERR.LOCKED
+            end
+            return resolve(...)
+        end
+        main.markPresenceChanged()
+        main.expire()
+        truthy(refused, 'the ending was refused once')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
+        Env.advance(Config.Audit.FlushIntervalMs / 1000)
+        main.expire()
+        s.contracts.resolve = resolve
+        eq(s.storage.readContract(c.id).state, CH.STATE.EXPIRED, 'on the next tick, not ten minutes on')
+    end)
+end)

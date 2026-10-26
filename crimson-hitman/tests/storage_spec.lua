@@ -1175,6 +1175,49 @@ describe('the mysql executor refuses what strict MariaDB refuses', function()
     end)
 end)
 
+--- What the store writes, held to what its INT columns hold (S01, S22,
+--- S04). Each was refused by strict mode: the pause never ended and the
+--- expiry pass stopped at it, and a give that raised for a rich player was
+--- never counted.
+describe('the mysql store within its INT columns', function()
+    local function mysqlStore()
+        Exec.install(Natives)
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local store = require('crimson-hitman.server.storage.mysql')
+        store.open()
+        return store
+    end
+
+    it('ends a 25-day pause, its total held to the column', function()
+        local store = mysqlStore()
+        local c = contractFixture('ct00000025')
+        c.deadline_at = os.time() + 3600
+        store.writeContract(c)
+        local since = os.time()
+        truthy(store.startPause(c.id, since), 'paused')
+        local ok, ended = pcall(store.endPause, c.id, since, 25 * 86400)
+        truthy(ok, 'the database refused it: ' .. tostring(ended))
+        truthy(ended, 'the pause ended')
+        local row = store.readContract(c.id)
+        eq(row.paused_ms, 2147483647, 'the total stops at what an INT holds')
+        eq(row.paused_since, nil)
+        eq(row.deadline_at, c.deadline_at + 25 * 86400, 'the deadline moves by the whole pause')
+    end)
+
+    it('keeps a balance past INT as the ceiling', function()
+        local store = mysqlStore()
+        local ok, err = pcall(store.writeEscrow, 'ct00000026', { {
+            id = 'ct00000026:1', slot = 1, portion = 'baseline', source = 'cash', amount = 500,
+            state = CH.ESCROW_STATE.HELD, owed_to = 'HITMAN01', deliver_raises = 1,
+            deliver_before = 3e9,
+        } })
+        truthy(ok, 'the database refused it: ' .. tostring(err))
+        local line = store.readEscrowLine('ct00000026:1')
+        eq(tonumber(line.deliver_before), 2147483647)
+        eq(tonumber(line.deliver_raises), 1, 'and the raise it records')
+    end)
+end)
+
 describe('json durability', function()
     it('survives a restart with escrow intact', function()
         package.loaded['crimson-hitman.server.storage.json'] = nil

@@ -656,6 +656,23 @@ function Escrow.validate(actor, spec, bonusPercent, existingLines, existingValue
         return nil, CH.ERR.INVALID_REWARD
     end
 
+    -- An item goes into escrow with its metadata, and on mysql that is a
+    -- TEXT column (Storage.MAX_TEXT_BYTES; json and memory set none). One
+    -- longer than it was refused by the store after the take, rolled back
+    -- and answered bad_state, with the whole metadata in the console. Here,
+    -- before anything is taken, and by name.
+    local limit = Storage and Storage.MAX_TEXT_BYTES
+    if limit then
+        for i = 1, #lines do
+            if lines[i].metadata ~= nil then
+                local encoded, text = pcall(json.encode, lines[i].metadata)
+                if not encoded or type(text) ~= 'string' or #text > limit then
+                    return nil, CH.ERR.ITEM_TOO_LARGE
+                end
+            end
+        end
+    end
+
     return lines, nil, #slots
 end
 

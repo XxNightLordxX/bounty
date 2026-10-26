@@ -214,8 +214,9 @@ local DEFAULTS = {
         -- Absent, a thread kept every message ever sent to it.
         MaxMessagesPerThread = 100,
     },
-    --- Owed deliveries tried per pass. Read inside the login timer, where a
-    --- nil is a comparison that throws with nobody to see it.
+    --- Owed deliveries tried per pass: at login and every 30 seconds for a
+    --- player still online. Read inside the login timer, where a nil is a
+    --- comparison that throws with nobody to see it.
     PendingEscrow = {
         MaxRetriesPerLogin = 5,
     },
@@ -522,7 +523,8 @@ local function validateConfig(quiet)
         { 'Limits', 'ExclusiveAttemptWindowSeconds' },
         -- Compared on every create and every payout.
         { 'Immunity', 'MinTargetSessionMinutes' },
-        -- Inside the login timer.
+        -- Inside the login timer and the 30-second retry (at least 1,
+        -- below).
         { 'PendingEscrow', 'MaxRetriesPerLogin' },
         { 'Audit', 'MaxQueueSize' },
         { 'Audit', 'RetentionDays' },
@@ -569,6 +571,47 @@ local function validateConfig(quiet)
     local mode = Config.Database.Mode
     if mode ~= 'mysql' and mode ~= 'json' and mode ~= 'memory' then
         fatal[#fatal + 1] = ('Config.Database.Mode is "%s"; expected mysql, json or memory'):format(tostring(mode))
+    end
+
+    -- mysql keeps every amount in an INT column, which holds at most
+    -- 2,147,483,647, and the reason and relay texts in VARCHAR(255). A
+    -- setting above either let through what the store then refused: a
+    -- contract taken and rolled back as bad_state, a message that never
+    -- arrived. Held to the columns here, in mysql mode only; json and
+    -- memory keep any figure. Before the MinContractReward check below,
+    -- which compares against MaxContractValue.
+    if mode == 'mysql' then
+        local INT_MAX = 2147483647
+        for _, path in ipairs({
+            { 'MaxContractValue' }, { 'Sources', 'cash', 'max' }, { 'Sources', 'bank', 'max' },
+            { 'Sources', 'dirty', 'max' }, { 'Bailout', 'AbsoluteMax' }, { 'Penalty', 'MaxAmount' },
+            { 'Anonymity', 'CreatorFee' }, { 'Anonymity', 'HitmanFee' }, { 'Informant', 'Cost' },
+        }) do
+            local holder = Config
+            for i = 1, #path - 1 do holder = type(holder) == 'table' and holder[path[i]] or nil end
+            local key = path[#path]
+            local value = type(holder) == 'table' and tonumber(holder[key]) or nil
+            if value and value > INT_MAX then
+                warn[#warn + 1] = ('Config.%s is %s; mysql mode keeps money in INT columns, which '
+                    .. 'hold at most 2147483647. Using 2147483647.')
+                    :format(table.concat(path, '.'), value == math.huge and 'infinite'
+                        or ('%.0f'):format(value))
+                holder[key] = INT_MAX
+            end
+        end
+        for _, text in ipairs({
+            { section = 'Reason', columns = 'crimson_contracts.reason and crimson_ledger.reason' },
+            { section = 'Relay', columns = 'crimson_messages.body' },
+        }) do
+            local block = Config[text.section]
+            local length = type(block) == 'table' and tonumber(block.MaxLength) or nil
+            if length and length > 255 then
+                warn[#warn + 1] = ('Config.%s.MaxLength is %s; mysql mode keeps that text in %s, '
+                    .. 'which hold at most 255 characters. Using 255.')
+                    :format(text.section, tostring(block.MaxLength), text.columns)
+                block.MaxLength = 255
+            end
+        end
     end
     -- Only true lets a start past money another mode still holds (see
     -- refuseModeSwitch). Anything else, a string 'true' included, is the
@@ -771,6 +814,18 @@ local function validateConfig(quiet)
         slowMs = 5
     end
     Config.Diagnostics.SlowJobMs = slowMs
+
+    -- How many owed payouts one retry pass tries: the one at login and the
+    -- one every 30 seconds for a player still online alike. Below 1 no owed
+    -- payout was ever tried, and nothing said so; read as 'none at login'
+    -- or 'unlimited' it stopped every one of them for good.
+    local retries = Config.PendingEscrow.MaxRetriesPerLogin
+    if retries ~= retries or retries < 1 then
+        warn[#warn + 1] = ('PendingEscrow.MaxRetriesPerLogin is %s; it is how many owed payouts '
+            .. 'every retry pass tries (at login, and every 30 seconds for a player still '
+            .. 'online), so below 1 none would ever be delivered. Using 1.'):format(tostring(retries))
+        Config.PendingEscrow.MaxRetriesPerLogin = 1
+    end
 
     if Config.Audit.MaxQueueSize < 1 then
         warn[#warn + 1] = 'Audit.MaxQueueSize is below 1; the queue holds at least one row.'
@@ -1984,142 +2039,207 @@ function MarkContractsChanged()
     nextDue = 0
 end
 
+--- When the expiry pass last said that it could not update a contract, by
+--- contract id: once every EXPIRY_FAILURE_SAID_EVERY seconds each, so one
+--- the store keeps refusing is not a console line every tick.
+local expiryFailureSaidAt = {}
+local EXPIRY_FAILURE_SAID_EVERY = 600
+
+--- One live contract's turn in the expiry pass. `pass` carries what the
+--- pass works out across them: how many it resolved, and the soonest moment
+--- worth waking for. Run in a pcall each, so one contract the store refuses
+--- does not stop the pass for every contract after it.
+---@param contract table as Storage.liveContracts listed it
+---@param now integer
+---@param pass table { resolved = integer, soonest = integer }
+local function expireOne(contract, now, pass)
+    -- Read again before acting on it. The list above was read once, and
+    -- every write and every resolve for the contracts before this one is
+    -- an await in which a player can act on this one: a payout claimed,
+    -- a deadline extended, a bonus raised. The pause marker below wrote
+    -- back the whole row as the list had it and undid all of them — a
+    -- claimed collection went back on offer and the next kill was paid
+    -- out of a slot already settled — and the deadline check expired a
+    -- contract its creator had just extended.
+    if contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED then
+        contract = Storage.readContract(contract.id) or contract
+    end
+    if contract.state ~= CH.STATE.ACTIVE and contract.state ~= CH.STATE.ACCEPTED then return end
+
+    -- A due contract whose ending was refused (a claim running on it, a
+    -- write that did not land) is looked at again on the next tick, not
+    -- after the longest skip.
+    local function ended(ok)
+        if ok then
+            pass.resolved = pass.resolved + 1
+        else
+            pass.soonest = math.min(pass.soonest, now)
+        end
+    end
+
+    -- The absolute ceiling applies whatever anyone's presence is.
+    if contract.expires_at and now > contract.expires_at then
+        -- Whether the hitmen failed is the paused deadline's
+        -- question, not the lifetime's (§3.6, §14.18). The lifetime
+        -- runs through every pause, so reaching it while the
+        -- deadline still has time on it — which is how it is almost
+        -- always reached, a target who was out of the city — is not
+        -- a hitman who let the clock run out, and their stake comes
+        -- back. It used to forfeit to the creator regardless: a
+        -- hitman holding a contract on a target who left for two
+        -- days lost their stake without ever having had them in
+        -- the city.
+        local deadlinePassed = not contract.paused_since
+            and contract.deadline_at ~= nil and now > contract.deadline_at
+        ended(modules.contracts.resolve(contract.id, CH.STATE.EXPIRED,
+            contract.creator_cid, nil, 'lifetime_exceeded',
+            { forfeit = deadlinePassed and true or false,
+              dueAt = now, byLifetime = true }))
+        return
+    end
+
+    -- An anonymous creator's presence is not asked (§14.32).
+    -- Pausing for it moved the deadline on by exactly how long
+    -- they were away, and every viewer is sent the deadline:
+    -- their session, to the minute. The hitman loses nothing by
+    -- it. A kill needs only the target, and a handover to a
+    -- creator nobody can locate is as easily avoided by one who
+    -- is online and elsewhere as by one who has logged off.
+    local creatorOnline = contract.anon_creator == true
+        or modules.identity.byCitizenId(contract.creator_cid) ~= nil
+    local targetActor = modules.identity.byCitizenId(contract.target_cid)
+    -- Whether the deadline has gone while the clock ran, asked before any
+    -- pause. Once it has, nobody leaving or being jailed now stops the
+    -- clock: a pause begun after the deadline turned an expiry into one
+    -- the lifetime ended, which hands the hitman back a stake they had
+    -- already lost, and left them on a card saying Due now with nothing
+    -- they could do on it. Either order on its own — the expiry first,
+    -- or the party gone with the deadline still to come and then passed
+    -- — forfeits; the seconds between the deadline and this pass must
+    -- too.
+    local overdue = not contract.paused_since
+        and contract.deadline_at ~= nil and now > contract.deadline_at
+    -- A target in prison is as far out of reach as one who has
+    -- logged off, and the hitman's clock ran on while they
+    -- served their time.
+    local jailed = Config.Limits.PauseWhileTargetJailed and targetActor ~= nil
+        and not overdue and modules.identity.isJailed(targetActor)
+    local targetAvailable = targetActor ~= nil and not jailed
+    local paused = not overdue and not (creatorOnline and targetAvailable)
+
+    -- A sentence the pass cannot count yet: the target not inside the
+    -- prison grounds yet (driven there, a fade, a few seconds of lag), or
+    -- the pause switched off. The sentence being written wakes one pass,
+    -- and nothing wakes another when they arrive, so it looks again within
+    -- a minute rather than after the longest skip, by when the deadline
+    -- could have gone with them inside.
+    if targetActor and not jailed and not overdue and modules.identity.serving(targetActor) then
+        pass.soonest = math.min(pass.soonest, now + 60)
+    end
+
+    if paused then
+        -- Record when the pause began, once. The deadline is
+        -- extended when it ends, by however long it lasted.
+        --
+        -- Narrow writes, not the row: the row this pass holds was
+        -- read one await ago, and writing it back undid whatever
+        -- landed in that await — a deadline the client had just
+        -- extended, most of all.
+        if not contract.paused_since and Storage.startPause(contract.id, now) then
+            contract.paused_since = now
+        end
+        -- A release from prison is not a player arriving, and on
+        -- a framework that does not announce it nothing else
+        -- would bring the pass back before its longest skip.
+        if targetActor and not targetAvailable then
+            pass.soonest = math.min(pass.soonest, now + 60)
+        end
+    else
+        if contract.paused_since then
+            local since = contract.paused_since
+            -- Relative, so an extension landing meanwhile is kept.
+            if Storage.endPause(contract.id, since, now - since) then
+                contract = Storage.readContract(contract.id) or contract
+            end
+        end
+
+        -- A hitman who made the kill before the deadline and is
+        -- walking to the body with the camera, or who armed a
+        -- handover that is still counting: expired under them,
+        -- the photo was refused and the stake went to the
+        -- client, for a job done in time. The pass comes back
+        -- next tick until it finishes, for no longer than a kill
+        -- waits for its photo. Never the lifetime's branch: that
+        -- ceiling holds whatever anyone is doing. Never for a
+        -- kill made after the deadline either, in the seconds
+        -- before this pass came round: that one was too late.
+        local finishing = contract.deadline_at and now > contract.deadline_at
+            and now <= contract.deadline_at
+                + 2 * Config.Completion.PhotoTokenLifetimeSeconds
+            and modules.bailout.finishing(contract.id, contract.deadline_at)
+        if finishing then
+            pass.soonest = now
+        elseif contract.deadline_at and now > contract.deadline_at then
+            ended(modules.contracts.resolve(contract.id, CH.STATE.EXPIRED,
+                contract.creator_cid, nil, 'expired', { dueAt = now }))
+        elseif contract.deadline_at and contract.deadline_at < pass.soonest then
+            pass.soonest = contract.deadline_at
+        end
+    end
+
+    -- A paused contract's deadline is not running, but its
+    -- absolute lifetime is.
+    if contract.expires_at and contract.expires_at < pass.soonest then
+        pass.soonest = contract.expires_at
+    end
+end
+
 function ExpireContracts()
     local now = os.time()
     if not presenceChanged and now < nextDue then return 0 end
     presenceChanged = false
 
-    -- Live contracts only, which is all the pass acts on.
-    local contracts = Storage.liveContracts()
-    local resolved = 0
+    -- Live contracts only, which is all the pass acts on. A read that
+    -- raised forgot whatever woke this pass (a logoff, a sentence) until
+    -- the next deadline, so it is remembered for the next tick.
+    local read, contracts = pcall(Storage.liveContracts)
+    if not read then
+        presenceChanged = true
+        error(contracts, 0)
+    end
 
     -- The soonest future moment worth waking for. Starts far out and is
     -- pulled in by every live contract's deadline.
-    local soonest = now + (Config.Limits.MaxDeadlineSkipSeconds or 600)
+    local pass = { resolved = 0, soonest = now + (Config.Limits.MaxDeadlineSkipSeconds or 600) }
 
     for i = 1, #contracts do
-        local contract = contracts[i]
-        -- Read again before acting on it. The list above was read once, and
-        -- every write and every resolve for the contracts before this one is
-        -- an await in which a player can act on this one: a payout claimed,
-        -- a deadline extended, a bonus raised. The pause marker below wrote
-        -- back the whole row as the list had it and undid all of them — a
-        -- claimed collection went back on offer and the next kill was paid
-        -- out of a slot already settled — and the deadline check expired a
-        -- contract its creator had just extended.
-        if contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED then
-            contract = Storage.readContract(contract.id) or contract
-        end
-        if contract.state == CH.STATE.ACTIVE or contract.state == CH.STATE.ACCEPTED then
-            -- The absolute ceiling applies whatever anyone's presence is.
-            if contract.expires_at and now > contract.expires_at then
-                -- Whether the hitmen failed is the paused deadline's
-                -- question, not the lifetime's (§3.6, §14.18). The lifetime
-                -- runs through every pause, so reaching it while the
-                -- deadline still has time on it — which is how it is almost
-                -- always reached, a target who was out of the city — is not
-                -- a hitman who let the clock run out, and their stake comes
-                -- back. It used to forfeit to the creator regardless: a
-                -- hitman holding a contract on a target who left for two
-                -- days lost their stake without ever having had them in
-                -- the city.
-                local deadlinePassed = not contract.paused_since
-                    and contract.deadline_at ~= nil and now > contract.deadline_at
-                if modules.contracts.resolve(contract.id, CH.STATE.EXPIRED,
-                    contract.creator_cid, nil, 'lifetime_exceeded',
-                    { forfeit = deadlinePassed and true or false,
-                      dueAt = now, byLifetime = true }) then
-                    resolved = resolved + 1
-                end
-            else
-                -- An anonymous creator's presence is not asked (§14.32).
-                -- Pausing for it moved the deadline on by exactly how long
-                -- they were away, and every viewer is sent the deadline:
-                -- their session, to the minute. The hitman loses nothing by
-                -- it. A kill needs only the target, and a handover to a
-                -- creator nobody can locate is as easily avoided by one who
-                -- is online and elsewhere as by one who has logged off.
-                local creatorOnline = contract.anon_creator == true
-                    or modules.identity.byCitizenId(contract.creator_cid) ~= nil
-                local targetActor = modules.identity.byCitizenId(contract.target_cid)
-                -- A target in prison is as far out of reach as one who has
-                -- logged off, and the hitman's clock ran on while they
-                -- served their time. Not once the deadline has gone,
-                -- though: a sentence written after it would otherwise turn
-                -- an expiry into a pause, and the lifetime then hands the
-                -- hitman back a stake they had already lost.
-                local overdue = not contract.paused_since
-                    and contract.deadline_at ~= nil and now > contract.deadline_at
-                local jailed = Config.Limits.PauseWhileTargetJailed and targetActor ~= nil
-                    and not overdue and modules.identity.isJailed(targetActor)
-                local targetAvailable = targetActor ~= nil and not jailed
-                local paused = not (creatorOnline and targetAvailable)
-
-                if paused then
-                    -- Record when the pause began, once. The deadline is
-                    -- extended when it ends, by however long it lasted.
-                    --
-                    -- Narrow writes, not the row: the row this pass holds was
-                    -- read one await ago, and writing it back undid whatever
-                    -- landed in that await — a deadline the client had just
-                    -- extended, most of all.
-                    if not contract.paused_since and Storage.startPause(contract.id, now) then
-                        contract.paused_since = now
-                    end
-                    -- A release from prison is not a player arriving, and on
-                    -- a framework that does not announce it nothing else
-                    -- would bring the pass back before its longest skip.
-                    if targetActor and not targetAvailable and now + 60 < soonest then
-                        soonest = now + 60
-                    end
-                else
-                    if contract.paused_since then
-                        local since = contract.paused_since
-                        -- Relative, so an extension landing meanwhile is kept.
-                        if Storage.endPause(contract.id, since, now - since) then
-                            contract = Storage.readContract(contract.id) or contract
-                        end
-                    end
-
-                    -- A hitman who made the kill before the deadline and is
-                    -- walking to the body with the camera, or who armed a
-                    -- handover that is still counting: expired under them,
-                    -- the photo was refused and the stake went to the
-                    -- client, for a job done in time. The pass comes back
-                    -- next tick until it finishes, for no longer than a kill
-                    -- waits for its photo. Never the lifetime's branch: that
-                    -- ceiling holds whatever anyone is doing. Never for a
-                    -- kill made after the deadline either, in the seconds
-                    -- before this pass came round: that one was too late.
-                    local finishing = contract.deadline_at and now > contract.deadline_at
-                        and now <= contract.deadline_at
-                            + 2 * Config.Completion.PhotoTokenLifetimeSeconds
-                        and modules.bailout.finishing(contract.id, contract.deadline_at)
-                    if finishing then
-                        soonest = now
-                    elseif contract.deadline_at and now > contract.deadline_at then
-                        if modules.contracts.resolve(contract.id, CH.STATE.EXPIRED,
-                            contract.creator_cid, nil, 'expired', { dueAt = now }) then
-                            resolved = resolved + 1
-                        end
-                    elseif contract.deadline_at and contract.deadline_at < soonest then
-                        soonest = contract.deadline_at
-                    end
-                end
-
-                -- A paused contract's deadline is not running, but its
-                -- absolute lifetime is.
-                if contract.expires_at and contract.expires_at < soonest then
-                    soonest = contract.expires_at
-                end
+        local ok, err = pcall(expireOne, contracts[i], now, pass)
+        if not ok then
+            -- A store that is not answering at all would make every
+            -- contract after this one wait out the same timeout: the pass
+            -- stops, and the next tick runs it again.
+            if Storage.timedOut and Storage.timedOut(err) then
+                presenceChanged = true
+                error(err, 0)
             end
+            local id = tostring(contracts[i] and contracts[i].id)
+            local last = expiryFailureSaidAt[id]
+            if last == nil or now - last >= EXPIRY_FAILURE_SAID_EVERY then
+                for seen, at in pairs(expiryFailureSaidAt) do
+                    if now - at >= EXPIRY_FAILURE_SAID_EVERY then expiryFailureSaidAt[seen] = nil end
+                end
+                expiryFailureSaidAt[id] = now
+                Log.always(('expiry pass: contract %s could not be updated (%s); the others went '
+                    .. 'on, and it is tried again within a minute'):format(id, Util.dbError(err)))
+            end
+            pass.soonest = math.min(pass.soonest, now + 60)
         end
     end
 
     -- One second past the earliest deadline, so the pass that wakes for it
     -- finds it genuinely overdue rather than exactly due.
-    nextDue = soonest + 1
-    return resolved
+    nextDue = pass.soonest + 1
+    return pass.resolved
 end
 
 --------------------------------------------------------------------------

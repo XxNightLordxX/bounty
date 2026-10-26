@@ -280,6 +280,11 @@ CH.ERR = {
     --- invalid_reward is worded as figures that do not add up, and the
     --- figures are fine; the item is the thing to take out.
     ITEM_NAMES_OWNER = 'item_names_owner',
+    --- mysql mode only: an item whose metadata is more than the escrow
+    --- table's TEXT column holds (MySQLStore.MAX_TEXT_BYTES, 65,535 bytes
+    --- once encoded). Refused before anything is taken; it was a bad_state
+    --- after a take and a rollback, with nothing to say which item.
+    ITEM_TOO_LARGE   = 'item_too_large',
     INVALID_INPUT    = 'invalid_input',
 
     --- The handler crashed. Distinct from INVALID_INPUT, which used to

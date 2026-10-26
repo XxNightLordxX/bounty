@@ -258,9 +258,14 @@ describe('a crash while a contract runs out', function()
         return main, s, f, c
     end
 
+    --- The ending raises part-way, as a process dying in it would leave it.
+    --- The pass goes on past it to the other contracts (each is run in a
+    --- pcall of its own), so the raise is seen at the release.
     local function dies(main, s)
-        s.escrow.release = function() error('process killed') end
-        falsy(pcall(main.expire), 'the ending was interrupted')
+        local raised = false
+        s.escrow.release = function() raised = true error('process killed') end
+        truthy(pcall(main.expire), 'the pass goes on past one contract that raised')
+        truthy(raised, 'the ending was interrupted')
     end
 
     for _, mode in ipairs({ 'json', 'mysql' }) do
@@ -4053,8 +4058,8 @@ local function raisingExpiry(mode, before)
     main.markPresenceChanged()
     local ran = pcall(main.expire)
     s.escrow.release = release
-    falsy(ran, 'the expiry raised')
-    truthy(raised(), 'it raised after writing EXPIRED')
+    truthy(ran, 'the pass goes on past one contract that raised')
+    truthy(raised(), 'the expiry raised after writing EXPIRED')
     eq(s.storage.readContract(c.id).state, CH.STATE.EXPIRED)
     eq(money(1) - creator, 5000, 'the reward was back before it raised')
     eq(s.storage.readEscrowLine(stake.id).state, CH.ESCROW_STATE.HELD, 'the stake left held')
