@@ -340,8 +340,9 @@ describe('the await scheduler', function()
                     Config.Limits.MaxAcceptedPerHitman = 1
                 end)
                 local f = Scheduler.fixture(m)
-                local function place()
-                    local c, err = m.contracts.create(f.creator, {
+                -- From two clients: one live contract per player on one target.
+                local function place(by)
+                    local c, err = m.contracts.create(by, {
                         targetCid = 'TARGET01', reason = 'Unpaid debt',
                         mode = CH.MODE.COMPETITIVE,
                         reward = { baseline = { cash = 5000 } }, penaltyAmount = 1000,
@@ -349,7 +350,7 @@ describe('the await scheduler', function()
                     assert(c, 'create refused: ' .. tostring(err))
                     return c
                 end
-                return main, m, { f = f, one = place(), two = place() }
+                return main, m, { f = f, one = place(f.creator), two = place(f.hitman2) }
             end,
             first = function(m, x) return m.contracts.accept(x.f.hitman, x.one.id, false) end,
             second = function(m, x) return m.contracts.accept(x.f.hitman, x.two.id, false) end,
@@ -513,6 +514,75 @@ describe('the same races at every await on mysql', function()
                 Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
                 return main, m, x
             end, function(m) return m.bailout.processQueue() end),
+            -- W072: the open proposals are counted and the new one written
+            -- with awaits between; both sides proposing at once left two
+            -- open where one is allowed.
+            {
+                name = 'propose x propose, both sides of one contract',
+                build = function() return seeded({ accepted = true }) end,
+                first = function(m, x)
+                    return m.amendments.propose(x.f.creator, x.c.id, CH.AMENDMENT.SHORTEN_DEADLINE,
+                        { seconds = 600 })
+                end,
+                second = function(m, x)
+                    return m.amendments.propose(x.f.hitman, x.c.id, CH.AMENDMENT.WITHDRAW, {})
+                end,
+                extra = function()
+                    local open = 0
+                    for _, row in ipairs(Scheduler.rows('crimson_amendments')) do
+                        if row.outcome == 'open' then open = open + 1 end
+                    end
+                    return 'open=' .. open
+                end,
+            },
+            -- W068: a give-back agreed while a second hitman accepts went in
+            -- under him: he took a two-payout contract and held one paying
+            -- once, a change he never agreed to.
+            {
+                name = 'agree to a give-back x a second hitman accepting',
+                build = function()
+                    local main, m = Scheduler.boot()
+                    local f = Scheduler.fixture(m)
+                    local c = assert(m.contracts.create(f.creator, {
+                        targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+                        reward = { slots = { { baseline = { cash = 1000 } },
+                                             { baseline = { cash = 2000 } } } },
+                    }))
+                    assert(m.contracts.accept(f.hitman, c.id, false))
+                    local p = assert(m.amendments.propose(f.creator, c.id,
+                        CH.AMENDMENT.REDUCE_REWARD, { slot = 2 }))
+                    return main, m, { f = f, c = c, p = p }
+                end,
+                first = function(m, x) return m.amendments.respond(x.f.hitman, x.p.id, true) end,
+                second = function(m, x)
+                    local ok = m.contracts.accept(x.f.hitman2, x.c.id, false)
+                    if ok then x.seen = m.storage.readContract(x.c.id).payout_slots end
+                    return ok
+                end,
+                -- Whether the payouts changed under the one who accepted.
+                extra = function(m, x)
+                    return 'changed=' .. tostring(x.seen ~= nil
+                        and x.seen ~= m.storage.readContract(x.c.id).payout_slots)
+                end,
+            },
+            -- W073: an edit to the reason landed on a hitman who took the
+            -- contract in its awaits.
+            {
+                name = 'revise the reason x accept',
+                build = function() return seeded({}) end,
+                first = function(m, x)
+                    return m.contracts.revise(x.f.creator, x.c.id, { reason = 'Something else' })
+                end,
+                second = function(m, x)
+                    local ok = m.contracts.accept(x.f.hitman, x.c.id, false)
+                    if ok then x.seen = m.storage.readContract(x.c.id).reason end
+                    return ok
+                end,
+                extra = function(m, x)
+                    return 'changed=' .. tostring(x.seen ~= nil
+                        and x.seen ~= m.storage.readContract(x.c.id).reason)
+                end,
+            },
             {
                 name = 'accept x buyout',
                 build = function() return seeded({ bailout = 12000, penalty = 1000 }) end,

@@ -688,6 +688,17 @@ function Memory.readOpenAmendments(contractId)
     return out
 end
 
+--- Proposals a start finds still being applied: everybody had agreed and
+--- the change was going in when the last process stopped
+--- (Amendments.recoverApplying). Read once, at start.
+function Memory.applyingAmendments()
+    local out = {}
+    for _, a in pairs(db.amendments) do
+        if a.outcome == 'applying' then out[#out + 1] = a end
+    end
+    return out
+end
+
 --- Drop a thread's oldest messages past Config.Relay.MaxMessagesPerThread,
 --- as the other backends do.
 local function pruneThread(m)

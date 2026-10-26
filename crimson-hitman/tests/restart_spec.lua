@@ -100,6 +100,48 @@ describe('giving the last collection back, on every backend', function()
     end)
 end)
 
+--- W067: an agreed change the process died applying. Left open, the next
+--- Agree applied it a second time; it is closed as 'unknown' at the start,
+--- and both sides are told to look at the contract.
+describe('an agreed change the process died applying', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is never applied again, and both sides are told', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            Env.players[3].PlayerData.money.bank = 50000
+            local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+                mode = CH.MODE.EXCLUSIVE, reward = { baseline = { cash = 5000 } } })
+            truthy(s.contracts.accept(f.hitman, c.id))
+            local p = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE,
+                { seconds = 1800 })
+            truthy(p and p.outcome == 'open')
+            local before = s.storage.readContract(c.id).deadline_at
+            -- Dies at the write that would have said it went in.
+            local real = s.storage.writeAmendment
+            s.storage.writeAmendment = function(a)
+                if a.outcome == 'applied' then error('the process died here', 0) end
+                return real(a)
+            end
+            falsy(pcall(s.amendments.respond, f.hitman, p.id, true))
+            s.storage.writeAmendment = real
+
+            local _, again = restart(mode, s)
+            eq(again.storage.readAmendment(p.id).outcome, 'unknown')
+            local ok, err = again.amendments.respond(again.identity.resolve(3), p.id, true)
+            falsy(ok, 'agreed again after the restart, and cut again')
+            eq(err, CH.ERR.NOT_FOUND)
+            eq(before - again.storage.readContract(c.id).deadline_at, 1800, 'cut once')
+            local told = {}
+            for _, event in ipairs(Env.clientEvents) do
+                if Natives.isNotice(event) and event.args[1].title == 'Change interrupted' then
+                    told[event.target] = true
+                end
+            end
+            truthy(told[1] and told[3], 'the client and the operative are both told')
+        end)
+    end
+end)
+
 describe('a claim landing while another handler holds a copy of the contract', function()
     --- On mysql every read is an await, and eight handlers read the row, work,
     --- and write the whole row back. next_slot was in that write, so a claim
@@ -670,7 +712,7 @@ describe('an idle exclusive hold, on the running server', function()
     --- The release is one of the maintenance jobs. Every other test of it
     --- calls the function directly, which says nothing about whether the
     --- server ever does.
-    it('is put back on the board by the tick, with the stake returned', function()
+    it('is put back on the board by the tick, with the stake the client\'s', function()
         local main, s = boot('memory')
         local f = fixture(s)
         local c = s.contracts.create(f.creator, {
@@ -681,7 +723,7 @@ describe('an idle exclusive hold, on the running server', function()
         truthy(s.contracts.accept(f.hitman, c.id))
         -- Nowhere near the target, with both parties in the city.
         Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
-        local before = money(3)
+        local before, client = money(3), money(1)
 
         main.tick()
         for _ = 1, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1 do
@@ -692,7 +734,8 @@ describe('an idle exclusive hold, on the running server', function()
         eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE,
             'the running server never let go of a hold nobody was working')
         eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released')
-        eq(money(3) - before, 2000, 'and the stake came back')
+        eq(money(3) - before, 0, 'a hold nobody worked is walked away from')
+        eq(money(1) - client, 2000, 'and the stake goes to the client, as an abandon\'s does')
     end)
 end)
 
@@ -1908,8 +1951,11 @@ describe('a crash between taking a new contract\'s escrow and storing it', funct
         killAt(s, function(name, contractId)
             return name == 'writeEscrow' and contractId ~= live.id
         end)
+        -- On somebody else: one live contract per player on one target.
+        Env.addPlayer({ source = 9, citizenid = 'TARGET02', license = 'license:t2',
+            cash = 100, bank = 100, firstname = 'Kit', lastname = 'Bell' })
         falsy(pcall(s.contracts.create, f.creator, {
-            targetCid = 'TARGET01', reason = 'y', reward = { baseline = { bank = 7000 } },
+            targetCid = 'TARGET02', reason = 'y', reward = { baseline = { bank = 7000 } },
         }))
         eq(money(1), before - 7000, 'the crash came after the charge')
         return main, s, live, before, hitman
@@ -2015,7 +2061,9 @@ describe('a crash between taking a new contract\'s escrow and storing it', funct
         })
         truthy(live)
         local before = money(1)
-        refused(main, s, f, { targetCid = 'TARGET01', reason = 'y', anonymous = true,
+        Env.addPlayer({ source = 9, citizenid = 'TARGET02', license = 'license:t2',
+            cash = 100, bank = 100, firstname = 'Kit', lastname = 'Bell' })
+        refused(main, s, f, { targetCid = 'TARGET02', reason = 'y', anonymous = true,
             reward = { baseline = { bank = 7000,
                 weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } } })
         eq(money(1), before - 7000)
@@ -4235,12 +4283,16 @@ describe('an ending that raised before handing its escrow over', function()
             local main, s = boot(mode)
             local f = fixture(s)
             Config.Limits.MaxActiveContractsPerCreator = 20
-            Config.Limits.MaxActiveContractsPerTarget = 20
             Env.players[1].PlayerData.money.cash = 400000
             local ids = {}
             for i = 1, 12 do
+                -- Each on a target of its own: one live contract per player
+                -- on one target.
+                local target = ('TARGET%02d'):format(10 + i)
+                Env.addPlayer({ source = 40 + i, citizenid = target, license = 'license:tg' .. i,
+                    cash = 100, bank = 100, firstname = 'Tess', lastname = tostring(i) })
                 local c = s.contracts.create(f.creator, {
-                    targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                    targetCid = target, reason = 'x', mode = CH.MODE.COMPETITIVE,
                     reward = { baseline = { cash = 1000 } },
                 })
                 truthy(c, 'contract ' .. i)

@@ -1661,7 +1661,7 @@ async function main() {
           proposer: 'The client', mine: false, answered: false, waiting: 1, expires: 0
         }] : [] };
       },
-      respondAmendment: function () { open = false; return { ok: false, err: 'bad_state' }; }
+      respondAmendment: function () { open = false; return { ok: false, err: 'proposal_expired' }; }
     });
     await settle(); await settle(); await settle();
     tab(app, 'mine');
@@ -7515,6 +7515,7 @@ async function main() {
       await settle(); await settle();
       click(app, 'Propose change');
       click(app, 'Call it off');
+      click(app, 'Propose it');
       await settle(); await settle();
       it('says a change is already waiting, not that they hold too much', function () {
         const said = app.notice();
@@ -8514,6 +8515,133 @@ async function main() {
       });
     })();
 
+    /* W071: both cancel options sent on one tap on a held contract, and a
+       proposal could not be taken back by whoever made it. */
+    await (async function heldCancelAsksFirst() {
+      const card = placedCard({});
+      const app = boot({
+        list: boardWith({ relistWaits: { anyMinutes: 5, sameTargetMinutes: 120 } }),
+        ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        propose: { ok: true, data: { outcome: 'open' } }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Propose change');
+      click(app, 'Cancel the contract');
+      await settle();
+      it('asks the client first, with the waits an agreed cancel starts', function () {
+        truthy(buttonLabels(app).indexOf('Propose it') !== -1, buttonLabels(app).join(' | '));
+        eq(app.sent.filter(function (x) { return x.name === 'propose'; }).length, 0);
+        truthy(app.view.textContent.indexOf('any new contract for 5 minutes') !== -1,
+          app.view.textContent);
+      });
+      click(app, 'Propose it');
+      await settle(); await settle();
+      it('and proposes it once agreed to', function () {
+        const sent = app.sent.filter(function (x) { return x.name === 'propose'; });
+        eq(sent.length, 1);
+        eq(sent[0].body.kind, 'cancel');
+      });
+    })();
+
+    await (async function hitmanCallItOffAsksFirst() {
+      const card = placedCard({ role: 'hitman', hitmen: undefined, myAlias: 'Operative #1',
+        penaltyAmount: 2000 });
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [card], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        propose: { ok: true, data: { outcome: 'open' } }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Propose change');
+      click(app, 'Call it off');
+      await settle();
+      it('tells a hitman their stake comes back, before anything is sent', function () {
+        truthy(app.view.textContent.indexOf('$2,000 stake comes back to you') !== -1,
+          app.view.textContent);
+        eq(app.sent.filter(function (x) { return x.name === 'propose'; }).length, 0);
+      });
+    })();
+
+    await (async function ownProposalCanBeTakenBack() {
+      const card = placedCard({ role: 'hitman', hitmen: undefined, myAlias: 'Operative #1' });
+      let answered = null;
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [card], onMe: [] } },
+        amendments: { ok: true, data: [{ id: 'am00000009', kind: 'withdraw', payload: {},
+          proposer: 'Operative #1', mine: true, answered: true, waiting: 1, secondsLeft: 240 }] },
+        respondAmendment: function (body) {
+          answered = body;
+          return { ok: true, data: { outcome: 'declined' } };
+        }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Take it back');
+      await settle(); await settle();
+      it('takes back their own proposal with a decline, and says so', function () {
+        truthy(answered, 'nothing was sent');
+        eq(answered.id, 'am00000009');
+        eq(answered.approve, false);
+        truthy(app.notice().indexOf('Taken back') !== -1, app.notice());
+      });
+    })();
+
+    /* W080: Withdraw after an operative took it and walked away said
+       "Nobody has taken it", and left out that withdrawing it then starts
+       the wait on the target for every client. */
+    await (async function withdrawAfterAWalkAway() {
+      const card = placedCard({ state: 'active', hitmenActive: 0, hitmen: [], everTaken: true });
+      const app = boot({
+        list: boardWith({ relistWaits: { anyMinutes: 5, sameTargetMinutes: 120,
+          everyoneMinutes: 30 } }),
+        ledger: LEDGER,
+        mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        cancel: { ok: true, data: { queued: 0 } }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Withdraw');
+      await settle();
+      it('says the operative walked away, and that everybody waits on the target', function () {
+        const text = app.view.textContent;
+        truthy(text.indexOf('The operative who took it walked away') !== -1, text);
+        falsy(text.indexOf('Nobody has taken it') !== -1, text);
+        truthy(text.indexOf('Nobody else can place one on Dana Reyes for 30 minutes either.')
+          !== -1, text);
+      });
+    })();
+
+    /* W070: a change everybody agreed to and the server refused as it went
+       in reached the last to agree as "ran out". */
+    await (async function agreedButNoLongerApplies() {
+      const card = placedCard({ role: 'hitman', hitmen: undefined, myAlias: 'Operative #1' });
+      const app = boot({
+        list: boardWith(), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [card], onMe: [] } },
+        amendments: { ok: true, data: [{ id: 'am00000010', kind: 'change_mode',
+          payload: { mode: 'exclusive' }, proposer: 'The client', mine: false,
+          answered: false, waiting: 1, secondsLeft: 240 }] },
+        respondAmendment: { ok: false, err: 'bad_state', data: { outcome: 'failed' } }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine'); await settle(); await settle();
+      click(app, 'Agree');
+      await settle(); await settle();
+      it('says it was agreed and no longer applies, and why, not that it ran out', function () {
+        const said = app.notice();
+        truthy(said.indexOf('Agreed, but it no longer applies: who is on the contract changed')
+          !== -1, said);
+        falsy(said.indexOf('ran out') !== -1, said);
+      });
+    })();
+
     /* A staked hitman asked to agree to a shorter clock was told neither
        what missing it costs nor that the proposal lapses. */
     await (async function proposalSaysCostAndLapse() {
@@ -9418,8 +9546,38 @@ async function main() {
     tab(working, 'mine');
     await settle(); await settle();
     it('reminds a hitman on their card what takes an exclusive back', function () {
-      truthy(working.view.textContent.indexOf('Exclusive: go 30 minutes without getting near '
-        + 'the target, or 2h without making an attempt on them') !== -1, working.view.textContent);
+      truthy(working.view.textContent.indexOf('Exclusive: going 30 minutes without going near '
+        + 'them, or 2h without an attempt, while they are in the city puts it back on the '
+        + 'board') !== -1, working.view.textContent);
+    });
+
+    // W016 and W019: the rule the hitman agrees to is the one applied. Going
+    // idle forfeits the stake as walking away does, and a full competitive
+    // contract releases the idle too.
+    async function acceptDialogFor(mode) {
+      const offer = { id: 'ct00000004', reason: 'x', mode: mode, state: 'active',
+        reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+        hitmenActive: 0, hitmenMax: 5, targetName: 'Dana Reyes', role: 'public',
+        penaltyAmount: 2000, deadline: Math.floor(Date.now() / 1000) + 3 * 3600 };
+      const app = boot({ list: { ok: true, data: { page: 1, pages: 1, contracts: [offer],
+          settings: { exclusiveIdleMinutes: 30, exclusiveAttemptMinutes: 120 } } },
+        mine: MINE, ledger: LEDGER });
+      await settle(); await settle();
+      click(app, 'Accept contract');
+      await settle();
+      return app.view.textContent;
+    }
+    const exclusiveTerms = await acceptDialogFor('exclusive');
+    it('tells a staked hitman that going idle hands the stake over, as walking away does', function () {
+      truthy(exclusiveTerms.indexOf('Walk away, go idle or run out of time and your stake goes '
+        + 'to the person who placed it.') !== -1, exclusiveTerms);
+      falsy(exclusiveTerms.indexOf('your stake comes back') !== -1, exclusiveTerms);
+    });
+    const competitiveTerms = await acceptDialogFor('competitive');
+    it('tells a competitive hitman what going idle costs while it is full', function () {
+      truthy(competitiveTerms.indexOf('While it is full, going 30 minutes without going near '
+        + 'them') !== -1 && competitiveTerms.indexOf('gives your place and your stake up.') !== -1,
+        competitiveTerms);
     });
 
     // A push naming one contract re-reads that one's proposals, not every card's.

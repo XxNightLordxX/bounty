@@ -741,15 +741,15 @@ describe('additive improvements apply without approval', function()
 
         -- Raise and lower repeatedly: each cycle used to mint the difference.
         for _ = 1, 5 do
-            local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.RAISE_PENALTY,
-                { amount = 10000 })
-            truthy(proposal, 'the raise was never put to the hitman')
             local was = s.storage.readContract(c.id).penalty_amount
-            local _, _, outcome = s.amendments.respond(f.hitman, proposal.id, true)
-            -- Conservation alone still holds when the raise is applied, so
-            -- the rule is asserted itself: a penalty is only real if it was
+            -- Refused as it is proposed, not once the hitman has agreed:
+            -- conservation alone still holds when a raise is applied, so the
+            -- rule is asserted itself. A penalty is only real if it was
             -- staked, and this hitman staked the old one.
-            eq(outcome, 'failed', 'a raise applied over a stake nobody put up')
+            local proposal, err = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.RAISE_PENALTY,
+                { amount = 10000 })
+            falsy(proposal, 'a raise put to a hitman over a stake nobody put up')
+            eq(err, CH.ERR.INVALID_INPUT)
             eq(s.storage.readContract(c.id).penalty_amount, was, 'the figure moved off the stake')
             s.amendments.improve(f.creator, c.id, CH.AMENDMENT.LOWER_PENALTY, { amount = 1 })
         end
@@ -804,12 +804,12 @@ describe('amendment guards', function()
         local second = s.identity.resolve(4)
         s.contracts.accept(second, c.id, false)
 
-        local proposal = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_MODE,
+        -- Refused as it is proposed: it could never apply, and held the
+        -- contract's one open proposal until it lapsed.
+        local proposal, err = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_MODE,
             { mode = CH.MODE.EXCLUSIVE })
-        truthy(proposal)
-        s.amendments.respond(f.hitman, proposal.id, true)
-        local ok = s.amendments.respond(second, proposal.id, true)
-        falsy(ok, 'exclusive means one hitman; the contract cannot land in a state it forbids')
+        falsy(proposal, 'exclusive means one hitman; the contract cannot land in a state it forbids')
+        eq(err, CH.ERR.INVALID_INPUT)
         eq(s.storage.readContract(c.id).mode, CH.MODE.COMPETITIVE)
     end)
 
@@ -2047,11 +2047,15 @@ describe('a player the app is closed to can still buy out', function()
 
     it('still limits actual purchases', function()
         local s, f, c = officer()
-        local c2 = s.contracts.create(f.creator, {
+        -- From another client: one live contract per player on one target.
+        Env.addPlayer({ source = 19, citizenid = 'CREATOR2', license = 'license:c2',
+            cash = 100000, bank = 100000, firstname = 'Ann', lastname = 'Poe' })
+        local c2 = s.contracts.create(s.identity.resolve(19), {
             targetCid = 'TARGET01', reason = 'y',
             reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000,
         })
         truthy(c2, 'a second contract on the same officer')
+        local _ = f
         Env.commands[Config.Bailout.Command](2, { c.id })
         eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
         Env.chat = {}

@@ -1562,10 +1562,19 @@ describe('the framework events this resource listens for', function()
         return ok, err
     end
 
-    --- Owed money waiting for somebody to come back.
+    --- Owed money waiting for somebody to come back. Each on a target of
+    --- its own: one live contract per player on one target.
+    local placed = 0
     local function owed(s, cid)
+        placed = placed + 1
+        local target = 'TARGET01'
+        if placed > 1 then
+            target = 'TARGET0' .. (placed + 1)
+            Env.addPlayer({ source = 30 + placed, citizenid = target, license = 'license:o' .. placed,
+                cash = 100, bank = 100, firstname = 'Owe', lastname = tostring(placed) })
+        end
         local c = s.contracts.create(s.identity.resolve(1), {
-            targetCid = 'TARGET01', reason = 'x',
+            targetCid = target, reason = 'x',
             reward = { baseline = { cash = 5000 } },
         })
         truthy(c)
@@ -1644,6 +1653,7 @@ describe('the framework events this resource listens for', function()
         -- The latch must not eat a real second login. It is released when
         -- the pass runs, and when the player drops.
         local s = wired()
+        placed = 0
         owed(s, 'HITMAN01')
         local before = Env.players[3].PlayerData.money.bank
 

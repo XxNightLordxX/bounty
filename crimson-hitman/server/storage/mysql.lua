@@ -1648,6 +1648,15 @@ function MySQLStore.readOpenAmendments(contractId)
     return rows
 end
 
+--- Proposals a start finds still being applied. See the memory backend.
+--- Once, at start, as openAmendmentContracts is read.
+function MySQLStore.applyingAmendments()
+    local rows = db.query(
+        "SELECT * FROM crimson_amendments WHERE outcome = 'applying'") or {}
+    for i = 1, #rows do hydrateAmendment(rows[i]) end
+    return rows
+end
+
 function MySQLStore.writeMessage(m)
     db.query([[
         INSERT INTO crimson_messages (contract_id, thread_id, from_cid, from_alias, body, sent_at)

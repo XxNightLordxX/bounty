@@ -2469,6 +2469,15 @@ function JsonStore.readOpenAmendments(contractId)
     return out
 end
 
+--- Proposals a start finds still being applied. See the memory backend.
+function JsonStore.applyingAmendments()
+    local out = {}
+    for _, a in pairs(db.amendments) do
+        if a.outcome == 'applying' then out[#out + 1] = a end
+    end
+    return out
+end
+
 function JsonStore.writeMessage(m)
     db.messages[#db.messages + 1] = m
     indexMessage(m)

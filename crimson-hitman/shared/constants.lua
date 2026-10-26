@@ -178,6 +178,11 @@ CH.ERR = {
     --- worth retrying — so a creator with two hours to wait was told to slow
     --- down, and the app quietly treated the refusal as a hiccup.
     SAME_TARGET_TOO_SOON = 'same_target_too_soon',
+    --- This player (on any character) already has a live contract on this
+    --- person. One per placer: two cheap contracts from one friend filled
+    --- Config.Limits.MaxActiveContractsPerTarget, and nobody else could list
+    --- the target while neither could be finished.
+    SAME_TARGET_ACTIVE   = 'same_target_active',
     --- The creator cancelled a contract recently. Same story: minutes of
     --- policy wait, reported as throttling.
     CANCELLED_TOO_SOON   = 'cancelled_too_soon',
@@ -203,6 +208,16 @@ CH.ERR = {
     --- working it and was released from it, so it is not theirs to take
     --- again (§14.8). Without the bar, releasing an idle hold only reset it.
     HOLD_RELEASED        = 'hold_released',
+    --- This player (on any character) walked away from this exclusive
+    --- contract too recently to take it again: within
+    --- Config.Limits.ExclusiveIdleReleaseSeconds, with { retryAfter =
+    --- seconds }. Walking away and straight back reset the idle clocks that
+    --- release a hold nobody works (§14.8), so the release never came.
+    RETAKE_TOO_SOON      = 'retake_too_soon',
+    --- A proposal answered after it ran out. It shared bad_state with a
+    --- change refused when it was applied, so a refusal reached the last
+    --- person to agree as "ran out".
+    PROPOSAL_EXPIRED     = 'proposal_expired',
     --- This server does not run the masked relay (Config.Relay.Enabled).
     --- It was read in one place, the send, and answered BAD_STATE — "Not
     --- right now." — on a feature that was never going to work, while the

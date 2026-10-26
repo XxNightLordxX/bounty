@@ -32,7 +32,11 @@ local function twoDeliveries()
         targetCid = 'TARGET01', reason = 'Unpaid debt',
         reward = { baseline = { cash = 5000 } },
     })
-    local second = s.contracts.create(f.creator, {
+    -- From a second client, who is there too: one live contract per player
+    -- on one target.
+    Env.addPlayer({ source = 5, citizenid = 'CREATOR2', license = 'license:c2',
+        cash = 100000, bank = 100000, firstname = 'Ann', lastname = 'Poe' })
+    local second = s.contracts.create(s.identity.resolve(5), {
         targetCid = 'TARGET01', reason = 'Also unpaid',
         reward = { baseline = { cash = 4000 } },
     })
@@ -41,7 +45,7 @@ local function twoDeliveries()
     s.contracts.accept(f.hitman, first.id, false)
     s.contracts.accept(s.identity.resolve(4), second.id, false)
 
-    for _, src in ipairs({ 1, 2, 3, 4 }) do
+    for _, src in ipairs({ 1, 2, 3, 4, 5 }) do
         Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z }
     end
     Env.players[2].PlayerData.metadata.ishandcuffed = true

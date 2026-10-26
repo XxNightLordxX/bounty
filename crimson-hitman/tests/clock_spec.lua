@@ -498,7 +498,10 @@ describe('the expiry pass past a contract the store refuses', function()
         local f = fixture(s)
         local a = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
-        local b = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'y',
+        -- From another client: one live contract per player on one target.
+        Env.addPlayer({ source = 19, citizenid = 'CREATOR2', license = 'license:c2',
+            cash = 100000, bank = 100000, firstname = 'Ann', lastname = 'Poe' })
+        local b = s.contracts.create(s.identity.resolve(19), { targetCid = 'TARGET01', reason = 'y',
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
         truthy(a and b, 'two contracts')
         -- The first one paused, so the pass ends its pause; the second one

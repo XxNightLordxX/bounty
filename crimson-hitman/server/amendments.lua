@@ -600,6 +600,19 @@ local function checkAgainst(contract, kind, payload)
         if not left or left - (payload.seconds or 0) < Contracts.MIN_LEFT_AFTER_CUT then
             return false, CH.ERR.INVALID_INPUT
         end
+    elseif kind == CH.AMENDMENT.RAISE_PENALTY or (kind == CH.AMENDMENT.CHANGE_MODE
+        and payload.mode == CH.MODE.EXCLUSIVE) then
+        -- A stake only moves while nobody has staked the old one, and
+        -- exclusive means one hitman (apply): either is refused by apply
+        -- whatever anybody answers, so it is refused here, before it holds
+        -- the contract's one open proposal until it lapses.
+        local holders = 0
+        for _, row in ipairs(Storage.readHitmen(contract.id) or {}) do
+            if Contracts.holds(row) then holders = holders + 1 end
+        end
+        if holders > (kind == CH.AMENDMENT.RAISE_PENALTY and 0 or 1) then
+            return false, CH.ERR.INVALID_INPUT
+        end
     end
     return true
 end
@@ -608,6 +621,15 @@ end
 --- inert until every participant approves.
 ---@return table|nil proposal
 ---@return string|nil err
+local proposeUnlocked, answer
+
+--- One at a time per contract, on the key acceptance holds (Contracts.serialized).
+--- The open proposals are counted and the new one written with awaits in
+--- between, so the client and a hitman proposing in the same instant each
+--- counted the other's as not there, and two were open at once. And a
+--- change nobody else has to agree to is applied inside this request, where
+--- an acceptance landing in its awaits took a contract a moment before its
+--- payout count came down under it.
 function Amendments.propose(actor, contractId, kind, payload)
     contractId = Util.toId(contractId)
     if not contractId then return nil, CH.ERR.INVALID_INPUT end
@@ -623,7 +645,13 @@ function Amendments.propose(actor, contractId, kind, payload)
     if not CH.AMENDMENT[kind:upper()] and not Amendments.isKnown(kind) then
         return nil, CH.ERR.INVALID_INPUT
     end
+    local out = table.pack(Contracts.serialized({ 'contract:' .. contractId },
+        proposeUnlocked, actor, contractId, kind, payload))
+    if out[1] == false then return nil, out[2], out[3] end
+    return table.unpack(out, 1, out.n)
+end
 
+proposeUnlocked = function(actor, contractId, kind, payload)
     local contract = Storage.readContract(contractId)
     if not contract then return nil, CH.ERR.NOT_FOUND end
 
@@ -701,7 +729,8 @@ function Amendments.propose(actor, contractId, kind, payload)
         if not approvals[cid] then everyone = false end
     end
     if everyone then
-        local _, err, outcome = Amendments.respond(actor, proposal.id, true)
+        -- With this request holding the contract's key already.
+        local _, err, outcome = answer(actor, proposal.id, true, true)
         proposal.outcome = outcome or proposal.outcome
         proposal.error = err
         -- Nobody else can answer it, so left open it would only block the
@@ -863,26 +892,37 @@ local respondUnlocked
 --- told somebody got there first and can answer again.
 local responding = {}
 
-function Amendments.respond(actor, amendmentId, approve)
-    amendmentId = Util.toId(amendmentId)
-    if not amendmentId then return false, CH.ERR.INVALID_INPUT end
+--- What apply answers when a hitman who has not agreed holds the contract
+--- now: not refused, waiting on them. Never sent to a page.
+local PENDING = 'pending'
+
+---@param keyHeld boolean the caller holds the contract's key (propose)
+answer = function(actor, amendmentId, approve, keyHeld)
     if responding[amendmentId] then return false, CH.ERR.LOCKED end
     responding[amendmentId] = true
-    local ok, a, b, c = pcall(respondUnlocked, actor, amendmentId, approve)
+    local ok, a, b, c = pcall(respondUnlocked, actor, amendmentId, approve, keyHeld)
     responding[amendmentId] = nil
     if not ok then error(a, 0) end
     return a, b, c
 end
 
-respondUnlocked = function(actor, amendmentId, approve)
+function Amendments.respond(actor, amendmentId, approve)
+    amendmentId = Util.toId(amendmentId)
+    if not amendmentId then return false, CH.ERR.INVALID_INPUT end
+    return answer(actor, amendmentId, approve, false)
+end
 
+respondUnlocked = function(actor, amendmentId, approve, keyHeld)
+
+    -- Only an open one: 'applying' is a change going in, or one a restart
+    -- cut off part-way ('unknown'), and neither is ever applied again.
     local proposal = Storage.readAmendment(amendmentId)
     if not proposal or proposal.outcome ~= 'open' then return false, CH.ERR.NOT_FOUND end
 
     if os.time() > proposal.expires_at then
         proposal.outcome = 'expired'
         Storage.writeAmendment(proposal)
-        return false, CH.ERR.BAD_STATE, 'expired'
+        return false, CH.ERR.PROPOSAL_EXPIRED, 'expired'
     end
 
     local contract = Storage.readContract(proposal.contract_id)
@@ -923,13 +963,30 @@ respondUnlocked = function(actor, amendmentId, approve)
         proposal.outcome = 'declined'
         proposal.declined_by = actor.cid
         Storage.writeAmendment(proposal)
-        Audit.action('amendment_declined', actor.cid, proposal.contract_id, { kind = proposal.kind })
-        Notify.toCitizen(proposal.proposer, 'Change declined',
-            'Your proposed contract change was declined. The original terms stand.')
+        if actor.cid == proposal.proposer then
+            -- Taken back by whoever made it (the page's "Take it back"). The
+            -- other side is told it was withdrawn; the proposer was sent
+            -- "Change declined" about their own tap.
+            Audit.action('amendment_declined', actor.cid, proposal.contract_id,
+                { kind = proposal.kind, withdrawn = true })
+            for cid in pairs(people) do
+                if cid ~= actor.cid then
+                    Notify.toCitizen(cid, 'Change withdrawn',
+                        'The change proposed to a contract you are on was taken back. '
+                        .. 'The original terms stand.')
+                end
+            end
+        else
+            Audit.action('amendment_declined', actor.cid, proposal.contract_id,
+                { kind = proposal.kind })
+            Notify.toCitizen(proposal.proposer, 'Change declined',
+                'Your proposed contract change was declined. The original terms stand.')
+        end
         pushOthers(contract, actor.cid, 'proposal')
         return true, nil, 'declined'
     end
 
+    local had = proposal.approvals[actor.cid]
     proposal.approvals[actor.cid] = true
 
     for cid in pairs(people) do
@@ -941,21 +998,66 @@ respondUnlocked = function(actor, amendmentId, approve)
         end
     end
 
-    local ok, err = Amendments.apply(proposal)
-    -- Busy is "not this instant", not "no": the proposal stays open and the
-    -- answer can be given again.
-    if not ok and err == CH.ERR.BUSY then return false, err, 'busy' end
+    -- Claimed before it is applied, every approval with it: 'applying' is
+    -- written first, and nothing is applied unless that write lands. The
+    -- change went in first and 'applied' was written after, so a write
+    -- that failed, or a server that died in between, left the proposal open
+    -- and still waiting on the last answer, and a second Agree cut the
+    -- deadline a second time. A start finds one left 'applying' and closes
+    -- it as 'unknown' (Amendments.recoverApplying), never applying it again.
+    local function reopen(keepApproval)
+        proposal.outcome = 'open'
+        if not keepApproval then proposal.approvals[actor.cid] = had end
+    end
+    proposal.outcome = 'applying'
+    local claimed, claimErr = pcall(Storage.writeAmendment, proposal)
+    if not claimed then
+        -- The copy in hand is the stored row on the in-process stores.
+        reopen(false)
+        error(claimErr, 0)
+    end
+
+    local ok, err = Amendments.apply(proposal, keyHeld)
+    -- Busy is "not this instant", not "no": the proposal goes back to open
+    -- and the answer can be given again.
+    if not ok and err == CH.ERR.BUSY then
+        reopen(false)
+        Storage.writeAmendment(proposal)
+        return false, err, 'busy'
+    end
+    -- A hitman who has not agreed took the contract since the answers were
+    -- counted: it waits on them, and nothing has changed under them.
+    if not ok and err == PENDING then
+        reopen(true)
+        Storage.writeAmendment(proposal)
+        local now = Storage.readContract(proposal.contract_id) or contract
+        for cid in pairs(participants(now)) do
+            if not proposal.approvals[cid] then
+                Notify.toCitizen(cid, 'Contract change proposed',
+                    'The other party has proposed a change to a contract you hold.')
+                Notify.push(cid, 'proposal', proposal.contract_id)
+            end
+        end
+        pushOthers(now, actor.cid, 'proposal')
+        return true, nil, 'pending'
+    end
     proposal.outcome = ok and 'applied' or 'failed'
     proposal.error = err
     Storage.writeAmendment(proposal)
 
-    -- The proposer is told too. Only the person who pressed Agree saw the
-    -- refusal, so the one who asked for the change was left believing it
-    -- was still waiting on an answer.
-    if not ok and proposal.proposer ~= actor.cid then
-        Notify.toCitizen(proposal.proposer, 'Change not made',
-            'Your proposed contract change was agreed, but the contract had '
-            .. 'moved on and it no longer applies. The terms are unchanged.')
+    -- Everybody who agreed earlier is told too. Only the person who pressed
+    -- Agree saw the refusal, so the one who asked for the change, and anyone
+    -- who agreed before them, were left believing it still waited on an
+    -- answer. Kept for one who logged off meanwhile.
+    if not ok then
+        for cid in pairs(proposal.approvals) do
+            if cid ~= actor.cid then
+                Notify.tellOrKeep(cid, 'Change not made',
+                    'A contract change everyone agreed to no longer applies: the contract '
+                    .. 'had moved on before it went in. The terms are unchanged.',
+                    nil, proposal.contract_id)
+            end
+        end
     end
     -- An applied change pushes from apply, with the contract as it now is.
     if not ok then pushOthers(contract, actor.cid, 'proposal') end
@@ -968,24 +1070,38 @@ local applyUnlocked
 --- Apply an approved proposal. Each kind is handled explicitly; an unknown
 --- kind fails rather than falling through to something permissive.
 ---
---- A change to the penalty or the mode waits for no acceptance in flight
---- on the contract (Contracts.serialized): who is on it decides whether it
---- may be applied at all.
-function Amendments.apply(proposal)
+--- A change to the penalty, the mode or the payout count waits for no
+--- acceptance in flight on the contract (Contracts.serialized): who is on
+--- it decides whether it may be applied at all. Giving back a payout ran
+--- beside an acceptance, and a hitman who took a two-payout contract held a
+--- one-payout one a moment later, told it was "changed by agreement".
+---@param keyHeld boolean|nil the caller holds the contract's key (propose)
+function Amendments.apply(proposal, keyHeld)
     local kind = proposal.kind
-    if kind == CH.AMENDMENT.RAISE_PENALTY or kind == CH.AMENDMENT.LOWER_PENALTY
-        or kind == CH.AMENDMENT.CHANGE_MODE then
+    if not keyHeld and (kind == CH.AMENDMENT.RAISE_PENALTY or kind == CH.AMENDMENT.LOWER_PENALTY
+        or kind == CH.AMENDMENT.CHANGE_MODE or kind == CH.AMENDMENT.REDUCE_REWARD) then
         return Contracts.serialized({ 'contract:' .. tostring(proposal.contract_id) },
-            applyUnlocked, proposal)
+            applyUnlocked, proposal, true)
     end
-    return applyUnlocked(proposal)
+    return applyUnlocked(proposal, keyHeld)
 end
 
-applyUnlocked = function(proposal)
+applyUnlocked = function(proposal, keyHeld)
     local fields = {}
     local contract = Storage.readContract(proposal.contract_id)
     if not contract then return false, CH.ERR.NOT_FOUND end
     local kind, payload = proposal.kind, proposal.payload
+
+    -- With nothing else able to change who holds it, every holder has to be
+    -- among those who agreed: one who took it since the answers were
+    -- counted has not, and it waits on them (respond).
+    if keyHeld then
+        for _, row in ipairs(Storage.readHitmen(proposal.contract_id) or {}) do
+            if Contracts.holds(row) and not proposal.approvals[row.hitman_cid] then
+                return false, PENDING
+            end
+        end
+    end
 
     -- Set by any branch that takes escrow back out of the contract.
     local reclamp = false
@@ -1058,9 +1174,15 @@ applyUnlocked = function(proposal)
         fields.penalty_amount = contract.penalty_amount
 
     elseif kind == CH.AMENDMENT.CANCEL or kind == CH.AMENDMENT.WITHDRAW then
-        -- Agreed cancellation: escrow returns to the creator in full.
-        return Contracts.resolve(proposal.contract_id, CH.STATE.CANCELLED,
+        -- Agreed cancellation: escrow returns to the creator in full. Every
+        -- party is told by the ending itself (Notify.contractEnded): the
+        -- client what came back and what waits, each hitman where their
+        -- stake went. Recorded as applied, as every other agreed change is.
+        local ended, endErr = Contracts.resolve(proposal.contract_id, CH.STATE.CANCELLED,
             contract.creator_cid, nil, 'cancelled_by_agreement')
+        if not ended then return false, endErr end
+        Audit.action('amendment_applied', proposal.proposer, proposal.contract_id, { kind = kind })
+        return true
 
     elseif kind == CH.AMENDMENT.REDUCE_REWARD then
         -- Reducing a reward means returning part of the escrow to the
@@ -1177,6 +1299,45 @@ function Amendments.reindex()
         end
     end
     return openContracts
+end
+
+--- Close every proposal the last process left being applied.
+---
+--- Everybody had agreed, 'applying' was written, and the process stopped
+--- before 'applied' or 'failed' was: the change may or may not have gone
+--- in, and nothing here can tell a deadline cut once from one never cut.
+--- So it is never applied again. It is closed as 'unknown', and everybody on
+--- it, and everybody who agreed, is told to look at the contract, where the
+--- deadline, the reward and the rest show which way it went. Kept for the
+--- next login: nobody is in the city at a start. Run once, at start.
+---@return integer closed
+function Amendments.recoverApplying()
+    local closed = 0
+    for _, proposal in ipairs(Storage.applyingAmendments() or {}) do
+        proposal.outcome = 'unknown'
+        Storage.writeAmendment(proposal)
+        closed = closed + 1
+        local contract = Storage.readContract(proposal.contract_id)
+        local body = ('The server stopped while a change everyone agreed to on the contract '
+            .. 'on %s was going in. The change may or may not have gone in; look at the '
+            .. 'contract.'):format(contract and contract.target_name or 'your target')
+        local told = {}
+        local function tell(cid)
+            if not cid or told[cid] then return end
+            told[cid] = true
+            Notify.tellOrKeep(cid, 'Change interrupted', body, { bypassBudget = true },
+                proposal.contract_id)
+        end
+        if contract then
+            tell(contract.creator_cid)
+            for _, row in ipairs(Storage.readHitmen(contract.id) or {}) do
+                if Contracts.holds(row) then tell(row.hitman_cid) end
+            end
+        end
+        for cid in pairs(proposal.approvals or {}) do tell(cid) end
+        Audit.action('amendment_unknown', nil, proposal.contract_id, { kind = proposal.kind })
+    end
+    return closed
 end
 
 return Amendments

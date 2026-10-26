@@ -144,14 +144,16 @@ describe('placing a contract that the server refuses', function()
         Env.players[1].PlayerData.money.cash = 1000000
 
         local browse = call('browseTargets', 1, { scope = 'all' })
-        local handle = browse.data.people[1] and browse.data.people[1].handle
-        truthy(handle)
+        -- Each on the next person: one live contract per player on one target.
+        local handles = {}
+        for _, person in ipairs(browse.data.people or {}) do handles[#handles + 1] = person.handle end
+        truthy(#handles > 1, 'two people to place on')
 
         local placed, throttled = 0, 0
         for i = 1, 15 do
             local reply = call('create', 1, {
-                target = handle, reason = 'Number ' .. i, mode = CH.MODE.COMPETITIVE,
-                reward = { baseline = { cash = 100 } },
+                target = handles[(i - 1) % #handles + 1], reason = 'Number ' .. i,
+                mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 100 } },
             })
             if reply and reply.ok then placed = placed + 1
             elseif reply and reply.err == CH.ERR.RATE_LIMITED then throttled = throttled + 1 end
@@ -223,9 +225,12 @@ describe('being told why a target is off limits', function()
 
     it('says when the target already has as many as the server allows', function()
         local s = newStack()
-        local f = fixture(s)
+        fixture(s)
+        -- From as many clients: one live contract per player on one target.
         for i = 1, Config.Limits.MaxActiveContractsPerTarget do
-            truthy(s.contracts.create(f.creator, {
+            Env.addPlayer({ source = 20 + i, citizenid = 'SEEDER0' .. i, license = 'license:s' .. i,
+                cash = 100000, bank = 100000, firstname = 'Seed', lastname = tostring(i) })
+            truthy(s.contracts.create(s.identity.resolve(20 + i), {
                 targetCid = 'TARGET01', reason = 'x ' .. i, mode = CH.MODE.COMPETITIVE,
                 reward = { baseline = { cash = 100 } },
             }), 'seeding contract ' .. i)

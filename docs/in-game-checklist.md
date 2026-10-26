@@ -219,6 +219,15 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] The weapon leaves your inventory **with its attachments**
 - [ ] A contract you cannot afford is refused and charges nothing
 - [ ] The contract appears on the board for a third character
+- [ ] A second contract from the same player on the same target, on any
+      character, is refused: *You already have a contract out on them.*
+- [ ] Two friends on two accounts each place a $1,000 contract on one target,
+      filling the cap; a third player is told the target has as many as the
+      server allows. Both friends log off while the target stays: within a
+      minute the third player can place one (as shipped, `alive`)
+- [ ] A contract nobody took that you let run out (bring it in with Edit to
+      the least it allows and wait): another player can place on the target at
+      once; you are told you placed one on them recently
 
 ## 3a. Changing what a contract pays
 
@@ -555,6 +564,23 @@ uploads, and with neither. Restart the resource between them.
       the client gets the stake at their next login, and the panel's **Logs**
       show `stake_forfeited` with the amount and *queued*. Walking away from
       one with no stake writes no `escrow_released` row
+- [ ] A hitman holds a staked exclusive contract and stays far from the
+      target, client and target in the city, for
+      `Config.Limits.ExclusiveIdleReleaseSeconds` (30 minutes as shipped): it
+      goes back on the board, the client is told *Their $… stake is yours*, and
+      the hitman, logged off meanwhile, is told at their next login *Your $…
+      stake went to the person who placed it*. With no stake the notice names
+      no stake. The accept dialog said so before they took it
+- [ ] Walk away from an exclusive contract and tap Accept on it again at
+      once: refused, saying when you can take it again; another hitman can
+      take it meanwhile
+- [ ] With `Config.Limits.MaxHitmenPerContract` set to 2 in the panel, two
+      hitmen take a competitive contract and both stay far from the target:
+      after the idle window one of them is taken off it and a third hitman
+      can take the place
+- [ ] A client who withdraws a contract an operative took and walked away from
+      is told *The operative who took it walked away*, and the dialog says
+      nobody else can place one on the target for a while either
 
 ## 9. Communication
 
@@ -568,6 +594,21 @@ uploads, and with neither. Restart the resource between them.
 - [ ] Extending the deadline applies immediately
 - [ ] Shortening the deadline requires the hitman to agree
 - [ ] The hitman declining leaves the original terms intact
+- [ ] **Cancel the contract** (client) and **Call it off** (hitman) on a held
+      contract each ask first: the client reads the waits it starts, a staked
+      hitman that their stake comes back. Nothing is sent on the first tap
+- [ ] Your own open proposal has **Take it back**; tapping it closes the
+      proposal and the other side is told it was taken back
+- [ ] Agreed cancel: the client is told *called off by agreement* and what
+      came back, and each hitman where their stake went; the panel's **Logs**
+      show `amendment_applied`
+- [ ] Propose *one hitman only* with one operative on a competitive contract,
+      let a second take it, then both agree: the last to agree reads
+      *Agreed, but it no longer applies: who is on the contract changed*, and
+      the client and the first operative are told too
+- [ ] Buyouts off in the panel, take part of a reward back, buyouts on again:
+      the target's buyout price is still there (lower only if the reward left
+      buys less)
 
 ## 11. Presence and persistence
 

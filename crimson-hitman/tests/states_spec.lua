@@ -585,7 +585,7 @@ describe('the three rules that stop a creator re-listing', function()
     --- three of the page's recovery paths treat rate_limited as a transient
     --- condition worth retrying, so the app also quietly filed a two-hour
     --- policy wait as a hiccup. Each rule names itself now.
-    local function creatorWith(kind)
+    local function creatorWith(kind, takenUp)
         local s = newStack()
         local f = fixture(s)
         Env.players[1].PlayerData.money.bank = 400000
@@ -595,6 +595,7 @@ describe('the three rules that stop a creator re-listing', function()
         local c = s.contracts.create(f.creator, { targetCid = 'TARGET01',
             reason = 'x', reward = { baseline = { cash = 1000 } } })
         truthy(c, 'the first contract')
+        if takenUp then truthy(s.contracts.accept(f.hitman, c.id, false)) end
 
         if kind == 'expired' then
             truthy(s.contracts.resolve(c.id, CH.STATE.EXPIRED, f.creator.cid,
@@ -607,13 +608,28 @@ describe('the three rules that stop a creator re-listing', function()
     end
 
     it('says so when somebody else listed this target recently', function()
-        -- Anyone's contract on this target, so the target cooldown bites
-        -- before the creator-specific one.
-        local s, f = creatorWith('expired')
+        -- Anyone's contract on this target that somebody took up, so the
+        -- target cooldown bites before the creator-specific one.
+        local s, f = creatorWith('expired', true)
         local _, err = s.contracts.create(f.creator, { targetCid = 'TARGET01',
             reason = 'again', reward = { baseline = { cash = 1000 } } })
         eq(err, CH.ERR.TARGET_RECENTLY_ON,
             'this one already had its own code')
+    end)
+
+    --- W078: one nobody took up, brought in with Edit and left to run out,
+    --- started thirty minutes of everybody waiting, free and refunded, as a
+    --- withdrawal nobody took up no longer does.
+    it('starts no wait for anybody else when nobody ever took it up', function()
+        local s, f = creatorWith('expired')
+        local _, err = s.contracts.create(f.creator, { targetCid = 'TARGET01',
+            reason = 'again', reward = { baseline = { cash = 1000 } } })
+        eq(err, CH.ERR.SAME_TARGET_TOO_SOON, 'its creator still waits on this target')
+        Env.addPlayer({ source = 8, citizenid = 'CREATOR2', license = 'license:c2',
+                        cash = 100000, bank = 100000, firstname = 'Ann', lastname = 'Poe' })
+        local other, why = s.contracts.create(s.identity.resolve(8), { targetCid = 'TARGET01',
+            reason = 'mine', reward = { baseline = { cash = 1000 } } })
+        truthy(other, 'another client may place at once: ' .. tostring(why))
     end)
 
     it('says so when it was THIS creator who listed them', function()

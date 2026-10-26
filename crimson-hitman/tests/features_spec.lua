@@ -199,6 +199,49 @@ describe('buyouts, switched from the panel', function()
     end)
 end)
 
+--- W042: the re-price after a withdrawal went through clampBailout, which
+--- answers 0 while buyouts are off and reads the panel's most buyout: a
+--- withdrawal made meanwhile wiped the target's way out for good, and a
+--- lower "Most buyout ($)" re-priced contracts placed long before.
+describe('a buyout price already set, across the switch and the limits', function()
+    local function priced(s, f)
+        local c = place(s, f, { reward = { baseline = { cash = 4000, bank = 2000 } },
+            bailoutAmount = 15000 })
+        truthy(c)
+        eq(s.storage.readContract(c.id).bailout_amount, 15000)
+        return c
+    end
+
+    local function withdrawBank(s, f, c)
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.source == 'bank' then
+                return s.contracts.withdrawReward(f.creator, c.id, { line.id })
+            end
+        end
+    end
+
+    it('comes down only with the reward while buyouts are off, and is there when they are on', function()
+        local s, f = stack()
+        local c = priced(s, f)
+        turn(s, 'Bailout.Enabled', false)
+        truthy(withdrawBank(s, f, c))
+        turn(s, 'Bailout.Enabled', true)
+        eq(s.storage.readContract(c.id).bailout_amount,
+            math.floor(4000 * Config.Bailout.MaxMultiplier),
+            'lowered to what the money left buys, not wiped')
+    end)
+
+    it('is not re-priced by a lower most buyout set after it was placed', function()
+        local s, f = stack()
+        local c = priced(s, f)
+        turn(s, 'Bailout.AbsoluteMax', 2000)
+        truthy(withdrawBank(s, f, c))
+        eq(s.storage.readContract(c.id).bailout_amount,
+            math.floor(4000 * Config.Bailout.MaxMultiplier),
+            'the panel says new contracts only')
+    end)
+end)
+
 describe('proposals, switched from the panel', function()
     it('refuses new ones while off, as turned off, and still answers one already open', function()
         local s, f = stack()
@@ -319,8 +362,10 @@ describe('the advisory, switched from the panel', function()
         eq(bulletins(), 0)
         turn(s, 'Advisory.Enabled', true)
         Config.Limits.MaxActiveContractsPerTarget = 5
-        Config.Limits.SameCreatorSameTargetCooldownSeconds = 0
-        truthy(place(s, f))
+        -- Another client: one live contract per player on one target.
+        Env.addPlayer({ source = 21, citizenid = 'CREATOR2', license = 'license:c2',
+            cash = 100000, bank = 100000, firstname = 'Ann', lastname = 'Poe' })
+        truthy(place(s, { creator = s.identity.resolve(21) }))
         truthy(bulletins() > 0, 'on again')
     end)
 end)

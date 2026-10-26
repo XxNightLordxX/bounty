@@ -1514,6 +1514,14 @@ function StartCrimsonHitman()
         Log.debug(('the sweep of kill photo files failed: %s'):format(tostring(sweepErr)))
     end
     amendments.reindex()
+    -- An agreed change the last process stopped part-way through applying
+    -- is closed as 'unknown', never applied a second time, and both sides
+    -- are told to look at the contract (Amendments.recoverApplying).
+    local closedOk, closedErr = pcall(amendments.recoverApplying)
+    if not closedOk then
+        Log.always(('closing agreed changes a restart cut off failed: %s; they stay closed to '
+            .. 'answers and are looked at again on the next start'):format(Util.dbError(closedErr)))
+    end
     -- Contracts already held when this process started, so an idle hold
     -- from before a restart is still one the sweep can see.
     contracts.reindexHolds()

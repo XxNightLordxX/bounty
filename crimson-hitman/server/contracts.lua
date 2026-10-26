@@ -167,10 +167,14 @@ end
 --- leaves the row active and refuses the abandon. Only an active row
 --- forfeits by stakeForfeits, so the ending paid it back to the hitman who
 --- had walked away, and a refused retake's unwind did the same.
+---
+--- And a row released for holding the contract without working it
+--- (releaseIdleHold), which forfeits the stake the same way: going idle
+--- instead of tapping Abandon is walking away too.
 ---@param hitman table|nil a hitman row
 ---@return boolean
 local function walkedAway(hitman)
-    return hitman ~= nil and hitman.state == 'abandoned'
+    return hitman ~= nil and (hitman.state == 'abandoned' or hitman.state == 'released')
 end
 
 --- What each hitman has staked and still has held, by citizen id. Read
@@ -298,9 +302,11 @@ local function finalise(contractId, contract, forfeitStakes, ending, winnerCid)
     -- A push only moves an app that is already open. An expiry took a
     -- hitman's stake, and a buyout or a rival's kill took their contract,
     -- with nothing on the phone to say so (§11.4).
+    local agreed = (settled or contract).resolution == 'cancelled_by_agreement'
     Notify.contractEnded(settled or contract, ending, stakes, {
         winnerCid = winnerCid,
-        creatorOwed = ending == CH.STATE.EXPIRED and owedTo(contractId, contract.creator_cid) or 0,
+        creatorOwed = (ending == CH.STATE.EXPIRED or agreed)
+            and owedTo(contractId, contract.creator_cid) or 0,
     })
 
     Notify.clearContract(contractId, settled or contract)
@@ -369,6 +375,26 @@ function Contracts.canCreate(actor, targetActor)
             or Identity.sameAccount(c.creator_account, actor.account)
     end
 
+    --- Whether a live contract on this target keeps its place under the
+    --- target's cap. Not one the board hides from everybody while the
+    --- target is here (Projection's listedFor): its client is named and away,
+    --- and nobody holds it. It cannot be taken or worked, and counted, two
+    --- cheap contracts from a friend who then logged off kept every real
+    --- enemy off the target for two days. While the target is away every
+    --- live contract counts, so contracts never pile up on an absent target
+    --- past the cap. An anonymous client's presence is never asked, so their
+    --- contracts always count.
+    local targetHere = Identity.byCitizenId(targetActor.cid) ~= nil
+    local function holdsAPlace(c)
+        if not targetHere or c.anon_creator == true then return true end
+        if c.state ~= CH.STATE.ACTIVE and c.state ~= CH.STATE.ACCEPTED then return true end
+        if Identity.byCitizenId(c.creator_cid) ~= nil then return true end
+        for _, row in ipairs(Storage.readHitmen(c.id) or {}) do
+            if holds(row) then return true end
+        end
+        return false
+    end
+
     local byCreator, byTarget = 0, 0
     local now = os.time()
     local counted = {}
@@ -379,7 +405,13 @@ function Contracts.canCreate(actor, targetActor)
         counted[c.id] = true
         if LIVE_STATES[c.state] then
             if placedByThisPlayer(c) then byCreator = byCreator + 1 end
-            if c.target_cid == targetActor.cid then byTarget = byTarget + 1 end
+            if c.target_cid == targetActor.cid then
+                -- One live contract per player on one target, on any
+                -- character: a shield now takes two accounts, each with a
+                -- reward locked up.
+                if placedByThisPlayer(c) then return false, CH.ERR.SAME_TARGET_ACTIVE end
+                if holdsAPlace(c) then byTarget = byTarget + 1 end
+            end
         else
             -- Cooldowns after a resolution, so a target cannot be re-listed
             -- the moment their last contract closes (§12.5).
@@ -397,8 +429,11 @@ function Contracts.canCreate(actor, targetActor)
                 -- every contract with a $1 one withdrawn at once, free and
                 -- refunded, as often as they liked. The creator who withdrew
                 -- still waits on this target (below), and on any (§12.4).
-                if since < cooldown and not (c.state == CH.STATE.CANCELLED
-                    and not everTakenUp(c.id)) then
+                -- And one left to run out with nobody ever on it, which is
+                -- the same contract brought in with Edit and left: free,
+                -- refunded, and thirty minutes of everybody waiting.
+                if since < cooldown and not ((c.state == CH.STATE.CANCELLED
+                    or c.state == CH.STATE.EXPIRED) and not everTakenUp(c.id)) then
                     return false, CH.ERR.TARGET_RECENTLY_ON
                 end
                 -- Its own code. This is a policy wait of hours, and sharing
@@ -1214,6 +1249,26 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         end
     end
 
+    -- Walked away from an exclusive contract a moment ago, on this
+    -- character or another: not again until a whole idle window has passed.
+    -- Walking away and straight back started both idle clocks from nothing,
+    -- so a friend holding it for the target tapped Abandon every 25 minutes
+    -- and the release never came. Meanwhile it is on the board for anyone
+    -- else.
+    local retakeWait = Config.Limits.ExclusiveIdleReleaseSeconds or 0
+    if contract.mode == CH.MODE.EXCLUSIVE and retakeWait > 0 then
+        for i = 1, #existing do
+            local row = existing[i]
+            if row.state == 'abandoned' and row.left_at and (row.hitman_cid == actor.cid
+                or Identity.sameAccount(row.hitman_account, actor.account)) then
+                local left = row.left_at + retakeWait - os.time()
+                if left > 0 then
+                    return false, CH.ERR.RETAKE_TOO_SOON, { retryAfter = left }
+                end
+            end
+        end
+    end
+
     -- Aliases are numbered from everyone who has ever held this contract,
     -- not from the live count: reusing "Operative #2" after someone abandons
     -- makes two different people indistinguishable in the creator's threads.
@@ -1890,10 +1945,19 @@ function Contracts.reindexHolds()
     return n
 end
 
---- Take one idle operative off an exclusive contract and put it back on the
---- board. Their stake comes back: the release is the remedy, not a fine.
+--- Take one idle operative off a contract: an exclusive one, or a full
+--- competitive one (Contracts.releaseIdleHolds). Their stake goes to the
+--- person who placed it, exactly as walking away hands it over
+--- (walkAway): the idle clock only runs while the contract could be worked,
+--- so a release is a hold that was not worked. Returning the stake made
+--- going idle the way to walk away for free, and the stake no deterrent.
+---
+--- Under the contract's key, as every other change to who holds it is: an
+--- acceptance, a buyout or an agreed change landing in its awaits is not
+--- interleaved with it. Busy, it is tried on the next pass.
 ---@return boolean released
-local function releaseIdleHold(contractId, hitman, idleSeconds, why)
+---@return string|nil err CH.ERR.BUSY when the contract's key was held
+local function releaseIdleHoldUnlocked(contractId, hitman, idleSeconds, why)
     -- Re-read: a payout or an abandonment may have moved it since the sweep
     -- read it, and a hitman being paid is not one to release.
     local contract = Storage.readContract(contractId)
@@ -1901,14 +1965,32 @@ local function releaseIdleHold(contractId, hitman, idleSeconds, why)
     local current = Storage.readHitman(contractId, hitman.hitman_cid)
     if not current or current.state ~= 'active' then return false end
 
+    -- Read before anything moves, so the notices can name the figure.
+    local stake = heldStakes(contractId)[current.hitman_cid] or 0
+
     Storage.updateHitman(current.id, { state = 'released', left_at = os.time() })
 
-    Escrow.release(contractId, current.hitman_cid,
-        { portion = CH.PORTION.STAKE, staker = current.hitman_cid }, 'stake_returned_idle')
+    -- Recorded with the figure, and whether it waits for them, whenever it
+    -- moved, as an abandon records it. Nothing is released, and nothing
+    -- written, for a contract staked at nothing.
+    local moved = 0
+    if stake > 0 then
+        local _, released = Escrow.release(contractId, contract.creator_cid,
+            { portion = CH.PORTION.STAKE, staker = current.hitman_cid }, 'penalty_forfeited')
+        moved = released and ((released.settled or 0) + (released.pending or 0)) or 0
+        if moved > 0 then
+            Audit.financial('stake_forfeited', current.hitman_cid, contractId,
+                { amount = stake, queued = (released.pending or 0) > 0, why = why or 'idle' })
+        end
+    end
+    local given = moved > 0 and stake or 0
 
-    local remaining = 0
+    local remaining, others = 0, {}
     for _, h in ipairs(Storage.readHitmen(contractId)) do
-        if holds(h) then remaining = remaining + 1 end
+        if holds(h) then
+            remaining = remaining + 1
+            if h.hitman_cid ~= current.hitman_cid then others[#others + 1] = h.hitman_cid end
+        end
     end
     if remaining == 0 then
         Contracts.transition(contractId, CH.STATE.ACCEPTED, CH.STATE.ACTIVE, 'idle_hold_released')
@@ -1918,21 +2000,36 @@ local function releaseIdleHold(contractId, hitman, idleSeconds, why)
         Contracts.onHitmanLeft(contractId, current.hitman_cid, 'idle_hold_released')
     end
 
+    -- Kept for a hitman who logged off: their clock runs while they are
+    -- away, so the usual release is of somebody asleep, who came back to a
+    -- contract gone from Mine and nothing to say why. The stake only where
+    -- there was one.
+    local target = contract.target_name or 'your target'
     local minutes = math.floor(idleSeconds / 60)
-    Notify.toCitizen(current.hitman_cid, 'Taken off a contract',
-        ('You held a contract for %d minutes without %s, so it has gone back on the '
-            .. 'board. Your stake has been returned.'):format(minutes,
-            why == 'no_attempt' and 'making an attempt on its target'
-                or 'going near its target'),
-        { bypassBudget = true })
-    Notify.toCitizen(contract.creator_cid, 'Contract back on the board',
-        'The operative holding your contract was not working it, so it is open again.')
-    Notify.pushParties(Storage.readContract(contractId) or contract,
-        { current.hitman_cid }, 'released')
+    Notify.tellOrKeep(current.hitman_cid, 'Taken off a contract',
+        ('You held the contract on %s for %d minutes without %s, so it has gone back '
+            .. 'on the board.'):format(target, minutes,
+            why == 'no_attempt' and 'making an attempt on them' or 'going near them')
+        .. (given > 0 and (' Your $%d stake went to the person who placed it.'):format(given)
+            or ''),
+        { bypassBudget = true }, contractId)
+    Notify.tellOrKeep(contract.creator_cid, 'Contract back on the board',
+        ('The operative holding your contract on %s was not working it, so %s'):format(target,
+            remaining == 0 and 'it is back on the board.'
+                or 'their place on it is open to another operative.')
+        .. (given > 0 and (' Their $%d stake is yours.'):format(given) or ''),
+        { bypassBudget = given > 0 }, contractId)
+    others[#others + 1] = current.hitman_cid
+    Notify.pushParties(Storage.readContract(contractId) or contract, others, 'released')
 
     Audit.action('hold_released_idle', current.hitman_cid, contractId,
         { idle = idleSeconds, why = why or 'idle' })
     return true
+end
+
+local function releaseIdleHold(contractId, hitman, idleSeconds, why)
+    return Contracts.serialized({ 'contract:' .. contractId },
+        releaseIdleHoldUnlocked, contractId, hitman, idleSeconds, why)
 end
 
 --- Finish what an abandon that stopped part-way left on a live contract.
@@ -1993,9 +2090,13 @@ function Contracts.repairHeld(contractId)
     return repaired == true
 end
 
---- Release every exclusive hold that has gone unworked for too long.
---- Driven by the maintenance tick; the clock is advanced by however long it
---- has been since the last pass, so a slow tick neither loses nor gains time.
+--- Release every exclusive hold that has gone unworked for too long, and
+--- the idlest holder of a competitive contract that is full
+--- (Config.Limits.MaxHitmenPerContract): five friends sat on one far from
+--- its target, every real hitman was refused it as full and its client could
+--- not cancel it, until the deadline. Driven by the maintenance tick; the
+--- clock is advanced by however long it has been since the last pass, so a
+--- slow tick neither loses nor gains time.
 ---
 --- And finish an abandon that stopped part-way (Contracts.repairHeld): on a
 --- contract an abandon left marked, and on an exclusive contract this walk
@@ -2033,17 +2134,24 @@ function Contracts.releaseIdleHolds()
             -- Resolved, or back on the board: nobody holds it now. A contract
             -- mid-settlement stays, since a failed payout lands it back here.
             if not c or c.state ~= CH.STATE.COMPLETING then heldIndex[contractId] = nil end
-        elseif c.mode == CH.MODE.EXCLUSIVE then
+        else
             local hitmen = Storage.readHitmen(c.id) or {}
             local holders = 0
             for i = 1, #hitmen do
                 if holds(hitmen[i]) then holders = holders + 1 end
             end
-            if holders == 0 then
+            local exclusive = c.mode == CH.MODE.EXCLUSIVE
+            if exclusive and holders == 0 then
                 -- Held by nobody: an abandon or a release that stopped part-way.
                 Contracts.repairHeld(c.id)
                 hitmen = {}
             elseif not idling then
+                hitmen = {}
+            elseif not exclusive and holders < (Config.Limits.MaxHitmenPerContract or 0) then
+                -- A competitive contract with room is left alone: a real
+                -- hitman can still take it. Full, it is the frozen contract
+                -- an exclusive hold was, with several friends in place of
+                -- one, and the client cannot cancel it while it is held.
                 hitmen = {}
             end
 
@@ -2054,12 +2162,18 @@ function Contracts.releaseIdleHolds()
             -- deadline: the hold's idle clock ran on through the sentence,
             -- and the hitman was taken off for not going near a target
             -- locked in Bolingbroke.
-            local targetActor = Identity.byCitizenId(c.target_cid)
-            local targetHere = targetActor ~= nil
-                and not (Config.Limits.PauseWhileTargetJailed and Identity.isJailed(targetActor))
-            local bothHere = (c.anon_creator == true or Identity.byCitizenId(c.creator_cid) ~= nil)
-                and targetHere
+            local bothHere = false
+            if #hitmen > 0 then
+                local targetActor = Identity.byCitizenId(c.target_cid)
+                local targetHere = targetActor ~= nil
+                    and not (Config.Limits.PauseWhileTargetJailed and Identity.isJailed(targetActor))
+                bothHere = (c.anon_creator == true or Identity.byCitizenId(c.creator_cid) ~= nil)
+                    and targetHere
+            end
 
+            -- Who is past a window, and by how long. On a full competitive
+            -- contract only the idlest goes: one place is all it takes.
+            local due = {}
             for _, h in ipairs(hitmen) do
                 if h.state == 'active' then
                     local k = c.id .. ':' .. h.hitman_cid
@@ -2092,12 +2206,24 @@ function Contracts.releaseIdleHolds()
                         why = 'no_attempt'
                     end
                     if why then
-                        local held = why == 'idle' and idleFor[k] or unattemptedFor[k]
-                        if releaseIdleHold(c.id, h, held, why) then
-                            released = released + 1
-                        end
-                        idleFor[k], unattemptedFor[k], armedAt[k] = nil, nil, nil
+                        due[#due + 1] = { row = h, key = k, why = why,
+                            held = why == 'idle' and idleFor[k] or unattemptedFor[k] }
                     end
+                end
+            end
+            if not exclusive and #due > 1 then
+                table.sort(due, function(a, b)
+                    if a.held ~= b.held then return a.held > b.held end
+                    return a.row.hitman_cid < b.row.hitman_cid
+                end)
+                due = { due[1] }
+            end
+            for _, d in ipairs(due) do
+                local ok, err = releaseIdleHold(c.id, d.row, d.held, d.why)
+                if ok then released = released + 1 end
+                -- Busy is not done: the clocks stand, and the next pass tries.
+                if err ~= CH.ERR.BUSY then
+                    idleFor[d.key], unattemptedFor[d.key], armedAt[d.key] = nil, nil, nil
                 end
             end
         end
@@ -2106,7 +2232,7 @@ function Contracts.releaseIdleHolds()
     if not idling then return released end
 
     -- Holds that ended some other way are forgotten, so this is bounded by
-    -- the exclusive contracts that are held right now.
+    -- the exclusive and full competitive contracts that are held right now.
     for k in pairs(idleFor) do
         if not live[k] then idleFor[k] = nil end
     end
@@ -2488,6 +2614,11 @@ local function cancelUnlocked(actor, contractId)
     if CH.TERMINAL[contract.state] then return false, CH.ERR.ALREADY_SETTLED end
     if heldByAnyone(contractId) then return false, CH.ERR.CONTRACT_TAKEN end
 
+    -- Read before it closes. An operative who took it and walked away is not
+    -- "nobody", and their having taken it starts the wait on this target for
+    -- every client (canCreate), which the creator is told.
+    local taken = everTakenUp(contractId)
+
     local ok, err = Contracts.resolve(contractId, CH.STATE.CANCELLED,
         actor.cid, nil, 'cancelled_by_creator')
     if not ok then return false, err end
@@ -2501,11 +2632,17 @@ local function cancelUnlocked(actor, contractId)
     -- short, and reports it stolen.
     local owed = owedTo(contractId, actor.cid)
 
-    Notify.toCitizen(actor.cid, 'Contract withdrawn', owed > 0
-        and ('Nobody had taken it. Most of what you put up is back; %d thing(s) '
+    local lead = taken and 'The operative who took it walked away' or 'Nobody had taken it'
+    local everyone = math.ceil((Config.Limits.TargetCooldownAfterResolveSeconds or 0) / 60)
+    Notify.toCitizen(actor.cid, 'Contract withdrawn', (owed > 0
+        and (lead .. '. Most of what you put up is back; %d thing(s) '
              .. 'would not fit and are waiting for you — they arrive when you '
              .. 'next have room.'):format(owed)
-        or 'Nobody had taken it, so everything you put up has been returned.',
+        or lead .. ', so everything you put up has been returned.')
+        .. ((taken and everyone > 0)
+            and (' Nobody can place a contract on %s for %d minute%s now.'):format(
+                contract.target_name or 'them', everyone, everyone == 1 and '' or 's')
+            or ''),
         { bypassBudget = true })
     return true, nil, { owed = owed }
 end
@@ -2535,11 +2672,7 @@ end
 ---@param changes table { reason?: string, deadlineSeconds?: integer }
 ---@return boolean ok
 ---@return string|nil err
-function Contracts.revise(actor, contractId, changes)
-    contractId = Util.toId(contractId)
-    if not contractId then return false, CH.ERR.INVALID_INPUT end
-    changes = type(changes) == 'table' and changes or {}
-
+local function reviseUnlocked(actor, contractId, changes)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.creator_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
@@ -2602,6 +2735,9 @@ function Contracts.revise(actor, contractId, changes)
     -- than half made.
     if deadlineFor then
         local moved, moveErr = Contracts.bringDeadlineIn(contractId, deadlineFor)
+        -- Put back because somebody holds it now: the creator is told so,
+        -- and the page shuts Edit, rather than "Not right now."
+        if not moved and moveErr == CH.ERR.BAD_STATE then return false, CH.ERR.CONTRACT_TAKEN end
         if not moved then return false, moveErr end
     end
     -- The reason alone, never the row: `contract` was read before every
@@ -2616,6 +2752,18 @@ function Contracts.revise(actor, contractId, changes)
     Audit.action('contract_revised', actor.cid, contractId,
         { changed = table.concat(touched, ',') })
     return true
+end
+
+--- One at a time with an acceptance, on the key acceptance holds, as a
+--- withdrawal is. Whether anybody holds it is a read, an await on mysql,
+--- and a hitman who took the contract in the edit's awaits held one whose
+--- stated reason changed under them, which only an agreed change may do.
+function Contracts.revise(actor, contractId, changes)
+    contractId = Util.toId(contractId)
+    if not contractId then return false, CH.ERR.INVALID_INPUT end
+    changes = type(changes) == 'table' and changes or {}
+    return Contracts.serialized({ 'contract:' .. contractId }, reviseUnlocked, actor, contractId,
+        changes)
 end
 
 --- Take part of a reward back out of escrow.
@@ -2883,7 +3031,7 @@ function Contracts.reclampToEscrow(contractId, actorCid)
     local contract = Storage.readContract(contractId)
     if not contract then return end
 
-    local held, heldMoney = {}, 0
+    local heldMoney = 0
     for _, line in ipairs(Storage.readEscrow(contractId) or {}) do
         -- And here too, for the same reason and with a sharper cost: this is
         -- what re-prices the buyout and the failure stake against what the
@@ -2896,24 +3044,31 @@ function Contracts.reclampToEscrow(contractId, actorCid)
         -- raised what the target paid to escape, and left the stake quoted
         -- to the next hitman at four times what the contract still paid.
         if line.state == CH.ESCROW_STATE.HELD and not line.owed_to
-            and line.portion ~= CH.PORTION.STAKE and line.portion ~= CH.PORTION.OWED then
-            held[#held + 1] = line
-            if CH.MONEY_ACCOUNTS[line.source] then
-                heldMoney = heldMoney + (line.amount or 0)
-            end
+            and line.portion ~= CH.PORTION.STAKE and line.portion ~= CH.PORTION.OWED
+            and CH.MONEY_ACCOUNTS[line.source] then
+            heldMoney = heldMoney + (line.amount or 0)
         end
     end
 
     local changed = false
 
     if (contract.bailout_amount or 0) > 0 then
-        local clamped = Contracts.clampBailout(contract.bailout_amount, held)
-        -- Down only. clampBailout also lifts a price to its floor, and a
-        -- price under the floor here is one a top-up left behind (addEscrow
-        -- re-prices nothing). Lifted, giving back one collection after a
-        -- top-up raised the buyout from 10,000 to 65,000 under a target
-        -- already looking at 10,000, who was then charged 65,000.
-        if clamped > contract.bailout_amount then clamped = contract.bailout_amount end
+        -- Down only, and only by the reward: to the most the money left buys
+        -- under the multiplier in force, never past the price as placed.
+        -- Lifted, giving back one collection after a top-up raised the
+        -- buyout from 10,000 to 65,000 under a target already looking at
+        -- 10,000, who was then charged 65,000.
+        --
+        -- Not through clampBailout, which reads the Buyouts switch and the
+        -- current AbsoluteMax: a withdrawal made while buyouts were off from
+        -- the panel wrote the price to 0 for good, and lowering "Most buyout
+        -- ($)" re-priced contracts placed long before, when the panel says
+        -- it touches new contracts only. A price is never taken to nothing
+        -- here: a ceiling of nothing (no cash or bank left in it, or a
+        -- multiplier of 0) leaves it as it stands.
+        local clamped = contract.bailout_amount
+        local ceiling = math.floor(heldMoney * (tonumber(Config.Bailout.MaxMultiplier) or 0))
+        if ceiling > 0 and ceiling < clamped then clamped = ceiling end
         if clamped ~= contract.bailout_amount then
             contract.bailout_amount = clamped
             changed = true

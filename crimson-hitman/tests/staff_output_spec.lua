@@ -31,7 +31,8 @@ end
 local function place(s, f, opts)
     opts = opts or {}
     local c, err = s.contracts.create(f.creator, {
-        targetCid = 'TARGET01', reason = opts.reason or 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+        targetCid = opts.target or 'TARGET01', reason = opts.reason or 'Unpaid debt',
+        mode = CH.MODE.COMPETITIVE,
         reward = { baseline = { cash = 5000 } }, anonymous = opts.anonymous,
     })
     truthy(c, 'placing it: ' .. tostring(err))
@@ -481,7 +482,10 @@ describe('every staff command has a button in the admin panel', function()
             eq(rows(s, action), before + 2, key .. ': the button wrote ' .. action)
         end
 
-        local a, b = place(s, f), place(s, f, { reason = 'second' })
+        -- The second on somebody else: one live contract per player on one target.
+        Env.addPlayer({ source = 9, citizenid = 'TARGET02', license = 'license:t2',
+            cash = 100, bank = 100, firstname = 'Kit', lastname = 'Bell' })
+        local a, b = place(s, f), place(s, f, { reason = 'second', target = 'TARGET02' })
         both('void', function() run(6, 'void', { a.id, 'checked' }) end,
             function() truthy(ask(6, 'void', { id = b.id, reason = 'checked' }).ok) end)
         both('stuck', function() run(6, 'stuck') end, function() truthy(ask(6, 'stuck').ok) end)
@@ -501,7 +505,7 @@ describe('every staff command has a button in the admin panel', function()
 
         -- A settle, on two lines a give that kept raising left for staff.
         local c = place(s, f, { accept = true })
-        local d = place(s, f, { accept = true, reason = 'fourth' })
+        local d = place(s, f, { accept = true, reason = 'fourth', target = 'TARGET02' })
         local p = Env.players[3]
         local real = p.Functions.AddMoney
         p.Functions.AddMoney = function() error('AddMoney hook raised', 0) end

@@ -909,7 +909,8 @@ function App.register()
     end)
 
     handler('revise', 'amend', function(actor, payload)
-        local ok, err = deps.contracts.revise(actor, payload.id, {
+        -- Busy says for how long (Contracts.serialized), for the page's words.
+        local ok, err, detail = deps.contracts.revise(actor, payload.id, {
             reason = payload.reason,
             -- The index a preset server takes instead of text. Left out
             -- here, the picker the Edit dialog draws sent a choice that
@@ -917,7 +918,7 @@ function App.register()
             reasonPreset = payload.reasonPreset,
             deadlineSeconds = payload.deadlineSeconds,
         })
-        if not ok then return false, err end
+        if not ok then return false, err, detail end
         return { id = payload.id }
     end)
 
@@ -1214,7 +1215,9 @@ function App.register()
 
     handler('respondAmendment', 'amend', function(actor, payload)
         local ok, err, outcome = deps.amendments.respond(actor, payload.id, payload.approve == true)
-        if not ok then return false, err end
+        -- Agreed by everybody and refused as it went in: said as that, with
+        -- the reason, rather than read as a proposal that lapsed.
+        if not ok then return false, err, outcome == 'failed' and { outcome = outcome } or nil end
         return { outcome = outcome }
     end)
 

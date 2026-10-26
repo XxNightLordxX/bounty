@@ -105,8 +105,9 @@ end
 local function loadBoard(stack, n)
     -- Enough people that neither the creator cap nor the target cap is what
     -- the fixture is really measuring, and few enough that the board is a
-    -- board rather than a phone book.
-    local players = math.max(4, math.ceil(n / 40))
+    -- board rather than a phone book. And no pair twice: one live contract
+    -- per player on one target, so n pairs need the square root of n of each.
+    local players = math.max(4, math.ceil(n / 40), math.ceil(math.sqrt(n)))
     local creators, targets = {}, {}
 
     for i = 1, players do
@@ -121,8 +122,10 @@ local function loadBoard(stack, n)
 
     local made = 0
     for i = 1, n do
-        local contract = stack.contracts.create(creators[(i % players) + 1], {
-            targetCid = targets[((i + 1) % players) + 1].cid,
+        local creator = (i - 1) % players
+        local target = (creator + math.floor((i - 1) / players)) % players
+        local contract = stack.contracts.create(creators[creator + 1], {
+            targetCid = targets[target + 1].cid,
             reason = 'scale',
             reward = { baseline = { cash = 100, bank = 100 } },
             bonusPercent = 50,

@@ -869,11 +869,16 @@ describe('an abandon a store call stopped part-way', function()
         local s, f, c = staked(CH.MODE.EXCLUSIVE)
         stopped(s, f, c, 'readEscrow')
         local client = bank(1)
+        -- Refused before anything is read of the stake: the one who walked
+        -- away may not take it straight back (RETAKE_TOO_SOON). The stake
+        -- is the client's all the same, by the next pass.
         local ok, err = s.contracts.accept(f.hitman, c.id, false)
         falsy(ok, 'held by nobody, and still refused')
-        eq(err, CH.ERR.LOCKED)
-        eq(bank(1) - client, 2000, 'the stake went to the client')
+        eq(err, CH.ERR.RETAKE_TOO_SOON)
         eq(bank(3), 48000, 'not back to the hitman who walked away')
+        s.contracts.releaseIdleHolds()
+        eq(bank(1) - client, 2000, 'the stake went to the client')
+        eq(bank(3), 48000)
     end)
 
     --- The repair waits for an acceptance in flight, which holds the
@@ -907,5 +912,37 @@ describe('an abandon a store call stopped part-way', function()
         truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
         eq(bank(3), 48000, 'only the new stake came back')
         eq(bank(1) - client, 2000, 'and the client kept the old one')
+    end)
+end)
+
+--- W067: the change went in first and 'applied' was written after, so a
+--- write that raised left the proposal open and still waiting on the last
+--- answer, and a second Agree cut the deadline again. On a copying store,
+--- as a database answers.
+describe('an agreed change whose last write raises', function()
+    it('is not applied a second time by a second Agree', function()
+        local s = newCopyingStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            mode = CH.MODE.EXCLUSIVE, reward = { baseline = { cash = 5000 } } })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local p = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.SHORTEN_DEADLINE,
+            { seconds = 1800 })
+        truthy(p and p.outcome == 'open')
+        local before = s.storage.readContract(c.id).deadline_at
+
+        local real = s.storage.writeAmendment
+        s.storage.writeAmendment = function(a)
+            if a.outcome == 'applied' then error('oxmysql: Connection lost', 0) end
+            return real(a)
+        end
+        falsy(pcall(s.amendments.respond, f.hitman, p.id, true), 'the last write raised')
+        s.storage.writeAmendment = real
+        eq(before - s.storage.readContract(c.id).deadline_at, 1800, 'cut once')
+
+        local ok, err = s.amendments.respond(f.hitman, p.id, true)
+        falsy(ok, 'agreed again, and applied again')
+        eq(err, CH.ERR.NOT_FOUND)
+        eq(before - s.storage.readContract(c.id).deadline_at, 1800, 'still cut once')
     end)
 end)

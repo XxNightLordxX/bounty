@@ -10,6 +10,14 @@ local function money(src)
     return m.cash + m.bank
 end
 
+--- Somebody else to place a second contract on: one live contract per
+--- player on one target.
+local function secondTarget()
+    Env.addPlayer({ source = 29, citizenid = 'TARGET02', license = 'license:t2',
+        cash = 100, bank = 100, firstname = 'Kit', lastname = 'Bell' })
+    return 'TARGET02'
+end
+
 local function seeded(opts)
     opts = opts or {}
     local s = newStack()
@@ -702,8 +710,9 @@ describe('refreshing every timer for testing', function()
 
         local relist = { targetCid = 'TARGET01', reason = 'Again',
                          reward = { baseline = { cash = 1000 } } }
+        -- Its creator's own wait: nobody took it up, so nobody else waits.
         eq(select(2, s.contracts.create(f.creator, relist)),
-            CH.ERR.TARGET_RECENTLY_ON, 'the re-list cooldown is running')
+            CH.ERR.SAME_TARGET_TOO_SOON, 'the re-list cooldown is running')
 
         Env.aces[3] = { ['crimson.admin'] = true }
         cmd(s)(3, {})
@@ -1408,7 +1417,7 @@ describe('lines left for staff', function()
     it('prints what arrived, why it was left, and every way to settle it', function()
         local s, f, c, line = leftForStaff(2000)
         -- And one a restart caught under way, as the next start leaves it.
-        local c2 = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
+        local c2 = s.contracts.create(f.creator, { targetCid = secondTarget(), reason = 'Unpaid debt',
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 700 } } })
         local cut = s.storage.readEscrow(c2.id)[1]
         cut.releasing_to = 'CREATOR1'
@@ -1540,7 +1549,7 @@ describe('paying a line left for staff a set amount', function()
 
         -- Only on a line left for staff: on any other, the normal paths give
         -- it, and settling it short would lose the rest.
-        local c2 = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
+        local c2 = s.contracts.create(f.creator, { targetCid = secondTarget(), reason = 'Unpaid debt',
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 700 } } })
         local owed = s.storage.readEscrow(c2.id)[1]
         eq(select(2, s.admin.settleLine(0, owed.id, 'pay', '700')), 'live',
@@ -1602,7 +1611,7 @@ describe('paying a line left for staff a set amount', function()
     it('flags each line whose arrival is unknown, with the amount to pay', function()
         local s, f, _, line = interruptedAfter(2000)
         -- And one whose give raised with nothing arriving, which is known.
-        local c2 = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
+        local c2 = s.contracts.create(f.creator, { targetCid = secondTarget(), reason = 'Unpaid debt',
             mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 700 } } })
         local raised = s.storage.readEscrow(c2.id)[1]
         local p = Env.players[3]
@@ -2317,8 +2326,9 @@ describe('the timer refresh past a contract the store refuses', function()
         Config.Limits.MaxActiveContractsPerTarget = 5
         Config.Limits.MaxActiveContractsPerCreator = 5
         local ids = {}
+        local targets = { 'TARGET01', secondTarget() }
         for i = 1, 2 do
-            local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x' .. i,
+            local c = s.contracts.create(f.creator, { targetCid = targets[i], reason = 'x' .. i,
                 mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 1000 } } })
             truthy(c)
             ids[#ids + 1] = c.id

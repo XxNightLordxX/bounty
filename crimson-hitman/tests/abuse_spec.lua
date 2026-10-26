@@ -561,16 +561,93 @@ describe('an exclusive contract held by somebody who is not working it', functio
         local _ = f
     end)
 
-    it('gives the stake back', function()
-        local s, f, c = held({ penalty = 2000 })
-        truthy((s.storage.readContract(c.id).penalty_amount or 0) > 0)
-        local before = Env.players[3].PlayerData.money.bank + Env.players[3].PlayerData.money.cash
+    --- W016: going idle for half an hour instead of tapping Abandon gave
+    --- the stake back, while walking away openly forfeited it.
+    it('hands the stake to the person who placed it, the same money as walking away', function()
+        local function purse(src)
+            return Env.players[src].PlayerData.money.bank + Env.players[src].PlayerData.money.cash
+        end
+        local function leaving(leave)
+            local s, f, c = held({ penalty = 2000 })
+            eq(s.storage.readContract(c.id).penalty_amount, 2000)
+            local client, hitman = purse(1), purse(3)
+            leave(s, f, c)
+            return purse(1) - client, purse(3) - hitman
+        end
+        local idleClient, idleHitman = leaving(function(s)
+            s.contracts.releaseIdleHolds()
+            run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
+        end)
+        local walkClient, walkHitman = leaving(function(s, f, c)
+            truthy(s.contracts.abandon(f.hitman, c.id))
+        end)
+        eq(idleClient, 2000, 'the stake went back to the hitman who sat on it')
+        eq(idleHitman, 0)
+        eq(idleClient, walkClient, 'going idle and walking away cost the same')
+        eq(idleHitman, walkHitman)
+    end)
+
+    --- W015: walking away and straight back started both idle clocks from
+    --- nothing, so a friend tapping Abandon every 25 minutes held it for good.
+    it('cannot be walked away from and taken straight back, on any character', function()
+        local s, f, c = held()
         s.contracts.releaseIdleHolds()
-        run(s, math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1)
-        local after = Env.players[3].PlayerData.money.bank + Env.players[3].PlayerData.money.cash
-        eq(after - before, s.storage.readContract(c.id).penalty_amount,
-            'a release is not a fine')
-        local _ = f
+        run(s, 25)
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        Env.advance(20)
+        local r = call('accept', 3, { id = c.id, anonymous = false, penaltyAmount = 0 })
+        eq(r.err, CH.ERR.RETAKE_TOO_SOON)
+        local wait = r.data and r.data.retryAfter or 0
+        truthy(wait > 0 and wait <= Config.Limits.ExclusiveIdleReleaseSeconds,
+            'and how long: ' .. tostring(wait))
+
+        Env.removePlayer(3)
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN02', license = 'license:ccc',
+            cash = 5000, bank = 5000 })
+        local _, err = s.contracts.accept(s.identity.resolve(3), c.id, false)
+        eq(err, CH.ERR.RETAKE_TOO_SOON, 'another character of the same player')
+
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false),
+            'it is on the board for anybody else meanwhile')
+    end)
+
+    it('may be taken again once a whole idle window has passed', function()
+        local s, f, c = held()
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        Env.advance(Config.Limits.ExclusiveIdleReleaseSeconds + 1)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+    end)
+
+    --- W019: five friends on a competitive contract, far from its target:
+    --- every real hitman was refused it as full, and its client could not
+    --- cancel it.
+    it('takes the idle holder off a full competitive contract, and leaves one with room alone', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Limits.MaxHitmenPerContract = 2
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+            cash = 5000, bank = 5000 })
+        Env.addPlayer({ source = 5, citizenid = 'REALHIT', license = 'license:real',
+            cash = 5000, bank = 5000 })
+        local c = place(s, f.creator, { mode = CH.MODE.COMPETITIVE, cash = 50000 })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
+        local minutes = math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1
+
+        s.contracts.releaseIdleHolds()
+        run(s, minutes)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active', 'it had room for another')
+
+        -- Full now. The second works it, beside the target.
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        Env.players[4]._coords = { x = 20.0, y = 0.0, z = 0.0 }
+        local _, full = s.contracts.accept(s.identity.resolve(5), c.id, false)
+        eq(full, CH.ERR.CONTRACT_FULL)
+        run(s, minutes)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released', 'the idle one was kept on')
+        eq(s.storage.readHitman(c.id, 'HITMAN02').state, 'active', 'and not the one working it')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
+        truthy(s.contracts.accept(s.identity.resolve(5), c.id, false), 'a real hitman gets the place')
     end)
 
     it('is not taken back by the same player, on any character', function()
@@ -706,6 +783,81 @@ describe('an exclusive contract held by somebody who is not working it', functio
         run(s, 240)
         eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'active')
         local _ = f
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- A friend's contracts that nobody can finish
+--------------------------------------------------------------------------
+
+--- W006: under 'alive' a contract pays only when the target is brought to
+--- its client. Two $1,000 contracts from a friend filled the target's cap,
+--- the friend logged off, the board hid both from everybody, and every real
+--- enemy was refused for the two days the contracts lived.
+describe('a friend filling the cap on a target', function()
+    local Shipped = require('crimson-hitman.tests.harness.shipped')
+
+    local function friends()
+        local s = Shipped.newStack()
+        local f = fixture(s)
+        for i, who in ipairs({ 'FRIEND01', 'FRIEND02', 'ENEMY001' }) do
+            Env.addPlayer({ source = 10 + i, citizenid = who, license = 'license:f' .. i,
+                cash = 100000, bank = 100000, firstname = 'Pal', lastname = tostring(i) })
+        end
+        return s, f, s.identity.resolve(11), s.identity.resolve(12), s.identity.resolve(13)
+    end
+
+    local function onTarget(s, actor, opts)
+        opts = opts or {}
+        return s.contracts.create(actor, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 1000 } }, anonymous = opts.anonymous,
+        })
+    end
+
+    it('lets a real enemy place once the friends who filled it log off', function()
+        local s, _, one, two, enemy = friends()
+        truthy(onTarget(s, one))
+        truthy(onTarget(s, two))
+        local _, err = onTarget(s, enemy)
+        eq(err, CH.ERR.TARGET_HAS_ENOUGH, 'the cap holds while they are here and listed')
+        Env.removePlayer(11)
+        Env.removePlayer(12)
+        local c, why = onTarget(s, enemy)
+        truthy(c, 'two hidden contracts nobody can take kept a real enemy off: ' .. tostring(why))
+    end)
+
+    it('still counts them while the target is away, so nothing piles up on them', function()
+        local s, f, one, two, enemy = friends()
+        truthy(onTarget(s, one))
+        truthy(onTarget(s, two))
+        Env.removePlayer(11)
+        Env.removePlayer(12)
+        local target = f.target
+        Env.removePlayer(2)
+        local ok, err = s.contracts.canCreate(enemy, target)
+        falsy(ok)
+        eq(err, CH.ERR.TARGET_HAS_ENOUGH)
+    end)
+
+    it('counts an anonymous friend, whose presence is never asked, and a held one', function()
+        local s, _, one, two, enemy = friends()
+        truthy(onTarget(s, one, { anonymous = true }))
+        local held = onTarget(s, two)
+        truthy(held)
+        truthy(s.contracts.accept(s.identity.resolve(3), held.id, false))
+        Env.removePlayer(11)
+        Env.removePlayer(12)
+        local _, err = onTarget(s, enemy)
+        eq(err, CH.ERR.TARGET_HAS_ENOUGH)
+    end)
+
+    it('takes one live contract per player on one target', function()
+        local s, _, one = friends()
+        truthy(onTarget(s, one))
+        local c, err = onTarget(s, one)
+        falsy(c, 'one friend filled the cap alone')
+        eq(err, CH.ERR.SAME_TARGET_ACTIVE)
     end)
 end)
 

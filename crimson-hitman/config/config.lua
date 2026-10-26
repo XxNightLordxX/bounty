@@ -231,6 +231,11 @@ Config.Bailout = {
 Config.Limits = {
     MaxActiveContractsPerCreator = 3,
     MaxAcceptedPerHitman         = 3,
+    --- The most live contracts one person may be the target of, and one
+    --- player, on any character, may place only one of them. While the
+    --- target is in the city a contract nobody holds whose named client is
+    --- away does not count: the board hides it from everybody, so it cannot
+    --- be worked.
     MaxActiveContractsPerTarget  = 2,
     --- The least a new contract's reward may be worth in money: cash, bank
     --- and dirty money summed across every payout, its kidnapping bonus
@@ -240,7 +245,7 @@ Config.Limits = {
     --- taken back out (Withdraw part, or giving back a payout) below it
     --- either. 0 turns it off.
     ---
-    --- Without it two contracts of a dollar each fill
+    --- Without it two contracts of a dollar each, from two accounts, fill
     --- MaxActiveContractsPerTarget, and nobody else can list that target
     --- until both close: a shield for a friend that costs two dollars.
     MinContractReward            = 1000,
@@ -268,6 +273,11 @@ Config.Limits = {
     --- it a multi-slot contract becomes a respawn-camping machine.
     SlotCooldownSeconds          = 600,
 
+    --- How long nobody may place a contract on a person after one on them
+    --- closes. Not after one nobody ever took up that was withdrawn or ran
+    --- out: that cost the target nothing, and a friend could renew it for
+    --- free. Its creator still waits SameCreatorSameTargetCooldownSeconds,
+    --- on any character.
     TargetCooldownAfterResolveSeconds = 1800,
     SameCreatorSameTargetCooldownSeconds = 7200,
 
@@ -292,8 +302,13 @@ Config.Limits = {
     --- An exclusive contract goes back on the board when the one operative
     --- holding it has not been near the target for this long (§14.8). The
     --- clock only runs while the client and the target are both in the
-    --- city, their stake is returned, and they may not take that contract
-    --- again on any character. 0 turns it off.
+    --- city. Their stake goes to the client, as walking away hands it over,
+    --- and they may not take that contract again on any character. A
+    --- competitive contract that is full (MaxHitmenPerContract) has its
+    --- idlest operative released the same way, which frees the place. And
+    --- an operative who walks away from an exclusive contract may not take
+    --- it again, on any character, until this long has passed. 0 turns it
+    --- off.
     ---
     --- Without it a target's friend could take the contract on them and sit
     --- on it: the client cannot cancel a held contract and nobody else can

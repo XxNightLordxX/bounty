@@ -194,7 +194,9 @@ local CATALOGUE = {
       about = 'A target may pay to close a contract on them, in the app or with the buyout '
           .. 'command for players the app is closed to.',
       inflight = 'A buyout already paid still closes the contract after its delay; new ones are '
-          .. 'refused while it is off, and contracts placed meanwhile carry no buyout price.' },
+          .. 'refused while it is off, and contracts placed meanwhile carry no buyout price. '
+          .. 'A price already set is kept: only taking part of the reward back lowers it, '
+          .. 'with the reward.' },
     { key = 'Bailout.BlockWhileIncapacitated', section = 'features', group = 'Buyouts',
       kind = 'switch', label = 'No buyout from the floor',
       about = 'A dead or downed target cannot buy out.', inflight = AT_USE },
@@ -416,10 +418,13 @@ local CATALOGUE = {
       inflight = 'New contracts only: a buyout price is fixed when the contract is placed.' },
     { key = 'Bailout.MaxMultiplier', section = 'limits', group = 'Buyout pricing', kind = 'number',
       min = 0, max = 20, label = 'Most buyout, times the reward',
-      inflight = 'New contracts only: a buyout price is fixed when the contract is placed.' },
+      inflight = 'New contracts only: a buyout price is fixed when the contract is placed, '
+          .. 'and only comes down, to this many times what is left, when part of the reward '
+          .. 'is taken back.' },
     { key = 'Bailout.AbsoluteMax', section = 'limits', group = 'Buyout pricing', kind = 'number',
       integer = true, min = 0, max = 100000000, label = 'Most buyout ($)',
-      inflight = 'New contracts only: a buyout price is fixed when the contract is placed.' },
+      inflight = 'New contracts only: a buyout price is fixed when the contract is placed, '
+          .. 'and lowering this never re-prices one.' },
 
     { key = 'Targeting.NearbyRadius', section = 'limits', group = 'Targeting', kind = 'number',
       min = 5, max = 200, label = 'Nearby list radius (m)', inflight = AT_USE },

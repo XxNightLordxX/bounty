@@ -308,7 +308,7 @@ deadline.
 | `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry. `TriggerJobNames` ships with every name in `Config.BlockedJobNames`, so a barred job whose type `qbx_core` leaves out still counts; a barred job in neither trigger list is warned about at startup |
 | `Config.Limits` | Contract caps, payouts, cooldowns |
 | `Config.Limits.MaxPayoutSlots` | How many times one contract can be collected: `1` (as shipped; each contract is collected once), `2` or `3`. At 1 the Place form shows no extra-collection controls at all; at 2 or 3 the creator chooses how many, each funded and escrowed up front. Anything outside 1 to 3, or not a whole number, is read as the nearest of them with a warning at startup; the admin panel takes 1 to 3. Contracts already placed keep the number they were placed with, and can still give their last collection back |
-| `Config.Limits.MinContractReward` | The least a new contract's reward may be worth in money (1000 as shipped; `0` turns it off): cash, bank and dirty money summed across every payout, the kidnapping bonus included. Items and weapons do not count, since nothing prices them. A contract worth less is refused (`reward_too_small`) and the app says the figure, on the Place form before anything is typed and in the refusal; a reward cannot be taken back out below it either, by Withdraw part or by giving back a payout. Without it two one-dollar contracts fill a target's `Config.Limits.MaxActiveContractsPerTarget` and nobody else can list them until both close. Anything that is not a whole number of dollars is read as 1000, and one above `Config.MaxContractValue` is held to it, with a warning at startup |
+| `Config.Limits.MinContractReward` | The least a new contract's reward may be worth in money (1000 as shipped; `0` turns it off): cash, bank and dirty money summed across every payout, the kidnapping bonus included. Items and weapons do not count, since nothing prices them. A contract worth less is refused (`reward_too_small`) and the app says the figure, on the Place form before anything is typed and in the refusal; a reward cannot be taken back out below it either, by Withdraw part or by giving back a payout. Without it two one-dollar contracts from two accounts fill a target's `Config.Limits.MaxActiveContractsPerTarget` and nobody else can list them until both close. Anything that is not a whole number of dollars is read as 1000, and one above `Config.MaxContractValue` is held to it, with a warning at startup |
 | `Config.Immunity` | Playtime and session floors that protect new players from being farmed |
 | `Config.Targeting.AllowBrowseAll` / `AllowNearby` | How a client finds a target. Browsing everyone online is on (a roster of names, no positions). The nearby list is **off**: on, it puts names to the unmasked people around a player, through walls, and boot warns while it is (see *Placing a contract*) |
 | `Config.Notifications.ParanoidAlertJitter` | How long (1 to 10 minutes, drawn per contract) a new contract is kept from its target: their alert, their On me tab, `/cleanse` and the request for their headshot all wait for it, so none of them dates the placement |
@@ -434,7 +434,22 @@ from Change reward and Extend deadline. Anything else — a shorter deadline,
 giving back the last payout, a new reason, switching between one hitman and
 several, raising the stake (only while nobody holds it), cancelling — is
 proposed in the app and happens only if the other side agrees; a proposal
-nobody answers lapses after `Config.Amendments.ProposalExpirySeconds`.
+nobody answers lapses after `Config.Amendments.ProposalExpirySeconds`. One
+proposal at a time is open on a contract, and whoever made it can **Take it
+back** until it is answered (the other side is told). Cancelling and calling
+it off ask first, saying what comes back and, for the client, the waits it
+starts. A change that could never apply (a stake raised on a contract
+somebody holds, one hitman only while several are on it) is refused when it is
+proposed. One every side agreed to that no longer fits when it goes in is
+refused as "Agreed, but it no longer applies", with why, and everyone who
+agreed is told. A hitman who took the contract in that moment is not bound by
+what he never agreed to: a shorter deadline is refused, and a change to the
+payouts, the stake or the mode waits for his answer. An agreed cancel tells the client what came
+back and what still waits, and each hitman where their stake went. If the
+server stops while an agreed change is going in, it is never applied a second
+time: the start closes it and tells both sides to look at the contract. Edit,
+Withdraw and proposing a change each run one at a time with an acceptance, so a
+hitman always takes the contract as it reads.
 
 **Taking one.** Accept from the board, anonymously if you like. More hitmen
 may accept than there are payouts; the first to fulfil are paid. If the
@@ -445,18 +460,28 @@ taken; if the stake or the deadline changed while you were looking at it, the
 acceptance is refused and the board refreshes rather than taking a stake on
 terms you were not shown. You can take it up again later, staking again; the wait
 between payouts on one contract (`Config.Limits.SlotCooldownSeconds`) carries
-over, so walking away is not a way round it. Where the server charges for
+over, so walking away is not a way round it. An exclusive contract you walked
+away from is not yours to take again until `Config.Limits.ExclusiveIdleReleaseSeconds`
+has passed (`retake_too_soon`, with how long), on any character: meanwhile it
+is on the board for everyone else, and walking away and straight back no
+longer starts the idle clocks again. Where the server charges for
 hitman anonymity and you cannot cover it, the acceptance is refused rather
 than made under your name. A refusal for money says which charge you were
 short for (the stake, taken whole from your bank or whole from your cash, or
 the fee), how much and from where. An exclusive contract you hold without going near
 the target for `Config.Limits.ExclusiveIdleReleaseSeconds` (counted only while
-the client and the target are both in the city) goes back on the board with
-your stake returned, and is not yours to take again. So does one you hold
-near the target without ever making an attempt on them — no hit landed, no
-handover armed — for `Config.Limits.ExclusiveAttemptWindowSeconds`. The
-accept dialog names both windows, and so does your card under Mine while you
-hold it. The deadline pauses the same way. Both follow the target alone when the client is anonymous, because
+the client and the target are both in the city) goes back on the board, and
+is not yours to take again; your stake goes to the person who placed it, as
+walking away hands it over, because going idle is walking away. So does one
+you hold near the target without ever making an attempt on them — no hit
+landed, no handover armed — for `Config.Limits.ExclusiveAttemptWindowSeconds`.
+A competitive contract held by as many operatives as it allows
+(`Config.Limits.MaxHitmenPerContract`) is the same while it is full: its
+idlest operative is taken off it, stake and all, and the place opens; one with
+room is left alone. The accept dialog names both windows and says where the
+stake goes, and so does your card under Mine while you hold it. The notice of
+a release waits for a hitman who was away, and names a stake only where there
+was one. The deadline pauses the same way. Both follow the target alone when the client is anonymous, because
 a clock that stops while they are away tells everyone watching it when they
 logged off. A target serving a prison sentence counts as away too, so the
 deadline stops for the sentence and moves on by the time served, and an
@@ -882,7 +907,19 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
 - **New players are protected.** Playtime and session floors, post-respawn
   immunity, per-target contract caps and re-listing cooldowns. Those caps
   cannot be filled for a dollar: a contract has to be worth at least
-  `Config.Limits.MinContractReward` in money, and stays so. A login event
+  `Config.Limits.MinContractReward` in money, and stays so. Nor by one
+  friend: one player has at most one live contract on a person, on any
+  character (`same_target_active`). While the target is in the city, a
+  contract nobody holds whose named client is away does not count toward
+  `Config.Limits.MaxActiveContractsPerTarget`: the board hides it from
+  everybody, so it cannot be worked, and a real enemy can place one. While the
+  target is away every live contract counts, so nothing piles up on them; an
+  anonymous client's presence is never asked, so theirs always count. A
+  contract nobody took up that is withdrawn or left to run out starts no
+  `Config.Limits.TargetCooldownAfterResolveSeconds` wait for anybody but its
+  creator. What is left for staff: two friends on two accounts who stay in the
+  city and listed, and never meet a hitman. Staff see every contract on a
+  target (the admin panel, `/ch-contracts`) and can void a no-show. A login event
   never restarts a session that is already running, so the session floor
   cannot be renewed on demand, and a client's limits and waits count across
   every character on their licence.
@@ -1147,7 +1184,10 @@ placed, and money already owed, finish under the rules they started with: only
 new actions are refused, and the app says the feature is turned off by the
 server (or uses the feature's own words, for buyouts, messages and calls). A
 buyout already paid still closes its contract after its delay, and `/cleanse`
-says buyouts are off; proposals already open can still be answered; a contract
+says buyouts are off; a buyout price already set is kept through the switch
+and through a lower most buyout, and comes down only with the reward, when
+part of it is taken back (to `Config.Bailout.MaxMultiplier` times what is
+left); proposals already open can still be answered; a contract
 keeps the completion rule it was placed under; a kill photo is taken the way
 its token was issued; an anonymity fee refunded is always the one charged, to
 the account it came from; money already in escrow for a reward source you turn

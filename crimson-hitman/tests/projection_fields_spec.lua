@@ -61,6 +61,10 @@ local CONDITIONAL = {
     -- What the contract holds in money. The creator's alone: it is the
     -- figure they can add up to the ceiling from, and nobody else adds.
     valueHeld = 'creator-only',
+    -- Whether anybody ever took it up, for Withdraw's words and the waits
+    -- it starts. The creator's own contract, and every acceptance and walk-
+    -- away was told to them as it happened.
+    everTaken = 'creator-only',
     -- Only on a contract the viewer is the target of. Its absence elsewhere
     -- is the rule, not a gap.
     bailoutAvailable = 'target-only',

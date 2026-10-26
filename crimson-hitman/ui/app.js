@@ -421,6 +421,8 @@
     cancelled_too_soon: 'You cancelled a contract recently. Placing another '
       + 'has to wait a few minutes: cancelling and re-listing would otherwise '
       + 'be free.',
+    // One live contract per player on one person, on any character.
+    same_target_active: 'You already have a contract out on them.',
     // Also policy waits. slot_cooldown shared rate_limited, so a hitman
     // photographing a body was told to wait a few seconds and try again on
     // a wait of ten minutes; handover_cooldown shared bad_state.
@@ -435,6 +437,12 @@
     already_holding: 'You are already on this contract. It is under Mine.',
     hold_released: 'You held this one without working it and were taken off '
       + 'it. It is not yours to take again.',
+    // Walked away from this exclusive one a moment ago. failText says how
+    // long when the server sends it.
+    retake_too_soon: 'You walked away from this contract a moment ago. It is open '
+      + 'to everybody else for a while before you can take it again.',
+    // A proposal answered after it lapsed (answerProposal says it the same way).
+    proposal_expired: 'That proposal ran out before it was answered.',
     relay_off: 'This server does not run messages through the app.',
     calls_off: 'This server does not place calls through the app.',
     // A feature staff turned off (proposals, the informant). Only new
@@ -1453,6 +1461,13 @@
       return 'This is still being worked on. Look again in a minute before you try again.';
     }
 
+    // How long until a hitman who walked away may take it back.
+    if (result.err === 'retake_too_soon' && result.data && Number(result.data.retryAfter) > 0) {
+      var back = Math.ceil(Number(result.data.retryAfter) / 60);
+      return 'You walked away from this contract a moment ago. You can take it again in '
+        + durationText(back) + '; until then it is open to everybody else.';
+    }
+
     // How long until the informant sells again after a restart.
     if (result.err === 'informant_warming' && result.data && Number(result.data.minutes) > 0) {
       var minutes = Math.ceil(Number(result.data.minutes));
@@ -2348,21 +2363,29 @@
     var waits = settings().relistWaits || {};
     var any = Number(waits.anyMinutes) || 0;
     var same = Number(waits.sameTargetMinutes) || 0;
+    var everyone = Number(waits.everyoneMinutes) || 0;
     var name = contract.targetName || 'them';
     var mine = [];
     if (any > 0) { mine.push('any new contract for ' + durationText(any)); }
     if (same > 0) { mine.push('one on ' + name + ' for ' + durationText(same)); }
-    /* Only the creator's own: withdrawing one nobody took up starts no
-       wait on the target for anybody else. */
-    return mine.length
-      ? 'After this you cannot place ' + mine.join(', or ') + '.'
-      : null;
+    /* The creator's own, and on a contract somebody took up, the wait on the
+       target for every client: withdrawing one nobody took up starts none
+       for anybody else, and the dialog said "Nobody else waits" after an
+       operative had taken it and walked away. */
+    var others = contract.everTaken && everyone > 0
+      ? 'Nobody else can place one on ' + name + ' for ' + durationText(everyone) + ' either.'
+      : '';
+    if (!mine.length) { return others || null; }
+    return 'After this you cannot place ' + mine.join(', or ') + '.'
+      + (others ? ' ' + others : '');
   }
 
   function cancelContract(contract) {
     var waits = relistWaitText(contract);
     ask('Withdraw this contract?',
-      'Nobody has taken it, so everything you put up comes back to you.'
+      (contract.everTaken
+        ? 'The operative who took it walked away, so everything you put up comes back to you.'
+        : 'Nobody has taken it, so everything you put up comes back to you.')
         + (waits ? ' ' + waits : '')
         + ' To change what it pays or when it runs out, use Change reward or '
         + 'Edit instead.',
@@ -2484,35 +2507,63 @@
       });
   }
 
-  /* The rule that takes an exclusive contract back, said before it is
-     taken. A hitman first learned it from the board once it had barred
-     them from the contract for good. Each window the server has switched
-     off is left out, and with both off there is nothing to say. */
-  function exclusiveWindows(contract) {
-    if (contract.mode !== 'exclusive') { return []; }
+  /* The rule that takes a hold back, said before it is taken. A hitman
+     first learned it from the board once it had barred them from the
+     contract for good. What going idle means, in words: "going 30 minutes
+     without going near them, or 2h without an attempt, while they are in
+     the city". The server's clocks run only while the target (and a named
+     client) are in the city, and they apply to an exclusive contract and to
+     a competitive one that is full. Each window the server has switched off
+     is left out, and with both off there is nothing to say. */
+  function idleText(contract) {
     var idle = Number(settings().exclusiveIdleMinutes) || 0;
     var attempt = Number(settings().exclusiveAttemptMinutes) || 0;
     var ways = [];
-    if (idle > 0) { ways.push(durationText(idle) + ' without getting near the target'); }
-    if (attempt > 0) { ways.push(durationText(attempt) + ' without making an attempt on them'); }
-    return ways;
+    if (idle > 0) { ways.push('going ' + durationText(idle) + ' without going near them'); }
+    if (attempt > 0) {
+      ways.push((ways.length ? '' : 'going ') + durationText(attempt) + ' without an attempt');
+    }
+    return ways.length ? ways.join(', or ') + ', while they are in the city' : '';
+  }
+
+  /* Where the stake goes, said where the hitman agrees to it. Going idle
+     forfeits it as walking away does (the server's idle release), so the
+     dialog no longer says "your stake comes back" about a rule that now
+     hands it to the client. */
+  function stakeRule(contract) {
+    var idleLoses = contract.mode === 'exclusive' && idleText(contract) !== '';
+    return (idleLoses ? 'Walk away, go idle or run out of time'
+      : 'Walk away or run out of time') + ' and your stake goes to the person who placed it.';
   }
 
   function exclusiveRule(contract) {
-    var ways = exclusiveWindows(contract);
-    if (!ways.length) { return ''; }
-    return ' Exclusive: if you go ' + ways.join(', or ') + ', it goes back on the '
-      + 'board and you cannot take it again'
-      + (Number(contract.penaltyAmount) > 0 ? ' (your stake comes back)' : '') + '.';
+    var idle = idleText(contract);
+    if (!idle) { return ''; }
+    if (contract.mode === 'exclusive') {
+      return ' Exclusive: ' + idle + ' puts it back on the board, and you cannot take it '
+        + 'again.';
+    }
+    // A competitive contract is released from only while it is full.
+    return ' While it is full, ' + idle + ' gives your place'
+      + (Number(contract.penaltyAmount) > 0 ? ' and your stake' : '') + ' up.';
   }
 
   /* The same rule, on the hitman's own card under Mine: where they look
      while they work it, and an hour after the dialog that said it. */
   function exclusiveReminder(contract) {
-    var ways = exclusiveWindows(contract);
-    if (!ways.length) { return null; }
-    return el('div', 'hint', 'Exclusive: go ' + ways.join(', or ')
-      + ', and it goes back on the board and is not yours to take again.');
+    var idle = idleText(contract);
+    if (!idle) { return null; }
+    var staked = Number(contract.penaltyAmount) > 0;
+    if (contract.mode === 'exclusive') {
+      return el('div', 'hint', 'Exclusive: ' + idle + ' puts it back on the board, and it '
+        + 'is not yours to take again.' + (staked ? ' ' + stakeRule(contract) : ''));
+    }
+    // On a competitive card only while it is full, which is when it applies.
+    if ((Number(contract.hitmenActive) || 0) < (Number(contract.hitmenMax) || Infinity)) {
+      return null;
+    }
+    return el('div', 'hint', 'While it is full, ' + idle + ' gives your place'
+      + (staked ? ' and your stake' : '') + ' up.');
   }
 
   function acceptContract(contract) {
@@ -2629,8 +2680,7 @@
           + (contract.penaltyAmount > 0
             ? ' Accepting stakes ' + money(contract.penaltyAmount)
               + ' of yours, taken whole from your bank or whole from your cash,'
-              + ' returned when you finish and forfeit to the person who placed it'
-              + ' if you walk away or run out of time.'
+              + ' returned when you finish. ' + stakeRule(contract)
             : '')
           // How much time that is. The stake is forfeit to the deadline, and
           // nothing on the dialog said when it was.
@@ -3496,15 +3546,21 @@
        operative read as one operative stepping away. Agreeing to that
        closed the contract under all of them, and cost the client a
        two-hour wait before they could list the same person again. */
-    withdraw: function () {
+    /* And to a hitman asked to agree, where their stake goes: back to them. */
+    withdraw: function (_p, contract) {
       return 'Call the whole contract off — it closes for everyone on it, '
-        + 'and what the person who placed it put up goes back to them';
+        + 'and what the person who placed it put up goes back to them' + stakeBack(contract);
     },
-    cancel: function () {
+    cancel: function (_p, contract) {
       return 'Cancel this contract outright — it closes for everyone on '
-        + 'it, and what the person who placed it put up goes back to them';
+        + 'it, and what the person who placed it put up goes back to them' + stakeBack(contract);
     }
   };
+
+  function stakeBack(contract) {
+    return contract && contract.role === 'hitman' && Number(contract.penaltyAmount) > 0
+      ? '; your ' + money(contract.penaltyAmount) + ' stake comes back to you' : '';
+  }
 
   function describeAmendment(proposal, contract) {
     var describe = AMENDMENT[proposal.kind];
@@ -3580,7 +3636,10 @@
      them, the panel kept Agree and Decline, and every later tap said
      "Gone." */
   var PROPOSAL_OVER = {
-    bad_state: 'That proposal ran out before it was answered.',
+    // Its own code since an answer refused as it went in shared bad_state
+    // with this, and the last person to agree was told it had run out.
+    proposal_expired: 'That proposal ran out before it was answered.',
+    bad_state: 'That proposal can no longer be answered.',
     not_found: 'That proposal has already been settled or has run out.',
     already_settled: 'That contract has closed, and the proposal with it.',
     invalid_input: 'Agreed, but the contract has moved on and the change no '
@@ -3589,9 +3648,27 @@
       + 'longer fits. Nothing was changed.'
   };
 
-  function answerProposal(proposal, approve) {
+  /* Why a change everybody agreed to did not go in, for "Agreed, but it no
+     longer applies: ...". */
+  var NO_LONGER_APPLIES = {
+    bad_state: 'who is on the contract changed before it went in.',
+    invalid_input: 'the contract has moved on and the change no longer fits.',
+    reward_too_small: 'it would leave the reward under the least a contract may be worth.',
+    already_settled: 'the contract has closed.'
+  };
+
+  function answerProposal(proposal, approve, takingBack) {
     return post('respondAmendment', { id: proposal.id, approve: approve }).then(function (r) {
       if (!r.ok) {
+        // Everybody agreed and the server refused it as it went in: said as
+        // that, with why, and not as a proposal that lapsed.
+        if (r.data && r.data.outcome === 'failed') {
+          say('Agreed, but it no longer applies: ' + (NO_LONGER_APPLIES[r.err]
+            || 'the contract changed before it went in.') + ' Nothing was changed.');
+          forgetProposals();
+          refresh();
+          return;
+        }
         if (PROPOSAL_OVER[r.err]) {
           say(PROPOSAL_OVER[r.err]);
           forgetProposals();
@@ -3602,7 +3679,7 @@
       }
       var outcome = r.data && r.data.outcome;
       say(outcome === 'applied' ? 'Agreed — the change is in effect.'
-        : outcome === 'declined' ? 'Declined.'
+        : outcome === 'declined' ? (takingBack ? 'Taken back. The other side is told.' : 'Declined.')
         : 'Recorded. Waiting on the other party.', 'ok');
       forgetProposals();
       refresh();
@@ -3619,6 +3696,11 @@
     }
     var seconds = read - Math.floor((Date.now() - (proposal.clockReadAt || Date.now())) / 1000);
     return 'Lapses in ' + durationText(Math.max(1, Math.ceil(seconds / 60)));
+  }
+
+  function takeBack(proposal) {
+    return actionButton('', 'Take it back', 'amend:' + proposal.id, 'Sending\u2026',
+      function () { return answerProposal(proposal, false, true); });
   }
 
   // The panel under a card: everything currently on the table, and the two
@@ -3658,11 +3740,20 @@
         applyRow.appendChild(actionButton('primary', 'Apply it',
           'amend:' + proposal.id, 'Sending…',
           function () { return answerProposal(proposal, true); }));
+        if (proposal.mine) { applyRow.appendChild(takeBack(proposal)); }
         item.appendChild(applyRow);
       } else if (proposal.mine || proposal.answered) {
         item.appendChild(el('div', 'hint', 'Waiting on ' + waiting
               + (waiting === 1 ? ' other party.' : ' other parties.')
               + (lapses ? ' ' + lapses + ' if nobody answers.' : '')));
+        /* The proposer's own: taken back rather than left holding the
+           contract's one open proposal until it lapses. The server takes
+           their own decline as that, and tells the other side. */
+        if (proposal.mine) {
+          var mineRow = el('div', 'row');
+          mineRow.appendChild(takeBack(proposal));
+          item.appendChild(mineRow);
+        }
       } else {
         if (lapses) { item.appendChild(el('div', 'hint', lapses + ' if you do not answer.')); }
         // Both keyed on the proposal, so answering it disables BOTH — a
@@ -4017,7 +4108,22 @@
              mentioned the refund, and no word of anything that did not fit
              and is owed. Withdraw asks first and says both. */
           if (untaken) { return cancelContract(contract); }
-          sendProposal(contract, hitman ? 'withdraw' : 'cancel', {});
+          /* Asked first, as every other option here is: one stray tap put a
+             contract-ending proposal in front of the other side. The client
+             reads the waits an agreed cancel starts, a hitman where their
+             stake goes. */
+          var waits = hitman ? null : relistWaitText(contract);
+          ask(hitman ? 'Ask to call it off?' : 'Ask to cancel the contract?',
+            (hitman
+              ? 'If everyone agrees it closes for all of you'
+                + (Number(contract.penaltyAmount) > 0
+                  ? ', and your ' + money(contract.penaltyAmount) + ' stake comes back to you.'
+                  : '.')
+              : 'If everyone on it agrees it closes, and what you put up comes back to you.'
+                + (waits ? ' ' + waits : ''))
+              + ' You can take the proposal back until it is answered.',
+            function () { sendProposal(contract, hitman ? 'withdraw' : 'cancel', {}); },
+            { yes: 'Propose it', no: 'Keep it' });
         }
       }
     ];

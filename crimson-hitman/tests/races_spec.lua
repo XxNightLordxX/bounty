@@ -596,6 +596,17 @@ end)
 --- the deadline, then wrote its row — so with an await between check and
 --- write on either side, both could pass and a hitman ended up holding a
 --- stake on a contract with minutes left that they had never been shown.
+---
+--- An edit, a solo proposal and a withdrawal now hold the contract's key
+--- an acceptance holds (Contracts.revise, Amendments.propose), so none of
+--- these can land inside another any more: each is refused as busy
+--- (interleave_spec races them at every await). The checks behind the key
+--- are still the code's, and these pin them with the key taken out, as a
+--- path that changed the contract without it would meet them.
+local function unkeyed(s)
+    s.contracts.serialized = function(_, fn, ...) return fn(...) end
+end
+
 local function deadlineRace(make)
     local s = make()
     local f = fixture(s)
@@ -617,6 +628,7 @@ end
 describe('RACE F9: the client brings the deadline in while a hitman is staking', function()
     local function run(make) return function()
         local s, f, c, original = deadlineRace(make)
+        unkeyed(s)
         local before = money(3)
 
         local realCount = s.storage.countHitmanContracts
@@ -650,6 +662,7 @@ end)
 describe('RACE F9b: the client edits once the staking hitman\'s row exists', function()
     local function run(make) return function()
         local s, f, c, original = deadlineRace(make)
+        unkeyed(s)
         local realWrite = s.storage.writeEscrow
         local revised, why
         s.storage.writeEscrow = function(contractId, lines)
@@ -673,6 +686,7 @@ end)
 describe('RACE F10: a hitman takes the contract while the client is editing its deadline', function()
     local function run(make) return function()
         local s, f, c, original = deadlineRace(make)
+        unkeyed(s)
 
         local realSet = s.storage.setDeadline
         local fired, accepted = false, nil
@@ -691,7 +705,9 @@ describe('RACE F10: a hitman takes the contract while the client is editing its 
         truthy(fired, 'the deadline was never written')
         truthy(accepted, 'the acceptance saw the deadline it was shown, and stands')
         falsy(ok, 'the edit cut the deadline under a hitman who had staked on it')
-        eq(err, CH.ERR.BAD_STATE)
+        -- Said as the contract taken, so the page says why and shuts Edit;
+        -- it was bad_state, "Not right now."
+        eq(err, CH.ERR.CONTRACT_TAKEN)
         eq(s.storage.readContract(c.id).deadline_at, original,
             'the deadline the hitman accepted is the one they hold')
         truthy(holding(s, c), 'and they still hold it')
@@ -704,6 +720,7 @@ end)
 describe('RACE F11: a hitman takes the contract while a solo shortening is applied', function()
     local function run(make) return function()
         local s, f, c, original = deadlineRace(make)
+        unkeyed(s)
 
         local realSet = s.storage.setDeadline
         local fired, accepted = false, nil
@@ -787,6 +804,7 @@ describe('RACE F12: an edit lands on a reward being withdrawn', function()
 
     local function run(make, hookName, changes) return function()
         local s, f, c, bonus = placed(make)
+        unkeyed(s)
         local before = s.storage.readContract(c.id)
 
         local real = s.storage[hookName]
@@ -830,6 +848,7 @@ end)
 describe('RACE F13: a pause ends and the client cuts while a hitman is staking', function()
     local function run(make) return function()
         local s, f, c = deadlineRace(make)
+        unkeyed(s)
         local now = os.time()
         s.storage.setDeadline(c.id, nil, now - 1500)
         truthy(s.storage.startPause(c.id, now - 3600))
@@ -890,6 +909,7 @@ describe('a deadline brought in', function()
         -- On the memory store the row read is the stored row: a reason set on
         -- it stood even though the edit it came with was refused.
         local s, f, c, original = deadlineRace(newStack)
+        unkeyed(s)
         local realSet = s.storage.setDeadline
         local fired = false
         s.storage.setDeadline = function(...)
@@ -911,6 +931,7 @@ describe('a deadline brought in', function()
         -- Three moves landing between the put-back's reads used to leave the
         -- cut in place under the hitman it had just been refused over.
         local s, f, c, original = deadlineRace(newStack)
+        unkeyed(s)
         local realSet = s.storage.setDeadline
         local calls = 0
         s.storage.setDeadline = function(id, expected, deadline)
@@ -1375,8 +1396,10 @@ describe('more of the acceptance, pinned', function()
         -- On mysql, where the acceptance's read is a copy the re-clamp does
         -- not reach.
         local s, f = staked(mysqlStack, 0)
+        -- On somebody else: one live contract per player on one target.
+        addHitman2()
         local c2 = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'y', mode = CH.MODE.COMPETITIVE,
+            targetCid = 'HITMAN02', reason = 'y', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
             penaltyAmount = 999999,
         })
@@ -1410,8 +1433,10 @@ describe('more of the acceptance, pinned', function()
 
     it('does not let a withdrawal land inside an acceptance', function()
         local s, f = staked(mysqlStack, 0)
+        -- On somebody else: one live contract per player on one target.
+        addHitman2()
         local c2 = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'y', mode = CH.MODE.COMPETITIVE,
+            targetCid = 'HITMAN02', reason = 'y', mode = CH.MODE.COMPETITIVE,
             reward = { baseline = { cash = 5000 }, bonus = { cash = 2500 } },
             penaltyAmount = 999999,
         })
@@ -1575,22 +1600,24 @@ describe('proposals while a hitman is part-way on', function()
         eq(p.outcome, 'open', 'applied as agreed by nobody else, over a hitman on the contract')
     end)
 
-    it('closes a solo proposal that was busy, so it can be made again', function()
+    it('leaves nothing open when a solo proposal is busy, so it can be made again', function()
         local s, f, c = staked(newStack, 2000)
-        local real, fired, p = s.storage.setContractFields, false, nil
+        local real, fired, p, err = s.storage.setContractFields, false, nil, nil
         s.storage.setContractFields = function(...)
             if not fired then
                 fired = true
-                p = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.RAISE_PENALTY, { amount = 3000 })
+                -- Proposing holds the contract's key, which the cut holds.
+                p, err = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.RAISE_PENALTY,
+                    { amount = 3000 })
             end
             return real(...)
         end
         truthy(s.amendments.improve(f.creator, c.id, CH.AMENDMENT.LOWER_PENALTY, { amount = 1000 }))
         s.storage.setContractFields = real
-        truthy(p, 'the proposal was never made')
-        eq(p.outcome, 'failed')
-        eq(p.error, CH.ERR.BUSY)
-        eq(s.storage.readAmendment(p.id).outcome, 'failed',
+        truthy(fired)
+        falsy(p, 'made inside the cut')
+        eq(err, CH.ERR.BUSY)
+        eq(#s.storage.readOpenAmendments(c.id), 0,
             'left open, with nobody else who could ever answer it')
         truthy(s.amendments.propose(f.creator, c.id, CH.AMENDMENT.RAISE_PENALTY, { amount = 3000 }),
             'and it can be made again')
@@ -2076,6 +2103,7 @@ end)
 describe('a saturated pause clock', function()
     it('refuses a stake whose deadline moved at all while it was taken (mysql)', function()
         local s, f, c, original = deadlineRace(mysqlStack)
+        unkeyed(s)
         local Exec = require('crimson-hitman.tests.harness.mysql_exec')
         Exec.run('UPDATE crimson_contracts SET paused_ms = ? WHERE id = ?', { 2147483647, c.id })
         local before = money(3)

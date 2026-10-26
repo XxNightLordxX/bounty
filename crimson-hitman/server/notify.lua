@@ -570,6 +570,9 @@ local function tellOrKeep(cid, title, content, opts, contractId)
     waiting[cid] = list
     return false
 end
+--- For the other modules' notices that must not be lost to a logoff: an
+--- idle release, an agreed change that ended a contract or was refused.
+Notify.tellOrKeep = tellOrKeep
 
 --- How many notices wait for a player's next login, and their titles, for
 --- the admin panel's player view. Titles only: the text can name a
@@ -636,8 +639,13 @@ local function hitmanNotice(contract, ending, outcome)
         return 'Contract closed', ('Staff closed your contract on %s.'):format(target)
     elseif ending == CH.STATE.COMPLETED then
         return 'Contract closed', ('Another operative finished the contract on %s.'):format(target)
+    elseif ending == CH.STATE.CANCELLED and contract.resolution == 'cancelled_by_agreement' then
+        -- With a hitman on it, only by a change everybody agreed to. Only the
+        -- one who pressed the last Agree heard anything, and the one who had
+        -- proposed it never learnt it went through, or where their stake went.
+        return 'Contract called off', ('The contract on %s was called off by agreement.')
+            :format(target)
     end
-    -- CANCELLED: with a hitman on it, only by an amendment they agreed to.
     return nil
 end
 
@@ -673,6 +681,22 @@ function Notify.contractEnded(contract, ending, outcomes, opts)
                     { bypassBudget = true }, contract.id)
             end
         end
+    end
+
+    -- An agreed cancel is new to the creator too: nothing else tells them
+    -- it closed, what came back, or what still waits for them. Worded as
+    -- their own withdrawal words it (Contracts.cancel).
+    if ending == CH.STATE.CANCELLED and contract.resolution == 'cancelled_by_agreement' then
+        local waits = opts.creatorOwed or 0
+        tellOrKeep(contract.creator_cid, 'Contract called off',
+            ('Your contract on %s was called off by agreement. '):format(
+                contract.target_name or 'your target')
+            .. (waits > 0
+                and ('Most of what you put up is back; %d thing(s) would not fit and are '
+                     .. 'waiting for you — they arrive when you next have room.'):format(waits)
+                or 'Everything you put up has been returned.'),
+            { bypassBudget = true }, contract.id)
+        return
     end
 
     if ending ~= CH.STATE.EXPIRED then return end

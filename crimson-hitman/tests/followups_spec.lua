@@ -441,14 +441,22 @@ describe('an agreed give-back while the client raises the bonus', function()
         s.escrow.take = function(...)
             if not agreed then
                 agreed = true
-                truthy(s.amendments.respond(f.hitman, proposal.id, true), 'the hitman agrees')
-                eq(s.storage.readContract(c.id).payout_slots, 1, 'given back')
+                -- One change to the contract at a time (Amendments.apply):
+                -- the give-back waits for the raise rather than running
+                -- inside it.
+                local ok, err, outcome = s.amendments.respond(f.hitman, proposal.id, true)
+                falsy(ok, 'the give-back ran inside the raise')
+                eq(err, CH.ERR.BUSY)
+                eq(outcome, 'busy')
             end
             return real(...)
         end
         s.amendments.improve(f.creator, c.id, CH.AMENDMENT.RAISE_BONUS, { percent = 20 })
         s.escrow.take = real
         truthy(agreed)
+        truthy(s.amendments.respond(f.hitman, proposal.id, true), 'the hitman agrees again')
+        eq(s.storage.readContract(c.id).payout_slots, 1, 'given back')
+        s.amendments.improve(f.creator, c.id, CH.AMENDMENT.RAISE_BONUS, { percent = 30 })
         eq(s.storage.readContract(c.id).payout_slots, 1,
             'the raise wrote its copy back over the give-back')
     end)
@@ -1195,6 +1203,146 @@ describe('endings reach the phone, not only an open app', function()
         truthy(creator[1].content:find('Their $2000 stake is yours. It is back on the board.', 1, true),
             creator[1].content)
     end)
+
+    --- Minutes of an idle hold: the sampler and the sweep, once a minute.
+    local function idle(s, minutes)
+        s.contracts.releaseIdleHolds()
+        for _ = 1, minutes do
+            Env.advance(60)
+            s.death.watchTargets(s.storage.allContracts())
+            s.contracts.releaseIdleHolds()
+        end
+    end
+    local IDLE = math.ceil(Config.Limits.ExclusiveIdleReleaseSeconds / 60) + 1
+
+    local function titled(list, title)
+        for _, note in ipairs(list) do
+            if note.title == title then return note end
+        end
+        return nil
+    end
+
+    --- W020: the notice went through toCitizen, which drops it for anybody
+    --- away, and a hitman's clock runs while they sleep.
+    it('keeps the idle release for a hitman who was away, and names the stake that went', function()
+        local s, _, c = staked()
+        Env.removePlayer(3)
+        idle(s, IDLE)
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'released')
+        local client = titled(told(1), 'Contract back on the board')
+        truthy(client and client.content:find('Their $2000 stake is yours.', 1, true),
+            client and client.content)
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN01', license = 'license:ccc',
+            firstname = 'Rook', lastname = 'Ash' })
+        Env.clientEvents = {}
+        s.bridges.onPlayerReady(s, 3)
+        local note = titled(told(3), 'Taken off a contract')
+        truthy(note, 'told on next login')
+        truthy(note.content:find('Your $2000 stake went to the person who placed it.', 1, true),
+            note.content)
+    end)
+
+    it('names no stake on the release of a hitman who staked nothing', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.players[3]._coords = { x = 5000.0, y = 5000.0, z = 0.0 }
+        Env.clientEvents = {}
+        idle(s, IDLE)
+        local note = titled(told(3), 'Taken off a contract')
+        truthy(note, 'told')
+        falsy(note.content:find('stake', 1, true), 'money that never existed: ' .. note.content)
+    end)
+
+    --- W069: only the person who pressed the last Agree heard anything.
+    it('tells every party of a contract called off by agreement, with the amounts', function()
+        local s, f, c = staked()
+        local p = s.amendments.propose(f.hitman, c.id, CH.AMENDMENT.WITHDRAW, {})
+        truthy(p and p.outcome == 'open')
+        Env.clientEvents = {}
+        truthy(s.amendments.respond(f.creator, p.id, true))
+        eq(s.storage.readContract(c.id).state, CH.STATE.CANCELLED)
+        local client = titled(told(1), 'Contract called off')
+        truthy(client and client.content:find('Everything you put up has been returned.', 1, true),
+            client and client.content)
+        local hitman = titled(told(3), 'Contract called off')
+        truthy(hitman and hitman.content:find('Your $2000 stake has been returned.', 1, true),
+            hitman and hitman.content)
+        s.audit.flush()
+        eq(#s.storage.auditByAction('amendment_applied', 10), 1, 'and on the record')
+    end)
+
+    --- W070: a change refused as it went in reached the last person to
+    --- agree as "ran out", and those who agreed earlier heard nothing.
+    it('tells the last to agree that it no longer applies, and everyone who agreed before', function()
+        local s, f, c = staked(CH.MODE.COMPETITIVE)
+        local p = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_MODE,
+            { mode = CH.MODE.EXCLUSIVE })
+        truthy(p and p.outcome == 'open', 'one operative on it: exclusive fits')
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+            cash = 5000, bank = 50000, firstname = 'Sol', lastname = 'Vane' })
+        local second = s.identity.resolve(4)
+        truthy(s.contracts.accept(second, c.id, false))
+        local _, _, waiting = s.amendments.respond(f.hitman, p.id, true)
+        eq(waiting, 'pending')
+        Env.clientEvents = {}
+        _G.source = 4
+        Env.events['crimson-hitman:respondAmendment']({ id = p.id, approve = true, __rid = 7 })
+        _G.source = nil
+        local reply
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:result' then reply = event.args[1] end
+        end
+        falsy(reply.ok)
+        eq(reply.err, CH.ERR.INVALID_INPUT, 'two hold it now')
+        eq(reply.data and reply.data.outcome, 'failed', 'said as agreed and refused, not as lapsed')
+        truthy(titled(told(1), 'Change not made'), 'the client who proposed it')
+        truthy(titled(told(3), 'Change not made'), 'and the operative who agreed first')
+    end)
+
+    it('answers a proposal that ran out with its own code', function()
+        local s, f, c = staked()
+        local p = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CHANGE_REASON,
+            { reason = 'Something else' })
+        truthy(p)
+        Env.advance(Config.Amendments.ProposalExpirySeconds + 600)
+        local ok, err = s.amendments.respond(f.hitman, p.id, true)
+        falsy(ok)
+        eq(err, CH.ERR.PROPOSAL_EXPIRED)
+    end)
+
+    --- W080: Withdraw after an operative took it and walked away said
+    --- "Nobody had taken it", and nothing said every client now waits.
+    it('tells a client who withdraws after a walk-away that it had been taken', function()
+        local s, f, c = staked()
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        local card = s.projection.contract(s.storage.readContract(c.id), 'CREATOR1')
+        eq(card.everTaken, true, 'the creator card says so')
+        Env.clientEvents = {}
+        truthy(s.contracts.cancel(f.creator, c.id))
+        local note = titled(told(1), 'Contract withdrawn')
+        truthy(note and note.content:find('The operative who took it walked away', 1, true),
+            note and note.content)
+        truthy(note.content:find(('Nobody can place a contract on Dana Reyes for %d minutes now.')
+            :format(Config.Limits.TargetCooldownAfterResolveSeconds // 60), 1, true), note.content)
+    end)
+
+    --- W071: the proposer's own decline is a take-back, and the other side
+    --- is told it was withdrawn rather than the proposer "declined".
+    it('tells the other side a proposal was taken back', function()
+        local s, f, c = staked()
+        local p = s.amendments.propose(f.creator, c.id, CH.AMENDMENT.CANCEL, {})
+        truthy(p and p.outcome == 'open')
+        Env.clientEvents = {}
+        truthy(s.amendments.respond(f.creator, p.id, false))
+        truthy(titled(told(3), 'Change withdrawn'), 'the operative it was put to')
+        falsy(titled(told(1), 'Change declined'), 'nobody declined it')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
+    end)
 end)
 
 --- lb-phone keeps a notification in the phone's list only when its server
@@ -1384,7 +1532,10 @@ describe('/ch-contracts', function()
         local f = fixture(s)
         local open = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 5000 } } })
-        Env.time = Env.time + 60
+        -- One live contract per player on one target: the first has run out
+        -- before the second is placed, and its creator's own wait is over.
+        truthy(s.contracts.resolve(open.id, CH.STATE.EXPIRED, 'CREATOR1', nil, 'expired'))
+        Env.time = Env.time + Config.Limits.SameCreatorSameTargetCooldownSeconds + 60
         local anon = s.contracts.create(f.creator, {
             targetCid = 'TARGET01', reason = 'y', anonymous = true,
             reward = { baseline = { cash = 5000 } } })

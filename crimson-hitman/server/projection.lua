@@ -210,6 +210,21 @@ function Projection.contract(contract, viewerCid)
 
     if role == 'creator' then
         out.bailoutAmount = contract.bailout_amount
+        -- Whether anybody ever took it up, as Contracts.canCreate counts it
+        -- (everTakenUp): one who walked away or was released did. Their own
+        -- contract, and every acceptance and walk-away was told to them as
+        -- it happened, so it says nothing new. Withdraw told them "Nobody
+        -- has taken it" after an operative had and walked away, and left
+        -- out that withdrawing it then starts the wait on the target for
+        -- every client.
+        out.everTaken = false
+        for i = 1, #hitmen do
+            local state = hitmen[i].state
+            if state ~= 'refused' and state ~= 'joining' then
+                out.everTaken = true
+                break
+            end
+        end
         -- What the contract holds in money, against the ceiling on what one
         -- contract may be worth: the add-to-reward box offered amounts the
         -- server could only refuse, as a reward that did not add up.
@@ -415,14 +430,18 @@ local function buildListing(viewerCid, page)
             -- The waits a withdrawal starts, for the dialog that asks first.
             -- A creator withdrawing to fix the reward found them out only
             -- when placing it again was refused. On the same person it is
-            -- whichever of the two waits ends later. Nobody else waits:
-            -- withdrawing a contract nobody took up starts no wait on the
-            -- target for anyone but its creator (Contracts.canCreate).
+            -- whichever of the two waits ends later. Nobody else waits on a
+            -- contract nobody took up: withdrawing it starts no wait on the
+            -- target for anyone but its creator (Contracts.canCreate). One an
+            -- operative took and walked away from starts everyoneMinutes for
+            -- every client (the creator projection's everTaken).
             relistWaits = {
                 anyMinutes = math.floor((Config.Amendments.CancelCooldownSeconds or 0) / 60),
                 sameTargetMinutes = math.floor(math.max(
                     Config.Limits.SameCreatorSameTargetCooldownSeconds or 0,
                     Config.Limits.TargetCooldownAfterResolveSeconds or 0) / 60),
+                everyoneMinutes = math.floor(
+                    (Config.Limits.TargetCooldownAfterResolveSeconds or 0) / 60),
             },
             -- Whether changes can be proposed at all. Absent, the page drew
             -- Propose change on every card of a server with amendments off,

@@ -178,9 +178,12 @@ describe('contract expiry', function()
         eq(main.expire(), 0, 'the pass now believes nothing is due for an hour')
 
         -- A new contract with a much nearer deadline must not wait out the
-        -- skip the previous pass established.
+        -- skip the previous pass established. On somebody else: one live
+        -- contract per player on one target.
+        Env.addPlayer({ source = 9, citizenid = 'TARGET02', license = 'license:t2',
+            cash = 100, bank = 100, firstname = 'Kit', lastname = 'Bell' })
         local c2 = modules.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'second',
+            targetCid = 'TARGET02', reason = 'second',
             reward = { baseline = { cash = 1000 } },
         })
         truthy(c2)

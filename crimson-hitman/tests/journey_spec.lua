@@ -220,8 +220,11 @@ describe('changing a contract after it is placed', function()
     --- was built with nothing in it. Every module-level test passed.
     it('reduces a reward by the slot the page names, not an amount', function()
         local s, f = seeded()
+        -- On somebody else: one live contract per player on one target.
+        Env.addPlayer({ source = 9, citizenid = 'TARGET02', license = 'license:t2',
+            cash = 100, bank = 100, firstname = 'Kit', lastname = 'Bell' })
         local c = s.contracts.create(f.creator, {
-            targetCid = 'TARGET01', reason = 'Two collections', mode = CH.MODE.COMPETITIVE,
+            targetCid = 'TARGET02', reason = 'Two collections', mode = CH.MODE.COMPETITIVE,
             reward = { slots = { { baseline = { cash = 1000 } }, { baseline = { cash = 2000 } } } },
         })
         truthy(c, 'a contract with a later collection to give back')
