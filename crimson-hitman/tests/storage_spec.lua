@@ -2491,6 +2491,8 @@ describe('every mysql statement is executable', function()
             function() m.contractsBy('A') end,
             function() m.contractsByAccount('license:a') end,
             function() m.compareSetContractState('c1','active','accepted') end,
+            function() m.setAdvised('c1', { advised_posted_at = 1 }) end,
+            function() m.setAdvised('c1', { advised_hitmen = 2 }) end,
             function() m.writeEscrow('c1', { { id='c1:1', contract_id='c1', slot=1, portion='baseline', source='cash', amount=100, state='held' } }) end,
             function() m.readEscrow('c1') end,
             function() m.readEscrowLine('c1:1') end,
@@ -2810,6 +2812,63 @@ describe('the buyout queue', function()
                 .. 'already paid for')
             eq(read.bailout_paid_amount, QUEUED.bailout_paid_amount, b.name)
         end
+    end)
+end)
+
+describe('what the advisory said of a contract', function()
+    --- Kept as each bulletin goes out, and read by the whitelisted-job view
+    --- in place of the advisory as it is set now. Moves only through
+    --- setAdvised, never through writeContract, so a copy read before a
+    --- bulletin and written after it cannot take back what it said.
+    it('is kept through its own write, and survives a copy read before it, in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ctadv1'))
+            local stale = {}
+            for k, v in pairs(b.store.readContract('ctadv1')) do stale[k] = v end
+
+            truthy(b.store.setAdvised('ctadv1', { advised_posted_at = 1800000100 }), b.name .. ': posted')
+            truthy(b.store.setAdvised('ctadv1', { advised_hitmen = 2 }), b.name .. ': accepted')
+            local read = b.store.readContract('ctadv1')
+            eq(read.advised_posted_at, 1800000100, b.name .. ': the posting one is kept')
+            eq(read.advised_hitmen, 2, b.name .. ': and the count the acceptance one carried')
+
+            stale.reason = 'edited meanwhile'
+            stale.advised_hitmen = 9
+            b.store.writeContract(stale)
+            read = b.store.readContract('ctadv1')
+            eq(read.reason, 'edited meanwhile', b.name .. ': the edit landed')
+            eq(read.advised_posted_at, 1800000100, b.name .. ': a stale copy took back a bulletin')
+            eq(read.advised_hitmen, 2, b.name .. ': or changed what it said')
+
+            local ok = pcall(b.store.setAdvised, 'ctadv1', { reason = 'x' })
+            falsy(ok, b.name .. ': nothing else moves through it')
+        end
+    end)
+
+    it('is absent where no bulletin went, in every backend', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ctadv2'))
+            local read = b.store.readContract('ctadv2')
+            eq(read.advised_posted_at, nil, b.name)
+            eq(read.advised_hitmen, nil, b.name)
+        end
+    end)
+
+    it('survives a restart in json mode', function()
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        Natives.files = {}
+        local store = require('crimson-hitman.server.storage.json')
+        store.open()
+        store.writeContract(contractFixture('ctadv3'))
+        store.setAdvised('ctadv3', { advised_posted_at = 1800000200, advised_hitmen = 1 })
+        store.close()
+
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        local reopened = require('crimson-hitman.server.storage.json')
+        reopened.open()
+        local read = reopened.readContract('ctadv3')
+        eq(read.advised_posted_at, 1800000200)
+        eq(read.advised_hitmen, 1)
     end)
 end)
 

@@ -96,6 +96,13 @@ local CLOCK = { 'deadline_at', 'paused_ms', 'paused_since' }
 --- term existed is not handed one by a later write.
 local TERMS = { 'fulfilment_rule' }
 
+--- What the law enforcement advisory said of a contract, kept as each
+--- bulletin goes out (Notify.advisory): when the posting one went, and the
+--- count the latest acceptance one carried. Moves only through setAdvised,
+--- so a copy read before a bulletin and written after it cannot take back
+--- what the bulletin said.
+local ADVISED = { 'advised_posted_at', 'advised_hitmen' }
+
 function Memory.writeContract(contract)
     local existing = db.contracts[contract.id]
     if existing and existing ~= contract then
@@ -111,6 +118,9 @@ function Memory.writeContract(contract)
         end
         for i = 1, #TERMS do
             contract[TERMS[i]] = existing[TERMS[i]]
+        end
+        for i = 1, #ADVISED do
+            contract[ADVISED[i]] = existing[ADVISED[i]]
         end
     end
     db.contracts[contract.id] = contract
@@ -210,6 +220,19 @@ function Memory.setBailoutQueue(id, fields)
     if not c then return false end
     for i = 1, #BAILOUT_QUEUE do
         c[BAILOUT_QUEUE[i]] = fields and fields[BAILOUT_QUEUE[i]] or nil
+    end
+    return true
+end
+
+--- Keep what an advisory bulletin said of one contract: any of the ADVISED
+--- fields, the others left as they are.
+local ADVISED_FIELD = { advised_posted_at = true, advised_hitmen = true }
+function Memory.setAdvised(id, fields)
+    local c = db.contracts[id]
+    if not c then return false end
+    for k, v in pairs(fields) do
+        if not ADVISED_FIELD[k] then error('setAdvised: not an advisory field: ' .. tostring(k)) end
+        c[k] = v
     end
     return true
 end

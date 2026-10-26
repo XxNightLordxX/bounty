@@ -1624,6 +1624,10 @@ local CLOCK = { 'deadline_at', 'paused_ms', 'paused_since' }
 --- backend.
 local TERMS = { 'fulfilment_rule' }
 
+--- What the law enforcement advisory said of a contract, which moves only
+--- through setAdvised; see the memory backend.
+local ADVISED = { 'advised_posted_at', 'advised_hitmen' }
+
 function JsonStore.writeContract(c)
     local existing = db.contracts[c.id]
     if existing and existing ~= c then
@@ -1639,6 +1643,9 @@ function JsonStore.writeContract(c)
         end
         for i = 1, #TERMS do
             c[TERMS[i]] = existing[TERMS[i]]
+        end
+        for i = 1, #ADVISED do
+            c[ADVISED[i]] = existing[ADVISED[i]]
         end
     end
     db.contracts[c.id] = c
@@ -1738,6 +1745,20 @@ function JsonStore.setBailoutQueue(id, fields)
     if not c then return false end
     for i = 1, #BAILOUT_QUEUE do
         c[BAILOUT_QUEUE[i]] = fields and fields[BAILOUT_QUEUE[i]] or nil
+    end
+    touch(true, id)
+    return true
+end
+
+--- Keep what an advisory bulletin said of one contract; see the memory
+--- backend.
+local ADVISED_FIELD = { advised_posted_at = true, advised_hitmen = true }
+function JsonStore.setAdvised(id, fields)
+    local c = db.contracts[id]
+    if not c then return false end
+    for k, v in pairs(fields) do
+        if not ADVISED_FIELD[k] then error('setAdvised: not an advisory field: ' .. tostring(k)) end
+        c[k] = v
     end
     touch(true, id)
     return true

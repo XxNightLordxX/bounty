@@ -959,7 +959,9 @@
       state.dialog = {
         kind: 'proof', handle: handle, src: src, kept: kept,
         // This server can serve the photo to the phone's Photos itself.
-        link: r.data.link === true
+        link: r.data.link === true,
+        // Kill photos are off: nothing takes it to the phone's Photos.
+        photosOff: r.data.photosOff === true
       };
       render();
     });
@@ -973,8 +975,14 @@
                   link, which is handed over;
        'upload'   the server keeps it and cannot serve it: lb-phone uploads
                   it wherever the phone uploads its own photos, and that
-                  link is handed over. */
+                  link is handed over.
+
+     None while kill photos are off: the server then serves nothing, and an
+     upload or a save would hand the photo to lb-phone and an image host,
+     which nothing does for one while they are off. It is kept in the app
+     or deleted. */
   function saveRoute(d) {
+    if (d.photosOff) { return null; }
     if (!/^data:/.test(d.src)) { return 'gallery'; }
     if (d.link) { return 'link'; }
     var phone = window.components;
@@ -1166,8 +1174,12 @@
         : route
           ? 'You can see this once. Save it to Photos to keep it \u2014 it is deleted '
             + 'when you close this.'
-          : 'You can see this once. Your phone can\u2019t take it, so it is kept for you '
-            + 'in this app. Tap Save to keep it \u2014 it is deleted when you close this.'));
+          : d.photosOff
+            ? 'You can see this once. Kill photos are off on this server, so it can only be '
+              + 'kept for you in this app. Tap Save to keep it \u2014 it is deleted when you '
+              + 'close this.'
+            : 'You can see this once. Your phone can\u2019t take it, so it is kept for you '
+              + 'in this app. Tap Save to keep it \u2014 it is deleted when you close this.'));
 
     var frame = el('div', 'photo-frame');
     var img = document.createElement('img');
@@ -5017,9 +5029,10 @@
      Config.WhitelistedView on: the contracts on them, and, where the law
      enforcement advisory reaches them, the contracts on other
      whitelisted-job members. Each entry is what the server sent and no
-     more, which is what the advisory already says: who it is on and their
+     more, which is what the advisory already said: who it is on and their
      job, when it was posted, open or taken, and when it runs out at the
-     latest, any of the middle two left out where no bulletin says it. With
+     latest, any of the last three left out where no bulletin said it (when
+     it runs out goes with when it was posted, which it would give back). With
      no colleagues' list sent at all, there is no such section. No photo is
      drawn, ever: the monogram stands where a face would be. On a contract on
      them, and only there, the buyout On me offers a civilian target

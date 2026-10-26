@@ -1087,7 +1087,8 @@ function App.register()
                 earliest = now + math.ceil(#view.image * 1000 / PHOTO_DRAIN_BPS) }
             TriggerLatentClientEvent('crimson-hitman:photoImage', actor.source, App.PHOTO_BPS,
                 { handle = view.handle, src = view.image })
-            return { handle = view.handle, latent = true, link = view.link, kept = view.kept }
+            return { handle = view.handle, latent = true, link = view.link, kept = view.kept,
+                     photosOff = view.photosOff }
         end
         return view
     end)

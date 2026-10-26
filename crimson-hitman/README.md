@@ -91,8 +91,9 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   and normal play print nothing at all. Only refusing to start, money left for
   staff (the review queue, a stuck escrow line, an ending that raised, a
   maintenance job that moves money failing, and an app request, staff command
-  or `/cleanse` that moves money and raised, once every five minutes each) and
-  a write that failed are printed; the settings a start finds wrong are counted
+  or `/cleanse` that moves money and raised, once every five minutes each, with
+  one line when they are up counting any more held back) and a write that
+  failed are printed; the settings a start finds wrong are counted
   in one line (*N setting(s) need attention; run ch-diag …*). `ch-diag`, and
   **Run the diagnosis** in the panel, list everything a quiet console left out
   (see *Console output*). `Config.Debug` is in the panel's Features too.
@@ -166,7 +167,9 @@ the `ALTER TABLE` statement to run as a user that may; this version adds the
 columns `crimson_escrow.deliver_raises`, `deliver_before`, `deliver_arrived`,
 `settled_by_staff` and `settled_staff`, and `crimson_contracts.fulfilment_rule`
 (how each contract may be completed; NULL on older rows, which read as
-`'either'`). A busy server
+`'either'`), `advised_posted_at` and `advised_hitmen` (what the law
+enforcement advisory said of each contract, which the whitelisted-job view
+shows; NULL where no bulletin went). A busy server
 (thousands of contracts a month) is better on `mysql` from the start: see
 *Changing storage mode* before switching a server that already has players'
 money in one.
@@ -553,7 +556,8 @@ lb-phone's Photos app keeps a link to each photo, never the picture, so
    before it tries, so on a phone that has an upload at all the button still
    reads **Save to Photos**; when the upload fails, the dialog offers **Keep
    it in the app instead**. **Save** appears only on a phone build that gives
-   the app no upload or gallery save.
+   the app no upload or gallery save, or while kill photos are off (see
+   *Turning pictures off*).
 
 `/ch-diag` says which: the address it serves photos from (or why there is
 none), whether lb-phone's `UploadWhitelistedHostnames` / `Domains` take it,
@@ -589,9 +593,11 @@ image host for one:
   applying.
 
 A photo kept before they were turned off keeps its normal expiry, and its
-client can still open it once, to keep it in the app, save it on their device
-or delete it: **Save to Photos** offers no link, since nothing is served while
-photos are off. The start-up sweep of photo files and the retention run only
+client can still open it once, to keep it in the app or delete it: **Save to
+Photos** is not offered, by link or by lb-phone's own upload, since nothing is
+served, uploaded or handed to the phone's Photos while photos are off, and the
+dialog says *Kill photos are off on this server, so it can only be kept for you
+in this app.* The start-up sweep of photo files and the retention run only
 while such a photo is kept.
 
 `Config.Mugshot.Enabled = false` turns target headshots off the same way: no
@@ -666,19 +672,28 @@ other whitelisted-job members.*
   has no such section, and the screen says *this app only shows contracts on
   you.*
 
-Each entry carries no more than the law enforcement advisory already says:
-the target's name and job, when it was posted (to the five minutes; only
-while `OnCreate` bulletins go out), open or taken by how many hitmen (only
-while `OnAccept` ones do: each operative who takes it up is one bulletin, and
-one walking away is not announced, so the count does not drop for it), and
-when it runs out at the latest (*Runs out within 47h*). With only acceptance
-bulletins going out, a contract is listed once one has. That last is the
-contract's lifetime (`Config.Limits.ContractLifetimeSeconds`, counted from the
-end of the five minutes it was placed in, so it dates the placement no more
-finely than when it was posted does), which no one's presence moves: the
-hitmen's deadline stops while a named placer is offline and jumps on when they
-come back, so a countdown read from it would tell every officer when the
-placer reconnected. Never who placed it (named or anonymous), any hitman, the
+Each entry carries no more than the law enforcement advisory already said
+about it. What each bulletin says is kept on the contract as it goes out, and
+the entry is read from that, never from how the advisory is set now: a
+contract placed or taken while advisories (or that stage of them) were off is
+not listed as posted or taken when they are turned back on, and one no
+bulletin was sent for is not listed at all. The target's name and job; when it
+was posted (to the five minutes), where a posting bulletin went out and while
+`OnCreate` ones still do; and open or taken by how many hitmen, while
+`OnAccept` ones go out: taken by the count the latest acceptance bulletin
+carried (each operative who takes it up is one bulletin, and one walking away
+is not announced, so the count does not drop for it), or open where a posting
+bulletin went and no acceptance one has since. And, beside when it was posted
+and only there, when it runs out at the latest (*Runs out within 47h*). With
+only acceptance bulletins going out, a contract is listed once one has, with
+neither. When it runs out is the contract's lifetime
+(`Config.Limits.ContractLifetimeSeconds`, counted from the end of the five
+minutes it was placed in, so it dates the placement no more finely than when
+it was posted does, and is left out with it, since the two give each other
+back), which no one's presence moves: the hitmen's deadline stops while a
+named placer is offline and jumps on when they come back, so a countdown read
+from it would tell every officer when the placer reconnected. Never who
+placed it (named or anonymous), any hitman, the
 reason, a location, a photo or headshot, or the reward. A contract on anybody else is never shown or counted. Like On me, a
 new contract appears once its target may be shown it (their alert's wait, or
 at once where a bulletin has already gone out). With nothing to show it says
@@ -888,7 +903,7 @@ line this resource prints is one of three kinds.
 
 | Kind | Printed | What |
 |---|---|---|
-| **Always** | Whatever `Config.Debug` says | Refusing to start (`FATAL`, `failed to start`, waiting for `qbx_core` or `ox_inventory`); money at risk or left for staff (a review item opened, a stuck or parked escrow line, an ending or a handover claim that raised, an app request, staff command, admin panel write or `/cleanse` that moves money and raised, each request or command once every five minutes, `BOOT RECOVERY FAILED`, contracts that could not be loaded, starting over money another storage mode holds, a maintenance job that moves money failing: the buyout queue, expiry, owed payouts, unfinished endings, placements and acceptances left part-way, idle holds, or the tick as a whole); a write that failed or read back wrong (a `json` file that could not be written, was torn or is missing, a kill photo that could not be written or reads back short, the audit or storage flush failing). A job that fails on every tick is printed once every five minutes, each failure in between counted in the diagnosis |
+| **Always** | Whatever `Config.Debug` says | Refusing to start (`FATAL`, `failed to start`, waiting for `qbx_core` or `ox_inventory`); money at risk or left for staff (a review item opened, a stuck or parked escrow line, an ending or a handover claim that raised, an app request, staff command, admin panel write or `/cleanse` that moves money and raised, each request or command once every five minutes, and when they are up one line saying how many more raised under it meanwhile (*request cancel raised 2 more time(s) …; run ch-diag …*), `BOOT RECOVERY FAILED`, contracts that could not be loaded, starting over money another storage mode holds, a maintenance job that moves money failing: the buyout queue, expiry, owed payouts, unfinished endings, placements and acceptances left part-way, idle holds, or the tick as a whole); a write that failed or read back wrong (a `json` file that could not be written, was torn or is missing, a kill photo that could not be written or reads back short, the audit or storage flush failing). A job that fails on every tick is printed once every five minutes, each failure in between counted in the diagnosis |
 | **Settings that need attention** | One line at the end of a start with `Config.Debug` off: `[crimson-hitman] N setting(s) need attention; run ch-diag (F8 or the server console) or open /hitmanadmin to see them`, and nothing when there are none. Each in full with it on | Every startup warning about `config.lua` (a value read as the nearest it may be, a setting your config lacks, counted once for each, an integration you configured that is not running, an admin panel setting not applied). One found later (an empty photo host list on the first tick) says the line again with the new count |
 | **Everything else** | Only with `Config.Debug` on | The integration list, start progress (`started in json mode`), finished migrations, photo sweeps, photo host list changes, slow maintenance jobs and failing ones that move no money, a read the app or a staff command asked for that raised, the settings changed from the panel in force, the `json` size advice, page faults players' phones report (marked *page stack from …*, with colour codes taken out), notes (memory mode, the playtime rule reading QBox metadata) |
 

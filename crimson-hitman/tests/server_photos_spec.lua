@@ -762,6 +762,7 @@ describe('a link for the phone\'s Photos, served by this server', function()
     it('says when it can give one', function()
         local _, _, _, _, _, reply = opened()
         eq(reply.data.link, true, 'with a public address')
+        eq(reply.data.photosOff, nil, 'and, photos on, every way to Photos is open')
         local _, _, _, _, _, without = opened({ web = false })
         falsy(without.data.link, 'and without one, says nothing of a link')
     end)
@@ -1554,6 +1555,9 @@ describe('kill photos switched off', function()
         truthy(reply and reply.ok, tostring(reply and reply.err))
         if reply.data.latent then landed(1, handle) end
         falsy(reply.data.link, 'no link is offered')
+        -- Nor the upload: without a link the page fell back to lb-phone's
+        -- own uploadMedia, which sends the photo to an image host.
+        eq(reply.data.photosOff, true, 'and the page is told photos are off')
         local asked = call('photoDecision', 1, { handle = handle, choice = 'link' })
         eq(asked.err, CH.ERR.PHOTO_NO_LINK, 'nor given when asked for')
         local record = s.storage.readPhoto(handle)

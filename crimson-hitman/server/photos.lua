@@ -741,8 +741,15 @@ function Photos.open(actor, rawHandle)
     end
 
     if not Storage.openPhoto(record.id, os.time()) then return nil, CH.ERR.PHOTO_GONE end
-    -- Not while kill photos are off: nothing is served then (publish).
-    if record.kind == 'file' and Util.killPhotos() and Photos.linkable() then view.link = true end
+    -- Not while kill photos are off: nothing is served then (publish). Nor
+    -- any other way to the phone's Photos: with no link the page fell back
+    -- to lb-phone's own upload, which sends the photo to an image host. It
+    -- offers to keep it in the app, or delete it.
+    if not Util.killPhotos() then
+        view.photosOff = true
+    elseif record.kind == 'file' and Photos.linkable() then
+        view.link = true
+    end
 
     Audit.action('photo_opened', actor.cid, record.contract_id, {})
     return view

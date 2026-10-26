@@ -69,12 +69,15 @@ ConfigDefaults.HideAppFromBlockedJobs = true
 --- enforcement advisory reaches (Advisory.RecipientJobTypes and
 --- RecipientJobNames, while Advisory.Enabled is on), the contracts on other
 --- whitelisted-job members as each contract recorded them when it was
---- placed. Each with no more than the advisory says (the name and job, when
---- it was posted, open or taken by how many hitmen, when it runs out at the
---- latest). Never who placed it, a hitman, the reason, a location, a photo
---- or the reward. On a contract on them they also get the buyout a civilian
---- target gets in On me, through the same server path as that button and
---- /cleanse. Nothing else in the app answers them but the page's own fault
+--- placed. Each with no more than the bulletins sent about it said, as each
+--- was kept on the contract when it went out (the name and job; when it was
+--- posted, and when it runs out at the latest, where a posting bulletin
+--- went; open, or taken by the count the latest acceptance bulletin
+--- carried), and nothing about one no bulletin was sent for, however
+--- Advisory is set later. Never who placed it, a hitman, the reason, a
+--- location, a photo or the reward. On a contract on them they also get
+--- the buyout a civilian target gets in On me, through the same server path
+--- as that button and /cleanse. Nothing else in the app answers them but the page's own fault
 --- report. A job change moves a player in or out of it at once.
 ConfigDefaults.WhitelistedView = {
     Enabled = true,     -- true = whitelisted jobs get that one screen; false = the app is closed to them, as HideAppFromBlockedJobs says
@@ -776,7 +779,10 @@ ConfigDefaults.Advisory = {
     --- operative accepts, carrying the running count, so one contract raises
     --- one acceptance bulletin per operative who takes it up. One who walks
     --- away and comes back raises no second. The dispatch entry for
-    --- acceptances shares one id per contract.
+    --- acceptances shares one id per contract. What each bulletin said is
+    --- kept on the contract, and that is what the whitelisted-job view
+    --- shows: a stage turned off and on again does not list what went
+    --- unannounced while it was off.
     OnCreate = true,
     OnAccept = true,
     WarnCreator = true,
@@ -1146,9 +1152,10 @@ ConfigDefaults.Diagnostics = {
 --- stays quiet. A normal start and normal play print nothing; only refusing
 --- to start, money left for staff (the review queue, a stuck escrow line,
 --- an ending that raised, and a request, staff command or /cleanse that
---- moves money and raised, once every five minutes each) and a write that
---- failed are printed, and every setting that needs attention is counted in
---- one line at start. Players'
+--- moves money and raised, once every five minutes each, with one line
+--- when they are up counting any more held back) and a write that failed
+--- are printed, and every setting that needs attention is counted in one
+--- line at start. Players'
 --- F8 consoles show nothing but a staff command's answer. true: everything,
 --- each setting problem in full, as before. ch-diag (and Run the diagnosis
 --- in the admin panel) lists all of it either way. Also in the admin

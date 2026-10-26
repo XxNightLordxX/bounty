@@ -84,6 +84,14 @@ local SCHEMA = {
         bailout_attempts INT DEFAULT 0,
         resolved_at INT,
         resolution VARCHAR(32),
+        -- What the law enforcement advisory said of it, kept as each
+        -- bulletin goes out (Notify.advisory), when the posting one went
+        -- and the count the latest acceptance one carried. The
+        -- whitelisted-job view reads a colleague's entry from these, never
+        -- from the advisory as it is set now. Move only through setAdvised.
+        -- Added to existing databases by migrate; NULL where none went.
+        advised_posted_at INT,
+        advised_hitmen INT,
         INDEX idx_state (state),
         INDEX idx_target (target_cid),
         INDEX idx_creator (creator_cid),
@@ -806,6 +814,25 @@ function MySQLStore.setBailoutQueue(id, fields)
         ]], { id })
     end
     return (tonumber(affected) or 0) > 0
+end
+
+--- What the law enforcement advisory said of a contract, which moves ONLY
+--- through here, never through writeContract (which does not name these
+--- columns at all): a copy read before a bulletin went out and written after
+--- cannot take back what it said. One literal statement per column, as
+--- SETTABLE below.
+local ADVISED = {
+    advised_posted_at = 'UPDATE crimson_contracts SET advised_posted_at = ? WHERE id = ?',
+    advised_hitmen = 'UPDATE crimson_contracts SET advised_hitmen = ? WHERE id = ?',
+}
+function MySQLStore.setAdvised(id, fields)
+    for k in pairs(fields) do
+        if not ADVISED[k] then error('setAdvised: not an advisory field: ' .. tostring(k)) end
+    end
+    for column, sql in pairs(ADVISED) do
+        if fields[column] ~= nil then db.update(sql, { fields[column], id }) end
+    end
+    return true
 end
 
 --- A TINYINT(1) column as the boolean the rest of the resource compares

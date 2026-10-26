@@ -7,8 +7,10 @@
 local Notify = {}
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Identity
+local Storage
 local budgets = {}
 local advisorySent = {}
 
@@ -50,6 +52,7 @@ local pendingAlert = {}
 
 function Notify.init(deps)
     Identity = deps.identity
+    Storage = deps.storage
     budgets, advisorySent = {}, {}
     lastPush, trailing = {}, {}
     waiting = {}
@@ -785,6 +788,23 @@ function Notify.advisory(contract, stage, activeHitmen, operative)
         .. tostring(operative or activeHitmen or 0)
     if advisorySent[key] then return end
     advisorySent[key] = true
+
+    -- What it says, kept on the contract as it goes out: the whitelisted-job
+    -- view lists a colleague's contract from this (Projection.whitelistedView),
+    -- never from the advisory as it is set now. Read from the setting, a
+    -- contract placed and taken while advisories were off, which no bulletin
+    -- announced, was listed as posted and taken the moment they were turned
+    -- back on. The count is the one this bulletin carries, so the view never
+    -- says more hitmen than a bulletin did. Not a reason to send nothing.
+    if Storage then
+        local said = stage == 'posted' and { advised_posted_at = os.time() }
+            or { advised_hitmen = math.max(1, math.floor(tonumber(activeHitmen) or 1)) }
+        local okSaid, errSaid = pcall(Storage.setAdvised, contract.id, said)
+        if not okSaid then
+            Log.always(('could not keep what the advisory said of contract %s: %s')
+                :format(tostring(contract.id), tostring(errSaid)))
+        end
+    end
 
     -- The bulletin dates the contract to the second for every officer
     -- online, the one it names included, so the wait has nothing left to

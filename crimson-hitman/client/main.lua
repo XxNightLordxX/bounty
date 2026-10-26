@@ -412,7 +412,9 @@ local function notePhoto(result)
     local data = type(result.data) == 'table' and result.data or nil
     if result.event == 'openPhoto' and result.ok and data
         and type(data.handle) == 'string' and type(data.url) == 'string' then
-        shownPhoto = { handle = data.handle, url = data.url }
+        -- None while kill photos are off: nothing then goes to the phone's
+        -- Photos, and the page offers only to keep it or delete it.
+        shownPhoto = data.photosOff ~= true and { handle = data.handle, url = data.url } or nil
     elseif result.event == 'photoDecision' and result.ok and data
         and type(data.handle) == 'string' and type(data.link) == 'string' then
         shownPhoto = { handle = data.handle, url = data.link }
@@ -564,11 +566,13 @@ local photoArrived
 
 --- The page's answer once the photo is here: the picture, with what the
 --- server said about saving it (`link`: it can serve it to the phone's
---- Photos; `kept`: it is kept in the app and opens again).
+--- Photos; `kept`: it is kept in the app and opens again; `photosOff`: kill
+--- photos are off, so nothing takes it to the phone's Photos).
 local function arrivedFor(handle, src, said)
     return { ok = true, event = 'openPhoto', data = {
         handle = handle, src = src,
         link = said.link == true or nil, kept = said.kept == true or nil,
+        photosOff = said.photosOff == true or nil,
     } }
 end
 

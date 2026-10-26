@@ -638,6 +638,18 @@ describe('saving the client their kill photo', function()
         eq(#saves(), 0)
     end)
 
+    it('saves no link while kill photos are off', function()
+        Env.reset()
+        Client.boot()
+        Client.nuiCall('crimson:openPhoto', { handle = 'ph00000000aa' })
+        local asked = Client.toServer[#Client.toServer]
+        Client.fire('crimson-hitman:result', { rid = asked.args[1].__rid, event = 'openPhoto',
+            ok = true, data = { handle = 'ph00000000aa', url = URL, photosOff = true } })
+        local _, answer = Client.nuiCall('crimson:saveToPhotos', { handle = 'ph00000000aa' })
+        falsy(answer.ok, 'nothing goes to the phone\'s Photos with photos off')
+        eq(#saves(), 0)
+    end)
+
     it('forgets the link once the server has the decision', function()
         Env.reset()
         Client.boot()
@@ -974,6 +986,19 @@ describe('a kill photo kept on the server, on its way to the client', function()
         truthy(Client.answered and Client.answer.ok)
         eq(Client.answer.data.kept, true, 'a photo kept in the app, arrived ahead of its reply')
         eq(Client.answer.data.src, SRC)
+        falsy(Client.answer.data.link)
+
+        -- Kill photos off: the page offers no way to the phone's Photos.
+        Env.reset()
+        Client.boot()
+        asked = openAsked('ph00000000cc')
+        Client.fire('crimson-hitman:result', {
+            rid = asked.args[1].__rid, event = 'openPhoto', ok = true,
+            data = { handle = 'ph00000000cc', latent = true, photosOff = true },
+        })
+        Client.fire('crimson-hitman:photoImage', { handle = 'ph00000000cc', src = SRC })
+        truthy(Client.answered and Client.answer.ok)
+        eq(Client.answer.data.photosOff, true, 'photos off, as the server said')
         falsy(Client.answer.data.link)
     end)
 

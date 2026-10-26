@@ -11,7 +11,8 @@
 ---                escrow line, an ending that raised); a write that failed
 ---                or read back wrong, so data could be lost. Log.raised is
 ---                the same for a request or command that may have moved
----                money and raised, once every few minutes per name.
+---                money and raised, once every few minutes per name, and
+---                one line when they are up counting any it held back.
 ---   Log.problem  a configuration problem found at start. With Debug on each
 ---                is printed in full as it is found; with it off they are
 ---                counted, and the start prints one line for all of them
@@ -56,6 +57,8 @@ local recent = {}      -- { text, key, at, times, seq }[] Log.debug lines, newes
 local loud = {}        -- { text, key, at, times, seq }[] Log.always lines, newest last
 local seq = 0          -- the order lines were kept in, across both lists
 local raisedAt = {}    -- [name] = os.time() Log.raised last printed under it
+local heldBack = {}    -- [name] = how many raised under it since, kept and not printed
+local starts = 0       -- which start this is, so a wait an earlier one set says nothing
 
 --- How long Log.raised waits before printing under the same name again.
 --- An app request is one a player can send again as fast as its allowance
@@ -140,18 +143,44 @@ function Log.always(text)
     keep(text, loud, Log.KEPT_ALWAYS)
 end
 
+--- Say how many raises under `name` were held back since the last line
+--- printed for it, if any were.
+local function sayHeld(name)
+    local n = heldBack[name]
+    heldBack[name] = nil
+    if not n then return end
+    local names = type(Config) == 'table' and type(Config.Admin) == 'table'
+        and type(Config.Admin.Commands) == 'table' and Config.Admin.Commands or {}
+    Log.always(('%s raised %d more time(s) in the %d minutes after the last line printed for '
+        .. 'it; run %s (F8 or the server console) to read them')
+        :format(name, n, Log.RAISED_EVERY // 60, tostring(names.diagnose or 'ch-diag')))
+end
+
 --- A raise in something that may have moved money part-way before it
 --- raised: an app request (a cancel whose ending raised, a buyout whose
 --- record would not write), a staff command that writes, or the buyout
 --- command. Printed whatever Debug says, as the admin panel's own writes
 --- are, at most once every Log.RAISED_EVERY seconds for the same name; one
---- in between is a Log.debug line, kept and counted for the diagnosis.
+--- in between is a Log.debug line, kept for the diagnosis, and counted in
+--- one line printed when those seconds are up. Counted by name alone, a
+--- second ending that raised inside them, on another contract and by
+--- another player, reached the console as nothing at all.
 ---@param name string what raised ('request cancel', 'command ch-void')
 ---@param text string
 function Log.raised(name, text)
     local at, last = now(), raisedAt[name]
-    if at and last and at - last < Log.RAISED_EVERY then return Log.debug(text) end
+    if at and last and at - last < Log.RAISED_EVERY then
+        heldBack[name] = (heldBack[name] or 0) + 1
+        if heldBack[name] == 1 and type(SetTimeout) == 'function' then
+            local start = starts
+            SetTimeout((Log.RAISED_EVERY - (at - last)) * 1000, function()
+                if start == starts then sayHeld(name) end
+            end)
+        end
+        return Log.debug(text)
+    end
     raisedAt[name] = at
+    sayHeld(name)
     Log.always(text)
 end
 
@@ -231,7 +260,8 @@ end
 
 --- A start begins: what an earlier one found and said is forgotten.
 function Log.beginStart()
-    problems, boot, recent, loud, raisedAt = {}, {}, {}, {}, {}
+    problems, boot, recent, loud, raisedAt, heldBack = {}, {}, {}, {}, {}, {}
+    starts = starts + 1
     reported, booting = false, true
 end
 

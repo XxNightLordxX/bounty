@@ -644,33 +644,42 @@ end
 --- named, when they reconnected and how long they had been gone.
 ---
 --- A colleague's entry (`advised`) carries what the bulletins about it
---- said, and only what they said (Notify.advisory): when it was posted only
---- where a posting bulletin goes, and open or taken only where acceptance
---- bulletins go. Taken by as many hitmen as have taken it up, one bulletin
---- each: one walking away is not announced, so it is not shown either.
+--- said, and only what they said, as each was kept on the contract when it
+--- went out (Notify.advisory: advised_posted_at, advised_hitmen), and only
+--- while that stage's bulletins still go out: read from the setting alone, a
+--- contract placed and taken while they were off was listed as posted and
+--- taken once they were back on. When it was posted only where a posting
+--- bulletin went; taken by the count the latest acceptance bulletin carried
+--- (one walking away is not announced, so it is not shown either), or open
+--- where a posting one went and no acceptance one has. When it runs out only
+--- with when it was posted: the lifetime runs from the end of the five
+--- minutes it was placed in and is the same for every contract, so the time
+--- left gives the posted time back.
 ---@param contract table
 ---@param job string the job the target is shown under
 ---@param advised table|nil { posted = boolean, accepted = boolean } for a
 --- colleague's contract; nil for one on the viewer
 ---@return table
 local function whitelistedEntry(contract, job, advised)
-    local hitmen = Storage.readHitmen(contract.id)
-    local active, takenUp = 0, 0
-    for i = 1, #hitmen do
-        local state = hitmen[i].state
-        if state == 'active' then active = active + 1 end
-        if state ~= 'refused' and state ~= 'joining' then takenUp = takenUp + 1 end
+    local posted, active = tonumber(contract.created_at), nil
+    if advised then
+        posted = advised.posted and tonumber(contract.advised_posted_at) or nil
+        active = advised.accepted
+            and (tonumber(contract.advised_hitmen) or (posted and 0)) or nil
+    else
+        active = 0
+        local hitmen = Storage.readHitmen(contract.id)
+        for i = 1, #hitmen do
+            if hitmen[i].state == 'active' then active = active + 1 end
+        end
     end
-    if advised then active = advised.accepted and takenUp or nil end
-    local posted = tonumber(contract.created_at)
-    if advised and not advised.posted then posted = nil end
     return {
         targetName   = contract.target_name,
         targetJob    = job,
         postedAt     = posted and (posted - (posted % Util.CLOCK_STEP)) or nil,
         state        = active and (active > 0 and 'taken' or 'open') or nil,
         hitmenActive = active,
-        secondsLeft  = contract.expires_at
+        secondsLeft  = (posted and contract.expires_at)
             and math.max(0, contract.expires_at - os.time()) or nil,
     }
 end
@@ -684,9 +693,11 @@ end
 ---
 --- The colleagues' list only for a viewer the law enforcement advisory goes
 --- to (Identity.isAdvisoryRecipient, as Notify.advisory asks it), and only
---- while bulletins go out (Util.advises), each entry no more than they say
---- (whitelistedEntry). For anybody else, and with the advisory off, there is
---- no list at all (`colleagues` absent), not an empty one.
+--- while bulletins go out (Util.advises), each entry no more than the
+--- bulletins that went out for it said (whitelistedEntry), and none for a
+--- contract no bulletin was sent for. For anybody else, and with the
+--- advisory off, there is no list at all (`colleagues` absent), not an
+--- empty one.
 ---
 --- Each one only once its target may be shown it (Notify.shownToTarget), as
 --- On me: listed at once, it dated the placement to the target, or to a
@@ -731,8 +742,8 @@ function Projection.whitelistedView(viewerCid, viewerJob)
             if c.target_cid ~= viewerCid and Notify.shownToTarget(c) then
                 local member, job = Identity.whitelistedTarget(c)
                 local entry = member and whitelistedEntry(c, job, advised)
-                -- With no posting bulletin, only once an acceptance one went.
-                if entry and (advised.posted or entry.hitmenActive > 0) then
+                -- Only where a bulletin said something of it.
+                if entry and (entry.postedAt or entry.hitmenActive) then
                     colleagues[#colleagues + 1] = entry
                 end
             end

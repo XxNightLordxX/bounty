@@ -1254,7 +1254,7 @@ function StartCrimsonHitman()
     if Storage.timeWaitsWith then Storage.timeWaitsWith(timing.await) end
 
     audit.init(Storage)
-    notify.init({ identity = identity })
+    notify.init({ identity = identity, storage = Storage })
     -- Money events no rule can settle by themselves are left for staff
     -- here (server/review.lua), from escrow, contracts, buyouts and staff
     -- settles alike.

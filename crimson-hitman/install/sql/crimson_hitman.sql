@@ -55,6 +55,14 @@ CREATE TABLE IF NOT EXISTS crimson_contracts (
     bailout_attempts INT DEFAULT 0,
     resolved_at INT,
     resolution VARCHAR(32),
+    -- What the law enforcement advisory said of it, kept as each
+    -- bulletin goes out (Notify.advisory), when the posting one went
+    -- and the count the latest acceptance one carried. The
+    -- whitelisted-job view reads a colleague's entry from these, never
+    -- from the advisory as it is set now. Move only through setAdvised.
+    -- Added to existing databases by migrate; NULL where none went.
+    advised_posted_at INT,
+    advised_hitmen INT,
     INDEX idx_state (state),
     INDEX idx_target (target_cid),
     INDEX idx_creator (creator_cid),

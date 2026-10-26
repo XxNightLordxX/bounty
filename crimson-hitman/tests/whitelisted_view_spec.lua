@@ -439,6 +439,10 @@ describe('the colleagues\' list', function()
         truthy(entries['Colin Hart'], 'taken, so announced')
         eq(entries['Colin Hart'].hitmenActive, 1)
         eq(entries['Colin Hart'].postedAt, nil, 'but not when it was posted, which nobody said')
+        -- The lifetime runs from the end of the five minutes it was placed
+        -- in, and is the same for every contract: the time left gave the
+        -- posted time back exactly.
+        eq(entries['Colin Hart'].secondsLeft, nil, 'nor when it runs out, which would say it')
         falsy(entries['Oona Fell'], 'nobody has taken hers, so nothing was said of it')
     end)
 
@@ -450,6 +454,96 @@ describe('the colleagues\' list', function()
         truthy(w.s.contracts.abandon(w.f.hitman, w.colleague.id))
         local entry = byName(view(11))['Colin Hart']
         eq(entry.hitmenActive, 1, 'still the count the bulletin said')
+        eq(entry.state, 'taken')
+    end)
+
+    --- A second hitman, and a second placer, for the cases below.
+    local function more(w)
+        Env.addPlayer({ source = 14, citizenid = 'PLACER02', license = 'license:pl2',
+            cash = 50000, bank = 50000, firstname = 'Pia', lastname = 'Lund' })
+        Env.addPlayer({ source = 17, citizenid = 'HITMAN02', license = 'license:hm2',
+            cash = 50000, bank = 50000, firstname = 'Kit', lastname = 'Vane' })
+        Env.addPlayer({ source = 15, citizenid = 'OFFICER5', license = 'license:of5',
+            cash = 50000, bank = 50000, firstname = 'Fay', lastname = 'Lowe',
+            job = { name = 'police', label = 'Police', type = 'leo', onduty = true } })
+        return w.s.identity.resolve(14), w.s.identity.resolve(17)
+    end
+
+    --- The bulletins that reached OFFICER1, by title, with what each said.
+    local function bulletins(title)
+        local out = {}
+        for _, note in ipairs(Natives.calls.notifications) do
+            if note.title == title then out[#out + 1] = tostring(note.content) end
+        end
+        return out
+    end
+
+    --- Read from what the bulletins said as each went out, kept on the
+    --- contract, never from what the advisory says now: switched off and on
+    --- again in the admin panel, a contract placed and taken meanwhile was
+    --- listed as posted and taken, which no bulletin had said.
+    it('lists nothing no bulletin announced, when the advisory is turned back on', function()
+        local w = world()
+        local placer, second = more(w)
+        Natives.calls.notifications = {}
+        Config.Advisory.Enabled = false
+        local quiet = w.place('OFFICER5', nil, placer)
+        truthy(w.s.contracts.accept(second, quiet.id, true), 'taken while it was off')
+        eq(#bulletins('THREAT ADVISORY') + #bulletins('THREAT ADVISORY — ACTIVE'), 0,
+            'no bulletin went out')
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        Config.Advisory.Enabled = true
+        local entries = byName(view(11))
+        falsy(entries['Fay Lowe'], 'so it is not listed now it is back on')
+        truthy(entries['Colin Hart'], 'while one announced before is')
+    end)
+
+    it('does not say when one was posted that no posting bulletin announced', function()
+        local w = world()
+        local placer, second = more(w)
+        Config.Advisory.OnCreate = false
+        local quiet = w.place('OFFICER5', nil, placer)
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        Config.Advisory.OnCreate = true
+        falsy(byName(view(11))['Fay Lowe'], 'not listed: nothing was said of it')
+        truthy(w.s.contracts.accept(second, quiet.id, true))
+        local entry = byName(view(11))['Fay Lowe']
+        truthy(entry, 'listed once an acceptance bulletin went out')
+        eq(entry.hitmenActive, 1)
+        eq(entry.postedAt, nil, 'but not when it was posted')
+        eq(entry.secondsLeft, nil, 'nor when it runs out, which would date it as well')
+    end)
+
+    it('does not call taken what no acceptance bulletin announced, when they are back on', function()
+        local w = world()
+        local _, second = more(w)
+        Natives.calls.notifications = {}
+        Config.Advisory.OnAccept = false
+        truthy(w.s.contracts.accept(second, w.offline.id, true), 'taken while they were off')
+        Config.Advisory.OnAccept = true
+        eq(#bulletins('THREAT ADVISORY — ACTIVE'), 0, 'no acceptance bulletin went out')
+        local entry = byName(view(11))['Oona Fell']
+        truthy(entry, 'listed: a posting bulletin went')
+        falsy(entry.state == 'taken', 'not taken, which no bulletin said')
+        eq(entry.hitmenActive, 0, 'posted, and no acceptance announced since')
+    end)
+
+    --- Every acceptance bulletin carries the count holding it then. Counted
+    --- from the hitmen rows, one who walked away and the one who took it up
+    --- after were two, a figure no bulletin ever gave.
+    it('says the count the latest acceptance bulletin carried', function()
+        local w = world()
+        local _, second = more(w)
+        Natives.calls.notifications = {}
+        truthy(w.s.contracts.abandon(w.f.hitman, w.colleague.id))
+        truthy(w.s.contracts.accept(second, w.colleague.id, true), 'another takes it up')
+        local said = bulletins('THREAT ADVISORY — ACTIVE')
+        truthy(#said > 0, 'a bulletin went out for them')
+        for _, text in ipairs(said) do
+            truthy(text:find('1 operative is active', 1, true), text)
+        end
+        local entry = byName(view(11))['Colin Hart']
+        eq(entry.hitmenActive, 1, 'as every bulletin said')
         eq(entry.state, 'taken')
     end)
 

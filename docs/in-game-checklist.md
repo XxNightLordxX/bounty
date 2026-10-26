@@ -115,14 +115,24 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] A civilian hitman accepts it: both screens say *Taken by 1 hitman* once
       the app is reopened (an acceptance does not ring the target's phone)
 - [ ] The hitman abandons it: the FIB character's entry still says *Taken by
-      1 hitman*, as no bulletin says one walked away
+      1 hitman*, as no bulletin says one walked away. A second hitman takes it
+      up: still *Taken by 1 hitman*, as that bulletin said *1 operative is
+      active*
 - [ ] Log the SAST character off and back on: the FIB character's entry for
       them is there throughout, the same. Place a contract on a civilian, then
       give them the `police` job: it is not under **Contracts on whitelisted
       jobs**, online or off (no advisory went out for it)
 - [ ] Admin panel, Features, Law enforcement advisory: turn **Advisories** off: the
-      FIB character's screen has no **Contracts on whitelisted jobs** section;
-      turn it back on
+      FIB character's screen has no **Contracts on whitelisted jobs** section.
+      While it is off, place a contract on another officer and have a hitman
+      take it (no bulletin goes out); turn it back on: the SAST character's
+      entry is back, and the other officer's contract is not listed at all
+- [ ] The same with only **When accepted** off while a hitman takes a
+      contract on an officer: turned back on, that entry says *Open — no
+      hitman yet*, as the bulletins did, not *Taken by …*. With only **When
+      posted** off while one is placed, it is listed once a hitman takes it,
+      saying *Taken by 1 hitman* with neither *Posted …* nor *Runs out
+      within …*
 - [ ] The SAST character taps **Buy out**: it asks first (two taps), the
       price is the one On me would show a civilian, then *Paid. It closes in
       about 2 minutes. You are still a target until then.*, the entry says
@@ -327,9 +337,11 @@ served, and no image host is asked anything.
       nothing about a photo; their Ledger row has no **View photo**
 - [ ] With a link to a photo saved before (on a server that had them on),
       `https://<address>/crimson-hitman/p/<name>.webp` answers "Not found."
-- [ ] A photo kept from before, opened by its client: **Save to Photos**
-      offers no link (it keeps the photo in the app or saves it on the
-      device), and the one look is not spent on a broken picture
+- [ ] A photo kept from before, opened by its client: there is no **Save
+      to Photos**, only **Save** (kept in the app) and **Delete**, and the
+      dialog says *Kill photos are off on this server, so it can only be kept
+      for you in this app.* Tap **Save**: nothing is uploaded (no new file at
+      your `Config.UploadMethod` host) and the phone's Photos gains nothing
 - [ ] In the admin panel, **Kill photos** is under **Features → Completion**,
       and **Where kill photos are kept** and **Keep kill photos for the
       client** say they do not apply now. Turn **Kill photos** on there:

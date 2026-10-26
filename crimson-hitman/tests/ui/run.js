@@ -1024,6 +1024,45 @@ async function main() {
     });
   })();
 
+  /* Kill photos off: a photo kept from before can still be opened, and
+     nothing may take it to an image host. With no link from the server the
+     page fell back to lb-phone's own upload, which does exactly that. */
+  for (const src of [KEPT, 'https://r2.qbox.re/abc123.webp']) {
+    await (async function photosOffNoUpload() {
+      const uploads = [], gallery = [];
+      const app = await openedPhoto({
+        openPhoto: { ok: true, data: { handle: 'ph00000000aa', src: src, photosOff: true } }
+      }, function (window) {
+        blobWindow(window);
+        window.components = {
+          uploadMedia: function (kind, blob) {
+            uploads.push(kind);
+            return Promise.resolve('https://r2.qbox.re/def456.webp');
+          },
+          saveToGallery: function (url) { gallery.push(url); return Promise.resolve(7); }
+        };
+      });
+      const kind = /^data:/.test(src) ? 'kept on the server' : 'on an image host';
+
+      it('offers no way to the phone\'s Photos with kill photos off, for one ' + kind, function () {
+        drewCleanly(app, 'a photo with kill photos off');
+        eq(labels(app).indexOf('Save to Photos'), -1, labels(app).join(','));
+        truthy(labels(app).indexOf('Save') !== -1 && labels(app).indexOf('Delete') !== -1,
+          labels(app).join(','));
+        truthy(app.view.textContent.indexOf('Kill photos are off on this server') !== -1,
+          app.view.textContent);
+      });
+
+      click(app, 'Save');
+      await settle(); await settle();
+      it('keeps it in the app, and hands it to no upload or gallery, for one ' + kind, function () {
+        eq(decisions(app).join(','), 'keep');
+        eq(uploads.length, 0, 'nothing uploaded');
+        eq(gallery.length, 0, 'nothing saved to the phone\'s Photos');
+      });
+    })();
+  }
+
   await (async function photoNoRouteClosedElsewhere() {
     const app = await openedPhoto({
       openPhoto: { ok: true, data: { handle: 'ph00000000aa', src: KEPT } }
@@ -10144,7 +10183,7 @@ async function main() {
 
     const now = Math.floor(Date.now() / 1000);
     const quiet = boot({ list: BARRED, mine: BARRED, ledger: BARRED, whitelistedView: jobView({
-      colleagues: [{ targetName: 'Colin Hart', targetJob: 'SAST', secondsLeft: 3000 }],
+      colleagues: [{ targetName: 'Colin Hart', targetJob: 'SAST' }],
       onYou: [{ id: 'ct00000031', targetName: 'Olive Ward', postedAt: now - 60, state: 'open',
         hitmenActive: 0, secondsLeft: 7200 }]
     }) });
@@ -10156,6 +10195,7 @@ async function main() {
       eq(cards.length, 1);
       falsy(/Open|Taken by/.test(cards[0].textContent), cards[0].textContent);
       falsy(cards[0].textContent.indexOf('Posted') !== -1, 'nor when it was posted: ' + cards[0].textContent);
+      falsy(/Runs out/.test(cards[0].textContent), 'nor when it runs out: ' + cards[0].textContent);
     });
     drewCleanly(quiet);
   })();

@@ -421,6 +421,44 @@ describe('a raise in something that moves money, with Config.Debug off', functio
         eq(said('the abandon handler threw: '), 2, 'and again once the few minutes are up')
     end)
 
+    --- Held back by name alone, a second ending that raised inside the few
+    --- minutes, on another contract and by another player, reached the
+    --- console as nothing at all.
+    it('says, once the few minutes are up, how many more it held back', function()
+        local _, s = boot('memory')
+        local f = fixture(s)
+        Env.addPlayer({ source = 4, citizenid = 'CREATOR2', license = 'license:ddd',
+            cash = 100000, bank = 100000, firstname = 'Ida', lastname = 'Moss' })
+        local first = placed(s, f)
+        local second = placed(s, { creator = s.identity.resolve(4) })
+        Env.console = {}
+        local release, raised = s.escrow.release, 0
+        s.escrow.release = function() raised = raised + 1 error('release failed #' .. raised) end
+        request('cancel', 1, { id = first.id, __rid = 1 })
+        Env.advance(60)
+        request('cancel', 4, { id = second.id, __rid = 2 })
+        s.escrow.release = release
+        eq(raised, 2, 'both endings raised')
+        eq(said('the cancel handler threw: '), 1, 'the first printed, the second held: ' .. console())
+        eq(said('more time'), 0, 'nothing to count yet')
+        Env.advance(Log.RAISED_EVERY)
+        eq(said('request cancel raised 1 more time(s)'), 1, 'counted once they are up: ' .. console())
+        truthy(console():find('run ch-diag', 1, true), 'and where to read it: ' .. console())
+        local report = table.concat(s.admin.diagnose(0), '\n')
+        truthy(report:find('release failed #2', 1, true), 'which lists it: ' .. report)
+        Env.advance(Log.RAISED_EVERY * 2)
+        eq(said('more time'), 1, 'and said once')
+
+        -- And the maintenance pass finishes both endings, as it always did.
+        truthy(s.contracts.finishEndings() >= 2, 'the endings are finished')
+        for _, c in ipairs({ first, second }) do
+            for _, line in ipairs(s.storage.readEscrow(c.id)) do
+                falsy(line.state == CH.ESCROW_STATE.HELD and not line.owed_to,
+                    'nothing is left held for nobody: ' .. tostring(line.id))
+            end
+        end
+    end)
+
     it('is not printed from a read, which is kept for the diagnosis', function()
         local _, s = boot('memory')
         fixture(s)
