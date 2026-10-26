@@ -6,7 +6,7 @@
 
 local Notify = {}
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Identity
 local budgets = {}

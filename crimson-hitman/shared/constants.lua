@@ -260,6 +260,11 @@ CH.ERR = {
     TOO_LITTLE_TIME  = 'too_little_time',
     INSUFFICIENT     = 'insufficient_funds',
     INVALID_REWARD   = 'invalid_reward',
+    --- The reward is worth less in money than Config.Limits.MinContractReward,
+    --- or would be once this much of it was taken back out. Sent with
+    --- { min = n } so the page can say the figure. Not invalid_reward, which
+    --- is worded as figures that do not add up: these add up, to too little.
+    REWARD_TOO_SMALL = 'reward_too_small',
     --- An item put up on an anonymous contract says whose it is: a name,
     --- a phone number, an owner (Escrow.namesOwner). Its own code because
     --- invalid_reward is worded as figures that do not add up, and the

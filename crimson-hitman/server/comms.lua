@@ -4,7 +4,7 @@
 --- No phone number, character name, citizen id or source ever crosses to the
 --- other participant; anonymity is enforced by what is *not* in the payload.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Comms = {}
 

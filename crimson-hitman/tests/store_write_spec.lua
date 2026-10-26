@@ -8,12 +8,19 @@
 --- succeeded; the read-back used to judge it did not agree, and the store
 --- threw away a write that had landed.
 
+--- The file a write is of. Every whole file is written as <file>.new and
+--- renamed over <file> (writeRaw), so SaveResourceFile sees the copy's name.
+local function logical(file)
+    return (file:gsub('%.new$', ''))
+end
+
 local function freshStore()
     package.loaded['crimson-hitman.server.storage.json'] = nil
     Natives.files = {}
     Natives.blocked = {}
     Natives.saveFile = nil
     Natives.loadFile = nil
+    Natives.renameKeeps, Natives.renameRefused = nil, nil
     local store = require('crimson-hitman.server.storage.json')
     store.open()
     return store
@@ -34,21 +41,34 @@ describe('writing the json store', function()
         -- file was written in full as well: two complete writes per flush,
         -- and no rename between them, so nothing was ever made atomic by
         -- it either.
+        --
+        -- The copy is renamed now, which is what makes it worth writing: a
+        -- crash part-way tears <file>.new, never <file> (see the crash specs
+        -- below). Still one whole write a file, and nothing left behind.
         local store = freshStore()
         local written = {}
         Natives.saveFile = function(file) written[#written + 1] = file end
+        Natives.calls.renamed = {}
         store.writeContract({ id = 'ct2', creator_cid = 'C', target_cid = 'T',
             state = CH.STATE.ACTIVE, created_at = os.time() })
         store.save(true)
         Natives.saveFile = nil
 
-        local temps = 0
+        local temps, times = 0, {}
         for _, file in ipairs(written) do
             if file:find('%.tmp$') then temps = temps + 1 end
+            times[logical(file)] = (times[logical(file)] or 0) + 1
         end
-        eq(temps, 0,
-            'a temp file that is never renamed is I/O for nothing: ' ..
-            table.concat(written, ', '))
+        eq(temps, 0, 'no temp file that is never renamed: ' .. table.concat(written, ', '))
+        eq(times['data/contracts/ct2.json'], 1, 'the contract written once')
+        eq(times['data/store.json'], 1, 'and the index once')
+        local moved = {}
+        for _, r in ipairs(Natives.calls.renamed) do moved[r.from] = r.to end
+        eq(moved['data/contracts/ct2.json.new'], 'data/contracts/ct2.json',
+            'each written whole as its copy and renamed over it')
+        eq(moved['data/store.json.new'], 'data/store.json')
+        eq(Natives.files['data/store.json.new'], nil, 'with no copy left behind')
+        eq(Natives.files['data/contracts/ct2.json.new'], nil)
     end)
 
     it('keeps the write when the read-back disagrees but the write succeeded', function()
@@ -59,11 +79,12 @@ describe('writing the json store', function()
         store.writeContract({ id = 'ct3', creator_cid = 'C', target_cid = 'T',
             state = CH.STATE.ACTIVE, created_at = os.time() })
 
-        -- A read that does not agree with what was just written.
+        -- A read that does not agree with what was just written: the
+        -- read-back is of the copy, before it is renamed over the file.
         local realLoad = _G.LoadResourceFile
         _G.LoadResourceFile = function(res, file)
             local content = realLoad(res, file)
-            if file == 'data/store.json' and content then return content:sub(1, 5) end
+            if file == 'data/store.json.new' and content then return content:sub(1, 5) end
             return content
         end
         local ok = store.save(true)
@@ -113,7 +134,9 @@ describe('writing the json store', function()
         store.writeContract({ id = 'ct5', creator_cid = 'C', target_cid = 'T',
             state = CH.STATE.ACTIVE, created_at = os.time() })
         local written = {}
-        Natives.saveFile = function(file) written[file] = (written[file] or 0) + 1 end
+        Natives.saveFile = function(file)
+            written[logical(file)] = (written[logical(file)] or 0) + 1
+        end
         store.setReason('ct5', 'changed')
         store.save(true)
         Natives.saveFile = nil
@@ -129,7 +152,7 @@ describe('writing the json store', function()
         local realLoad = _G.LoadResourceFile
         _G.LoadResourceFile = function(res, file)
             local content = realLoad(res, file)
-            if file == 'data/store.json' and content then return content:sub(1, 5) end
+            if file == 'data/store.json.new' and content then return content:sub(1, 5) end
             return content
         end
 
@@ -227,7 +250,7 @@ describe('the audit log and a money write', function()
         store.writeAudit({ ts = os.time(), kind = 'financial', action = 'unwritten', detail = {} })
 
         local written = {}
-        Natives.saveFile = function(file, data) written[file] = data end
+        Natives.saveFile = function(file, data) written[logical(file)] = data end
         store.writeEscrow('ctaud01', { { id = 'ctaud01:1', contract_id = 'ctaud01', slot = 1,
             portion = 'baseline', source = 'cash', amount = 500, state = CH.ESCROW_STATE.HELD } })
         truthy(store.claimEscrowLine('ctaud01:1', CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
@@ -380,7 +403,7 @@ describe('the records file', function()
         Natives.files['data/records.json'] = nil
 
         local order = {}
-        Natives.saveFile = function(file) order[#order + 1] = file end
+        Natives.saveFile = function(file) order[#order + 1] = logical(file) end
         local moved, ok = reopen()
         Natives.saveFile = nil
         truthy(ok, 'it starts')
@@ -423,7 +446,7 @@ describe('the records file', function()
         local store = freshStore()
         Natives.blocked = { ['data/store.json'] = true }
         local wrote = {}
-        Natives.saveFile = function(file) wrote[file] = true end
+        Natives.saveFile = function(file) wrote[logical(file)] = true end
         store.queuePending('HITMAN01', 'ctrec02', 'ctrec02:1')
         Natives.saveFile = nil
         Natives.blocked = {}
@@ -431,5 +454,254 @@ describe('the records file', function()
             'with the index refused, the row whose id it minted waits for it')
         truthy(store.save(true), 'once the index can be written, both are')
         truthy(Natives.files['data/records.json']:find('ctrec02', 1, true))
+    end)
+end)
+
+
+--- A whole file is written as <file>.new and renamed over <file>; where the
+--- system will not rename over a file that exists (Windows), <file> is
+--- moved aside to <file>.old first and removed once the copy is in place.
+--- Each of these stops the server at one step of that and starts it again
+--- on what was left on disk.
+---
+--- A stop is a coroutine never resumed: the write goes no further, as a
+--- process that has died does not come back to finish it.
+describe('a write the server stopped part-way', function()
+    local ROOT = Natives.RESOURCE_ROOT .. '/'
+    local SHARD = 'data/contracts/ctcrash1.json'
+
+    local function reopen()
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        local store = require('crimson-hitman.server.storage.json')
+        local ok, err = pcall(store.open)
+        return store, ok, err
+    end
+
+    local function line(n)
+        return { id = 'ctcrash1:' .. n, contract_id = 'ctcrash1', slot = 1,
+            portion = 'baseline', source = 'cash', amount = 100 * n,
+            state = CH.ESCROW_STATE.HELD }
+    end
+
+    --- On disk: a contract holding one line. Then a second line, written
+    --- with the server stopping where `install` says, under `mode`
+    --- ('windows': rename keeps a taken name; 'refused': no rename at all).
+    --- What starting again finds is returned.
+    local function stopWriting(install, mode, write)
+        local store = freshStore()
+        store.writeContract({ id = 'ctcrash1', creator_cid = 'C', target_cid = 'T',
+            state = CH.STATE.ACTIVE, created_at = os.time() })
+        store.writeEscrow('ctcrash1', { line(1) })
+        truthy(store.save(true), 'the first write lands')
+        Env.console = {}
+
+        local realRename, realRemove = os.rename, os.remove
+        Natives.renameKeeps = mode == 'windows' or nil
+        Natives.renameRefused = mode == 'refused' or nil
+        install(realRename, realRemove)
+        local co = coroutine.create(write or function()
+            store.writeEscrow('ctcrash1', { line(2) })
+            store.save(true)
+        end)
+        local ok, err = coroutine.resume(co)
+        os.rename, os.remove, Natives.saveFile = realRename, realRemove, nil
+        Natives.renameKeeps, Natives.renameRefused = nil, nil
+        if not ok then error(err, 0) end
+        eq(coroutine.status(co), 'suspended', 'the server stopped where this test said')
+        return reopen()
+    end
+
+    --- Stop inside SaveResourceFile, with half of `file` written.
+    local function tornWhile(file)
+        return function()
+            Natives.saveFile = function(name, data)
+                if name == file then
+                    Natives.files[name] = data:sub(1, math.floor(#data / 2))
+                    coroutine.yield()
+                end
+            end
+        end
+    end
+
+    --- Stop at the rename to `to`: before it, or once it has happened.
+    local function atRename(to, after)
+        return function(realRename)
+            os.rename = function(from, target)
+                if target == ROOT .. to and not after then coroutine.yield() end
+                local done, err = realRename(from, target)
+                if target == ROOT .. to and after and done then coroutine.yield() end
+                return done, err
+            end
+        end
+    end
+
+    local function holds(store, n)
+        return store.readEscrowLine('ctcrash1:' .. n) ~= nil
+    end
+
+    it('tearing the copy leaves the file as it was', function()
+        local store, ok, err = stopWriting(tornWhile(SHARD .. '.new'))
+        truthy(ok, tostring(err))
+        truthy(holds(store, 1) and not holds(store, 2), 'the last write that finished')
+        eq(#store.quarantined(), 0, 'and nothing set aside')
+    end)
+
+    it('stopping before the rename leaves the file as it was', function()
+        local store, ok, err = stopWriting(atRename(SHARD))
+        truthy(ok, tostring(err))
+        truthy(holds(store, 1) and not holds(store, 2))
+        eq(#store.quarantined(), 0)
+    end)
+
+    it('on Windows, stopping with the file moved aside puts the copy back', function()
+        -- The file is gone and its copy whole: set aside as missing, this was
+        -- a contract and its escrow quarantined for a write that had finished.
+        local store, ok, err = stopWriting(atRename(SHARD .. '.old', true), 'windows')
+        truthy(ok, tostring(err))
+        truthy(holds(store, 1) and holds(store, 2), 'the write the copy holds')
+        eq(#store.quarantined(), 0, 'nothing quarantined')
+        truthy(Natives.files[SHARD], 'the file is back in place')
+        eq(Natives.files[SHARD .. '.new'], nil, 'renamed there, not written over')
+        truthy(table.concat(Env.console, '\n'):find('put back', 1, true),
+            'and the console says so')
+    end)
+
+    it('on Windows, stopping before the old file is removed loses nothing', function()
+        local store, ok, err = stopWriting(function(_, realRemove)
+            os.remove = function(target)
+                if target == ROOT .. SHARD .. '.old' and Natives.files[SHARD .. '.old'] then
+                    coroutine.yield()
+                end
+                return realRemove(target)
+            end
+        end, 'windows')
+        truthy(ok, tostring(err))
+        truthy(holds(store, 1) and holds(store, 2), 'the copy was in place')
+        truthy(Natives.files[SHARD .. '.old'], 'with the old one still beside it')
+
+        -- And the next write on Windows clears it out of the way first.
+        Natives.renameKeeps = true
+        local wrote = pcall(function()
+            store.writeEscrow('ctcrash1', { line(3) })
+            return store.save(true)
+        end)
+        Natives.renameKeeps = nil
+        truthy(wrote)
+        eq(Natives.files[SHARD .. '.old'], nil, 'no old file left')
+        local again, reopened = reopen()
+        truthy(reopened)
+        truthy(holds(again, 3), 'and the write after it landed')
+    end)
+
+    it('on Windows, a write that is not stopped leaves only the file', function()
+        local store = freshStore()
+        Natives.renameKeeps = true
+        local ok = pcall(function()
+            store.writeContract({ id = 'ctcrash1', creator_cid = 'C', target_cid = 'T',
+                state = CH.STATE.ACTIVE, created_at = os.time() })
+            store.writeEscrow('ctcrash1', { line(1) })
+            store.save(true)
+            store.writeEscrow('ctcrash1', { line(2) })
+            return store.save(true)
+        end)
+        Natives.renameKeeps = nil
+        truthy(ok)
+        for _, suffix in ipairs({ '.new', '.old' }) do
+            eq(Natives.files[SHARD .. suffix], nil, suffix .. ' left behind')
+            eq(Natives.files['data/store.json' .. suffix], nil, 'store.json' .. suffix)
+        end
+        local again, reopened = reopen()
+        truthy(reopened)
+        truthy(holds(again, 2))
+    end)
+
+    it('where renames are refused, a file torn in place is put back from its copy', function()
+        local store, ok, err = stopWriting(tornWhile(SHARD), 'refused')
+        truthy(ok, tostring(err))
+        truthy(holds(store, 1) and holds(store, 2), 'the copy was written whole first')
+        eq(#store.quarantined(), 0)
+        truthy(Natives.files[SHARD .. '.torn'], 'the torn one is kept, not lost')
+        truthy(table.concat(Env.console, '\n'):find('rename', 1, true),
+            'and the console said renames were refused')
+    end)
+
+    it('a torn file with no whole copy is still set aside, not guessed at', function()
+        local store = freshStore()
+        store.writeContract({ id = 'ctcrash1', creator_cid = 'C', target_cid = 'T',
+            state = CH.STATE.ACTIVE, created_at = os.time() })
+        store.writeEscrow('ctcrash1', { line(1) })
+        store.close()
+        Natives.files[SHARD] = '{"contract":'
+        Natives.files[SHARD .. '.new'] = '{"esc'
+        local again, ok = reopen()
+        truthy(ok, 'one contract is quarantined, the store still starts')
+        eq(#again.quarantined(), 1, 'and that contract is named for staff')
+        eq(Natives.files[SHARD], '{"contract":', 'with its file left as it was')
+    end)
+
+    --- The index and the records: a store that has run before refuses to
+    --- start without them, and a copy beside a missing one is not "without".
+    it('on Windows, an index stopped between renames is put back, not refused', function()
+        local store, ok, err = stopWriting(atRename('data/store.json.old', true), 'windows',
+            function()
+                local s = require('crimson-hitman.server.storage.json')
+                s.writeContract({ id = 'ctcrash2', creator_cid = 'C', target_cid = 'T',
+                    state = CH.STATE.ACTIVE, created_at = os.time() })
+                s.save(true)
+            end)
+        truthy(ok, 'refused as missing: ' .. tostring(err))
+        truthy(store.readContract('ctcrash2'), 'with the contract the new index names')
+        truthy(Natives.files['data/store.json'], 'and store.json back in place')
+    end)
+
+    it('on Windows, records stopped between renames are put back, not refused', function()
+        local store, ok, err = stopWriting(atRename('data/records.json.old', true), 'windows',
+            function()
+                local s = require('crimson-hitman.server.storage.json')
+                s.queuePending('HITMAN01', 'ctcrash1', 'ctcrash1:1')
+                s.save(true)
+            end)
+        truthy(ok, tostring(err))
+        eq(#store.readPending('HITMAN01'), 1, 'the payout owed is still owed')
+    end)
+
+    it('an index torn with its copy torn too is still refused, and left alone', function()
+        local store = freshStore()
+        store.writeContract({ id = 'ctcrash3', creator_cid = 'C', target_cid = 'T',
+            state = CH.STATE.ACTIVE, created_at = os.time() })
+        store.close()
+        Natives.files['data/store.json'] = '{"contractIds":["ctcr'
+        Natives.files['data/store.json.new'] = '{"contra'
+        local _, ok, err = reopen()
+        falsy(ok, 'nothing whole to put back')
+        truthy(tostring(err):find('store.json.prev', 1, true), tostring(err))
+        eq(Natives.files['data/store.json'], '{"contractIds":["ctcr', 'and nothing written over it')
+    end)
+
+    it('an audit day stopped between renames comes back with its rows', function()
+        local day = 'data/audit-' .. os.date('!%Y-%m-%d', os.time()) .. '.jsonl'
+        local store, ok, err = stopWriting(atRename(day .. '.old', true), 'windows', function()
+            local s = require('crimson-hitman.server.storage.json')
+            s.writeAudit({ ts = os.time(), kind = 'financial', action = 'first', detail = {} })
+            s.flush()
+            s.writeAudit({ ts = os.time(), kind = 'financial', action = 'second', detail = {} })
+            s.flush()
+        end)
+        truthy(ok, tostring(err))
+        local actions = {}
+        for _, row in ipairs(store.readAudit()) do actions[#actions + 1] = row.action end
+        eq(table.concat(actions, ','), 'first,second', 'every row, in its own file')
+        truthy(Natives.files[day], 'the day file is back')
+    end)
+
+    it('another mode, looking before it starts, counts the money in a copy', function()
+        stopWriting(atRename(SHARD .. '.old', true), 'windows')
+        -- Back as the moment of the stop: the file aside, the copy whole.
+        Natives.files[SHARD .. '.new'] = Natives.files[SHARD]
+        Natives.files[SHARD] = nil
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        local held = require('crimson-hitman.server.storage.json').inspect()
+        eq(held.lines, 2, 'both lines are held, read from the copy')
+        eq(Natives.files[SHARD], nil, 'and looking moves nothing')
     end)
 end)

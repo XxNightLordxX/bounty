@@ -916,7 +916,7 @@ describe('minting an id that is already taken', function()
 
         -- The next id comes back the same, as a collision would produce.
         -- Contract ids are random (Util.randomId); this one comes back taken.
-        local Util = require_shared('util')
+        local Util = CrimsonBoot.requireShared('util')
         local real = Util.randomId
         Util.randomId = function(prefix)
             if prefix == 'ct' then return first.id end
@@ -949,7 +949,7 @@ describe('minting an id that is already taken', function()
         truthy(first)
 
         -- Contract ids are random (Util.randomId); this one comes back taken.
-        local Util = require_shared('util')
+        local Util = CrimsonBoot.requireShared('util')
         local real = Util.randomId
         Util.randomId = function(prefix)
             if prefix == 'ct' then return first.id end
@@ -1095,5 +1095,172 @@ describe('a reason over the length limit', function()
         })
         truthy(c)
         eq(utf8.len(s.storage.readContract(c.id).reason), Config.Reason.MaxLength)
+    end)
+end)
+
+--- Config.Limits.MinContractReward: the least a contract's reward may be
+--- worth in money. Two one-dollar contracts filled a target's
+--- MaxActiveContractsPerTarget, and nobody else could list them until both
+--- closed. The harness runs with none; these set the shipped figure.
+describe('the least a contract may be worth', function()
+    local SHIPPED = ConfigDefaults.Limits.MinContractReward
+
+    --- Fire a net event the way a client does, and return the reply.
+    local function call(name, src, payload)
+        local fire = Env.events['crimson-hitman:' .. name]
+        Env.clientEvents = {}
+        _G.source = src
+        fire(payload or {})
+        _G.source = nil
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:result' then return event.args[1] end
+        end
+        return nil
+    end
+
+    local function withMinimum(s)
+        Config.Limits.MinContractReward = SHIPPED
+        return fixture(s)
+    end
+
+    it('ships at 1000', function()
+        eq(SHIPPED, 1000)
+    end)
+
+    it('refuses a reward worth less, takes nothing, and says the minimum', function()
+        local s = newStack()
+        local f = withMinimum(s)
+        local cash, bank = Env.players[1].PlayerData.money.cash, Env.players[1].PlayerData.money.bank
+        local c, err, refusal = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 999 } },
+        })
+        falsy(c, 'placed under the minimum')
+        eq(err, CH.ERR.REWARD_TOO_SMALL)
+        eq(refusal and refusal.min, 1000, 'the figure goes with the refusal')
+        eq(Env.players[1].PlayerData.money.cash, cash, 'nothing was taken')
+        eq(Env.players[1].PlayerData.money.bank, bank)
+        eq(#s.storage.allContracts(), 0, 'and nothing is on the board')
+    end)
+
+    it('counts cash, bank and dirty money across every payout', function()
+        local s = newStack()
+        local f = withMinimum(s)
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { slots = {
+                { baseline = { cash = 400 } },
+                { baseline = { bank = 300, dirty = 300 } },
+            } },
+        })
+        truthy(c, 'exactly the minimum, split three ways over two payouts: ' .. tostring(err))
+    end)
+
+    it('does not count items or weapons', function()
+        local s = newStack()
+        local f = withMinimum(s)
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 500,
+                items = { { name = 'lockpick', count = 5 } },
+                weapons = { { name = 'WEAPON_PISTOL', slot = 3 } } } },
+        })
+        falsy(c, 'goods cannot be priced, so they cannot make up the difference')
+        eq(err, CH.ERR.REWARD_TOO_SMALL)
+    end)
+
+    it('counts a kidnapping bonus, which is escrowed with the rest', function()
+        local s = newStack()
+        local f = withMinimum(s)
+        local c, err = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', bonusPercent = 100,
+            reward = { baseline = { cash = 500 } },
+        })
+        truthy(c, 'five hundred and its hundred percent: ' .. tostring(err))
+    end)
+
+    it('is off at 0', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Limits.MinContractReward = 0
+        truthy(s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1 } },
+        }))
+    end)
+
+    it('tells the page the code and the figure', function()
+        local s = newStack()
+        withMinimum(s)
+        local found = s.app.handlers.searchTargets(s.identity.resolve(1), { query = 'Reyes' })
+        local target = found and found[1] and found[1].handle
+        truthy(target, 'a handle for the target')
+        local reply = call('create', 1, { target = target, reason = 'x',
+            reward = { slots = { { baseline = { cash = 10 } } } } })
+        eq(reply and reply.err, 'reward_too_small')
+        eq(reply.data and reply.data.min, 1000)
+    end)
+
+    it('says the minimum on the Place form before anything is typed', function()
+        local s = newStack()
+        local f = withMinimum(s)
+        local wallet = s.app.handlers.rewardOptions(f.creator, {})
+        eq(wallet.caps.minValue, 1000)
+        Config.Limits.MinContractReward = 0
+        eq(s.app.handlers.rewardOptions(f.creator, {}).caps.minValue, 0, 'and none when off')
+    end)
+
+    --- Placed at the minimum and emptied straight back down, it was the
+    --- contract the minimum is there to stop.
+    it('cannot be withdrawn below it', function()
+        local s = newStack()
+        local f = withMinimum(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 1000, bank = 500,
+                items = { { name = 'lockpick', count = 5 } } } },
+        })
+        truthy(c)
+        local cash, bank, item
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.source == 'cash' then cash = line.id end
+            if line.source == 'bank' then bank = line.id end
+            if line.source == 'item' then item = line.id end
+        end
+
+        local ok, err, refusal = s.contracts.withdrawReward(f.creator, c.id, { cash })
+        falsy(ok, 'left at 500')
+        eq(err, CH.ERR.REWARD_TOO_SMALL)
+        eq(refusal and refusal.min, 1000)
+
+        local reply = call('withdrawReward', 1, { id = c.id, lines = { cash } })
+        eq(reply and reply.err, 'reward_too_small')
+        eq(reply.data and reply.data.min, 1000, 'the page is told the figure here too')
+
+        truthy(s.contracts.withdrawReward(f.creator, c.id, { bank }), 'left at exactly 1000')
+        Env.advance(60)
+        truthy(s.contracts.withdrawReward(f.creator, c.id, { item }),
+            'goods never counted towards it, so they can always come back')
+        eq(s.escrow.moneyValue(c.id), 1000)
+    end)
+
+    it('cannot be given back a payout at a time below it', function()
+        local s = newStack()
+        local f = withMinimum(s)
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { slots = { { baseline = { cash = 600 } }, { baseline = { cash = 600 } } } },
+        })
+        truthy(c)
+        local proposal, err, refusal = s.amendments.propose(f.creator, c.id,
+            CH.AMENDMENT.REDUCE_REWARD, { slot = 2 })
+        falsy(proposal, 'one payout of 600 would be left')
+        eq(err, CH.ERR.REWARD_TOO_SMALL)
+        eq(refusal and refusal.min, 1000)
+        eq(s.storage.readContract(c.id).payout_slots, 2, 'nothing given back')
+
+        Env.advance(60)
+        local reply = call('propose', 1, { id = c.id, kind = 'reduce_reward', payload = { slot = 2 } })
+        eq(reply and reply.err, 'reward_too_small')
+        eq(reply.data and reply.data.min, 1000)
     end)
 end)

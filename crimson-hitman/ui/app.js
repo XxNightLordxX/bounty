@@ -463,6 +463,12 @@
     // own; this is what is left, and it at least says it is about money.
     insufficient_funds: 'You do not have enough money for that.',
     invalid_reward: 'That reward does not add up.',
+    // Worth too little in money (Config.Limits.MinContractReward). Said with
+    // the figure where the reply or the Place form carries it (failText);
+    // this is what is left when neither does.
+    reward_too_small: 'A contract here has to be worth more in money than that: '
+      + 'cash, bank and dirty money across every payout. Items and weapons do '
+      + 'not count towards it.',
     // Anonymous only: the item would go to the hitman with its own record
     // of whose it is, so it is the item to take out, not the figures.
     item_names_owner: 'One of those items carries your name or number, and '
@@ -1401,7 +1407,25 @@
           : 'Slow down — try again in ' + wait + ' second' + (wait === 1 ? '' : 's') + '.';
     }
 
+    // Worth too little in money: the least is sent with the refusal, and
+    // the Place form was opened with it. Said as a figure, because "more
+    // than that" leaves the player guessing at a number the server knows.
+    if (result.err === 'reward_too_small') {
+      var least = Number(result.data && result.data.min)
+        || Number(state.wallet && state.wallet.caps && state.wallet.caps.minValue) || 0;
+      if (least > 0) { return minRewardText(least); }
+    }
+
     return ERRORS[result.err] || 'Something went wrong.';
+  }
+
+  /* The least a contract may be worth in money, in the words every place
+     that says it uses: the Place form's hint, its own check, and a refusal
+     for placing under it or taking a reward back out below it. */
+  function minRewardText(least) {
+    return 'A contract here has to be worth at least ' + money(least) + ' in money: '
+      + 'cash, bank and dirty money across every payout. Items and weapons do '
+      + 'not count towards it.';
   }
 
   /* ---------- actions already running ----------------------------------
@@ -5170,6 +5194,15 @@
     pay.appendChild(el('div', 'hint',
       'Every payout is funded and escrowed up front. More hitmen may accept than there are ' +
       'payouts — the first to finish are paid.'));
+    // The least a contract may be worth (caps.minValue, 0 for none), said
+    // where the money is set rather than in a refusal once it is all filled
+    // in. The bonus counts towards it, as it does towards the ceiling.
+    var payCaps = (state.wallet && state.wallet.caps) || {};
+    var leastValue = Number(payCaps.minValue) || 0;
+    if (leastValue > 0) {
+      pay.appendChild(el('div', 'hint', minRewardText(leastValue)
+        + (placingAliveOnly() || payCaps.bonusPercent === 0 ? '' : ' The kidnapping bonus does.')));
+    }
     // What a payout is paid for, on a server that places contracts for a
     // live delivery only. Said where the money is set, since it is what the
     // money buys, and in place of the bonus field, whose hint was the only
@@ -6019,6 +6052,14 @@
       return say('This contract would be worth ' + money(worth)
         + (bonusPct > 0 ? ' with its kidnapping bonus' : '')
         + '; this server allows at most ' + money(maxValue) + '.');
+    }
+    // And the least, counted the same way: refused by the server as
+    // reward_too_small, it is said here first with both figures.
+    var minValue = Number(caps.minValue) || 0;
+    if (minValue > 0 && worth < minValue) {
+      return say('This contract would be worth ' + money(worth) + ' in money'
+        + (bonusPct > 0 ? ' with its kidnapping bonus' : '') + '. '
+        + minRewardText(minValue));
     }
 
     // A buyout is priced as a multiple of the clean money in the reward.

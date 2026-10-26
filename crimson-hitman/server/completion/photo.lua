@@ -12,7 +12,7 @@
 --- picture itself, which is checked here and kept as a file on this server;
 --- no image host and no allowlist are involved.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Photo = {}
 

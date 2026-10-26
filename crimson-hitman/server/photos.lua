@@ -35,7 +35,7 @@
 --- that is handled where the record is made (keep), shown (open) and let
 --- go of (release).
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Photos = {}
 

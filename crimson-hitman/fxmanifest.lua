@@ -23,7 +23,7 @@ client_scripts {
     '@qbx_core/modules/playerdata.lua',
     -- The client needs Util.monotonicMs: GetGameTimer wraps every ~24.8 days
     -- and the mugshot floor is an elapsed subtraction against it. The server
-    -- loads this same file through require_shared instead.
+    -- loads this same file through CrimsonBoot.requireShared instead.
     'shared/util.lua',
     'client/main.lua',
     'client/mugshot.lua',

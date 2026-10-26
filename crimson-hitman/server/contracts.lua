@@ -4,11 +4,11 @@
 --- compare-and-set against the stored state (§9.7, §9.10). Two actions racing
 --- on one contract cannot both win.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Contracts = {}
 
-local Storage, Escrow, Identity, Audit, Notify, Progression, Death
+local Storage, Escrow, Identity, Audit, Notify, Progression, Death, Review
 
 function Contracts.init(deps)
     Storage     = deps.storage
@@ -18,6 +18,9 @@ function Contracts.init(deps)
     Notify      = deps.notify
     Progression = deps.progression
     Death       = deps.death
+    -- Where money no rule here can settle is left for staff
+    -- (server/review.lua).
+    Review      = deps.review
 end
 
 local LIVE_STATES = { [CH.STATE.ACTIVE] = true, [CH.STATE.ACCEPTED] = true, [CH.STATE.COMPLETING] = true }
@@ -432,6 +435,25 @@ function Contracts.isImmune(targetActor, opts)
     return false
 end
 
+--- Why a reward worth `worth` in money is too small to be on the board, or
+--- nil: under Config.Limits.MinContractReward, where that is above 0.
+---
+--- The one rule for placing a contract and for taking reward back out of
+--- one (withdrawReward, and the reduce_reward amendment): a minimum that
+--- held only at the moment of placing was a contract placed at it and
+--- emptied straight back down to a dollar, still filling one of the
+--- target's MaxActiveContractsPerTarget.
+---@param worth number cash, bank and dirty money, every payout, bonus included
+---@return string|nil err CH.ERR.REWARD_TOO_SMALL
+---@return table|nil refusal { min = n }, so the page can name the figure
+function Contracts.belowMinReward(worth)
+    local floor = tonumber(Config.Limits.MinContractReward) or 0
+    if floor > 0 and (tonumber(worth) or 0) < floor then
+        return CH.ERR.REWARD_TOO_SMALL, { min = floor }
+    end
+    return nil
+end
+
 --------------------------------------------------------------------------
 -- Creation
 --------------------------------------------------------------------------
@@ -462,6 +484,14 @@ local function refundAnonymityFee(actor, contractId, anonymous)
     -- part of it, or unknown (none written). Staff return only the rest.
     Audit.financial('anonymity_fee_refund_failed', actor.cid, contractId,
         { amount = fee, account = account, error = raised, arrived = raised and arrived or nil })
+    -- Kept until they have: the row above is pruned with the log.
+    if Review then
+        Review.open({
+            kind = 'anonymity_fee_refund_failed', contract_id = contractId,
+            cids = { creator = actor.cid }, amount = fee, account = account,
+            known = { error = raised, arrived = raised and arrived or nil },
+        })
+    end
     return false
 end
 
@@ -502,7 +532,24 @@ local function placeUnlocked(actor, contract, lines)
             -- A read that raises too decides nothing. Asked again by the
             -- tick once the store answers: a contract that is there was
             -- placed, and one that is not has its escrow and fee handed back.
-            stuckCreates[contract.id] = { cid = actor.cid, fee = contract.anon_creator }
+            --
+            -- Only in this process, though. A restart before the store
+            -- answers hands the escrow of a contract never stored back at
+            -- boot (recoverNeverPlaced), and nothing gives the fee back: the
+            -- contract that said there was one is the thing that may not
+            -- exist. So the question is left for staff as well, and closed
+            -- by the tick if it answers it first (retryStuckCreates).
+            local fee = contract.anon_creator and (Config.Anonymity.CreatorFee or 0) or 0
+            local review = Review and Review.open({
+                kind = 'contract_unrecorded', contract_id = contract.id,
+                cids = { creator = actor.cid },
+                amount = fee > 0 and fee or nil,
+                account = fee > 0 and (Config.Anonymity.FeeAccount or 'bank') or nil,
+                known = { error = tostring(stored), read_error = tostring(found),
+                          fee = fee > 0 or nil },
+            })
+            stuckCreates[contract.id] = { cid = actor.cid, fee = contract.anon_creator,
+                                          review = review }
             error(found, 0)
         end
         stored = found ~= nil
@@ -741,6 +788,16 @@ function Contracts.create(actor, req)
             if lines[i].portion == CH.PORTION.BONUS then return nil, CH.ERR.NO_BONUS end
         end
     end
+    -- Worth at least the minimum in money, summed across every payout with
+    -- the bonus, as the ceiling counts it (Escrow.validate). Goods are not
+    -- priced, so they count for nothing here. Refused before anything is
+    -- taken, with the figure for the page to say.
+    local worth = 0
+    for i = 1, #lines do
+        if CH.MONEY_SOURCES[lines[i].source] then worth = worth + (lines[i].amount or 0) end
+    end
+    local tooSmall, floor = Contracts.belowMinReward(worth)
+    if tooSmall then return nil, tooSmall, floor end
     -- An item reaches the hitman with its metadata, and some of it names
     -- the client: an anonymous one is refused it rather than unmasked.
     if req.anonymous == true and Escrow.namesOwner(actor, lines) then
@@ -1469,13 +1526,21 @@ function Contracts.retryStuckCreates()
             if Storage.readContract(contractId) then return true end
             returnNeverPlaced(contractId)
             -- Last, so a throw above leaves it to come back on the next pass.
-            -- Credited if they are here; otherwise the row tells staff.
+            -- Credited if they are here; otherwise it is left for staff as
+            -- an item of its own (refundAnonymityFee).
             if stuck.fee then
                 refundAnonymityFee(Identity.byCitizenId(stuck.cid) or { cid = stuck.cid },
                     contractId, true)
             end
-            return true
+            return 'returned'
         end)
+        -- The question left for staff when it was placed is answered.
+        if ran and stuck.review and Review then
+            Review.settleBySystem(stuck.review, ran == 'returned'
+                and 'never stored: its escrow was handed back and its fee refunded, or left for '
+                    .. 'staff as an item of its own'
+                or 'stored after all: the contract was placed')
+        end
         if ran then
             stuckCreates[contractId] = nil
             done = done + 1
@@ -2398,6 +2463,21 @@ local function withdrawRewardUnlocked(actor, contractId, lineIds)
             and Util.escrowIsEmpty(after[slot] or {}, CH.PORTION.BASELINE) then
             return false, CH.ERR.INVALID_REWARD
         end
+    end
+
+    -- Nor below the least a contract may be worth in money
+    -- (Contracts.belowMinReward). Only money taken out is asked about: goods
+    -- were never counted towards it, so taking an item back changes nothing
+    -- the minimum measures.
+    local removing = 0
+    for i = 1, #lines do
+        if wanted[lines[i].id] and CH.MONEY_SOURCES[lines[i].source] then
+            removing = removing + (lines[i].amount or 0)
+        end
+    end
+    if removing > 0 then
+        local tooSmall, floor = Contracts.belowMinReward(Escrow.moneyValue(contractId) - removing)
+        if tooSmall then return false, tooSmall, floor end
     end
 
     -- One release for the whole set: several would be several windows for

@@ -7,7 +7,7 @@
 
 local Projection = {}
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Storage, Identity, Escrow, Kidnap, Mugshot, Progression, Comms, Informant, Notify
 

@@ -1700,3 +1700,62 @@ describe('a playtime provider in the wrong shape', function()
         truthy(told:find(SHAPE, 1, true), told)
     end)
 end)
+
+--- Config.Limits.MinContractReward, added to a Limits section every
+--- operator already has.
+describe('the least a contract may be worth, on any config', function()
+    local function told(fn)
+        local said = {}
+        local realPrint = _G.print
+        _G.print = function(...)
+            local parts = {}
+            for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+            said[#said + 1] = table.concat(parts, ' ')
+        end
+        local ok, err = pcall(fn)
+        _G.print = realPrint
+        if not ok then error(err, 0) end
+        return table.concat(said, ' | ')
+    end
+
+    it('is filled in, not read as no minimum, for a config from before it', function()
+        local out = told(function()
+            boot(function() Config.Limits.MinContractReward = nil end)
+        end)
+        eq(Config.Limits.MinContractReward, 1000,
+            'absent read as off, and two one-dollar contracts filled a target')
+        truthy(out:find('Limits.MinContractReward', 1, true), 'and the fill is named: ' .. out)
+        resetConfig()
+    end)
+
+    it('takes 0 as off, and a whole number of dollars as it is', function()
+        told(function() boot(function() Config.Limits.MinContractReward = 0 end) end)
+        eq(Config.Limits.MinContractReward, 0)
+        told(function() boot(function() Config.Limits.MinContractReward = '2500.7' end) end)
+        eq(Config.Limits.MinContractReward, 2500)
+        resetConfig()
+    end)
+
+    it('reads a setting that is not a figure as the shipped one, and says so', function()
+        for _, bad in ipairs({ 'lots', -5, 0 / 0, math.huge }) do
+            local out = told(function()
+                boot(function() Config.Limits.MinContractReward = bad end)
+            end)
+            eq(Config.Limits.MinContractReward, 1000, tostring(bad) .. ' is not a minimum')
+            truthy(out:find('Limits.MinContractReward', 1, true), out)
+        end
+        resetConfig()
+    end)
+
+    it('holds one above the most a contract may be worth to that, rather than refuse all', function()
+        local out = told(function()
+            boot(function()
+                Config.MaxContractValue = 50000
+                Config.Limits.MinContractReward = 60000
+            end)
+        end)
+        eq(Config.Limits.MinContractReward, 50000)
+        truthy(out:find('MaxContractValue', 1, true), 'and the operator is told why: ' .. out)
+        resetConfig()
+    end)
+end)

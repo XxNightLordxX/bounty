@@ -9,10 +9,17 @@ local Env = Natives.env
 
 Natives.install()
 
--- Module loader used by the server files.
-_G.require_shared = function(name) return require('crimson-hitman.shared.' .. name) end
+-- Module loader used by the server files: server/boot.lua's namespace
+-- table, standing in for the one LoadResourceFile builds on a live server.
+-- Both go through the global require at call time rather than capturing it
+-- here, so a wrapper installed around it (tests/invariants.lua) still sees
+-- every module a server file asks for.
+_G.CrimsonBoot = {
+    require = function(path) return require(path) end,
+    requireShared = function(name) return require('crimson-hitman.shared.' .. name) end,
+}
 
--- The resource's own require (server/boot.lua) resolves 'server.escrow'
+-- The resource's own loader (server/boot.lua) resolves 'server.escrow'
 -- against the resource root. Teaching the harness the same shape is what
 -- lets main.lua — the real wiring, the tick and the expiry pass — be loaded
 -- and tested rather than reimplemented here. Reimplementing it is how
@@ -81,6 +88,16 @@ CONFIG_DEFAULTS.Completion.PhotoStorage = 'host'
 --- business of the specs that set it (fulfilment_spec), which cover the
 --- shipped default explicitly.
 CONFIG_DEFAULTS.Completion.Fulfilment = 'either'
+
+--- And with no least reward, though the resource ships one of 1000
+--- (Config.Limits.MinContractReward).
+---
+--- The specs place contracts at whatever figure makes their arithmetic
+--- plain — a reward of 500, a stake of 100 against a reward of 200 — and
+--- what they hold the server to has nothing to do with how small a reward
+--- may be. The minimum itself is the business of the specs that set it
+--- (contracts_spec, reward_edit_spec), which cover the shipped figure.
+CONFIG_DEFAULTS.Limits.MinContractReward = 0
 
 --- Restore in place, recursing into tables that exist in both. Assigning a
 --- fresh table would leave anything holding a subtable — a module that did
@@ -209,17 +226,19 @@ function _G.newCopyingStack()
     end
 
     stack.audit.init(copying)
-    stack.escrow.init(copying, stack.audit)
+    stack.review.init({ storage = copying, escrow = stack.escrow, audit = stack.audit })
+    stack.escrow.init(copying, stack.audit, stack.review)
     stack.progression.init({ storage = copying, identity = stack.identity, audit = stack.audit })
     stack.contracts.init({ storage = copying, escrow = stack.escrow, identity = stack.identity,
                            audit = stack.audit, notify = stack.notify,
-                           progression = stack.progression, death = stack.death })
+                           progression = stack.progression, death = stack.death,
+                           review = stack.review })
     stack.photos.init({ storage = copying, audit = stack.audit })
     stack.ledger.init({ storage = copying, photos = stack.photos, notify = stack.notify })
     stack.bailout.init({ storage = copying, identity = stack.identity,
                          contracts = stack.contracts, escrow = stack.escrow,
                          audit = stack.audit, notify = stack.notify, kidnap = stack.kidnap,
-                         death = stack.death })
+                         death = stack.death, review = stack.review })
     stack.death.init({ storage = copying, identity = stack.identity,
                        contracts = stack.contracts, audit = stack.audit })
     -- Amendments were left talking to the sharing store behind the
@@ -265,6 +284,7 @@ function _G.newStack()
 
     package.loaded['crimson-hitman.server.storage.memory'] = nil
     package.loaded['crimson-hitman.server.escrow'] = nil
+    package.loaded['crimson-hitman.server.review'] = nil
     package.loaded['crimson-hitman.server.contracts'] = nil
     package.loaded['crimson-hitman.server.audit'] = nil
     package.loaded['crimson-hitman.server.notify'] = nil
@@ -291,6 +311,7 @@ function _G.newStack()
     local identity  = require('crimson-hitman.server.identity')
     local notify    = require('crimson-hitman.server.notify')
     local escrow    = require('crimson-hitman.server.escrow')
+    local review    = require('crimson-hitman.server.review')
     local contracts = require('crimson-hitman.server.contracts')
     local ratelimit = require('crimson-hitman.server.ratelimit')
     local ledger    = require('crimson-hitman.server.ledger')
@@ -312,11 +333,13 @@ function _G.newStack()
     storage.open()
     audit.init(storage)
     notify.init({ identity = identity })
-    escrow.init(storage, audit)
+    review.init({ storage = storage, escrow = escrow, audit = audit })
+    escrow.init(storage, audit, review)
     progression.init({ storage = storage, identity = identity, audit = audit })
     contracts.init({
         storage = storage, escrow = escrow, identity = identity,
         audit = audit, notify = notify, progression = progression, death = death,
+        review = review,
     })
 
     photos.init({ storage = storage, audit = audit })
@@ -333,7 +356,8 @@ function _G.newStack()
     })
 
     bailout.init({ storage = storage, identity = identity, contracts = contracts,
-        escrow = escrow, audit = audit, notify = notify, kidnap = kidnap, death = death })
+        escrow = escrow, audit = audit, notify = notify, kidnap = kidnap, death = death,
+        review = review })
     informant.init({ storage = storage, identity = identity, audit = audit, death = death })
     amendments.init({ storage = storage, identity = identity, contracts = contracts,
         escrow = escrow, audit = audit, notify = notify })
@@ -354,7 +378,7 @@ function _G.newStack()
         death = death, photo = photo, kidnap = kidnap, bailout = bailout,
         informant = informant, amendments = amendments, comms = comms,
         projection = projection, mugshot = mugshot, progression = progression,
-        photos = photos,
+        photos = photos, review = review,
         -- The app module itself: admin reads its handler table to run the
         -- real handlers in a diagnosis, and requiring it there instead
         -- hands back a second copy of the module under a different path.
@@ -369,7 +393,7 @@ function _G.newStack()
         escrow = escrow, contracts = contracts, ratelimit = ratelimit,
         ledger = ledger, death = death, photo = photo, bridges = bridges,
         mugshot = mugshot, progression = progression, app = app, admin = admin,
-        photos = photos,
+        photos = photos, review = review,
     }
 end
 
@@ -406,7 +430,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec', 'anonymity_spec', 'fulfilment_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec', 'anonymity_spec', 'fulfilment_spec', 'review_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

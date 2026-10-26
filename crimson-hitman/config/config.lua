@@ -199,6 +199,18 @@ Config.Limits = {
     MaxActiveContractsPerCreator = 3,
     MaxAcceptedPerHitman         = 3,
     MaxActiveContractsPerTarget  = 2,
+    --- The least a new contract's reward may be worth in money: cash, bank
+    --- and dirty money summed across every payout, its kidnapping bonus
+    --- included (as MaxContractValue counts it). Items and weapons are not
+    --- counted, since nothing here can price them. A contract worth less is
+    --- not placed, and the page says what the minimum is; a reward cannot be
+    --- taken back out (Withdraw part, or giving back a payout) below it
+    --- either. 0 turns it off.
+    ---
+    --- Without it two contracts of a dollar each fill
+    --- MaxActiveContractsPerTarget, and nobody else can list that target
+    --- until both close: a shield for a friend that costs two dollars.
+    MinContractReward            = 1000,
     MaxHitmenPerContract        = 5,
 
     --- How many times one contract may be collected. Each slot carries its
@@ -1053,6 +1065,10 @@ Config.Admin = {
         --- Brings every wait forward so a test server can be tested. ACE
         --- only — the extra ACEs above do NOT open it, because it writes.
         refresh  = 'hitmanadmin',
+        --- Lists and resolves the review queue: money no rule here could
+        --- settle by itself, which ch-stuck also lists. ACE only, as
+        --- ch-settle is, because it moves money.
+        review   = 'ch-review',
     },
     --- Rows read per contract for a timeline. A cap, because the audit log
     --- is the largest table here and a staff command should not be able to

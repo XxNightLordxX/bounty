@@ -763,6 +763,73 @@ function Bridges.installCommands(modules)
                        or ('Could not void it: ' .. tostring(err)))
     end, true)
 
+    --- One review item in words (Admin.reviews), for /ch-stuck and /ch-review.
+    local function sayReview(src, item)
+        local what = {}
+        if (tonumber(item.amount) or 0) > 0 then
+            what[#what + 1] = describeLine({ source = item.account or 'cash', amount = item.amount })
+        end
+        for _, entry in ipairs(type(item.items) == 'table' and item.items or {}) do
+            if type(entry) == 'table' then what[#what + 1] = describeLine(entry) end
+        end
+        local parties = {}
+        for _, party in ipairs(item.parties or {}) do
+            parties[#parties + 1] = ('%s %s'):format(party.role, tostring(party.who))
+        end
+        reply(src, ('  %s  %s  contract %s  %s  %s%s'):format(item.id, item.kind,
+            tostring(item.contract or 'n/a'), #what > 0 and table.concat(what, ', ') or 'nothing recorded',
+            #parties > 0 and table.concat(parties, ', ') or 'no party recorded',
+            item.created_at and ('  (' .. os.date('%Y-%m-%d %H:%M', item.created_at) .. ')') or ''))
+        if item.about then reply(src, '    ' .. item.about) end
+
+        local known = {}
+        for key, value in pairs(type(item.known) == 'table' and item.known or {}) do
+            known[#known + 1] = ('%s %s'):format(key, tostring(value))
+        end
+        table.sort(known)
+        if #known > 0 then reply(src, '    known: ' .. table.concat(known, '; ')) end
+
+        local now = item.now or {}
+        local said = {}
+        if now.contract then said[#said + 1] = 'contract ' .. tostring(now.contract) end
+        if now.buyout then said[#said + 1] = 'buyout ' .. tostring(now.buyout) end
+        if now.lines then
+            said[#said + 1] = ('lines held %d, settled %d, not in the store %d')
+                :format(now.lines.held, now.lines.settled, now.lines.missing)
+        end
+        if #said > 0 then reply(src, '    now: ' .. table.concat(said, '; ')) end
+
+        if item.unwritten then
+            reply(src, '    the store has not taken this yet; it is written once it answers')
+        elseif item.state == 'resolving' then
+            reply(src, ('    being resolved (%s, by %s) and stopped part-way: /%s %s finishes it as decided')
+                :format(tostring(item.resolution and item.resolution.action), tostring(item.resolved_by),
+                    names.review, item.id))
+        elseif item.state == 'resolved' then
+            local r = item.resolution or {}
+            reply(src, ('    resolved: %s%s by %s%s%s'):format(tostring(r.action),
+                r.cid and (' to ' .. tostring(r.cid)) or '', tostring(item.resolved_by),
+                item.resolved_at and (' ' .. os.date('%Y-%m-%d %H:%M', item.resolved_at)) or '',
+                r.note and (' (' .. r.note .. ')') or ''))
+        end
+    end
+
+    --- The review queue's open items, as /ch-stuck lists them below the
+    --- escrow. Read-only; /ch-review resolves one.
+    local function listReviews(src)
+        if not names.review then return 0 end
+        local items = Admin.reviews(src)
+        if #items == 0 then return 0 end
+        reply(src, ('%d money event(s) no rule could settle wait for you in the review queue:')
+            :format(#items))
+        for i = 1, #items do sayReview(src, items[i]) end
+        reply(src, ('Resolve one with /%s <id> refund <citizenid|role> <amount> [cash|bank|dirty], '
+            .. '/%s <id> refund <citizenid|role> items, /%s <id> pay <citizenid|role>, or /%s <id> '
+            .. 'dismiss <note>. A role is one the item names (payer, creator, ...).')
+            :format(names.review, names.review, names.review, names.review))
+        return #items
+    end
+
     command(names.stuck, Config.Admin.Ace, function(src)
         -- Recovery is still putting back, leaving for staff and queuing what
         -- the last shutdown left: listed now, a line it is about to deal
@@ -770,7 +837,12 @@ function Bridges.installCommands(modules)
         local waiting = notRecovered()
         if waiting then return reply(src, waiting) end
         local lines = Admin.interrupted(src)
-        if #lines == 0 then return reply(src, 'No interrupted releases.') end
+        -- And the review queue, last: money no rule could settle, kept until
+        -- staff resolve it rather than only in the log, which is pruned.
+        if #lines == 0 then
+            if listReviews(src) == 0 then reply(src, 'No interrupted releases.') end
+            return
+        end
 
         local interrupted, nameless, parked, unfinished = {}, {}, {}, {}
         for i = 1, #lines do
@@ -903,6 +975,8 @@ function Bridges.installCommands(modules)
             reply(src, ('Find out who put each up, then /%s <line> return <citizenid>')
                 :format(names.settle))
         end
+
+        listReviews(src)
     end)
 
     -- Not through `command`: this one refuses the extra ACEs. `command`
@@ -989,6 +1063,61 @@ function Bridges.installCommands(modules)
         end
         reply(src, ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err)))
     end, true)
+
+    -- The review queue: list it, or resolve one item. Strict, as /ch-settle
+    -- is, because it moves money; the list is in /ch-stuck for the rest.
+    if names.review then
+        command(names.review, Config.Admin.Ace, function(src, args)
+            local waiting = notRecovered()
+            if waiting then return reply(src, waiting) end
+            local first = args[1] and tostring(args[1]):lower()
+            if first == nil or first == 'list' or first == 'all' then
+                local items = Admin.reviews(src, first == 'all')
+                if #items == 0 then
+                    return reply(src, first == 'all' and 'The review queue has never held anything.'
+                        or 'Nothing waits in the review queue.')
+                end
+                for i = 1, #items do sayReview(src, items[i]) end
+                return
+            end
+
+            local rest = {}
+            for i = 2, #args do rest[#rest + 1] = args[i] end
+            local ok, err, detail = Admin.resolveReview(src, args[1], rest)
+            if err == 'recovering' then return reply(src, RECOVERING) end
+            if err == 'recovery_failed' then return reply(src, RECOVERY_FAILED) end
+            if ok then
+                local r = detail or {}
+                if r.action == 'dismiss' then
+                    return reply(src, 'Dismissed. Nothing was given.' .. (r.continued
+                        and ' It had been decided so before a stop, and is finished now.' or ''))
+                end
+                return reply(src, ('Resolved: %d line(s) given, %d owed and given while they are in '
+                    .. 'the city or at their next login, %d left for /%s (giving raised). %s')
+                    :format(r.settled or 0, r.pending or 0, r.parked or 0, names.stuck,
+                        r.continued and 'It had been decided before a stop and was finished as decided, '
+                            .. 'not as asked now.' or ''))
+            end
+            local why = {
+                [CH.ERR.NOT_FOUND] = 'No review item has that id.',
+                [CH.ERR.ALREADY_SETTLED] = 'Already resolved; nothing was given again.',
+                [CH.ERR.BUSY] = 'It is being resolved right now. Look again in a moment.',
+                [CH.ERR.LOCKED] = 'Something else resolved or began resolving it meanwhile; look again.',
+                note_required = 'Say why: /' .. names.review .. ' <id> dismiss <note>.',
+                no_party = 'Name who it goes to: a citizen id, or a role the item names.',
+                which_money = 'It records more than one kind of money: say which (cash, bank or dirty).',
+                nothing_recorded = 'It records nothing of that to give; use pay, or items for goods.',
+                over_recorded = ('That is more than it records (%s); refund at most that.')
+                    :format(tostring(detail)),
+                raised = ('Resolving it raised an error (in the console). It is left being resolved, '
+                    .. 'with the decision on it: /%s %s finishes it.')
+                    :format(names.review, tostring(args[1])),
+            }
+            reply(src, why[err] or ('Usage: /%s [all] | /%s <id> refund <citizenid|role> <amount> '
+                .. '[cash|bank|dirty] | refund <citizenid|role> items | pay <citizenid|role> | '
+                .. 'dismiss <note>'):format(names.review, names.review))
+        end, true)
+    end
 
     --- What /cleanse says for each refusal, where the app's words do not
     --- reach because the app is closed to the player running it.

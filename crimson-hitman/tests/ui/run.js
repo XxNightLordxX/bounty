@@ -5010,9 +5010,10 @@ async function main() {
           caps: { itemsEnabled: false, weaponsEnabled: false, slots: 5,
                   cash: 500000, bank: 500000, dirty: 500000,
                   cashEnabled: true, bankEnabled: true, dirtyEnabled: true,
-                  maxLines: 60, maxValue: opts.maxValue || 1000000 }
+                  maxLines: 60, maxValue: opts.maxValue || 1000000,
+                  minValue: opts.minValue || 0 }
         } },
-        create: { ok: true, data: { id: 'ct00000001' } }
+        create: opts.create || { ok: true, data: { id: 'ct00000001' } }
       });
       await settle(); await settle();
       tab(app, 'place');
@@ -5064,6 +5065,46 @@ async function main() {
     it('says a buyout needs cash or bank behind it', function () {
       eq(created(dirtyBuyout), 0);
       truthy(dirtyBuyout.notice().indexOf('cash or bank') !== -1, dirtyBuyout.notice());
+    });
+
+    /* Config.Limits.MinContractReward. Two one-dollar contracts filled a
+       target's slots; the server refuses one worth less, and the form says
+       the figure before anything is typed and again before it sends. */
+    const tooSmall = await place({ cash: 10000, minValue: 1000,
+      fields: { 'slot-cash-1': 500, bonus: 0 } });
+    it('names the least a contract may be worth, and does not send under it', function () {
+      eq(created(tooSmall), 0, 'sent for a refusal the page could have seen');
+      truthy(tooSmall.notice().indexOf('$500') !== -1
+        && tooSmall.notice().indexOf('$1,000') !== -1, tooSmall.notice());
+    });
+    it('says the least on the form itself, where the money is set', function () {
+      const hint = tooSmall.view.all().filter(function (n) {
+        return n.className === 'hint' && (n.textContent || '').indexOf('at least $1,000') !== -1;
+      });
+      eq(hint.length, 1, 'one hint naming the minimum');
+      truthy(hint[0].textContent.indexOf('Items and weapons do not count') !== -1,
+        hint[0].textContent);
+    });
+
+    const withBonus = await place({ cash: 10000, minValue: 1000,
+      fields: { 'slot-cash-1': 500, bonus: 100 } });
+    it('counts the bonus towards it, as the server does', function () {
+      eq(created(withBonus), 1, withBonus.notice());
+    });
+
+    const noMinimum = await place({ cash: 10000, fields: { 'slot-cash-1': 5, bonus: 0 } });
+    it('says nothing about a minimum where there is none', function () {
+      eq(created(noMinimum), 1, noMinimum.notice());
+      eq(noMinimum.view.all().filter(function (n) {
+        return (n.textContent || '').indexOf('at least $') !== -1 && n.className === 'hint';
+      }).length, 0);
+    });
+
+    const refused = await place({ cash: 10000, fields: { 'slot-cash-1': 5, bonus: 0 },
+      create: { ok: false, err: 'reward_too_small', data: { min: 2500 } } });
+    it('reads the figure from the refusal when the form had none', function () {
+      eq(created(refused), 1);
+      truthy(refused.notice().indexOf('$2,500') !== -1, refused.notice());
     });
   })();
 

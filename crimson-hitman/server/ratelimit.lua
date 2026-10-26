@@ -2,7 +2,7 @@
 --- Keyed on the resolved citizen id, never on anything from a payload, so
 --- rotating a field in the request cannot buy extra attempts.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local RateLimit = {}
 

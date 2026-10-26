@@ -187,8 +187,11 @@ function serverStub() {
       items: [{ name: 'lockpick', label: 'Lockpick', count: 5 }],
       weapons: [{ name: 'WEAPON_PISTOL', label: 'Pistol', slot: 3, serial: 'C123' }],
       inventoryRead: true,
+      // minValue as shipped (Config.Limits.MinContractReward), so the Place
+      // form is measured with the hint that names it drawn.
       caps: { itemsEnabled: true, weaponsEnabled: true, maxStacks: 3,
-              maxPerStack: 100, maxWeapons: 2, slots: 5, bonusPercent: 200 } } },
+              maxPerStack: 100, maxWeapons: 2, slots: 5, bonusPercent: 200,
+              minValue: 1000 } } },
     // Deliberately more lines than fit: a reward can be several money
     // lines and a handful of item stacks, and that is the shape that
     // pushes a dialog's own buttons off the bottom of the screen.

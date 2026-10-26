@@ -153,6 +153,11 @@ end
 -- resolves them through LoadResourceFile in server/boot.lua. A path that is
 -- wrong for the second but right for the first would pass every test and
 -- fail on the first start.
+--
+-- And every server file loads through that loader's namespace table
+-- (CrimsonBoot.require / CrimsonBoot.requireShared), never the runtime's
+-- own require: boot.lua no longer replaces it, so a bare require('server.x')
+-- would pass here, where package.path resolves it, and fail on a live server.
 
 local function moduleExists(path)
     local file = path:gsub('%.', '/') .. '.lua'
@@ -171,10 +176,25 @@ for _, path in ipairs(files) do
                         :format(path, module)
             end
         end
-        for module in src:gmatch("require_shared%('([%w_]+)'%)") do
+        for module in src:gmatch("requireShared%('([%w_]+)'%)") do
             if not moduleExists('shared.' .. module) then
                 failures[#failures + 1] =
                     ('%s requires shared "%s", which does not exist'):format(path, module)
+            end
+        end
+        if path:find('/server/', 1, true) then
+            local lineNo = 0
+            for line in src:gmatch('[^\n]*') do
+                lineNo = lineNo + 1
+                local code = line:gsub('%-%-.*$', '')
+                local bare = code:find('[^%w_%.]require%s*%(') or code:find('^require%s*%(')
+                    or code:find('[^%w_%.]require_shared%s*%(') or code:find('^require_shared%s*%(')
+                    or code:find('function%s+require[%s_(]')
+                if bare then
+                    failures[#failures + 1] =
+                        ('%s:%d loads through the bare global require; use CrimsonBoot.require '
+                            .. '(server/boot.lua): %s'):format(path, lineNo, line:gsub('^%s+', ''):sub(1, 90))
+                end
             end
         end
     end
@@ -1824,6 +1844,24 @@ do
         ['crimson_mutes.contract_id']         = 'which contract the thread is on',
         ['crimson_mutes.thread_id']           = 'which thread was muted',
         ['crimson_mutes.cid']                 = 'who muted it',
+        -- A review item is written once and never over (writeReview's
+        -- update clause changes nothing): a write the store reported as
+        -- failed may have landed, and the queue writes it again, so writing
+        -- over would put back open an item staff had resolved meanwhile, to
+        -- be paid a second time. Its state and resolution move only through
+        -- setReviewState, which is guarded.
+        ['crimson_review.kind']               = 'what happened, when it happened',
+        ['crimson_review.contract_id']        = 'which contract it happened on',
+        ['crimson_review.cids']               = 'who was involved',
+        ['crimson_review.amount']             = 'how much was involved',
+        ['crimson_review.account']            = 'which account it was in',
+        ['crimson_review.items']              = 'which lines or goods were involved',
+        ['crimson_review.known']              = 'what could be told at the time',
+        ['crimson_review.created_at']         = 'when it was left for staff',
+        ['crimson_review.state']              = 'moves only through setReviewState, which is guarded',
+        ['crimson_review.resolution']         = 'moves only through setReviewState',
+        ['crimson_review.resolved_by']        = 'moves only through setReviewState',
+        ['crimson_review.resolved_at']        = 'moves only through setReviewState',
     }
 
     local sql = read('crimson-hitman/server/storage/mysql.lua')

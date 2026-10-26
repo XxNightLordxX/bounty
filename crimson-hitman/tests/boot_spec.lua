@@ -874,8 +874,8 @@ describe('the loader and the wait in front of it', function()
     local function loadBoot()
         Env.reset()
         Natives.resetResourceStates()
+        local harness = _G.CrimsonBoot
         _G.CrimsonBoot = nil
-        local realRequire, realRequireShared = _G.require, _G.require_shared
 
         local source = io.open('crimson-hitman/server/boot.lua', 'r')
         local text = source:read('*a')
@@ -886,15 +886,17 @@ describe('the loader and the wait in front of it', function()
         -- never executed.
         assert(load(text, '@crimson-hitman/server/boot.lua'))()
 
-        -- The loader replaces the global require, which the suite itself
-        -- runs on — and the suite is mid-run. Its own loader is captured and
-        -- the real one put straight back, so the tests below drive
-        -- boot.require explicitly rather than through a global that
-        -- everything else depends on.
+        -- The file defines the namespace table every server module loads
+        -- through, and the suite is mid-run on the harness's loader. Its
+        -- table is captured, and the global left holding its functions (the
+        -- wait below reads them through it) with the harness's loader put
+        -- straight back, so the tests below drive boot.require explicitly
+        -- rather than through a global that everything else depends on.
         local boot = _G.CrimsonBoot
-        boot.require = _G.require
-        boot.requireShared = _G.require_shared
-        _G.require, _G.require_shared = realRequire, realRequireShared
+        local global = {}
+        for key, value in pairs(boot) do global[key] = value end
+        global.require, global.requireShared = harness.require, harness.requireShared
+        _G.CrimsonBoot = global
         return boot
     end
 
@@ -957,19 +959,37 @@ describe('the loader and the wait in front of it', function()
 
     it('still catches a genuine circular require', function()
         local boot = loadBoot()
-        Natives.files['server/a.lua'] = 'require("server.b") return {}'
-        Natives.files['server/b.lua'] = 'require("server.a") return {}'
+        Natives.files['server/a.lua'] = 'CrimsonBoot.require("server.b") return {}'
+        Natives.files['server/b.lua'] = 'CrimsonBoot.require("server.a") return {}'
 
-        -- A module reaches its own loader through the global, so this one
-        -- test has to install it — and put the suite's back afterwards
-        -- whatever happens, because everything after it loads through that.
-        local real = _G.require
-        _G.require = boot.require
+        -- A module reaches its own loader through the global namespace
+        -- table, so this one test has to install it — and put the suite's
+        -- back afterwards whatever happens, because everything after it
+        -- loads through that.
+        local real = _G.CrimsonBoot
+        _G.CrimsonBoot = boot
         local ok, err = pcall(boot.require, 'server.a')
-        _G.require = real
+        _G.CrimsonBoot = real
 
         falsy(ok)
         truthy(tostring(err):find('circular require', 1, true), tostring(err))
+    end)
+
+    it('leaves the runtime require alone and adds no lowercase global', function()
+        -- It replaced the global require, which every script in the Lua
+        -- state shares, and added require_shared beside it: anything that
+        -- reached for the runtime's own loader got this one instead, with
+        -- its resource-root paths. Both live in the namespace table now.
+        local before = _G.require
+        local boot = loadBoot()
+        eq(_G.require, before, 'the runtime require is not replaced')
+        eq(rawget(_G, 'require_shared'), nil, 'and no lowercase global is added')
+
+        Natives.files['shared/thing.lua'] = 'return { shared = true }'
+        truthy(boot.requireShared('thing').shared,
+            'shared modules load through the namespace table')
+        eq(boot.requireShared('thing'), boot.require('shared.thing'),
+            'from the same registry as everything else')
     end)
 
     it('names the file when a module returns something that is not a module', function()

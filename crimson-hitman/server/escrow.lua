@@ -6,11 +6,11 @@
 ---      compare-and-set on the escrow line's state (§14.3). A line can settle
 ---      exactly once, no matter which path reaches it.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Escrow = {}
 
-local Storage, Audit
+local Storage, Audit, Review
 
 --- Players owed something that could not be handed over, by citizen id, and
 --- the earliest moment to try them again. See Escrow.retryWaiting.
@@ -64,8 +64,10 @@ local claiming = {}  -- { [contractId] = count }
 --- start (accountItem).
 local accountItems = nil
 
-function Escrow.init(storage, audit)
-    Storage, Audit = storage, audit
+---@param review table|nil the review queue (server/review.lua), where money no
+--- rule here can settle is left for staff
+function Escrow.init(storage, audit, review)
+    Storage, Audit, Review = storage, audit, review
     waiting = {}
     lastTried = {}
     wakes = {}
@@ -192,6 +194,23 @@ end
 
 local function isWeaponName(name)
     return type(name) == 'string' and name:upper():sub(1, 7) == 'WEAPON_'
+end
+
+--- An escrow line as a review item records it (server/review.lua): what
+--- was in it, and its id where it was stored, so a listing can say whether
+--- the store has it now.
+local function forReview(line)
+    return {
+        id = line.id, source = line.source, amount = line.amount,
+        item = line.item or (line.source == CH.SOURCE.DIRTY and dirtyItemOf(line)) or nil,
+        quantity = line.quantity, metadata = Util.copy(line.metadata),
+    }
+end
+
+--- Leave a money event for staff, where the review queue is wired (it is
+--- in every running server; a test may build escrow without it).
+local function leaveForStaff(spec)
+    if Review then Review.open(spec) end
 end
 
 --- An item name as ox_inventory reads it: lower case, and a weapon's in upper
@@ -767,6 +786,17 @@ takeUnlocked = function(actor, contractId, lines)
                     amount = line.amount, quantity = line.quantity,
                     error = raised, arrived = raised and arrived or nil,
                 })
+                -- And kept until staff have given it back: the row above is
+                -- pruned with the log. Money in its account, with what of it
+                -- arrived; goods as they were taken.
+                local money = line.source == 'cash' or line.source == 'bank'
+                leaveForStaff({
+                    kind = 'escrow_rollback_failed', contract_id = contractId,
+                    cids = { from = actor.cid },
+                    amount = money and line.amount or nil, account = money and line.source or nil,
+                    items = not money and { forReview(line) } or nil,
+                    known = { error = raised, arrived = raised and arrived or nil },
+                })
             end
         end
     end
@@ -856,6 +886,11 @@ takeUnlocked = function(actor, contractId, lines)
                 source = line.source, item = line.item, amount = line.amount,
                 quantity = line.quantity, error = raised,
             })
+            leaveForStaff({
+                kind = 'escrow_take_raised', contract_id = contractId,
+                cids = { from = actor.cid }, items = { forReview(line) },
+                known = { error = raised },
+            })
         end
         if not ok then
             rollback()
@@ -891,6 +926,12 @@ takeUnlocked = function(actor, contractId, lines)
             end
             Audit.financial('escrow_take_unverified', actor.cid, contractId,
                 { lines = charged, error = tostring(rows) })
+            local taken = {}
+            for i = 1, #records do taken[i] = forReview(records[i]) end
+            leaveForStaff({
+                kind = 'escrow_take_unverified', contract_id = contractId,
+                cids = { from = actor.cid }, items = taken, known = { error = tostring(rows) },
+            })
             error(rows, 0)
         end
         local present = {}
@@ -1280,6 +1321,11 @@ local function release(mine, contractId, recipientCid, filter, reason, guard)
                     if not Storage.settleEscrowLine(line.id, recipientCid) then
                         Audit.financial('escrow_settle_lost', recipientCid, contractId,
                             { line = line.id })
+                        leaveForStaff({
+                            kind = 'escrow_settle_lost', contract_id = contractId,
+                            cids = { recipient = recipientCid }, items = { forReview(line) },
+                            known = { delivered = true },
+                        })
                     end
                     letGo(mine, line.id)
                     result.settled = result.settled + 1
@@ -2183,6 +2229,11 @@ local function retryPending(mine, cid)
                     if not Storage.settleEscrowLine(line.id, cid) then
                         Audit.financial('escrow_settle_lost', cid, line.contract_id,
                             { line = line.id })
+                        leaveForStaff({
+                            kind = 'escrow_settle_lost', contract_id = line.contract_id,
+                            cids = { recipient = cid }, items = { forReview(line) },
+                            known = { delivered = true },
+                        })
                     end
                     letGo(mine, line.id)
                     Storage.clearPending(entry.id)

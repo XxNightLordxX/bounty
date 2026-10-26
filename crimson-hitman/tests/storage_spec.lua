@@ -2033,7 +2033,8 @@ describe('json sharding', function()
         -- Watch what a single write actually touches.
         local touched = {}
         local realSave = Natives.saveFile
-        Natives.saveFile = function(file) touched[file] = true end
+        -- Under the name it is written through (<file>.new, renamed over it).
+        Natives.saveFile = function(file) touched[(file:gsub('%.new$', ''))] = true end
 
         store.writeContract(contract('ct1'))
         store.close()
@@ -2422,7 +2423,7 @@ describe('the install SQL', function()
         local shipped = statements(handle:read('a'))
         handle:close()
 
-        eq(#ran, 13, 'the thirteen crimson_* tables')
+        eq(#ran, 14, 'the fourteen crimson_* tables')
         eq(#shipped, #ran, 'one statement for every table')
         for i = 1, #ran do
             eq(shipped[i], ran[i], 'statement ' .. i .. ' as mysql mode runs it')
@@ -2537,6 +2538,11 @@ describe('every mysql statement is executable', function()
             function() m.photosOpenedBefore(10, 5, 'kept') end,
             function() m.photoTotals() end,
             function() m.deletePhoto('ph1') end,
+            function() m.writeReview({ id='rv1', kind='bailout_refund_stranded', contract_id='c1', cids={ payer='A' }, amount=100, account='bank', known={ arrived=0 }, created_at=1, state='open' }) end,
+            function() m.readReview('rv1') end,
+            function() m.reviewItems(true, 10) end,
+            function() m.reviewItems(false, 10) end,
+            function() m.setReviewState('rv1', 'open', 'resolving', { resolution = { action = 'dismiss' }, resolved_by = 'console' }) end,
             function() m.prune() end,
             function() m.migrate() end,
         }

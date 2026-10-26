@@ -11,12 +11,12 @@
 --- including the ones that only read. Looking is exceptional; a lookup that
 --- leaves no trace is a lookup nobody can review.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Admin = {}
 
 local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit, Death, Photo
-local Informant, Kidnap, Mugshot, Photos, Timing
+local Informant, Kidnap, Mugshot, Photos, Timing, Review
 
 function Admin.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
@@ -31,12 +31,12 @@ function Admin.init(deps)
     Photos = deps.photos
 
     -- Taken from the wiring like every other collaborator, rather than
-    -- required here. `require('server.app')` and the path the rest of the
-    -- suite loads it by are different keys for the same file, so requiring
-    -- it again hands back a SECOND copy of the module — one whose handler
-    -- table nothing ever registered into. The diagnosis would then report
-    -- every handler as unregistered while the real ones worked, which is a
-    -- diagnosis lying in the other direction.
+    -- required here. `CrimsonBoot.require('server.app')` and the path the
+    -- rest of the suite loads it by are different keys for the same file,
+    -- so requiring it again hands back a SECOND copy of the module — one
+    -- whose handler table nothing ever registered into. The diagnosis
+    -- would then report every handler as unregistered while the real ones
+    -- worked, which is a diagnosis lying in the other direction.
     App = deps.app
     RateLimit = deps.ratelimit
 
@@ -44,6 +44,9 @@ function Admin.init(deps)
     Informant, Kidnap, Mugshot = deps.informant, deps.kidnap, deps.mugshot
     -- How long the maintenance jobs take, which the diagnosis lists.
     Timing = deps.timing
+    -- The review queue: money no rule here could settle, which /ch-stuck
+    -- lists and /ch-review resolves.
+    Review = deps.review
 end
 
 --- How many of the slowest maintenance jobs the diagnosis lists.
@@ -853,6 +856,15 @@ function Admin.settleLine(src, lineId, disposition, owner)
               arrived = line.deliver_arrived, before = line.deliver_before })
         if claim and claim.lost then
             Audit.financial('escrow_settle_lost', recipient, line.contract_id, { line = lineId })
+            if Review then
+                Review.open({
+                    kind = 'escrow_settle_lost', contract_id = line.contract_id,
+                    cids = { recipient = recipient },
+                    items = { { id = line.id, source = line.source, amount = line.amount,
+                                item = line.item, quantity = line.quantity } },
+                    known = { delivered = 'staff found it with them', by = who or 'console' },
+                })
+            end
         end
         logNow()
         if settled then return true, nil end
@@ -936,6 +948,117 @@ function Admin.settleLine(src, lineId, disposition, owner)
     if requeued > 0 then return true, 'requeued' end
     if pending > 0 then return true, 'queued', (result.away or 0) > 0 and 'away' or 'refused' end
     return false, CH.ERR.LOCKED
+end
+
+--------------------------------------------------------------------------
+-- The review queue
+--------------------------------------------------------------------------
+
+--- The review queue as staff read it (server/review.lua): the open items,
+--- or with `all` the latest ones resolved too.
+---
+--- Each names its parties by role, with who each is to staff who may see
+--- that and the party's place on the contract to staff who may not, as
+--- /ch-stuck names whom a line is owed to. A resolution takes the role, so
+--- staff who may not see who is behind an anonymous party still settle one.
+---@param src number|nil who is asking
+---@param all boolean|nil
+---@return table[] rows { id, kind, about, contract, parties = { { role, who } }, amount,
+--- account, items, known, now, state, created_at, resolution, resolved_by, resolved_at,
+--- unwritten }
+function Admin.reviews(src, all)
+    if not Review then return {} end
+    local canIdentify = src == nil or src == 0
+        or Admin.allowed(src, Config.Admin.IdentityAce, true)
+    local contracts = {}
+    local function contractOf(id)
+        if not id then return nil end
+        if contracts[id] == nil then
+            local ok, found = pcall(Storage.readContract, id)
+            contracts[id] = ok and found or false
+        end
+        return contracts[id] or nil
+    end
+
+    local out = {}
+    for _, item in ipairs(Review.list(all, 50)) do
+        local parties, roles = {}, {}
+        for role in pairs(type(item.cids) == 'table' and item.cids or {}) do roles[#roles + 1] = role end
+        table.sort(roles)
+        for _, role in ipairs(roles) do
+            local cid = item.cids[role]
+            parties[#parties + 1] = {
+                role = role,
+                who = canIdentify and cid or Admin.partyRole(contractOf(item.contract_id), cid),
+            }
+        end
+        out[#out + 1] = {
+            id = item.id, kind = item.kind, about = Review.KINDS[item.kind],
+            contract = item.contract_id, parties = parties, amount = item.amount,
+            account = item.account, items = item.items, known = item.known, now = item.now,
+            state = item.state, created_at = item.created_at, resolution = item.resolution,
+            resolved_by = item.resolved_by, resolved_at = item.resolved_at,
+            unwritten = item.unwritten,
+        }
+    end
+    Audit.staff(canIdentify and 'admin_review_identified' or 'admin_review', callerCid(src), nil,
+        { items = #out, all = all or nil })
+    return out
+end
+
+--- Resolve one review item (Review.resolve): `refund <cid|role> <amount>
+--- [cash|bank|dirty]`, `refund <cid|role> items`, `pay <cid|role>`, or
+--- `dismiss <note>`. Waits for boot recovery, as /ch-settle does: a
+--- resolution moves money, and recovery may still be putting back a line an
+--- earlier one left.
+---@param src number
+---@param id string
+---@param args string[] the words after the id
+---@return boolean ok
+---@return string|nil err
+---@return any detail
+function Admin.resolveReview(src, id, args)
+    local waiting = recovering()
+    if waiting then return false, waiting end
+    if not Review then return false, CH.ERR.NOT_FOUND end
+    args = type(args) == 'table' and args or {}
+    local action = type(args[1]) == 'string' and args[1]:lower() or nil
+    local decision = { action = action }
+    if action == 'dismiss' then
+        decision.note = table.concat(args, ' ', 2)
+    elseif action == 'pay' then
+        decision.who = args[2]
+    elseif action == 'refund' then
+        decision.who = args[2]
+        if type(args[3]) == 'string' and args[3]:lower() == 'items' then
+            decision.goods = true
+        else
+            if type(args[3]) ~= 'string' or not args[3]:match('^%d+$') then
+                return false, CH.ERR.INVALID_INPUT
+            end
+            decision.amount = tonumber(args[3])
+            if args[4] ~= nil then
+                local account = tostring(args[4]):lower()
+                if not CH.MONEY_SOURCES[account] then return false, 'which_money' end
+                decision.account = account
+            end
+        end
+    else
+        return false, CH.ERR.INVALID_INPUT
+    end
+
+    local who = callerCid(src) or (src == 0 and 'console') or ('player ' .. tostring(src))
+    local ran, ok, err, detail = pcall(Review.resolve, id, decision, who)
+    if not ran then
+        -- Left `resolving`, with the decision on it: the next ask, or the
+        -- next start, finishes it from the lines it already wrote.
+        Audit.financial('review_resolve_raised', who, nil,
+            { review = id, action = action, error = tostring(ok) })
+        logNow()
+        print(('[crimson-hitman] resolving review %s raised: %s'):format(tostring(id), tostring(ok)))
+        return false, 'raised'
+    end
+    return ok, err, detail
 end
 
 --- Who is behind an anonymous party on a contract.
@@ -1105,6 +1228,14 @@ function Admin.diagnose(source, subjectId, later)
         end
         say('    -> restore those files from a backup and restart, or settle '
             .. 'them by hand and take their ids out of data/store.json')
+    end
+
+    -- Money no rule could settle, waiting for staff (server/review.lua).
+    local reviewing = Review and Review.openCount() or 0
+    if reviewing > 0 then
+        say(('  %d MONEY EVENT(S) WAIT IN THE REVIEW QUEUE.'):format(reviewing))
+        say(('    -> /%s lists them with what is known, and /%s resolves each')
+            :format(tostring(Config.Admin.Commands.stuck), tostring(Config.Admin.Commands.review)))
     end
 
     -- Server-wide, so before the player checks, which can stop early.

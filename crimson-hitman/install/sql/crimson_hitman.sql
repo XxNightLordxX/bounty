@@ -242,6 +242,23 @@ CREATE TABLE IF NOT EXISTS crimson_photos (
     INDEX idx_photo_public (public_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS crimson_review (
+    id VARCHAR(32) PRIMARY KEY,
+    kind VARCHAR(48) NOT NULL,
+    contract_id VARCHAR(32),
+    cids TEXT,
+    amount INT,
+    account VARCHAR(16),
+    items TEXT,
+    known TEXT,
+    created_at INT NOT NULL,
+    state VARCHAR(16) NOT NULL,
+    resolution TEXT,
+    resolved_by VARCHAR(64),
+    resolved_at INT,
+    INDEX idx_review_state (state, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS crimson_meta (
     meta_key VARCHAR(32) PRIMARY KEY,
     meta_value INT NOT NULL

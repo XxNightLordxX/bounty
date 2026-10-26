@@ -628,10 +628,11 @@ function Util.credit(player, account, amount)
     return credited, tostring(gave), arrived, before
 end
 
---- The client has no module loader — server/boot.lua's require_shared is a
---- server-side stand-in for one — so the client half reaches these helpers
---- through a global. The file is listed in client_scripts and loaded exactly
---- once on each side, so there is still only one clock per process.
+--- The client has no module loader — server/boot.lua's
+--- CrimsonBoot.requireShared is a server-side stand-in for one — so the
+--- client half reaches these helpers through a global. The file is listed
+--- in client_scripts and loaded exactly once on each side, so there is still
+--- only one clock per process.
 CrimsonUtil = Util
 
 return Util

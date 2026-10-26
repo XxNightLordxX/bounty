@@ -5,17 +5,25 @@
 --- once. A bailout while a hitman is mid-delivery does not rug-pull them: it
 --- is queued for a short processing delay first.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Bailout = {}
 
-local Storage, Identity, Contracts, Escrow, Audit, Notify
+local Storage, Identity, Contracts, Escrow, Audit, Notify, Review
 
 function Bailout.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
         deps.storage, deps.identity, deps.contracts, deps.escrow, deps.audit, deps.notify
+    -- Where a premium no rule here can settle is left for staff
+    -- (server/review.lua).
+    Review = deps.review
     Bailout.kidnap = deps.kidnap
     Bailout.death = deps.death
+end
+
+--- Leave a buyout's money for staff, where the review queue is wired.
+local function leaveForStaff(spec)
+    if Review then Review.open(spec) end
 end
 
 --- Queued buyouts live on the contract row, not in a process-local table.
@@ -124,6 +132,9 @@ local settleUnlocked, deliver
 local function handBack(cid, contractId, amount, account, why)
     local delivered, raise = deliver(cid, contractId, amount, account, 'bailout_refund')
     if not delivered then
+        -- Left for staff already, by Bailout.owe: deliver fails only where
+        -- the premium could be neither handed over nor put on the books,
+        -- and one item for the money is all staff should be asked to pay.
         Audit.financial('bailout_refund_stranded', cid, contractId,
             { amount = amount, account = account, reason = why,
               error = raise and raise.error, arrived = raise and raise.arrived })
@@ -146,7 +157,20 @@ local function recordPaid(contractId, fields)
     local payer = fields.bailout_paid_by
     Audit.financial('bailout_record_failed', payer, contractId,
         { amount = fields.bailout_paid_amount, error = tostring(err) })
-    local stored = Storage.readContract(contractId)
+    local read, stored = pcall(Storage.readContract, contractId)
+    if not read then
+        -- The double fault: the store would neither take the record nor
+        -- say whether it had. Nothing here can tell a buyout recorded (the
+        -- tick settles it) from one that is not (nothing ever refunds it),
+        -- so it is left for staff, and kept until they have looked: the
+        -- audit row above is pruned with the log.
+        leaveForStaff({
+            kind = 'bailout_unrecorded', contract_id = contractId, cids = { payer = payer },
+            amount = fields.bailout_paid_amount, account = fields.bailout_paid_account,
+            known = { error = tostring(err), read_error = tostring(stored) },
+        })
+        error(stored, 0)
+    end
     if stored and stored.bailout_queued_at and stored.bailout_paid_by == payer then return end
     handBack(payer, contractId, fields.bailout_paid_amount, fields.bailout_paid_account, 'unrecorded')
     error(err, 0)
@@ -483,6 +507,12 @@ function Bailout.owe(cid, contractId, amount, account, reason, raise)
     local lineId = Util.mintId(Storage.nextId, 'owe', Storage.readEscrowLine)
     if not lineId then
         Audit.financial('owe_id_exhausted', cid, contractId, { amount = amount })
+        leaveForStaff({
+            kind = 'owe_id_exhausted', contract_id = contractId, cids = { owed = cid },
+            amount = amount, account = account == 'cash' and 'cash' or 'bank',
+            known = { reason = reason, error = raise and raise.error,
+                      arrived = raise and raise.arrived },
+        })
         return nil
     end
 
@@ -573,6 +603,16 @@ function Bailout.returnQueued(contract, reason)
         { amount = amount, account = account, paid_to = paidTo, reason = reason,
           raised_for = doubt and doubt.cid, error = doubt and doubt.error,
           arrived = doubt and doubt.arrived, review = doubt and true or nil })
+    if not paidTo and amount > 0 then
+        leaveForStaff({
+            kind = 'bailout_refund_stranded', contract_id = contract.id,
+            cids = { payer = payer, creator = contract.creator_cid,
+                     raised_for = doubt and doubt.cid or nil },
+            amount = amount, account = account,
+            known = { reason = reason, error = doubt and doubt.error,
+                      arrived = doubt and doubt.arrived },
+        })
+    end
     Bailout.clearQueue(contract.id)
     return paidTo ~= nil
 end

@@ -310,7 +310,7 @@ describe('editing a contract nobody has taken', function()
         local now = os.time()
         truthy(s.storage.endPause(c.id, since, now - since))
         local left = s.storage.readContract(c.id).deadline_at - now
-        truthy(left <= 3 * 3600 + require_shared('util').CLOCK_STEP,
+        truthy(left <= 3 * 3600 + CrimsonBoot.requireShared('util').CLOCK_STEP,
             'three hours set, and ' .. left .. ' seconds left once the target was back')
     end)
 

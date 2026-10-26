@@ -2,24 +2,25 @@
 ---
 --- For servers that do not want to run MySQL. Financial transitions bypass
 --- the debounce, and a malformed data file halts the resource rather than
---- starting with empty escrow. Writes are not atomic: each file is rewritten
---- in place (see writeFile), so a crash mid-write can tear one. A torn index
---- halts the boot too, and store.json.prev holds the one the last start read;
---- records.json and records.json.prev the same for the records (see
+--- starting with empty escrow. A file is written whole under <file>.new and
+--- renamed over <file> (see writeRaw), so a crash mid-write tears the copy,
+--- not the file, and the next start puts back the last complete one when
+--- <file> is missing or torn (see recoverFile). Where renames are refused it
+--- is written in place after the copy. A torn index with nothing to put
+--- back halts the boot too, and store.json.prev holds the one the last start
+--- read; records.json and records.json.prev the same for the records (see
 --- RECORDS). The audit log is not in the index: it is a file per day, added
 --- to rather than rewritten (see writeAudit).
 
-local Util = require_shared('util')
-
 local JsonStore = {}
 
-local db, dirty, lastFlush, seq = nil, false, 0, 0
+local db, dirty, seq = nil, false, 0
 local resource = GetCurrentResourceName and GetCurrentResourceName() or 'crimson-hitman'
 
 local EMPTY = {
     contracts = {}, escrow = {}, hitmen = {}, amendments = {},
     messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, reveals = {}, mutes = {},
-    photos = {}, seq = 0,
+    photos = {}, reviews = {}, seq = 0,
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -34,7 +35,7 @@ local indexDirty = false
 
 --- The records: everything that is not per-contract and is not the index's
 --- own bookkeeping. The ledger, pending payouts, the stats, the informant
---- reveals and the kill photo records.
+--- reveals, the kill photo records and the review queue.
 ---
 --- They were fields of store.json, and store.json was rewritten whole on
 --- every financial write, even one that changed only a contract's own file.
@@ -45,7 +46,7 @@ local indexDirty = false
 --- on it. So they are a file of their own, records.json, written only when
 --- one of them changed: a money write on a contract writes that contract's
 --- file and, at most, a store.json small enough not to matter.
-local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos' }
+local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews' }
 local recordsDirty = false
 
 --- Whether records.json is known to be on disk: read at this start, or
@@ -256,6 +257,58 @@ end
 --- line repeating until it buried everything after it.
 local mismatches = 0
 
+--- The names a whole file is written through: the complete copy, and where
+--- the file itself is moved while the copy takes its name on a system whose
+--- rename will not replace a file (Windows). Not '.bak', which is taken:
+--- store.json.bak is the single-file layout's own copy from the migration
+--- (open), and moving store.json aside under that name would delete it.
+local NEW, OLD = '.new', '.old'
+
+--- Said once a process: renames refused, so files are written in place.
+local renameRefusedSaid = false
+
+--- The resource's folder on disk, for os.rename and os.remove. Both resolve
+--- a path against the server's working directory rather than the resource,
+--- as SaveResourceFile does (see JsonStore.prune), so they are handed the
+--- whole path. nil where this server cannot say.
+local function folderOnDisk()
+    local base = GetResourcePath and GetResourcePath(resource)
+    if type(base) ~= 'string' or base == '' or type(os.rename) ~= 'function' then return nil end
+    return base
+end
+
+--- Rename `from` over `to`, both inside the resource.
+---
+--- A plain rename first, which replaces `to` where the system allows it
+--- (Linux, and an `to` that does not exist yet). Where it will not
+--- (Windows refuses a name that is taken), `to` is moved aside to
+--- `to`.old, the rename made, and the old one removed. A stopped server can
+--- leave any of those steps half done, and none of them tears a file: the
+--- next start finds `to`, or `to`.new whole beside a missing `to`
+--- (recoverFile). A stale `to`.old from a swap stopped before its last step
+--- is removed first, or Windows would refuse the move aside as well.
+---@return boolean moved
+local function moveOver(from, to)
+    local base = folderOnDisk()
+    if not base then return false end
+    local source, target, aside = base .. '/' .. from, base .. '/' .. to, base .. '/' .. to .. OLD
+
+    local ok, moved = pcall(os.rename, source, target)
+    if ok and moved == true then return true end
+
+    if type(os.remove) == 'function' then pcall(os.remove, aside) end
+    local asideOk, setAside = pcall(os.rename, target, aside)
+    setAside = asideOk and setAside == true
+    ok, moved = pcall(os.rename, source, target)
+    if ok and moved == true then
+        if setAside and type(os.remove) == 'function' then pcall(os.remove, aside) end
+        return true
+    end
+    -- Neither worked: the file goes back where it was, as it was.
+    if setAside then pcall(os.rename, aside, target) end
+    return false
+end
+
 --- Write one file.
 ---
 --- This used to write the whole thing to `target.tmp`, read that back, and
@@ -273,9 +326,22 @@ local mismatches = 0
 --- kept as a second opinion, and where the two disagree the write is
 --- retried once — but a write the engine confirmed is never thrown away on
 --- the strength of a read that may be cached, buffered, or simply behind.
+---
+--- And the copy is renamed now (moveOver), which is what the temp file
+--- never was: written in place, a crash part-way through left a torn file,
+--- and a torn index or records file refuses the start while a torn shard
+--- quarantines that contract and its escrow. Written whole as `target`.new
+--- and renamed over `target`, the crash tears the copy and the file is the
+--- last one written whole. One write a file, as before, and a rename.
+---
+--- On a server that refuses the rename the file is written in place after
+--- the copy, as it was before there was one, and the copy is left: it is
+--- the whole file, written first, so a crash that tears the file in place
+--- leaves the next start a complete one to put back (recoverFile).
 ---@return boolean written
 local function writeRaw(target, encoded)
-    local wrote = SaveResourceFile(resource, target, encoded, -1)
+    local fresh = target .. NEW
+    local wrote = SaveResourceFile(resource, fresh, encoded, -1)
     if wrote == false then
         print(('[crimson-hitman] could not write %s. Check that the directory exists '
             .. 'and the server can write to it.'):format(target))
@@ -283,28 +349,118 @@ local function writeRaw(target, encoded)
     end
 
     -- A second opinion, not a verdict.
-    local verify = LoadResourceFile(resource, target)
-    if verify and #verify == #encoded then return true end
-
-    -- Once more, in case the read caught the write mid-flight.
-    SaveResourceFile(resource, target, encoded, -1)
-    verify = LoadResourceFile(resource, target)
-    if verify and #verify == #encoded then return true end
-
-    mismatches = mismatches + 1
-    if mismatches <= 3 then
-        print(('[crimson-hitman] %s reads back as %s bytes after writing %d; the write '
-            .. 'was accepted anyway. If contracts do not survive a restart, this is '
-            .. 'where to look.')
-            :format(target, verify and tostring(#verify) or 'missing', #encoded))
-        if mismatches == 3 then
-            print('[crimson-hitman] further read-back mismatches will not be printed.')
+    local verify = LoadResourceFile(resource, fresh)
+    if not (verify and #verify == #encoded) then
+        -- Once more, in case the read caught the write mid-flight.
+        SaveResourceFile(resource, fresh, encoded, -1)
+        verify = LoadResourceFile(resource, fresh)
+    end
+    if not (verify and #verify == #encoded) then
+        mismatches = mismatches + 1
+        if mismatches <= 3 then
+            print(('[crimson-hitman] %s reads back as %s bytes after writing %d; the write '
+                .. 'was accepted anyway. If contracts do not survive a restart, this is '
+                .. 'where to look.')
+                :format(target, verify and tostring(#verify) or 'missing', #encoded))
+            if mismatches == 3 then
+                print('[crimson-hitman] further read-back mismatches will not be printed.')
+            end
         end
+        -- The engine said it wrote it. Discarding on a disagreeing read is
+        -- how "probably fine" became "certainly lost".
     end
 
-    -- The engine said it wrote it. Discarding on a disagreeing read is how
-    -- "probably fine" became "certainly lost".
+    if moveOver(fresh, target) then return true end
+
+    if not renameRefusedSaid then
+        renameRefusedSaid = true
+        print(('[crimson-hitman] this server would not rename %s over %s, so the json store '
+            .. 'writes its files in place, each after a whole copy beside it (<file>%s) that '
+            .. 'the next start puts back if a crash tears the file. Check that the server can '
+            .. 'rename and remove files in %s.'):format(fresh, target, NEW, directory()))
+    end
+    if SaveResourceFile(resource, target, encoded, -1) == false then
+        print(('[crimson-hitman] could not write %s. Check that the directory exists '
+            .. 'and the server can write to it.'):format(target))
+        return false
+    end
     return true
+end
+
+--- The decoded table a json file holds, or nil for one missing, empty or
+--- torn. A write cut short is never valid JSON: it stops before the brace
+--- that closes it.
+local function decodeTable(raw)
+    if type(raw) ~= 'string' or raw == '' then return nil end
+    local ok, value = pcall(json.decode, raw)
+    if ok and type(value) == 'table' then return value end
+    return nil
+end
+
+--- An audit day's file written whole, as writeRaw writes one: something in
+--- it, ending on a line's end. Only ever asked of a copy (recoverFile).
+local function wholeLines(raw)
+    return type(raw) == 'string' and raw ~= '' and raw:sub(-1) == '\n' and raw or nil
+end
+
+--- The last complete write of `file`, for a start that found it missing or
+--- torn: `file`.new, then `file`.old, whichever holds one `complete` takes.
+---
+--- Only ever asked when the file itself will not do. Beside a good file a
+--- copy is a write that never finished its rename, and the file is the one
+--- the store last finished writing. Beside a missing or torn one it is the
+--- newest whole write there is: `.new` is written whole before anything
+--- moves (writeRaw), and `.old` is the file as it was before a swap that
+--- stopped part-way (moveOver).
+---
+--- `place` puts it back as `file`, by rename where the server allows it, so
+--- the copy that was found is never written over on the way: a crash while
+--- rewriting the only complete copy would tear that too. A torn `file` is
+--- kept as `file`.torn rather than lost. Read-only callers (inspect) leave
+--- the disk as it is.
+---@param file string
+---@param complete function raw -> value or nil
+---@param place boolean
+---@param torn string|nil what `file` itself read as, kept if there is any
+---@return string|nil raw
+---@return any value what `complete` made of it
+---@return string|nil from the copy's name
+local function recoverFile(file, complete, place, torn)
+    local raw, value, from
+    for _, suffix in ipairs({ NEW, OLD }) do
+        local candidate = LoadResourceFile(resource, file .. suffix)
+        local made = candidate and complete(candidate)
+        if made then
+            raw, value, from = candidate, made, file .. suffix
+            break
+        end
+    end
+    if not raw or not place then return raw, value, from end
+
+    local hadFile = type(torn) == 'string' and torn ~= ''
+    if hadFile then SaveResourceFile(resource, file .. '.torn', torn, -1) end
+    local base = folderOnDisk()
+    local placed = false
+    if base then
+        local ok, moved = pcall(os.rename, base .. '/' .. from, base .. '/' .. file)
+        placed = ok and moved == true
+        if not placed and hadFile and type(os.remove) == 'function' then
+            -- Windows will not rename over the torn file; its copy is kept.
+            pcall(os.remove, base .. '/' .. file)
+            ok, moved = pcall(os.rename, base .. '/' .. from, base .. '/' .. file)
+            placed = ok and moved == true
+        end
+    end
+    if not placed then
+        -- Written in place, and the copy left where it is: a crash in this
+        -- write leaves it for the next start, as it was for this one.
+        SaveResourceFile(resource, file, raw, -1)
+    end
+    print(('[crimson-hitman] %s was %s, as a write the server stopped part-way leaves it; '
+        .. 'put back the last complete write of it, from %s.%s')
+        :format(file, hadFile and 'torn' or 'missing', from,
+            hadFile and (' The torn one is kept as ' .. file .. '.torn.') or ''))
+    return raw, value, from
 end
 
 local function writeFile(target, value)
@@ -342,6 +498,11 @@ local function readAuditDay(day)
     -- Twice, as a shard is, before believing it is empty.
     local raw = LoadResourceFile(resource, file)
     if not raw or raw == '' then raw = LoadResourceFile(resource, file) end
+    -- Missing, where a whole write of it stopped between its two renames
+    -- (moveOver): its copy is the day as last written whole. Only when it is
+    -- missing: rows are added to the end of the file itself (appendFile), so
+    -- beside a file that has any, a copy may hold fewer of them.
+    if not raw or raw == '' then raw = recoverFile(file, wholeLines, true) or raw end
 
     local lines, rows, bad = {}, {}, 0
     if not raw or raw == '' then return lines, rows, true, true end
@@ -490,6 +651,11 @@ local function loadRecords(decoded)
     -- Read twice, as the index is, before believing there is nothing.
     local raw = LoadResourceFile(resource, recordsPath())
     if raw == nil or raw == '' then raw = LoadResourceFile(resource, recordsPath()) end
+    -- Missing or torn, the last complete write of it is put back first
+    -- (recoverFile), and refused below only where there is none.
+    if not decodeTable(raw) then
+        raw = recoverFile(recordsPath(), decodeTable, true, raw) or raw
+    end
 
     if raw == nil or raw == '' then
         if decoded.records then
@@ -736,6 +902,13 @@ function JsonStore.open()
     -- Read twice, as a shard is, before believing there is no index.
     local raw = LoadResourceFile(resource, path())
     if raw == nil or raw == '' then raw = LoadResourceFile(resource, path()) end
+    -- Missing or torn, the last complete write of it is put back first: a
+    -- write the server stopped between its renames leaves store.json missing
+    -- and store.json.new whole (recoverFile). Only where there is none do
+    -- the refusals below decide.
+    if not decodeTable(raw) then
+        raw = recoverFile(path(), decodeTable, true, raw) or raw
+    end
 
     if raw == nil or raw == '' then
         -- Empty is a first install only where this store has never run.
@@ -834,10 +1007,12 @@ function JsonStore.open()
                 shardRaw = file and LoadResourceFile(resource, file)
             end
 
-            local shard
-            if shardRaw and shardRaw ~= '' then
-                local shardOk, decodedShard = pcall(json.decode, shardRaw)
-                if shardOk and type(decodedShard) == 'table' then shard = decodedShard end
+            local shard = decodeTable(shardRaw)
+            -- Missing or torn, the last complete write of it before it is
+            -- set aside (recoverFile).
+            if not shard and file then
+                local recovered, value = recoverFile(file, decodeTable, true, shardRaw)
+                if recovered then shardRaw, shard = recovered, value end
             end
 
             if shard then
@@ -929,10 +1104,19 @@ end
 --- describes is exactly as it was left.
 ---@return table|nil { contracts, lines, owed, unreadable }
 function JsonStore.inspect()
+    -- Each file as open() would find it: the last complete write of one
+    -- that is missing or torn (recoverFile), read where it lies.
+    local function readJson(file)
+        local value = decodeTable(LoadResourceFile(resource, file))
+        if value then return value end
+        local _, copy = recoverFile(file, decodeTable, false)
+        return copy
+    end
+
     local raw = LoadResourceFile(resource, path())
-    if raw == nil or raw == '' then return nil end
-    local ok, index = pcall(json.decode, raw)
-    if not ok or type(index) ~= 'table' then
+    local index = readJson(path())
+    if not index then
+        if raw == nil or raw == '' then return nil end
         -- Nobody can tell what it holds, so it is not taken to hold nothing.
         return { contracts = 0, lines = 0, owed = 0, unreadable = true }
     end
@@ -954,20 +1138,14 @@ function JsonStore.inspect()
     for _, id in ipairs(type(index.contractIds) == 'table' and index.contractIds or {}) do
         out.contracts = out.contracts + 1
         local file = shardPath(id)
-        local shardRaw = file and LoadResourceFile(resource, file)
-        if shardRaw and shardRaw ~= '' then
-            local shardOk, shard = pcall(json.decode, shardRaw)
-            if shardOk and type(shard) == 'table' then held(shard.escrow) end
-        end
+        local shard = file and readJson(file)
+        if shard then held(shard.escrow) end
     end
 
     local pending = index.pending
     if pending == nil then
-        local recordsRaw = LoadResourceFile(resource, recordsPath())
-        if recordsRaw and recordsRaw ~= '' then
-            local recordsOk, records = pcall(json.decode, recordsRaw)
-            pending = recordsOk and type(records) == 'table' and records.pending or nil
-        end
+        local records = readJson(recordsPath())
+        pending = records and records.pending or nil
     end
     for _ in pairs(type(pending) == 'table' and pending or {}) do out.owed = out.owed + 1 end
     return out
@@ -1033,7 +1211,6 @@ function JsonStore.save(force)
     if not next(dirtyShards) and not indexDirty and not recordsDirty then
         dirty = false
     end
-    lastFlush = Util.monotonicMs()
     -- A flush that could not write the index did not flush. Saying it did
     -- is what let the store report success while persisting nothing.
     return indexOk and recordsOk
@@ -1163,7 +1340,12 @@ function JsonStore.prune()
         -- there, the unlink failed in silence, and every pruned contract's
         -- file stayed on disk for good.
         local file = shardPath(id)
-        if file then pendingUnlinks[#pendingUnlinks + 1] = file end
+        if file then
+            pendingUnlinks[#pendingUnlinks + 1] = file
+            -- And a copy a server that refuses renames keeps beside it
+            -- (writeRaw), which nothing would read again either.
+            pendingUnlinks[#pendingUnlinks + 1] = file .. NEW
+        end
     end
 
     -- The index that no longer names them goes to disk first, and the files
@@ -1221,6 +1403,56 @@ function JsonStore.clearReveals(contractId)
         end
     end
     if cleared then touch(false) end
+    return true
+end
+
+--------------------------------------------------------------------------
+-- The review queue
+--------------------------------------------------------------------------
+
+--- See the memory backend. In records.json, and every write is financial:
+--- an item is the only record of money no rule settles, and a resolution
+--- the only record that it was.
+function JsonStore.writeReview(item)
+    if db.reviews[item.id] then return true end
+    local row = {}
+    for k, v in pairs(item) do row[k] = v end
+    db.reviews[row.id] = row
+    touch(true)
+    return true
+end
+
+function JsonStore.readReview(id)
+    return db.reviews[id]
+end
+
+function JsonStore.reviewItems(open, limit)
+    local out = {}
+    for _, row in pairs(db.reviews) do
+        if not open or row.state == 'open' or row.state == 'resolving' then
+            out[#out + 1] = row
+        end
+    end
+    table.sort(out, function(a, b)
+        if (a.created_at or 0) ~= (b.created_at or 0) then
+            if open then return (a.created_at or 0) < (b.created_at or 0) end
+            return (a.created_at or 0) > (b.created_at or 0)
+        end
+        return a.id < b.id
+    end)
+    if limit and #out > limit then
+        for i = #out, limit + 1, -1 do out[i] = nil end
+    end
+    return out
+end
+
+function JsonStore.setReviewState(id, expected, next_, fields)
+    local row = db.reviews[id]
+    if not row or row.state ~= expected then return false end
+    row.state = next_
+    row.resolution, row.resolved_by, row.resolved_at =
+        fields.resolution, fields.resolved_by, fields.resolved_at
+    touch(true)
     return true
 end
 

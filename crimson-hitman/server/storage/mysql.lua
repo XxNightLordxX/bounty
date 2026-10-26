@@ -4,7 +4,7 @@
 --- SQL anywhere in this file, and no table or column name comes from config
 --- or from a player — they are literals in this source.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 local MySQLStore = {}
 
 local seq = 0
@@ -277,6 +277,29 @@ local SCHEMA = {
         INDEX idx_photo_open (state, opened_at),
         INDEX idx_photo_created (created_at),
         INDEX idx_photo_public (public_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    -- The review queue (server/review.lua): money events no rule here can
+    -- settle by itself, kept until staff resolve them. `cids` are the
+    -- parties by role, `items` the lines or goods involved and `known` what
+    -- could be told (what arrived, the error), as JSON; `resolution` how it
+    -- was resolved, by `resolved_by` at `resolved_at`. Created on an
+    -- existing database by the CREATE TABLE IF NOT EXISTS at the next start,
+    -- like any table added since.
+    [[CREATE TABLE IF NOT EXISTS crimson_review (
+        id VARCHAR(32) PRIMARY KEY,
+        kind VARCHAR(48) NOT NULL,
+        contract_id VARCHAR(32),
+        cids TEXT,
+        amount INT,
+        account VARCHAR(16),
+        items TEXT,
+        known TEXT,
+        created_at INT NOT NULL,
+        state VARCHAR(16) NOT NULL,
+        resolution TEXT,
+        resolved_by VARCHAR(64),
+        resolved_at INT,
+        INDEX idx_review_state (state, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
@@ -1853,6 +1876,73 @@ function MySQLStore.deletePhoto(id)
 end
 
 --- When this process was last known to be running. See main.lua's Recover.
+--------------------------------------------------------------------------
+-- The review queue
+--------------------------------------------------------------------------
+
+local function encoded(value)
+    if value == nil then return nil end
+    return json.encode(value)
+end
+
+local function hydrateReview(row)
+    if not row then return nil end
+    for _, column in ipairs({ 'cids', 'items', 'known', 'resolution' }) do
+        if type(row[column]) == 'string' then
+            local ok, decoded = pcall(json.decode, row[column])
+            row[column] = ok and decoded or nil
+        end
+    end
+    return row
+end
+
+--- See the memory backend. Never over an item already there: the update
+--- clause changes nothing.
+function MySQLStore.writeReview(r)
+    db.query([[
+        INSERT INTO crimson_review
+            (id, kind, contract_id, cids, amount, account, items, known, created_at, state,
+             resolution, resolved_by, resolved_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE id = id
+    ]], {
+        r.id, r.kind, r.contract_id, encoded(r.cids), r.amount, r.account, encoded(r.items),
+        encoded(r.known), r.created_at, r.state, encoded(r.resolution), r.resolved_by,
+        r.resolved_at,
+    })
+    return true
+end
+
+function MySQLStore.readReview(id)
+    local rows = db.query('SELECT * FROM crimson_review WHERE id = ?', { id }) or {}
+    return hydrateReview(rows[1])
+end
+
+function MySQLStore.reviewItems(open, limit)
+    local rows
+    if open then
+        rows = db.query([[
+            SELECT * FROM crimson_review WHERE state IN ('open', 'resolving')
+            ORDER BY created_at LIMIT ?
+        ]], { limit or 200 }) or {}
+    else
+        rows = db.query(
+            'SELECT * FROM crimson_review ORDER BY created_at DESC LIMIT ?',
+            { limit or 200 }) or {}
+    end
+    for i = 1, #rows do hydrateReview(rows[i]) end
+    return rows
+end
+
+function MySQLStore.setReviewState(id, expected, next_, fields)
+    local affected = db.update([[
+        UPDATE crimson_review SET state = ?, resolution = ?, resolved_by = ?, resolved_at = ?
+        WHERE id = ? AND state = ?
+    ]], { next_, encoded(fields.resolution), fields.resolved_by, fields.resolved_at,
+          id, expected })
+    return (tonumber(affected) or 0) > 0
+end
+
 function MySQLStore.heartbeat(at)
     db.query([[
         INSERT INTO crimson_meta (meta_key, meta_value) VALUES (?, ?)

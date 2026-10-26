@@ -5,7 +5,7 @@
 --- the rate limit before the body runs. No handler body reads an identity
 --- from its payload, and none of them is reachable without passing the gate.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local App = {}
 
@@ -762,6 +762,10 @@ function App.register()
                 -- included. Over it the server refused the contract as not
                 -- adding up, about amounts that each sat inside their caps.
                 maxValue = Config.MaxContractValue,
+                -- And the least, counted the same way, goods not at all
+                -- (Config.Limits.MinContractReward; 0 for none). The form
+                -- says it before anything is typed rather than after.
+                minValue = Config.Limits.MinContractReward or 0,
             },
         }
     end)
@@ -889,7 +893,9 @@ function App.register()
         end
 
         local ok, err, result = deps.contracts.withdrawReward(actor, payload.id, list)
-        if not ok then return false, err end
+        -- On a refusal the third is what it says beyond the code: the least
+        -- the contract may be left worth (Contracts.belowMinReward).
+        if not ok then return false, err, result end
         return {
             id = payload.id,
             returned = result and result.settled or 0,
@@ -1102,8 +1108,9 @@ function App.register()
     end)
 
     handler('propose', 'amend', function(actor, payload)
-        local proposal, err = deps.amendments.propose(actor, payload.id, payload.kind, payload.payload)
-        if not proposal then return false, err end
+        local proposal, err, refusal = deps.amendments.propose(actor, payload.id, payload.kind,
+            payload.payload)
+        if not proposal then return false, err, refusal end
         -- outcome 'applied' when nobody else had to agree and it is in
         -- effect already; 'failed' when it was agreed but no longer fits.
         return { id = proposal.id, kind = proposal.kind, expires = proposal.expires_at,

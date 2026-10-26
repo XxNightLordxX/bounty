@@ -109,6 +109,8 @@ local DEFAULTS = {
             whois    = 'ch-whois',
             contracts = 'ch-contracts',
             diagnose = 'ch-diag',
+            -- The review queue's, added to a list every config has.
+            review   = 'ch-review',
         },
     },
     Immunity = {
@@ -164,6 +166,9 @@ local DEFAULTS = {
         -- Absent read as off, and a jailed target's deadline ran on through
         -- the sentence on every server that upgraded.
         PauseWhileTargetJailed = true,
+        -- Absent read as off, and two one-dollar contracts filled a target's
+        -- MaxActiveContractsPerTarget on every server that upgraded.
+        MinContractReward = 1000,
         JailZone = { x = 1693.3, y = 2569.5, radius = 300 },
     },
     --- Absent read as off, and an anonymous client calling a named operative
@@ -593,7 +598,7 @@ local function validateConfig()
     -- links that lead nowhere.
     local publicUrl = Config.Completion.PhotoPublicUrl
     if publicUrl ~= nil and publicUrl ~= '' then
-        local checked = require('server.photos').checkBase(publicUrl)
+        local checked = CrimsonBoot.require('server.photos').checkBase(publicUrl)
         if not checked then
             warn[#warn + 1] = ('Completion.PhotoPublicUrl is %s; it has to be an https:// '
                 .. 'address such as \'https://photos.example.com/crimson-hitman\', with no '
@@ -620,6 +625,27 @@ local function validateConfig()
             Config.Completion.KeptPhotoDays = days
         end
     end
+
+    -- The least a new contract's reward may be worth in money. A whole
+    -- number of dollars, 0 for no minimum; anything else is read as the
+    -- shipped figure and said so, rather than as no minimum at all. One
+    -- above the most a contract may be worth would refuse every contract
+    -- placed, so it is held to that.
+    local minReward = tonumber(Config.Limits.MinContractReward)
+    if not minReward or minReward ~= minReward or minReward < 0 or minReward == math.huge then
+        warn[#warn + 1] = ('Limits.MinContractReward is %s, not a number of dollars (0 for no '
+            .. 'minimum); using 1000.'):format(tostring(Config.Limits.MinContractReward))
+        minReward = 1000
+    end
+    minReward = math.floor(minReward)
+    local maxValue = tonumber(Config.MaxContractValue)
+    if maxValue and minReward > maxValue then
+        warn[#warn + 1] = ('Limits.MinContractReward (%d) is above MaxContractValue (%d), so no '
+            .. 'contract could ever be placed; using %d.'):format(minReward, maxValue,
+                math.floor(maxValue))
+        minReward = math.floor(maxValue)
+    end
+    Config.Limits.MinContractReward = minReward
 
     -- How slow a maintenance job may be before the console hears about it.
     -- 0 turns the warning off; /ch-diag still lists the slowest jobs.
@@ -802,9 +828,9 @@ end
 
 local function selectStorage()
     local mode = Config.Database.Mode
-    if mode == 'mysql' then return require('server.storage.mysql') end
-    if mode == 'json' then return require('server.storage.json') end
-    return require('server.storage.memory')
+    if mode == 'mysql' then return CrimsonBoot.require('server.storage.mysql') end
+    if mode == 'json' then return CrimsonBoot.require('server.storage.json') end
+    return CrimsonBoot.require('server.storage.memory')
 end
 
 --- Refuse to start where another storage mode still holds players' money.
@@ -827,7 +853,7 @@ local function refuseModeSwitch()
     local found = {}
 
     if mode ~= 'json' then
-        local ok, held = pcall(require('server.storage.json').inspect)
+        local ok, held = pcall(CrimsonBoot.require('server.storage.json').inspect)
         if ok and held then
             if held.lines > 0 or held.owed > 0 or held.unreadable then
                 found[#found + 1] = held.unreadable
@@ -846,7 +872,7 @@ local function refuseModeSwitch()
     -- Only where oxmysql is running: a json server without a database has
     -- nothing there to find, and asking would wait on a connection forever.
     if mode ~= 'mysql' and GetResourceState('oxmysql') == 'started' and MySQL then
-        local ok, held = pcall(require('server.storage.mysql').inspect)
+        local ok, held = pcall(CrimsonBoot.require('server.storage.mysql').inspect)
         if ok and held and (held.lines > 0 or held.owed > 0) then
             found[#found + 1] = ('mysql mode: %d escrow line(s) and %d payout(s) owed, in the '
                 .. 'crimson_* tables'):format(held.lines, held.owed)
@@ -952,7 +978,7 @@ local function reportIntegrations()
     -- up empty is the symptom operators actually report, and until this
     -- line existed there was no way to tell an empty pocket from an export
     -- that was never there.
-    local app = require('server.app')
+    local app = CrimsonBoot.require('server.app')
     local online = modules.identity and modules.identity.online() or {}
     local read = app.probeInventory(online[1])
     if read == nil then
@@ -984,27 +1010,28 @@ function StartCrimsonHitman()
     Storage = selectStorage()
     Storage.open()
 
-    local identity   = require('server.identity')
-    local ratelimit  = require('server.ratelimit')
-    local audit      = require('server.audit')
-    local notify     = require('server.notify')
-    local escrow     = require('server.escrow')
-    local contracts  = require('server.contracts')
-    local ledger     = require('server.ledger')
-    local photos     = require('server.photos')
-    local death      = require('server.completion.death')
-    local photo      = require('server.completion.photo')
-    local kidnap     = require('server.completion.kidnap')
-    local bailout    = require('server.bailout')
-    local informant  = require('server.informant')
-    local amendments = require('server.amendments')
-    local comms      = require('server.comms')
-    local mugshot    = require('server.mugshot')
-    local progression = require('server.progression')
-    local admin      = require('server.admin')
-    local projection = require('server.projection')
-    local app        = require('server.app')
-    local timing     = require('server.timing')
+    local identity   = CrimsonBoot.require('server.identity')
+    local ratelimit  = CrimsonBoot.require('server.ratelimit')
+    local audit      = CrimsonBoot.require('server.audit')
+    local notify     = CrimsonBoot.require('server.notify')
+    local escrow     = CrimsonBoot.require('server.escrow')
+    local review     = CrimsonBoot.require('server.review')
+    local contracts  = CrimsonBoot.require('server.contracts')
+    local ledger     = CrimsonBoot.require('server.ledger')
+    local photos     = CrimsonBoot.require('server.photos')
+    local death      = CrimsonBoot.require('server.completion.death')
+    local photo      = CrimsonBoot.require('server.completion.photo')
+    local kidnap     = CrimsonBoot.require('server.completion.kidnap')
+    local bailout    = CrimsonBoot.require('server.bailout')
+    local informant  = CrimsonBoot.require('server.informant')
+    local amendments = CrimsonBoot.require('server.amendments')
+    local comms      = CrimsonBoot.require('server.comms')
+    local mugshot    = CrimsonBoot.require('server.mugshot')
+    local progression = CrimsonBoot.require('server.progression')
+    local admin      = CrimsonBoot.require('server.admin')
+    local projection = CrimsonBoot.require('server.projection')
+    local app        = CrimsonBoot.require('server.app')
+    local timing     = CrimsonBoot.require('server.timing')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -1012,11 +1039,15 @@ function StartCrimsonHitman()
 
     audit.init(Storage)
     notify.init({ identity = identity })
-    escrow.init(Storage, audit)
+    -- Money events no rule can settle by themselves are left for staff
+    -- here (server/review.lua), from escrow, contracts, buyouts and staff
+    -- settles alike.
+    review.init({ storage = Storage, escrow = escrow, audit = audit })
+    escrow.init(Storage, audit, review)
     progression.init({ storage = Storage, identity = identity, audit = audit })
     contracts.init({ storage = Storage, escrow = escrow, identity = identity,
                      audit = audit, notify = notify, progression = progression,
-                     death = death })
+                     death = death, review = review })
     photos.init({ storage = Storage, audit = audit })
     ledger.init({ storage = Storage, photos = photos, notify = notify })
     death.init({ storage = Storage, identity = identity, contracts = contracts, audit = audit,
@@ -1027,7 +1058,7 @@ function StartCrimsonHitman()
                   audit = audit, notify = notify, ledger = ledger })
     bailout.init({ storage = Storage, identity = identity, contracts = contracts,
                    escrow = escrow, audit = audit, notify = notify, kidnap = kidnap,
-                   death = death })
+                   death = death, review = review })
     informant.init({ storage = Storage, identity = identity, audit = audit, death = death })
     amendments.init({ storage = Storage, identity = identity, contracts = contracts,
                       escrow = escrow, audit = audit, notify = notify })
@@ -1044,7 +1075,7 @@ function StartCrimsonHitman()
         death = death, photo = photo, kidnap = kidnap, bailout = bailout,
         informant = informant, amendments = amendments, comms = comms,
         projection = projection, mugshot = mugshot, progression = progression,
-        app = app, admin = admin, photos = photos,
+        app = app, admin = admin, photos = photos, review = review,
         -- How long each tick job and sampler pass takes, for the console
         -- warning and /ch-diag.
         timing = timing,
@@ -1061,7 +1092,7 @@ function StartCrimsonHitman()
     app.recoveryFailed = false
     app.init(modules)
     admin.init(modules)
-    require('server.bridges').install(modules)
+    CrimsonBoot.require('server.bridges').install(modules)
 
     -- Its own clock, faster than the maintenance tick: attribution is only
     -- as precise as the last condition sample.
@@ -1101,6 +1132,13 @@ function StartCrimsonHitman()
     -- Contracts already held when this process started, so an idle hold
     -- from before a restart is still one the sweep can see.
     contracts.reindexHolds()
+    -- Reviews the last shutdown left part-way resolved, finished as staff
+    -- decided them, now recovery has put back what their lines left.
+    local reviewed, reviewErr = pcall(review.recover)
+    if not reviewed then
+        print(('[crimson-hitman] finishing reviews left part-way failed: %s; /%s finishes each')
+            :format(tostring(reviewErr), tostring(Config.Admin.Commands.review)))
+    end
     app.ready = true
     StartTick()
 
@@ -1471,12 +1509,12 @@ function Tick()
     -- A photo kept in the app past Config.Completion.KeptPhotoDays, where
     -- that is set.
     job('photos.forgetKept', modules.photos.forgetKept)
-    local app = require('server.app')
+    local app = CrimsonBoot.require('server.app')
     -- Who may have the app on their phone. Recomputed here rather than
     -- trusted to a job-change event whose name has differed across
     -- framework versions: a wrong name fails silently in the direction that
     -- costs a player the app with no way to ask for it back.
-    local bridges = require('server.bridges')
+    local bridges = CrimsonBoot.require('server.bridges')
     if bridges.refreshAccess then job('bridges.refreshAccess', bridges.refreshAccess) end
     job('app.sweepHandles', app.sweepHandles)
     job('app.sweepFloodCounters', app.sweepFloodCounters)
@@ -1494,6 +1532,8 @@ function Tick()
     if modules.contracts.retryStuckCreates then
         job('contracts.retryStuckCreates', modules.contracts.retryStuckCreates)
     end
+    -- An item for staff the store would not take when it was opened.
+    if modules.review then job('review.retryUnwritten', modules.review.retryUnwritten) end
     job('expireContracts', ExpireContracts)
     -- A closed contract whose ending raised before it handed its escrow
     -- over: finished as the next start would (Contracts.finishEndings).

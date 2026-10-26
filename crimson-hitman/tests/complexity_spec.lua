@@ -462,6 +462,8 @@ describe('json mode: what a kill payout writes', function()
 
         local steps, current = {}, nil
         Natives.saveFile = function(file, data)
+            -- A whole file is written as <file>.new and renamed over it.
+            file = file:gsub('%.new$', '')
             local step = steps[current]
             step[file] = step[file] or { writes = 0, bytes = 0 }
             step[file].writes = step[file].writes + 1

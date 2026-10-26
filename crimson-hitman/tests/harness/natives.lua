@@ -221,7 +221,15 @@ function Natives.install()
         -- A write into a directory that does not exist goes nowhere and
         -- says nothing, which is what FiveM does rather than raising. A BOOL
         -- native: 1 when written, false when not.
-        if Natives.blocked and Natives.blocked[file] then return false end
+        --
+        -- A file a test refuses is refused under the name the json store
+        -- writes it through as well (<file>.new, renamed over <file>): what
+        -- the test models is the store unable to write that file, and the
+        -- copy is how it writes it.
+        if Natives.blocked and (Natives.blocked[file]
+            or (type(file) == 'string' and Natives.blocked[(file:gsub('%.new$', ''))])) then
+            return false
+        end
         -- The length, as FiveM reads it: -1 (or 0) is "up to the first NUL
         -- byte", which is right for JSON and cuts a picture short at its
         -- fifth byte. Ignoring it here let a photo written with -1 pass.
@@ -263,11 +271,14 @@ function Natives.install()
     -- operating system refuses it, where there is no such file or the
     -- folder it is moving into does not exist: one os.createdir made, or
     -- one some file is already in. Natives.renameRefused models a server
-    -- whose rename fails all the same.
+    -- whose rename fails all the same. Natives.renameKeeps models Windows,
+    -- whose rename refuses a name another file already has rather than
+    -- replacing it, as Linux does.
     os.rename = function(from, to)
         local source, target = inResource(from), inResource(to)
         if not source or not target or Natives.renameRefused
-            or Natives.files[source] == nil then
+            or Natives.files[source] == nil
+            or (Natives.renameKeeps and Natives.files[target] ~= nil) then
             return nil, tostring(from) .. ' -> ' .. tostring(to) .. ': Permission denied', 13
         end
         local folder = target:match('^(.*)/[^/]+$') or ''

@@ -1,8 +1,16 @@
 --- Module loader, and the wait for everything this resource stands on.
 ---
---- FiveM has no package system, so `require_shared` and a small module
+--- FiveM has no package system, so CrimsonBoot.require and a small module
 --- registry stand in. Every server file returns a table and is loaded exactly
 --- once, in dependency order, by server/main.lua.
+---
+--- The loader lives in this resource's one server namespace table rather
+--- than as bare globals. It used to replace the runtime's own `require`
+--- (and add a lowercase `require_shared` beside it), which every other
+--- script in this Lua state saw too: anything that reached for the real
+--- loader got this one, with its resource-root paths and its errors.
+
+CrimsonBoot = {}
 
 local loaded = {}
 local loading = {}
@@ -10,7 +18,7 @@ local loading = {}
 --- Load a module by path relative to the resource root, without the .lua.
 ---@param path string e.g. 'server.escrow'
 ---@return table
-function require(path)
+function CrimsonBoot.require(path)
     if loaded[path] ~= nil then return loaded[path] end
     if loading[path] then
         error(('[crimson-hitman] circular require: %s'):format(path))
@@ -63,9 +71,14 @@ function require(path)
     return done(module)
 end
 
---- Shared modules live under shared/ and are loaded the same way.
-function require_shared(name)
-    return require('shared.' .. name)
+--- Shared modules live under shared/ and are loaded the same way, from the
+--- same registry: this file's own loader, whatever the table field holds.
+local loadModule = CrimsonBoot.require
+
+---@param name string e.g. 'util'
+---@return table
+function CrimsonBoot.requireShared(name)
+    return loadModule('shared.' .. name)
 end
 
 --------------------------------------------------------------------------
@@ -90,8 +103,6 @@ local GRACE_SECONDS = 15
 --- And how often to repeat afterwards, so somebody who looks at the console
 --- late still finds out.
 local REPEAT_SECONDS = 30
-
-CrimsonBoot = {}
 
 --- Which dependencies are not started yet.
 ---@return table[] entries from DEPENDENCIES

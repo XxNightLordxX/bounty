@@ -12,18 +12,32 @@ mode rather than run that way, and the message names this directory.
 `store.json` holds the index — the sequence, which contracts have a file,
 which days have an audit file, and whether `records.json` has been written.
 `records.json` holds the records: the ledger, pending payouts (money owed to
-players who were offline), the stats, the informant reveals and the kill
-photo records (a handle, a state and at most a link or the name of a file in
-`photos/` each, never an image). It is written only when one of those
-changes, so a money write never rewrites the history it carries; a
-`store.json` from an older version that still holds them is moved into it on
-the first start. `contracts/<id>.json` holds one contract each, with its
-escrow, hitmen, amendments and messages, so a write touches only the
-contract that changed. `store.json.prev` and `records.json.prev` are those
-two files as the last start read them: a missing or unreadable `store.json`
-or `records.json` stops the start rather than lose what they held, and these
-are what to restore from. `heartbeat.json` is when the server was last seen
-running.
+players who were offline), the stats, the informant reveals, the kill photo
+records (a handle, a state and at most a link or the name of a file in
+`photos/` each, never an image) and the review queue (money events no rule
+could settle, kept until staff resolve them with `/ch-review`). It is written
+only when one of those changes, so a money write never rewrites the history
+it carries; a `store.json` from an older version that still holds them is
+moved into it on the first start. `contracts/<id>.json` holds one contract
+each, with its escrow, hitmen, amendments and messages, so a write touches
+only the contract that changed. `store.json.prev` and `records.json.prev` are
+those two files as the last start read them: a missing or unreadable
+`store.json` or `records.json` stops the start rather than lose what they
+held, and these are what to restore from. `heartbeat.json` is when the server
+was last seen running.
+
+Each of `store.json`, `records.json`, `contracts/<id>.json` and a day's audit
+file, when it is written whole, is written as `<file>.new` and then renamed
+over `<file>`, so a crash part-way through a write tears the copy and never
+the file. On Windows, where a rename will not replace a file, `<file>` is
+moved aside to `<file>.old` for the moment the rename takes and removed after
+it. A start that finds one of them missing or torn, with a whole `.new` or
+`.old` beside it, puts that back, keeps a torn one as `<file>.torn`, and says
+so in the console; only where there is no whole copy does it stop or set the
+contract aside as described above. A `.new` or `.old` beside a good file is a
+write that never finished, and is left alone. On a server that cannot rename
+files here, each is written in place after its whole `.new` copy, which then
+stays beside it for a start to put back, and the console says so once.
 
 `audit-<day>.jsonl` holds the audit log, one file per day (UTC) and one row
 per line. The flush adds new rows to the end of the day's file, and a money

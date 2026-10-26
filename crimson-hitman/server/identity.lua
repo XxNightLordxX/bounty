@@ -5,7 +5,7 @@
 --- identity out of a client payload (§14.1) — if it is in the payload, it is
 --- a claim, and claims are discarded here rather than validated.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Identity = {}
 

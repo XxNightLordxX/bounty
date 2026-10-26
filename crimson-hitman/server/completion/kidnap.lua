@@ -5,7 +5,7 @@
 --- accepted contracts. Positions and states are read server-side; the hitman
 --- reports nothing.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Kidnap = {}
 

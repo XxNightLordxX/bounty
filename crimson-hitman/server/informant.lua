@@ -4,7 +4,7 @@
 --- server-side, the response is uniform whether or not a name was found, and
 --- the reveal is sticky so repeat purchases cannot enumerate the roster.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Informant = {}
 

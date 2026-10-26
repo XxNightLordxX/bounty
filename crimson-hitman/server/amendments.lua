@@ -5,11 +5,11 @@
 --- needing approval from the creator and every accepted hitman. The target of
 --- a contract is never amendable.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Amendments = {}
 
-local Storage, Identity, Contracts, Escrow, Audit, Notify
+local Storage, Contracts, Escrow, Audit, Notify
 
 --- Contract ids known to carry an open proposal. Walking every contract ever
 --- created on each tick means a query per contract, forever; proposals are
@@ -18,8 +18,8 @@ local Storage, Identity, Contracts, Escrow, Audit, Notify
 local openContracts = {}
 
 function Amendments.init(deps)
-    Storage, Identity, Contracts, Escrow, Audit, Notify =
-        deps.storage, deps.identity, deps.contracts, deps.escrow, deps.audit, deps.notify
+    Storage, Contracts, Escrow, Audit, Notify =
+        deps.storage, deps.contracts, deps.escrow, deps.audit, deps.notify
     openContracts = {}
 end
 
@@ -565,6 +565,7 @@ end
 --- because the contract can move in between.
 ---@return boolean ok
 ---@return string|nil err
+---@return table|nil refusal what the page is told beyond the code
 local function checkAgainst(contract, kind, payload)
     if kind == CH.AMENDMENT.REDUCE_REWARD then
         -- Only the LAST collection, and only one nobody is competing for:
@@ -573,6 +574,16 @@ local function checkAgainst(contract, kind, payload)
         local slot = payload.slot
         if not slot or slot <= (contract.next_slot or 1) or slot ~= slots then
             return false, CH.ERR.INVALID_INPUT
+        end
+        -- Nor one that leaves the contract worth less in money than a
+        -- contract may be placed at (Contracts.belowMinReward). Nobody else
+        -- has to agree on a contract nobody holds, so this applies at once:
+        -- two payouts at half the minimum each, the second given back, was
+        -- the cheap contract the minimum is there to stop.
+        local giving = Escrow.moneyValue(contract.id, { slot = slot })
+        if giving > 0 then
+            local tooSmall, floor = Contracts.belowMinReward(Escrow.moneyValue(contract.id) - giving)
+            if tooSmall then return false, tooSmall, floor end
         end
     elseif kind == CH.AMENDMENT.SHORTEN_DEADLINE then
         -- There has to be a deadline, and cutting it by this much has to
@@ -634,8 +645,8 @@ function Amendments.propose(actor, contractId, kind, payload)
     local clean, payloadErr = Amendments.sanitize(kind, payload, actor)
     if not clean then return nil, payloadErr end
 
-    local fits, fitErr = checkAgainst(contract, kind, clean)
-    if not fits then return nil, fitErr end
+    local fits, fitErr, refusal = checkAgainst(contract, kind, clean)
+    if not fits then return nil, fitErr, refusal end
 
     -- Only the proposer's answer is recorded here. The set of people who
     -- must agree is recomputed when someone responds, so a hitman who joins

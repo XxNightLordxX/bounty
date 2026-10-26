@@ -44,7 +44,7 @@ function Memory.open()
     db = {
         contracts = {}, escrow = {}, hitmen = {}, amendments = {},
         messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {},
-        photos = {}, seq = 0,
+        photos = {}, reviews = {}, seq = 0,
     }
     return true
 end
@@ -1067,6 +1067,67 @@ function Memory.clearReveals(contractId)
     for key, row in pairs(db.reveals) do
         if row.contract_id == contractId then db.reveals[key] = nil end
     end
+    return true
+end
+
+--------------------------------------------------------------------------
+-- The review queue
+--------------------------------------------------------------------------
+
+--- Money events no rule here can settle by itself, kept until staff resolve
+--- them (server/review.lua), by id.
+---
+--- Written once and never over: a write the store reported as failed may
+--- have landed, and the queue tries it again, so a second write of the
+--- same item finds it there and leaves it — resolved meanwhile, it stays
+--- resolved, and nobody is paid for it twice.
+function Memory.writeReview(item)
+    if db.reviews[item.id] then return true end
+    local row = {}
+    for k, v in pairs(item) do row[k] = v end
+    db.reviews[row.id] = row
+    return true
+end
+
+function Memory.readReview(id)
+    return db.reviews[id]
+end
+
+--- Open ones (and any left part-way resolved) oldest first, or every one
+--- newest first, at most `limit`.
+---@param open boolean
+---@param limit integer|nil
+function Memory.reviewItems(open, limit)
+    local out = {}
+    for _, row in pairs(db.reviews) do
+        if not open or row.state == 'open' or row.state == 'resolving' then
+            out[#out + 1] = row
+        end
+    end
+    table.sort(out, function(a, b)
+        if (a.created_at or 0) ~= (b.created_at or 0) then
+            if open then return (a.created_at or 0) < (b.created_at or 0) end
+            return (a.created_at or 0) > (b.created_at or 0)
+        end
+        return a.id < b.id
+    end)
+    if limit and #out > limit then
+        for i = #out, limit + 1, -1 do out[i] = nil end
+    end
+    return out
+end
+
+--- Move an item from `expected` to `next_`, writing how it was resolved, by
+--- whom and when in the same step. Compare-and-set, so two resolutions of
+--- one item cannot both begin.
+---@param fields table { resolution, resolved_by, resolved_at }
+---@return boolean moved
+function Memory.setReviewState(id, expected, next_, fields)
+    local row = db.reviews[id]
+    if not row or row.state ~= expected then return false end
+    row.state = next_
+    row.resolution, row.resolved_by, row.resolved_at =
+        fields.resolution, fields.resolved_by, fields.resolved_at
     return true
 end
 

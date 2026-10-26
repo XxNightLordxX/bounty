@@ -6,10 +6,10 @@
 
 local Progression = {}
 
-local Storage, Identity, Audit
+local Storage, Audit
 
 function Progression.init(deps)
-    Storage, Identity, Audit = deps.storage, deps.identity, deps.audit
+    Storage, Audit = deps.storage, deps.audit
 end
 
 --------------------------------------------------------------------------

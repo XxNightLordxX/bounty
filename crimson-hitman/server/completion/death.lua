@@ -7,11 +7,11 @@
 --- The hitman is never the source of either. A killer asserting "I killed
 --- them" is not evidence and is dropped.
 
-local Util = require_shared('util')
+local Util = CrimsonBoot.requireShared('util')
 
 local Death = {}
 
-local Storage, Identity, Contracts, Audit, Photo, Timing
+local Storage, Identity, Audit, Timing
 
 --- Recent damage the server saw for itself: [victimCid] = { attackerCid, at, weapon, distance }
 local damage = {}
@@ -172,8 +172,8 @@ local function endUpPeriod(cid)
 end
 
 function Death.init(deps)
-    Storage, Identity, Contracts, Audit, Photo =
-        deps.storage, deps.identity, deps.contracts, deps.audit, deps.photo
+    Storage, Identity, Audit =
+        deps.storage, deps.identity, deps.audit
     -- Optional: times each sampler pass for /ch-diag (server/timing.lua).
     Timing = deps.timing
     damage, pending, hitBy = {}, {}, {}
