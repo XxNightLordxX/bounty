@@ -133,6 +133,11 @@ function serverStub() {
     copy.role = 'hitman';
     return copy;
   });
+  // One taken under live transfer only, as the server places them: no
+  // bonus, the rule as a chip, and Deliver alive alone on the top line
+  // where the other card has Verify kill beside it.
+  taken[1].fulfilment = 'alive';
+  taken[1].reward = { baseline: taken[1].reward.baseline, bonus: 0 };
 
   const answers = {
     list: { ok: true, data: { page: 1, pages: 1, contracts: contracts,
@@ -596,6 +601,29 @@ async function main() {
     truthy(escapees.length === 0,
       escapees.length + ' element(s) outside their card: '
       + escapees.slice(0, 4).join(' | '));
+  });
+
+  /* A contract that pays only for a live delivery has one way to finish,
+     where the row was laid out for two side by side. */
+  const lone = await page.evaluate(function () {
+    const deliver = Array.prototype.slice.call(document.querySelectorAll('.actions.is-working > button'))
+      .filter(function (b) {
+        return b.textContent === 'Deliver alive' && b.classList.contains('primary');
+      })[0];
+    if (!deliver) { return null; }
+    const row = deliver.parentNode.getBoundingClientRect();
+    const r = deliver.getBoundingClientRect();
+    const style = getComputedStyle(deliver.parentNode);
+    return { width: r.width, height: r.height,
+             room: row.width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+             beside: deliver.parentNode.querySelectorAll(':scope > button').length };
+  });
+
+  it('gives Deliver alive the whole line where it is the only way to finish', function () {
+    truthy(lone, 'no card taken under live transfer only, so this measures nothing');
+    truthy(lone.beside === 1, 'it shares the line with ' + (lone.beside - 1) + ' other button(s)');
+    atLeast(lone.width, lone.room - 1, 'Deliver alive across its row (px)');
+    atLeast(lone.height, 36, 'Deliver alive height (px)');
   });
 
   await page.click('[data-tab="place"]');

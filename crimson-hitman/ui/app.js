@@ -1616,11 +1616,16 @@
       stamp = Number(g.weapons) > 0 ? 'Weapons' : 'Goods';
     }
     reward.appendChild(el('div', 'amount' + (stamp.charAt(0) === '$' ? '' : ' is-goods'), stamp));
+    // A contract that pays only for a live delivery pays all of it for one,
+    // so nothing on it is "if alive": the server places it with no bonus,
+    // and one it somehow held would be paid on the same delivery as the
+    // rest. The card says the rule once, as a chip, instead.
+    var ifAlive = aliveOnly(contract) ? '' : ' if alive';
     if (paid.bonus > 0) {
       // "If alive", not "alive": "+$75,000 alive" read as a figure with a
       // stray word after it. Not "if delivered alive", which is too long to
       // sit under the stamp at 390px without pushing the target's name down.
-      reward.appendChild(el('div', 'bonus', '+' + money(paid.bonus) + ' if alive'));
+      reward.appendChild(el('div', 'bonus', '+' + money(paid.bonus) + ifAlive));
     }
 
     // What the headline figure does not say goes on a line of its own under
@@ -1656,7 +1661,7 @@
     var goods = goodsLine(paid.goods);
     if (goods) { notes.appendChild(el('div', 'goods ico i-box', goods)); }
     var bonusGoods = goodsLine(paid.bonusGoods);
-    if (bonusGoods) { notes.appendChild(el('div', 'goods ico i-box', '+ ' + bonusGoods + ' if alive')); }
+    if (bonusGoods) { notes.appendChild(el('div', 'goods ico i-box', '+ ' + bonusGoods + ifAlive)); }
     head.appendChild(reward);
     node.appendChild(head);
     if (notes.children.length) { node.appendChild(notes); }
@@ -1697,6 +1702,13 @@
 
     meta.appendChild(chip(contract.mode === 'competitive' ? 'Competitive' : 'Exclusive',
       null, contract.mode === 'competitive' ? 'i-flag' : 'i-lock'));
+
+    // How it can be finished, beside how it is shared: a term of the
+    // contract every party is shown, the target too. Only where a kill does
+    // not pay. A card without it is finished either way, as every card was.
+    if (aliveOnly(contract)) {
+      meta.appendChild(chip('Alive only', null, 'i-usercheck'));
+    }
 
     // "Payout", the Place form's word for it. "Slot 1 of 3" told the
     // client nothing about how many had been collected.
@@ -1888,7 +1900,8 @@
     }
 
     if (contract.role === 'hitman') {
-      // Two ways to finish, and they share the top line.
+      // Two ways to finish, and they share the top line; one, on a contract
+      // that pays only for a live delivery, and it has the line to itself.
       row.className = 'row actions is-working';
 
       // Both through `once`. The camera takes as long as the hitman takes
@@ -1900,11 +1913,19 @@
       //
       // "Verifying", not "Camera open": the label lasts the whole request,
       // and the camera is shut while the photo uploads and is checked.
-      row.appendChild(actionButton('primary', 'Verify kill',
-        'photo:' + contract.id, 'Verifying\u2026',
-        function () { return verifyKill(contract); }));
+      //
+      // Only where a kill can pay. On a contract placed for a live delivery
+      // only, the server opens no kill and issues no photo for one, so the
+      // button could only ever be refused, and it put a kill on the card as
+      // a way to finish. Delivering is the one way, and the card's primary.
+      var killPays = !aliveOnly(contract);
+      if (killPays) {
+        row.appendChild(actionButton('primary', 'Verify kill',
+          'photo:' + contract.id, 'Verifying\u2026',
+          function () { return verifyKill(contract); }));
+      }
 
-      row.appendChild(actionButton(null, 'Deliver alive',
+      row.appendChild(actionButton(killPays ? null : 'primary', 'Deliver alive',
         'kidnap:' + contract.id, 'Starting handover\u2026',
         function () { return armKidnap(contract); }));
 
@@ -1915,7 +1936,7 @@
 
       // How each one is done, for a hitman who has never finished a
       // contract. Every rule was only learned by tapping and failing, in a
-      // notice that is gone in seconds.
+      // notice that is gone in seconds. Worded for this contract's rule.
       var firstJob = howToFinish(contract);
       if (firstJob) { row.appendChild(firstJob); }
       var held = exclusiveReminder(contract);
@@ -2442,6 +2463,13 @@
         kind: 'choice',
         question: 'Take this one anonymously?',
         detail: 'The client will see an operative, not a name.'
+          // What finishes it, before it is taken: the card's chip says it,
+          // and this is where a hitman agrees to the terms. One used to
+          // being paid for a kill would otherwise find out after making one.
+          + (aliveOnly(contract)
+            ? ' This contract pays only for delivering the target alive: '
+              + 'a kill does not complete it.'
+            : '')
           + (anonymityFee('hitman') > 0
             ? ' Anonymity costs ' + money(anonymityFee('hitman')) + ' from your '
               + feeAccount + '.'
@@ -2492,12 +2520,20 @@
     var record = state.ledger && state.ledger.record;
     if (!record || record.completed !== 0) { return null; }
     var kidnap = settings().kidnap || {};
-    var text = 'Kill: a downed target is not dead. Finish them, then stand over '
-      + 'the body and tap Verify kill to photograph it before they are revived. '
-      + 'Alive: restrain them or get them into your vehicle, bring them '
+    var deliver = 'restrain them or get them into your vehicle, bring them '
       + (kidnap.radius ? 'within ' + kidnap.radius + ' m of' : 'to')
       + ' the client, tap Deliver alive and hold '
       + (kidnap.seconds ? 'for ' + kidnap.seconds + 's.' : 'until it finishes.');
+    // On a contract a kill cannot finish, the kill's half of this told a
+    // new hitman the one thing that would never pay. What it does instead
+    // is said, since a kill still happens: they come back, and the contract
+    // is still open.
+    var text = aliveOnly(contract)
+      ? 'This one pays only for delivering them alive. A kill does not complete '
+        + 'it, and it stays open if they die. To deliver, ' + deliver
+      : 'Kill: a downed target is not dead. Finish them, then stand over '
+        + 'the body and tap Verify kill to photograph it before they are revived. '
+        + 'Alive: ' + deliver;
     // Nobody can be met who cannot be found.
     if (contract.creatorAnonymous && settings().relay !== false) {
       text += ' Your client is anonymous. Use Message to agree where to meet '
@@ -3495,9 +3531,14 @@
     // What a kill pays, with the bonus apart, as the card shows it. Added
     // together, a hitman was told "Pays $75,000" on a contract whose kill
     // pays $50,000.
+    //
+    // A contract that pays only for a live delivery pays all of it for
+    // that, so nothing is "if alive", and what it pays for is said instead.
     var reward = contract.reward || {};
+    var bonusPaid = Number(reward.bonus) || 0;
     var pays = money(Number(reward.baseline) || 0)
-      + (Number(reward.bonus) > 0 ? ' (+' + money(Number(reward.bonus)) + ' if alive)' : '');
+      + (bonusPaid > 0 ? ' (+' + money(bonusPaid) + (aliveOnly(contract) ? ')' : ' if alive)') : '')
+      + (aliveOnly(contract) ? ' for a live delivery' : '');
 
     // The most a stake can be, as Contracts.clampPenalty holds it: offered
     // above that, the server applies the ceiling instead of the figure typed.
@@ -4117,7 +4158,11 @@
     var base = Number((contract.reward || {}).baseline) || 0;
     // The bonus is a share of the money base, so with none there is nothing
     // to take a share of, and the server refuses.
-    var bonusRoom = bonusCap > bonusNow && base > 0;
+    //
+    // Nor on a contract that pays only for a live delivery: it pays all of
+    // its reward for that, so there is no bonus to raise, and the server
+    // refuses one (no_bonus). Adding to the reward is the way to offer more.
+    var bonusRoom = bonusCap > bonusNow && base > 0 && !aliveOnly(contract);
 
     if (!usable.length && !items.length && !weapons.length && !bonusRoom) {
       return say('You have nothing this server takes as a reward.');
@@ -5099,6 +5144,16 @@
     pay.appendChild(el('div', 'hint',
       'Every payout is funded and escrowed up front. More hitmen may accept than there are ' +
       'payouts — the first to finish are paid.'));
+    // What a payout is paid for, on a server that places contracts for a
+    // live delivery only. Said where the money is set, since it is what the
+    // money buys, and in place of the bonus field, whose hint was the only
+    // thing that told a creator they have to be at the handover.
+    if (placingAliveOnly()) {
+      pay.appendChild(el('div', 'hint',
+        'Contracts here pay only for delivering the target alive: a kill does not '
+        + 'complete one. Delivered means brought to you, so you have to be there in '
+        + 'person for the handover.'));
+    }
 
     var slotBox = el('div');
     slotBox.id = 'slots';
@@ -5116,7 +5171,11 @@
     // with ||, it offered the box at 50 with no ceiling.
     var caps = state.wallet && state.wallet.caps;
     var bonusCap = caps && typeof caps.bonusPercent === 'number' ? caps.bonusPercent : null;
-    if (bonusCap === 0) {
+    // And none where contracts are placed for a live delivery only: the
+    // whole reward is paid for that, so there is nothing to pay on top, and
+    // the server places them with no bonus whatever is typed here.
+    var bonusOffered = bonusCap !== 0 && !placingAliveOnly();
+    if (!bonusOffered) {
       delete state.draft.bonus;
     } else {
       // Opens at 50 or the ceiling, whichever is lower: a max attribute
@@ -5149,8 +5208,8 @@
       // is said once it is placed and on the client's card.
       terms.appendChild(el('div', 'hint',
         'What the target can pay to close this early. It is kept between the '
-        + 'cash and bank you put up (kidnapping bonus included) and a few times '
-        + 'that, and is moved to the nearest limit if outside.'));
+        + 'cash and bank you put up' + (placingAliveOnly() ? '' : ' (kidnapping bonus included)')
+        + ' and a few times that, and is moved to the nearest limit if outside.'));
     } else {
       delete state.draft.bailout;
     }
@@ -5429,9 +5488,13 @@
     // always promised and the server has always escrowed and paid: the form
     // offered one percentage and nothing else, so a rifle for bringing them
     // in breathing could not be put up. Not on a server with no kidnapping
-    // bonus, the same rule the percentage field follows.
+    // bonus, the same rule the percentage field follows — which includes
+    // one placing contracts for a live delivery only, where everything in a
+    // payout is paid for that and the server refuses goods set apart for it
+    // (no_bonus). Picks go into the payout itself there.
     var bonusCap = typeof caps.bonusPercent === 'number' ? caps.bonusPercent : null;
-    if ((items.length > 0 || weapons.length > 0) && bonusCap !== 0) {
+    if (placingAliveOnly()) { picked.aliveOnly = false; }
+    if ((items.length > 0 || weapons.length > 0) && bonusCap !== 0 && !placingAliveOnly()) {
       var alive = document.createElement('input');
       alive.type = 'checkbox'; alive.id = 'slot-alive-' + index;
       alive.checked = picked.aliveOnly === true;
@@ -6052,6 +6115,10 @@
      typed, a creator who could cover the ceiling was refused for the rest,
      and one who could cover it all was shown more than they got. */
   function bonusPercent() {
+    // None where contracts are placed for a live delivery only, as the
+    // server places them: the field is not drawn, and a figure left in the
+    // draft from before is not one anybody can see.
+    if (placingAliveOnly()) { return 0; }
     var typed = num('bonus') || 0;
     var caps = state.wallet && state.wallet.caps;
     var cap = caps && typeof caps.bonusPercent === 'number' ? caps.bonusPercent : null;
@@ -6097,6 +6164,25 @@
   function advised(stage) {
     var a = settings().advisory;
     return !a || a[stage] !== false;
+  }
+
+  /* Whether a contract pays only for delivering its target alive: a term
+     it was placed under, like its reward, sent on every card as
+     `fulfilment` ('alive', or 'either' where a kill completes it too).
+     Read the way the server reads it (Util.fulfilmentRule): a card without
+     one is a contract from before the rule, accepted on the old terms, so
+     only 'either' or nothing means a kill can pay. */
+  function aliveOnly(contract) {
+    var rule = contract && contract.fulfilment;
+    return rule !== undefined && rule !== null && rule !== 'either';
+  }
+
+  /* The same for a contract placed now, from the server's rule for new
+     ones, which comes with the board's settings. A server that does not
+     say is one from before the rule, where every contract was 'either'. */
+  function placingAliveOnly() {
+    var rule = settings().fulfilment;
+    return rule !== undefined && rule !== null && rule !== 'either';
   }
 
   /* What choosing anonymity costs, from the server's settings; 0 where it

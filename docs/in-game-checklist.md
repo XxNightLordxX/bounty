@@ -133,7 +133,12 @@ delivering the target alive to the client. Run these before changing it.
 - [ ] `/ch-diag` says `completion: alive` and that the kill photo settings
       are not used
 - [ ] The Place form offers no kidnapping bonus and no "alive only" marking
-      on goods, and the placed contract holds no bonus line
+      on goods, says contracts pay only for delivering the target alive, and
+      the placed contract holds no bonus line
+- [ ] The contract's card says **Alive only** on the board, under Mine and
+      under On Me, with nothing priced "if alive"; the accept dialog says a
+      kill does not complete it; the hitman's card has **Deliver alive** alone,
+      and a hitman who has never finished one is told how to deliver
 - [ ] Place a contract, take it with a second character, **restrain** the
       target (cuffs) and bring them to the client: the handover arms, counts
       down and pays the **whole reward**; the contract closes

@@ -9073,6 +9073,321 @@ async function main() {
     drewCleanly(app); drewCleanly(held); drewCleanly(broke); drewCleanly(working); drewCleanly(pushed);
   })();
 
+  /* Live transfer only (Config.Completion.Fulfilment, shipped as 'alive').
+
+     Each contract carries the rule it was placed under as `fulfilment`, and
+     the board's settings carry the rule a contract placed now gets. The
+     card, the accept dialog, Mine and the how-to follow the contract; the
+     Place form follows the settings. Under 'alive' a kill completes
+     nothing, so nothing offers one and nothing is priced "if alive"; under
+     'either' the page is as it was. A card with no `fulfilment` is a
+     contract from before the rule and reads as 'either', whatever new ones
+     are placed under. */
+  await (async function liveTransferOnly() {
+    const KIDNAP = { radius: 10, seconds: 30 };
+    function contractFor(rule, over) {
+      const c = {
+        id: 'ct00000001', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
+        // As the server places them: no bonus under 'alive'.
+        reward: rule === 'alive' ? { baseline: 5000, bonus: 0 } : { baseline: 5000, bonus: 2500 },
+        bonusPercent: rule === 'alive' ? 0 : 50,
+        slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 0, hitmenMax: 5,
+        targetName: 'Dana Reyes', targetProtected: false,
+        creatorName: 'Vic Marlowe', role: 'public',
+        deadline: Math.floor(Date.now() / 1000) + 7500
+      };
+      if (rule !== undefined) { c.fulfilment = rule; }
+      return Object.assign(c, over || {});
+    }
+    function boardFor(rule, contracts) {
+      const settings = { kidnap: KIDNAP };
+      if (rule !== undefined) { settings.fulfilment = rule; }
+      return { ok: true, data: { page: 1, pages: 1, settings: settings, contracts: contracts || [] } };
+    }
+    function labels(app) {
+      return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+    }
+    function button(app, label) {
+      return app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === label;
+      })[0] || null;
+    }
+    function chips(app) {
+      return app.view.all().filter(function (n) { return n.classList.contains('chip'); })
+        .map(function (n) { return n.textContent; });
+    }
+
+    // The board, and the dialog that takes a contract from it.
+    async function onBoard(rule, cardRule) {
+      const app = boot({ list: boardFor(rule, [contractFor(cardRule)]), mine: MINE,
+        ledger: LEDGER, accept: { ok: true, data: { myAnonymous: true } } });
+      await settle(); await settle();
+      return app;
+    }
+    const aliveBoard = await onBoard('alive', 'alive');
+    it('alive: the board card says the contract is alive only', function () {
+      truthy(chips(aliveBoard).indexOf('Alive only') !== -1, chips(aliveBoard).join(' | '));
+    });
+    it('alive: and prices nothing "if alive"', function () {
+      falsy(aliveBoard.view.textContent.indexOf('if alive') !== -1, aliveBoard.view.textContent);
+    });
+    click(aliveBoard, 'Accept contract');
+    await settle();
+    it('alive: the accept dialog says a kill does not complete it', function () {
+      truthy(aliveBoard.view.textContent.indexOf('This contract pays only for delivering the '
+        + 'target alive: a kill does not complete it.') !== -1, aliveBoard.view.textContent);
+    });
+
+    const eitherBoard = await onBoard('either', 'either');
+    it('either: the board card is as it was, bonus "if alive" and no rule chip', function () {
+      truthy(eitherBoard.view.textContent.indexOf('+$2,500 if alive') !== -1,
+        eitherBoard.view.textContent);
+      falsy(chips(eitherBoard).indexOf('Alive only') !== -1, chips(eitherBoard).join(' | '));
+    });
+    click(eitherBoard, 'Accept contract');
+    await settle();
+    it('either: and the accept dialog says nothing about it', function () {
+      truthy(eitherBoard.view.textContent.indexOf('Take this one anonymously?') !== -1,
+        eitherBoard.view.textContent);
+      falsy(eitherBoard.view.textContent.indexOf('pays only for delivering') !== -1,
+        eitherBoard.view.textContent);
+    });
+
+    // A hitman's own card under Mine, by a hitman who has not finished one,
+    // so the how-to is drawn.
+    async function working(rule, cardRule) {
+      const held = contractFor(cardRule, { role: 'hitman', state: 'accepted',
+        hitmenActive: 1, myAlias: 'Operative #1', myAnonymous: true });
+      const app = boot({ list: boardFor(rule), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [held], onMe: [] } },
+        amendments: { ok: true, data: [] }, armKidnap: { ok: true, data: {} } });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      return app;
+    }
+    const aliveWork = await working('alive', 'alive');
+    it('alive: Mine offers Deliver alive and no Verify kill', function () {
+      const shown = labels(aliveWork);
+      falsy(shown.indexOf('Verify kill') !== -1, 'a kill can never pay here: ' + shown.join(' | '));
+      truthy(button(aliveWork, 'Deliver alive'), shown.join(' | '));
+    });
+    it('alive: and Deliver alive is the card\'s primary', function () {
+      truthy(button(aliveWork, 'Deliver alive').classList.contains('primary'),
+        button(aliveWork, 'Deliver alive').className);
+    });
+    it('alive: the how-to says only a live delivery pays, with the server\'s handover terms', function () {
+      const text = aliveWork.view.textContent;
+      truthy(text.indexOf('This one pays only for delivering them alive. A kill does not '
+        + 'complete it, and it stays open if they die. To deliver, restrain them or get them '
+        + 'into your vehicle, bring them within 10 m of the client, tap Deliver alive and '
+        + 'hold for 30s.') !== -1, text);
+      falsy(text.indexOf('Verify kill') !== -1, 'nothing tells them to photograph a body: ' + text);
+      truthy(chips(aliveWork).indexOf('Alive only') !== -1, chips(aliveWork).join(' | '));
+    });
+    click(aliveWork, 'Deliver alive');
+    await settle(); await settle();
+    it('alive: Deliver alive still starts the handover', function () {
+      eq(aliveWork.sent.filter(function (s) { return s.name === 'armKidnap'; }).length, 1);
+    });
+    const aliveTerms = await working('alive', 'alive');
+    click(aliveTerms, 'Propose change');
+    it('alive: a proposal states what it pays for, not a bonus "if alive"', function () {
+      const text = aliveTerms.view.textContent;
+      truthy(text.indexOf('Pays $5,000 for a live delivery') !== -1, text);
+      falsy(text.indexOf('if alive') !== -1, text);
+    });
+
+    const eitherWork = await working('either', 'either');
+    it('either: Mine offers both, Verify kill first', function () {
+      truthy(button(eitherWork, 'Verify kill').classList.contains('primary'), labels(eitherWork).join(' | '));
+      truthy(button(eitherWork, 'Deliver alive'), labels(eitherWork).join(' | '));
+      falsy(button(eitherWork, 'Deliver alive').classList.contains('primary'),
+        'one crimson button on a card');
+    });
+    it('either: the how-to explains both ways, as it did', function () {
+      truthy(eitherWork.view.textContent.indexOf('Kill: a downed target is not dead. Finish '
+        + 'them, then stand over the body and tap Verify kill to photograph it before they '
+        + 'are revived. Alive: restrain them or get them into your vehicle, bring them '
+        + 'within 10 m of the client, tap Deliver alive and hold for 30s.') !== -1,
+        eitherWork.view.textContent);
+    });
+    const eitherTerms = await working('either', 'either');
+    click(eitherTerms, 'Propose change');
+    it('either: a proposal states the bonus "if alive", as it did', function () {
+      truthy(eitherTerms.view.textContent.indexOf('Pays $5,000 (+$2,500 if alive)') !== -1,
+        eitherTerms.view.textContent);
+    });
+
+    // The card follows the contract's own rule, not the server's rule for
+    // new ones: a server switched to 'alive' still pays a kill on what was
+    // taken before, and one switched back still does not on what was not.
+    const older = await working('alive', undefined);
+    it('a contract stored before the rule still offers Verify kill on an alive server', function () {
+      truthy(button(older, 'Verify kill'), labels(older).join(' | '));
+      falsy(chips(older).indexOf('Alive only') !== -1, chips(older).join(' | '));
+      truthy(older.view.textContent.indexOf('Kill: a downed target is not dead.') !== -1,
+        older.view.textContent);
+    });
+    const kept = await working('either', 'alive');
+    it('an alive contract offers no kill on a server since switched to either', function () {
+      falsy(button(kept, 'Verify kill'), labels(kept).join(' | '));
+      truthy(chips(kept).indexOf('Alive only') !== -1, chips(kept).join(' | '));
+    });
+
+    // The client's own card, and adding to it.
+    async function placed(rule) {
+      const own = contractFor(rule, { role: 'creator', hitmen: [] });
+      const app = boot({ list: boardFor(rule), ledger: LEDGER,
+        mine: { ok: true, data: { created: [own], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] },
+        rewardBreakdown: { ok: true, data: { editable: true, slots: 1, currentSlot: 1,
+          lines: [{ id: 'ct00000001:1', slot: 1, portion: 'baseline',
+                    source: 'cash', amount: 5000, withdrawable: true }] } },
+        rewardOptions: { ok: true, data: { cash: 100000, bank: 50000, dirty: 0,
+          items: [], weapons: [], inventoryRead: true,
+          caps: { bonusPercent: 100, cash: 250000, bank: 500000, itemsEnabled: false,
+                  weaponsEnabled: false, cashEnabled: true, bankEnabled: true,
+                  dirtyEnabled: false } } }
+      });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      return app;
+    }
+    const aliveOwn = await placed('alive');
+    it('alive: the client\'s card under Mine says it is alive only', function () {
+      truthy(chips(aliveOwn).indexOf('Alive only') !== -1, chips(aliveOwn).join(' | '));
+    });
+    click(aliveOwn, 'Change reward'); await settle(); await settle();
+    click(aliveOwn, 'Add to it'); await settle(); await settle();
+    it('alive: adding to it offers money, and no kidnapping bonus to raise', function () {
+      const shown = labels(aliveOwn);
+      truthy(shown.indexOf('Cash') !== -1 && shown.indexOf('Bank') !== -1, shown.join(' | '));
+      falsy(shown.indexOf('Kidnapping bonus') !== -1, 'the server refuses one: ' + shown.join(' | '));
+    });
+    const eitherOwn = await placed('either');
+    click(eitherOwn, 'Change reward'); await settle(); await settle();
+    click(eitherOwn, 'Add to it'); await settle(); await settle();
+    it('either: adding to it still offers the kidnapping bonus', function () {
+      truthy(labels(eitherOwn).indexOf('Kidnapping bonus') !== -1, labels(eitherOwn).join(' | '));
+    });
+
+    // The target is shown the term like the others.
+    const hunted = boot({ list: boardFor('alive'), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [
+        contractFor('alive', { role: 'target', hitmenActive: 1, creatorName: undefined,
+          creatorAnonymous: true, bailoutAmount: 15000, bailoutAvailable: true })] } } });
+    await settle(); await settle(); await settle();
+    tab(hunted, 'onme');
+    await settle();
+    it('alive: the target\'s card says it too', function () {
+      truthy(chips(hunted).indexOf('Alive only') !== -1, chips(hunted).join(' | '));
+    });
+
+    // The Place form, from the settings.
+    function chooseDana(app) {
+      const query = pick(app, 'target-query');
+      query.value = 'Dana';
+      query.oninput();
+      app.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+    }
+    async function placing(rule, list) {
+      const app = placeForm({
+        list: list || boardFor(rule),
+        create: function (body) {
+          app.body = body;
+          return { ok: true, data: { penaltyAmount: 0, secondsLeft: 10800 } };
+        }
+      });
+      await settle(); await settle();
+      tab(app, 'place');
+      await settle(); await settle();
+      chooseDana(app);
+      await settle(); await settle();
+      app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Dana Reyes') === 0;
+      })[0].onclick();
+      return app;
+    }
+    const total = function (app) { return app.document.getElementById('place-total').textContent; };
+
+    const alivePlace = await placing('alive');
+    it('alive: the Place form draws no bonus and no alive-only marking', function () {
+      falsy(alivePlace.document.getElementById('bonus'), 'the bonus field is drawn');
+      falsy(alivePlace.document.getElementById('slot-alive-1'), 'the alive-only toggle is drawn');
+      falsy(alivePlace.view.textContent.indexOf('Kidnapping bonus') !== -1, alivePlace.view.textContent);
+      falsy(alivePlace.view.textContent.indexOf('Only if delivered alive') !== -1,
+        alivePlace.view.textContent);
+      falsy(alivePlace.view.textContent.indexOf('kidnapping bonus included') !== -1,
+        'the buyout hint names a bonus there is none of: ' + alivePlace.view.textContent);
+    });
+    it('alive: and says contracts pay for delivering the target alive', function () {
+      truthy(alivePlace.view.textContent.indexOf('Contracts here pay only for delivering the '
+        + 'target alive: a kill does not complete one.') !== -1, alivePlace.view.textContent);
+    });
+    pick(alivePlace, 'slot-cash-1', 40000);
+    pick(alivePlace, 'slot-item-1').value = 'lockpick';
+    press(alivePlace, 'slot-item-add-1');
+    it('alive: the total is the reward alone, with nothing "alive only"', function () {
+      eq(total(alivePlace), 'Taken from you now: $40,000 cash and Lockpick.');
+      falsy(alivePlace.view.textContent.indexOf('alive only') !== -1, alivePlace.view.textContent);
+    });
+    press(alivePlace, 'place-submit');
+    await settle(); await settle();
+    it('alive: it is placed with no bonus, the goods in the payout itself', function () {
+      truthy(alivePlace.body, 'nothing was placed');
+      eq(alivePlace.body.bonusPercent, 0);
+      const slot = alivePlace.body.reward.slots[0];
+      eq(slot.baseline.cash, 40000);
+      eq(JSON.stringify(slot.baseline.items), JSON.stringify([{ name: 'lockpick', count: 1 }]));
+      falsy(slot.bonus, 'nothing set apart for a live delivery: ' + JSON.stringify(slot));
+    });
+
+    const eitherPlace = await placing('either');
+    it('either: the Place form draws the bonus and the alive-only marking, as it did', function () {
+      truthy(eitherPlace.document.getElementById('bonus'), 'no bonus field');
+      truthy(eitherPlace.document.getElementById('slot-alive-1'), 'no alive-only toggle');
+      truthy(eitherPlace.view.textContent.indexOf('kidnapping bonus included') !== -1,
+        eitherPlace.view.textContent);
+      falsy(eitherPlace.view.textContent.indexOf('Contracts here pay only') !== -1,
+        eitherPlace.view.textContent);
+    });
+    pick(eitherPlace, 'slot-cash-1', 40000);
+    press(eitherPlace, 'place-submit');
+    await settle(); await settle();
+    it('either: and places the bonus it shows', function () {
+      eq(eitherPlace.body.bonusPercent, 50);
+    });
+
+    /* The rule arrives with the board. A form opened before it did drew
+       the bonus, and a figure typed there is not sent once the board says
+       contracts here carry none. */
+    let answer = null;
+    const early = await placing(undefined, function () {
+      return new Promise(function (resolve) { answer = resolve; });
+    });
+    pick(early, 'bonus', 40);
+    answer(boardFor('alive'));
+    await settle(); await settle(); await settle();
+    it('alive: a bonus typed before the board arrived is taken off the form', function () {
+      falsy(early.document.getElementById('bonus'), 'still drawn once the rule is known');
+    });
+    pick(early, 'slot-cash-1', 40000);
+    press(early, 'place-submit');
+    await settle(); await settle();
+    it('alive: and is not sent', function () {
+      truthy(early.body, 'nothing was placed');
+      eq(early.body.bonusPercent, 0);
+    });
+
+    drewCleanly(aliveBoard); drewCleanly(eitherBoard); drewCleanly(aliveWork);
+    drewCleanly(eitherWork); drewCleanly(older); drewCleanly(kept); drewCleanly(aliveOwn);
+    drewCleanly(eitherOwn); drewCleanly(hunted); drewCleanly(alivePlace);
+    drewCleanly(eitherPlace); drewCleanly(early);
+  })();
+
   /* lb-phone's light theme, its default. It draws its status bar and home
      indicator onto the page in black, and the page is dark, so the page
      marks its root with the theme and the stylesheet lays a paper band

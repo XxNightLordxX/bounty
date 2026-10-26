@@ -220,7 +220,10 @@ brings them to the client alive and holds them there for the handover
 countdown. Killing the target never completes it: they die and respawn as
 normal, the contract stays open, and there is no **Verify kill**. The whole
 reward is paid on delivery, so there is no separate kidnapping bonus, and
-the kill photo settings are not used. Set it to `'either'` to turn kills back
+the kill photo settings are not used. In the app, every card of such a
+contract is marked **Alive only**, the accept dialog says a kill does not
+complete it, the hitman's card offers **Deliver alive** alone, and the Place
+form says what a contract pays for instead of offering a bonus. Set it to `'either'` to turn kills back
 on: then a kill, photographed with **Verify kill**, or a live handover
 completes a contract, and a handover pays the kidnapping bonus on top. Each
 contract keeps the rule it was placed under, so changing the setting changes
