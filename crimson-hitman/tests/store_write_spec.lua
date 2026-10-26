@@ -180,6 +180,59 @@ describe('writing the json store', function()
         end
         truthy(closed, 'and it has to say it has stopped, not just go quiet')
     end)
+
+    --- An antivirus, a backup tool or an editor holding one contract file on
+    --- Windows stopped the save at that file: every contract after it in
+    --- pairs() order had its escrow in memory only, on every save while the
+    --- file stayed locked, and the save answered true.
+    it('one locked contract file does not stop another contract\'s escrow reaching disk; save answers false', function()
+        local store = freshStore()
+        for i = 0, 5 do
+            store.writeContract({ id = 'ctlock0' .. i, creator_cid = 'C', target_cid = 'T',
+                state = CH.STATE.ACTIVE, created_at = os.time() })
+        end
+        truthy(store.save(true))
+        Natives.blocked = { ['data/contracts/ctlock00.json'] = true }
+        Env.console = {}
+        store.writeMessage({ contract_id = 'ctlock00', thread_id = 't', from_cid = 'C',
+            from_alias = 'Client', body = 'x', sent_at = os.time() })
+        for i = 1, 5 do
+            local id = 'ctlock0' .. i
+            store.writeEscrow(id, { { id = id .. ':1', contract_id = id, slot = 1,
+                portion = 'baseline', source = 'bank', amount = 1000 * i,
+                state = CH.ESCROW_STATE.HELD } })
+            truthy((Natives.files['data/contracts/' .. id .. '.json'] or ''):find(id .. ':1', 1, true),
+                id .. '\'s money write is on disk')
+        end
+        local saved, file = store.save(true)
+        falsy(saved, 'a save that left a dirty file unwritten did not save')
+        eq(file, 'data/contracts/ctlock00.json', 'and says which')
+        local said = {}
+        for _, line in ipairs(Env.console) do
+            if line:find('could not be written', 1, true) or line:find('could not write', 1, true) then
+                said[#said + 1] = line
+            end
+        end
+        eq(#said, 1, 'one console line for it: ' .. table.concat(said, ' | '))
+        truthy(said[1]:find('ctlock00', 1, true) and said[1]:find('next flush retries', 1, true),
+            said[1])
+
+        Natives.blocked = {}
+        truthy(store.save(true), 'once it can be written, it is')
+        truthy((Natives.files['data/contracts/ctlock00.json'] or ''):find('"body":"x"', 1, true))
+    end)
+
+    --- The admin panel's Flush button reads what flush answers.
+    it('a flush that could not write answers false, naming the file', function()
+        local store = freshStore()
+        truthy(store.flush(), 'nothing to write is nothing left unwritten')
+        Natives.blocked = { ['data/store.json'] = true }
+        store.nextId('zz')
+        local saved, file = store.flush()
+        Natives.blocked = {}
+        falsy(saved)
+        eq(file, 'data/store.json')
+    end)
 end)
 
 
@@ -692,6 +745,55 @@ describe('a write the server stopped part-way', function()
         for _, row in ipairs(store.readAudit()) do actions[#actions + 1] = row.action end
         eq(table.concat(actions, ','), 'first,second', 'every row, in its own file')
         truthy(Natives.files[day], 'the day file is back')
+    end)
+
+    --- A new contract is its file first, then the index naming it. Stopped
+    --- between the two, the start kept the old whole index, ignored the
+    --- whole store.json.new that named the contract, and never read the
+    --- file: the contract, its escrow and the client's money were gone.
+    local function placeNew()
+        local s = require('crimson-hitman.server.storage.json')
+        local sync = Config.Database.Json.SyncOnFinancialWrite
+        Config.Database.Json.SyncOnFinancialWrite = false
+        s.writeContract({ id = 'ctcrash4', creator_cid = 'C', target_cid = 'T',
+            state = CH.STATE.ACTIVE, created_at = os.time() })
+        s.writeEscrow('ctcrash4', { { id = 'ctcrash4:1', contract_id = 'ctcrash4', slot = 1,
+            portion = 'baseline', source = 'bank', amount = 50000, state = CH.ESCROW_STATE.HELD } })
+        Config.Database.Json.SyncOnFinancialWrite = sync
+        s.save(true)
+    end
+
+    it('a new contract stopped before its index\'s rename is there at the next start', function()
+        local store, ok, err = stopWriting(atRename('data/store.json'), nil, placeNew)
+        truthy(ok, tostring(err))
+        truthy(store.readContract('ctcrash4'), 'the contract the whole store.json.new names')
+        eq(store.readEscrowLine('ctcrash4:1').amount, 50000, 'with its escrow')
+        truthy(holds(store, 1), 'and everything the old index named')
+        truthy((Natives.files['data/store.json'] or ''):find('ctcrash4', 1, true),
+            'the newer index put in place')
+        truthy(table.concat(Env.console, '\n'):find('newer of the two', 1, true),
+            'and the console says so')
+    end)
+
+    it('a new contract whose index copy was torn is taken back in from its own file', function()
+        local store, ok, err = stopWriting(tornWhile('data/store.json.new'), nil, function()
+            -- And a finished contract's file a prune had not yet removed.
+            Natives.files['data/contracts/ctdone01.json'] = json.encode({
+                contract = { id = 'ctdone01', state = CH.STATE.COMPLETED, created_at = 1 },
+                escrow = { ['ctdone01:1'] = { id = 'ctdone01:1', contract_id = 'ctdone01',
+                    state = CH.ESCROW_STATE.SETTLED, amount = 10 } } })
+            placeNew()
+        end)
+        truthy(ok, tostring(err))
+        truthy(store.readContract('ctcrash4'), 'a file nothing names that holds money is read')
+        eq(store.readEscrowLine('ctcrash4:1').amount, 50000)
+        truthy(table.concat(Env.console, '\n'):find('taken back in: ctcrash4', 1, true),
+            table.concat(Env.console, '\n'))
+        eq(store.readContract('ctdone01'), nil, 'a finished one holding nothing is not')
+        truthy(Natives.files['data/contracts/ctdone01.json'], 'and is left where it is')
+        store.close()
+        truthy((Natives.files['data/store.json'] or ''):find('ctcrash4', 1, true),
+            'the index names it from now on')
     end)
 
     it('another mode, looking before it starts, counts the money in a copy', function()

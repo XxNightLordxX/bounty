@@ -290,6 +290,46 @@ describe('the admin panel rate limit', function()
     end)
 end)
 
+--- "Flush the audit log" kept whether the flush raised, not what it
+--- answered. The json store's flush answers false and never raises, so
+--- "the store did not save" could never be said: staff pressing it before a
+--- restart were told the rows were written while nothing reached the disk.
+describe('flushing the audit log on a store that cannot write', function()
+    it('json: says the store did not save, and names the file', function()
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Config.Database.Mode = 'json'
+        Natives.files, Natives.blocked = {}, {}
+        local s = require('server.main').start()
+        fixture(s)
+        Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:ADMIN001',
+            firstname = 'Sam', lastname = 'Steward' })
+        Env.aces[6] = { ['crimson.admin'] = true }
+        Config.Cooldowns.adminWrite = { per = 10, burst = 500 }
+
+        local fine = ask(6, 'flush')
+        eq(fine.ok, true)
+        falsy(tostring(fine.message):find('did not save', 1, true), tostring(fine.message))
+
+        Natives.blocked = { ['data/store.json'] = true }
+        s.storage.nextId('zz')
+        local refused = ask(6, 'flush')
+        Natives.blocked = {}
+        eq(refused.ok, true, 'the rows were handed to the store')
+        truthy(tostring(refused.message):find('but the store did not save', 1, true),
+            tostring(refused.message))
+        truthy(tostring(refused.message):find('data/store.json could not be written', 1, true),
+            tostring(refused.message))
+    end)
+end)
+
 --------------------------------------------------------------------------
 -- Recovery
 --------------------------------------------------------------------------

@@ -1036,14 +1036,27 @@ H.diag = function(src, data)
     return true, nil, nil, { lines = lines }
 end
 
+--- What the store answered, not only whether it raised: the json store's
+--- flush answers false, with the file it could not write, and never raises,
+--- so "the store did not save" could never be said and staff pressing this
+--- before a restart were told the rows were on disk when nothing was.
 H.flush = function(src)
     local written = deps.audit.flush() or 0
-    local stored = true
-    if deps.storage.flush then stored = pcall(deps.storage.flush) end
+    local stored, file = true, nil
+    if deps.storage.flush then
+        local ran, saved, failed = pcall(deps.storage.flush)
+        stored = ran and saved ~= false
+        file = ran and type(failed) == 'string' and failed or nil
+    end
     deps.audit.staff('admin_log_flushed', staffOf(src), nil, { rows = written })
     deps.audit.flush()
+    local unsaved = ''
+    if not stored then
+        unsaved = ', but the store did not save'
+            .. (file and (': ' .. file .. ' could not be written') or '')
+    end
     return true, nil, ('Audit log flushed: %d row(s) written%s.')
-        :format(written, stored and '' or ', but the store did not save'), { written = written }
+        :format(written, unsaved), { written = written }
 end
 
 --------------------------------------------------------------------------

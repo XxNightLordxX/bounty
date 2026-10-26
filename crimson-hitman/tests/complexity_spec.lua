@@ -934,6 +934,108 @@ describe('complexity: rows a lookup walks', function()
     end)
 end)
 
+--- The json and memory prune walked every message (and shifted the array
+--- for each one it removed), and every amendment, reveal and mute, once per
+--- contract it pruned: 1.2 s of main thread a tick on a 3,000-contract
+--- backlog. And a json money write writes every dirty contract file, each
+--- gathered by a walk of every message in the store.
+describe('complexity: the prune and a money write, in json and memory', function()
+    --- Every read of a row out of the store's message list, counted. The
+    --- list is the store's own (`_raw().messages`) behind a proxy, so the
+    --- store reads and writes it exactly as before.
+    local function countingMessages(store)
+        local raw = store._raw()
+        local backing, reads = raw.messages, 0
+        raw.messages = setmetatable({}, {
+            __index = function(_, k)
+                reads = reads + 1
+                return backing[k]
+            end,
+            __newindex = function(_, k, v) backing[k] = v end,
+            __len = function() return #backing end,
+        })
+        return function() return reads end, function() raw.messages = backing end, backing
+    end
+
+    --- A store holding `contracts` contracts, `each` messages and a mute
+    --- apiece, written without a save per write.
+    local function filled(name, contracts, each, state, resolvedAt)
+        package.loaded['crimson-hitman.server.storage.' .. name] = nil
+        Natives.files = {}
+        local store = require('crimson-hitman.server.storage.' .. name)
+        store.open()
+        withConfig({ { Config.Database.Json, 'SyncOnFinancialWrite', false },
+                     { Config.Relay, 'MaxMessagesPerThread', 0 } }, function()
+            for i = 1, contracts do
+                local id = ('ctbusy%05d'):format(i)
+                store.writeContract({ id = id, creator_cid = 'CREATOR1', target_cid = 'TARGET01',
+                    mode = CH.MODE.EXCLUSIVE, state = state, created_at = 1,
+                    resolved_at = resolvedAt })
+                for _ = 1, each do
+                    store.writeMessage({ contract_id = id, thread_id = id .. '|HITMAN01',
+                        from_cid = 'CREATOR1', from_alias = 'Client', body = 'm', sent_at = 1 })
+                end
+                store.setMute(id, id .. '|HITMAN01', 'CREATOR1', true, 1)
+            end
+        end)
+        return store
+    end
+
+    it('prunes 3,000 finished contracts and 30,000 messages in one walk of each', function()
+        local old = os.time() - (Config.Audit.ContractRetentionDays + 1) * 86400
+        for _, name in ipairs({ 'json', 'memory' }) do
+            local store = filled(name, 3000, 10, CH.STATE.COMPLETED, old)
+            local reads, restore, backing = countingMessages(store)
+            local steps, restorePairs = countingPairs()
+            local ok, err = pcall(store.prune)
+            restorePairs()
+            restore()
+            truthy(ok, tostring(err))
+            eq(#backing, 30000 - 2000, name .. ': a tick\'s 200 contracts went with their messages')
+            truthy(reads() <= 30000,
+                ('%s: the prune read %d message rows for 30,000 messages'):format(name, reads()))
+            -- A few walks of each table (and the index written once), not
+            -- one of the mutes and the reveals per contract pruned: that was
+            -- 600,000 steps here.
+            truthy(steps() <= 40000,
+                ('%s: the prune walked %d rows for 3,000 contracts and 3,000 mutes')
+                :format(name, steps()))
+            eq(#store.allContracts(), 2800, name)
+            falsy(store.readMute('ctbusy00001|HITMAN01', 'CREATOR1'), name .. ': and their mutes')
+            truthy(store.readMute('ctbusy03000|HITMAN01', 'CREATOR1'), name .. ': and only theirs')
+        end
+    end)
+
+    it('json: a money write writes every dirty contract file without walking every message', function()
+        local store = filled('json', 300, 100, CH.STATE.ACTIVE, nil)
+        truthy(store.save(true))
+        -- Each changed by a message, which waits for the capped flush.
+        for i = 1, 300 do
+            local id = ('ctbusy%05d'):format(i)
+            store.writeMessage({ contract_id = id, thread_id = id .. '|HITMAN01',
+                from_cid = 'CREATOR1', from_alias = 'Client', body = 'late', sent_at = 2 })
+        end
+        local reads, restore = countingMessages(store)
+        local written = 0
+        Natives.saveFile = function(file)
+            if file:find('^data/contracts/') then written = written + 1 end
+        end
+        local ok, err = pcall(store.setReason, 'ctbusy00001', 'changed')
+        Natives.saveFile = nil
+        restore()
+        truthy(ok, tostring(err))
+        -- Decided: a money write still writes every dirty file with it, so
+        -- each file stays as the index written at the same moment knows it.
+        eq(written, 300, 'every dirty contract file, the money one with them')
+        eq(reads(), 0, 'each gathered from its own messages, not a walk of all 30,300')
+        local shard = json.decode(Natives.files['data/contracts/ctbusy00150.json'])
+        local keep = tonumber(Config.Relay.MaxMessagesPerThread) or 0
+        eq(#shard.messages, keep > 0 and math.min(101, keep) or 101,
+            'and each holds its own thread, as the thread cap keeps it')
+        eq(shard.messages[#shard.messages].body, 'late', 'the newest among them')
+    end)
+end)
+
 describe('complexity: a start', function()
     --- Recovery read escrow twice for every contract kept, and the amendment
     --- index asked each one for its open proposals: on mysql, some four

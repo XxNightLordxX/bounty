@@ -2178,6 +2178,25 @@ function Escrow.recoverOwed(lines)
     return finished
 end
 
+--- Whether a queued payout's line, which this store does not hold, may be
+--- in a contract file it could not read (json: JsonStore.quarantined).
+---
+--- A row whose line was read and is settled, or is not there, is dropped
+--- when it is met: a payout handed over at once leaves its row behind. One
+--- whose contract's file was set aside is not "not there": restoring the
+--- file brings the line back, and this row is what delivers it then.
+---@param entry table a pending row
+---@return boolean
+local function mayBeUnread(entry)
+    local set = Storage.quarantined and Storage.quarantined() or nil
+    if type(set) ~= 'table' or #set == 0 then return false end
+    if entry.contract_id == nil then return true end
+    for i = 1, #set do
+        if set[i].id == entry.contract_id then return true end
+    end
+    return false
+end
+
 --- Retry queued deliveries for a player who has just come online (§9.3).
 ---@param cid string
 ---@return integer delivered
@@ -2196,7 +2215,7 @@ local function retryPending(mine, cid)
         return a < b
     end)
 
-    local gone, stillTried, left = {}, {}, 0
+    local gone, stillTried, left, unread = {}, {}, 0, {}
     for k = 1, math.min(#queued, Config.PendingEscrow.MaxRetriesPerLogin or 0) do
         local entry = queued[order[k]]
         local line = Storage.readEscrowLine(entry.line_id)
@@ -2263,6 +2282,14 @@ local function retryPending(mine, cid)
                 attempts = attempts + 1
                 stillTried[entry.id] = attempts
             end
+        elseif line == nil and mayBeUnread(entry) then
+            -- Kept for the file to be restored, and not tried again in this
+            -- process: the line comes back only with a start that reads it.
+            -- Marked as tried just now, so it waits behind every other entry
+            -- rather than taking a login's turn each time.
+            unread[entry.id] = true
+            attempts = attempts + 1
+            stillTried[entry.id] = attempts
         else
             Storage.clearPending(entry.id)
             gone[entry.id] = true
@@ -2273,7 +2300,7 @@ local function retryPending(mine, cid)
     -- the ones no longer queued, so this is bounded by the queue.
     for i = 1, #queued do
         local id = queued[i].id
-        if not gone[id] then
+        if not gone[id] and not unread[id] then
             left = left + 1
             if stillTried[id] == nil and tried[id] ~= nil then stillTried[id] = tried[id] end
         end

@@ -874,7 +874,12 @@ describe('finished contracts do not accumulate forever', function()
         local old = os.time() - (Config.Audit.ContractRetentionDays + 1) * DAY
         for _, backend in ipairs(backends()) do
             settled(backend.store, 'ct00000005', old)
-            backend.store.queuePending('CREATOR1', 'ct00000005', 'ct00000005:1')
+            backend.store.writeEscrow('ct00000005', { {
+                id = 'owe00000005', contract_id = 'ct00000005', slot = 0,
+                portion = CH.PORTION.OWED, owed_to = 'CREATOR1',
+                source = 'bank', amount = 20000, state = CH.ESCROW_STATE.HELD,
+            } })
+            backend.store.queuePending('CREATOR1', 'ct00000005', 'owe00000005')
 
             backend.store.prune()
 
@@ -882,6 +887,51 @@ describe('finished contracts do not accumulate forever', function()
                 backend.name .. ': a queued payout points at this contract')
             truthy(#backend.store.readPending('CREATOR1') > 0,
                 backend.name .. ': and the queue entry must survive')
+        end
+    end)
+
+    --- A payout handed over at once leaves its queue entry behind until the
+    --- player's next login. One who never came back held the contract here
+    --- for good, and every mode switch after it, with nothing owed.
+    it('does not keep one for a queue entry whose payout was handed over, in every backend', function()
+        local old = os.time() - (Config.Audit.ContractRetentionDays + 1) * DAY
+        for _, backend in ipairs(backends()) do
+            settled(backend.store, 'ct00000015', old)
+            backend.store.queuePending('TARGET01', 'ct00000015', 'ct00000015:1')
+            backend.store.queuePending('TARGET01', 'ct00000015', 'ct00000015:9')
+
+            backend.store.prune()
+
+            falsy(backend.store.readContract('ct00000015'),
+                backend.name .. ': its line is settled and the other is not there; nothing is owed')
+        end
+    end)
+
+    --- A review item's advice is read against its contract: "if the contract
+    --- shows the buyout, dismiss; if not, refund". Pruned under an open one,
+    --- the item read "contract none" and staff refunded a buyout that had
+    --- already been used.
+    it('keeps one an open review item names until it is resolved, in every backend', function()
+        local old = os.time() - (Config.Audit.ContractRetentionDays + 1) * DAY
+        for _, backend in ipairs(backends()) do
+            local store = backend.store
+            settled(store, 'ct00000016', old)
+            store.writeReview({ id = 'rv00000016', kind = 'bailout_unrecorded',
+                contract_id = 'ct00000016', cids = { payer = 'TARGET01' }, amount = 5000,
+                account = 'bank', created_at = old, state = 'open' })
+
+            store.prune()
+            truthy(store.readContract('ct00000016'), backend.name .. ': open, the item needs it')
+
+            truthy(store.setReviewState('rv00000016', 'open', 'resolving',
+                { resolution = { action = 'dismiss' }, resolved_by = 'STAFF01' }))
+            store.prune()
+            truthy(store.readContract('ct00000016'), backend.name .. ': and while it is resolving')
+
+            truthy(store.setReviewState('rv00000016', 'resolving', 'resolved',
+                { resolution = { action = 'dismiss' }, resolved_by = 'STAFF01', resolved_at = os.time() }))
+            store.prune()
+            falsy(store.readContract('ct00000016'), backend.name .. ': pruned once it is resolved')
         end
     end)
 
@@ -1949,6 +1999,97 @@ describe('mysql schema migration', function()
         eq(#Sim.altered, 0, 'a second run finds nothing left to do')
     end)
 
+    --- A user who may not alter tables is told what to run. With the rename
+    --- refused, the column was also queued as missing, so the list held the
+    --- rename and then ADD COLUMN line_portion: run in order, as the README
+    --- says, it stopped at error 1060 before every ADD after it.
+    it('prints a refused rename once, without the column it would add', function()
+        Sim.install(Natives)
+        Sim.existingSchema({
+            crimson_escrow = { id = true, contract_id = true, portion = true,
+                               source = true, state = true },
+        })
+        Sim.denied = { ALTER = true }
+        local ok, err = reopened()
+        falsy(ok, 'the old shape cannot be used as it is')
+        truthy(err:find('ALTER TABLE crimson_escrow CHANGE COLUMN `portion` line_portion', 1, true),
+            'the rename is printed: ' .. err)
+        falsy(err:find('ADD COLUMN line_portion', 1, true), 'and not the column it makes: ' .. err)
+        local _, named = err:gsub('crimson_escrow%.line_portion', '')
+        eq(named, 1, 'named once among what is missing: ' .. err)
+        truthy(err:find('ALTER TABLE crimson_escrow ADD COLUMN taken_from', 1, true),
+            'every other missing column is still there: ' .. err)
+        truthy(err:find('ALTER TABLE crimson_escrow ADD COLUMN deliver_raises', 1, true), err)
+    end)
+
+    --- Three reads the schema had no index for: the audit log by action (the
+    --- overview, a contract's page, /ch-stuck, /ch-settle), and the prune's
+    --- finished contracts by age and their messages by contract. Each read
+    --- the whole table.
+    it('adds the audit action, resolved and message contract indexes to an older database', function()
+        opened({
+            crimson_audit = { id = true, ts = true, kind = true, action = true,
+                actor_cid = true, contract_id = true, detail = true },
+            crimson_contracts = { id = true, creator_cid = true, target_cid = true,
+                mode = true, state = true, created_at = true, resolved_at = true },
+            crimson_messages = { id = true, contract_id = true, thread_id = true,
+                from_cid = true, from_alias = true, body = true, sent_at = true },
+        }, {
+            crimson_audit = { PRIMARY = true, idx_ts = true, idx_actor = true,
+                idx_audit_contract = true },
+            crimson_contracts = { PRIMARY = true, idx_state = true },
+            crimson_messages = { PRIMARY = true, idx_thread = true },
+        })
+        local sql = {}
+        for _, change in ipairs(Sim.altered) do
+            if change.index then sql[#sql + 1] = change.sql end
+        end
+        local all = table.concat(sql, ' | ')
+        truthy(all:find('ALTER TABLE crimson_audit ADD INDEX idx_audit_action (action)', 1, true), all)
+        truthy(all:find('ALTER TABLE crimson_contracts ADD INDEX idx_resolved (resolved_at)', 1, true), all)
+        truthy(all:find('ALTER TABLE crimson_messages ADD INDEX idx_message_contract (contract_id)',
+            1, true), all)
+
+        -- And a user who may not add them is told the three statements.
+        Sim.install(Natives)
+        Sim.existingSchema({ crimson_audit = { id = true, ts = true, kind = true, action = true,
+            actor_cid = true, contract_id = true, detail = true } },
+            { crimson_audit = { PRIMARY = true, idx_ts = true, idx_actor = true,
+                idx_audit_contract = true } })
+        Sim.denied = { ALTER = true }
+        local ok, err = reopened()
+        falsy(ok)
+        truthy(err:find('ALTER TABLE crimson_audit ADD INDEX idx_audit_action (action);', 1, true), err)
+    end)
+
+    --- Another resource's table under one of these generic names was taken
+    --- for an older version of this one: moved to InnoDB, rebuilt in
+    --- utf8mb4 and given columns, then the start refused on "Multiple primary
+    --- key" as a missing grant, the other resource's table changed for good.
+    it('leaves a same-named table that is not this resource\'s alone, and refuses', function()
+        Sim.install(Natives)
+        Sim.existingSchema({ crimson_settings = { id = true, name = 'latin1', value = 'latin1' } },
+            { crimson_settings = { PRIMARY = true } }, { crimson_settings = 'latin1_swedish_ci' },
+            { crimson_settings = 'MyISAM' })
+        local ok, err = reopened()
+        falsy(ok, 'it is not this resource\'s table')
+        truthy(err:find('table crimson_settings already exists in this database and is not this '
+            .. 'resource\'s', 1, true), err)
+        truthy(err:find('setting_key primary key', 1, true), 'says why: ' .. err)
+        truthy(err:find('Nothing was changed', 1, true), err)
+        eq(#Sim.altered, 0, 'nothing altered')
+        eq(Sim.engines.crimson_settings, 'MyISAM', 'still on its own engine')
+        eq(Sim.schema.crimson_contracts, nil, 'and nothing created either')
+
+        -- migrate() run on its own refuses the same way, before any change.
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local store = require('crimson-hitman.server.storage.mysql')
+        local migrated, again = pcall(store.migrate)
+        falsy(migrated)
+        truthy(tostring(again):find('is not this resource\'s', 1, true), tostring(again))
+        eq(#Sim.altered, 0)
+    end)
+
     --- txAdmin makes the database utf8 (utf8mb3), older MariaDB and XAMPP
     --- latin1. A table inheriting either refused an emoji in a contract
     --- reason or a relay message with error 1366, and latin1 a Polish or
@@ -2690,6 +2831,8 @@ describe('every mysql statement is executable', function()
             function() m.queryAudit({ contract = 'c1', kind = 'financial', action = 'x' }, 50, 10) end,
             function() m.queryAudit({ actor = 'A', from = 0, to = 10 }, nil, 10) end,
             function() m.prune() end,
+            function() m.pruneContracts(os.time()) end,
+            function() m.inspect() end,
             function() m.migrate() end,
         }
 
@@ -3199,6 +3342,43 @@ describe('audit retention', function()
             end
         end
         Config.Audit.RetentionDays = 30
+    end)
+
+    --- One DELETE took the whole backlog: after a long downtime, or with
+    --- retention first switched on, 900,000 rows in twelve seconds with the
+    --- tick waiting on it. A batch a tick, oldest first.
+    it('mysql: prunes a backlog 5,000 rows a tick, oldest first', function()
+        Exec.install(Natives)
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local m = require('crimson-hitman.server.storage.mysql')
+        m.open()
+        Config.Audit.RetentionDays = 30
+        local aged = os.time() - 40 * 86400
+        for i = 1, 12000 do
+            Exec.tables.crimson_audit[i] = { id = i, ts = aged + i, kind = 'financial',
+                action = 'old_row', detail = '{}' }
+        end
+        Exec.tables.crimson_audit[12001] = { id = 12001, ts = os.time(), kind = 'financial',
+            action = 'new_row', detail = '{}' }
+        local function rows()
+            local n, oldest = 0, nil
+            for _, row in pairs(Exec.tables.crimson_audit) do
+                if row.action == 'old_row' then
+                    n = n + 1
+                    if not oldest or row.ts < oldest then oldest = row.ts end
+                end
+            end
+            return n, oldest
+        end
+        m.prune()
+        local left, oldest = rows()
+        eq(left, 7000, 'one batch a tick')
+        eq(oldest, aged + 5001, 'the oldest went first')
+        m.prune()
+        eq((rows()), 2000)
+        m.prune()
+        eq((rows()), 0, 'and the backlog drains')
+        truthy(Exec.tables.crimson_audit[12001], 'a row inside the retention age is kept')
     end)
 end)
 

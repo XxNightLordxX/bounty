@@ -26,20 +26,40 @@ only the contract that changed. `store.json.prev` and `records.json.prev` are
 those two files as the last start read them: a missing or unreadable
 `store.json` or `records.json` stops the start rather than lose what they
 held, and these are what to restore from. `heartbeat.json` is when the server
-was last seen running.
+was last seen running; where a crash left it empty, a start dates the
+downtime from its last whole copy, else from the newest audit row or the time
+`store.json` was last written, and says so in the console.
 
-Each of `store.json`, `records.json`, `contracts/<id>.json` and a day's audit
-file, when it is written whole, is written as `<file>.new` and then renamed
-over `<file>`, so a crash part-way through a write tears the copy and never
-the file. On Windows, where a rename will not replace a file, `<file>` is
-moved aside to `<file>.old` for the moment the rename takes and removed after
-it. A start that finds one of them missing or torn, with a whole `.new` or
-`.old` beside it, puts that back, keeps a torn one as `<file>.torn`, and says
-so in the console; only where there is no whole copy does it stop or set the
-contract aside as described above. A `.new` or `.old` beside a good file is a
-write that never finished, and is left alone. On a server that cannot rename
-files here, each is written in place after its whole `.new` copy, which then
-stays beside it for a start to put back, and the console says so once.
+Each of `store.json`, `records.json`, `contracts/<id>.json`, `heartbeat.json`
+and a day's audit file, when it is written whole, is written as `<file>.new`
+and then renamed over `<file>`, so a crash part-way through a write tears the
+copy and never the file. On Windows, where a rename will not replace a file,
+`<file>` is moved aside to `<file>.old` for the moment the rename takes and
+removed after it. A start that finds one of them missing or torn, with a
+whole `.new` or `.old` beside it, puts that back, keeps a torn one as
+`<file>.torn`, and says so in the console; only where there is no whole copy
+does it stop or set the contract aside as described above. A `.new` or `.old`
+beside a good file is a write that never finished, and is left alone, with
+one exception: a whole `store.json.new` at least as new as `store.json` (its
+`seq` no lower) is the index a new contract was being named in when the
+server stopped, so it is used and put in place, and the console says so. On
+a server that cannot rename files here, each is written in place after its
+whole `.new` copy, which then stays beside it for a start to put back, and
+the console says so once.
+
+A start also lists `contracts/` (where the server build can list a folder).
+A contract's file that `store.json` does not name and that holds escrow not
+yet settled, or a contract still running, is what a crash between writing a
+new contract and naming it leaves: it is taken back in, and the console
+names it. Any other file there that the index does not name (a finished
+contract a prune had not yet removed) is left exactly where it is; nothing
+here is ever deleted for not being named. To drop a contract for good, take
+its id out of `store.json` and move its file out of `contracts/` too.
+
+A contract file that could not be written (one held open by a backup tool,
+an antivirus or an editor) is kept in memory and tried again at every flush,
+while every other contract is still written; the console names it at most
+once every five minutes until it lands.
 
 `audit-<day>.jsonl` holds the audit log, one file per day (UTC) and one row
 per line. The flush adds new rows to the end of the day's file, and a money

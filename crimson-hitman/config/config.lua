@@ -996,9 +996,10 @@ Config.Database = {
     --- Modes do not share data: a server switched from one to another
     --- starts with nothing in the new one. So it refuses to start while the
     --- mode it left still holds players' money — escrow not yet settled, or
-    --- payouts owed to somebody offline — and says where. Let those
-    --- contracts finish in the old mode first (README, Changing storage
-    --- mode). Kill photo files kept for the old mode are left alone too.
+    --- payouts owed to somebody offline — and says where and how much: each
+    --- contract, what it holds and what clears it. Clear those in the old
+    --- mode first (README, Changing storage mode). Kill photo files kept
+    --- for the old mode are left alone too.
     Mode = 'json',
     --- true starts in the mode above even though another mode still holds
     --- players' money. That money is then invisible from here and nothing
@@ -1019,7 +1020,10 @@ Config.Database = {
         --- rather than a rewrite of the whole store — but a burst of
         --- activity should not turn one flush into a stall either. Anything
         --- over the budget is written on the next flush, and a shutdown
-        --- writes all of it regardless.
+        --- writes all of it regardless, as does a money write while
+        --- SyncOnFinancialWrite is on, so every file stays as the index
+        --- written with it knows it. A file the disk refuses is skipped and
+        --- tried again at the next flush; the others are still written.
         MaxDirtyShardsPerFlush = 25,
     },
 }
@@ -1048,7 +1052,8 @@ Config.Audit = {
     FlushIntervalMs = 10000,
     MaxQueueSize = 5000,
     --- In json mode the log is one file per day in the data directory, and a
-    --- day's file is deleted once the whole day is older than this.
+    --- day's file is deleted once the whole day is older than this. In mysql
+    --- mode at most 5,000 rows past it go each maintenance tick, oldest first.
     RetentionDays = 30,   -- 0 keeps the audit log forever
     --- How long a finished contract and its rows are kept, in days. 0 keeps
     --- them forever, which is what this did before it was a setting.
@@ -1060,9 +1065,11 @@ Config.Audit = {
     --- at start still reads every contract kept.
     ---
     --- A contract is only ever removed once it is finished, past this age,
-    --- holds no escrow line that is not settled, and owes nobody anything
-    --- on login. Ledger history is not touched: it is the player's own
-    --- record and carries its own copy of what it needs.
+    --- holds no escrow line that is not settled, owes nobody anything on
+    --- login (a queued payout already handed over is not owed), and no open
+    --- review item names it: staff read that item against the contract.
+    --- Ledger history is not touched: it is the player's own record and
+    --- carries its own copy of what it needs.
     ContractRetentionDays = 30,
     --- How many contracts one maintenance tick may remove. A first prune on
     --- a long-lived database has a lot to get through, and doing it all in

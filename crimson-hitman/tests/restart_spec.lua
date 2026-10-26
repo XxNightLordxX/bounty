@@ -513,6 +513,80 @@ describe('server downtime and the deadline', function()
             eq(money(3), hitmanBefore, 'and nothing was forfeited')
         end)
     end
+
+    --- heartbeat.json was rewritten in place every tick, the file written
+    --- most often. A crash that left it empty left the start with no idea
+    --- when the server went down: the downtime was charged to the deadline,
+    --- the contract expired at the restart and the stake was forfeited.
+    it('json: so does a downtime whose heartbeat file a crash left empty', function()
+        local _, s, _, c = nearlyDue('json')
+        local hitmanBefore = money(3)
+
+        local away = {}
+        for src, p in pairs(Env.players) do away[src] = p end
+        for src in pairs(away) do Env.removePlayer(src) end
+        Env.advance(1800)
+        Natives.files['data/heartbeat.json'] = ''
+        Natives.files['data/heartbeat.json.new'] = nil
+
+        Env.console = {}
+        local main2, s2 = restart('json', s)
+        main2.tick()
+        truthy(table.concat(Env.console, '\n'):find('downtime before this start is dated from', 1, true),
+            'and the start says what it dated the downtime from: ' .. table.concat(Env.console, '\n'))
+        eq(s2.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'not expired at the start')
+        for src, p in pairs(away) do
+            Env.players[src] = p
+            Env.byCitizen[p.PlayerData.citizenid] = src
+        end
+        main2.markPresenceChanged()
+        Env.advance(60)
+        main2.tick()
+
+        eq(s2.storage.readContract(c.id).state, CH.STATE.ACCEPTED,
+            'the contract ran out during a restart')
+        eq(money(3), hitmanBefore, 'and nothing was forfeited')
+        truthy((Natives.files['data/heartbeat.json'] or ''):find('"at"', 1, true),
+            'and the heartbeat is written whole again')
+    end)
+end)
+
+--- A payout queued for a player whose contract's file could not be read at
+--- the start: the line is not "not there", it is in the file the start set
+--- aside. Dropped at the next login, the queue entry that delivers it once
+--- the file is restored was gone.
+describe('a queued payout whose contract file could not be read', function()
+    it('json: is kept at login, and delivered once the file is restored', function()
+        local _, s = boot('json')
+        local f = fixture(s)
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } } })
+        truthy(c)
+        truthy(s.contracts.cancel(f.creator, c.id), 'closed, its money back')
+        s.storage.writeEscrow(c.id, { { id = 'owe00000077', contract_id = c.id, slot = 0,
+            portion = CH.PORTION.OWED, owed_to = 'HITMAN01', source = 'cash', amount = 7000,
+            state = CH.ESCROW_STATE.HELD } })
+        s.storage.queuePending('HITMAN01', c.id, 'owe00000077')
+        s.storage.close()
+        local file = 'data/contracts/' .. c.id .. '.json'
+        local whole = Natives.files[file]
+        Natives.files[file] = '{"contract":{"id":'
+        Natives.files[file .. '.new'], Natives.files[file .. '.old'] = nil, nil
+
+        local _, s2 = restart('json', s)
+        eq(#s2.storage.quarantined(), 1, 'the file is set aside')
+        local before = money(3)
+        s2.escrow.retryPending('HITMAN01')
+        eq(#s2.storage.readPending('HITMAN01'), 1, 'the queue entry is kept')
+        eq(money(3), before, 'and nothing was given')
+
+        Natives.files[file] = whole
+        local _, s3 = restart('json', s2)
+        eq(#s3.storage.quarantined(), 0, 'restored')
+        s3.escrow.retryPending('HITMAN01')
+        eq(money(3), before + 7000, 'delivered once the file is back')
+        eq(#s3.storage.readPending('HITMAN01'), 0)
+    end)
 end)
 
 describe('an anonymous client away from the city', function()

@@ -1045,12 +1045,18 @@ end
 --- server's whole history rather than its live board and grew without bound
 --- for the life of the database.
 ---
---- Four conditions, and the last two are the ones that matter: terminal,
---- older than the cutoff, holding no escrow line that is not settled, and
---- owing nobody anything on their next login. A contract whose creator was
---- offline when it closed holds their money in a `held` OWED line with a
---- pending row pointing at it, and removing either would take that money
---- with it.
+--- Five conditions, and the last three are the ones that matter: terminal,
+--- older than the cutoff, holding no escrow line that is not settled, owing
+--- nobody anything on their next login, and named by no review item staff
+--- have not resolved. A contract whose creator was offline when it closed
+--- holds their money in a `held` OWED line with a pending row pointing at
+--- it, and removing either would take that money with it.
+---
+--- A pending row owes something only while the line it names is held or
+--- mid-release: a payout handed over at once leaves its row behind until
+--- the player's next login, and it is not money. An open review item reads
+--- its advice against the contract, so the contract stays until the item
+--- is resolved. See the json backend.
 local function prunableContracts(cutoff, limit)
     local TERMINAL = {
         completed = true, bailed_out = true, expired = true,
@@ -1074,7 +1080,16 @@ local function prunableContracts(cutoff, limit)
         end
     end
     for _, p in pairs(db.pending) do
-        if p.contract_id and aged[p.contract_id] then owing[p.contract_id] = true end
+        if p.contract_id and aged[p.contract_id] then
+            local line = db.escrow[p.line_id]
+            if line and line.state ~= 'settled' then owing[p.contract_id] = true end
+        end
+    end
+    for _, item in pairs(db.reviews) do
+        if item.contract_id and aged[item.contract_id]
+            and (item.state == 'open' or item.state == 'resolving') then
+            owing[item.contract_id] = true
+        end
     end
 
     local out = {}
@@ -1104,8 +1119,14 @@ function Memory.prune()
 
     local ids = prunableContracts(os.time() - (days * 86400),
         Config.Audit.ContractsPrunedPerTick or 200)
+    if #ids == 0 then return true end
+
+    -- One walk of each table that is not indexed by contract, for all of
+    -- them, rather than one per contract: see the json backend.
+    local gone = {}
     for i = 1, #ids do
         local id = ids[i]
+        gone[id] = true
         for lineId, line in pairs(escrowBy[id] or {}) do
             if db.escrow[lineId] == line then db.escrow[lineId] = nil end
         end
@@ -1114,19 +1135,25 @@ function Memory.prune()
             if db.hitmen[hitmanId] == hitman then db.hitmen[hitmanId] = nil end
         end
         hitmenBy[id] = nil
-        for amendmentId, amendment in pairs(db.amendments) do
-            if amendment.contract_id == id then db.amendments[amendmentId] = nil end
-        end
-        for j = #db.messages, 1, -1 do
-            if db.messages[j].contract_id == id then table.remove(db.messages, j) end
-        end
-        for key, row in pairs(db.reveals) do
-            if row.contract_id == id then db.reveals[key] = nil end
-        end
-        for key, row in pairs(db.mutes) do
-            if row.contract_id == id then db.mutes[key] = nil end
-        end
         db.contracts[id] = nil
+    end
+    for amendmentId, amendment in pairs(db.amendments) do
+        if gone[amendment.contract_id] then db.amendments[amendmentId] = nil end
+    end
+    local messages, kept = db.messages, 0
+    for j = 1, #messages do
+        local m = messages[j]
+        if not gone[m.contract_id] then
+            kept = kept + 1
+            messages[kept] = m
+        end
+    end
+    for j = #messages, kept + 1, -1 do messages[j] = nil end
+    for key, row in pairs(db.reveals) do
+        if gone[row.contract_id] then db.reveals[key] = nil end
+    end
+    for key, row in pairs(db.mutes) do
+        if gone[row.contract_id] then db.mutes[key] = nil end
     end
     return true
 end

@@ -60,8 +60,24 @@ A staff account that can adjust money and spawn items makes this much faster.
       restart. It refuses to start, saying the folder was replaced; put
       `data/` back and it starts with every contract
 - [ ] With a contract holding money in json mode, switch `Config.Database.Mode`
-      to `mysql` and restart: it refuses, naming how many escrow lines json
-      still holds. Switch back and it starts as before
+      to `mysql` and restart: it refuses, listing the contract by its Ref with
+      its state, what it holds (`50000 bank`, say), whom anything is owed to
+      by role (never a name) and what clears it. Switch back and it starts as
+      before
+- [ ] json mode, on a copy: with a contract holding money, stop the server,
+      copy `data/contracts/<its id>.json` aside and replace it with `{` (a file
+      nobody can read). Switch to `mysql` and restart: it refuses, naming that
+      file. Put the copy back and switch back: it starts with the contract
+- [ ] json mode, on a Windows copy: hold one `data/contracts/<id>.json` open in
+      a program that locks it, and move money on another contract:
+      the console says once `1 contract file(s) could not be written and are
+      kept in memory: <id>`, the other contract's file changes, and closing
+      the editor lets the next flush write it. **Flush the audit log** in the
+      admin panel meanwhile says the store did not save and names the file
+- [ ] mysql mode, on a copy: `SHOW INDEX FROM crimson_audit` lists
+      `idx_audit_action`, `crimson_contracts` `idx_resolved` and
+      `crimson_messages` `idx_message_contract` after the first start of
+      this version
 - [ ] With `MugShotBase64` stopped (`stop MugShotBase64`), a new contract's
       target never gets a face on the board, and no `crimson-hitman:renderMugshot`
       event reaches their client; started again, faces come back

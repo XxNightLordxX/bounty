@@ -1463,3 +1463,106 @@ describe('a medical resource without the server exports asked for', function()
             1, true), out)
     end)
 end)
+
+--- A server switched away from json while json holds money refuses to
+--- start (main.lua's refuseModeSwitch). It counted lines and payouts and
+--- named neither a contract nor an amount; it read a contract file it could
+--- not open as one holding nothing; and it counted a queue entry whose
+--- payout had been handed over as money owed, for good.
+describe('switching mode away from a json store', function()
+    local function forget()
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+    end
+
+    --- A json store on disk, as `fill` leaves it, then a start in `mode`.
+    local function switched(fill, mode, tamper)
+        forget()
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Config.Database.Mode = 'json'
+        local store = require('crimson-hitman.server.storage.json')
+        store.open()
+        fill(store)
+        store.close()
+        if tamper then tamper() end
+        forget()
+        Config.Database.Mode = mode or 'memory'
+        local main = require('server.main')
+        local ok, err = pcall(main.start)
+        return ok, tostring(err)
+    end
+
+    local function contract(store, id, state, name)
+        store.writeContract({ id = id, creator_cid = 'CREATOR1', creator_name = name or 'Ana Client',
+            target_cid = 'TARGET01', target_name = 'Tom Target', mode = CH.MODE.EXCLUSIVE,
+            state = state, created_at = os.time() })
+    end
+
+    local function line(store, id, n, fields)
+        local row = { id = id .. ':' .. n, contract_id = id, slot = 1, portion = 'baseline',
+            source = 'bank', amount = 1000, state = CH.ESCROW_STATE.HELD }
+        for k, v in pairs(fields or {}) do row[k] = v end
+        store.writeEscrow(id, { row })
+        return row.id
+    end
+
+    it('refuses over a contract file it cannot read, and names it', function()
+        local ok, err = switched(function(store)
+            contract(store, 'ctswap01', CH.STATE.ACCEPTED)
+            line(store, 'ctswap01', 1, { amount = 50000 })
+        end, 'memory', function()
+            Natives.files['data/contracts/ctswap01.json'] = '{"contract":{"id":'
+        end)
+        falsy(ok, 'a file nobody can read is not one that holds nothing')
+        truthy(err:find('data/contracts/ctswap01.json', 1, true), err)
+        truthy(err:find('cannot be read', 1, true), err)
+        truthy(err:find('restore', 1, true), 'and says what to do: ' .. err)
+    end)
+
+    it('starts where the only queue entries are for payouts already handed over', function()
+        local ok, err = switched(function(store)
+            contract(store, 'ctswap02', CH.STATE.COMPLETED)
+            local id = line(store, 'ctswap02', 1)
+            truthy(store.claimEscrowLine(id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
+            truthy(store.settleEscrowLine(id, 'TARGET01'))
+            store.queuePending('TARGET01', 'ctswap02', id)
+            store.queuePending('TARGET01', 'ctswap02', 'ctswap02:9')
+        end)
+        truthy(ok, 'nothing is owed: ' .. err)
+    end)
+
+    it('lists each contract with what it holds and what clears it', function()
+        local ok, err = switched(function(store)
+            contract(store, 'ctswap03', CH.STATE.ACCEPTED)
+            line(store, 'ctswap03', 1, { amount = 50000 })
+            line(store, 'ctswap03', 2, { source = 'cash', amount = 2000 })
+            contract(store, 'ctswap04', CH.STATE.COMPLETED)
+            local owed = line(store, 'ctswap04', 1, { source = 'cash', amount = 7000,
+                portion = CH.PORTION.OWED, owed_to = 'CREATOR1' })
+            store.queuePending('CREATOR1', 'ctswap04', owed)
+            contract(store, 'ctswap05', CH.STATE.COMPLETED)
+            store.addHitman({ id = 'hn00000005', contract_id = 'ctswap05', hitman_cid = 'HITMAN01',
+                hitman_name = 'Hal Hitman', alias = 'Crow', state = 'active', accepted_at = 1 })
+            line(store, 'ctswap05', 1, { amount = 9000, owed_to = 'HITMAN01', deliver_raises = 3 })
+        end)
+        falsy(ok)
+        truthy(err:find('json mode: 4 escrow line(s) and 1 payout(s) owed', 1, true), err)
+        truthy(err:find('ctswap03 (accepted): 50000 bank, 2000 cash; running: let it finish', 1, true),
+            err)
+        truthy(err:find('ctswap04 (completed): 7000 cash owed to the client; owed to a player who '
+            .. 'is away: handed over at their next login', 1, true), err)
+        truthy(err:find(('ctswap05 (completed): 9000 bank owed to an operative; left for staff: /%s '
+            .. 'lists it, /%s settles it'):format(Config.Admin.Commands.stuck,
+                Config.Admin.Commands.settle), 1, true), err)
+        for _, name in ipairs({ 'Ana Client', 'Tom Target', 'Hal Hitman', 'CREATOR1', 'HITMAN01' }) do
+            falsy(err:find(name, 1, true), 'no names and no citizen ids: ' .. name)
+        end
+    end)
+end)

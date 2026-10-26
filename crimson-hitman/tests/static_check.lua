@@ -2075,23 +2075,43 @@ do
     local f = io.open(path, 'r')
     local src = f and f:read('*a') or ''
     if f then f:close() end
-    local function checkSql(body, where)
-        local sql = body:upper()
-        if not (sql:find('SELECT') or sql:find('INSERT') or sql:find('UPDATE')
-            or sql:find('DELETE') or sql:find('CREATE') or sql:find('ALTER')) then return end
-        if body:find('[:@]') then
-            failures[#failures + 1] = ('%s has a SQL statement containing \':\' or \'@\' '
-                .. '(%s). oxmysql reads that as named placeholders whenever the '
-                .. 'parameters arrive as a map, which they do whenever one is nil, '
-                .. 'and every value shifts a column. Reword the comment.'):format(path, where)
+    --- Where a source has SQL holding ':' or '@': its long strings, and its
+    --- quoted ones in either kind of quote.
+    local function marked(text)
+        local out = {}
+        local function checkSql(body, where)
+            local sql = body:upper()
+            if not (sql:find('SELECT') or sql:find('INSERT') or sql:find('UPDATE')
+                or sql:find('DELETE') or sql:find('CREATE') or sql:find('ALTER')) then return end
+            if body:find('[:@]') then out[#out + 1] = where end
         end
+        for _, body in text:gmatch('%[(=*)%[(.-)%]%1%]') do
+            local line = body:match('[^\n]*[:@][^\n]*') or ''
+            checkSql(body, (line:gsub('^%s+', '')))
+        end
+        for body in text:gmatch("'([^'\n]*)'") do checkSql(body, body) end
+        for body in text:gmatch('"([^"\n]*)"') do checkSql(body, body) end
+        return out
     end
-    for eq, body in src:gmatch('%[(=*)%[(.-)%]%1%]') do
-        local line = body:match('[^\n]*[:@][^\n]*') or ''
-        checkSql(body, line:gsub('^%s+', ''))
+
+    -- Not vacuous: a colon in a SQL comment in a long string, and an @ in
+    -- SQL in double quotes, are found; a key built with a colon is not.
+    local probe = marked(table.concat({
+        'local a = [[SELECT ? FROM t -- note: x]]',
+        'local b = "SELECT * FROM t WHERE a = @b"',
+        "local key = contractId .. ':' .. cid",
+        "local c = 'SELECT * FROM t WHERE id = ?'",
+    }, '\n'))
+    if #probe ~= 2 then
+        failures[#failures + 1] = ('the SQL colon check found %d of the two marked statements in '
+            .. 'its own sample, so a clean run of it means nothing'):format(#probe)
     end
-    for body in src:gmatch("'([^'\n]*)'") do
-        checkSql(body, body)
+
+    for _, where in ipairs(marked(src)) do
+        failures[#failures + 1] = ('%s has a SQL statement containing \':\' or \'@\' '
+            .. '(%s). oxmysql reads that as named placeholders whenever the '
+            .. 'parameters arrive as a map, which they do whenever one is nil, '
+            .. 'and every value shifts a column. Reword the comment.'):format(path, where)
     end
 end
 
@@ -2343,6 +2363,50 @@ do
                     :format(path, hit.line, hit.name)
             end
         end
+    end
+end
+
+--------------------------------------------------------------------------
+-- 34. Every mysql table is named in the README's account of the database
+--------------------------------------------------------------------------
+-- The paragraph for an owner whose database user cannot create or alter
+-- tables listed what 1.1.0 adds as six columns, and not the two new tables
+-- (crimson_review, crimson_settings) that user has to import or have made:
+-- the start then refused on both. Every CREATE TABLE in mysql.lua's SCHEMA
+-- is named in the README's Install section, where that account is.
+
+do
+    local function unnamedTables(schemaSrc, readme)
+        local section = readme:match('\n## Install\n(.-)\n## ') or ''
+        local out = {}
+        for name in schemaSrc:gmatch('CREATE TABLE IF NOT EXISTS (crimson_[%w_]+)') do
+            if not section:find('`' .. name .. '`', 1, true) then out[#out + 1] = name end
+        end
+        return out
+    end
+
+    -- Not vacuous: a table left out of the section is found.
+    local probe = unnamedTables('CREATE TABLE IF NOT EXISTS crimson_a (\nCREATE TABLE IF NOT EXISTS crimson_b (',
+        '\n## Install\nThe tables are `crimson_a`.\n## Next\n`crimson_b`')
+    if #probe ~= 1 or probe[1] ~= 'crimson_b' then
+        failures[#failures + 1] = 'the README table check no longer finds a table its own sample '
+            .. 'leaves out, so a clean run of it means nothing'
+    end
+
+    local schemaSrc = read('crimson-hitman/server/storage/mysql.lua') or ''
+    local readme = read('crimson-hitman/README.md') or ''
+    local _, tables = schemaSrc:gsub('CREATE TABLE IF NOT EXISTS crimson_', '')
+    if tables < 15 then
+        failures[#failures + 1] = ('the README table check found %d tables in mysql.lua; it reads '
+            .. 'SCHEMA wrongly'):format(tables)
+    end
+    if not readme:find('\n## Install\n', 1, true) then
+        failures[#failures + 1] = 'README.md has no "## Install" section for the table check to read'
+    end
+    for _, name in ipairs(unnamedTables(schemaSrc, readme)) do
+        failures[#failures + 1] = ('README.md\'s Install section does not name the table %s, '
+            .. 'which mysql mode creates (server/storage/mysql.lua SCHEMA): an owner whose user '
+            .. 'cannot create tables is not told to import it'):format(name)
     end
 end
 

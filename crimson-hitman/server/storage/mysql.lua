@@ -99,7 +99,11 @@ local SCHEMA = {
         INDEX idx_creator_account (creator_account),
         -- Read on every maintenance tick, and almost always empty. Added
         -- to existing databases by MySQLStore.migrate.
-        INDEX idx_bailout_queued (bailout_queued_at)
+        INDEX idx_bailout_queued (bailout_queued_at),
+        -- The prune asks every tick which finished contracts are old enough,
+        -- and without it read the whole table to find none. Added to
+        -- existing databases by MySQLStore.migrate.
+        INDEX idx_resolved (resolved_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_escrow (
         id VARCHAR(64) PRIMARY KEY,
@@ -184,7 +188,11 @@ local SCHEMA = {
         from_alias VARCHAR(32) NOT NULL,
         body VARCHAR(255) NOT NULL,
         sent_at INT NOT NULL,
-        INDEX idx_thread (thread_id)
+        INDEX idx_thread (thread_id),
+        -- A pruned contract's messages are deleted by contract, which was a
+        -- scan of every message (and a lock on each) per contract pruned.
+        -- Added to existing databases by MySQLStore.migrate.
+        INDEX idx_message_contract (contract_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     [[CREATE TABLE IF NOT EXISTS crimson_ledger (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -226,7 +234,11 @@ local SCHEMA = {
         INDEX idx_actor (actor_cid),
         -- The admin timeline reads every row for one contract. Without this
         -- that is a scan of the whole log, which is the largest table here.
-        INDEX idx_audit_contract (contract_id)
+        INDEX idx_audit_contract (contract_id),
+        -- The overview, a contract's page, /ch-stuck and /ch-settle read
+        -- the rows of one rare action, and without this read the whole log
+        -- to find them. Added to existing databases by MySQLStore.migrate.
+        INDEX idx_audit_action (action)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- What one buyer's informant purchases on one contract have bought: the
     -- reroll lock and the purchase count. Kept here rather than only in
@@ -366,15 +378,17 @@ local RENAMED = {
 }
 MySQLStore.RENAMED = RENAMED
 
---- Column and index declarations for one CREATE TABLE statement.
+--- Column and index declarations for one CREATE TABLE statement, and the
+--- column declared PRIMARY KEY.
 ---@return string|nil name
 ---@return table columns [ { name, definition } ] in declaration order
 ---@return table indexes [ { name, definition } ]
+---@return string|nil key the primary key column
 local function declarationsIn(sql)
     local name = sql:match('CREATE TABLE IF NOT EXISTS ([%w_]+)')
     if not name then return nil, {}, {} end
 
-    local columns, indexes = {}, {}
+    local columns, indexes, key = {}, {}, nil
     -- MySQL ignores the `--` comments; this has to as well. Read as
     -- declarations, the prose in them became columns named `and` and
     -- `which`, the ALTER TABLE built from them was a syntax error, oxmysql
@@ -413,11 +427,12 @@ local function declarationsIn(sql)
             elseif upper ~= 'PRIMARY' and upper ~= 'UNIQUE'
                 and upper ~= 'CONSTRAINT' and upper ~= 'FOREIGN' then
                 columns[#columns + 1] = { name = head, definition = trimmed }
+                if trimmed:upper():find('PRIMARY KEY', 1, true) then key = key or head end
             end
         end
     end
 
-    return name, columns, indexes
+    return name, columns, indexes, key
 end
 
 --- Table and column names here come from the literals in this file and from
@@ -488,6 +503,74 @@ local function tablesPresent()
     return out
 end
 
+--- What information_schema.COLUMNS says of one table, read once a start:
+--- the check for a table that is not this resource's reads it first, and
+--- migrate goes on from the same answer.
+---@param table_ string
+---@param cache table [table] = rows
+---@return table rows
+local function columnsOf(table_, cache)
+    if cache[table_] == nil then
+        cache[table_] = db.query([[
+            SELECT COLUMN_NAME, COLUMN_KEY, CHARACTER_SET_NAME, COLLATION_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+        ]], { table_ }) or {}
+    end
+    return cache[table_]
+end
+
+--- The tables this file declares that are in the database and are not this
+--- resource's: one whose declared primary key column is not there, or is
+--- there and is not its primary key.
+---
+--- migrate took any table with a declared name for an older version of its
+--- own, so another resource's crimson_settings (or crimson_audit, or
+--- crimson_meta) was moved to InnoDB, rebuilt in utf8mb4 and given columns
+--- before the start refused, on "Multiple primary key", as a missing grant.
+--- Every table here has had the same key column since it was first made
+--- (id; cid for crimson_stats; setting_key; meta_key), so a table without
+--- it as its key is somebody else's.
+---@param engines table<string, string> tablesPresent()
+---@param cache table columnsOf's
+---@return table[] { table, key }
+local function foreignTables(engines, cache)
+    local out = {}
+    for i = 1, #SCHEMA do
+        local table_, _, _, key = declarationsIn(SCHEMA[i])
+        if table_ and key and engines[table_] then
+            local keyed = false
+            for _, row in ipairs(columnsOf(table_, cache)) do
+                local column = tostring(row.COLUMN_NAME or row.column_name or ''):lower()
+                local role = tostring(row.COLUMN_KEY or row.column_key or ''):upper()
+                if column == key:lower() and role == 'PRI' then keyed = true end
+            end
+            if not keyed then out[#out + 1] = { table = table_, key = key } end
+        end
+    end
+    return out
+end
+
+--- What to tell an owner whose database already has a table of one of
+--- these names that is not this resource's. Nothing was changed.
+---@param foreign table[] foreignTables()
+---@return string
+local function foreignRefused(foreign)
+    if #foreign == 1 then
+        return ('mysql mode cannot start: table %s already exists in this database and is not '
+            .. 'this resource\'s (it has no %s primary key, which every version of it has had). '
+            .. 'Nothing was changed. Rename that table, or give crimson-hitman a database of its '
+            .. 'own, then start again.'):format(foreign[1].table, foreign[1].key)
+    end
+    local named = {}
+    for i = 1, #foreign do
+        named[i] = ('%s (it has no %s primary key)'):format(foreign[i].table, foreign[i].key)
+    end
+    return ('mysql mode cannot start: tables %s already exist in this database and are not '
+        .. 'this resource\'s, whose tables have had those keys in every version. Nothing was '
+        .. 'changed. Rename those tables, or give crimson-hitman a database of its own, then '
+        .. 'start again.'):format(table.concat(named, ', '))
+end
+
 --- Make one schema change, or note that the database refused it. Every
 --- change a start needs is tried, and what could not be made is reported
 --- together (schemaRefused), rather than the first refusal standing for all.
@@ -530,15 +613,24 @@ end
 --- Add whatever the declarations have and the database does not.
 ---
 --- `failed` collects the changes the database refused (open passes its own
---- list); called without one, a refusal raises with the same report.
+--- list); called without one, a refusal raises with the same report, and a
+--- table that is not this resource's is refused first, with nothing changed
+--- (open checks that itself, before it creates anything). `cache` is the
+--- COLUMNS answers open already read (columnsOf).
 ---@param failed table|nil
+---@param cache table|nil
 ---@return integer added columns
 ---@return integer added indexes
-function MySQLStore.migrate(failed)
+function MySQLStore.migrate(failed, cache)
     local addedColumns, addedIndexes = 0, 0
     local raiseAtEnd = failed == nil
     failed = failed or {}
+    cache = cache or {}
     local engines = tablesPresent()
+    if raiseAtEnd then
+        local foreign = foreignTables(engines, cache)
+        if #foreign > 0 then error(foreignRefused(foreign), 0) end
+    end
 
     for i = 1, #SCHEMA do
         local table_, columns, indexes = declarationsIn(SCHEMA[i])
@@ -560,10 +652,7 @@ function MySQLStore.migrate(failed)
             end
 
             local present = {}
-            local rows = db.query([[
-                SELECT COLUMN_NAME, CHARACTER_SET_NAME, COLLATION_NAME FROM information_schema.COLUMNS
-                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
-            ]], { table_ }) or {}
+            local rows = columnsOf(table_, cache)
             for j = 1, #rows do
                 present[tostring(rows[j].COLUMN_NAME or rows[j].column_name):lower()] = true
             end
@@ -597,8 +686,12 @@ function MySQLStore.migrate(failed)
                                 ('column %s.%s, renamed from %s'):format(table_, new, old), failed) then
                                 Log.debug(('migrated: renamed %s.%s to %s')
                                     :format(table_, old, new))
-                                present[old], present[new] = nil, true
                             end
+                            -- Made or refused, the new name is the rename's to
+                            -- make: a refused rename also queued ADD COLUMN
+                            -- of the same name, and the fix list printed, run
+                            -- in order, stopped there at error 1060.
+                            present[old], present[new] = nil, true
                         end
                     end
                 end
@@ -651,27 +744,66 @@ function MySQLStore.migrate(failed)
     return addedColumns, addedIndexes
 end
 
+--- How many contracts holding money inspect reads whole for the refusal.
+local INSPECT_LISTED = 10
+
 --- What the crimson_* tables hold, for a server started in another mode
---- (main.lua's refuseModeSwitch): escrow lines not yet settled, and payouts
---- owed to players who were offline. Creates nothing: a database this
---- resource never used answers zero.
----@return table { lines, owed }
+--- (main.lua's refuseModeSwitch): escrow lines not yet settled, payouts
+--- still owed to players who were offline, and the contracts holding money
+--- with their lines (the first INSPECT_LISTED, and `more` when there are
+--- others). Creates nothing: a database this resource never used answers
+--- zero.
+---
+--- A queued payout counts only while the line it names is not settled: one
+--- handed over at once leaves its row behind until the player's next login,
+--- and that is not money anybody is owed.
+---@return table { lines, owed, holding = { { id, contract, lines, hitmen } }, more }
 function MySQLStore.inspect()
     local rows = db.query([[
         SELECT TABLE_NAME FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('crimson_escrow', 'crimson_pending')
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN ('crimson_escrow', 'crimson_pending', 'crimson_contracts', 'crimson_hitmen')
     ]]) or {}
     local have = {}
     for i = 1, #rows do have[tostring(rows[i].TABLE_NAME or rows[i].table_name)] = true end
 
-    local out = { lines = 0, owed = 0 }
+    local out = { lines = 0, owed = 0, holding = {} }
     if have.crimson_escrow then
         out.lines = tonumber(db.scalar(
             "SELECT COUNT(*) FROM crimson_escrow WHERE state <> 'settled'")) or 0
     end
-    if have.crimson_pending then
-        out.owed = tonumber(db.scalar('SELECT COUNT(*) FROM crimson_pending')) or 0
+    if have.crimson_pending and have.crimson_escrow then
+        out.owed = tonumber(db.scalar([[
+            SELECT COUNT(*) FROM crimson_pending p
+            WHERE EXISTS (
+                SELECT 1 FROM crimson_escrow e
+                WHERE e.id = p.line_id AND e.state <> 'settled')
+        ]])) or 0
     end
+    if out.lines == 0 then return out end
+
+    local ids = db.query([[
+        SELECT DISTINCT contract_id FROM crimson_escrow WHERE state <> 'settled'
+        ORDER BY contract_id LIMIT ?
+    ]], { INSPECT_LISTED + 1 }) or {}
+    for i = 1, math.min(#ids, INSPECT_LISTED) do
+        local id = ids[i].contract_id
+        local contract = have.crimson_contracts
+            and (db.query('SELECT * FROM crimson_contracts WHERE id = ?', { id }) or {})[1] or nil
+        -- As stored: the refusal reads the source, amount, owed_to,
+        -- releasing_to and deliver_raises, none of which hydrateEscrow renames.
+        local lines = db.query(
+            "SELECT * FROM crimson_escrow WHERE contract_id = ? AND state <> 'settled'", { id }) or {}
+        local hitmen = {}
+        if have.crimson_hitmen then
+            for _, row in ipairs(db.query('SELECT hitman_cid FROM crimson_hitmen WHERE contract_id = ?',
+                { id }) or {}) do
+                if row.hitman_cid then hitmen[row.hitman_cid] = true end
+            end
+        end
+        out.holding[#out.holding + 1] = { id = id, contract = contract, lines = lines, hitmen = hitmen }
+    end
+    if #ids > INSPECT_LISTED then out.more = true end
     return out
 end
 
@@ -680,8 +812,14 @@ function MySQLStore.open()
     -- table that is there still needs CREATE, so a database user without it
     -- failed here even after install/sql/crimson_hitman.sql had made every
     -- table, which the README said was all it needed.
-    local failed = {}
+    local failed, cache = {}, {}
     local present = tablesPresent()
+
+    -- Before anything is made or changed: a table of one of these names that
+    -- is not this resource's is refused with nothing touched (foreignTables).
+    local foreign = foreignTables(present, cache)
+    if #foreign > 0 then error(foreignRefused(foreign), 0) end
+
     for i = 1, #SCHEMA do
         local name = SCHEMA[i]:match('CREATE TABLE IF NOT EXISTS ([%w_]+)')
         if name and not present[name] then
@@ -691,7 +829,7 @@ function MySQLStore.open()
 
     -- A table that already existed keeps whatever shape it had, so the
     -- statements above are not enough on their own.
-    MySQLStore.migrate(failed)
+    MySQLStore.migrate(failed, cache)
     if #failed > 0 then error(schemaRefused(failed), 0) end
 
     local highest = db.scalar('SELECT COUNT(*) FROM crimson_contracts') or 0
@@ -1649,6 +1787,13 @@ end
 --- Rows the admin panel's log reads per round trip, and at most per page.
 local AUDIT_BATCH, AUDIT_SCAN_ROWS = 500, 5000
 
+--- How many audit rows past the retention age one prune removes. One
+--- statement for the whole backlog (a first start with retention on, or
+--- after a long downtime) removed 900,000 rows in twelve seconds, with the
+--- tick waiting on it; at 5,000 a tick a backlog still drains at 1.8 million
+--- rows an hour.
+local AUDIT_PRUNE_ROWS = 5000
+
 --- A page of the audit log for the admin panel, newest first. See the
 --- memory backend; the cursor here is the id to read below.
 ---
@@ -1737,8 +1882,8 @@ function MySQLStore.prune()
     -- 0 keeps the log, as the retention settings beside it do.
     local auditDays = tonumber(Config.Audit.RetentionDays) or 0
     if auditDays > 0 then
-        db.query('DELETE FROM crimson_audit WHERE ts < ?',
-            { os.time() - (auditDays * 86400) })
+        db.query('DELETE FROM crimson_audit WHERE ts < ? ORDER BY ts LIMIT ?',
+            { os.time() - (auditDays * 86400), AUDIT_PRUNE_ROWS })
     end
 
     local days = Config.Audit.ContractRetentionDays or 0
@@ -1752,12 +1897,23 @@ end
 --- Nothing did this, so every full scan in the resource walked the server's
 --- entire history rather than its live board and grew without bound.
 ---
---- Four conditions, and the last two are the ones that matter: a contract is
---- only removed when it is terminal, older than the cutoff, holds no escrow
---- line that is not settled, and owes nobody anything on their next login.
---- A contract whose creator was offline when it closed holds their money in
---- a `held` OWED line with a crimson_pending row pointing at it, and
---- deleting either would take that money with it.
+--- Five conditions, and the last three are the ones that matter: a contract
+--- is only removed when it is terminal, older than the cutoff, holds no
+--- escrow line that is not settled, owes nobody anything on their next
+--- login, and is named by no review item staff have not resolved. A
+--- contract whose creator was offline when it closed holds their money in a
+--- `held` OWED line with a crimson_pending row pointing at it, and deleting
+--- either would take that money with it.
+---
+--- A crimson_pending row owes something only while the line it names is not
+--- settled: a payout handed over at once leaves its row until the player's
+--- next login, and one who never came back held the contract here for good.
+--- A review item's advice is read against its contract, so the contract
+--- stays until the item is resolved (see the json backend).
+---
+--- idx_resolved serves the age test and idx_message_contract the messages
+--- delete; without them each tick read every contract, and each contract
+--- pruned scanned every message.
 ---
 --- The ledger is deliberately untouched: it is the player's own record of
 --- what they did and carries its own copy of the target name and reason, so
@@ -1774,7 +1930,13 @@ function MySQLStore.pruneContracts(cutoff)
               SELECT 1 FROM crimson_escrow e
               WHERE e.contract_id = c.id AND e.state <> 'settled')
           AND NOT EXISTS (
-              SELECT 1 FROM crimson_pending p WHERE p.contract_id = c.id)
+              SELECT 1 FROM crimson_pending p
+              WHERE p.contract_id = c.id AND EXISTS (
+                  SELECT 1 FROM crimson_escrow q
+                  WHERE q.id = p.line_id AND q.state <> 'settled'))
+          AND NOT EXISTS (
+              SELECT 1 FROM crimson_review r
+              WHERE r.contract_id = c.id AND r.state IN ('open', 'resolving'))
         ORDER BY c.resolved_at
         LIMIT ?
     ]], { cutoff, Config.Audit.ContractsPrunedPerTick or 200 }) or {}

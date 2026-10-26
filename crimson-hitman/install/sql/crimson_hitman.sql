@@ -70,7 +70,11 @@ CREATE TABLE IF NOT EXISTS crimson_contracts (
     INDEX idx_creator_account (creator_account),
     -- Read on every maintenance tick, and almost always empty. Added
     -- to existing databases by MySQLStore.migrate.
-    INDEX idx_bailout_queued (bailout_queued_at)
+    INDEX idx_bailout_queued (bailout_queued_at),
+    -- The prune asks every tick which finished contracts are old enough,
+    -- and without it read the whole table to find none. Added to
+    -- existing databases by MySQLStore.migrate.
+    INDEX idx_resolved (resolved_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS crimson_escrow (
@@ -157,7 +161,11 @@ CREATE TABLE IF NOT EXISTS crimson_messages (
     from_alias VARCHAR(32) NOT NULL,
     body VARCHAR(255) NOT NULL,
     sent_at INT NOT NULL,
-    INDEX idx_thread (thread_id)
+    INDEX idx_thread (thread_id),
+    -- A pruned contract's messages are deleted by contract, which was a
+    -- scan of every message (and a lock on each) per contract pruned.
+    -- Added to existing databases by MySQLStore.migrate.
+    INDEX idx_message_contract (contract_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS crimson_ledger (
@@ -203,7 +211,11 @@ CREATE TABLE IF NOT EXISTS crimson_audit (
     INDEX idx_actor (actor_cid),
     -- The admin timeline reads every row for one contract. Without this
     -- that is a scan of the whole log, which is the largest table here.
-    INDEX idx_audit_contract (contract_id)
+    INDEX idx_audit_contract (contract_id),
+    -- The overview, a contract's page, /ch-stuck and /ch-settle read
+    -- the rows of one rare action, and without this read the whole log
+    -- to find them. Added to existing databases by MySQLStore.migrate.
+    INDEX idx_audit_action (action)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS crimson_reveals (

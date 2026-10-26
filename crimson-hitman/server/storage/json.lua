@@ -173,6 +173,26 @@ end
 --- (a kill payout writes its shard several times).
 local escrowBy, hitmenBy = {}, {}
 
+--- Messages by contract: [contract_id] = { row, ... }, in the order
+--- db.messages holds them, kept as each is written, trimmed or pruned.
+---
+--- shardOf walked every message in the store for each shard it wrote, and a
+--- money write writes every dirty shard at once (SyncOnFinancialWrite): with
+--- 300 contracts dirtied by a message each over 30,000 messages, one coin
+--- moving walked them all 300 times, about a second inside the request that
+--- moved it. The prune did the same once per contract it removed.
+local messagesBy = {}
+
+local function indexMessage(m)
+    if type(m) ~= 'table' or m.contract_id == nil then return end
+    local rows = messagesBy[m.contract_id]
+    if not rows then
+        rows = {}
+        messagesBy[m.contract_id] = rows
+    end
+    rows[#rows + 1] = m
+end
+
 --- Under the key db holds the row by, which is its id wherever this store
 --- wrote it; a row read from an older file is indexed by its key all the
 --- same, so nothing db holds is left out of a read.
@@ -199,9 +219,10 @@ end
 --- into db, and then writes them out as shards through shardOf. An index
 --- that missed them wrote those shards with no escrow in them.
 local function reindexRows()
-    escrowBy, hitmenBy = {}, {}
+    escrowBy, hitmenBy, messagesBy = {}, {}, {}
     for key, line in pairs(db.escrow or {}) do indexRow(escrowBy, line, key) end
     for key, h in pairs(db.hitmen or {}) do indexRow(hitmenBy, h, key) end
+    for i = 1, #(db.messages or {}) do indexMessage(db.messages[i]) end
 end
 
 --- Everything belonging to one contract, gathered for writing.
@@ -220,11 +241,8 @@ local function shardOf(contractId)
     for id, amendment in pairs(db.amendments) do
         if amendment.contract_id == contractId then shard.amendments[id] = amendment end
     end
-    for i = 1, #db.messages do
-        if db.messages[i].contract_id == contractId then
-            shard.messages[#shard.messages + 1] = db.messages[i]
-        end
-    end
+    local messages = messagesBy[contractId] or {}
+    for i = 1, #messages do shard.messages[i] = messages[i] end
     for key, row in pairs(db.mutes) do
         if row.contract_id == contractId then shard.mutes[key] = row end
     end
@@ -342,13 +360,19 @@ end
 --- the copy, as it was before there was one, and the copy is left: it is
 --- the whole file, written first, so a crash that tears the file in place
 --- leaves the next start a complete one to put back (recoverFile).
+---
+--- `quiet` leaves a refused write unsaid, for a caller that says it once
+--- for all of them (JsonStore.save, the contract files) or never did (the
+--- heartbeat).
 ---@return boolean written
-local function writeRaw(target, encoded)
+local function writeRaw(target, encoded, quiet)
     local fresh = target .. NEW
     local wrote = SaveResourceFile(resource, fresh, encoded, -1)
     if wrote == false then
-        Log.always(('could not write %s. Check that the directory exists '
-            .. 'and the server can write to it.'):format(target))
+        if not quiet then
+            Log.always(('could not write %s. Check that the directory exists '
+                .. 'and the server can write to it.'):format(target))
+        end
         return false
     end
 
@@ -384,8 +408,10 @@ local function writeRaw(target, encoded)
             .. 'rename and remove files in %s.'):format(fresh, target, NEW, directory()))
     end
     if SaveResourceFile(resource, target, encoded, -1) == false then
-        Log.always(('could not write %s. Check that the directory exists '
-            .. 'and the server can write to it.'):format(target))
+        if not quiet then
+            Log.always(('could not write %s. Check that the directory exists '
+                .. 'and the server can write to it.'):format(target))
+        end
         return false
     end
     return true
@@ -467,8 +493,8 @@ local function recoverFile(file, complete, place, torn)
     return raw, value, from
 end
 
-local function writeFile(target, value)
-    return writeRaw(target, json.encode(value))
+local function writeFile(target, value, quiet)
+    return writeRaw(target, json.encode(value), quiet)
 end
 
 --- How many writes have read back differently. Reported by the diagnosis,
@@ -596,6 +622,11 @@ local function buildIndex()
     index.auditDays = {}
     for day in pairs(auditLog.lines) do index.auditDays[#index.auditDays + 1] = day end
     table.sort(index.auditDays)
+
+    -- When it was written: the server was running then, which is the last
+    -- resort a start has for dating the downtime before it where the
+    -- heartbeat file did not survive (JsonStore.lastHeartbeat).
+    index.saved_at = os.time()
     return index
 end
 
@@ -699,8 +730,9 @@ end
 --- crash leaves is a name with no file, which reads back as an empty day
 --- whose rows go on in a file of their own (auditKey).
 ---@return boolean ok
+---@return string|nil file the first day's file that could not be written
 local function saveAudit()
-    local ok = true
+    local ok, failedFile = true, nil
     for day, lines in pairs(auditLog.lines) do
         local done = auditLog.onDisk[day] or 0
         -- Never a day whose file read back empty: see auditKey.
@@ -720,11 +752,11 @@ local function saveAudit()
             if wrote then
                 auditLog.onDisk[day], auditLog.rewrite[day] = #lines, nil
             else
-                ok = false
+                ok, failedFile = false, failedFile or file
             end
         end
     end
-    return ok
+    return ok, failedFile
 end
 
 --- A whole day past the retention age: off the index, and its file removed
@@ -896,6 +928,86 @@ function JsonStore.assertWritable()
     return true
 end
 
+--- A whole store.json.new beside a whole store.json, and at least as new.
+---
+--- A new contract is written as its file first and then the index naming
+--- it, through store.json.new renamed over store.json (writeRaw). A server
+--- stopped between the two left an index on disk that named the contract,
+--- whole, beside the one that did not, and the start kept the old one:
+--- the contract, its escrow and the client's money were gone, with nothing
+--- said. Every whole file is written as its .new before anything moves, so
+--- a whole .new is the newer of the two, or the same file where renames are
+--- refused (and then nothing differs). `seq` only goes up, so one lower
+--- than the index's is a copy something else left and is not taken.
+---@param raw string store.json as read, whole
+---@return string|nil fresh the copy's text, where it is to be used
+local function newerIndex(raw)
+    local fresh = LoadResourceFile(resource, path() .. NEW)
+    if fresh == nil or fresh == '' or fresh == raw then return nil end
+    local copy, current = decodeTable(fresh), decodeTable(raw)
+    if not (copy and current and type(copy.contractIds) == 'table') then return nil end
+    if (tonumber(copy.seq) or 0) < (tonumber(current.seq) or 0) then return nil end
+    return fresh
+end
+
+--- The contract files in contracts/ that `named` does not name, by id: a
+--- file of its own, or only its whole copy (<id>.json.new or .old). Empty
+--- where this server cannot list a folder (io.readdir), as photos'
+--- sweepFiles finds it.
+---@param named table<string, boolean>
+---@return string[] ids
+local function unnamedShards(named)
+    local base, readdir = folderOnDisk(), io and io.readdir
+    if not base or type(readdir) ~= 'function' then return {} end
+    local ok, listing = pcall(readdir, base .. '/' .. directory() .. '/contracts')
+    if not ok or not listing then return {} end
+    local ids, seen = {}, {}
+    pcall(function()
+        for name in listing:lines() do
+            local id = type(name) == 'string' and (name:match('^([%w_%-]+)%.json$')
+                or name:match('^([%w_%-]+)%.json%.new$') or name:match('^([%w_%-]+)%.json%.old$'))
+            if id and not named[id] and not seen[id] then
+                seen[id] = true
+                ids[#ids + 1] = id
+            end
+        end
+    end)
+    pcall(function() listing:close() end)
+    table.sort(ids)
+    return ids
+end
+
+--- One contract file as a start reads it: the file, or else its last whole
+--- copy (read only, nothing moved).
+local function readShard(id)
+    local file = shardPath(id)
+    if not file then return nil end
+    local shard = decodeTable(LoadResourceFile(resource, file))
+    if shard then return shard end
+    local _, copy = recoverFile(file, decodeTable, false)
+    return copy
+end
+
+--- Whether a contract file the index does not name has to be taken back
+--- in: it holds escrow not yet settled (held, owed or mid-release), or its
+--- contract is still running. One that holds neither is a finished
+--- contract's file a prune had not yet removed, and stays where it is.
+local function holdsMoneyOrRuns(shard, id)
+    if type(shard) ~= 'table' then return false end
+    local contract = shard.contract
+    if type(contract) == 'table' and contract.id ~= nil and contract.id ~= id then return false end
+    if type(contract) == 'table' and not CH.TERMINAL[contract.state] then return true end
+    for _, line in pairs(type(shard.escrow) == 'table' and shard.escrow or {}) do
+        if type(line) == 'table' and line.state ~= CH.ESCROW_STATE.SETTLED then return true end
+    end
+    return false
+end
+
+--- What this start read that says when the server was last running, for a
+--- heartbeat file a crash did not leave whole (JsonStore.lastHeartbeat):
+--- the newest audit row, and when the index it found was written.
+local lastKnown = {}
+
 --- Read the store.
 ---
 --- A file that exists but will not parse is fatal: starting fresh would
@@ -912,7 +1024,20 @@ function JsonStore.open()
     -- the refusals below decide.
     if not decodeTable(raw) then
         raw = recoverFile(path(), decodeTable, true, raw) or raw
+    else
+        -- Whole, beside a whole newer copy: the server stopped before the
+        -- copy's rename (newerIndex). Put in place as that rename would have.
+        local fresh = newerIndex(raw)
+        if fresh then
+            if not moveOver(path() .. NEW, path()) then
+                SaveResourceFile(resource, path(), fresh, -1)
+            end
+            Log.always(('%s was not yet renamed over %s when the server stopped; it is the '
+                .. 'newer of the two, whole, and is used.'):format(path() .. NEW, path()))
+            raw = fresh
+        end
     end
+    lastKnown = {}
 
     if raw == nil or raw == '' then
         -- Empty is a first install only where this store has never run.
@@ -948,7 +1073,7 @@ function JsonStore.open()
         end
 
         db = json.decode(json.encode(EMPTY))
-        escrowBy, hitmenBy = {}, {}
+        escrowBy, hitmenBy, messagesBy = {}, {}, {}
         dirtyShards, shardIds, quarantined, indexDirty = {}, {}, {}, true
         recordsDirty, recordsOnDisk = true, false
         auditLog = { lines = {}, onDisk = {}, rewrite = {}, named = {}, unread = {} }
@@ -971,10 +1096,11 @@ function JsonStore.open()
         -- The audit log is read from its own files, below, and the records
         -- from theirs. `records` is only the index saying that file exists.
         if key ~= 'contractIds' and key ~= 'audit' and key ~= 'auditDays'
-            and key ~= 'records' then
+            and key ~= 'records' and key ~= 'saved_at' then
             db[key] = value
         end
     end
+    lastKnown.index = tonumber(decoded.saved_at)
     for key, value in pairs(EMPTY) do
         if db[key] == nil then db[key] = type(value) == 'table' and {} or value end
     end
@@ -987,6 +1113,10 @@ function JsonStore.open()
     if type(decoded.contractIds) == 'table' or type(decoded.contracts) == 'table' then
         loadAudit(decoded)
         loadRecords(decoded)
+        for i = 1, #db.audit do
+            local ts = tonumber(db.audit[i].ts)
+            if ts and (lastKnown.audit == nil or ts > lastKnown.audit) then lastKnown.audit = ts end
+        end
     end
 
     if type(decoded.contractIds) == 'table' then
@@ -1049,6 +1179,40 @@ function JsonStore.open()
                 }
             end
         end
+
+        -- A contract file the index does not name: a server stopped after a
+        -- new contract's file was whole and before an index naming it was
+        -- (newerIndex covers the copy that was whole; this the one that was
+        -- not). Nothing else would ever read it, so one holding money or a
+        -- running contract is taken back in; any other is a finished one a
+        -- prune had not yet removed, said once and left where it is, never
+        -- deleted.
+        local named = {}
+        for i = 1, #decoded.contractIds do named[tostring(decoded.contractIds[i])] = true end
+        local adopted, left = {}, {}
+        for _, id in ipairs(unnamedShards(named)) do
+            local shard = readShard(id)
+            if holdsMoneyOrRuns(shard, id) then
+                absorb(shard)
+                shardIds[id], dirtyShards[id] = true, true
+                indexDirty, dirty = true, true
+                adopted[#adopted + 1] = id
+            else
+                left[#left + 1] = id
+            end
+        end
+        if #adopted > 0 then
+            Log.always(('%d contract file(s) in %s/contracts/ were not named in %s and hold '
+                .. 'money or a running contract, as a server stopped between writing a new contract '
+                .. 'and the index leaves them; taken back in: %s.')
+                :format(#adopted, directory(), path(), table.concat(adopted, ', ')))
+        end
+        if #left > 0 then
+            Log.debug(('%d contract file(s) in %s/contracts/ are not named in %s and hold no '
+                .. 'money; left as they are: %s.')
+                :format(#left, directory(), path(), table.concat(left, ', ')))
+        end
+
         -- Everything the shards brought in.
         reindexRows()
     elseif type(decoded.contracts) == 'table' then
@@ -1101,12 +1265,23 @@ end
 
 --- What a json store on disk holds, read without opening it, for a server
 --- started in another mode (main.lua's refuseModeSwitch): how many contracts
---- it names, how many escrow lines are not yet settled, and how many payouts
---- it owes players who were offline. nil where there is no store here.
+--- it names, how many escrow lines are not yet settled, how many payouts it
+--- still owes players who were offline, the files it could not read, and
+--- every contract holding money, with its lines. nil where there is no
+--- store here.
 ---
 --- Reads the files only; nothing in this module is touched, so the store it
 --- describes is exactly as it was left.
----@return table|nil { contracts, lines, owed, unreadable }
+---
+--- A contract file the index names and cannot read is not a contract that
+--- holds nothing: nobody can tell what it holds, and the start in this mode
+--- would quarantine it and say so every boot until the file is restored. It
+--- is listed in `unreadable`, and a payout queued against it counts as owed
+--- (restoring the file brings its line back, and the queue entry is what
+--- delivers it). A queued payout whose line was read and is settled, or is
+--- not there, is not owed: a payout handed over at once leaves its entry
+--- behind until the player's next login (Escrow.retryPending drops it).
+---@return table|nil { contracts, lines, owed, unreadable = { { id, file } }, holding = { { id, contract, lines, hitmen } } }
 function JsonStore.inspect()
     -- Each file as open() would find it: the last complete write of one
     -- that is missing or torn (recoverFile), read where it lies.
@@ -1118,18 +1293,51 @@ function JsonStore.inspect()
     end
 
     local raw = LoadResourceFile(resource, path())
-    local index = readJson(path())
+    local index = decodeTable(raw)
+    if index then
+        -- The newer whole copy open() would use (newerIndex).
+        local fresh = newerIndex(raw)
+        index = fresh and decodeTable(fresh) or index
+    else
+        index = readJson(path())
+    end
     if not index then
         if raw == nil or raw == '' then return nil end
         -- Nobody can tell what it holds, so it is not taken to hold nothing.
-        return { contracts = 0, lines = 0, owed = 0, unreadable = true }
+        return { contracts = 0, lines = 0, owed = 0, unreadable = { { file = path() } },
+                 holding = {} }
     end
 
-    local out = { contracts = 0, lines = 0, owed = 0 }
-    local function held(escrow)
-        for _, line in pairs(type(escrow) == 'table' and escrow or {}) do
-            if type(line) == 'table' and line.state ~= CH.ESCROW_STATE.SETTLED then
-                out.lines = out.lines + 1
+    local out = { contracts = 0, lines = 0, owed = 0, holding = {} }
+    local unreadable, unreadIds, lines, byId = {}, {}, {}, {}
+    -- `contractOf(id)` is the contract row a line's contract id names.
+    local function held(id, contractOf, escrow, hitmen)
+        for key, line in pairs(type(escrow) == 'table' and escrow or {}) do
+            if type(line) == 'table' then
+                local lineId = line.id or key
+                -- A line of the single-file layout that names no contract is
+                -- still money, listed under no contract.
+                local owner = id or line.contract_id or '(no contract)'
+                lines[lineId] = line
+                if line.state ~= CH.ESCROW_STATE.SETTLED then
+                    out.lines = out.lines + 1
+                    local entry = byId[owner]
+                    if not entry then
+                        local who = {}
+                        for _, h in pairs(type(hitmen) == 'table' and hitmen or {}) do
+                            if type(h) == 'table' and h.hitman_cid
+                                and (h.contract_id == nil or h.contract_id == owner) then
+                                who[h.hitman_cid] = true
+                            end
+                        end
+                        local row = contractOf(owner)
+                        entry = { id = owner, contract = type(row) == 'table' and row or nil,
+                                  lines = {}, hitmen = who }
+                        byId[owner] = entry
+                        out.holding[#out.holding + 1] = entry
+                    end
+                    entry.lines[#entry.lines + 1] = line
+                end
             end
         end
     end
@@ -1137,22 +1345,72 @@ function JsonStore.inspect()
     -- The single-file layout of an older version holds it all in the index.
     if type(index.contracts) == 'table' then
         for _ in pairs(index.contracts) do out.contracts = out.contracts + 1 end
-        held(index.escrow)
+        held(nil, function(id) return index.contracts[id] end, index.escrow, index.hitmen)
     end
+    local named = {}
     for _, id in ipairs(type(index.contractIds) == 'table' and index.contractIds or {}) do
+        named[tostring(id)] = true
         out.contracts = out.contracts + 1
         local file = shardPath(id)
         local shard = file and readJson(file)
-        if shard then held(shard.escrow) end
+        if shard then
+            held(id, function() return shard.contract end, shard.escrow, shard.hitmen)
+        else
+            unreadable[#unreadable + 1] = { id = tostring(id), file = file or tostring(id) }
+            unreadIds[tostring(id)] = true
+        end
     end
+    -- And a contract file the index does not name that a start would take
+    -- back in (W158): money there is money here.
+    if type(index.contractIds) == 'table' then
+        for _, id in ipairs(unnamedShards(named)) do
+            local shard = readShard(id)
+            if holdsMoneyOrRuns(shard, id) then
+                out.contracts = out.contracts + 1
+                held(id, function() return shard.contract end, shard.escrow, shard.hitmen)
+            end
+        end
+    end
+    table.sort(out.holding, function(a, b) return tostring(a.id) < tostring(b.id) end)
 
     local pending = index.pending
     if pending == nil then
         local records = readJson(recordsPath())
         pending = records and records.pending or nil
     end
-    for _ in pairs(type(pending) == 'table' and pending or {}) do out.owed = out.owed + 1 end
+    for _, p in pairs(type(pending) == 'table' and pending or {}) do
+        if type(p) == 'table' then
+            local line = lines[p.line_id]
+            if line ~= nil then
+                if line.state ~= CH.ESCROW_STATE.SETTLED then out.owed = out.owed + 1 end
+            elseif (p.contract_id ~= nil and unreadIds[tostring(p.contract_id)])
+                or (p.contract_id == nil and #unreadable > 0) then
+                out.owed = out.owed + 1
+            end
+        end
+    end
+    if #unreadable > 0 then out.unreadable = unreadable end
     return out
+end
+
+--- When the console last said contract files were left unwritten, so it
+--- says so at most every UNWRITTEN_SAY_SECONDS while they stay that way.
+local unwrittenSaidAt = nil
+local UNWRITTEN_SAY_SECONDS = 300
+
+--- Say which contract files could not be written, once for all of them.
+local function sayUnwritten(ids)
+    local now = os.time()
+    if unwrittenSaidAt and now - unwrittenSaidAt < UNWRITTEN_SAY_SECONDS then return end
+    unwrittenSaidAt = now
+    table.sort(ids)
+    local shown = {}
+    for i = 1, math.min(#ids, 5) do shown[i] = ids[i] end
+    Log.always(('%d contract file(s) could not be written and are kept in memory: %s%s; '
+        .. 'the next flush retries. Check that the server can write to %s/contracts/ and that '
+        .. 'nothing (a backup tool, an antivirus, an editor) holds those files open.')
+        :format(#ids, table.concat(shown, ', '), #ids > #shown and ' and others' or '',
+            directory()))
 end
 
 --- Write what changed.
@@ -1163,13 +1421,24 @@ end
 ---
 --- Not the audit log: a financial write calls this, and the log waits for
 --- the flush (JsonStore.flush, JsonStore.close).
+---
+--- One contract file the disk refuses (an antivirus, a backup tool or an
+--- editor holding it on Windows) is skipped, and every other one is still
+--- written. It used to stop the walk, so the contracts after it in pairs()
+--- order had their escrow in memory only, on every save while that one file
+--- stayed locked, and the save still answered true: a crash then lost that
+--- money with nothing having said so. A save that left any dirty file
+--- unwritten answers false, with the first file it could not write.
+---@return boolean saved nothing it was asked to write was left unwritten
+---@return string|nil file the first file that could not be written
 function JsonStore.save(force)
     if not db then return false end
-    if not force and not dirty then return false end
+    -- Nothing changed, so nothing is left unwritten.
+    if not force and not dirty then return true end
 
     local budget = force and math.huge
         or (Config.Database.Json.MaxDirtyShardsPerFlush or 25)
-    local written = 0
+    local written, failed = 0, {}
 
     for id in pairs(dirtyShards) do
         if written >= budget then break end
@@ -1179,7 +1448,7 @@ function JsonStore.save(force)
             -- Not a shape this store mints, so not something to name a file
             -- after. Dropped rather than written.
             dirtyShards[id] = nil
-        elseif writeFile(file, shardOf(id)) then
+        elseif writeFile(file, shardOf(id), true) then
             -- The index is not marked for this. A contract it does not name
             -- yet marked it when it was touched (touch); one it already
             -- names has nothing new to say there. Marking it here rewrote
@@ -1189,10 +1458,12 @@ function JsonStore.save(force)
             written = written + 1
         else
             -- Left dirty deliberately: a shard that did not land is retried
-            -- on the next flush rather than forgotten.
-            break
+            -- on the next flush rather than forgotten. And the walk goes on.
+            failed[#failed + 1] = id
         end
     end
+    local failedFile = failed[1] and shardPath(failed[1]) or nil
+    if #failed > 0 then sayUnwritten(failed) end
 
     -- Only when something in it changed: `force` means every dirty shard,
     -- not every file whatever it holds.
@@ -1202,6 +1473,7 @@ function JsonStore.save(force)
         indexOk = writeIndex()
         if indexOk then indexDirty = false end
     end
+    if not indexOk then failedFile = failedFile or path() end
 
     -- After the index, and only once it is on disk. A pending payout's id is
     -- minted from the sequence the index holds; written ahead of it, a crash
@@ -1210,6 +1482,7 @@ function JsonStore.save(force)
     local recordsOk = true
     if recordsDirty and indexOk then
         recordsOk = writeRecords()
+        if not recordsOk then failedFile = failedFile or recordsPath() end
     end
 
     if not next(dirtyShards) and not indexDirty and not recordsDirty then
@@ -1217,7 +1490,8 @@ function JsonStore.save(force)
     end
     -- A flush that could not write the index did not flush. Saying it did
     -- is what let the store report success while persisting nothing.
-    return indexOk and recordsOk
+    if #failed == 0 and indexOk and recordsOk then return true end
+    return false, failedFile
 end
 
 --- Mark the store dirty.
@@ -1250,12 +1524,23 @@ end
 --- server's whole history rather than its live board and grew without bound
 --- for the life of the database.
 ---
---- Four conditions, and the last two are the ones that matter: terminal,
---- older than the cutoff, holding no escrow line that is not settled, and
---- owing nobody anything on their next login. A contract whose creator was
---- offline when it closed holds their money in a `held` OWED line with a
---- pending row pointing at it, and removing either would take that money
---- with it.
+--- Five conditions, and the last three are the ones that matter: terminal,
+--- older than the cutoff, holding no escrow line that is not settled, owing
+--- nobody anything on their next login, and named by no review item staff
+--- have not resolved. A contract whose creator was offline when it closed
+--- holds their money in a `held` OWED line with a pending row pointing at
+--- it, and removing either would take that money with it.
+---
+--- A pending row owes something only while the line it names is held or
+--- mid-release. A payout handed over at once leaves its row behind until
+--- the player's next login (Escrow.retryPending drops it then), and one who
+--- never came back held the contract here for good, and every mode switch
+--- after it. The line is one of the contract's own, read whole with it.
+---
+--- A review item's advice is read against the contract ("if it shows the
+--- buyout, dismiss"); pruned under an open one, the item read "contract
+--- none" and staff refunded a buyout that had already been used. Kept until
+--- the item is resolved, and pruned at the first tick after.
 local function prunableContracts(cutoff, limit)
     local TERMINAL = {
         completed = true, bailed_out = true, expired = true,
@@ -1279,7 +1564,16 @@ local function prunableContracts(cutoff, limit)
         end
     end
     for _, p in pairs(db.pending) do
-        if p.contract_id and aged[p.contract_id] then owing[p.contract_id] = true end
+        if p.contract_id and aged[p.contract_id] then
+            local line = db.escrow[p.line_id]
+            if line and line.state ~= 'settled' then owing[p.contract_id] = true end
+        end
+    end
+    for _, item in pairs(db.reviews or {}) do
+        if type(item) == 'table' and item.contract_id and aged[item.contract_id]
+            and (item.state == 'open' or item.state == 'resolving') then
+            owing[item.contract_id] = true
+        end
     end
 
     local out = {}
@@ -1305,8 +1599,14 @@ function JsonStore.prune()
         Config.Audit.ContractsPrunedPerTick or 200)
     if #ids == 0 then return true end
 
+    -- What belongs to them that is not indexed by contract goes in one walk
+    -- of each table below, not one walk per contract: with every message
+    -- scanned (and shifted, for each one removed) once per contract pruned,
+    -- a backlog of 3,000 took over a second of the main thread a tick.
+    local gone = {}
     for i = 1, #ids do
         local id = ids[i]
+        gone[id] = true
         for lineId, line in pairs(escrowBy[id] or {}) do
             if db.escrow[lineId] == line then db.escrow[lineId] = nil end
         end
@@ -1315,21 +1615,7 @@ function JsonStore.prune()
             if db.hitmen[hitmanId] == hitman then db.hitmen[hitmanId] = nil end
         end
         hitmenBy[id] = nil
-        for amendmentId, amendment in pairs(db.amendments) do
-            if amendment.contract_id == id then db.amendments[amendmentId] = nil end
-        end
-        for j = #db.messages, 1, -1 do
-            if db.messages[j].contract_id == id then table.remove(db.messages, j) end
-        end
-        for key, row in pairs(db.reveals) do
-            if row.contract_id == id then
-                db.reveals[key] = nil
-                recordsDirty = true
-            end
-        end
-        for key, row in pairs(db.mutes) do
-            if row.contract_id == id then db.mutes[key] = nil end
-        end
+        messagesBy[id] = nil
         db.contracts[id] = nil
 
         -- Off the index first, so a crash between here and the unlink
@@ -1352,6 +1638,28 @@ function JsonStore.prune()
         end
     end
 
+    for amendmentId, amendment in pairs(db.amendments) do
+        if gone[amendment.contract_id] then db.amendments[amendmentId] = nil end
+    end
+    local messages, kept = db.messages, 0
+    for j = 1, #messages do
+        local m = messages[j]
+        if not gone[m.contract_id] then
+            kept = kept + 1
+            messages[kept] = m
+        end
+    end
+    for j = #messages, kept + 1, -1 do messages[j] = nil end
+    for key, row in pairs(db.reveals) do
+        if gone[row.contract_id] then
+            db.reveals[key] = nil
+            recordsDirty = true
+        end
+    end
+    for key, row in pairs(db.mutes) do
+        if gone[row.contract_id] then db.mutes[key] = nil end
+    end
+
     -- The index that no longer names them goes to disk first, and the files
     -- only after it has. Unlinked first, a crash before the next flush left
     -- store.json naming a file that was gone, and the contract was
@@ -1370,16 +1678,21 @@ end
 --- The audit log is written here and at close, and nowhere else: the queue
 --- in server/audit.lua already holds rows until the tick, and a coin moving
 --- is no reason to write the log.
+---
+--- Answers whether everything it was asked to write is on disk, and the
+--- first file that is not (the admin panel names it).
+---@return boolean saved
+---@return string|nil file
 function JsonStore.flush()
-    local ok = JsonStore.save(false)
-    local logged = saveAudit()
-    return ok and logged
+    local ok, file = JsonStore.save(false)
+    local logged, day = saveAudit()
+    return ok and logged, file or day
 end
 
 function JsonStore.close()
-    local ok = JsonStore.save(true)
-    local logged = saveAudit()
-    return ok and logged
+    local ok, file = JsonStore.save(true)
+    local logged, day = saveAudit()
+    return ok and logged, file or day
 end
 
 --- What one buyer's informant purchases on one contract have bought; see the
@@ -1505,17 +1818,43 @@ local function heartbeatPath()
     return directory() .. '/heartbeat.json'
 end
 
+---
+--- Written whole and renamed over, as every other file here is (writeRaw).
+--- It was rewritten in place, and it is the file written most often: a
+--- crash that left it empty left a start with no idea when the server went
+--- down, so the downtime was charged to every running contract, and one
+--- whose deadline fell inside it expired at the restart, its hitman's stake
+--- forfeited, which is what the heartbeat is for. Quiet, as it always was:
+--- a server that cannot write here cannot write the index either, and that
+--- is said.
 function JsonStore.heartbeat(at)
-    SaveResourceFile(resource, heartbeatPath(), json.encode({ at = at }), -1)
+    writeRaw(heartbeatPath(), json.encode({ at = at }), true)
     return true
 end
 
+--- When the server was last known to be running, and, where the heartbeat
+--- file itself was not whole, what that was read from instead: its last
+--- whole copy, else the later of the newest audit row and the time the
+--- index this start found was written. Each is a moment the server was
+--- running, so the downtime is dated from no later than it began, and a
+--- contract is paused for at least as long as nobody could play.
+---@return integer|nil at
+---@return string|nil from nil when it is the heartbeat file itself
 function JsonStore.lastHeartbeat()
-    local raw = LoadResourceFile(resource, heartbeatPath())
-    if not raw or raw == '' then return nil end
-    local ok, decoded = pcall(json.decode, raw)
-    if not ok or type(decoded) ~= 'table' then return nil end
-    return tonumber(decoded.at)
+    local function at(raw)
+        local decoded = decodeTable(raw)
+        return decoded and tonumber(decoded.at) or nil
+    end
+    local found = at(LoadResourceFile(resource, heartbeatPath()))
+    if found then return found end
+    local _, copy, from = recoverFile(heartbeatPath(), at, false)
+    if copy then return copy, from end
+    local audit, index = lastKnown.audit, lastKnown.index
+    if audit and (index == nil or audit >= index) then
+        return audit, 'the newest audit row'
+    end
+    if index then return index, ('the last time %s was written'):format(path()) end
+    return nil
 end
 
 --- The sequence is the index's, so this marks the index, not the records.
@@ -2120,17 +2459,29 @@ end
 
 function JsonStore.writeMessage(m)
     db.messages[#db.messages + 1] = m
+    indexMessage(m)
     -- Pruned to the newest Config.Relay.MaxMessagesPerThread, so the
     -- contract's file — rewritten whole on every message — stays small.
     local keep = tonumber(Config.Relay.MaxMessagesPerThread) or 0
     if keep > 0 then
-        local seen = 0
+        local seen, dropped = 0, {}
         for i = #db.messages, 1, -1 do
             local row = db.messages[i]
             if row.contract_id == m.contract_id and row.thread_id == m.thread_id then
                 seen = seen + 1
-                if seen > keep then table.remove(db.messages, i) end
+                if seen > keep then
+                    dropped[row] = true
+                    table.remove(db.messages, i)
+                end
             end
+        end
+        -- And from the contract's own list (messagesBy), as it stands now.
+        if next(dropped) and messagesBy[m.contract_id] then
+            local rows, kept = messagesBy[m.contract_id], {}
+            for i = 1, #rows do
+                if not dropped[rows[i]] then kept[#kept + 1] = rows[i] end
+            end
+            messagesBy[m.contract_id] = kept
         end
     end
     touch(false, m.contract_id)

@@ -15,7 +15,7 @@ local function parseSchema(sql)
     local name = sql:match('CREATE TABLE IF NOT EXISTS ([%w_]+)')
     if not name then return end
 
-    local columns, indexes = {}, { PRIMARY = true }
+    local columns, indexes, key = {}, { PRIMARY = true }, nil
     -- Up to the last bracket: the table options (the character set) follow.
     local body = sql:gsub('%-%-[^\n]*', ''):match('%((.*)%)[^)]*$') or ''
     local depth, part = 0, {}
@@ -30,6 +30,7 @@ local function parseSchema(sql)
                     indexes[line:match('^%s*[%w_]+%s+([%w_]+)')] = true
                 elseif upper ~= 'PRIMARY' then
                     columns[column] = true
+                    if line:upper():find('PRIMARY KEY', 1, true) then key = key or column end
                 end
             end
         else
@@ -40,6 +41,7 @@ local function parseSchema(sql)
 
     Sim.schema[name] = columns
     Sim.indexes[name] = indexes
+    Sim.keys[name] = key
     Sim.tables[name] = Sim.tables[name] or {}
     -- What the table is made with: what it declares after its last
     -- bracket, or else the database's own default, which on a txAdmin
@@ -64,6 +66,11 @@ end
 
 function Sim.reset()
     Sim.tables, Sim.schema, Sim.indexes, Sim.collations = {}, {}, {}, {}
+    -- [table] = its primary key column: the one its CREATE TABLE declares,
+    -- or for a table an older version (or another resource) left, the one
+    -- existingSchema's fifth argument names.
+    Sim.keys = {}
+    Sim.existingKeys = nil
     -- [table] = engine, for the tables there are: made here, or left by an
     -- older version (existingSchema's fourth argument; InnoDB otherwise).
     Sim.engines = {}
@@ -92,10 +99,14 @@ end
 --- table not named here answers nothing, as a query that failed would
 ---@param engines table|nil [tableName] = engine it was made on; InnoDB if
 --- not named
-function Sim.existingSchema(tables, indexes, collations, engines)
+---@param keys table|nil [tableName] = its primary key column; where not
+--- named, the first of id, cid, setting_key and meta_key it has, which is
+--- what every version of this resource's tables has had
+function Sim.existingSchema(tables, indexes, collations, engines, keys)
     Sim.existing = tables
     Sim.existingIndexes = indexes or {}
     Sim.existingCollations = collations or {}
+    Sim.existingKeys = keys or {}
     for name in pairs(tables or {}) do
         Sim.engines[name] = engines and engines[name] or 'InnoDB'
     end
@@ -261,8 +272,26 @@ function Sim.install(Natives)
                         collation = charset .. '_general_ci'
                     end
                 end
-                rows[#rows + 1] = { COLUMN_NAME = column,
+                rows[#rows + 1] = { COLUMN_NAME = column, COLUMN_KEY = '',
                     CHARACTER_SET_NAME = charset, COLLATION_NAME = collation }
+            end
+            -- Which column is the table's primary key (COLUMN_KEY 'PRI').
+            local key
+            if Sim.existing and Sim.existing[table_] then
+                key = Sim.existingKeys and Sim.existingKeys[table_]
+                if not key then
+                    for _, candidate in ipairs({ 'id', 'cid', 'setting_key', 'meta_key' }) do
+                        if held[candidate] then
+                            key = candidate
+                            break
+                        end
+                    end
+                end
+            else
+                key = Sim.keys[table_]
+            end
+            for _, row in ipairs(rows) do
+                if row.COLUMN_NAME == key then row.COLUMN_KEY = 'PRI' end
             end
             return rows
         end

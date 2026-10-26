@@ -238,22 +238,21 @@ local function matches(row, conditions, params, from)
     for i = 1, #conditions do
         local condition = conditions[i]
 
-        if condition.notExists then
+        if condition.subquery then
             -- The correlated subquery, evaluated by scanning the other
             -- table. Slow and exact, which is what a test executor wants.
+            -- Its own conditions are read as any WHERE is, so one inside it
+            -- (an IN list, another EXISTS) is held to the row it names.
             local linked = row[condition.linkedTo]
-            for _, other in pairs(Exec.tables[condition.notExists] or {}) do
-                if tostring(other[condition.link]) == tostring(linked) then
-                    local hit = true
-                    for _, extra in ipairs(condition.extra) do
-                        if not compare(other[extra.column], extra.operator, extra.literal) then
-                            hit = false
-                            break
-                        end
-                    end
-                    if hit then return false end
+            local found = false
+            for _, other in pairs(Exec.tables[condition.subquery] or {}) do
+                if tostring(other[condition.link]) == tostring(linked)
+                    and matches(other, condition.inner, params, from) then
+                    found = true
+                    break
                 end
             end
+            if found ~= condition.exists then return false end
 
         elseif condition.notNull then
             if row[condition.column] == nil then return false end
@@ -325,6 +324,7 @@ local function parseConditions(clause, sql)
         end
 
         local negatedExists = term:match('^[Nn][Oo][Tt]%s+EXISTS%s*%((.*)%)$')
+        local positiveExists = not negatedExists and term:match('^EXISTS%s*%((.*)%)$')
         local column, operator, value = term:match('^([%w_.]+)%s*([=<>!]+)%s*(.+)$')
         local isNull = term:match('^([%w_.]+)%s+IS%s+NULL$')
         local notNull = term:match('^([%w_.]+)%s+IS%s+NOT%s+NULL$')
@@ -333,34 +333,37 @@ local function parseConditions(clause, sql)
 
         local function bare(name) return name:match('([%w_]+)$') end
 
-        if negatedExists then
-            -- NOT EXISTS (SELECT 1 FROM <table> WHERE <table>.<col> = <outer>.<col> [AND ...])
-            local subTable = negatedExists:match('FROM%s+([%w_]+)')
-            local subWhere = negatedExists:match('WHERE%s+(.*)$')
+        if negatedExists or positiveExists then
+            -- [NOT] EXISTS (SELECT 1 FROM <table> <alias> WHERE <alias>.<col> =
+            -- <outer>.<col> [AND ...]): the one term naming a column of the
+            -- row outside is the join, and the rest are read as any WHERE is,
+            -- a nested EXISTS among them, against the row inside.
+            local subquery = negatedExists or positiveExists
+            local subTable = subquery:match('FROM%s+([%w_]+)')
+            local subWhere = subquery:match('WHERE%s+(.*)$')
             if not subTable or not subWhere then
                 error('mysql_exec: cannot read the subquery in: ' .. tostring(sql))
             end
-            local link, linkedTo, extra = nil, nil, {}
+            local link, linkedTo, rest = nil, nil, {}
             for _, inner in ipairs(andTerms(subWhere)) do
                 local left, op, right = inner:match('^([%w_.]+)%s*([=<>!]+)%s*(.+)$')
-                if not left then
-                    error('mysql_exec: cannot read `' .. inner .. '` in: ' .. tostring(sql))
-                end
-                if right:match('^[%w_]+%.[%w_]+$') then
+                if left and op == '=' and right:match('^[%a_][%w_]*%.[%w_]+$') and not link then
                     link, linkedTo = bare(left), bare(right)
-                elseif right == '?' then
-                    error('mysql_exec: a bound parameter inside a subquery is '
-                        .. 'not supported: ' .. tostring(sql))
                 else
-                    extra[#extra + 1] = { column = bare(left), operator = op,
-                                          literal = unquote(right) }
+                    rest[#rest + 1] = inner
                 end
             end
             if not link then
                 error('mysql_exec: the subquery names no join column: ' .. tostring(sql))
             end
-            conditions[#conditions + 1] = { notExists = subTable, link = link,
-                                            linkedTo = linkedTo, extra = extra }
+            local inner, bound = parseConditions(#rest > 0 and table.concat(rest, ' AND ') or nil, sql)
+            if bound > 0 then
+                error('mysql_exec: a bound parameter inside a subquery is '
+                    .. 'not supported: ' .. tostring(sql))
+            end
+            conditions[#conditions + 1] = { subquery = subTable,
+                exists = type(positiveExists) == 'string',
+                link = link, linkedTo = linkedTo, inner = inner }
 
         elseif notNull then
             conditions[#conditions + 1] = { column = bare(notNull), notNull = true }
@@ -679,25 +682,49 @@ local function delete(sql, params)
     if not tableName then return {} end
 
     local whereClause = sql:match('WHERE (.*)$')
+    -- `... ORDER BY col LIMIT ?`: the first `?`-many rows in that order,
+    -- as MariaDB deletes them (the audit prune, a batch a tick).
+    local orderBy, limit
+    if whereClause then
+        local head, by = whereClause:match('^(.-)%s+ORDER BY ([%w_]+)')
+        if head then
+            whereClause, orderBy = head, by
+            if sql:find('LIMIT %?%s*$') then limit = tonumber(params[#params]) end
+        end
+    end
     -- Both captures. `a and f()` keeps only f()'s first result, so the
     -- comparison was always nil and no DELETE with one ever matched a row:
     -- the audit prune on mysql was never exercised.
     local column, comparison
-    if whereClause then column, comparison = whereClause:match('([%w_]+) ([<>]=?) %?') end
+    if whereClause then column, comparison = whereClause:match('^([%w_]+) ([<>]=?) %?$') end
 
+    local doomed = {}
     for key, row in pairs(Exec.tables[tableName] or {}) do
         if column then
             local value, bound = tonumber(row[column]), tonumber(params[1])
             if value and bound then
                 if (comparison == '<' and value < bound)
-                    or (comparison == '>' and value > bound) then
-                    Exec.tables[tableName][key] = nil
+                    or (comparison == '>' and value > bound)
+                    or (comparison == '<=' and value <= bound)
+                    or (comparison == '>=' and value >= bound) then
+                    doomed[#doomed + 1] = { key = key, row = row }
                 end
             end
         else
             local conditions = parseConditions(whereClause, sql)
-            if matches(row, conditions, params, 1) then Exec.tables[tableName][key] = nil end
+            if matches(row, conditions, params, 1) then doomed[#doomed + 1] = { key = key, row = row } end
         end
+    end
+    if orderBy then
+        table.sort(doomed, function(a, b)
+            local av, bv = a.row[orderBy], b.row[orderBy]
+            if av ~= bv then return (tonumber(av) or 0) < (tonumber(bv) or 0) end
+            return tostring(a.key) < tostring(b.key)
+        end)
+    end
+    for i = 1, #doomed do
+        if limit and i > limit then break end
+        Exec.tables[tableName][doomed[i].key] = nil
     end
 
     return {}
@@ -878,6 +905,26 @@ local function execute(sql, params, flat)
         end
         return rows
     end
+    -- A table's columns, with which is its primary key (COLUMN_KEY 'PRI'),
+    -- and the character set and collation every text column here is made
+    -- in, for the tables CREATE TABLE has made here.
+    if flat:find('information_schema%.COLUMNS') then
+        local name = params[1]
+        local declared = Exec.schema[name]
+        if not declared then return {} end
+        local rows = {}
+        for _, column in ipairs(declared.order) do
+            local t = declared.types[column] or {}
+            local text = t.base == 'VARCHAR' or t.base == 'TEXT'
+            rows[#rows + 1] = {
+                COLUMN_NAME = column,
+                COLUMN_KEY = Exec.primary[name] == column and 'PRI' or '',
+                CHARACTER_SET_NAME = text and 'utf8mb4' or nil,
+                COLLATION_NAME = text and 'utf8mb4_unicode_ci' or nil,
+            }
+        end
+        return rows
+    end
     if flat:find('information_schema') then return {} end
 
     if flat:find('^INSERT INTO crimson_ledger') and flat:find('DELETE') then
@@ -898,7 +945,8 @@ local function execute(sql, params, flat)
         return escrowOfContracts(flat, params)
     end
     -- A count with a condition is the rows the same SELECT * would return.
-    if flat:find('^SELECT COUNT%(%*%) FROM [%w_]+ WHERE ') then
+    if flat:find('^SELECT COUNT%(%*%) FROM [%w_]+ WHERE ')
+        or flat:find('^SELECT COUNT%(%*%) FROM [%w_]+ %a+ WHERE ') then
         return #select_(flat:gsub('^SELECT COUNT%(%*%)', 'SELECT *', 1), params)
     end
     if flat:find('^SELECT COUNT%(%*%)') then

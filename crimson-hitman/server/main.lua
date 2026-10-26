@@ -1023,6 +1023,89 @@ local function selectStorage()
     return CrimsonBoot.require('server.storage.memory')
 end
 
+--- How many contracts holding money a refusal names, each with what it
+--- holds and what clears it.
+local SWITCH_LISTED = 10
+
+--- One contract another mode holds money on, in a line for the owner: its
+--- id and state, what its unsettled lines hold by source, whom anything is
+--- owed to by role (never by name), and what clears it. `mode` is the mode
+--- holding it, which is the one these must be cleared in.
+---@param entry table { id, contract, lines, hitmen } from a store's inspect
+---@param mode string
+---@return string
+local function heldLine(entry, mode)
+    local contract = entry.contract
+    local amounts, order, goods, owed, owedOrder = {}, {}, 0, {}, {}
+    local staff, limit = contract == nil, CrimsonBoot.require('server.escrow').DELIVER_RAISE_LIMIT
+    local lines = {}
+    for i, line in ipairs(entry.lines or {}) do lines[i] = line end
+    table.sort(lines, function(a, b) return tostring(a.id) < tostring(b.id) end)
+    for _, line in ipairs(lines) do
+        if line.source == CH.SOURCE.ITEM or line.source == CH.SOURCE.WEAPON then
+            goods = goods + 1
+        else
+            local source = tostring(line.source)
+            if amounts[source] == nil then order[#order + 1] = source end
+            amounts[source] = (amounts[source] or 0) + (tonumber(line.amount) or 0)
+        end
+        if line.owed_to ~= nil then
+            local role = (contract and line.owed_to == contract.creator_cid and 'the client')
+                or (contract and line.owed_to == contract.target_cid and 'the target')
+                or ((entry.hitmen or {})[line.owed_to] and 'an operative') or 'a player'
+            if not owed[role] then
+                owed[role] = true
+                owedOrder[#owedOrder + 1] = role
+            end
+        end
+        -- Left for staff: a give that kept raising, or one the server
+        -- stopped in the middle of, which the next start leaves for them.
+        if (tonumber(line.deliver_raises) or 0) >= limit or line.releasing_to ~= nil then
+            staff = true
+        end
+    end
+
+    local held = {}
+    for _, source in ipairs(order) do
+        held[#held + 1] = ('%d %s'):format(math.floor(amounts[source]),
+            source == CH.SOURCE.DIRTY and 'dirty money' or source)
+    end
+    if goods > 0 then held[#held + 1] = ('%d item(s) or weapon(s)'):format(goods) end
+    local what = table.concat(held, ', ')
+    if #owedOrder > 0 then what = what .. ' owed to ' .. table.concat(owedOrder, ' and ') end
+
+    local commands = Config.Admin.Commands
+    local clears
+    if staff then
+        clears = ('left for staff: /%s lists it, /%s settles it'):format(commands.stuck, commands.settle)
+    elseif not CH.TERMINAL[contract.state] then
+        clears = ('running: let it finish, the client can cancel it in the app while nobody has '
+            .. 'taken it, or staff can void it (/%s)'):format(commands.void)
+    elseif #owedOrder > 0 then
+        clears = 'owed to a player who is away: handed over at their next login'
+    else
+        clears = ('finished with money not yet handed back: the next start in %s mode hands it '
+            .. 'back'):format(mode)
+    end
+    return ('%s (%s): %s; %s'):format(tostring(entry.id),
+        contract and tostring(contract.state) or 'no contract row', what, clears)
+end
+
+--- The contracts holding money, up to SWITCH_LISTED of them, one a line.
+local function heldList(holding, mode, more)
+    local out = {}
+    for i = 1, math.min(#(holding or {}), SWITCH_LISTED) do
+        out[#out + 1] = '  - ' .. heldLine(holding[i], mode)
+    end
+    local beyond = more or (#(holding or {}) - SWITCH_LISTED)
+    if beyond == true then
+        out[#out + 1] = '  - and more not listed'
+    elseif beyond > 0 then
+        out[#out + 1] = ('  - and %d more contract(s) not listed'):format(beyond)
+    end
+    return out
+end
+
 --- Refuse to start where another storage mode still holds players' money.
 ---
 --- Modes do not share data. A server switched from json to mysql (which the
@@ -1038,23 +1121,38 @@ end
 --- for somebody offline. A store holding finished history is left as it
 --- is and mentioned once. Config.Database.AllowModeSwitch = true starts
 --- anyway.
+---
+--- Said contract by contract, with what each holds and what clears it: a
+--- count of lines told the owner neither where nor how much, and "cancel
+--- them in the app" clears neither a payout owed to a player who is away
+--- nor a line left for staff. A contract file json mode cannot read is
+--- named as one that may hold money: nobody can tell that it does not, and
+--- switching away would also stop the warning that says to restore it.
 local function refuseModeSwitch()
     local mode = Config.Database.Mode
-    local found = {}
+    local found, listed = {}, {}
 
     if mode ~= 'json' then
         local ok, held = pcall(CrimsonBoot.require('server.storage.json').inspect)
+        local folder = Config.Database.Json.Directory or 'data'
         if ok and held then
-            if held.lines > 0 or held.owed > 0 or held.unreadable then
-                found[#found + 1] = held.unreadable
-                    and ('json mode: %s/store.json, which cannot be read')
-                        :format(Config.Database.Json.Directory or 'data')
-                    or ('json mode: %d escrow line(s) and %d payout(s) owed, in %s/')
-                        :format(held.lines, held.owed, Config.Database.Json.Directory or 'data')
+            local unreadable = held.unreadable or {}
+            if held.lines > 0 or held.owed > 0 or #unreadable > 0 then
+                if held.lines > 0 or held.owed > 0 then
+                    found[#found + 1] = ('json mode: %d escrow line(s) and %d payout(s) owed, in %s/')
+                        :format(held.lines, held.owed, folder)
+                end
+                if #unreadable > 0 then
+                    local files = {}
+                    for i = 1, #unreadable do files[i] = tostring(unreadable[i].file) end
+                    found[#found + 1] = ('json mode: %d file(s) that cannot be read and may hold '
+                        .. 'money (%s); restore them from a backup'):format(#files, table.concat(files, ', '))
+                end
+                for _, text in ipairs(heldList(held.holding, 'json')) do listed[#listed + 1] = text end
             elseif held.contracts > 0 then
                 Log.debug(('%s/store.json still names %d finished contract(s) from '
                     .. 'json mode. They hold no money and %s mode does not read them.')
-                    :format(Config.Database.Json.Directory or 'data', held.contracts, mode))
+                    :format(folder, held.contracts, mode))
             end
         end
     end
@@ -1066,24 +1164,29 @@ local function refuseModeSwitch()
         if ok and held and (held.lines > 0 or held.owed > 0) then
             found[#found + 1] = ('mysql mode: %d escrow line(s) and %d payout(s) owed, in the '
                 .. 'crimson_* tables'):format(held.lines, held.owed)
+            for _, text in ipairs(heldList(held.holding, 'mysql', held.more)) do
+                listed[#listed + 1] = text
+            end
         end
     end
 
     if #found == 0 then return end
+    local where = table.concat(found, '; ')
+    local contracts = #listed > 0 and ('\n' .. table.concat(listed, '\n')) or ''
     -- Money another mode holds, out of reach: said whatever Config.Debug says.
     if Config.Database.AllowModeSwitch == true then
         Log.always(('warning: started in %s mode although %s. '
             .. 'Config.Database.AllowModeSwitch is on, so none of it is visible or returned '
-            .. 'from here.'):format(mode, table.concat(found, '; ')))
+            .. 'from here.%s'):format(mode, where, contracts))
         return
     end
     error(('[crimson-hitman] Config.Database.Mode is \'%s\', but players\' money is still held by '
         .. 'another mode: %s. Modes do not share data, so started like this every contract '
         .. 'there and the money in it would be invisible, and nothing would return it. '
-        .. 'Refusing to start. Switch Mode back and let those contracts finish (or cancel them '
-        .. 'in the app), or settle them by hand and move that data out of the way, or set '
-        .. 'Config.Database.AllowModeSwitch = true to start anyway.')
-        :format(tostring(mode), table.concat(found, '; ')), 0)
+        .. 'Refusing to start. Switch Mode back and clear each contract as its line below says, '
+        .. 'or settle them by hand and move that data out of the way, or set '
+        .. 'Config.Database.AllowModeSwitch = true to start anyway.%s')
+        :format(tostring(mode), where, contracts), 0)
 end
 --------------------------------------------------------------------------
 -- Integration report (§4.2 of the improvements document)
@@ -1421,8 +1524,16 @@ function Recover()
     -- expired the moment both parties were back, forfeiting the hitman's
     -- stake for a restart. Dated from the last heartbeat instead.
     local now = os.time()
-    local lastAlive = Storage.lastHeartbeat and Storage.lastHeartbeat() or nil
+    local lastAlive, datedFrom
+    if Storage.lastHeartbeat then lastAlive, datedFrom = Storage.lastHeartbeat() end
     if lastAlive and lastAlive >= now then lastAlive = nil end
+    -- The heartbeat file a crash did not leave whole (json): dated from
+    -- what the store says instead, no later than the server went down.
+    if lastAlive and datedFrom then
+        Log.always(('the last heartbeat could not be read whole, so the downtime before this '
+            .. 'start is dated from %s instead (%d second(s) ago); running contracts are paused '
+            .. 'from then.'):format(tostring(datedFrom), now - lastAlive))
+    end
 
     -- The contracts still holding an escrow line that is not settled, in
     -- one read. A finished contract whose lines are all settled has nothing
