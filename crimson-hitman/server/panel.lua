@@ -54,6 +54,15 @@ local WAITS_FOR_RECOVERY = {
 local OVERVIEW_SECONDS = 5
 local overviewCache = nil   -- { at = os.time(), data = table }
 
+--- And one read of every contract, shared for as long between the overview
+--- and the contract searches. On mysql it is a SELECT * of the whole table,
+--- thirty days of finished contracts as shipped (Storage.allContracts), and
+--- the search asked for it again at every pause in typing: past a thousand
+--- rows each read also printed oxmysql's oversized-result warning. A search
+--- is a few seconds behind a contract placed meanwhile, as the overview is;
+--- a write here reads it afresh.
+local contractsCache = nil  -- { at = os.time(), rows = table[] }
+
 --- Refusals already written down, by source and when, so a page posting in
 --- a loop cannot fill the audit log with one fact.
 local deniedLogged = {}     -- [src] = Util.monotonicMs()
@@ -69,8 +78,18 @@ local LOG_ROWS_MAX = 100
 
 function Panel.init(d)
     deps = d
-    overviewCache = nil
+    overviewCache, contractsCache = nil, nil
     deniedLogged = {}
+end
+
+--- Every contract the store keeps, read at most once per OVERVIEW_SECONDS.
+---@return table[]
+local function everyContract()
+    local now = os.time()
+    if not contractsCache or now - contractsCache.at >= OVERVIEW_SECONDS then
+        contractsCache = { at = now, rows = deps.storage.allContracts() or {} }
+    end
+    return contractsCache.rows
 end
 
 --------------------------------------------------------------------------
@@ -184,7 +203,7 @@ local function redactor(canIdentify, contract, hitmen)
         if hitman.anon == true and hitman.hitman_name then hidden[hitman.hitman_name] = true end
     end
 
-    local r = {}
+    local r = { canIdentify = canIdentify }
 
     --- A citizen id as this staff member may see it.
     function r.who(cid)
@@ -250,11 +269,30 @@ local function lineView(line, r)
     }
 end
 
+--- Detail fields only staff with IdentityAce read, by the row's action.
+---
+--- What an identity holder searched for, and how many contracts it found,
+--- counts the ones it matched through an anonymous party: a reader without
+--- the ACE who ran the same search and found fewer learned that the citizen
+--- id or name typed was behind that many anonymous contracts. Neither is a
+--- citizen id in a field that says so, so nothing else here redacted them.
+local IDENTITY_ONLY = {
+    admin_panel_search_identified = { query = true, rows = true },
+}
+local IDENTITY_ONLY_SHOWN = '(identity only)'
+
 --- One audit row, as the panel shows it.
 local function rowView(row, r)
+    local detail = r.value(nil, row.detail or {})
+    local hidden = not r.canIdentify and IDENTITY_ONLY[row.action]
+    if hidden then
+        for key in pairs(hidden) do
+            if detail[key] ~= nil then detail[key] = IDENTITY_ONLY_SHOWN end
+        end
+    end
     return {
         ts = row.ts, kind = row.kind, action = row.action, contract = row.contract_id,
-        actor = r.who(row.actor_cid), detail = r.value(nil, row.detail or {}),
+        actor = r.who(row.actor_cid), detail = detail,
     }
 end
 
@@ -273,6 +311,27 @@ end
 local function shortText(value, max)
     if type(value) ~= 'string' then return nil end
     return Util.sanitizeText(value, max)
+end
+
+--- A citizen id staff typed, in the form the server keeps it, or nil.
+---
+--- qbx_core's are capitals and digits, and every lookup by one is an exact
+--- match on the store's index: 'target01' found no contract, a player view
+--- of nobody, and no log row, each answered as though there were nothing to
+--- find. Upper case, unless the server knows it as typed (a server whose ids
+--- are not all capitals), which costs a lookup only when it was typed in
+--- lower case.
+---@param value any
+---@return string|nil
+local function typedCitizenId(value)
+    local cid = Util.toCitizenId(value)
+    if not cid then return nil end
+    local upper = cid:upper()
+    if upper == cid then return cid end
+    if deps.identity.byCitizenId(cid) or #(deps.storage.contractsInvolving(cid) or {}) > 0 then
+        return cid
+    end
+    return upper
 end
 
 local VALID_STATE = {}
@@ -314,6 +373,27 @@ local function diagWarnings()
     return out
 end
 
+--- What a stuck line can be settled with, as /ch-stuck says (Admin.interrupted).
+---
+--- Never `return` for a line owed to somebody (a buyout's premium, a review
+--- item's pay): it was put up by nobody it could go back to, and
+--- Admin.settleLine refuses every return of one, so the button only ever
+--- answered invalid_input.
+local function settleActions(entry)
+    if entry.unfinished then return {} end
+    if entry.orphan then return { 'return_owner' } end
+    local owed = entry.portion == CH.PORTION.OWED
+    if entry.raised ~= nil then
+        if deps.escrow.NEVER_GIVEN[entry.why] then return { 'pay', 'pay_amount' } end
+        if owed then return { 'pay', 'pay_amount', 'delivered' } end
+        return { 'pay', 'pay_amount', 'return', 'delivered' }
+    end
+    if entry.settles == 'queued' then return {} end
+    if entry.settles == 'return_owner' then return { 'return_owner' } end
+    if entry.settles == 'pay_or_return' then return owed and { 'pay' } or { 'pay', 'return' } end
+    return owed and {} or { 'return' }
+end
+
 local function addLine(bucket, line, owes)
     if CH.MONEY_SOURCES[line.source] then
         bucket[line.source] = bucket[line.source] + (owes or tonumber(line.amount) or 0)
@@ -330,7 +410,7 @@ local function buildOverview()
     local out = { at = os.time() }
 
     local byState, total = {}, 0
-    for _, contract in ipairs(Storage.allContracts() or {}) do
+    for _, contract in ipairs(everyContract()) do
         byState[contract.state] = (byState[contract.state] or 0) + 1
         total = total + 1
     end
@@ -372,7 +452,11 @@ local function buildOverview()
 
     -- What waits for staff, as /ch-stuck lists it. Not while recovery is
     -- still deciding it: the command says nothing is listed then, and so
-    -- does this.
+    -- does this. Left for staff is every line something settles by hand
+    -- (settleActions): counted as the parked ones only, a line a shutdown
+    -- caught mid-release and escrow of a contract never stored were said not
+    -- to be staff's, and the total counted lines queued since or an ending
+    -- finishing itself, which need nobody.
     out.recovery = recoveryState()
     if out.recovery == 'ready' then
         local ok, lines = pcall(deps.admin.interrupted, 0, true)
@@ -381,7 +465,7 @@ local function buildOverview()
             for _, entry in ipairs(lines) do
                 local why = entry.why or (entry.orphan and 'orphan') or 'interrupted'
                 byWhy[why] = (byWhy[why] or 0) + 1
-                if entry.raised ~= nil then leftForStaff = leftForStaff + 1 end
+                if #settleActions(entry) > 0 then leftForStaff = leftForStaff + 1 end
             end
             out.stuck = { total = #lines, byWhy = byWhy, leftForStaff = leftForStaff }
         end
@@ -441,7 +525,7 @@ H.contracts = function(src, data)
     local page = wholeNumber(data.page, 1, 100000) or 1
 
     local viaCid = {}
-    local cid = query and Util.toCitizenId(query)
+    local cid = query and typedCitizenId(query)
     if cid then
         for _, contract in ipairs(Storage.contractsInvolving(cid) or {}) do
             local visible
@@ -459,7 +543,7 @@ H.contracts = function(src, data)
 
     local lowered = query and query:lower()
     local matched = {}
-    for _, contract in ipairs(Storage.allContracts() or {}) do
+    for _, contract in ipairs(everyContract()) do
         local hit = not lowered
         if lowered and not hit then
             hit = viaCid[contract.id]
@@ -505,20 +589,6 @@ H.contracts = function(src, data)
             staffOf(src), nil, { query = query, rows = #matched })
     end
     return true, nil, nil, { rows = rows, page = page, pages = pages, total = #matched }
-end
-
---- What a stuck line can be settled with, as /ch-stuck says (Admin.interrupted).
-local function settleActions(entry)
-    if entry.unfinished then return {} end
-    if entry.orphan then return { 'return_owner' } end
-    if entry.raised ~= nil then
-        if deps.escrow.NEVER_GIVEN[entry.why] then return { 'pay', 'pay_amount' } end
-        return { 'pay', 'pay_amount', 'return', 'delivered' }
-    end
-    if entry.settles == 'queued' then return {} end
-    if entry.settles == 'return_owner' then return { 'return_owner' } end
-    if entry.settles == 'pay_or_return' then return { 'pay', 'return' } end
-    return { 'return' }
 end
 
 --- One contract, whole: its terms, payouts, escrow, operatives, open
@@ -635,7 +705,9 @@ H.settle = function(src, data)
             return false, CH.ERR.INVALID_INPUT, 'An amount is a whole number of at least 1.'
         end
     elseif disposition == 'return' and data.owner ~= nil then
-        extra = Util.toCitizenId(data.owner)
+        -- In the server's form: returned to 'creator01', a line went to a
+        -- citizen id nobody has, owed and queued for a login that never comes.
+        extra = typedCitizenId(data.owner)
         if not extra then return false, CH.ERR.INVALID_INPUT, 'That is not a citizen id.' end
     end
     local ok, err, detail = deps.admin.settleLine(src, line, disposition, extra)
@@ -707,7 +779,7 @@ H.logs = function(src, data)
             return false, 'identity_required', ('Finding a player\'s rows needs %s.')
                 :format(tostring(Config.Admin.IdentityAce))
         end
-        filter.actor = Util.toCitizenId(data.actor)
+        filter.actor = typedCitizenId(data.actor)
         if not filter.actor then return false, CH.ERR.INVALID_INPUT, 'That is not a citizen id.' end
     end
     local limit = math.min(LOG_ROWS_MAX, wholeNumber(data.limit, 1, LOG_ROWS_MAX) or pageSize())
@@ -731,6 +803,20 @@ end
 
 --- One player: their contracts as /ch-contracts lists them, their record,
 --- what they are owed, and the notices kept for their next login.
+---
+--- To staff who may not see who is behind an anonymous party, nothing here
+--- counts what the player did anonymously, as /ch-contracts leaves those
+--- contracts out. A line owed, a delivery pending and a notice kept are each
+--- left out when they are on a contract the player was an anonymous party
+--- to. The record is counters kept for the life of the character
+--- (Progression.record), anonymous contracts in them and nothing to say
+--- which: one placed more than the list shows was one placed anonymously,
+--- and with one anonymous contract on the board that named its client. It
+--- is shown only with IdentityAce.
+---
+--- A citizen id nobody in the city has and nothing shown names answers
+--- not found: answered with an empty profile, a mistyped one read as a
+--- player with nothing on record.
 H.player = function(src, data)
     local Storage = deps.storage
     local canIdentify = identifies(src)
@@ -745,7 +831,7 @@ H.player = function(src, data)
         end
         cid = actor.cid
     else
-        cid = Util.toCitizenId(subject)
+        cid = typedCitizenId(subject)
         if not cid then return false, CH.ERR.INVALID_INPUT, 'Give a player id or a citizen id.' end
         typedCid = true
         actor = deps.identity.byCitizenId(cid)
@@ -753,28 +839,37 @@ H.player = function(src, data)
 
     local contracts = deps.admin.contractsOf(src, cid) or {}
 
-    -- A line owed to them on a contract they were an anonymous party to
-    -- says they were, so it is left out for staff who may not see that,
-    -- as /ch-contracts leaves the contract out.
+    -- Whether something of theirs is on a contract they were an anonymous
+    -- party to, which this staff member may not be shown.
     local parties = partiesReader()
+    local function hiddenOn(contractId)
+        if canIdentify then return false end
+        local contract, hitmen = parties(contractId)
+        if contract and contract.anon_creator == true and contract.creator_cid == cid then return true end
+        for _, hitman in ipairs(hitmen or {}) do
+            if hitman.hitman_cid == cid and hitman.anon == true then return true end
+        end
+        return false
+    end
+
     local owed, queues = {}, {}
     for _, line in ipairs(Storage.owedHeldEscrow and Storage.owedHeldEscrow() or {}) do
-        if line.owed_to == cid then
+        if line.owed_to == cid and not hiddenOn(line.contract_id) then
             local contract, hitmen = parties(line.contract_id)
-            local anonymous = contract and contract.anon_creator == true and contract.creator_cid == cid
-            for _, hitman in ipairs(hitmen or {}) do
-                if hitman.hitman_cid == cid and hitman.anon == true then anonymous = true end
-            end
-            if canIdentify or not anonymous then
-                local view = lineView(line, redactor(canIdentify, contract, hitmen))
-                view.queued = deps.escrow.queued(line, queues)
-                owed[#owed + 1] = view
-            end
+            local view = lineView(line, redactor(canIdentify, contract, hitmen))
+            view.queued = deps.escrow.queued(line, queues)
+            owed[#owed + 1] = view
         end
     end
-    local pending = #(Storage.readPending(cid) or {})
+    local pending = 0
+    for _, entry in ipairs(Storage.readPending(cid) or {}) do
+        if not hiddenOn(entry.contract_id) then pending = pending + 1 end
+    end
     local notices, titles = 0, {}
-    if deps.notify and deps.notify.waitingFor then notices, titles = deps.notify.waitingFor(cid) end
+    if deps.notify and deps.notify.waitingFor then
+        notices, titles = deps.notify.waitingFor(cid, hiddenOn)
+    end
+    local stats = canIdentify and deps.progression.record(cid) or nil
 
     -- A name for somebody offline, from a contract that names them openly.
     local name = actor and actor.name or nil
@@ -792,13 +887,21 @@ H.player = function(src, data)
     deps.audit.staff(canIdentify and 'admin_panel_player_identified' or 'admin_panel_player',
         staffOf(src), nil, { subject = cid, typed = typedCid or nil })
 
+    local recorded = stats and ((stats.placed or 0) + (stats.completed or 0) + (stats.failed or 0)
+        + (stats.survived or 0)) > 0
+    if typedCid and not actor and not name and #contracts == 0 and #owed == 0 and pending == 0
+        and notices == 0 and not recorded then
+        return false, CH.ERR.NOT_FOUND, 'Nobody in the city has that citizen id, and nothing you may '
+            .. 'see here names it. Check how it is spelt.'
+    end
+
     return true, nil, nil, {
         player = {
             cid = (canIdentify or typedCid) and cid or nil, name = name,
             online = actor ~= nil, server = actor and actor.source or nil,
         },
         contracts = contracts,
-        stats = deps.progression.record(cid),
+        stats = stats,
         owed = owed, pending = pending,
         notices = { count = notices, titles = titles },
     }
@@ -821,6 +924,9 @@ local function settingRefusal(key, err, why)
     if err == 'not_allowed' then return 'Not a setting the panel may change.' end
     if err == 'read_only' then return ('Not changed: %s'):format(tostring(why)) end
     if err == 'not_overridden' then return ('%s is what config.lua says already.'):format(key) end
+    if err == CH.ERR.BUSY then
+        return 'Not changed: another change to the settings is being saved. Try again in a moment.'
+    end
     if err == 'store_failed' then
         return ('Not changed: the store would not take it (%s). Nothing changed.'):format(tostring(why))
     end
@@ -965,9 +1071,9 @@ function Panel.handle(src, payload)
             'That raised an error on the server (the console says what).')
     end
     if level == WRITE then
-        -- Whatever it moved shows in the next overview, not one cached
-        -- from before it.
-        overviewCache = nil
+        -- Whatever it moved shows in the next overview and search, not
+        -- ones cached from before it.
+        overviewCache, contractsCache = nil, nil
         -- Every write on the record at once, not at the next flush.
         pcall(deps.audit.flush)
         if deps.storage.flush then pcall(deps.storage.flush) end

@@ -32,6 +32,17 @@ local REFOCUS_MS, REFOCUS_TIMES = 50, 5
 --- and either one released closes it.
 local ESCAPE_CONTROLS = { 200, 322 }
 
+--- And for this long after it closes. Closing gives the game its input back
+--- while the key that closed it can still be down, and the watch below
+--- ended the frame after: the rest of that keystroke reached the game
+--- unguarded, and the pause menu opened as the panel went.
+local ESCAPE_GUARD_MS = 400
+
+--- When the trailing guard ends (CrimsonUtil.monotonicMs, which steps past
+--- the game timer's wrap), and whether the watch is running, so a second
+--- open while it trails starts no second one.
+local guardUntil, watching = 0, false
+
 --- Close the page, whichever way it is closed: Escape in the page or in the
 --- game, the page's own close button, or this resource stopping. Always
 --- gives the focus back, and answers every request still waiting, so no
@@ -39,6 +50,7 @@ local ESCAPE_CONTROLS = { 200, 322 }
 function AdminPanel.close()
     local was = open
     open = false
+    if was then guardUntil = CrimsonUtil.monotonicMs() + ESCAPE_GUARD_MS end
     SetNuiFocus(false, false)
     if was then SendNUIMessage({ type = 'close' }) end
     for rid, answer in pairs(pending) do
@@ -63,21 +75,26 @@ function AdminPanel.open(access)
     end)
     -- Escape, here as well as in the page: with the focus in the page the
     -- game may still see the key, and the pause menu opening over the
-    -- panel is what it does with it. Every frame, and only while the page
-    -- is open; the loop ends as it closes. One watch however often the
-    -- server says to open: a second would run beside the first.
-    if already then return end
+    -- panel is what it does with it. Every frame, only while the page is
+    -- open and for ESCAPE_GUARD_MS after it closes; the loop ends then. One
+    -- watch however often the server says to open, a trailing one included:
+    -- a second would run beside the first.
+    if already or watching then return end
+    watching = true
     CreateThread(function()
-        while open do
+        while open or CrimsonUtil.monotonicMs() < guardUntil do
             for i = 1, #ESCAPE_CONTROLS do DisableControlAction(0, ESCAPE_CONTROLS[i], true) end
-            for i = 1, #ESCAPE_CONTROLS do
-                if IsDisabledControlJustReleased(0, ESCAPE_CONTROLS[i]) then
-                    AdminPanel.close()
-                    break
+            if open then
+                for i = 1, #ESCAPE_CONTROLS do
+                    if IsDisabledControlJustReleased(0, ESCAPE_CONTROLS[i]) then
+                        AdminPanel.close()
+                        break
+                    end
                 end
             end
             Wait(0)
         end
+        watching = false
     end)
 end
 

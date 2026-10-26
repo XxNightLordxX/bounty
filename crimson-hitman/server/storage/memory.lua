@@ -924,6 +924,17 @@ function Memory.writeAudit(entry)
     return true
 end
 
+--- How many rows the retention age has dropped from the front of the log
+--- since it was this table: what a page's cursor counts from
+--- (Memory.queryAudit). Kept against the table itself, so a store opened
+--- again starts counting again.
+local auditDropped = { log = nil, rows = 0 }
+
+local function droppedFrom(log)
+    if auditDropped.log ~= log then auditDropped.log, auditDropped.rows = log, 0 end
+    return auditDropped.rows
+end
+
 --- Drop the rows older than the cutoff. They are at the front, in the order
 --- they were written, so they go in one move: removing them one at a time
 --- from the front shifted the whole log once per row.
@@ -935,6 +946,7 @@ local function trimAudit(cutoff)
     if aged == 0 then return 0 end
     table.move(log, aged + 1, n, 1)
     for i = n - aged + 1, n do log[i] = nil end
+    auditDropped.rows = droppedFrom(log) + aged
     return aged
 end
 function Memory.readAudit() return db.audit end
@@ -957,8 +969,11 @@ end
 --- A page of the audit log for the admin panel, newest first: at most
 --- `limit` rows passing the filters (Util.auditMatches), from `cursor` back,
 --- and the cursor the next page starts from, nil on the last. The cursor is
---- opaque to callers: here it is a position in the log, the row it names
---- included.
+--- opaque to callers: here it is a position in the log counted from the
+--- first row written to it, aged rows included (droppedFrom), the row it
+--- names included. Counted from what was left of the log, every row the
+--- retention age dropped between two pages moved every position down, and
+--- the next page started that many rows too new and showed rows again.
 ---@param filter table|nil { kind, action, contract, actor, from, to }
 ---@param cursor integer|nil
 ---@param limit integer
@@ -966,11 +981,15 @@ end
 ---@return integer|nil next
 function Memory.queryAudit(filter, cursor, limit)
     local log = db.audit
-    local start = math.tointeger(tonumber(cursor)) or #log
+    local base = droppedFrom(log)
+    local at = math.tointeger(tonumber(cursor))
+    local start = at and (at - base) or #log
+    -- Everything from there back has aged out since.
+    if start < 1 then return {}, nil end
     local out = {}
     for i = math.min(start, #log), 1, -1 do
         if Util.auditMatches(log[i], filter) then
-            if #out >= limit then return out, i end
+            if #out >= limit then return out, base + i end
             out[#out + 1] = log[i]
         end
     end

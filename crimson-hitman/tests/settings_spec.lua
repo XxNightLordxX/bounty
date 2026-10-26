@@ -164,12 +164,31 @@ describe('what the admin panel can change', function()
 
     it('keeps staff from locking themselves out', function()
         local s = stack()
-        for _, key in ipairs({ 'Admin.Enabled', 'Admin.Ace', 'Admin.IdentityAce', 'Database.Mode' }) do
+        for _, key in ipairs({ 'Admin.Enabled', 'Admin.Ace', 'Admin.IdentityAce', 'Database.Mode',
+            'Cooldowns.admin.per', 'Cooldowns.admin.burst', 'Cooldowns.adminWrite.per',
+            'Cooldowns.adminWrite.burst' }) do
             local value, err, why = s.settings.check(key, false)
             eq(value, nil, key)
             eq(err, 'read_only', key)
             truthy(why and #why > 10, key .. ' says why')
         end
+        eq(select(2, s.settings.check('Cooldowns.admin.burst', 1)), 'read_only',
+            'the panel\'s own allowance, at any value')
+    end)
+
+    it('marks the one number whose lowering deletes something, with what the second click does', function()
+        local s = stack()
+        local marked = {}
+        for _, entry in ipairs(s.settings.CATALOGUE) do
+            if entry.destroys then marked[#marked + 1] = entry.key end
+        end
+        eq(table.concat(marked, ','), 'Ledger.PhotoRetentionDays')
+        local row
+        for _, r in ipairs(s.settings.view().limits) do
+            if r.key == 'Ledger.PhotoRetentionDays' then row = r end
+        end
+        truthy(row.destroys:find('%s', 1, true), 'the page puts the new value in')
+        truthy(row.destroys:find('deleted', 1, true))
     end)
 end)
 
@@ -297,6 +316,41 @@ describe('changing a setting from the admin panel', function()
         eq(Config.Bailout.MinMultiplier, 1)
         eq(next(s.storage.readSettings()), nil)
         eq(#s.storage.auditByAction('admin_settings_reset_all', 5), 1)
+    end)
+
+    it('saves one change at a time, so two cannot each pass beside the other\'s old value', function()
+        local s = stack()
+        local real = s.storage.writeSetting
+        local inner
+        -- What a mysql write allows: another request runs while this one
+        -- waits on the store.
+        s.storage.writeSetting = function(...)
+            if not inner then
+                inner = { s.settings.set('Bailout.MaxMultiplier', 2, 'B', 'B') }
+            end
+            return real(...)
+        end
+        local ok, err = s.settings.set('Bailout.MinMultiplier', 2.5, 'A', 'A')
+        s.storage.writeSetting = real
+        truthy(ok, tostring(err))
+        eq(inner[1], false, 'the second is refused while the first is saved')
+        eq(inner[2], CH.ERR.BUSY)
+        eq(Config.Bailout.MinMultiplier, 2.5)
+        eq(Config.Bailout.MaxMultiplier, 3, 'and the pair in force is one the start accepts')
+        local again = { s.settings.set('Bailout.MaxMultiplier', 2, 'B', 'B') }
+        eq(again[2], 'invalid_value', 'asked again, it is checked beside the first')
+        truthy(s.settings.set('Relay.Enabled', false, 'B'), 'and the next change goes through')
+    end)
+
+    it('frees the lock when a change raises', function()
+        local s = stack()
+        truthy(s.settings.set('Relay.Enabled', false, 'A'))
+        local realStaff = s.audit.staff
+        s.audit.staff = function() error('audit raised', 0) end
+        local raised = pcall(s.settings.set, 'Informant.Cost', 100, 'A')
+        s.audit.staff = realStaff
+        falsy(raised, 'the raise reaches the caller')
+        truthy(s.settings.set('Relay.Enabled', true, 'A'), 'and nothing is left holding the lock')
     end)
 
     it('changes nothing when the store will not take it', function()
@@ -429,6 +483,73 @@ describe('settings changed from the panel, across a restart', function()
                 end
                 eq(skipped, 3, 'listed, with why, for /ch-diag')
                 truthy(settings.reset('Bailout.MinMultiplier', 'A'), 'and a reset clears one')
+            end)
+
+            it('apply a pair that depends on each other together, whichever sorts first', function()
+                local s = stack()
+                local store = freshStore(name)
+                local settings = settingsOn(s, store)
+                -- Each fine beside the other, and each set in the order that
+                -- the sort at the next start turns round: MaxMultiplier sorts
+                -- before MinMultiplier, ContractLifetime before DefaultDeadline.
+                truthy(settings.set('Bailout.MinMultiplier', 0.5, 'A'))
+                truthy(settings.set('Bailout.MaxMultiplier', 0.8, 'A'))
+                truthy(settings.set('Limits.DefaultDeadlineSeconds', 3600, 'A'))
+                truthy(settings.set('Limits.ContractLifetimeSeconds', 7200, 'A'))
+
+                resetConfig()
+                settings = settingsOn(s, reopened(name, store))
+                eq(settings.boot(), 4, 'all four applied')
+                eq(Config.Bailout.MinMultiplier, 0.5)
+                eq(Config.Bailout.MaxMultiplier, 0.8)
+                eq(Config.Limits.DefaultDeadlineSeconds, 3600)
+                eq(Config.Limits.ContractLifetimeSeconds, 7200)
+                for _, row in ipairs(settings.active()) do falsy(row.ignored, row.key .. ' applied') end
+            end)
+
+            it('apply what still fits when one does not, whatever order they sort in', function()
+                local s = stack()
+                local deadline = Config.Limits.DefaultDeadlineSeconds
+                local store = freshStore(name)
+                store.writeSetting('Bailout.MaxMultiplier', 0.8, 'A', 1)
+                store.writeSetting('Bailout.MinMultiplier', 0.5, 'A', 1)
+                store.writeSetting('Limits.DefaultDeadlineSeconds',
+                    Config.Limits.ContractLifetimeSeconds + 600, 'A', 1)
+                local printed = {}
+                local real = _G.print
+                _G.print = function(line) printed[#printed + 1] = tostring(line) end
+                local settings = settingsOn(s, reopened(name, store))
+                local applied = settings.boot()
+                _G.print = real
+                eq(applied, 2, 'the pair, though the most sorts first and does not fit config.lua\'s '
+                    .. 'least alone')
+                eq(Config.Bailout.MaxMultiplier, 0.8)
+                eq(Config.Bailout.MinMultiplier, 0.5)
+                eq(Config.Limits.DefaultDeadlineSeconds, deadline, 'config.lua\'s for the one that does not')
+                local skipped = {}
+                for _, row in ipairs(settings.active()) do
+                    if row.ignored then skipped[#skipped + 1] = row.key end
+                end
+                eq(table.concat(skipped, ','), 'Limits.DefaultDeadlineSeconds')
+                truthy(table.concat(printed, '\n'):find('DefaultDeadlineSeconds', 1, true),
+                    'and the console says which, and why')
+            end)
+
+            it('never apply a stored value for the panel\'s own allowance, and let staff clear it', function()
+                local s = stack()
+                local burst = Config.Cooldowns.admin.burst
+                local store = freshStore(name)
+                store.writeSetting('Cooldowns.admin.burst', 1, 'A', 1)
+                store.writeSetting('Cooldowns.admin.per', 3600, 'A', 1)
+                local again = reopened(name, store)
+                local settings = settingsOn(s, again)
+                eq(settings.boot(), 0, 'kept from before it was read-only, and applied no more')
+                eq(Config.Cooldowns.admin.burst, burst)
+                truthy(settings.reset('Cooldowns.admin.burst', 'A'), 'a reset takes its row away')
+                eq(again.readSettings()['Cooldowns.admin.burst'], nil)
+                eq(select(2, settings.reset('Cooldowns.admin.burst', 'A')), 'read_only',
+                    'and it is plain read-only after')
+                eq(Config.Cooldowns.admin.burst, burst, 'nothing in force moved')
             end)
         end)
     end

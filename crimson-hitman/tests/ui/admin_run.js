@@ -218,7 +218,11 @@ function settingsView(extra) {
     readonly: [
       { key: 'Admin.Enabled', group: 'Staff', label: 'Staff tools', kind: 'switch', live: true,
         readonly: 'Turning the staff tools off from the staff tools would lock you out.', value: true,
-        default: true, source: 'config' }
+        default: true, source: 'config' },
+      { key: 'Cooldowns.admin.burst', group: 'Staff', label: 'admin: requests held', kind: 'number',
+        integer: true, min: 1, max: 200, live: true, value: 30, default: 30, source: 'config',
+        readonly: 'The staff panel\'s own allowance, which every request it makes spends.',
+        ignored: 'The staff panel\'s own allowance, which every request it makes spends.' }
     ],
     overrides: 2
   }, extra || {}) };
@@ -335,6 +339,7 @@ function boot(server) {
       return node;
     },
     key: function (node, key) { markup.dispatch(node || document.body, 'keydown', { key: key }); },
+    keyUp: function (node, key) { markup.dispatch(node || document.body, 'keyup', { key: key }); },
     /** Fire every live timer of this length, as that much time passing would. */
     fire: function (ms) {
       const due = timers.filter(function (t) { return !t.cleared && !t.fired && t.ms === ms; });
@@ -425,7 +430,9 @@ async function main() {
       has(app.main(), '$15,000');
       has(app.main(), '$50,000');
       has(app.main(), 'Waiting for staff');
-      has(app.main(), '1 left for you to settle');
+      has(app.main(), 'left for you to settle, of 2 listed', 'what staff settle, not every line listed');
+      has(app.main(), '1 need nothing from you', 'and the rest said apart');
+      has(app.main(), 'Operatives3on contracts now, holding 4 contracts', 'operatives, and what they hold');
       has(app.main(), 'Alive only', 'the rule new contracts are placed under');
       has(app.main(), 'expiry', 'the slowest job');
       has(app.main(), '7.20 ms');
@@ -435,10 +442,10 @@ async function main() {
     it('posts to its own resource, as GetParentResourceName names it', function () {
       truthy(app.urls[0].indexOf('https://crimson-hitman-renamed/adminRequest') === 0, app.urls[0]);
     });
-    it('counts open review items and stuck lines on the navigation', function () {
+    it('counts open review items and the lines left for staff on the navigation', function () {
       eq(app.byId('count-reviews').textContent, '3');
       eq(app.byId('count-reviews').hidden, false);
-      eq(app.byId('count-overview').textContent, '2');
+      eq(app.byId('count-overview').textContent, '1', 'left for staff, not every line listed');
       eq(app.byId('count-settings').textContent, '2');
     });
     it('marks what this staff member may do', function () {
@@ -480,7 +487,13 @@ async function main() {
 
     app.key(app.body, 'Escape');
     await settled();
-    it('Escape closes it: tells the client, stops the refresh, draws nothing', function () {
+    it('Escape pressed does not close it yet: the game would get the rest of the keystroke', function () {
+      eq(app.byId('panel').hidden, false);
+      falsy(app.sent.some(function (s) { return s.event === 'adminClose'; }), 'nothing posted');
+    });
+    app.keyUp(app.body, 'Escape');
+    await settled();
+    it('Escape closes it on release: tells the client, stops the refresh, draws nothing', function () {
       eq(app.byId('panel').hidden, true);
       truthy(app.sent.some(function (s) { return s.event === 'adminClose'; }), 'adminClose posted');
       eq(app.live(10000), 0, 'no refresh after close');
@@ -1076,6 +1089,48 @@ async function main() {
     clean(app, 'reviews');
   })();
 
+  await (async function () {
+    const server = standardServer();
+    let resolved = false;
+    // The server lists open items only: once resolved, it is not in the list.
+    server.reviews = function () {
+      const list = reviews();
+      if (resolved) list.data.items = list.data.items.filter(function (i) { return i.id !== 'rv00000001'; });
+      return list;
+    };
+    server.resolve = function () {
+      resolved = true;
+      return { ok: true, message: 'Resolved: 1 line(s) given, 0 owed and given while they are in the city or at '
+        + 'their next login, 0 left for /ch-stuck (giving raised). ', data: { detail: {} } };
+    };
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('reviews');
+    await settled();
+    app.type(app.byId('rv-rv00000001').querySelector('[data-bind="rv.rv00000001.amount"]'), '500');
+    const refund = app.button('Refund it', app.byId('rv-rv00000001'));
+    app.click(refund);
+    app.click(refund);
+    await settled();
+    it('an item just resolved stays, with the server\'s exact answer in it, once the queue is read again', function () {
+      truthy(app.requests('reviews').length >= 2, 'the queue was read again');
+      const card = app.byId('rv-rv00000001');
+      truthy(card, 'still drawn, though the open list no longer has it');
+      has(app.text(card), 'Resolved: 1 line(s) given');
+      has(app.text(card), 'resolved', 'marked resolved');
+      eq(card.querySelectorAll('.rv-form').length, 0, 'and offers nothing more to do');
+      truthy(app.byId('rv-rv00000002'), 'the rest as listed');
+    });
+    app.click(app.button('Refresh'));
+    await settled();
+    it('until Refresh', function () {
+      falsy(app.byId('rv-rv00000001'), 'gone once the queue is read afresh');
+      truthy(app.byId('rv-rv00000002'));
+    });
+    clean(app, 'a review resolved');
+  })();
+
   /* ---- logs ---- */
   await (async function () {
     const app = boot(standardServer());
@@ -1128,6 +1183,50 @@ async function main() {
     clean(app, 'logs');
   })();
 
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(FULL);
+    await settled();
+    app.nav('logs');
+    await settled();
+    const input = function (bind) {
+      return app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === bind; })[0];
+    };
+    const asked = app.requests('logs').length;
+    app.type(input('lg.contract'), 'ct00');
+    app.fire(350);
+    await settled();
+    it('a contract id half typed is marked, and asks nothing while typing goes on', function () {
+      eq(app.requests('logs').length, asked, 'no request for a partial id');
+      truthy(input('lg.contract').classList.contains('is-bad'), 'the box says it is not one yet');
+      lacks(app.toasts(), 'not a contract id', 'and no error toast at every pause');
+    });
+    app.key(input('lg.contract'), 'Enter');
+    await settled();
+    it('Enter on it says what a contract id is, and still asks nothing', function () {
+      eq(app.requests('logs').length, asked);
+      has(app.toasts(), 'A contract id is 8 to 64 letters');
+    });
+    app.type(input('lg.actor'), 'ab');
+    app.type(input('lg.contract'), 'ct00000003');
+    app.fire(350);
+    await settled();
+    it('nor while the citizen id box holds no citizen id', function () {
+      eq(app.requests('logs').length, asked);
+      falsy(input('lg.contract').classList.contains('is-bad'), 'the contract id is one now');
+      truthy(input('lg.actor').classList.contains('is-bad'));
+    });
+    app.type(input('lg.actor'), 'TARGET01');
+    app.fire(350);
+    await settled();
+    it('and asks once both are whole', function () {
+      eq(app.requests('logs').length, asked + 1);
+      eq(app.last('logs').data, { contract: 'ct00000003', actor: 'TARGET01' });
+      falsy(input('lg.actor').classList.contains('is-bad'));
+    });
+    clean(app, 'half-typed ids');
+  })();
+
   /* ---- players ---- */
   await (async function () {
     const app = boot(standardServer());
@@ -1159,6 +1258,26 @@ async function main() {
       has(app.main(), 'Kai Holt');
     });
     clean(app, 'players');
+  })();
+
+  await (async function () {
+    // As the server answers staff without crimson.identity: no record.
+    const answer = player();
+    delete answer.data.stats;
+    const app = boot(standardServer({ player: answer }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('players');
+    await settled();
+    app.type(app.byId('pl-q'), 'TARGET01');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    it('without identity the record is said to be held back, not drawn as zeros', function () {
+      has(app.main(), 'Their record is not shown');
+      lacks(app.main(), 'Success rate');
+      has(app.main(), '1 delivery pending', 'what may be shown still is');
+    });
+    clean(app, 'no record');
   })();
 
   /* ---- features, limits & settings ---- */
@@ -1271,7 +1390,73 @@ async function main() {
       eq(row.querySelectorAll('button').length, 0);
       eq(row.querySelectorAll('input').length, 0);
     });
+    it('but one whose stored value was not applied can have that value reset away', function () {
+      const row = app.byId('st-row-Cooldowns.admin.burst');
+      has(app.text(row), 'not applied');
+      eq(row.querySelectorAll('input').length, 0, 'still nothing to change it with');
+      truthy(app.button('Reset to config.lua', row), 'only the reset');
+    });
     clean(app, 'settings');
+  })();
+
+  await (async function () {
+    const view = settingsView();
+    view.data.limits.push({ key: 'Ledger.PhotoRetentionDays', group: 'Ledger',
+      label: 'Days an unopened kill photo is kept (0 forever)', kind: 'number', integer: true, min: 0, max: 365,
+      live: true, inflight: 'Looked at every ten minutes.', value: 30, default: 30, source: 'config',
+      destroys: 'Lowered to %s, every unopened kill photo older than %s day(s) is deleted at the next sweep, for good.' });
+    const server = standardServer({ settings: view });
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('settings');
+    await settled();
+    app.click(app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-value') === 'limits'; })[0]);
+    const row = function () { return app.byId('st-row-Ledger.PhotoRetentionDays'); };
+    it('a setting whose lowering deletes says so on its row', function () {
+      has(app.text(row()), 'Lowering it deletes for good');
+    });
+    const sets = app.requests('setSetting').length;
+    app.type(row().querySelector('input'), '1');
+    app.key(row().querySelector('input'), 'Enter');
+    await settled();
+    app.key(row().querySelector('input'), 'Enter');
+    await settled();
+    it('Enter never lowers it: it says what the save would delete and arms Save', function () {
+      eq(app.requests('setSetting').length, sets, 'nothing sent, even on a second Enter');
+      has(app.text(row()), 'Lowered to 1, every unopened kill photo older than 1 day(s) is deleted');
+      truthy(app.byId('st-save-Ledger.PhotoRetentionDays').classList.contains('is-armed'));
+    });
+    app.fire(3000);
+    app.click(app.button('Save', row()));
+    await settled();
+    it('the first click on Save arms it, and sends nothing', function () {
+      eq(app.requests('setSetting').length, sets);
+      const save = app.byId('st-save-Ledger.PhotoRetentionDays');
+      truthy(save.classList.contains('is-armed'));
+      has(app.text(save), 'Click again to save');
+    });
+    app.click(app.byId('st-save-Ledger.PhotoRetentionDays'));
+    await settled();
+    it('the second lowers it', function () {
+      eq(app.requests('setSetting').length, sets + 1);
+      eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 1 });
+    });
+    app.type(row().querySelector('input'), '60');
+    app.click(app.button('Save', row()));
+    await settled();
+    it('raising it deletes nothing, and saves at one click', function () {
+      eq(app.requests('setSetting').length, sets + 2);
+      eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 60 });
+    });
+    app.type(row().querySelector('input'), '0');
+    app.key(row().querySelector('input'), 'Enter');
+    await settled();
+    it('and so does 0, which keeps every photo', function () {
+      eq(app.requests('setSetting').length, sets + 3);
+      eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 0 });
+    });
+    clean(app, 'a setting that deletes');
   })();
 
   /* ---- tools ---- */

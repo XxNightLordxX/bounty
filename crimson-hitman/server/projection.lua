@@ -76,8 +76,14 @@ end
 --- What the viewer's own informant purchase on this contract came back
 --- with, as the words to show. Only ever the viewer's own: the record is
 --- keyed by buyer, so a creator and a target who both bought each see theirs.
+---
+--- Whatever Config.Informant.Enabled says: a name already bought was paid
+--- for under the rules of the moment it was bought, and stays shown for as
+--- long as it would have (Informant.answerFor). Turning the informant off
+--- refuses new purchases (Informant.buy); hiding what was paid for took
+--- from the target what Config.Informant.Cost had bought.
 local function informantAnswer(contractId, viewerCid)
-    if not (Informant and Config.Informant.Enabled) then return nil end
+    if not Informant then return nil end
     local answer = Informant.answerFor(contractId, viewerCid)
     if type(answer) ~= 'table' then return nil end
     return answer.name or answer.description

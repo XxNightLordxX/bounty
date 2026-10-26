@@ -61,7 +61,12 @@ local CAP = 'Lowering it below what is in use now never cancels anything: it onl
 --- 'limits'. live = false is a key kept and applied at the next start (or
 --- the next time what reads it runs), and said so. client = true is a key
 --- players' games read too, sent to them when it changes. readonly is the
---- reason a key cannot be changed here.
+--- reason a key cannot be changed here. destroys is for a number whose
+--- lowering deletes something for good (0 being 'never', the highest): what
+--- the panel says lowering it does, %s the new value. Lowering it takes the
+--- two clicks every other destructive button does; one click, or Enter in
+--- the box, put a typo of 1 for 10 days into force, and the next sweep
+--- deleted every unopened kill photo older than a day.
 local CATALOGUE = {
     -- Features ------------------------------------------------------------
     { key = 'BlockOffDuty', section = 'features', group = 'Access', kind = 'switch',
@@ -370,7 +375,9 @@ local CATALOGUE = {
 
     { key = 'Ledger.PhotoRetentionDays', section = 'limits', group = 'Ledger', kind = 'number',
       integer = true, min = 0, max = 365, label = 'Days an unopened kill photo is kept (0 forever)',
-      inflight = 'Looked at every ten minutes: photos already past a shorter age go then.' },
+      inflight = 'Looked at every ten minutes: photos already past a shorter age go then.',
+      destroys = 'Lowered to %s, every unopened kill photo older than %s day(s) is deleted at the '
+          .. 'next sweep, for good.' },
 
     { key = 'Advisory.TriggerJobTypes', section = 'limits', group = 'Advisory job lists',
       kind = 'list', label = 'Job types that raise an advisory', inflight = AT_USE },
@@ -389,16 +396,30 @@ local BUCKETS = {
     'photoSubmit', 'photoView', 'photoDecide', 'message', 'progress', 'death', 'mugshot',
     'image', 'diagnostic', 'admin', 'adminWrite',
 }
+
+--- The panel's own buckets, which every request it makes spends (Panel.handle).
+--- Changeable here, one request an hour was accepted, kept and applied at
+--- every start, and the page's own overview refresh spent it: the reset that
+--- would have put it back was refused with the rest, and only an edit of the
+--- store by hand let staff in again.
+local PANEL_BUCKETS = { admin = true, adminWrite = true }
+local PANEL_BUCKET_READONLY = 'The staff panel\'s own allowance, which every request it makes '
+    .. 'spends: set too low from here it would refuse the very request that puts it back, at '
+    .. 'every start. Set it in config.lua.'
+
 for _, bucket in ipairs(BUCKETS) do
+    local panel = PANEL_BUCKETS[bucket]
     CATALOGUE[#CATALOGUE + 1] = {
-        key = 'Cooldowns.' .. bucket .. '.per', section = 'limits', group = 'Rate limits',
+        key = 'Cooldowns.' .. bucket .. '.per', section = panel and 'readonly' or 'limits',
+        group = panel and 'Staff' or 'Rate limits',
         kind = 'number', min = 0.5, max = 3600, label = bucket .. ': refill window (s)',
-        inflight = AT_USE,
+        inflight = not panel and AT_USE or nil, readonly = panel and PANEL_BUCKET_READONLY or nil,
     }
     CATALOGUE[#CATALOGUE + 1] = {
-        key = 'Cooldowns.' .. bucket .. '.burst', section = 'limits', group = 'Rate limits',
+        key = 'Cooldowns.' .. bucket .. '.burst', section = panel and 'readonly' or 'limits',
+        group = panel and 'Staff' or 'Rate limits',
         kind = 'number', integer = true, min = 1, max = 200, label = bucket .. ': requests held',
-        inflight = AT_USE,
+        inflight = not panel and AT_USE or nil, readonly = panel and PANEL_BUCKET_READONLY or nil,
     }
 end
 
@@ -604,9 +625,32 @@ end
 -- Changing a key
 --------------------------------------------------------------------------
 
+--- A change being saved (set, reset, reset all): only one runs at a time.
+---
+--- Each is checked against the config in force, then waits on the store (a
+--- yield on mysql), then applied. Two at once were each checked against the
+--- config from before the other: a least buyout of 2.5 and a most of 2,
+--- each fine beside what was in force, both passed, and the server ran on a
+--- pair the start-up checks call fatal, which the next start then dropped
+--- one of. The second is refused as busy, and staff ask again.
+local saving = false
+
+--- Run one change, or refuse it while another is being saved.
+local function oneAtATime(fn, ...)
+    if saving then
+        return false, CH.ERR.BUSY, 'another change to the settings is being saved'
+    end
+    saving = true
+    local ran, ok, err, detail = pcall(fn, ...)
+    saving = false
+    if not ran then error(ok, 0) end
+    return ok, err, detail
+end
+
 function Settings.init(deps)
     Storage, Audit, Check = deps.storage, deps.audit, deps.check
     overrides, ignored = {}, {}
+    saving = false
     -- What config.lua says, as the start-up checks left it. Taken here so a
     -- stack that never boots still knows what a reset puts back.
     defaults = {}
@@ -646,18 +690,7 @@ local function changed(entry)
     if Settings.onChanged then pcall(Settings.onChanged, entry.key, entry) end
 end
 
---- Change a key live and keep it over config.lua.
----
---- A value equal to what config.lua says takes the override away instead:
---- the key is then config.lua's again, as a reset would leave it.
----@param key string
----@param raw any
----@param staff string|nil who, for the record ('console' at the console)
----@param actorCid string|nil their citizen id, for the audit row
----@return boolean ok
----@return string|nil err
----@return any detail the reason, or { key, value, old, source } on success
-function Settings.set(key, raw, staff, actorCid)
+local function setKey(key, raw, staff, actorCid)
     local value, err, why = Settings.check(key, raw)
     if value == nil then return false, err, why end
     local entry = byKey[key]
@@ -693,14 +726,29 @@ function Settings.set(key, raw, staff, actorCid)
                         source = backToConfig and 'config' or 'panel' }
 end
 
---- Put one key back to what config.lua says.
+--- Change a key live and keep it over config.lua.
+---
+--- A value equal to what config.lua says takes the override away instead:
+--- the key is then config.lua's again, as a reset would leave it.
+---@param key string
+---@param raw any
+---@param staff string|nil who, for the record ('console' at the console)
+---@param actorCid string|nil their citizen id, for the audit row
 ---@return boolean ok
----@return string|nil err 'not_allowed' | 'read_only' | 'not_overridden' | 'invalid_value' | 'store_failed'
----@return any detail
-function Settings.reset(key, staff, actorCid)
+---@return string|nil err also 'busy' while another change is being saved
+---@return any detail the reason, or { key, value, old, source } on success
+function Settings.set(key, raw, staff, actorCid)
+    return oneAtATime(setKey, key, raw, staff, actorCid)
+end
+
+--- One key back to what config.lua says. A key read-only now whose stored
+--- value was not applied at start (one changeable before, say) has its row
+--- taken away all the same: nothing in force changes, and it stops being
+--- listed as not applied.
+local function resetKey(key, staff, actorCid)
     local entry = type(key) == 'string' and byKey[key] or nil
     if not entry then return false, 'not_allowed', 'not a setting the panel may change' end
-    if entry.readonly then return false, 'read_only', entry.readonly end
+    if entry.readonly and not ignored[key] then return false, 'read_only', entry.readonly end
     if not overrides[key] and not ignored[key] then
         return false, 'not_overridden', 'it is what config.lua says already'
     end
@@ -725,11 +773,16 @@ function Settings.reset(key, staff, actorCid)
     return true, nil, { key = key, value = copyOf(defaults[key]), old = old, source = 'config' }
 end
 
---- Put every key back to what config.lua says.
+--- Put one key back to what config.lua says.
 ---@return boolean ok
----@return string|nil err
----@return any detail { keys = n }
-function Settings.resetAll(staff, actorCid)
+---@return string|nil err 'not_allowed' | 'read_only' | 'not_overridden' | 'invalid_value' |
+--- 'store_failed' | 'busy'
+---@return any detail
+function Settings.reset(key, staff, actorCid)
+    return oneAtATime(resetKey, key, staff, actorCid)
+end
+
+local function resetEvery(staff, actorCid)
     local wrote, writeErr = pcall(Storage.clearSettings)
     if not wrote then return false, 'store_failed', tostring(writeErr) end
     local keys, changes = {}, {}
@@ -753,6 +806,14 @@ function Settings.resetAll(staff, actorCid)
     return true, nil, { keys = #keys }
 end
 
+--- Put every key back to what config.lua says.
+---@return boolean ok
+---@return string|nil err 'store_failed' | 'busy'
+---@return any detail { keys = n }
+function Settings.resetAll(staff, actorCid)
+    return oneAtATime(resetEvery, staff, actorCid)
+end
+
 --------------------------------------------------------------------------
 -- At start
 --------------------------------------------------------------------------
@@ -760,11 +821,18 @@ end
 --- Apply what the store holds over config.lua. Run at start, right after
 --- the start-up checks and before anything reads the config.
 ---
---- Each override is checked again against config.lua as it now is: one the
---- catalogue no longer lists, or that config.lua has made invalid (a most
---- buyout now under a least one an owner raised in the file), is not
---- applied, and is said so in the console and in /ch-diag until staff reset
---- it.
+--- The overrides are checked again against config.lua as it now is, all of
+--- them together, as they stood together in force when the server stopped.
+--- One at a time, each was checked beside config.lua and only the ones
+--- before it in sort order: a least buyout of 0.5 and a most of 0.8, set in
+--- that order and each fine beside the other, sorted Max before Min, and the
+--- most was refused beside config.lua's least of 1 and dropped at every
+--- restart. Only when the set as a whole fails are they tried one at a time,
+--- in passes until a pass applies nothing more, so that the order they sort
+--- in decides nothing. One the catalogue no longer lists, one read-only, or
+--- one config.lua has made invalid (a most buyout now under a least one an
+--- owner raised in the file) is not applied, and is said so in the console
+--- and in /ch-diag until staff reset it.
 ---@return integer applied
 function Settings.boot()
     local ok, rows = pcall(Storage.readSettings)
@@ -777,20 +845,71 @@ function Settings.boot()
     for key in pairs(type(rows) == 'table' and rows or {}) do keys[#keys + 1] = key end
     table.sort(keys)
 
-    local said = {}
+    local function rowOf(key) return type(rows[key]) == 'table' and rows[key] or {} end
+    local function notApplied(key, why)
+        local row = rowOf(key)
+        ignored[key] = { value = copyOf(row.value), by = row.by, at = row.at, why = tostring(why) }
+        print(('[crimson-hitman] warning: the admin panel setting %s is not applied: %s. '
+            .. 'config.lua\'s value is used; reset it in the panel to clear this.')
+            :format(key, tostring(why)))
+    end
+
+    -- Each value first as the panel would take it, on its own.
+    local wanted, order = {}, {}
     for _, key in ipairs(keys) do
-        local row = type(rows[key]) == 'table' and rows[key] or {}
+        local entry = byKey[key]
         -- Read as it is, not through `and ... or`: a switch turned off is
         -- false, and `row and row.value or nil` read it as nothing at all.
-        local raw = row.value
-        local value, err, why = Settings.check(key, raw)
-        if value == nil then
-            ignored[key] = { value = copyOf(raw), by = row.by, at = row.at,
-                             why = tostring(why or err) }
-            print(('[crimson-hitman] warning: the admin panel setting %s is not applied: %s. '
-                .. 'config.lua\'s value is used; reset it in the panel to clear this.')
-                :format(key, tostring(why or err)))
+        local raw = rowOf(key).value
+        local value, why
+        if not entry then
+            why = 'not a setting the panel may change'
+        elseif entry.readonly then
+            why = entry.readonly
         else
+            value, why = normalise(entry, raw)
+        end
+        if value == nil then
+            notApplied(key, why or 'invalid_value')
+        else
+            wanted[key] = value
+            order[#order + 1] = key
+        end
+    end
+
+    -- Then together; and only if that fails, one at a time in passes.
+    local applied = {}
+    if fits(wanted) then
+        for _, key in ipairs(order) do applied[key] = wanted[key] end
+    else
+        local left = order
+        repeat
+            local rest, progressed = {}, false
+            for _, key in ipairs(left) do
+                local candidate = copyOf(applied)
+                candidate[key] = wanted[key]
+                if fits(candidate) then
+                    applied[key] = wanted[key]
+                    progressed = true
+                else
+                    rest[#rest + 1] = key
+                end
+            end
+            left = rest
+        until not progressed or #left == 0
+        for _, key in ipairs(left) do
+            local candidate = copyOf(applied)
+            candidate[key] = wanted[key]
+            local _, reason = fits(candidate)
+            notApplied(key, reason or 'the start-up checks refuse it')
+        end
+    end
+
+    local said = {}
+    for _, key in ipairs(order) do
+        local value = applied[key]
+        if value ~= nil then
+            local row = rowOf(key)
             write(Config, key, stored(byKey[key], value))
             overrides[key] = { value = copyOf(value), by = row.by, at = row.at }
             said[#said + 1] = ('%s = %s'):format(key, Settings.describe(value))
@@ -828,7 +947,7 @@ function Settings.view()
             key = entry.key, group = entry.group, label = entry.label, about = entry.about,
             kind = entry.kind, choices = entry.choices, min = entry.min, max = entry.max,
             integer = entry.integer or nil, live = entry.live ~= false,
-            inflight = entry.inflight, readonly = entry.readonly,
+            inflight = entry.inflight, readonly = entry.readonly, destroys = entry.destroys,
             value = current(entry), default = copyOf(defaults[entry.key]),
             source = override and 'panel' or 'config',
             by = override and override.by or nil, at = override and override.at or nil,

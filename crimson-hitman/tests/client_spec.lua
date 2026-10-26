@@ -2440,10 +2440,14 @@ describe('the admin panel page', function()
 
         -- The page's own two threads, as the engine runs them: the focus
         -- asked for again, then the Escape watch, which closes it on its
-        -- first frame with Escape released in the game. Not the client's
-        -- other loops, which never end.
+        -- first frame with Escape released in the game, and ends once its
+        -- guard after closing has run out. Not the client's other loops,
+        -- which never end. A frame is 16 ms of the game's clock.
         Client.released[200] = true
+        local realWait = _G.Wait
+        _G.Wait = function() Env.gameTimer = Env.gameTimer + 16 end
         for i = before + 1, #Env.threads do Env.threads[i]() end
+        _G.Wait = realWait
         local asked = 0
         for _, call in ipairs(Client.focus) do if call.focus then asked = asked + 1 end end
         eq(asked, 6, 'once, then five more times')
@@ -2451,6 +2455,45 @@ describe('the admin panel page', function()
         eq(lastFocus().focus, false, 'and gives the focus back')
         eq(lastFocus().cursor, false)
         truthy(sent('close'), 'and the page is told')
+    end)
+
+    it('holds the pause keys off for a moment after it closes, so the key that closed it opens nothing', function()
+        booted()
+        local before = #Env.threads
+        Client.fire('crimson-hitman:adminOpen', { canWrite = true })
+        local calls = {}
+        local realDisable, realWait = _G.DisableControlAction, _G.Wait
+        _G.DisableControlAction = function(_, control)
+            calls[#calls + 1] = { control = control, at = Env.gameTimer, open = Client.admin.isOpen() }
+        end
+        _G.Wait = function() Env.gameTimer = Env.gameTimer + 16 end
+        Client.released[322] = true
+        -- The Escape watch is the last thread the open queued.
+        Env.threads[#Env.threads]()
+        _G.DisableControlAction, _G.Wait = realDisable, realWait
+        truthy(#Env.threads > before, 'a watch was queued')
+        eq(Client.admin.isOpen(), false, 'the key closed it')
+
+        local after, first, last = {}, nil, nil
+        for _, call in ipairs(calls) do
+            if not call.open then
+                after[call.control] = true
+                first = first or call.at
+                last = call.at
+            end
+        end
+        truthy(after[200] and after[322], 'both pause keys held off after it closed')
+        truthy(last - first >= 300, 'for a moment: ' .. tostring(last - first) .. ' ms')
+        truthy(last - first < 500, 'and no longer: the watch ended')
+    end)
+
+    it('starts no second watch when it opens again while the first still trails', function()
+        opened()
+        Client.nuiCall('adminClose', {})
+        local before = #Env.threads
+        Client.fire('crimson-hitman:adminOpen', { canWrite = true })
+        eq(#Env.threads - before, 1, 'the focus asked for again, and the watch already running carries on')
+        eq(Client.admin.isOpen(), true)
     end)
 
     it('runs one Escape watch however often the server says to open', function()

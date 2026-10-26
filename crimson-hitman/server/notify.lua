@@ -522,12 +522,14 @@ end
 --- login (§14.8). Kept in memory: a restart loses the notice but not the
 --- money it describes, which is in escrow and handed over by the login
 --- retry under its own "Outstanding payment".
-local function tellOrKeep(cid, title, content, opts)
+--- Kept with the contract it is about, so the admin panel can leave out one
+--- about a contract the player was anonymous on (Notify.waitingFor).
+local function tellOrKeep(cid, title, content, opts, contractId)
     if not cid then return false end
     if Identity.byCitizenId(cid) then return Notify.toCitizen(cid, title, content, opts) end
     local list = waiting[cid] or {}
     if #list >= WAITING_CAP then table.remove(list, 1) end
-    list[#list + 1] = { title = title, content = content, opts = opts }
+    list[#list + 1] = { title = title, content = content, opts = opts, contract_id = contractId }
     waiting[cid] = list
     return false
 end
@@ -535,14 +537,20 @@ end
 --- How many notices wait for a player's next login, and their titles, for
 --- the admin panel's player view. Titles only: the text can name a
 --- contract's other parties, and the panel shows those under its own rules.
+--- And by those rules not a notice `skip` says to leave out: a 'Contract
+--- expired' kept for an offline player, beside an anonymous contract that
+--- just expired, said who had placed it.
 ---@param cid string
+---@param skip fun(contractId: string|nil): boolean|nil
 ---@return integer count
 ---@return string[] titles
-function Notify.waitingFor(cid)
+function Notify.waitingFor(cid, skip)
     local list = cid and waiting[cid] or {}
     local titles = {}
-    for i = 1, #list do titles[#titles + 1] = tostring(list[i].title) end
-    return #list, titles
+    for i = 1, #list do
+        if not (skip and skip(list[i].contract_id)) then titles[#titles + 1] = tostring(list[i].title) end
+    end
+    return #titles, titles
 end
 
 --- Hand a player what was kept for them while they were away. Called from
@@ -624,7 +632,7 @@ function Notify.contractEnded(contract, ending, outcomes, opts)
             local title, body = hitmanNotice(contract, ending, outcome)
             if title then
                 tellOrKeep(outcome.cid, title, body .. stakeSentence(outcome),
-                    { bypassBudget = true })
+                    { bypassBudget = true }, contract.id)
             end
         end
     end
@@ -645,7 +653,7 @@ function Notify.contractEnded(contract, ending, outcomes, opts)
     elseif forfeitedCount > 1 then
         body = body .. (" The operatives' stakes, %s in all, are yours."):format(dollars(forfeitedTotal))
     end
-    tellOrKeep(contract.creator_cid, 'Contract expired', body, { bypassBudget = true })
+    tellOrKeep(contract.creator_cid, 'Contract expired', body, { bypassBudget = true }, contract.id)
 
     -- The target only when they were told there was a price on their head
     -- at all. Anyone else would learn of a contract from its ending. Worded
@@ -676,7 +684,7 @@ function Notify.hitmanLeft(contract, stake, remaining)
     -- A receipt only when money moved; otherwise it spends the budget like
     -- any other news.
     tellOrKeep(contract.creator_cid, 'Operative walked away', body,
-        { bypassBudget = (stake or 0) > 0 })
+        { bypassBudget = (stake or 0) > 0 }, contract.id)
 end
 
 --- Warn the operatives on a contract that its target has paid to close it.

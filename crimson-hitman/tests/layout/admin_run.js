@@ -88,6 +88,13 @@ function serverStub() {
       value: 30, default: 30, source: i === 3 ? 'panel' : 'config',
       inflight: 'Read each time it is used, so it applies to the next check, including on contracts already placed.' });
   }
+  // A number whose lowering deletes: its Save carries a confirm label, and
+  // its row a warning line.
+  settings.limits.push({ key: 'Ledger.PhotoRetentionDays', group: 'Ledger',
+    label: 'Days an unopened kill photo is kept (0 forever)', kind: 'number', integer: true, min: 0, max: 365,
+    live: true, value: 7, default: 7, source: 'config',
+    inflight: 'Looked at every ten minutes: photos already past a shorter age go then.',
+    destroys: 'Lowered to %s, every unopened kill photo older than %s day(s) is deleted at the next sweep, for good.' });
   settings.limits.push({ key: 'Advisory.RecipientJobNames', group: 'Advisory job lists',
     label: 'Job names that receive advisories', kind: 'list', live: true,
     value: ['police', 'sheriff', 'sast', 'fib', 'ranger'], default: ['police'], source: 'panel' });
@@ -372,9 +379,10 @@ async function main() {
     // The settings, grouped, with each control beside its words.
     await page.click('#nav-settings');
     await page.waitForTimeout(120);
-    const rowsFit = await page.evaluate(function () {
+    const sideBySide = function () {
       const out = [];
       document.querySelectorAll('.st-row').forEach(function (row) {
+        if (row.hidden) return;
         const main = row.querySelector('.st-main').getBoundingClientRect();
         const control = row.querySelector('.st-control').getBoundingClientRect();
         if (control.width > 0 && main.right > control.left + 1 && main.bottom > control.top + 1
@@ -383,8 +391,27 @@ async function main() {
         }
       });
       return out;
-    });
+    };
+    const rowsFit = await page.evaluate(sideBySide);
     it(at + ': every setting\'s words and its control sit side by side', function () { none(rowsFit); });
+
+    // And the limits, where a Save can carry a confirm label: armed, with
+    // the row saying what lowering it deletes.
+    await page.click('button.seg-btn[data-act="st-tab"][data-value="limits"]');
+    await page.waitForTimeout(120);
+    await page.fill('[data-bind="st.Ledger.PhotoRetentionDays"]', '1');
+    await page.press('[data-bind="st.Ledger.PhotoRetentionDays"]', 'Enter');
+    await page.waitForTimeout(120);
+    const limitFaults = await page.evaluate(measure, { tablesFit: size.tablesFit });
+    const limitRows = await page.evaluate(sideBySide);
+    const saveArmed = await page.evaluate(function () {
+      const save = document.getElementById('st-save-Ledger.PhotoRetentionDays');
+      return save ? save.classList.contains('is-armed') : null;
+    });
+    it(at + ': the limits fit too, with a destructive Save armed and its warning shown', function () {
+      truthy(saveArmed === true, 'the Save was not armed: ' + saveArmed);
+      none(limitFaults.concat(limitRows), 'limits');
+    });
 
     // A dropdown opened stays in the window.
     await page.click('#nav-contracts');

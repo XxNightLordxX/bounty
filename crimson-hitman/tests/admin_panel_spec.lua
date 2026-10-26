@@ -370,6 +370,25 @@ describe('the admin panel overview', function()
         eq(ask(6, 'flush').ok, true)
         eq(ask(6, 'overview').data.contracts.total, 1, 'a write makes the next one fresh')
     end)
+
+    it('counts as left for staff every line something settles by hand, and only those', function()
+        local s = stack()
+        local real = s.admin.interrupted
+        s.admin.interrupted = function()
+            return {
+                { line = 'l1', contract = 'ct00000001', raised = 3, why = 'raised', portion = 'baseline' },
+                { line = 'l2', contract = 'ct00000001', settles = 'pay_or_return', portion = 'baseline' },
+                { line = 'l3', contract = 'ct00000009', orphan = true },
+                { line = 'l4', contract = 'ct00000001', settles = 'queued', portion = 'baseline' },
+                { line = 'l5', contract = 'ct00000002', why = 'ending_unfinished', unfinished = true },
+            }
+        end
+        local stuck = ask(6, 'overview').data.stuck
+        s.admin.interrupted = real
+        eq(stuck.total, 5, 'every line /ch-stuck lists')
+        eq(stuck.leftForStaff, 3, 'a parked line, one a shutdown caught, and an orphan are staff\'s; '
+            .. 'one queued since and an ending finishing itself are nobody\'s')
+    end)
 end)
 
 --------------------------------------------------------------------------
@@ -445,6 +464,62 @@ describe('contracts in the admin panel', function()
         eq(#stored(s, 'admin_panel_contract_identified'), 1, 'and the unmasking is its own row')
     end)
 
+    it('reads every contract once for a few seconds, between the overview and the searches', function()
+        local s, f = stack()
+        place(s, f)
+        -- Counted inside the panel's reads only: a store write is followed
+        -- by reads of its own where an invariant monitor wraps the store.
+        local real, reads, counting = s.storage.allContracts, 0, false
+        s.storage.allContracts = function(...)
+            if counting then reads = reads + 1 end
+            return real(...)
+        end
+        local function read(op, data)
+            counting = true
+            local reply = ask(6, op, data)
+            counting = false
+            return reply
+        end
+        read('overview')
+        for _, query in ipairs({ 'D', 'Da', 'Dana', 'Dana R' }) do read('contracts', { query = query }) end
+        read('contracts', { state = 'active' })
+        eq(reads, 1, 'one read of the whole table for the overview and five searches')
+        place(s, f, { target = 'HITMAN01' })
+        eq(read('contracts', {}).data.total, 1, 'a contract placed meanwhile shows a few seconds later')
+        Env.time = Env.time + 5
+        eq(read('contracts', {}).data.total, 2, 'and does then')
+        eq(reads, 2)
+        eq(ask(6, 'flush').ok, true)
+        read('contracts', {})
+        eq(reads, 3, 'a write reads it afresh')
+        s.storage.allContracts = real
+    end)
+
+    it('finds a citizen id typed in lower case', function()
+        local s, f = stack()
+        place(s, f)
+        eq(ask(6, 'contracts', { query = 'target01' }).data.total, 1, 'qbx ids are capitals and digits')
+        eq(ask(6, 'contracts', { query = 'TaRgEt01' }).data.total, 1)
+    end)
+
+    it('offers no return for a stuck line owed to somebody, which only a pay settles', function()
+        local s, f = stack()
+        local c = place(s, f)
+        local real = s.admin.interrupted
+        s.admin.interrupted = function()
+            return {
+                { line = c.id .. ':8', contract = c.id, raised = 3, why = 'raised', portion = 'owed' },
+                { line = c.id .. ':9', contract = c.id, settles = 'pay_or_return', portion = 'owed' },
+                { line = c.id .. ':7', contract = c.id, raised = 3, why = 'raised', portion = 'baseline' },
+            }
+        end
+        local stuck = ask(6, 'contract', { id = c.id }).data.stuck
+        s.admin.interrupted = real
+        eq(table.concat(stuck[1].actions, ','), 'pay,pay_amount,delivered')
+        eq(table.concat(stuck[2].actions, ','), 'pay')
+        eq(table.concat(stuck[3].actions, ','), 'pay,pay_amount,return,delivered', 'a payout still can')
+    end)
+
     it('voids a contract in the words /ch-void uses, on the record at once', function()
         local s, f = stack()
         local c = place(s, f)
@@ -516,6 +591,75 @@ describe('the review queue in the admin panel', function()
         eq(ask(6, 'reviews', { all = true }).data.items[1].state, 'resolved')
     end)
 
+    it('never shows who an anonymous party is through a resolved item, nor a weapon\'s owner', function()
+        local s, f = stack()
+        local c = place(s, f, { anonymous = true })
+        local pistol = { source = 'weapon', item = 'WEAPON_PISTOL', quantity = 1,
+                         metadata = { registered = 'Vic Marlowe', serial = 'SER0042' } }
+        local fee = s.review.open({ kind = 'anonymity_fee_refund_failed', contract_id = c.id,
+            cids = { payer = 'CREATOR1' }, amount = 500, account = 'bank', items = { pistol },
+            known = { error = 'credit to CREATOR1 raised' } })
+        local goods = s.review.open({ kind = 'escrow_take_raised', contract_id = c.id,
+            cids = { from = 'CREATOR1' }, items = { pistol } })
+        -- Resolved by somebody who may see who it is, and by a role.
+        eq(ask(8, 'resolve', { id = fee, action = 'refund', who = 'payer', amount = 500 }).ok, true)
+        ask(8, 'resolve', { id = goods, action = 'refund', who = 'from', goods = true })
+
+        for _, src in ipairs({ 6, 7 }) do
+            local items = ask(src, 'reviews', { all = true }).data.items
+            eq(#items, 2, 'source ' .. src)
+            falsy(mentions(items, 'CREATOR1'), 'no citizen id reaches source ' .. src)
+            falsy(mentions(items, 'Vic Marlowe'), 'nor the weapon owner\'s name, to source ' .. src)
+            falsy(mentions(items, 'SER0042'), 'nor anything else of its metadata')
+            for _, item in ipairs(items) do
+                if item.id == fee then
+                    eq(item.resolution.cid, 'the client', 'whom it paid, as the party\'s place')
+                    eq(item.known.error, 'credit to the client raised')
+                    eq(item.items[1].item, 'WEAPON_PISTOL', 'what it records still shows')
+                end
+            end
+        end
+        local seen = ask(8, 'reviews', { all = true }).data.items
+        truthy(mentions(seen, 'CREATOR1'), 'crimson.identity reads them as they are')
+        truthy(mentions(seen, 'Vic Marlowe'))
+
+        Env.chat = {}
+        Env.commands['ch-review'](6, { 'all' })
+        local said = {}
+        for _, line in ipairs(Env.chat) do said[#said + 1] = line.text end
+        truthy(#said > 0, 'the command lists them')
+        falsy(table.concat(said, '\n'):find('CREATOR1', 1, true), table.concat(said, '\n'))
+        truthy(table.concat(said, '\n'):find('to the client', 1, true), table.concat(said, '\n'))
+    end)
+
+    it('settles a review payout left for staff on a contract that was never stored', function()
+        local s = stack()
+        local id = s.review.open({ kind = 'escrow_take_unverified', contract_id = 'ctnever00001',
+            cids = { from = 'CREATOR1' }, amount = 700, account = 'cash' })
+        local p = Env.players[1]
+        local real = p.Functions.AddMoney
+        p.Functions.AddMoney = function() error('AddMoney hook raised', 0) end
+        pcall(s.review.resolve, id, { action = 'pay', who = 'from' }, 'console')
+        local line = s.storage.readEscrowLine(id .. ':1')
+        truthy(line, 'the pay is an escrow line')
+        for _ = 1, s.escrow.DELIVER_RAISE_LIMIT do
+            pcall(s.escrow.release, 'ctnever00001', 'CREATOR1', { line = line.id }, 'test')
+        end
+        p.Functions.AddMoney = real
+        truthy(s.escrow.parked(s.storage.readEscrowLine(line.id)), 'left for staff')
+        local listed = false
+        for _, entry in ipairs(s.admin.interrupted(0, true)) do
+            if entry.line == line.id then listed = true end
+        end
+        truthy(listed, 'listed by /ch-stuck')
+
+        local before = money(1)
+        local reply = ask(6, 'settle', { line = line.id, disposition = 'pay' })
+        eq(reply.ok, true, tostring(reply.message))
+        eq(money(1) - before, 700, 'paid to whom it is owed, once')
+        eq(s.storage.readEscrowLine(line.id).state, CH.ESCROW_STATE.SETTLED)
+    end)
+
     it('wants a note to dismiss, and a party to pay', function()
         local s = stack()
         local id = s.review.open({ kind = 'escrow_settle_lost', contract_id = 'ct00000001',
@@ -571,6 +715,34 @@ describe('the audit log in the admin panel', function()
         eq(theirs[1].actor, 'CREATOR1', 'crimson.identity reads them as they are')
         s.audit.flush()
         eq(#stored(s, 'admin_panel_logs_identified'), 1)
+        eq(#ask(8, 'logs', { actor = 'creator01', limit = 100 }).data.rows, 0, 'not a cid anybody has')
+        eq(#ask(8, 'logs', { actor = 'creator1', limit = 100 }).data.rows, #theirs,
+            'and one typed in lower case is the same player')
+    end)
+
+    it('does not show staff without crimson.identity what a search by somebody with it found', function()
+        local s, f = stack()
+        place(s, f, { anonymous = true })
+        eq(ask(6, 'contracts', { query = 'CREATOR1' }).data.total, 0, 'their own search finds nothing')
+        eq(ask(8, 'contracts', { query = 'CREATOR1' }).data.total, 1, 'and one with identity finds it')
+        local function searches(src)
+            local rows = ask(src, 'logs', { action = 'admin_panel_search', limit = 50 }).data.rows
+            for _, row in ipairs(rows) do
+                if row.action == 'admin_panel_search_identified' then return row, rows end
+            end
+            return nil, rows
+        end
+        local row = searches(6)
+        truthy(row, 'the identified search is on the record for them to see')
+        eq(row.detail.query, '(identity only)', 'not what was typed')
+        eq(row.detail.rows, '(identity only)', 'nor how many it matched')
+        falsy(mentions(row, 'CREATOR1'), 'no citizen id anywhere in it (their own search row has '
+            .. 'what they typed themselves)')
+        local plain = searches(7)
+        eq(plain.detail.query, '(identity only)', 'nor to an extra ACE')
+        local whole = searches(8)
+        eq(whole.detail.query, 'CREATOR1', 'crimson.identity reads it as it was')
+        eq(whole.detail.rows, 1)
     end)
 end)
 
@@ -628,6 +800,34 @@ describe('the audit log a page at a time, in every backend', function()
             eq(#store.queryAudit({ actor = 'AAA11111' }, nil, 10), 3, 'by who acted')
             eq(#store.queryAudit({ from = base + 3, to = base + 5 }, nil, 10), 3, 'by time')
         end)
+
+        it(name .. ': pages on where it was when old rows age out between pages', function()
+            newStack()
+            local store = storeOf(name)
+            Config.Audit.RetentionDays = 1
+            local base = Env.time
+            for i = 1, 10 do
+                store.writeAudit({ ts = base + i, kind = 'conduct', action = 'row' .. i,
+                    detail = { i = i } })
+            end
+            local first, cursor = store.queryAudit({}, nil, 4)
+            eq(first[1].action, 'row10')
+            eq(first[4].action, 'row7')
+            truthy(cursor, 'there is a next page')
+
+            -- A day on, the two oldest age out with the next write (json
+            -- ages them as it writes, memory and mysql when they prune).
+            Env.time = base + 86400 + 3
+            store.writeAudit({ ts = Env.time, kind = 'conduct', action = 'row11', detail = {} })
+            if store.prune then store.prune() end
+            eq(#store.queryAudit({}, nil, 20), 9, 'row1 and row2 aged out')
+
+            local second, after = store.queryAudit({}, cursor, 4)
+            local seen = {}
+            for _, row in ipairs(second) do seen[#seen + 1] = row.action end
+            eq(table.concat(seen, ','), 'row6,row5,row4,row3', 'the page after, and nothing again')
+            eq(after, nil, 'and the last: what aged out is not shown')
+        end)
     end
 end)
 
@@ -646,8 +846,10 @@ describe('a player in the admin panel', function()
         eq(reply.data.player.cid, nil)
         eq(#reply.data.contracts, 1, 'their contracts, as /ch-contracts lists them')
         eq(reply.data.contracts[1].role, 'hitman')
-        eq(type(reply.data.stats.completed), 'number')
+        eq(reply.data.stats, nil, 'the record counts anonymous work, so it needs crimson.identity')
         eq(type(reply.data.notices.count), 'number')
+        eq(type(ask(8, 'player', { subject = 3 }).data.stats.completed), 'number',
+            'crimson.identity reads the record')
         eq(ask(8, 'player', { subject = 3 }).data.player.cid, 'HITMAN01', 'crimson.identity sees it')
         eq(ask(6, 'player', { subject = 'HITMAN01' }).data.player.cid, 'HITMAN01',
             'and anybody sees the one they typed')
@@ -662,10 +864,55 @@ describe('a player in the admin panel', function()
         Env.removePlayer(3)
         s.escrow.release(c.id, 'HITMAN01', { line = line.id }, 'test')
         eq(s.storage.readEscrowLine(line.id).owed_to, 'HITMAN01', 'owed to them, offline')
-        eq(#ask(6, 'player', { subject = 'HITMAN01' }).data.owed, 0, 'not to staff who may not unmask')
+        -- Offline, and party to nothing but that contract: to staff who may
+        -- not unmask, nothing they may see names them, which is what an
+        -- unknown citizen id answers too.
+        local hidden = ask(6, 'player', { subject = 'HITMAN01' })
+        eq(hidden.err, CH.ERR.NOT_FOUND, 'not to staff who may not unmask')
+        falsy(mentions(hidden, line.id), 'and nothing of the line')
         local owed = ask(8, 'player', { subject = 'HITMAN01' }).data.owed
         eq(#owed, 1)
         eq(owed[1].queued, true, 'and in their queue')
+    end)
+
+    it('counts nothing they did anonymously, to staff who may not unmask', function()
+        local s, f = stack()
+        Config.Limits.MaxActiveContractsPerCreator = 10
+        local open = place(s, f)
+        local hidden = place(s, f, { anonymous = true, target = 'HITMAN01' })
+        Env.removePlayer(1)
+        -- A notice kept for their next login on each, and a delivery on each.
+        for _, c in ipairs({ open, hidden }) do
+            s.notify.contractEnded(s.storage.readContract(c.id), CH.STATE.EXPIRED, {}, {})
+            s.storage.queuePending('CREATOR1', c.id, c.id .. ':1')
+        end
+
+        for _, src in ipairs({ 6, 7 }) do
+            local data = ask(src, 'player', { subject = 'CREATOR1' }).data
+            eq(#data.contracts, 1, 'the contract placed openly, as /ch-contracts lists it')
+            eq(data.stats, nil, 'and no record: its counters hold the anonymous one too')
+            eq(data.pending, 1, 'a delivery on the anonymous contract is left out')
+            eq(data.notices.count, 1, 'and so is a notice about it')
+            falsy(mentions(data, hidden.id), 'nothing names the anonymous contract')
+        end
+        local whole = ask(8, 'player', { subject = 'CREATOR1' }).data
+        eq(#whole.contracts, 2)
+        eq(whole.stats.placed, 2, 'crimson.identity reads the whole record')
+        eq(whole.pending, 2)
+        eq(whole.notices.count, 2)
+    end)
+
+    it('answers not found for a citizen id nothing names, and finds one typed in lower case', function()
+        local s, f = stack()
+        place(s, f)
+        local nobody = ask(6, 'player', { subject = 'NOBODY99' })
+        eq(nobody.err, CH.ERR.NOT_FOUND, 'not an empty profile that reads as a player with nothing')
+        truthy(tostring(nobody.message):find('spelt', 1, true), tostring(nobody.message))
+        local typed = ask(6, 'player', { subject = 'target01' })
+        eq(typed.ok, true, tostring(typed.message))
+        eq(typed.data.player.cid, 'TARGET01', 'the server\'s form of what was typed')
+        eq(typed.data.player.online, true)
+        eq(#typed.data.contracts, 1)
     end)
 end)
 
@@ -694,6 +941,24 @@ describe('settings and tools in the admin panel', function()
         eq(ask(6, 'resetSetting', { key = 'Limits.MaxAcceptedPerHitman' }).ok, true)
         eq(Config.Limits.MaxAcceptedPerHitman, 3, 'back to config.lua')
         eq(ask(6, 'resetSettings', {}).ok, true)
+    end)
+
+    it('will not let staff rate-limit the panel itself', function()
+        local s = stack()
+        for _, key in ipairs({ 'Cooldowns.admin.per', 'Cooldowns.admin.burst',
+            'Cooldowns.adminWrite.per', 'Cooldowns.adminWrite.burst' }) do
+            local reply = ask(6, 'setSetting', { key = key, value = key:find('per') and 3600 or 1 })
+            eq(reply.err, 'read_only', key)
+            truthy(tostring(reply.message):find('every request it makes', 1, true), tostring(reply.message))
+        end
+        eq(next(s.storage.readSettings()), nil, 'nothing kept')
+        for i = 1, 5 do eq(ask(8, 'overview').ok, true, 'request ' .. i .. ' still answered') end
+        local readonly = {}
+        for _, row in ipairs(ask(6, 'settings').data.readonly) do readonly[row.key] = row end
+        truthy(readonly['Cooldowns.admin.burst'], 'shown read-only, with why')
+        truthy(readonly['Cooldowns.adminWrite.per'])
+        eq(ask(6, 'setSetting', { key = 'Cooldowns.load.burst', value = 50 }).ok, true,
+            'the players\' own limits still change')
     end)
 
     it('runs the timer refresh, the diagnosis and the log flush', function()

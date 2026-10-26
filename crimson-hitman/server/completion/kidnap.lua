@@ -75,9 +75,16 @@ end
 --------------------------------------------------------------------------
 
 --- Conditions that must hold both to arm a countdown and to keep it running.
+---
+--- `radius` is the one a running countdown was armed with (its state's), and
+--- Config.Kidnap.Radius to arm one. The panel tells staff a countdown keeps
+--- the radius it was armed with, and the samples read the config every
+--- time: narrowed live, every handover in progress was out of range at once,
+--- spent its one grace budget, and failed.
+---@param radius number|nil metres; Config.Kidnap.Radius when nil
 ---@return boolean ok
 ---@return string|nil reason
-function Kidnap.conditionsMet(contract, hitman, target, creator)
+function Kidnap.conditionsMet(contract, hitman, target, creator, radius)
     -- An anonymous client who is not in the city gets the answer a client
     -- who is in the city but not here would get (§14.32). 'party_offline'
     -- was the first thing checked, so a hitman pressing Arm anywhere, with
@@ -112,7 +119,7 @@ function Kidnap.conditionsMet(contract, hitman, target, creator)
     local coerced = Kidnap.isCoerced(hitman.source, target.source)
     if not coerced then return false, 'not_coerced' end
 
-    local radius = Config.Kidnap.Radius
+    radius = tonumber(radius) or Config.Kidnap.Radius
     local r2 = radius * radius
     local hitmanCoords = GetEntityCoords(GetPlayerPed(hitman.source))
     local targetCoords = GetEntityCoords(GetPlayerPed(target.source))
@@ -184,7 +191,8 @@ function Kidnap.arm(contractId, hitmanCid)
     local targetActor  = Identity.byCitizenId(contract.target_cid)
     local creatorActor = Identity.byCitizenId(contract.creator_cid)
 
-    local ok, reason = Kidnap.conditionsMet(contract, hitmanActor, targetActor, creatorActor)
+    local radius = Config.Kidnap.Radius
+    local ok, reason = Kidnap.conditionsMet(contract, hitmanActor, targetActor, creatorActor, radius)
     if not ok then return false, reason end
 
     -- Immunity is checked here, not only at the end. The claim would be
@@ -209,6 +217,9 @@ function Kidnap.arm(contractId, hitmanCid)
         startedAt  = Util.monotonicMs(),
         -- On the clock deadlines are kept in (Kidnap.armedAt).
         armedAt    = os.time(),
+        -- What every sample measures against, whatever staff change it to
+        -- meanwhile (Kidnap.conditionsMet).
+        radius     = radius,
     }
 
     -- How the PREVIOUS handover ended is not how this one ends. Kept, it
@@ -363,7 +374,8 @@ function Kidnap.tick(deltaMs)
                 local targetActor  = Identity.byCitizenId(contract.target_cid)
                 local creatorActor = Identity.byCitizenId(contract.creator_cid)
 
-                local ok, reason = Kidnap.conditionsMet(contract, hitmanActor, targetActor, creatorActor)
+                local ok, reason = Kidnap.conditionsMet(contract, hitmanActor, targetActor,
+                    creatorActor, state.radius)
 
                 if ok then
                     state.elapsedMs = state.elapsedMs + deltaMs

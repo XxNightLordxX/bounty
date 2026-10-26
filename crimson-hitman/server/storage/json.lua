@@ -2353,6 +2353,17 @@ function JsonStore.readStats(cid)
     return db.stats[cid] or { cid = cid, completed = 0, failed = 0, placed = 0, survived = 0 }
 end
 
+--- How many rows the retention age has dropped from the front of db.audit
+--- since it was this table: what a page's cursor counts from
+--- (JsonStore.queryAudit). Kept against the table itself, so a store opened
+--- or read back again starts counting again.
+local auditDropped = { log = nil, rows = 0 }
+
+local function droppedFrom(log)
+    if auditDropped.log ~= log then auditDropped.log, auditDropped.rows = log, 0 end
+    return auditDropped.rows
+end
+
 --- Into its day's file, on the next flush; see auditLog.
 ---
 --- Encoded here, once. The file is these lines, so a flush adds them as
@@ -2388,6 +2399,7 @@ function JsonStore.writeAudit(entry)
         if aged > 0 then
             table.move(log, aged + 1, n, 1)
             for i = n - aged + 1, n do log[i] = nil end
+            auditDropped.rows = droppedFrom(log) + aged
         end
         -- A file goes once the whole of its day is past the age. The day
         -- the cutoff falls in keeps its older rows on disk until then; a
@@ -2418,14 +2430,22 @@ end
 
 --- A page of the audit log for the admin panel, newest first. See the
 --- memory backend: the rows within the retention age are all in memory
---- here too (db.audit), whichever day's file they are written in.
+--- here too (db.audit), whichever day's file they are written in, and the
+--- cursor is a position counted from the first row written, the aged ones
+--- included (droppedFrom). Every write here ages rows off the front, so
+--- counted from what was left, the page after one written meanwhile
+--- started too new and showed rows again.
 function JsonStore.queryAudit(filter, cursor, limit)
     local log = db.audit
-    local start = math.tointeger(tonumber(cursor)) or #log
+    local base = droppedFrom(log)
+    local at = math.tointeger(tonumber(cursor))
+    local start = at and (at - base) or #log
+    -- Everything from there back has aged out since.
+    if start < 1 then return {}, nil end
     local out = {}
     for i = math.min(start, #log), 1, -1 do
         if Util.auditMatches(log[i], filter) then
-            if #out >= limit then return out, i end
+            if #out >= limit then return out, base + i end
             out[#out + 1] = log[i]
         end
     end

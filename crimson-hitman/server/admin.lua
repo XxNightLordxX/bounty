@@ -877,11 +877,15 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- whose they are (Contracts.recoverNeverPlaced leaves one caught
     -- mid-payment for staff, as recovery does any other). One that does not
     -- goes where staff say, and nowhere else does: anywhere else, a citizen
-    -- id typed here would take the line from the one it names.
+    -- id typed here would take the line from the one it names. A line owed
+    -- to somebody names them too: a review item's pay is written under the
+    -- contract it is about, which may never have been stored (a take that
+    -- could not be confirmed), and left for staff it was listed by /ch-stuck
+    -- and refused here as not found, with nothing else that ever gives it.
     local contract = Storage.readContract(line.contract_id)
     if owner then
         if contract or not namesNobody(line) then return false, CH.ERR.INVALID_INPUT end
-    elseif not contract and not line.taken_from then
+    elseif not contract and not line.taken_from and not line.owed_to then
         return false, CH.ERR.NOT_FOUND
     end
 
@@ -1135,6 +1139,32 @@ end
 -- The review queue
 --------------------------------------------------------------------------
 
+--- An item's record as staff without the identity permission are shown it.
+---
+--- Copied, with every citizen id of a party the item names (its roles, and
+--- whom a resolution gave to) put as that party's place on the contract,
+--- wherever it is written: the resolution itself, what was known, a note.
+--- Resolved on an anonymous contract, `resolution.cid` was the citizen id it
+--- paid, and every reader of the history saw who was behind the party. And
+--- no metadata: a weapon's `registered` is its owner's character name, which
+--- Escrow strips from a weapon handed over for the same reason (handedOver).
+---@param value any
+---@param names table [cid] = how it is shown
+local function shownWithout(value, names)
+    if type(value) == 'string' then
+        for cid, label in pairs(names) do
+            value = value:gsub(cid:gsub('%W', '%%%0'), (label:gsub('%%', '%%%%')))
+        end
+        return value
+    end
+    if type(value) ~= 'table' then return value end
+    local out = {}
+    for k, inner in pairs(value) do
+        if k ~= 'metadata' then out[k] = shownWithout(inner, names) end
+    end
+    return out
+end
+
 --- The review queue as staff read it (server/review.lua): the open items,
 --- or with `all` the latest ones resolved too.
 ---
@@ -1142,6 +1172,9 @@ end
 --- that and the party's place on the contract to staff who may not, as
 --- /ch-stuck names whom a line is owed to. A resolution takes the role, so
 --- staff who may not see who is behind an anonymous party still settle one.
+--- To staff who may not, nothing else in an item names anybody either
+--- (shownWithout): /ch-review all and the panel's history print it as it
+--- comes from here.
 ---@param src number|nil who is asking
 ---@param all boolean|nil
 ---@return table[] rows { id, kind, about, contract, parties = { { role, who } }, amount,
@@ -1163,21 +1196,33 @@ function Admin.reviews(src, all)
 
     local out = {}
     for _, item in ipairs(Review.list(all, 50)) do
-        local parties, roles = {}, {}
+        local parties, roles, names = {}, {}, {}
+        local contract = contractOf(item.contract_id)
         for role in pairs(type(item.cids) == 'table' and item.cids or {}) do roles[#roles + 1] = role end
         table.sort(roles)
         for _, role in ipairs(roles) do
             local cid = item.cids[role]
+            if type(cid) == 'string' and cid ~= '' then names[cid] = Admin.partyRole(contract, cid) end
             parties[#parties + 1] = {
                 role = role,
-                who = canIdentify and cid or Admin.partyRole(contractOf(item.contract_id), cid),
+                who = canIdentify and cid or Admin.partyRole(contract, cid),
             }
+        end
+        local resolution = item.resolution
+        local paid = type(resolution) == 'table' and resolution.cid or nil
+        if type(paid) == 'string' and paid ~= '' and not names[paid] then
+            names[paid] = Admin.partyRole(contract, paid)
+        end
+        local items, known = item.items, item.known
+        if not canIdentify then
+            items, known = shownWithout(items, names), shownWithout(known, names)
+            resolution = shownWithout(resolution, names)
         end
         out[#out + 1] = {
             id = item.id, kind = item.kind, about = Review.KINDS[item.kind],
             contract = item.contract_id, parties = parties, amount = item.amount,
-            account = item.account, items = item.items, known = item.known, now = item.now,
-            state = item.state, created_at = item.created_at, resolution = item.resolution,
+            account = item.account, items = items, known = known, now = item.now,
+            state = item.state, created_at = item.created_at, resolution = resolution,
             resolved_by = item.resolved_by, resolved_at = item.resolved_at,
             unwritten = item.unwritten,
         }

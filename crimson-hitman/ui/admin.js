@@ -342,7 +342,8 @@
     read_only: 'That setting cannot be changed from the panel.',
     invalid_value: 'That value is refused.',
     store_failed: 'The store would not take it. Nothing changed.',
-    not_overridden: 'That setting is what config.lua says already.'
+    not_overridden: 'That setting is what config.lua says already.',
+    busy: 'Another change is being saved right now. Try again in a moment.'
   };
 
   function words(reply) {
@@ -635,7 +636,9 @@
   function drawCounts() {
     var o = S.overview || {};
     setCount('count-reviews', o.reviews ? Number(o.reviews.open) || 0 : 0, 'open in the review queue');
-    setCount('count-overview', o.stuck ? Number(o.stuck.total) || 0 : 0, 'escrow line(s) waiting for staff');
+    // What staff settle, not every line listed: one queued since, or an
+    // ending finishing itself, needs nobody.
+    setCount('count-overview', o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0, 'escrow line(s) left for you to settle');
     setCount('count-settings', Number(o.overrides) || 0, 'setting(s) changed from the panel');
   }
 
@@ -747,18 +750,28 @@
     var warnings = asList(o.warnings);
     var slowMs = Number(o.slowMs) || 0;
 
+    /* The headline is what staff settle (every line with something to settle
+       it by), not every line listed: one queued since for whom it is owed,
+       or an ending finishing itself, needs nobody, and is said so apart. */
     var stuckBody;
+    var forYou = o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0;
     if (!o.stuck) {
       stuckBody = h('p.note', 'Not listed while the server is recovering from the restart.');
     } else {
       var byWhy = o.stuck.byWhy || {};
+      var listed = Number(o.stuck.total) || 0;
+      var nothingToDo = Math.max(0, listed - forYou);
       stuckBody = frag(
-        h('p.big' + (Number(o.stuck.total) > 0 ? '.is-warn' : ''), num(o.stuck.total)),
-        h('p.sub', num(o.stuck.leftForStaff) + ' left for you to settle'),
+        h('p.big' + (forYou > 0 ? '.is-warn' : ''), num(forYou)),
+        h('p.sub', 'left for you to settle, of ' + num(listed) + ' listed'),
         h('div.chips', Object.keys(byWhy).sort().map(function (why) {
           return h('span.chip', (WHY_SHORT[why] || why) + ' ' + num(byWhy[why]));
         })),
-        Number(o.stuck.total) > 0
+        nothingToDo > 0
+          ? h('p.note', num(nothingToDo) + ' need nothing from you: queued since for whom '
+            + (nothingToDo === 1 ? 'it is' : 'they are') + ' owed, or an ending settling itself within a minute.')
+          : null,
+        listed > 0
           ? h('p.note', 'Each contract\'s view lists its own and settles them; /'
             + (S.access.commands && S.access.commands.stuck || 'ch-stuck') + ' lists every one.')
           : null);
@@ -775,14 +788,14 @@
               (STATE_LABEL[s] || s) + ' ' + num(byState[s]));
           })))),
         tile('Operatives', frag(
-          h('p.big', num(hitmen.active)),
-          h('p.sub', 'contracts held, by ' + num(hitmen.operatives) + ' operative'
-            + (Number(hitmen.operatives) === 1 ? '' : 's')))),
+          h('p.big', num(hitmen.operatives)),
+          h('p.sub', 'on contracts now, holding ' + num(hitmen.active) + ' contract'
+            + (Number(hitmen.active) === 1 ? '' : 's')))),
         tile('Held in escrow', moneyRows(o.held)),
         tile('Owed to players', frag(moneyRows(owed),
           h('p.sub', num(owed.players) + ' player' + (Number(owed.players) === 1 ? '' : 's') + ' · '
             + num(owed.queued) + ' line' + (Number(owed.queued) === 1 ? '' : 's') + ' in a retry queue'))),
-        tile('Waiting for staff', stuckBody, Number(o.stuck && o.stuck.total) > 0 ? '.is-warn' : ''),
+        tile('Waiting for staff', stuckBody, forYou > 0 ? '.is-warn' : ''),
         tile('Needs review', frag(
           h('p.big' + (reviewsOpen > 0 ? '.is-warn' : ''), num(reviewsOpen)),
           h('p.sub', 'open item' + (reviewsOpen === 1 ? '' : 's') + ' in the review queue'),
@@ -1263,11 +1276,38 @@
     return asList(S.reviews.items).filter(function (item) { return String(item.id) === String(id); })[0];
   }
 
-  function loadReviews() {
+  /** The fresh list, with each item resolved here that it no longer lists
+      kept where it was, marked resolved, so its answer stays in its card. */
+  function keptResolved(before, fresh) {
+    var listed = {}, used = {}, out = [];
+    fresh.forEach(function (item) { listed[String(item.id)] = item; });
+    before.forEach(function (item) {
+      var id = String(item.id);
+      var answer = S.reviews.answers[id];
+      if (listed[id]) {
+        out.push(listed[id]);
+        used[id] = true;
+      } else if (answer && answer.ok) {
+        var copy = {};
+        Object.keys(item).forEach(function (k) { copy[k] = item[k]; });
+        copy.state = 'resolved';
+        out.push(copy);
+      }
+    });
+    fresh.forEach(function (item) { if (!used[String(item.id)]) out.push(item); });
+    return out;
+  }
+
+  /** The queue, read again. After a resolve (`keep`), the item resolved
+      stays until Refresh or another section: the open list no longer has
+      it, and read alone it vanished with its answer the moment the resolve
+      came back, leaving the exact words only in a toast. */
+  function loadReviews(keep) {
     return ask('reviews', S.reviews.all ? { all: true } : {}, 'reviews').then(function (reply) {
       if (!reply) return;
       if (!reply.ok) { toast(words(reply), 'error'); return; }
-      S.reviews.items = asList((reply.data || {}).items);
+      var fresh = asList((reply.data || {}).items);
+      S.reviews.items = keep ? keptResolved(asList(S.reviews.items), fresh) : fresh;
       if (S.section === 'reviews') setHtml(byId('rv-list'), reviewList());
     });
   }
@@ -1382,15 +1422,37 @@
     }
   };
 
-  function logQuery() {
+  /* A contract id and a citizen id as the server reads them (Util.toId,
+     Util.toCitizenId). Sent half-typed, every pause in typing one answered
+     "That is not a contract id." in an error toast, over the rows of the
+     search before, which read as its result. A box that does not hold one
+     yet is marked and nothing is asked, as with a date that cannot be read,
+     and Enter says why. */
+  var LOG_IDS = {
+    contract: { re: /^[A-Za-z0-9_-]{8,64}$/, box: 'lg-contract',
+                why: 'A contract id is 8 to 64 letters, digits, - or _, as ct00000001.' },
+    actor: { re: /^[A-Za-z0-9]{3,32}$/, box: 'lg-actor', why: 'A citizen id is 3 to 32 letters and digits.' }
+  };
+
+  /** The log's filters as a request, or null when one cannot be sent yet
+      (its box is marked). `strict` (Enter) says why. */
+  function logQuery(strict) {
     var data = {};
     if (S.logs.kind) data.kind = S.logs.kind;
     var action = trim(S.forms['lg.action']).slice(0, 48);
     if (action) data.action = action;
-    var contract = trim(S.forms['lg.contract']);
-    if (contract) data.contract = contract.slice(0, 64);
-    var actor = trim(S.forms['lg.actor']);
-    if (actor && canIdentify()) data.actor = actor.slice(0, 64);
+    var typed = { contract: trim(S.forms['lg.contract']), actor: canIdentify() ? trim(S.forms['lg.actor']) : '' };
+    var bad = null;
+    Object.keys(LOG_IDS).forEach(function (name) {
+      var wrong = typed[name] !== '' && !LOG_IDS[name].re.test(typed[name]);
+      markBad(LOG_IDS[name].box, wrong);
+      if (wrong && !bad) bad = LOG_IDS[name].why;
+      else if (!wrong && typed[name]) data[name] = typed[name];
+    });
+    if (bad) {
+      if (strict) toast(bad, 'error');
+      return null;
+    }
     var range = rangeOf('lg', S.logs.range);
     if (range === false) return null;
     if (range.from) data.from = range.from;
@@ -1399,17 +1461,17 @@
     return data;
   }
 
-  function firstLogPage() {
+  function firstLogPage(strict) {
     S.logs.cursor = null;
     S.logs.back = [];
     S.logs.open = {};
-    return loadLogs();
+    return loadLogs(strict);
   }
 
-  function loadLogs() {
+  function loadLogs(strict) {
     clearTimeout(S.logs.timer);
     S.logs.timer = null;
-    var data = logQuery();
+    var data = logQuery(strict);
     if (!data) return Promise.resolve();
     var results = byId('lg-results');
     if (results) results.classList.toggle('is-loading', true);
@@ -1469,9 +1531,9 @@
         dropdown('lg-kind'),
         field('lg.action', { class: 'is-mid', placeholder: 'Action contains', 'data-live': 'lg-search',
           'data-enter': 'lg-search-now', 'aria-label': 'Action contains' }),
-        field('lg.contract', { class: 'is-mid', placeholder: 'Contract id', 'data-live': 'lg-search',
+        field('lg.contract', { id: 'lg-contract', class: 'is-mid', placeholder: 'Contract id', 'data-live': 'lg-search',
           'data-enter': 'lg-search-now', 'aria-label': 'Contract id' }),
-        field('lg.actor', { class: 'is-mid', placeholder: canIdentify() ? 'Citizen id' : 'Citizen id (needs identity)',
+        field('lg.actor', { id: 'lg-actor', class: 'is-mid', placeholder: canIdentify() ? 'Citizen id' : 'Citizen id (needs identity)',
           'data-live': 'lg-search', 'data-enter': 'lg-search-now', disabled: !canIdentify(),
           title: canIdentify() ? null : 'Finding a player\'s rows needs the identity ACE.',
           'aria-label': 'Citizen id' }),
@@ -1506,7 +1568,7 @@
     if (!d) return empty('Look somebody up by their player id (in the city) or their citizen id (anybody).');
     if (d.error) return empty(d.error);
     var p = d.player || {};
-    var stats = d.stats || {};
+    var stats = d.stats;
     var owed = asList(d.owed);
     var contracts = asList(d.contracts);
     var notices = d.notices || {};
@@ -1515,13 +1577,17 @@
         h('h2', String(p.name || 'No name on record')),
         p.cid ? h('span.cid', String(p.cid)) : h('span.chip', 'citizen id hidden'),
         p.online ? h('span.chip.is-live', 'in the city · player ' + String(p.server)) : h('span.chip', 'offline')),
-      h('div.tiles.is-compact',
+      // Sent only to staff with the identity ACE: the counters hold what was
+      // placed and taken anonymously too, and nothing says which.
+      stats ? h('div.tiles.is-compact',
         tile('Completed', h('p.big', num(stats.completed))),
         tile('Failed', h('p.big', num(stats.failed))),
         tile('Placed', h('p.big', num(stats.placed))),
         tile('Survived', h('p.big', num(stats.survived))),
         tile('Success rate', h('p.big', stats.rate == null ? '—' : num(stats.rate) + '%')),
-        tile('Standing', h('p.big.is-word', String(stats.standing || '—')))),
+        tile('Standing', h('p.big.is-word', String(stats.standing || '—'))))
+        : h('p.note', 'Their record is not shown: it counts contracts placed and taken anonymously too, '
+          + 'which only the identity ACE may see.'),
       h('div.cols',
         card('Owed to them', owed.length ? h('div.table-wrap', h('table.grid',
           h('thead', h('tr', h('th', 'Line'), h('th', 'Contract'), h('th', 'Holds'), h('th', 'State'),
@@ -1567,7 +1633,8 @@
         btn('.is-primary', 'pl-lookup', {}, 'Look up', 'arrow-right')),
       h('p.hint', canIdentify()
         ? 'You see every contract they were party to, anonymous ones included. Each lookup is on the record.'
-        : 'Contracts they placed or took anonymously, and what they are owed on them, are left out.'),
+        : 'Contracts they placed or took anonymously are left out, with what they are owed, the deliveries '
+          + 'and the notices on them, and so is their record, which counts them.'),
       h('div.stack', { id: 'pl-result' }, playerBody()));
   };
   LOAD.players = function () {};
@@ -1636,8 +1703,17 @@
       field(bind, { value: shownValue, class: entry.kind === 'list' ? 'is-grow' : 'is-short',
         inputmode: entry.kind === 'number' ? 'decimal' : null, 'data-enter': 'st-save', 'data-key': key,
         disabled: !open, 'aria-label': entry.label }),
-      writeBtn('.is-small', 'st-save', { 'data-key': key }, 'Save', null, 'check'),
+      writeBtn('.is-small', 'st-save', { 'data-key': key, id: 'st-save-' + key }, 'Save',
+        entry.destroys ? 'Click again to save' : null, 'check'),
       h('span.st-range', range));
+  }
+
+  /** Whether saving this value deletes something for good (the catalogue's
+      `destroys`): a lower one, 0 being never and so the highest. */
+  function destroysWith(entry, value) {
+    if (!entry.destroys || typeof value !== 'number' || value === 0) return false;
+    var now = Number(entry.value) || 0;
+    return now === 0 || value < now;
   }
 
   function settingInner(entry) {
@@ -1653,6 +1729,8 @@
         h('code.st-key', 'Config.' + key),
         entry.about ? h('p.st-about', String(entry.about)) : null,
         entry.readonly ? h('p.st-about.is-warn', String(entry.readonly)) : null,
+        entry.destroys && !entry.readonly
+          ? h('p.st-about.is-warn', 'Lowering it deletes for good, so saving a lower value takes two clicks.') : null,
         entry.inflight ? h('p.st-inflight', h('b', 'Under way: '), String(entry.inflight)) : null,
         entry.readonly ? null : h('p.st-source', 'config.lua: ' + describe(entry, entry.default),
           overridden ? ' · in force from the panel' + (entry.by ? ', set by ' + entry.by : '')
@@ -1660,8 +1738,11 @@
         entry.ignored ? h('p.st-about.is-error', 'The store holds a value that was not applied at start: '
           + String(entry.ignored) + '. config.lua\'s is in force; reset it to clear this.') : null,
         answerBox(answer)),
+      // A read-only key too, when the store holds a value for it that was
+      // not applied (kept from a version where it could be changed): the
+      // reset takes that row away, and nothing in force moves.
       h('div.st-control', settingControl(entry),
-        (overridden || entry.ignored) && !entry.readonly
+        entry.ignored || (overridden && !entry.readonly)
           ? writeBtn('.is-small.is-ghost', 'st-reset', { 'data-key': key }, 'Reset to config.lua',
             'Click again to reset', 'arrow-rotate-left') : null));
   }
@@ -2035,11 +2116,11 @@
       S.reviews.answers[id] = { ok: reply.ok === true, text: words(reply) };
       toast(words(reply), reply.ok ? 'ok' : 'error');
       if (S.section === 'reviews') setHtml(byId('rv-list'), reviewList());
-      loadReviews();
+      loadReviews(true);
     });
   };
 
-  ACTIONS['lg-search-now'] = function () { firstLogPage(); };
+  ACTIONS['lg-search-now'] = function () { firstLogPage(true); };
   LIVE['lg-search'] = function () {
     clearTimeout(S.logs.timer);
     S.logs.timer = setTimeout(function () { S.logs.timer = null; firstLogPage(); }, DEBOUNCE_MS + 100);
@@ -2103,6 +2184,24 @@
     if (parsed.error) {
       S.settings.answers[key] = { ok: false, text: parsed.error };
       drawSettingRow(key);
+      return;
+    }
+    // A value that deletes something for good takes the two clicks every
+    // destructive button does, the row saying what the second one does.
+    // Saved on one click or on Enter, a typo of 1 for 10 days lost every
+    // unopened kill photo older than a day at the next sweep. Enter only
+    // ever arms it.
+    if (destroysWith(entry, parsed.value)) {
+      if (node.tagName === 'BUTTON' && S.armed && S.armed.node === node) {
+        disarm();
+        setSetting(key, parsed.value, node);
+        return;
+      }
+      S.settings.answers[key] = { ok: false,
+        text: String(entry.destroys).replace(/%s/g, num(parsed.value)) + ' Click Save again to do it.' };
+      drawSettingRow(key);
+      var button = byId('st-save-' + key);
+      if (button) confirmed(button);
       return;
     }
     setSetting(key, parsed.value, node.tagName === 'BUTTON' ? node : null);
@@ -2200,11 +2299,22 @@
     if (live && LIVE[live]) run(LIVE[live], node, event);
   });
 
+  /* Escape closes on its release, not its press. Closed on the press, the
+     focus went back to the game with the key still down, and the rest of
+     that keystroke reached it: the pause menu opened as the panel closed.
+     The client holds the pause keys off for a moment after, too. */
+  function isEscape(event) { return event.key === 'Escape' || event.key === 'Esc'; }
+
+  document.addEventListener('keyup', function (event) {
+    if (!S.open || !isEscape(event)) return;
+    if (event.preventDefault) event.preventDefault();
+    close();
+  });
+
   document.addEventListener('keydown', function (event) {
     if (!S.open) return;
-    if (event.key === 'Escape' || event.key === 'Esc') {
+    if (isEscape(event)) {
       if (event.preventDefault) event.preventDefault();
-      close();
       return;
     }
     if (event.key === 'Enter') {

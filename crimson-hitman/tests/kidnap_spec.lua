@@ -158,6 +158,25 @@ describe('countdown', function()
         eq(Env.players[3].PlayerData.money.cash, 5000)
     end)
 
+    it('keeps the radius it was armed with when staff narrow it meanwhile', function()
+        local s, f, c = seeded()
+        -- The client 8 m off: inside config.lua's radius.
+        Env.players[1]._coords = { x = AT.x + 8, y = AT.y, z = AT.z }
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+        runCountdown(s, 5)
+        truthy(s.settings.set('Kidnap.Radius', 4, 'ADMIN001', 'ADMIN001'))
+        eq(Config.Kidnap.Radius, 4, 'in force at once')
+        local done = runCountdown(s, Config.Kidnap.CountdownSeconds)
+        eq(#done, 1, 'finished: every sample measured against the radius it was armed with')
+        eq(Env.players[3].PlayerData.money.cash, 12500, 'and paid')
+
+        local again, _, other = seeded()
+        truthy(again.settings.set('Kidnap.Radius', 4, 'ADMIN001', 'ADMIN001'))
+        Env.players[1]._coords = { x = AT.x + 8, y = AT.y, z = AT.z }
+        eq(select(2, again.kidnap.arm(other.id, 'HITMAN01')), 'creator_too_far',
+            'a countdown armed after the change takes the new radius')
+    end)
+
     it('reports live progress for the app', function()
         local s, f, c = seeded()
         s.kidnap.arm(c.id, 'HITMAN01')

@@ -227,6 +227,26 @@ describe('the informant, switched from the panel', function()
         local _, err = s.informant.buy(f.target, c.id)
         falsy(err == CH.ERR.FEATURE_OFF, 'on again: ' .. tostring(err))
     end)
+
+    it('keeps showing a name already bought while it is off', function()
+        local s, f = stack()
+        Config.Informant.RequireProximity = false
+        Config.Informant.Cost = 100
+        local c = place(s, f)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local ok, err = s.informant.buy(f.target, c.id)
+        truthy(ok, 'bought: ' .. tostring(err))
+        local function shown()
+            return s.projection.contract(s.storage.readContract(c.id), 'TARGET01').informantAnswer
+        end
+        local bought = shown()
+        truthy(bought, 'shown once bought')
+        turn(s, 'Informant.Enabled', false)
+        eq(shown(), bought, 'paid for under the rules it was bought under, and still shown')
+        eq(select(2, s.informant.buy(f.target, c.id)), CH.ERR.FEATURE_OFF, 'only a new purchase is refused')
+        turn(s, 'Informant.Enabled', true)
+        eq(shown(), bought)
+    end)
 end)
 
 describe('messages, switched from the panel', function()

@@ -403,6 +403,9 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       still opens from the phone as before. Escape closes it, so does its close
       button, and the game takes input again at once. `restart crimson-hitman`
       with it open leaves no cursor behind
+- [ ] Escape closes the panel without opening the pause menu: press and let go
+      of Escape a few times, quickly and slowly, and the map or pause menu never
+      opens as the panel goes (a second Escape after it has gone does open it)
 - [ ] The overview shows the contracts by state, money held by account, owed
       deliveries, stuck lines, open review items and photos, and refreshes
       every 10 seconds; it matches `/ch-stuck` and `/ch-review`
@@ -422,8 +425,11 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Turn a feature switch off and on again from **Features & limits**: each
       click answers in a toast and on the row, and the row says *changed from
       the panel* with `config.lua`'s value beside it until you reset it
-- [ ] On the `command`-only account the panel opens, every section reads, and
-      void, settle, resolve and every setting answer *Not authorised*
+- [ ] On the `command`-only account the panel opens and every section reads;
+      void, settle, every switch and every Save are greyed out, with *Read only:
+      changing anything needs the staff ACE itself* on hover, and the review
+      queue shows no resolve form. Then, as that account, type `/ch-void <id>` in
+      chat: it answers *Not authorised*, so the server refuses it too
 - [ ] Place an anonymous contract and accept it anonymously on another
       character. Without `crimson.identity` the contract shows *Anonymous* for
       both, no citizen id appears anywhere (contract, log, player view), and
@@ -436,7 +442,17 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
       mid-payout) and settle it from the contract view with `delivered` and
       then with `pay <amount>` on another: the answers read as `/ch-settle`'s
 - [ ] Resolve a review item twice: the second says it is already resolved, and
-      the player is paid once
+      the player is paid once. After the first, the item stays in the list,
+      marked resolved with the answer in it, until you press Refresh
+- [ ] On the `crimson.identity` account, resolve a review item on an anonymous
+      contract by role. Then, on the account without it, open **Needs review**,
+      All, and run `/ch-review all`: whom it paid reads as *the client*, never a
+      citizen id
+- [ ] In **Features & limits**, **Limits & settings**, type 1 into *Days an
+      unopened kill photo is kept* and press Enter: nothing is saved, the row says
+      what lowering it deletes, and Save turns brass; only a second click on Save
+      lowers it. Raising it back saves at one click. `Config.Cooldowns.admin` and
+      `adminWrite` are on the **Read only** tab
 - [ ] The log pages back with Older and forward again, and a filter by contract
       shows that contract's rows only
 - [ ] Turn **Buyouts** off: the app's On me tab stops offering a buyout,

@@ -686,10 +686,17 @@ Without `crimson.identity` an anonymous party is shown as *Anonymous*, every
 citizen id is the party's place on the contract (*the client*, *the target*,
 *operative &lt;alias&gt;*, or *(a player)*) in contract details, the log and
 the player view alike, a search by citizen id or name never finds a contract
-through a party who placed or took it anonymously, and what a player is owed
-on a contract they were anonymous on is left out of their view. Each lookup
-that unmasks is its own audit row (`admin_panel_contract_identified`,
-`admin_panel_logs_identified`, `admin_panel_player_identified`). Every request
+through a party who placed or took it anonymously, and what a player is owed,
+the deliveries waiting for them and the notices kept for them on a contract
+they were anonymous on are left out of their view. So is their record (placed,
+completed, failed, survived): its counters hold their anonymous contracts too,
+and nothing says which. The review queue's items, resolved ones included, name
+whom a resolution paid by the party's place, and carry no item's metadata (a
+weapon's `registered` is its owner's name). What a staff member with
+`crimson.identity` searched for, and how many contracts it found, reads
+*(identity only)* in the log. Each lookup that unmasks is its own audit row
+(`admin_panel_contract_identified`, `admin_panel_logs_identified`,
+`admin_panel_player_identified`, `admin_panel_search_identified`). Every request
 is rate-limited per staff member (`Config.Cooldowns.admin`, and
 `Config.Cooldowns.adminWrite` as well for a write). Every write is in the audit
 log, written at once rather than at the next flush. While the server is still
@@ -700,32 +707,39 @@ flushing the log is refused, in the commands' own words.
 
 | Section | What it shows | What you can do |
 |---|---|---|
-| **Overview** | Contracts by state; active operatives; money held in escrow by account, and items and weapons held; owed deliveries (lines, players, and how many are in a retry queue); stuck and parked lines, as `/ch-stuck` lists them; open review items; kill photos waiting, kept and served, with their size; the storage mode, the rule new contracts are placed under and the recovery state; the slowest maintenance jobs; the `/ch-diag` warnings; how many settings are changed from the panel. Refreshes itself every `Config.Admin.PanelRefreshSeconds` (10) while open | — |
+| **Overview** | Contracts by state; operatives on contracts now, and how many contracts they hold; money held in escrow by account, and items and weapons held; owed deliveries (lines, players, and how many are in a retry queue); the lines `/ch-stuck` lists, headed by the ones left for you to settle (what the badge beside Overview counts), with the ones that need nothing (queued since, or an ending settling itself) said apart; open review items; kill photos waiting, kept and served, with their size; the storage mode, the rule new contracts are placed under and the recovery state; the slowest maintenance jobs; the `/ch-diag` warnings; how many settings are changed from the panel. Refreshes itself every `Config.Admin.PanelRefreshSeconds` (10) while open | — |
 | **Contracts** | Search by contract id, citizen id or name, and filter by state, completion rule and date; `Config.Admin.PanelPageSize` (25) a page, newest first. The detail: terms, payouts, every escrow line with its state and what it owes and what arrived, the operatives, open proposals, the lines `/ch-stuck` lists for it with what settles each, and its audit timeline | **Void** with a reason, as `/ch-void`; **settle** a listed stuck line `pay`, `pay <amount>`, `return` or `delivered`, as `/ch-settle`. Both answer in the commands' exact words |
 | **Needs review** | The review queue's open items with what is known and what the store says now, and the latest resolved ones with how, by whom and when | **Refund**, **pay** or **dismiss** (with a note), as `/ch-review`: given once, however often it is asked |
-| **Logs** | The audit log, newest first, a page at a time, filtered by kind, part of the action, contract id, citizen id (with `crimson.identity`) and time. Read from whichever store keeps it (the json day files, the `crimson_audit` table, or memory) | — |
-| **Players** | By server id or citizen id: their contracts (as `/ch-contracts`), their record, what they are owed and whether it is queued for them, and how many notices wait for their next login | **Whois** on a contract, with `crimson.identity` |
+| **Logs** | The audit log, newest first, a page at a time, filtered by kind, part of the action, contract id, citizen id (with `crimson.identity`) and time. Read from whichever store keeps it (the json day files, the `crimson_audit` table, or memory); a page follows on from the last even when old rows age out in between. A contract id or citizen id box is marked, and asks nothing, until it holds a whole one | — |
+| **Players** | By server id or citizen id (in any case: it is read as the server keeps it): their contracts (as `/ch-contracts`), their record (with `crimson.identity`), what they are owed and whether it is queued for them, and how many notices wait for their next login. A citizen id nobody in the city has and nothing you may see names answers *not found* | **Whois** on a contract, with `crimson.identity` |
 | **Features, limits & settings** | Every on/off switch in `config.lua`, grouped by section, with a line on what it does and what turning it off does to things already under way, and the two multi-choice features (`Config.Completion.Fulfilment`, `Config.Completion.PhotoStorage`). Then the limits: every number in `Config.Limits`, the anonymity fees and their account, the informant's price, the stake ceilings, the handover countdown, radius and health floor, buyout pricing, the targeting radii and page sizes, `Config.Ledger.PhotoRetentionDays`, the advisory job lists and every rate limit. Each with its value now, what `config.lua` says, and whether the value comes from `config.lua` or the panel | **Change** one, **reset** one, **reset all** |
 | **Tools** | — | The timer refresh (`/ch-refresh`, test servers), **run the diagnosis** and read it, **flush the audit log** |
 
 **Using the page.** The panel is sized for a game window 1280 to 1920 pixels
 wide, and still works at 1024. It opens on the overview, with the open review
-items, the lines waiting for staff and the settings changed from the panel
+items, the lines left for you to settle and the settings changed from the panel
 counted beside their sections. A contract opens in a drawer over the list,
 with what you can do to it first: void, whois, and each stuck line's settle
 buttons. Anything that moves money or cannot be undone (void, settle, resolve,
-reset, the timer refresh) takes two clicks: the first turns the button brass
-and says what the second does, and it disarms itself after three seconds. The
-server's answer is shown in its exact words where you asked, and as a toast in
-the corner; a refusal (a rate limit with its wait, a recovering server, a
-value the start-up checks refuse) is shown the same way. The contract search
-asks once you stop typing, and an answer to an older search never replaces a
-newer one. Read-only staff see every write control disabled, with why on
-hover, and a banner says when recovery holds writes back. The page never asks
-for whois, a player's log rows or anything that unmasks without
-`crimson.identity`; what it shows is only what the server sent, already
-redacted for you. Escape, or Close, closes it; so does the server refusing a
-read (the ACE taken away), with why. The icons come from Font Awesome's CDN,
+reset, the timer refresh, and lowering `Config.Ledger.PhotoRetentionDays`,
+which deletes the unopened kill photos past the new age at the next sweep)
+takes two clicks: the first turns the button brass and says what the second
+does, and it disarms itself after three seconds. Enter in the photo age's box
+only arms its Save; it never lowers it. The server's answer is shown in its
+exact words where you asked, and as a toast in the corner; a review item you
+resolve stays in the queue, marked resolved with that answer, until you press
+Refresh or open another section. A refusal (a rate limit with its wait, a
+recovering server, a value the start-up checks refuse) is shown the same way.
+The contract search reads the store at most once every five seconds between
+every open panel, so a contract placed a moment ago shows within that; the
+search asks once you stop typing, and an answer to an older search never
+replaces a newer one. Read-only staff see every write control disabled, with
+why on hover, and no resolve form on a review item, and a banner says when
+recovery holds writes back. The page never asks for whois, a player's log rows
+or anything that unmasks without `crimson.identity`; what it shows is only what
+the server sent, already redacted for you. Escape (as you let go of it), or
+Close, closes it, and the pause menu stays shut for a moment after; so does the
+server refusing a read (the ACE taken away), with why. The icons come from Font Awesome's CDN,
 and every control has its words beside its icon, so a game that cannot reach
 the CDN loses nothing but the icons.
 
@@ -734,9 +748,13 @@ server runs: `data/records.json` in `json` mode, the `crimson_settings` table in
 `mysql` mode (created at start, and in `install/sql/crimson_hitman.sql`), and in
 memory mode for as long as it keeps anything, which is until the resource
 stops. They are applied over `config.lua` at every start, right after the
-start-up checks and before anything reads the config, and they are in force
-the moment you change them, because the code reads the config when it uses
-it. `config.lua` is never rewritten: setting a value back to what it says, or
+start-up checks and before anything reads the config, all of them checked
+together as they stood in force (a least buyout and a most changed in either
+order come back as a pair), and they are in force the moment you change them,
+because the code reads the config when it uses it. One change is saved at a
+time: one sent while another is being saved is refused as busy, so two staff
+changing keys that depend on each other can never leave a pair the start
+would refuse. `config.lua` is never rewritten: setting a value back to what it says, or
 resetting it, makes it the file's again. Each value is checked the way the
 start checks `config.lua` (the same checks, run against a copy of the config
 with your change in it), so a value the start would refuse, or quietly
@@ -763,17 +781,24 @@ its token was issued; an anonymity fee refunded is always the one charged, to
 the account it came from; money already in escrow for a reward source you turn
 off is paid out or returned as before. Lowering a cap below what is in use
 cancels nothing and only refuses new ones. A rule read each time it is used
-(the handover's and the kill's checks) applies from the next check. The panel
-says which for every key. `Config.App.DefaultInstalled` is kept and sent to
+(the handover's and the kill's checks) applies from the next check, except the
+handover radius, which a countdown already running keeps from when it was
+armed. A name a target already bought from the informant stays on their card
+while the informant is off. The panel says which for every key. `Config.App.DefaultInstalled` is kept and sent to
 every game but applies when the app is next added to a phone (after this
 resource or lb-phone restarts, or when a player rejoins), and the panel marks it
 *applies after restart*.
 
 Shown read-only, with why: `Config.Admin.Enabled`, `Config.Admin.Ace` and
 `Config.Admin.IdentityAce` (changed from the panel, a slip could lock staff
-out), `Config.Database.Mode` (changing storage needs the old mode's money
-settled and a restart; see *Changing storage mode*),
-`Config.Database.AllowModeSwitch` and `Config.Database.Json.SyncOnFinancialWrite`.
+out), the panel's own rate limits `Config.Cooldowns.admin` and
+`Config.Cooldowns.adminWrite` (set too low from the panel, they would refuse the
+request that puts them back, at every start), `Config.Database.Mode` (changing
+storage needs the old mode's money settled and a restart; see *Changing storage
+mode*), `Config.Database.AllowModeSwitch` and
+`Config.Database.Json.SyncOnFinancialWrite`. A value the store still holds for
+one of these from an older version is not applied, is listed as *not applied*,
+and **Reset to config.lua** on its row takes it away.
 There is no single switch for the phone app as a whole:
 `Config.HideAppFromBlockedJobs` and the job lists decide who sees it, and the
 panel works whatever they say.
@@ -838,7 +863,7 @@ resource (`GetParentResourceName()`):
 | op | Needs | `data` sent | `data` answered |
 |---|---|---|---|
 | `access` | read | — | `{ canWrite, canIdentify, pageSize, refreshSeconds, recovery = 'ready'\|'recovering'\|'recovery_failed', version, commands = { panel, refresh, diagnose, stuck, settle, void, review, timeline, contracts, whois } }` |
-| `overview` | read | — | `{ at, contracts = { total, byState = { [state] = n } }, hitmen = { active, operatives }, held = { cash, bank, dirty, items, weapons, lines }, owed = { cash, bank, dirty, items, weapons, lines, players, queued }, stuck = { total, leftForStaff, byWhy = { [why] = n } }` (absent while recovering)`, reviews = { open }, photos = { waiting, kept, served }` (each `{ count, bytes }`)`, storage, fulfilment, photoStorage, recovery, slowest = [{ name, max, avg, last, runs }], slowMs, warnings = [line], overrides, auditQueued }` |
+| `overview` | read | — | `{ at, contracts = { total, byState = { [state] = n } }, hitmen = { active, operatives }, held = { cash, bank, dirty, items, weapons, lines }, owed = { cash, bank, dirty, items, weapons, lines, players, queued }, stuck = { total, leftForStaff, byWhy = { [why] = n } }` (absent while recovering; `leftForStaff` counts the lines something settles by hand, `total` every line listed)`, reviews = { open }, photos = { waiting, kept, served }` (each `{ count, bytes }`)`, storage, fulfilment, photoStorage, recovery, slowest = [{ name, max, avg, last, runs }], slowMs, warnings = [line], overrides, auditQueued }` |
 | `contracts` | read | `{ query?, state?, rule?, from?, to?, page? }` (times in os.time seconds) | `{ rows = [{ id, state, mode, rule, created_at, deadline_at, resolved_at, resolution, target, client, anonymous, slots, claimed }], page, pages, total }` |
 | `contract` | read | `{ id }` | `{ contract = { id, state, mode, rule, reason, created_at, deadline_at, expires_at, resolved_at, resolution, paused_since, bailout_amount, penalty_amount, bonus_percent, slots, claimed, next_slot, buyout_queued, target_protected, anonymous, client = { name, cid? }, target = { name, cid? } }, escrow = [line], hitmen = [{ id, alias, anonymous, name, cid?, state, accepted_at, left_at, claims, stake, last_claim_at }], amendments = [{ id, kind, proposer, outcome, expires_at, payload }], timeline = [row]` (oldest first)`, stuck = [stuck]` (absent while recovering)`, canVoid }` |
 | `void` | write | `{ id, reason? }` | — (`message` is `/ch-void`'s answer) |
@@ -846,11 +871,11 @@ resource (`GetParentResourceName()`):
 | `reviews` | read | `{ all? }` | `{ items = [{ id, kind, about, contract, parties = [{ role, who }], amount, account, items, known, now, state, created_at, resolution, resolved_by, resolved_at, unwritten }] }` |
 | `resolve` | write | `{ id, action = 'refund'\|'pay'\|'dismiss', who?` (a role the item names, or a citizen id)`, amount?, account?, goods?, note? }` | `{ detail = { action, settled, pending, parked, continued } }` (`message` is `/ch-review`'s answer) |
 | `logs` | read | `{ kind?, action?, contract?, actor?, from?, to?, limit?, cursor? }` | `{ rows = [row], next }`: pass `next` back as `cursor` for the page after; absent on the last |
-| `player` | read | `{ subject }` (a server id, or a citizen id) | `{ player = { cid?, name, online, server }, contracts = [{ id, state, role, anonymous, target, created_at, resolution }], stats = { completed, failed, placed, survived, rate, standing }, owed = [line + queued], pending, notices = { count, titles } }` |
+| `player` | read | `{ subject }` (a server id, or a citizen id) | `{ player = { cid?, name, online, server }, contracts = [{ id, state, role, anonymous, target, created_at, resolution }], stats = { completed, failed, placed, survived, rate, standing }` (with `crimson.identity` only)`, owed = [line + queued], pending, notices = { count, titles } }`; `not_found` for a citizen id nobody in the city has and nothing shown names |
 | `whois` | identity | `{ id }` | `{ creator = { cid, name, anonymous }, target = { cid, name }, hitmen = [{ alias, cid, name, anonymous, state }] }` |
 | `settings` | read | — | `{ features = [setting], limits = [setting], readonly = [setting], overrides }` |
-| `setSetting` | write | `{ key, value }` (a boolean, a number, one of `choices`, or a list of job names) | `{ key, value, old, source }`; refused `not_allowed`, `read_only`, `invalid_value` or `store_failed`, with why in `message` |
-| `resetSetting` | write | `{ key }` | `{ key, value, old, source }`; also `not_overridden` |
+| `setSetting` | write | `{ key, value }` (a boolean, a number, one of `choices`, or a list of job names) | `{ key, value, old, source }`; refused `not_allowed`, `read_only`, `invalid_value`, `store_failed` or `busy` (another change is being saved), with why in `message` |
+| `resetSetting` | write | `{ key }` | `{ key, value, old, source }`; also `not_overridden` and `busy` |
 | `resetSettings` | write | — | `{ keys }` |
 | `refresh` | write | — | `{ lines }` |
 | `diag` | read | `{ subject? }` (a server id) | `{ lines }` |
@@ -863,12 +888,14 @@ row) is `{ ts, kind, action, contract, actor, detail }`; `stuck` is a `/ch-stuck
 entry, `{ line, contract, amount, source, item, quantity, portion, intended,
 why, at, raised, arrived, settles, orphan, unfinished, actions }`, where
 `actions` lists what settles it: `pay`, `pay_amount`, `return`, `return_owner`
-(a `return` naming a citizen id) and `delivered`. `setting` is `{ key, group,
+(a `return` naming a citizen id) and `delivered`; never `return` for a line
+owed to somebody (portion `owed`), which nobody put up to take back. `setting` is `{ key, group,
 label, about, kind = 'switch'\|'choice'\|'number'\|'list'\|'text', choices?, min?,
-max?, integer?, live, inflight, readonly?, value, default, source =
+max?, integer?, live, inflight, readonly?, destroys?, value, default, source =
 'config'\|'panel', by?, at?, ignored? }`: `live = false` is *applies after
-restart*, `readonly` is why it cannot be changed, and `ignored` is why a value
-the store holds was not applied at start.
+restart*, `readonly` is why it cannot be changed, `destroys` (with `%s` for the
+new value) is what lowering it deletes for good, which the page asks a second
+click for, and `ignored` is why a value the store holds was not applied at start.
 
 **Convars.**
 
