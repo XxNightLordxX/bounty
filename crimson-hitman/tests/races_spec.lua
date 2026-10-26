@@ -77,7 +77,8 @@ end)
 describe('RACE F2: a contract resolves while a hitman is mid-accept', function()
     -- A staff void lands before the hitman's row exists. The client's own
     -- cancel no longer can: it waits on the key the acceptance holds and is
-    -- refused as busy. A buyout lands inside the stake itself, after the row.
+    -- refused as busy. Nor can a buyout, sent inside the stake itself after
+    -- the row: it holds the same key (Bailout.buy).
     local function run(which, fee)
         local s = newStack()
         local f = fixture(s)
@@ -88,14 +89,14 @@ describe('RACE F2: a contract resolves while a hitman is mid-accept', function()
             bailoutAmount = 5000,
         })
         truthy(c)
+        local landed
         local function land()
-            local ok, err
             if which == 'void' then
-                ok, err = s.admin.void(0, c.id, 'raced')
+                landed = table.pack(s.admin.void(0, c.id, 'raced'))
             else
-                ok, err = s.bailout.buy(f.target, c.id)
+                landed = table.pack(s.bailout.buy(f.target, c.id))
             end
-            print('  ' .. which .. ' ->', ok, err)
+            print('  ' .. which .. ' ->', landed[1], landed[2])
         end
         local realWrite, realCount = s.storage.writeEscrow, s.storage.countHitmanContracts
         local fired = false
@@ -114,20 +115,27 @@ describe('RACE F2: a contract resolves while a hitman is mid-accept', function()
         local ok1, err1 = s.contracts.accept(f.hitman, c.id, fee ~= nil)
         s.storage.writeEscrow, s.storage.countHitmanContracts = realWrite, realCount
         truthy(fired, 'the ' .. which .. ' never landed')
-        falsy(ok1, 'accepted a contract that closed underneath')
-        eq(err1, CH.ERR.ALREADY_SETTLED)
         print('  accept ->', ok1, err1, ' state', s.storage.readContract(c.id).state)
         for _, l in ipairs(stakeLines(s, c.id)) do
             print('  stake line', l.id, 'state', l.state, 'amount', l.amount)
         end
         print('  hitman money', money(3), '(started 10000)')
-        return money(3)
+        if which == 'void' then
+            falsy(ok1, 'accepted a contract that closed underneath')
+            eq(err1, CH.ERR.ALREADY_SETTLED)
+        end
+        return money(3), ok1, err1, landed
     end
     it('gives the stake back when staff void it mid-accept', function()
         eq(run('void'), 10000, 'the stake was left held on a voided contract')
     end)
-    it('gives the stake back when the target buys out mid-accept', function()
-        eq(run('bailout'), 10000, 'the stake was left held on a bought-out contract')
+    it('refuses a buyout sent mid-accept, before it charges anything', function()
+        local held, ok, err, landed = run('bailout')
+        eq(landed[1], false)
+        eq(landed[2], CH.ERR.BUSY, 'the buy waits on the key the acceptance holds')
+        truthy(ok, 'and the acceptance stands: ' .. tostring(err))
+        eq(held, 9000, 'its stake held, on a contract still open')
+        eq(money(2), 40000, 'nothing was taken from the target')
     end)
     it('gives the anonymity fee back with the stake', function()
         eq(run('void', 1500), 10000, 'the fee for anonymity on a contract '
@@ -1934,12 +1942,14 @@ describe('RACE: one photo token sent twice at once', function()
     end)
 end)
 
---- A buyout that lands while another settle of the same contract holds it
---- is handed straight back (Bailout.buy's handBack). That credit can raise
---- after the money moved (qbx_core adds it before the hooks that can raise),
---- and read as not paid it was also owed on a new line: every retry paid
---- the premium again.
-describe('RACE: a buyout handed back while another settle holds the contract', function()
+--- A buyout whose record would not write, and that the store says is not
+--- there, is handed straight back (Bailout.buy's handBack). That credit can
+--- raise after the money moved (qbx_core adds it before the hooks that can
+--- raise), and read as not paid it was also owed on a new line: every retry
+--- paid the premium again. (A buy that meets another settle of the same
+--- contract is refused now before it charges anything, Bailout.buy, so this
+--- is the hand-back left.)
+describe('RACE: a buyout handed back when its record would not write', function()
     local function handedBack(addMoney)
         local s = newStack()
         local f = fixture(s)
@@ -1953,13 +1963,13 @@ describe('RACE: a buyout handed back while another settle holds the contract', f
         local p = Env.players[2]
         local real = p.Functions.AddMoney
         p.Functions.AddMoney = function(...) return addMoney(real, ...) end
-        local ok, why = s.contracts.serialized({ 'settle:' .. c.id }, function()
-            return s.bailout.buy(f.target, c.id)
-        end)
+        local realQueue = s.storage.setBailoutQueue
+        s.storage.setBailoutQueue = function() error('the connection dropped', 0) end
+        local ran = pcall(s.bailout.buy, f.target, c.id)
+        s.storage.setBailoutQueue = realQueue
         for _ = 1, 3 do s.escrow.retryPending('TARGET01') end
         p.Functions.AddMoney = real
-        falsy(ok, 'another settle held it')
-        eq(why, CH.ERR.BUSY)
+        falsy(ran, 'the record would not write')
         local owed = {}
         for _, l in ipairs(s.storage.readEscrow(c.id)) do
             if l.portion == CH.PORTION.OWED and l.owed_to == 'TARGET01' then owed[#owed + 1] = l end

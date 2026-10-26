@@ -243,10 +243,12 @@ local function matches(row, conditions, params, from)
             -- table. Slow and exact, which is what a test executor wants.
             -- Its own conditions are read as any WHERE is, so one inside it
             -- (an IN list, another EXISTS) is held to the row it names.
-            local linked = row[condition.linkedTo]
+            -- With no join column it is uncorrelated: any row of the other
+            -- table its own conditions keep.
+            local linked = condition.link and row[condition.linkedTo]
             local found = false
             for _, other in pairs(Exec.tables[condition.subquery] or {}) do
-                if tostring(other[condition.link]) == tostring(linked)
+                if (not condition.link or tostring(other[condition.link]) == tostring(linked))
                     and matches(other, condition.inner, params, from) then
                     found = true
                     break
@@ -353,13 +355,27 @@ local function parseConditions(clause, sql)
                     rest[#rest + 1] = inner
                 end
             end
-            if not link then
-                error('mysql_exec: the subquery names no join column: ' .. tostring(sql))
-            end
             local inner, bound = parseConditions(#rest > 0 and table.concat(rest, ' AND ') or nil, sql)
             if bound > 0 then
-                error('mysql_exec: a bound parameter inside a subquery is '
-                    .. 'not supported: ' .. tostring(sql))
+                -- An uncorrelated subquery may bind its own values, as
+                -- MySQLStore.abandonHitman's `c.id = ?` does: they come after
+                -- every `?` before it in the statement, which is where they
+                -- are read from. One that also joins, or nests a subquery
+                -- of its own, is not a shape this backend sends.
+                if link then
+                    error('mysql_exec: a bound parameter inside a correlated subquery is '
+                        .. 'not supported: ' .. tostring(sql))
+                end
+                for _, condition in ipairs(inner) do
+                    if condition.subquery then
+                        error('mysql_exec: a subquery inside a subquery that binds values is '
+                            .. 'not supported: ' .. tostring(sql))
+                    end
+                    if condition.index then condition.index = condition.index + index end
+                end
+                index = index + bound
+            elseif not link then
+                error('mysql_exec: the subquery names no join column: ' .. tostring(sql))
             end
             conditions[#conditions + 1] = { subquery = subTable,
                 exists = type(positiveExists) == 'string',

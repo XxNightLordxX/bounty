@@ -324,6 +324,10 @@ Config.Cooldowns = {
     diagnostic  = { per = 60, burst = 10 },
     create    = { per = 60, burst = 2 },
     accept    = { per = 30, burst = 3 },
+    --- How often a target may buy out, and a buyer buy informant data.
+    --- Not what keeps a double tap from charging twice: a second request
+    --- while the first is still running is refused as busy before anything
+    --- is charged, whatever these are set to here or in the admin panel.
     bailout   = { per = 60, burst = 1 },
     informant = { per = 300, burst = 1 },
     message   = { per = 5,  burst = 5 },
@@ -902,6 +906,11 @@ Config.Informant = {
     --- How long an observation counts for. Long enough that a hitman who
     --- tailed you and backed off is still named; short enough that one who
     --- walked past yesterday is not.
+    ---
+    --- Observations are kept in memory, so a restart forgets them. For this
+    --- long after a start, with RequireProximity on, informant data on a
+    --- contract placed before the start is refused, uncharged, for every
+    --- buyer alike, with how long to wait; after it, sold as before.
     ProximityWindowMinutes = 10,
     RerollLockMinutes = 30,
     MaxPurchasesPerContract = 2,

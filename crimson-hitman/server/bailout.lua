@@ -177,11 +177,36 @@ local function recordPaid(contractId, fields)
     error(err, 0)
 end
 
+local buyUnlocked
+
+--- Buy out a contract, one buy at a time per contract, and never beside an
+--- acceptance, a cancel or a settle of it.
+---
+--- A buy reads the contract and its hitmen, charges, then records the
+--- queue, and every read is an await on mysql. A second tap landing in one
+--- of them passed the "already paid" check and charged the target again;
+--- the second record wrote over the first, or landed on a contract already
+--- bought out, and one premium reached nobody. And an acceptance finishing
+--- in the same awaits was missed by the read of who is engaged, so a
+--- hitman who had just staked was bought out from under with no delay.
+--- The contract's key is the one acceptance, cancel, withdraw and the
+--- agreed changes hold, and the settle key is the queue's (Bailout.settle):
+--- held from before anything is read, so a buy that would meet another is
+--- refused as busy before it charges anything. The rate limit on the
+--- request is not what keeps this right: staff may raise it from the admin
+--- panel.
+---@return boolean ok
+---@return string|nil err
+---@return boolean|table|nil queued, or on a refusal what the page is told
 function Bailout.buy(actor, contractId)
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
     if not Config.Bailout.Enabled then return false, CH.ERR.BAILOUT_OFF end
+    return Contracts.serialized({ 'contract:' .. contractId, 'settle:' .. contractId },
+        buyUnlocked, actor, contractId)
+end
 
+buyUnlocked = function(actor, contractId)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.target_cid ~= actor.cid then return false, CH.ERR.NOT_PARTICIPANT end
@@ -271,25 +296,18 @@ function Bailout.buy(actor, contractId)
     -- settling is a score of awaits on mysql. A crash in any of them left a
     -- contract bought out with the premium in no line, no queue and no
     -- pocket. Recorded, the next tick finishes it like a queued buyout, and
-    -- settle clears the record when it is done.
-    -- Under the settle lock from the record on, so the tick cannot settle
-    -- it too in between (Bailout.settle).
-    local settled, why = Contracts.serialized({ 'settle:' .. tostring(contractId) }, function()
-        recordPaid(contract.id, {
-            bailout_queued_at = os.time() - (Config.Bailout.ProcessingDelaySeconds or 0),
-            bailout_paid_by = actor.cid,
-            bailout_paid_amount = amount,
-            bailout_paid_account = account,
-            bailout_attempts = 0,
-        })
-        return settleUnlocked(contractId, amount, actor.cid, account)
-    end)
-    -- Another settle of this contract was running: nothing of this buyout
-    -- was recorded, so the charge goes back rather than vanish.
-    if not settled and why == CH.ERR.BUSY then
-        handBack(actor.cid, contractId, amount, account, why)
-    end
-    return settled, why
+    -- settle clears the record when it is done. The settle key is this
+    -- buy's from before the first read (Bailout.buy), so the tick cannot
+    -- settle it too in between, and nothing here can meet it busy after
+    -- the charge.
+    recordPaid(contract.id, {
+        bailout_queued_at = os.time() - (Config.Bailout.ProcessingDelaySeconds or 0),
+        bailout_paid_by = actor.cid,
+        bailout_paid_amount = amount,
+        bailout_paid_account = account,
+        bailout_attempts = 0,
+    })
+    return settleUnlocked(contractId, amount, actor.cid, account)
 end
 
 --- Put money into a player's hands, or on the books for them.

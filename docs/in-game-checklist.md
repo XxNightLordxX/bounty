@@ -542,6 +542,19 @@ uploads, and with neither. Restart the resource between them.
       is refused, and the premium goes to the client, not back to the target
 - [ ] Informant data names one hitman, and charges even when it finds nobody
 - [ ] Buying informant data twice returns the same name
+- [ ] In the panel, raise **bailout: requests held** and **informant: requests
+      held** to 2. Tap **Buy out** twice as fast as you can: the target pays
+      once (the second says *That was busy for a moment. Try again.* or *You
+      have already paid*). The same with **Buy informant data**: one fee.
+      Put both back to 1
+- [ ] Restart the resource with a hitman on a contract and buy informant data
+      on it at once: *The informant is still asking around after a restart.
+      Try again in 10 minutes.*, and nothing is charged. After ten minutes,
+      with the hitman near the target again, it names them and charges
+- [ ] A hitman walks away from a staked contract while its client is offline:
+      the client gets the stake at their next login, and the panel's **Logs**
+      show `stake_forfeited` with the amount and *queued*. Walking away from
+      one with no stake writes no `escrow_released` row
 
 ## 9. Communication
 

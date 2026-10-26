@@ -803,6 +803,43 @@ describe('informant data across a restart', function()
             eq(money(2), before, 'and charged for it')
         end)
     end
+
+    --- Who had been near the target is kept in memory only, and a restart
+    --- forgot it: a purchase in the window after it paid $25,000 for
+    --- "Unknown operative" on a hitman who had tailed the target and backed
+    --- off. Refused uncharged until the sampler has watched a whole window,
+    --- whoever it has seen since, so the refusal says nothing about who has
+    --- been near; then sold as before.
+    it('json: refuses a purchase uncharged in the window after a restart, whoever has been seen', function()
+        for _, seen in ipairs({ false, true }) do
+            local _, s = boot('json')
+            local f = fixture(s)
+            Env.players[2].PlayerData.money.bank = 200000
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x',
+                reward = { baseline = { cash = 10000 } },
+            })
+            truthy(s.contracts.accept(f.hitman, c.id))
+            s.death.watchTargets(s.storage.allContracts())
+            Env.advance(60)
+
+            local _, s2 = restart('json', s)
+            if seen then s2.death.watchTargets(s2.storage.allContracts()) end
+            local before = money(2)
+            local ok, err, data = s2.informant.buy(s2.identity.resolve(2), c.id)
+            falsy(ok, 'sold for what the restart forgot')
+            eq(err, CH.ERR.INFORMANT_WARMING)
+            eq(data.minutes, Config.Informant.ProximityWindowMinutes)
+            eq(money(2), before, 'and nothing was charged')
+
+            Env.advance(Config.Informant.ProximityWindowMinutes * 60)
+            s2.death.watchTargets(s2.storage.allContracts())
+            ok, err, data = s2.informant.buy(s2.identity.resolve(2), c.id)
+            truthy(ok, tostring(err))
+            eq(data.name, 'Rook Ash', 'after a whole window, named as before')
+            eq(before - money(2), Config.Informant.Cost, 'and charged as before')
+        end
+    end)
 end)
 
 describe('memory mode stopping with a buyout waiting out its delay', function()
@@ -2742,10 +2779,12 @@ describe('a staff delivered the server stops part-way', function()
     end
 end)
 
---- A buyout handed back (another settle held the contract) whose credit
---- raised with part of it there, and no id left to owe the rest under: the
---- row staff are told by said nothing of the part that arrived, so a hand
---- refund of all of it overpaid by that part.
+--- A buyout handed back (its record would not write, and the store says it
+--- is not there) whose credit raised with part of it there, and no id left
+--- to owe the rest under: the row staff are told by said nothing of the
+--- part that arrived, so a hand refund of all of it overpaid by that part.
+--- A buy that meets another settle is refused before it charges anything
+--- now (Bailout.buy), so this is the hand-back left.
 describe('a buyout hand-back stranded part-way', function()
     for _, mode in ipairs({ 'json', 'mysql' }) do
         it(mode .. ': says how much of it arrived', function()
@@ -2769,12 +2808,12 @@ describe('a buyout hand-back stranded part-way', function()
                 if prefix == 'owe' then return nil end
                 return realNext(prefix)
             end
-            local ok, why = s.contracts.serialized({ 'settle:' .. c.id }, function()
-                return s.bailout.buy(f.target, c.id)
-            end)
+            local realQueue = s.storage.setBailoutQueue
+            s.storage.setBailoutQueue = function() error('the connection dropped', 0) end
+            local ran = pcall(s.bailout.buy, f.target, c.id)
+            s.storage.setBailoutQueue = realQueue
             p.Functions.AddMoney = real
-            falsy(ok, 'another settle held it')
-            eq(why, CH.ERR.BUSY)
+            falsy(ran, 'the record would not write')
             eq(money(2), before - 15000 + 6000, 'part of it back')
 
             -- The tick's flush, to the disk.
@@ -4422,4 +4461,34 @@ describe('a staff void whose ending raises, then a crash', function()
             eq(money(1) - creator, 5000, 'the ending is finished: the escrow is back')
         end)
     end
+end)
+
+--------------------------------------------------------------------------
+-- An abandon a crash stopped part-way
+--------------------------------------------------------------------------
+
+describe('an abandon the process died in', function()
+    --- After the row and before the stake: the exclusive contract came back
+    --- ACCEPTED with nobody on it, refusing every acceptance, and the stake
+    --- held under a row that walked away, which the ending gave back to the
+    --- walker. The start finishes it instead.
+    it('json: the start puts the contract back on the board and the stake goes to the client', function()
+        local _, s = boot('json')
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        local c = s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 10000 } }, penaltyAmount = 2000,
+        })
+        truthy(s.contracts.accept(f.hitman, c.id))
+        local client = money(1)
+        killBefore(s.storage, 1, function(name) return name == 'readEscrow' end)
+        falsy(pcall(s.contracts.abandon, f.hitman, c.id), 'the process died after the row')
+
+        local _, s2 = restart('json', s)
+        eq(s2.storage.readHitman(c.id, 'HITMAN01').state, 'abandoned')
+        eq(s2.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'back on the board')
+        eq(money(1) - client, 2000, 'the walked-away stake is the client\'s')
+        eq(Env.players[3].PlayerData.money.bank, 48000, 'and not the walker\'s')
+    end)
 end)

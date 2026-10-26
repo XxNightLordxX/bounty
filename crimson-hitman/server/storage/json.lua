@@ -2409,6 +2409,18 @@ function JsonStore.confirmHitman(id, anon, acceptedAt)
     return true
 end
 
+--- A hitman walks away: the row goes abandoned only while it is active, on
+--- this contract, and the contract is still open (MySQLStore.abandonHitman).
+function JsonStore.abandonHitman(id, contractId, leftAt)
+    local h = db.hitmen[id]
+    if not h or h.state ~= 'active' or h.contract_id ~= contractId then return false end
+    local c = db.contracts[contractId]
+    if not c or (c.state ~= CH.STATE.ACTIVE and c.state ~= CH.STATE.ACCEPTED) then return false end
+    h.state, h.left_at = 'abandoned', leftAt
+    touch(true, h.contract_id)
+    return true
+end
+
 --- Contracts a player is on, mid-acceptance included: two acceptances in
 --- flight must each see the other against the cap.
 function JsonStore.countHitmanContracts(cid, states)

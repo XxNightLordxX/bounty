@@ -685,7 +685,12 @@ Players on a whitelisted job — law enforcement, EMS and the rest — have the
 same button on the whitelisted-job view (see *Access*), and anyone can use
 `/cleanse` (lists what is on them) and `/cleanse <id>` (buys one out); all
 three go through the same server path. Either
-side can pay an informant to unmask one hitman. Creator and hitmen can
+side can pay an informant to unmask one hitman. The server forgets who has
+been near a target when it restarts, so for
+`Config.Informant.ProximityWindowMinutes` after a start (with
+`Config.Informant.RequireProximity` on) informant data on a contract placed
+before it is refused, uncharged, for every buyer alike, with how many minutes
+to wait. Creator and hitmen can
 message or call each other through the app without either learning who the
 other is (`Config.Relay`; switching it off removes messaging and calls
 entirely). A call to an anonymous party asks them to call back rather than
@@ -839,6 +844,21 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
   and every other money event no rule can settle by itself, is also kept as
   an item in the **review queue** until staff resolve it (`/ch-review`), so
   it is not lost when the log is pruned.
+- **One request at a time where money moves.** On one contract a buyout, an
+  acceptance, a cancel, a withdrawal and an agreed change run one at a time;
+  so do two purchases of informant data by one buyer, and two creates by one
+  client or on one target, which is what the limits on live contracts count.
+  A second tap while the first is still running is refused as busy before
+  anything is read or charged, whatever the request limits are set to in the
+  admin panel, and the page says *That was busy for a moment. Try again.*, or
+  after ten seconds *This is still being worked on. Look again in a minute
+  before you try again.* A hitman walking away is checked against the
+  contract as it is written, so it never lands on one a claim, a void, an
+  expiry or a buyout has just ended. A stake still held for a hitman who
+  walked away is the client's whatever ends the contract, and an abandon
+  that stopped part-way (a dropped database connection, a crash) is finished
+  by the next maintenance pass or start: the stake to the client, and an
+  exclusive contract nobody holds back on the board.
 - **Identity is never taken from a payload.** Every handler resolves the
   acting player from the connection. Citizen ids never reach a client;
   searches and threads use expiring per-viewer handles.
@@ -1317,6 +1337,7 @@ headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
 |---|---|
 | A player cannot find the app | It is in the phone's App Store, not on the home screen: each player downloads it. Set `Config.App.DefaultInstalled = true` to put it on every eligible phone. Players with a barred job (`Config.BlockedJobTypes` / `Config.BlockedJobNames`, any job they hold) never see it. `/ch-diag <player id>` says why it is not showing for them |
 | A kill does not complete a contract, or there is no Verify kill | As shipped, `Config.Completion.Fulfilment` is `'alive'`: contracts are completed only by bringing the target alive to the person who placed the contract, who has to be there for the handover, and a kill never completes one (the server answers `kill_not_allowed`). Set it to `'either'` to let kills complete contracts placed from then on; ones already placed keep their rule. `/ch-diag` says which is in use |
+| Buy informant data says *The informant is still asking around after a restart* | The server forgets who has been near a target when it restarts, so for `Config.Informant.ProximityWindowMinutes` (10) after a start, informant data on a contract placed before it is refused, and nothing is charged. Wait the minutes it says. Turning `Config.Informant.RequireProximity` off removes the wait, and lets the informant name any hitman on the contract |
 | A staff command typed in chat seems to answer nothing | It answers in your F8 console, never in chat: press F8. A notice on your screen says *Printed to your F8 console* |
 | The console prints `N setting(s) need attention` at start | `config.lua` has settings the start read as something else, or lacks some. Run `ch-diag` in F8 or the server console, or open the admin panel's **Tools** and **Run the diagnosis**: *settings that need attention* lists each in full. Or set `Config.Debug = true` to have the start print each |
 | The console says nothing at all, not even that it started | That is the shipped `Config.Debug = false`: a sound start says nothing. `ch-diag` lists what it would have said |

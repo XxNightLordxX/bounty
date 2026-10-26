@@ -386,3 +386,231 @@ describe('the await scheduler', function()
         truthy(said:find('matches no serial order', 1, true), said)
     end)
 end)
+
+--- The money paths raced against each other at every await, on mysql with
+--- every database await a yield (tests/harness/await_scheduler.lua): two
+--- buyouts, two purchases of informant data, two creates on one target,
+--- an abandon against each ending, an acceptance against a buyout, and the
+--- two staff writes of the admin panel. Each must end as one of its serial
+--- orders, money and state, with nothing left held.
+describe('the same races at every await on mysql', function()
+    local Scheduler = require('crimson-hitman.tests.harness.await_scheduler')
+
+    --- A request as the page sends it.
+    local function tap(name, src, rid, payload)
+        payload.__rid = rid
+        _G.source = src
+        Env.events['crimson-hitman:' .. name](payload)
+        _G.source = nil
+        return true
+    end
+
+    --- A fresh server, its people, and a contract on TARGET01.
+    local function seeded(opts, configure, bootOpts)
+        local main, m = Scheduler.boot(configure, bootOpts)
+        local f = Scheduler.fixture(m)
+        local c, err = m.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = opts.mode or CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } },
+            penaltyAmount = opts.penalty, bailoutAmount = opts.bailout,
+        })
+        assert(c, 'create refused: ' .. tostring(err))
+        if opts.accepted then assert(m.contracts.accept(f.hitman, c.id, false)) end
+        return main, m, { f = f, c = c }
+    end
+
+    --- The request buckets as shipped, with the raced one raised to 2 from
+    --- the admin panel, as staff may: the rate limiter is not what keeps
+    --- the two apart.
+    local function raised(m, key)
+        local answer = m.panel.handle(6, { op = 'setSetting', data = { key = key, value = 2 } })
+        assert(answer and answer.ok, 'the panel raised ' .. key .. ': '
+            .. tostring(answer and answer.message))
+    end
+
+    local function another(m, x, who)
+        return m.contracts.create(who, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+    end
+
+    local function abandonAgainst(name, build, second)
+        return {
+            name = name, build = build,
+            first = function(m, x) return m.contracts.abandon(x.f.hitman, x.c.id) end,
+            second = second,
+        }
+    end
+
+    local staked = { penalty = 1000, accepted = true }
+
+    local function scenarios()
+        return {
+            {
+                name = 'buyout x buyout, queued, through the app',
+                build = function()
+                    local main, m, x = seeded({ bailout = 12000, penalty = 1000, accepted = true },
+                        nil, { realLimits = true })
+                    raised(m, 'Cooldowns.bailout.burst')
+                    return main, m, x
+                end,
+                first = function(_, x) return tap('bailout', 2, 901, { id = x.c.id }) end,
+                second = function(_, x) return tap('bailout', 2, 902, { id = x.c.id }) end,
+            },
+            {
+                name = 'buyout x buyout, instant, through the app',
+                build = function()
+                    local main, m, x = seeded({ bailout = 12000 }, nil, { realLimits = true })
+                    raised(m, 'Cooldowns.bailout.burst')
+                    return main, m, x
+                end,
+                first = function(_, x) return tap('bailout', 2, 903, { id = x.c.id }) end,
+                second = function(_, x) return tap('bailout', 2, 904, { id = x.c.id }) end,
+            },
+            {
+                -- The fee is a sink: it leaves the world, once.
+                name = 'informant x informant, through the app',
+                mints = true,
+                build = function()
+                    local main, m, x = seeded({ accepted = true }, nil, { realLimits = true })
+                    raised(m, 'Cooldowns.informant.burst')
+                    Env.players[2].PlayerData.money.bank = 100000
+                    m.death.watchTargets(m.storage.allContracts())
+                    return main, m, x
+                end,
+                first = function(_, x) return tap('informant', 2, 905, { id = x.c.id }) end,
+                second = function(_, x) return tap('informant', 2, 906, { id = x.c.id }) end,
+            },
+            {
+                -- The target already carries one of the two it may.
+                name = 'create x create, one target with room for one more',
+                build = function() return seeded({}) end,
+                first = function(m, x) return another(m, x, x.f.hitman) end,
+                second = function(m, x) return another(m, x, x.f.hitman2) end,
+            },
+            abandonAgainst('abandon x claim', function() return seeded(staked) end,
+                function(m, x)
+                    return m.contracts.claimSlot(x.c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
+                end),
+            abandonAgainst('abandon x staff void', function() return seeded(staked) end,
+                function(m, x) return m.admin.void(0, x.c.id, 'staff void') end),
+            -- The stake is the client's in every serial order: forfeited at
+            -- the abandon, or at the expiry. An expiry landing between the
+            -- abandon's row and its release gave it back to the walker.
+            abandonAgainst('abandon x expire', function()
+                local main, m, x = seeded(staked)
+                Env.advance(x.c.deadline_at - os.time() + 5)
+                return main, m, x
+            end, function(_, _, main)
+                main.markContractsChanged()
+                return main.expire()
+            end),
+            abandonAgainst('abandon x buyout settle', function()
+                local main, m, x = seeded({ bailout = 12000, penalty = 1000, accepted = true })
+                assert(m.bailout.buy(x.f.target, x.c.id))
+                Env.advance(Config.Bailout.ProcessingDelaySeconds + 1)
+                return main, m, x
+            end, function(m) return m.bailout.processQueue() end),
+            {
+                name = 'accept x buyout',
+                build = function() return seeded({ bailout = 12000, penalty = 1000 }) end,
+                first = function(m, x) return m.contracts.accept(x.f.hitman, x.c.id, false) end,
+                second = function(m, x) return m.bailout.buy(x.f.target, x.c.id) end,
+            },
+            {
+                name = 'buyout x accept, instant',
+                build = function() return seeded({ bailout = 12000, penalty = 1000 }) end,
+                first = function(m, x) return m.bailout.buy(x.f.target, x.c.id) end,
+                second = function(m, x) return m.contracts.accept(x.f.hitman, x.c.id, false) end,
+            },
+            {
+                name = 'setSetting x setSetting, from the admin panel',
+                build = function()
+                    local main, m = Scheduler.boot()
+                    Scheduler.fixture(m)
+                    return main, m, {}
+                end,
+                first = function(m)
+                    return m.panel.handle(6, { op = 'setSetting',
+                        data = { key = 'Cooldowns.bailout.burst', value = 3 } })
+                end,
+                second = function(m)
+                    return m.panel.handle(6, { op = 'setSetting',
+                        data = { key = 'Cooldowns.bailout.burst', value = 4 } })
+                end,
+                -- What is in force and what the store keeps, which must agree.
+                extra = function()
+                    local stored
+                    for _, row in ipairs(Scheduler.rows('crimson_settings')) do
+                        if row.setting_key == 'Cooldowns.bailout.burst' then stored = row.setting_value end
+                    end
+                    return tostring(Config.Cooldowns.bailout.burst) .. '/' .. tostring(stored)
+                end,
+            },
+            {
+                -- Staff refunds out of nothing the resource holds: money
+                -- appears, once.
+                name = 'review resolve x review resolve, from the admin panel',
+                mints = true,
+                build = function()
+                    local main, m = Scheduler.boot()
+                    Scheduler.fixture(m)
+                    local id = m.review.open({ kind = 'bailout_refund_stranded',
+                        contract_id = 'ct00000001', cids = { payer = 'TARGET01' },
+                        amount = 5000, account = 'bank' })
+                    return main, m, { id = id }
+                end,
+                first = function(m, x)
+                    return m.panel.handle(6, { op = 'resolve', data = { id = x.id,
+                        action = 'refund', who = 'payer', amount = 5000 } })
+                end,
+                second = function(m, x)
+                    return m.panel.handle(6, { op = 'resolve', data = { id = x.id,
+                        action = 'refund', who = 'payer', amount = 5000 } })
+                end,
+            },
+        }
+    end
+
+    for _, scn in ipairs(scenarios()) do
+        it(scn.name .. ' ends as a serial order at every await', function()
+            local res = Scheduler.explore(scn)
+            truthy(res.depth >= 2, scn.name .. ' waits on the database more than this: ' .. res.depth)
+            eq(#res.findings, 0, Scheduler.report(res))
+        end)
+    end
+
+    --- The oracle is not vacuous: with the contract's key taken out of the
+    --- buy, a hitman staking inside the buy's awaits is bought out from
+    --- under, instantly, holding a row on a closed contract.
+    it('fails the oracle once the contract key is taken out of the buyout', function()
+        local scn
+        for _, s in ipairs(scenarios()) do
+            if s.name == 'buyout x accept, instant' then scn = s end
+        end
+        local build = scn.build
+        scn.build = function()
+            local main, m, x = build()
+            local real = m.contracts.serialized
+            m.contracts.serialized = function(keys, fn, ...)
+                local buying = false
+                for _, key in ipairs(keys) do
+                    if key:find('^settle:') then buying = true end
+                end
+                if not buying then return real(keys, fn, ...) end
+                local kept = {}
+                for _, key in ipairs(keys) do
+                    if not key:find('^contract:') then kept[#kept + 1] = key end
+                end
+                return real(kept, fn, ...)
+            end
+            return main, m, x
+        end
+        local res = Scheduler.explore(scn)
+        local said = Scheduler.report(res)
+        truthy(#res.findings > 0, 'a buyout and an acceptance overlapped unseen: ' .. said)
+        truthy(said:find('matches no serial order', 1, true), said)
+    end)
+end)

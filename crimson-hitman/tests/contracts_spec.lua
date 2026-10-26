@@ -342,6 +342,31 @@ describe('failure penalty', function()
         eq(Env.players[3].PlayerData.money.bank, 40000, 'hitman does not get it back')
     end)
 
+    --- "Their stake is yours" only once it is: paid to the client, or owed
+    --- to one who is away. A release that moved nothing (another release
+    --- held the line) gave them nothing, and said it had.
+    it('tells the client of a stake only when it reached them', function()
+        local s, f, c = withPenalty(10000)
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local claim = s.storage.claimEscrowLine
+        s.storage.claimEscrowLine = function() return false end
+        Natives.calls.notifications = {}
+        local ok, err = s.contracts.abandon(f.hitman, c.id)
+        s.storage.claimEscrowLine = claim
+        truthy(ok, tostring(err))
+
+        local said = ''
+        for _, note in ipairs(Natives.calls.notifications or {}) do
+            if note.title == 'Operative walked away' then said = said .. tostring(note.content) end
+        end
+        truthy(said:find('An operative left your contract', 1, true), 'the client is told: ' .. said)
+        falsy(said:find('stake is yours', 1, true), 'of a stake that never reached them: ' .. said)
+        s.audit.flush()
+        for _, row in ipairs(s.storage.readAudit()) do
+            truthy(row.action ~= 'stake_forfeited', 'a forfeit recorded that moved nothing')
+        end
+    end)
+
     it('returns the stake when the hitman delivers', function()
         local s, f, c = withPenalty(10000)
         s.contracts.accept(f.hitman, c.id, false)
@@ -383,6 +408,33 @@ describe('failure penalty', function()
         eq(Env.players[1].PlayerData.money.cash, creatorBefore + 5000,
             'the creator gets their escrow back and nothing of the stake')
         eq(Env.players[3].PlayerData.money.bank, 50000)
+    end)
+end)
+
+describe('one request at a time on a key', function()
+    --- A key held for seconds is a request waiting on a slow database, and
+    --- the page words that apart from a moment's clash (failText).
+    it('answers busy with how long the key has been held', function()
+        local s = newStack()
+        local long, short
+        truthy(s.contracts.serialized({ 'contract:ctheld01' }, function()
+            Env.gameTimer = Env.gameTimer + 2000
+            short = table.pack(s.contracts.serialized({ 'contract:ctheld01' }, function()
+                return true
+            end))
+            Env.gameTimer = Env.gameTimer + 10000
+            long = table.pack(s.contracts.serialized({ 'settle:ctheld01', 'contract:ctheld01' },
+                function() return true end))
+            return true
+        end))
+        eq(short[1], false)
+        eq(short[2], CH.ERR.BUSY)
+        eq(type(short[3]), 'table', 'the refusal says how long')
+        truthy(short[3].heldMs >= 2000 and short[3].heldMs < 10000, tostring(short[3].heldMs))
+        eq(long[2], CH.ERR.BUSY)
+        truthy(long[3].heldMs >= 10000, 'held 12 s: ' .. tostring(long[3].heldMs))
+        truthy(s.contracts.serialized({ 'settle:ctheld01' }, function() return true end),
+            'and a key the refusal named but never took is free')
     end)
 end)
 

@@ -440,6 +440,11 @@
     // A feature staff turned off (proposals, the informant). Only new
     // actions are refused; whatever was under way carries on.
     feature_off: 'That is turned off by the server right now.',
+    /* Informant data in the minutes after a restart, which forgot who had
+       been near the target. Nothing was charged. failText says how long
+       when the server sends it. */
+    informant_warming: 'The informant is still asking around after a restart. '
+      + 'Try again in a few minutes.',
     call_unmasked: 'They are staying anonymous, and a call from this phone '
       + 'would show their number. Send a message instead.',
     limit_reached: 'You are holding too many contracts.',
@@ -1439,6 +1444,20 @@
           ? 'Slow down — try again in about ' + Math.ceil(wait / 60) + ' minute'
             + (wait >= 120 ? 's' : '') + '.'
           : 'Slow down — try again in ' + wait + ' second' + (wait === 1 ? '' : 's') + '.';
+    }
+
+    // Held for seconds: the same request is still being worked on, waiting
+    // on the server, and tapping again at once meets it again. Under ten
+    // seconds it is the moment the plain words say.
+    if (result.err === 'busy' && result.data && Number(result.data.heldMs) >= 10000) {
+      return 'This is still being worked on. Look again in a minute before you try again.';
+    }
+
+    // How long until the informant sells again after a restart.
+    if (result.err === 'informant_warming' && result.data && Number(result.data.minutes) > 0) {
+      var minutes = Math.ceil(Number(result.data.minutes));
+      return 'The informant is still asking around after a restart. Try again in '
+        + minutes + ' minute' + (minutes === 1 ? '' : 's') + '.';
     }
 
     // Worth too little in money: the least is sent with the refusal, and

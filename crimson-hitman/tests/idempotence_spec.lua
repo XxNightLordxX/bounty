@@ -353,11 +353,39 @@ describe('buying out twice', function()
         same(afterOne, world(s), 'processing the queue again moved money')
     end)
 
+    --- The second tap landing while the first waits on the database, here
+    --- inside its read of who is engaged, before either has recorded
+    --- anything: both passed "already paid", and the target was charged
+    --- twice for one queue record. The buy holds the contract's key from
+    --- before its first read, so the second is refused before it charges.
+    it('refuses a second buy that lands while the first is still running', function()
+        local s, f, c = seeded({ bailout = 15000 })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local real, fired, inner = s.storage.readHitmen, false, nil
+        s.storage.readHitmen = function(...)
+            if not fired then
+                fired = true
+                inner = table.pack(s.bailout.buy(f.target, c.id))
+            end
+            return real(...)
+        end
+        local ok, err = s.bailout.buy(f.target, c.id)
+        s.storage.readHitmen = real
+        truthy(ok, tostring(err))
+        truthy(fired, 'the second tap landed inside the first')
+        eq(inner[1], false)
+        eq(inner[2], CH.ERR.BUSY, 'refused as busy, before anything was charged')
+        eq(Env.players[2].PlayerData.money.bank + Env.players[2].PlayerData.money.cash,
+            40000 - 15000, 'the target paid one premium')
+        eq(s.bailout.queuedCount(), 1, 'and one is queued')
+    end)
+
     it('is stopped at the door by the rate limiter through the app', function()
         -- Said out loud because it is a different defence: the bailout
         -- bucket is one token per minute, so the app never gets to ask the
         -- module a second time. That is a real protection, but it is not
-        -- idempotence — the module's own guard, tested above, is.
+        -- idempotence, and staff may raise the bucket from the admin panel:
+        -- the module's own guards, tested above, are what hold then.
         local s, f, c = seeded({ bailout = 15000 })
         truthy(s.contracts.accept(f.hitman, c.id, false))
         local one = call('bailout', 2, { id = c.id })
@@ -577,6 +605,72 @@ describe('buying informant data twice', function()
         truthy(third[1])
         eq(Env.players[1].PlayerData.money.bank, 100000 - Config.Informant.Cost,
             'and one purchase was paid for')
+    end)
+
+    --- The second tap landing while the first waits on the database, before
+    --- the first has remembered the reveal: it found no record and was
+    --- charged again for the same sticky answer, counted once.
+    it('refuses a second purchase that lands while the first is still running', function()
+        local s, f, c = seeded()
+        -- Wired as main.lua wires it, with the contracts module for its key.
+        s.informant.init({ storage = s.storage, identity = s.identity, audit = s.audit,
+            death = s.death, contracts = s.contracts })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        local real, fired, inner = s.storage.readHitmen, false, nil
+        s.storage.readHitmen = function(...)
+            if not fired then
+                fired = true
+                inner = table.pack(s.informant.buy(f.creator, c.id))
+            end
+            return real(...)
+        end
+        local ok, err = s.informant.buy(f.creator, c.id)
+        s.storage.readHitmen = real
+        truthy(ok, tostring(err))
+        truthy(fired, 'the second tap landed inside the first')
+        eq(inner[2], CH.ERR.BUSY, 'refused as busy, before anything was charged')
+        eq(Env.players[1].PlayerData.money.bank, 100000 - Config.Informant.Cost,
+            'one purchase was paid for')
+        eq(s.storage.readReveal(c.id, 'CREATOR1').purchases, 1, 'and one is counted')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- Placing
+--------------------------------------------------------------------------
+
+describe('two creators naming one target at the same moment', function()
+    --- The target's limit is counted from a read, an await on mysql: two
+    --- creates in flight each counted the other as not there.
+    it('places one and refuses the other as busy', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Limits.MaxActiveContractsPerTarget = 1
+        Env.addPlayer({ source = 4, citizenid = 'CREATOR2', license = 'license:eee',
+            cash = 100000, bank = 100000, firstname = 'Lou', lastname = 'Kane' })
+        local other = s.identity.resolve(4)
+        local function place(actor)
+            return s.contracts.create(actor, {
+                targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.EXCLUSIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+        end
+        local real, fired, inner = s.storage.contractsNaming, false, nil
+        s.storage.contractsNaming = function(...)
+            if not fired then
+                fired = true
+                inner = table.pack(place(other))
+            end
+            return real(...)
+        end
+        local first, err = place(f.creator)
+        s.storage.contractsNaming = real
+        truthy(first, tostring(err))
+        truthy(fired, 'the second create landed inside the first')
+        falsy(inner[1], 'the target had room for one')
+        eq(inner[2], CH.ERR.BUSY)
+        eq(#s.storage.contractsNaming('TARGET01'), 1, 'one contract on the target')
+        eq(Env.players[4].PlayerData.money.cash, 100000, 'and nothing taken from the other')
     end)
 end)
 

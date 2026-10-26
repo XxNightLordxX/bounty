@@ -8,7 +8,7 @@ local Util = CrimsonBoot.requireShared('util')
 
 local Informant = {}
 
-local Storage, Identity, Audit, Death
+local Storage, Identity, Audit, Death, Contracts
 
 --- [contractId .. ':' .. buyerCid] = { hitmanCid, at, purchases }
 local reveals = {}
@@ -17,11 +17,18 @@ local reveals = {}
 --- read back from the store after that refresh is aged the same way.
 local locksAgedAt = nil
 
+--- os.time() this process started: the condition sampler's record of who
+--- has been near a target (Death.seenNear) starts empty here.
+local startedAt = nil
+
 function Informant.init(deps)
     Storage, Identity, Audit = deps.storage, deps.identity, deps.audit
     Death = deps.death
+    -- For one purchase at a time per buyer and contract (Informant.buy).
+    Contracts = deps.contracts
     reveals = {}
     locksAgedAt = nil
+    startedAt = os.time()
 end
 
 --- The buyer's record, from memory or from the store.
@@ -71,6 +78,19 @@ local function remember(contractId, cid, record)
     end
 end
 
+--- Remember a purchase that has been paid for, and answer it whatever the
+--- store does. The buyer has been charged by now, and this is the one
+--- purchase never refunded: a write that raised answered server_error for
+--- a name already paid for. Kept in memory all the same (remember sets it
+--- first), so a repeat inside the lock is free on this process; recorded
+--- for staff, since a restart forgets it.
+local function rememberPaid(contractId, cid, record)
+    local wrote, err = pcall(remember, contractId, cid, record)
+    if not wrote then
+        Audit.financial('informant_unremembered', cid, contractId, { error = tostring(err) })
+    end
+end
+
 --- Who may buy data on a contract: its creator, or its target.
 local function authorised(contract, actor)
     return contract.creator_cid == actor.cid or contract.target_cid == actor.cid
@@ -98,17 +118,51 @@ local function pool(contract, actor)
     -- roster at all, so for them every operative is unknown.
     local buyerSeesNamed = contract.creator_cid == actor.cid
 
+    -- And only one the server can describe now. A hitman seen near the
+    -- target who has since left the city is answered "Unknown operative"
+    -- (describe), and landing on one paid the fee for that while another
+    -- seen one was online. Leaving them out says nothing new: with only
+    -- offline ones the answer is that same "Unknown operative".
     local out = {}
     for i = 1, #hitmen do
         local h = hitmen[i]
         if h.state == 'active' and (not near or near[h.hitman_cid])
-            and not (buyerSeesNamed and not h.anon) then
+            and not (buyerSeesNamed and not h.anon)
+            and Identity.byCitizenId(h.hitman_cid) ~= nil then
             out[#out + 1] = h
         end
     end
     return out
 end
 
+--- Seconds until the sampler has watched for a whole window since this
+--- process started, while the pool is the hitmen it has seen; 0 otherwise.
+---
+--- Its record is kept in memory only, so a restart forgets who had been
+--- near the target, and a purchase in the window after it paid the fee for
+--- "Unknown operative", locked in for the reroll lock. Refused uncharged
+--- instead, on a contract that was already placed when this process
+--- started: one placed since has had every acceptance on it watched from
+--- the start. Never by who has been seen: a refusal only when nobody had
+--- been near would tell any buyer, for nothing, what the purchase sells.
+---@param contract table
+---@return integer seconds
+local function warming(contract)
+    if not Config.Informant.RequireProximity or not startedAt then return 0 end
+    if (tonumber(contract.created_at) or 0) >= startedAt then return 0 end
+    local window = (tonumber(Config.Informant.ProximityWindowMinutes) or 10) * 60
+    return math.max(0, startedAt + window - os.time())
+end
+
+local buyUnlocked
+
+--- Buy informant data, one purchase at a time per buyer and contract.
+---
+--- The record that makes a repeat free is read, then the fee taken, then
+--- the record written, and every read is an await on mysql: a second tap
+--- landing in between found no record and was charged again for the same
+--- sticky reveal, counted once. A second purchase while one is running is
+--- refused as busy, before anything is read or charged.
 ---@return boolean ok
 ---@return string|nil err
 ---@return table|nil data
@@ -118,7 +172,13 @@ function Informant.buy(actor, contractId)
     -- Turned off, from the admin panel or config.lua: new purchases only.
     -- A name already bought stays shown.
     if not Config.Informant.Enabled then return false, CH.ERR.FEATURE_OFF end
+    -- Unkeyed only where no contracts module was wired in (Informant.init).
+    if not Contracts then return buyUnlocked(actor, contractId) end
+    return Contracts.serialized({ 'informant:' .. contractId .. ':' .. tostring(actor.cid) },
+        buyUnlocked, actor, contractId)
+end
 
+buyUnlocked = function(actor, contractId)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if not authorised(contract, actor) then return false, CH.ERR.NOT_PARTICIPANT end
@@ -153,6 +213,28 @@ function Informant.buy(actor, contractId)
         return false, CH.ERR.LIMIT_REACHED
     end
 
+    -- Just after a restart, nothing is sold that the restart made worthless.
+    local wait = warming(contract)
+    if wait > 0 then
+        return false, CH.ERR.INFORMANT_WARMING, { minutes = math.ceil(wait / 60) }
+    end
+
+    -- Who could be named, before anything is charged: the read is an await
+    -- on mysql and raises on a dropped connection, and one that raised after
+    -- the charge kept the fee with nothing recorded for it, so every retry
+    -- was charged again.
+    local candidates = pool(contract, actor)
+
+    -- And the contract read again, with nothing between this and the
+    -- charge. The state checked above was read before every await since,
+    -- and a contract that ended in one of them was still sold. Only an open
+    -- one, as for a buyout: a contract being paid out (COMPLETING) is
+    -- ending too.
+    local now = Storage.readContract(contractId)
+    if not now or (now.state ~= CH.STATE.ACTIVE and now.state ~= CH.STATE.ACCEPTED) then
+        return false, CH.ERR.ALREADY_SETTLED
+    end
+
     local cost = Config.Informant.Cost
     local account = Config.Informant.Account
     -- Balance read first: RemoveMoney answers true on an empty bank, which
@@ -162,7 +244,6 @@ function Informant.buy(actor, contractId)
     end
     Audit.financial('informant_purchased', actor.cid, contractId, { cost = cost })
 
-    local candidates = pool(contract, actor)
     if #candidates == 0 then
         -- Charged anyway, and deliberately: a refund on an empty result turns
         -- the purchase into a free oracle for "is anyone after me?".
@@ -175,7 +256,7 @@ function Informant.buy(actor, contractId)
         -- anonymous operative is on them right now — which is the paid
         -- oracle the charge was there to prevent.
         local answer = Informant.describe(nil)
-        remember(contractId, actor.cid, { hitmanCid = nil, at = os.time(),
+        rememberPaid(contractId, actor.cid, { hitmanCid = nil, at = os.time(),
                          purchases = purchases + 1, seed = existing and existing.seed, answer = answer })
         Audit.action('informant_revealed', actor.cid, contractId, { hitman = nil })
         return true, nil, answer
@@ -207,7 +288,7 @@ function Informant.buy(actor, contractId)
     local chosen = candidates[index]
 
     local answer = Informant.describe(chosen.hitman_cid)
-    remember(contractId, actor.cid, { hitmanCid = chosen.hitman_cid, at = os.time(),
+    rememberPaid(contractId, actor.cid, { hitmanCid = chosen.hitman_cid, at = os.time(),
                      purchases = purchases + 1, seed = seed, answer = answer })
     Audit.action('informant_revealed', actor.cid, contractId, { hitman = chosen.hitman_cid })
 

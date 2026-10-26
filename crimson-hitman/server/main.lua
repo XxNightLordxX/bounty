@@ -1433,7 +1433,8 @@ function StartCrimsonHitman()
     bailout.init({ storage = Storage, identity = identity, contracts = contracts,
                    escrow = escrow, audit = audit, notify = notify, kidnap = kidnap,
                    death = death, review = review })
-    informant.init({ storage = Storage, identity = identity, audit = audit, death = death })
+    informant.init({ storage = Storage, identity = identity, audit = audit, death = death,
+                     contracts = contracts })
     amendments.init({ storage = Storage, identity = identity, contracts = contracts,
                       escrow = escrow, audit = audit, notify = notify })
     comms.init({ storage = Storage, identity = identity, audit = audit,
@@ -1741,6 +1742,14 @@ function Recover()
         if (current.state == CH.STATE.ACTIVE or current.state == CH.STATE.ACCEPTED)
             and modules.contracts.recoverJoining then
             recovered = recovered + modules.contracts.recoverJoining(current)
+        end
+
+        -- And an abandon it left part-way (Contracts.repairHeld): a stake
+        -- still held under a row that walked away goes to the client, and an
+        -- exclusive contract nobody holds goes back on the board.
+        if (current.state == CH.STATE.ACTIVE or current.state == CH.STATE.ACCEPTED)
+            and modules.contracts.repairHeld and modules.contracts.repairHeld(current.id) then
+            recovered = recovered + 1
         end
 
         -- Owed lines a crash left unqueued, and a stake reduction it

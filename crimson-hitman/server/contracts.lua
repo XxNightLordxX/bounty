@@ -52,16 +52,28 @@ Contracts.holds = holds
 --- Checking before writing cannot close that; only one at a time can. The
 --- other is refused as busy rather than queued, and a crash takes every
 --- key with it, so nothing is ever held across a restart.
+---
+--- Each key holds the moment it was taken (Util.monotonicMs), and a refusal
+--- says how long the oldest of them has been held: { heldMs }. A key held
+--- for seconds is a request waiting on a slow database, where "try again"
+--- at once meets the same key; the page words that case apart (failText).
+--- Callers inside the resource compare only the code.
 local busy = {}
 
 ---@param keys string[]
 ---@param fn function
----@return any ...
+---@return any ... or false, CH.ERR.BUSY, { heldMs = integer } while a key is held
 function Contracts.serialized(keys, fn, ...)
+    local oldest
     for i = 1, #keys do
-        if busy[keys[i]] then return false, CH.ERR.BUSY end
+        local since = busy[keys[i]]
+        if since and (not oldest or since < oldest) then oldest = since end
     end
-    for i = 1, #keys do busy[keys[i]] = true end
+    if oldest then
+        return false, CH.ERR.BUSY, { heldMs = math.max(0, Util.monotonicMs() - oldest) }
+    end
+    local now = Util.monotonicMs()
+    for i = 1, #keys do busy[keys[i]] = now end
     local out = table.pack(pcall(fn, ...))
     for i = 1, #keys do busy[keys[i]] = nil end
     if not out[1] then error(out[2], 0) end
@@ -75,6 +87,11 @@ local stuckJoins = {}
 --- who placed it, and whether their anonymity fee is still to come back.
 --- See Contracts.retryStuckCreates.
 local stuckCreates = {}
+
+--- Contracts an abandon raised on, by id, which the maintenance tick
+--- finishes (Contracts.repairHeld); and how many abandons are running on
+--- each, which it leaves alone meanwhile.
+local leaving, abandoning = {}, {}
 
 --- Contracts somebody has accepted, so the idle-hold sweep reads those and
 --- not the whole table. Filled on acceptance and rebuilt once at boot
@@ -139,6 +156,23 @@ local function stakeForfeits(hitman, contract)
     return true
 end
 
+--- Whether a stake still held under this row is the client's whatever the
+--- ending: the hitman walked away from the contract, which forfeits it
+--- (Contracts.abandon).
+---
+--- Held at all means the abandon stopped between the row and the release: a
+--- store call that raised, a crash, or an ending that ran in between. Every
+--- serial order hands it to the client: the abandon first forfeits it there,
+--- an expiry first forfeits it at the expiry, and a void or a buyout first
+--- leaves the row active and refuses the abandon. Only an active row
+--- forfeits by stakeForfeits, so the ending paid it back to the hitman who
+--- had walked away, and a refused retake's unwind did the same.
+---@param hitman table|nil a hitman row
+---@return boolean
+local function walkedAway(hitman)
+    return hitman ~= nil and hitman.state == 'abandoned'
+end
+
 --- What each hitman has staked and still has held, by citizen id. Read
 --- before anything settles the stakes, because settling empties the lines
 --- a notice has to name the figure from.
@@ -170,6 +204,39 @@ local function owedTo(contractId, cid)
     return owed
 end
 
+--- Hand the client a stake still held under a row its hitman walked away
+--- from (walkedAway): the forfeit an abandon began and did not finish.
+---
+--- Only lines nobody has tried to pay: held, owed to nobody, naming no give
+--- that may have run, not left for staff. By their ids, so nothing else of
+--- this staker's moves with them.
+---@param contract table
+---@param staker string the hitman's citizen id
+---@param lines table[]|nil the contract's escrow, when the caller has read it
+---@return table ids the lines it tried, as a set (empty when none was held)
+---@return integer moved how many of them reached the client or are owed to them
+---@return integer amount what the lines it tried held
+local function forfeitWalkedStake(contract, staker, lines)
+    local ids, amount = {}, 0
+    for _, line in ipairs(lines or Storage.readEscrow(contract.id) or {}) do
+        if line.portion == CH.PORTION.STAKE and line.staker == staker
+            and line.state == CH.ESCROW_STATE.HELD and not line.owed_to
+            and not line.releasing_to and not Escrow.parked(line) then
+            ids[line.id] = true
+            amount = amount + (line.amount or 0)
+        end
+    end
+    if not next(ids) then return ids, 0, 0 end
+    local _, result = Escrow.release(contract.id, contract.creator_cid, { lines = ids },
+        'penalty_forfeited')
+    local moved = result and ((result.settled or 0) + (result.pending or 0)) or 0
+    if moved > 0 then
+        Audit.financial('stake_forfeited', staker, contract.id,
+            { amount = amount, queued = (result.pending or 0) > 0, finished = true })
+    end
+    return ids, moved, amount
+end
+
 ---@return table[] outcomes one per hitman still on the contract:
 --- { cid, stake, forfeited, owed }, for the notice that tells them
 local function settleStakes(contractId, creatorCid, forfeit, contract)
@@ -178,7 +245,7 @@ local function settleStakes(contractId, creatorCid, forfeit, contract)
     local hitmen = Storage.readHitmen(contractId)
     for i = 1, #hitmen do
         local hitman = hitmen[i]
-        local toCreator = forfeit and stakeForfeits(hitman, contract)
+        local toCreator = walkedAway(hitman) or (forfeit and stakeForfeits(hitman, contract))
         local _, result = Escrow.release(contractId,
             toCreator and creatorCid or hitman.hitman_cid,
             { portion = CH.PORTION.STAKE, staker = hitman.hitman_cid },
@@ -749,8 +816,7 @@ end
 --- server whose operator had switched free text off.
 Contracts.reasonFor = reasonFor
 
-function Contracts.create(actor, req)
-    local targetActor = Identity.byCitizenId(req.targetCid)
+local function createUnlocked(actor, req, targetActor)
     local ok, err, refusal = Contracts.canCreate(actor, targetActor)
     if not ok then return nil, err, refusal end
 
@@ -931,6 +997,28 @@ function Contracts.create(actor, req)
     if Contracts.onChanged then Contracts.onChanged() end
 
     return contract
+end
+
+--- Place a contract, one at a time per creator and per target.
+---
+--- The limits on how many live contracts one creator may have and one
+--- target may carry (canCreate) are counted from reads, and every read is
+--- an await on mysql: two creates in flight together each counted the other
+--- as not there, and a target already at the cap took one more. Per
+--- creator by their licence, which the creator limit counts across, and per
+--- target by the citizen id the server found, whatever case the client
+--- sent. The target is looked up first, which asks no store. A second
+--- create while one is running is refused as busy, with how long.
+---@return table|nil contract
+---@return string|nil err
+---@return table|nil refusal what the page is told beyond the code
+function Contracts.create(actor, req)
+    local targetActor = Identity.byCitizenId(req.targetCid)
+    local keys = { 'creator:' .. tostring(actor.account or actor.cid) }
+    if targetActor then keys[#keys + 1] = 'target:' .. tostring(targetActor.cid) end
+    local out = table.pack(Contracts.serialized(keys, createUnlocked, actor, req, targetActor))
+    if out[1] == false then return nil, out[2], out[3] end
+    return table.unpack(out, 1, out.n)
 end
 
 --------------------------------------------------------------------------
@@ -1199,6 +1287,18 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         return false, CH.ERR.BAD_STATE
     end
 
+    -- A stake still held under the row this takes up again is the client's:
+    -- its hitman walked away (walkedAway), and an abandon that stopped
+    -- part-way had not handed it over. Handed over now, because the row is
+    -- about to be active again, and a stake under an active row goes back
+    -- to its hitman when the contract ends: a competitive contract taken
+    -- straight back turned the forfeit into the walker's. Kept by its ids,
+    -- so taking this acceptance back never returns it either.
+    local forfeited = {}
+    if previousState == 'abandoned' then
+        forfeited = forfeitWalkedStake(contract, actor.cid)
+    end
+
     -- The row first, before the contract is reserved and before anything is
     -- taken. A crash after it leaves a row boot recovery can find and undo
     -- (Contracts.recoverJoining); a crash before it has taken nothing. The
@@ -1219,8 +1319,9 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     -- once flipped a competitive contract to `accepted` for every viewer of
     -- the board, with no hitman on it, and left it that way.
     local advanced = false
-    -- The lines the stake went into, once the take has returned them.
-    local stakeIds
+    -- The lines the stake went into, once the take has returned them, and
+    -- whether a take was begun at all.
+    local stakeIds, takeStarted = nil, false
     -- What a refusal for money inside the awaits below was short of: the
     -- balance that passed the check above moved before it was taken.
     local short
@@ -1229,13 +1330,17 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
     --- then the reservation. In that order, so a crash part-way leaves a
     --- joining row that recovery takes back the same way, and never a stake
     --- with no row to say whose it is. By the lines the take returned; by
-    --- staker only for a take that threw part-way and returned none.
+    --- staker only for a take that was begun and returned none (it threw
+    --- part-way), and never a walked-away stake handed to the client above.
+    --- A refusal before the take has no stake of this acceptance's to give
+    --- back: by staker, it handed the walked-away one back to its hitman.
     local function unwind(reason)
         if stakeIds and next(stakeIds) then
             Escrow.release(contractId, actor.cid, { lines = stakeIds }, reason)
-        elseif stake > 0 then
+        elseif takeStarted then
             Escrow.release(contractId, actor.cid,
-                { portion = CH.PORTION.STAKE, staker = actor.cid }, reason)
+                { portion = CH.PORTION.STAKE, staker = actor.cid }, reason,
+                function(line) return not forfeited[line.id] end)
         end
         if previous then
             Storage.updateHitman(previous.id, { state = previousState,
@@ -1292,6 +1397,7 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         end
 
         if stake > 0 then
+            takeStarted = true
             local taken, takeErr, ids = Escrow.take(actor, contractId, { {
                 slot = 0, portion = CH.PORTION.STAKE, source = stakeAccount,
                 amount = stake, staker = actor.cid,
@@ -1628,7 +1734,7 @@ end
 
 --- A hitman walks away. The contract reverts to open rather than resolving,
 --- and the failure penalty applies if one was staked.
-function Contracts.abandon(actor, contractId)
+local function walkAway(actor, contractId)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
 
@@ -1639,15 +1745,36 @@ function Contracts.abandon(actor, contractId)
     local hitman = Storage.readHitman(contractId, actor.cid)
     if not hitman or hitman.state ~= 'active' then return false, CH.ERR.NOT_PARTICIPANT end
 
-    Storage.updateHitman(hitman.id, { state = 'abandoned', left_at = os.time() })
+    -- Only an active row of a contract still open (Storage.abandonHitman).
+    -- Both reads above are awaits on mysql, and a claim, a void, an expiry
+    -- or a buyout that ended the contract in one of them was overwritten:
+    -- the row of a hitman just paid for the contract marked abandoned, a
+    -- failure counted on top of the completion, the client told the stake
+    -- was theirs when it had gone back to the hitman, and "done" answered.
+    -- Every ending moves the state before it touches a row, so one compare
+    -- and set orders this against all of them.
+    if not Storage.abandonHitman(hitman.id, contractId, os.time()) then
+        local now = Storage.readContract(contractId)
+        if not now or CH.TERMINAL[now.state] then return false, CH.ERR.ALREADY_SETTLED end
+        if now.state == CH.STATE.COMPLETING then return false, CH.ERR.BAD_STATE end
+        return false, CH.ERR.NOT_PARTICIPANT
+    end
 
     -- Walking away from an accepted contract forfeits the stake to the
-    -- creator. That is what the penalty is for.
+    -- creator. That is what the penalty is for. Recorded with the figure,
+    -- and whether it waits for them, whenever it moved: paid now or queued
+    -- for a client who is away. Nothing is released, and nothing written,
+    -- for a contract staked at nothing.
     local stake = heldStakes(contractId)[actor.cid] or 0
-    local forfeited = Escrow.release(contractId, contract.creator_cid,
-        { portion = CH.PORTION.STAKE, staker = actor.cid }, 'penalty_forfeited')
-    if forfeited then
-        Audit.financial('stake_forfeited', actor.cid, contractId, {})
+    local moved = 0
+    if stake > 0 then
+        local _, released = Escrow.release(contractId, contract.creator_cid,
+            { portion = CH.PORTION.STAKE, staker = actor.cid }, 'penalty_forfeited')
+        moved = released and ((released.settled or 0) + (released.pending or 0)) or 0
+        if moved > 0 then
+            Audit.financial('stake_forfeited', actor.cid, contractId,
+                { amount = stake, queued = (released.pending or 0) > 0 })
+        end
     end
 
     local remaining = 0
@@ -1696,11 +1823,27 @@ function Contracts.abandon(actor, contractId)
     -- And the phone told: the client gained a stake, or their contract
     -- went back on the board, with nothing to say why.
     -- The stake read before the release: one the client is offline for is
-    -- owed to them rather than settled, and is still theirs.
-    Notify.hitmanLeft(after, stake, #others)
+    -- owed to them rather than settled, and is still theirs. Named only
+    -- when it reached them or waits for them: a release that moved nothing
+    -- (another release had the line) gave them nothing to be told of.
+    Notify.hitmanLeft(after, moved > 0 and stake or 0, #others)
 
     Audit.action('contract_abandoned', actor.cid, contractId, {})
     return true
+end
+
+--- See walkAway. One that raises part-way, after its row and before its
+--- stake or the board, is left for the maintenance tick to finish
+--- (Contracts.repairHeld); a restart is finished by Recover.
+function Contracts.abandon(actor, contractId)
+    abandoning[contractId] = (abandoning[contractId] or 0) + 1
+    local out = table.pack(pcall(walkAway, actor, contractId))
+    abandoning[contractId] = abandoning[contractId] > 1 and abandoning[contractId] - 1 or nil
+    if not out[1] then
+        leaving[contractId] = true
+        error(out[2], 0)
+    end
+    return table.unpack(out, 2, out.n)
 end
 
 --------------------------------------------------------------------------
@@ -1792,9 +1935,71 @@ local function releaseIdleHold(contractId, hitman, idleSeconds, why)
     return true
 end
 
+--- Finish what an abandon that stopped part-way left on a live contract.
+---
+--- Contracts.abandon writes the row, then hands the stake over, then puts
+--- an exclusive contract nobody is left on back on the board. A store call
+--- that raised in between, or a crash, left an exclusive contract ACCEPTED
+--- with nobody on it, refusing every acceptance as "Someone got there
+--- first" until it ran out; and the stake held under a row that walked
+--- away, which the ending then gave back to the walker. So, under the
+--- contract's key and only while nothing else holds it (an acceptance in
+--- flight is never undone): a stake still held under a walked-away row is
+--- the client's (walkedAway), and an exclusive ACCEPTED contract with no
+--- row holding it and no claim running goes back to ACTIVE, by the same
+--- compare and set as the abandon's. An ending settles by the same rule
+--- itself (settleStakes), so only a live contract is looked at.
+---@return boolean repaired
+local function repairHeldUnlocked(contractId)
+    -- An abandon still running finishes itself.
+    if abandoning[contractId] then return false, CH.ERR.BUSY end
+    local contract = Storage.readContract(contractId)
+    if not contract or (contract.state ~= CH.STATE.ACTIVE
+        and contract.state ~= CH.STATE.ACCEPTED) then
+        return false
+    end
+    local holders, lines, given = 0, nil, 0
+    for _, h in ipairs(Storage.readHitmen(contractId) or {}) do
+        if holds(h) then
+            holders = holders + 1
+        elseif walkedAway(h) then
+            lines = lines or Storage.readEscrow(contractId) or {}
+            local _, moved, amount = forfeitWalkedStake(contract, h.hitman_cid, lines)
+            if moved > 0 then given = given + amount end
+        end
+    end
+    local reopened = holders == 0 and contract.mode == CH.MODE.EXCLUSIVE
+        and contract.state == CH.STATE.ACCEPTED and not Escrow.claimRunning(contractId)
+        and Contracts.transition(contractId, CH.STATE.ACCEPTED, CH.STATE.ACTIVE, 'holder_gone')
+    if given == 0 and not reopened then return false end
+
+    -- The client was told nothing when the abandon stopped: told now, of
+    -- what this did.
+    local after = Storage.readContract(contractId) or contract
+    Notify.push(after.creator_cid, 'abandoned', contractId)
+    Notify.hitmanLeft(after, given, holders)
+    if Contracts.onChanged then Contracts.onChanged() end
+    return true
+end
+
+--- See repairHeldUnlocked. Skipped, and left for the next pass, while the
+--- contract's key is held; one that raises stays marked for the next pass.
+---@param contractId string
+---@return boolean repaired
+function Contracts.repairHeld(contractId)
+    local repaired, err = Contracts.serialized({ 'contract:' .. contractId },
+        repairHeldUnlocked, contractId)
+    if not (repaired == false and err == CH.ERR.BUSY) then leaving[contractId] = nil end
+    return repaired == true
+end
+
 --- Release every exclusive hold that has gone unworked for too long.
 --- Driven by the maintenance tick; the clock is advanced by however long it
 --- has been since the last pass, so a slow tick neither loses nor gains time.
+---
+--- And finish an abandon that stopped part-way (Contracts.repairHeld): on a
+--- contract an abandon left marked, and on an exclusive contract this walk
+--- finds held by nobody. Whatever the idle windows are set to.
 ---@return integer released
 function Contracts.releaseIdleHolds()
     local window = Config.Limits.ExclusiveIdleReleaseSeconds or 0
@@ -1802,10 +2007,12 @@ function Contracts.releaseIdleHolds()
     local now = os.time()
     local elapsed = lastIdleSweep and math.max(0, now - lastIdleSweep) or 0
     lastIdleSweep = now
-    if window <= 0 and attemptWindow <= 0 then
-        idleFor, unattemptedFor = {}, {}
-        return 0
-    end
+    local idling = window > 0 or attemptWindow > 0
+    if not idling then idleFor, unattemptedFor = {}, {} end
+
+    local marked = {}
+    for contractId in pairs(leaving) do marked[#marked + 1] = contractId end
+    for i = 1, #marked do Contracts.repairHeld(marked[i]) end
 
     local released = 0
     local live = {}
@@ -1827,6 +2034,19 @@ function Contracts.releaseIdleHolds()
             -- mid-settlement stays, since a failed payout lands it back here.
             if not c or c.state ~= CH.STATE.COMPLETING then heldIndex[contractId] = nil end
         elseif c.mode == CH.MODE.EXCLUSIVE then
+            local hitmen = Storage.readHitmen(c.id) or {}
+            local holders = 0
+            for i = 1, #hitmen do
+                if holds(hitmen[i]) then holders = holders + 1 end
+            end
+            if holders == 0 then
+                -- Held by nobody: an abandon or a release that stopped part-way.
+                Contracts.repairHeld(c.id)
+                hitmen = {}
+            elseif not idling then
+                hitmen = {}
+            end
+
             -- An anonymous creator's presence is not asked, as for the
             -- deadline: a release timed by it tells the holder when the
             -- client was in the city.
@@ -1840,7 +2060,7 @@ function Contracts.releaseIdleHolds()
             local bothHere = (c.anon_creator == true or Identity.byCitizenId(c.creator_cid) ~= nil)
                 and targetHere
 
-            for _, h in ipairs(Storage.readHitmen(c.id)) do
+            for _, h in ipairs(hitmen) do
                 if h.state == 'active' then
                     local k = c.id .. ':' .. h.hitman_cid
                     live[k] = true
@@ -1882,6 +2102,8 @@ function Contracts.releaseIdleHolds()
             end
         end
     end
+
+    if not idling then return released end
 
     -- Holds that ended some other way are forgotten, so this is bounded by
     -- the exclusive contracts that are held right now.
@@ -2827,7 +3049,7 @@ local function releaseUntouched(contract, forfeit, reason)
             local recipient = contract.creator_cid
             if line.portion == CH.PORTION.STAKE then
                 local hitman = line.staker and Storage.readHitman(contract.id, line.staker)
-                local keeps = forfeit and stakeForfeits(hitman, contract)
+                local keeps = walkedAway(hitman) or (forfeit and stakeForfeits(hitman, contract))
                 recipient = keeps and contract.creator_cid or line.staker
             end
             if recipient then

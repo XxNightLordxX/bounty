@@ -413,6 +413,13 @@ end
 -- Exploring a pairing
 --------------------------------------------------------------------------
 
+--- The signature, and what a scenario adds to it: state the rows above do
+--- not cover (a setting held in memory and in the store, say).
+local function signatureOf(scn, m, ctx)
+    if not scn.extra then return Scheduler.signature() end
+    return Scheduler.signature() .. '\nextra=' .. tostring(scn.extra(m, ctx))
+end
+
 --- One serial order, from a fresh build.
 local function serial(scn, order)
     local main, m, ctx = scn.build()
@@ -422,7 +429,7 @@ local function serial(scn, order)
         Scheduler.race(nil, 'pre', function() return fn(m, ctx, main) end)
     end
     if scn.settle then scn.settle(m, ctx, main) end
-    return Scheduler.signature(), Scheduler.world() - before, Scheduler.moneySignature()
+    return signatureOf(scn, m, ctx), Scheduler.world() - before, Scheduler.moneySignature()
 end
 
 --- Race a pairing at every await of A, before and after each, against
@@ -430,6 +437,7 @@ end
 ---
 --- A scenario is { name, build() -> main, m, ctx; first(m, ctx, main);
 --- second(m, ctx, main); settle(m, ctx, main) optional, run after both;
+--- extra(m, ctx) optional, more state for the signature, as text;
 --- mints = true where money may legitimately appear }.
 ---@return table result { name, depth, runs, findings = { { k, phase, at, problems } } }
 function Scheduler.explore(scn)
@@ -467,7 +475,7 @@ function Scheduler.explore(scn)
             end
             if not moneyOutcomes[Scheduler.moneySignature()] then
                 problems[#problems + 1] = 'MONEY matches no serial order'
-            elseif not outcomes[Scheduler.signature()] then
+            elseif not outcomes[signatureOf(scn, m, ctx)] then
                 problems[#problems + 1] = 'state (not money) matches no serial order'
             end
             for _, s in ipairs(Scheduler.stuck(m)) do problems[#problems + 1] = s end

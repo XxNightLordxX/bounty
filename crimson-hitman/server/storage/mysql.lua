@@ -1556,6 +1556,20 @@ function MySQLStore.confirmHitman(id, anon, acceptedAt)
     return (tonumber(affected) or 0) > 0
 end
 
+--- A hitman walks away: the row goes abandoned only while it is active and
+--- its contract is still open. A claim, a void, an expiry or a buyout moves
+--- the contract's state before it touches a row, so an abandon read before
+--- one of them landed matches nothing here instead of overwriting a hitman
+--- just paid, or one whose stake the ending had already returned.
+function MySQLStore.abandonHitman(id, contractId, leftAt)
+    local affected = db.update([[
+        UPDATE crimson_hitmen SET state = 'abandoned', left_at = ?
+        WHERE id = ? AND state = 'active'
+          AND EXISTS (SELECT 1 FROM crimson_contracts c WHERE c.id = ? AND c.state IN ('active', 'accepted'))
+    ]], { leftAt, id, contractId })
+    return (tonumber(affected) or 0) > 0
+end
+
 --- Mid-acceptance rows count: two acceptances in flight must each see the
 --- other against the cap.
 function MySQLStore.countHitmanContracts(cid, states)

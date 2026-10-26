@@ -807,3 +807,106 @@ describe('goods from an anonymous client, two worlds apart', function()
         end
     end)
 end)
+
+--------------------------------------------------------------------------
+-- Informant data, paid for once
+--------------------------------------------------------------------------
+
+describe('informant data the target pays for', function()
+    --- A contract on the target with an anonymous operative the sampler
+    --- has seen on them, and the informant wired as main.lua wires it.
+    local function tracked()
+        local s = newStack()
+        local f = fixture(s)
+        s.informant.init({ storage = s.storage, identity = s.identity, audit = s.audit,
+            death = s.death, contracts = s.contracts })
+        local c = assert(s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        }))
+        truthy(s.contracts.accept(f.hitman, c.id, true))
+        s.death.watchTargets(s.storage.allContracts())
+        Env.players[2].PlayerData.money.bank = 100000
+        return s, f, c
+    end
+
+    local function spent() return 100000 - Env.players[2].PlayerData.money.bank end
+
+    --- The fee is taken and never refunded, so the paid answer is given
+    --- whatever the store does with the record of it.
+    it('answers the name it was paid for when the record of it will not write', function()
+        local s, f, c = tracked()
+        local real = s.storage.writeReveal
+        s.storage.writeReveal = function() error('the connection dropped', 0) end
+        local ran, ok, err, data = pcall(s.informant.buy, f.target, c.id)
+        s.storage.writeReveal = real
+        truthy(ran, 'the purchase raised: ' .. tostring(ok))
+        truthy(ok, tostring(err))
+        eq(data.name, 'Rook Ash')
+        eq(spent(), Config.Informant.Cost, 'charged once')
+        s.audit.flush()
+        local kept = false
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == 'informant_unremembered' then kept = true end
+        end
+        truthy(kept, 'staff are told the purchase was not kept')
+    end)
+
+    --- A read that raised after the charge kept the fee with nothing to say
+    --- it was paid, and every retry paid it again.
+    it('charges once across a read that raised and a retry', function()
+        local s, f, c = tracked()
+        local real, raised = s.storage.readHitmen, false
+        s.storage.readHitmen = function(...)
+            if not raised then
+                raised = true
+                error('the connection dropped', 0)
+            end
+            return real(...)
+        end
+        falsy(pcall(s.informant.buy, f.target, c.id), 'the read raised')
+        eq(spent(), 0, 'and nothing was taken for it')
+        local ok, err, data = s.informant.buy(f.target, c.id)
+        s.storage.readHitmen = real
+        truthy(ok, tostring(err))
+        eq(data.name, 'Rook Ash')
+        eq(spent(), Config.Informant.Cost, 'one fee for one answer')
+    end)
+
+    --- Checked once, before an await, and only for closed: a contract being
+    --- paid out, or one that ended in that await, was still sold.
+    it('is refused uncharged on a contract that started paying out inside the purchase', function()
+        local s, f, c = tracked()
+        local real, moved = s.storage.readHitmen, false
+        s.storage.readHitmen = function(...)
+            if not moved then
+                moved = true
+                truthy(s.storage.compareSetContractState(c.id, CH.STATE.ACCEPTED, CH.STATE.COMPLETING))
+            end
+            return real(...)
+        end
+        local ok, err = s.informant.buy(f.target, c.id)
+        s.storage.readHitmen = real
+        truthy(s.storage.compareSetContractState(c.id, CH.STATE.COMPLETING, CH.STATE.ACCEPTED))
+        falsy(ok)
+        eq(err, CH.ERR.ALREADY_SETTLED)
+        eq(spent(), 0, 'nothing taken')
+    end)
+
+    --- Two operatives seen on the target and one of them gone from the city:
+    --- whichever it is, the purchase names the one still here. Leaving the
+    --- gone one out says nothing new: alone, it is "Unknown operative" too.
+    for _, gone in ipairs({ 3, 4 }) do
+        it(('names the seen operative still in the city (source %d left)'):format(gone), function()
+            local s, f, c = tracked()
+            Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+                cash = 5000, bank = 5000, firstname = 'Sol', lastname = 'Vane' })
+            truthy(s.contracts.accept(s.identity.resolve(4), c.id, true))
+            s.death.watchTargets(s.storage.allContracts())
+            Env.removePlayer(gone)
+            local ok, err, data = s.informant.buy(f.target, c.id)
+            truthy(ok, tostring(err))
+            eq(data.name, gone == 3 and 'Sol Vane' or 'Rook Ash')
+        end)
+    end
+end)

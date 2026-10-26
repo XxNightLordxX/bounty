@@ -4061,6 +4061,42 @@ async function main() {
         'five minutes should not be reported in seconds: ' + longWait.notice());
     });
 
+    /* Busy with how long: a key held for seconds is the same request still
+       being worked on, and "try again" at once meets it again. Under ten
+       seconds it is the moment the plain words say. */
+    const heldLong = await onMine({
+      informant: { ok: false, err: 'busy', data: { heldMs: 12000 } }
+    });
+    click(heldLong, 'Buy informant data');
+    click(heldLong, 'Yes');
+    await settle();
+    const heldShort = await onMine({
+      informant: { ok: false, err: 'busy', data: { heldMs: 2000 } }
+    });
+    click(heldShort, 'Buy informant data');
+    click(heldShort, 'Yes');
+    await settle();
+
+    it('says a long hold is still being worked on, and a short one was a moment', function () {
+      eq(heldLong.notice(),
+        'This is still being worked on. Look again in a minute before you try again.');
+      eq(heldShort.notice(), 'That was busy for a moment. Try again.');
+    });
+
+    /* The minutes after a restart, which forgot who had been near the
+       target: refused uncharged, with how long. */
+    const warming = await onMine({
+      informant: { ok: false, err: 'informant_warming', data: { minutes: 10 } }
+    });
+    click(warming, 'Buy informant data');
+    click(warming, 'Yes');
+    await settle();
+
+    it('says how long until the informant sells again after a restart', function () {
+      eq(warming.notice(),
+        'The informant is still asking around after a restart. Try again in 10 minutes.');
+    });
+
     /* limit_reached means something else entirely for an informant, and the
        shared wording for it described a rule with nothing to do with this
        purchase. */

@@ -1117,3 +1117,47 @@ describe('what a creator is told when a refund could not be handed over', functi
             'the ordinary case must not be made alarming: ' .. said)
     end)
 end)
+
+describe('what the log says of a stake a hitman walked away from', function()
+    local function staked(penalty)
+        local s = newStack()
+        local f = fixture(s)
+        local c = assert(s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } }, penaltyAmount = penalty,
+        }))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        return s, f, c
+    end
+
+    local function rows(s, action)
+        s.audit.flush()
+        local out = {}
+        for _, row in ipairs(s.storage.readAudit()) do
+            if row.action == action then out[#out + 1] = row end
+        end
+        return out
+    end
+
+    --- Staff answering "where did my stake go" read this row. It was written
+    --- only when the stake was paid now, never for a client who was away,
+    --- and it never said how much.
+    it('records the forfeit with its figure, and that it waits, for a client who is away', function()
+        local s, f, c = staked(2000)
+        Env.removePlayer(1)
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        local forfeits = rows(s, 'stake_forfeited')
+        eq(#forfeits, 1, 'one row for the forfeit')
+        eq(forfeits[1].detail.amount, 2000, 'with the figure')
+        eq(forfeits[1].detail.queued, true, 'and that it waits for the client')
+    end)
+
+    it('writes no release at all for a contract staked at nothing', function()
+        local s, f, c = staked(0)
+        rows(s, 'escrow_released')
+        local before = #rows(s, 'escrow_released')
+        truthy(s.contracts.abandon(f.hitman, c.id))
+        eq(#rows(s, 'escrow_released'), before, 'an empty release row for nothing released')
+        eq(#rows(s, 'stake_forfeited'), 0)
+    end)
+end)

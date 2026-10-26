@@ -807,3 +807,105 @@ describe('a write the server stopped part-way', function()
         eq(Natives.files[SHARD], nil, 'and looking moves nothing')
     end)
 end)
+
+--------------------------------------------------------------------------
+-- An abandon a store call stopped part-way
+--------------------------------------------------------------------------
+--
+-- Contracts.abandon writes the row, then hands the stake to the client,
+-- then puts an exclusive contract nobody is on back on the board. A store
+-- call that raised in between left it ACCEPTED with nobody on it, every
+-- acceptance refused, and the stake held under a row that walked away,
+-- which the ending, or a refused retake, gave back to the walker.
+
+describe('an abandon a store call stopped part-way', function()
+    local function staked(mode)
+        local s = newStack()
+        local f = fixture(s)
+        Env.players[3].PlayerData.money.bank = 50000
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+            cash = 5000, bank = 50000, firstname = 'Sol', lastname = 'Vane' })
+        local c = assert(s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = mode,
+            reward = { baseline = { cash = 5000 } }, penaltyAmount = 2000,
+        }))
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        return s, f, c
+    end
+
+    --- The abandon, with the store's `name` raising the first time it is
+    --- called, after the abandon has written its row.
+    local function stopped(s, f, c, name)
+        local real, raised = s.storage[name], false
+        s.storage[name] = function(...)
+            if not raised then
+                raised = true
+                error('the connection dropped', 0)
+            end
+            return real(...)
+        end
+        local ran = pcall(s.contracts.abandon, f.hitman, c.id)
+        s.storage[name] = real
+        falsy(ran, 'the abandon raised part-way')
+        eq(s.storage.readHitman(c.id, 'HITMAN01').state, 'abandoned', 'after its row')
+    end
+
+    local function bank(src) return Env.players[src].PlayerData.money.bank end
+
+    it('exclusive: the next tick puts it back on the board, and the stake goes to the client', function()
+        local s, f, c = staked(CH.MODE.EXCLUSIVE)
+        stopped(s, f, c, 'readEscrow')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'held by nobody')
+        local client = bank(1)
+
+        s.contracts.releaseIdleHolds()
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'back on the board')
+        eq(bank(1) - client, 2000, 'the walked-away stake is the client\'s')
+        eq(bank(3), 48000, 'and not the hitman\'s who walked away')
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false), 'and another may take it')
+    end)
+
+    it('exclusive: a retake that is refused does not hand the stake back', function()
+        local s, f, c = staked(CH.MODE.EXCLUSIVE)
+        stopped(s, f, c, 'readEscrow')
+        local client = bank(1)
+        local ok, err = s.contracts.accept(f.hitman, c.id, false)
+        falsy(ok, 'held by nobody, and still refused')
+        eq(err, CH.ERR.LOCKED)
+        eq(bank(1) - client, 2000, 'the stake went to the client')
+        eq(bank(3), 48000, 'not back to the hitman who walked away')
+    end)
+
+    --- The repair waits for an acceptance in flight, which holds the
+    --- contract's key, rather than undoing anything under it.
+    it('exclusive: the tick leaves alone a contract an acceptance is running on', function()
+        local s, f, c = staked(CH.MODE.EXCLUSIVE)
+        stopped(s, f, c, 'readEscrow')
+        local real, fired, seen = s.storage.readHitman, false, nil
+        s.storage.readHitman = function(...)
+            if not fired then
+                fired = true
+                s.contracts.releaseIdleHolds()
+                seen = s.storage.readContract(c.id).state
+            end
+            return real(...)
+        end
+        s.contracts.accept(s.identity.resolve(4), c.id, false)
+        s.storage.readHitman = real
+        eq(seen, CH.STATE.ACCEPTED, 'nothing was changed under the acceptance')
+        s.contracts.releaseIdleHolds()
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'and the next pass finished it')
+    end)
+
+    it('competitive: a retake straight after, then a completion, hands back only the new stake', function()
+        local s, f, c = staked(CH.MODE.COMPETITIVE)
+        stopped(s, f, c, 'claimEscrowLine')
+        local client = bank(1)
+        truthy(s.contracts.accept(f.hitman, c.id, false), 'taken straight back')
+        eq(bank(1) - client, 2000, 'the walked-away stake went to the client first')
+        eq(bank(3), 46000, 'and a new one was staked')
+        truthy(s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION))
+        eq(bank(3), 48000, 'only the new stake came back')
+        eq(bank(1) - client, 2000, 'and the client kept the old one')
+    end)
+end)

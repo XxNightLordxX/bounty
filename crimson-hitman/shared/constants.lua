@@ -216,6 +216,13 @@ CH.ERR = {
     --- a feature that may stay off for good. Only new actions are refused:
     --- whatever was already under way finishes under the rules it began.
     FEATURE_OFF          = 'feature_off',
+    --- Informant data on a contract placed before this start, asked for
+    --- inside Config.Informant.ProximityWindowMinutes of it, with
+    --- RequireProximity on. Who had been near the target is kept in memory
+    --- and a restart forgot it, so the purchase was charged for "Unknown
+    --- operative". Refused uncharged for everyone, whoever has been seen,
+    --- with { minutes } until it is sold again.
+    INFORMANT_WARMING    = 'informant_warming',
     --- A call would show a number the other party paid to keep hidden, and
     --- this phone build cannot mask it, so it is not placed (§11.3). It was
     --- BAD_STATE, which says nothing about why or what to do instead.

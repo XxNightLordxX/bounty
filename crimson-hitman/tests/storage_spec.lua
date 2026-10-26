@@ -3300,6 +3300,39 @@ describe('the narrow writes added for the second review', function()
         end
     end)
 
+    --- Contracts.abandon's compare and set: a claim, a void, an expiry or a
+    --- buyout that ended the contract in the abandon's awaits leaves the row
+    --- as that ending left it.
+    it('abandons only an active row of a live contract, in every backend', function()
+        for _, b in ipairs(backends()) do
+            local open = contractFixture('ctleave1')
+            open.state = CH.STATE.ACCEPTED
+            b.store.writeContract(open)
+            b.store.addHitman({ id = 'hnleave1', contract_id = 'ctleave1', hitman_cid = 'HITMAN01',
+                alias = 'Operative #1', anon = false, accepted_at = 10, state = 'active' })
+            truthy(b.store.abandonHitman('hnleave1', 'ctleave1', 50), b.name .. ': an active row')
+            local h = b.store.readHitman('ctleave1', 'HITMAN01')
+            eq(h.state, 'abandoned', b.name)
+            eq(h.left_at, 50, b.name)
+            falsy(b.store.abandonHitman('hnleave1', 'ctleave1', 60), b.name .. ': twice')
+            eq(b.store.readHitman('ctleave1', 'HITMAN01').left_at, 50, b.name .. ': left as it was')
+
+            for i, state in ipairs({ CH.STATE.COMPLETING, CH.STATE.EXPIRED, CH.STATE.VOIDED }) do
+                local id = 'ctleave' .. (i + 1)
+                local row = contractFixture(id)
+                row.state = state
+                b.store.writeContract(row)
+                b.store.addHitman({ id = 'hnleave' .. (i + 1), contract_id = id,
+                    hitman_cid = 'HITMAN01', alias = 'Operative #1', anon = false,
+                    accepted_at = 10, state = 'active' })
+                falsy(b.store.abandonHitman('hnleave' .. (i + 1), id, 70),
+                    b.name .. ': on a ' .. state .. ' contract')
+                eq(b.store.readHitman(id, 'HITMAN01').state, 'active',
+                    b.name .. ': the row as the ending left it, on ' .. state)
+            end
+        end
+    end)
+
     it('counts a hitman mid-acceptance against their cap, in every backend', function()
         for _, b in ipairs(backends()) do
             b.store.writeContract(contractFixture('ctcount1'))

@@ -900,7 +900,8 @@ function App.register()
     -- actually working it.
     handler('cancel', 'accept', function(actor, payload)
         local ok, err, result = deps.contracts.cancel(actor, payload.id)
-        if not ok then return false, err end
+        -- On a refusal the third is how long a busy key has been held.
+        if not ok then return false, err, result end
         -- How much could not be handed back yet, so the page does not say
         -- "everything has been returned" beside a phone notification saying
         -- some of it is waiting.
@@ -979,8 +980,8 @@ function App.register()
     end)
 
     handler('abandon', 'accept', function(actor, payload)
-        local ok, err = deps.contracts.abandon(actor, Util.toId(payload.id) or '')
-        if not ok then return false, err end
+        local ok, err, data = deps.contracts.abandon(actor, Util.toId(payload.id) or '')
+        if not ok then return false, err, data end
         return true
     end)
 
@@ -1171,8 +1172,10 @@ function App.register()
     end, 'target')
 
     handler('informant', 'informant', function(actor, payload)
+        -- On a refusal the third says more than the code: how long a busy
+        -- key has been held, or the minutes until it is sold again.
         local ok, err, data = deps.informant.buy(actor, payload.id)
-        if not ok then return false, err end
+        if not ok then return false, err, data end
         return data
     end)
 
