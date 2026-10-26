@@ -5,6 +5,8 @@
 --- written but never wired is a silent dead path — the elimination payout
 --- depended on exactly one of these, and nothing else would have noticed.
 
+local Log = CrimsonBoot.requireShared('log')
+
 local Bridges = {}
 
 --- Observe damage the engine reports, so an elimination can be attributed
@@ -666,13 +668,121 @@ end
 -- Staff commands
 --------------------------------------------------------------------------
 
+-- A command's answer goes to whoever ran it: the server console, printed
+-- there whatever Config.Debug says (Log.console), or a player's own F8
+-- console, never chat. A player's lines are gathered while the command runs
+-- (Bridges.runCommand) and sent when it ends, in order, in as few events as
+-- fit under OUTPUT_EVENT_BYTES each, with one notice on their screen saying
+-- where to look. A line said after the command ended (the diagnosis's photo
+-- address check answers later) goes on its own.
+
+--- The most one output event carries, in bytes of text. FiveM refuses a
+--- reliable event much over 16 KB, and a line's envelope adds a little.
+local OUTPUT_EVENT_BYTES = 8000
+Bridges.OUTPUT_EVENT_BYTES = OUTPUT_EVENT_BYTES
+
+--- The lines a command run by a player has said so far, by the thread it
+--- runs on: { src, lines }. Weak, so a thread that ended is not kept.
+local Gathering = setmetatable({}, { __mode = 'k' })
+
+--- The notify bridge (server/notify.lua), as Bridges.installCommands was
+--- handed it.
+local Notify
+
+--- A line as it is shown: FiveM's colour codes (^0 to ^9) taken out, since
+--- names, aliases and reasons in it are player-written, and one ending in
+--- ^1 would colour everything printed after it.
+---@param line any
+---@return string
+local function plain(line)
+    return (tostring(line):gsub('%^%d', ''))
+end
+Bridges.plainLine = plain
+
+--- A line longer than OUTPUT_EVENT_BYTES, in pieces that fit, in order, and
+--- never cut inside a character: a cut that would land on a byte that
+--- continues one (0x80 to 0xBF) is moved back to where it starts.
+---@param line string
+---@return string[]
+local function piecesOf(line)
+    local out, at = {}, 1
+    while at <= #line do
+        local stop = math.min(#line, at + OUTPUT_EVENT_BYTES - 1)
+        while stop < #line and stop > at do
+            local next_ = line:byte(stop + 1)
+            if next_ < 0x80 or next_ >= 0xC0 then break end
+            stop = stop - 1
+        end
+        out[#out + 1] = line:sub(at, stop)
+        at = stop + 1
+    end
+    return out
+end
+
+--- Send a player their lines, in order, batched under OUTPUT_EVENT_BYTES.
+--- A single line longer than that goes in pieces, one after another.
+---@param src number
+---@param lines string[]
+---@param notice boolean whether to say on screen where they went
+---@return integer events
+function Bridges.sendOutput(src, lines, notice)
+    if #lines == 0 then return 0 end
+    local events, batch, size = 0, {}, 0
+    local function flush()
+        if #batch == 0 then return end
+        TriggerClientEvent('crimson-hitman:commandOutput', src, batch)
+        events = events + 1
+        batch, size = {}, 0
+    end
+    for i = 1, #lines do
+        local line = lines[i]
+        local pieces = #line > OUTPUT_EVENT_BYTES and piecesOf(line) or { line }
+        for _, piece in ipairs(pieces) do
+            if size + #piece > OUTPUT_EVENT_BYTES then flush() end
+            batch[#batch + 1] = piece
+            size = size + #piece
+        end
+    end
+    flush()
+    -- One short notice through the notify bridge, for somebody who typed
+    -- the command in chat and is looking there for its answer.
+    if notice and Notify then
+        Notify.onScreen(src, 'Crimson-Hitman', 'Printed to your F8 console')
+    end
+    return events
+end
+
 --- Print to whoever ran the command — the console when there is no player.
 local function reply(src, line)
-    if src == 0 then
-        print(line)
-    else
-        TriggerClientEvent('chat:addMessage', src, { args = { 'CRIMSON', line } })
+    line = plain(line)
+    if src == 0 then return Log.console(line) end
+    local gathering = Gathering[coroutine.running()]
+    if gathering and gathering.src == src then
+        gathering.lines[#gathering.lines + 1] = line
+        return
     end
+    Bridges.sendOutput(src, { line }, false)
+end
+
+--- Run one command for whoever typed it, its answer gathered and sent to a
+--- player's F8 console as it ends (reply). One that raises is answered so,
+--- in F8 too, and the error kept for the diagnosis.
+---@param src number
+---@param fn function
+function Bridges.runCommand(src, fn, ...)
+    if src == 0 then return fn(src, ...) end
+    local key = coroutine.running()
+    local outer = Gathering[key]
+    local gathering = { src = src, lines = {} }
+    Gathering[key] = gathering
+    local ok, err = pcall(fn, src, ...)
+    Gathering[key] = outer
+    if not ok then
+        Log.debug(('a staff command run by player %s raised: %s'):format(tostring(src), tostring(err)))
+        gathering.lines[#gathering.lines + 1] = 'That raised an error on the server; the diagnosis '
+            .. 'lists it.'
+    end
+    Bridges.sendOutput(src, gathering.lines, true)
 end
 
 --- An escrow line in words, for a staff command.
@@ -706,6 +816,7 @@ function Bridges.installCommands(modules)
 
     local Admin = modules.admin
     local names = Config.Admin.Commands
+    Notify = modules.notify
 
     --- What a command that settles, voids or lists escrow says while boot
     --- recovery runs (App.ready), or once it has raised; nil once it has
@@ -720,13 +831,18 @@ function Bridges.installCommands(modules)
     ---@param strict boolean|nil only the named ACE: Config.Admin.ExtraAces
     --- opens the read-only commands, never one that moves money or unmasks
     --- an anonymous party.
+    ---
+    --- Its answer goes to the console that ran it, or to the player's own
+    --- F8 console (Bridges.runCommand), never chat.
     local function command(name, ace, fn, strict)
         RegisterCommand(name, function(src, args)
-            if not Admin.allowed(src, ace, strict) then
-                reply(src, Admin.howToAuthorise(ace))
-                return
-            end
-            fn(src, args or {})
+            Bridges.runCommand(src, function()
+                if not Admin.allowed(src, ace, strict) then
+                    reply(src, Admin.howToAuthorise(ace))
+                    return
+                end
+                fn(src, args or {})
+            end)
         end, false)
     end
 
@@ -1027,15 +1143,17 @@ function Bridges.installCommands(modules)
     -- moves every clock on the server.
     if names.refresh then
         RegisterCommand(names.refresh, function(src, args)
-            if not Admin.allowed(src, Config.Admin.Ace, true) then
-                return reply(src, Admin.howToAuthorise(Config.Admin.Ace))
-            end
-            local what = tostring((args or {})[1] or 'timers'):lower()
-            if what ~= 'timers' and what ~= 'refresh' then
-                return reply(src, ('Usage: /%s timers'):format(names.refresh))
-            end
-            local lines = Admin.refreshTimers(src)
-            for i = 1, #lines do reply(src, lines[i]) end
+            Bridges.runCommand(src, function()
+                if not Admin.allowed(src, Config.Admin.Ace, true) then
+                    return reply(src, Admin.howToAuthorise(Config.Admin.Ace))
+                end
+                local what = tostring((args or {})[1] or 'timers'):lower()
+                if what ~= 'timers' and what ~= 'refresh' then
+                    return reply(src, ('Usage: /%s timers'):format(names.refresh))
+                end
+                local lines = Admin.refreshTimers(src)
+                for i = 1, #lines do reply(src, lines[i]) end
+            end)
         end, false)
     end
 
@@ -1096,8 +1214,11 @@ function Bridges.installCommands(modules)
     -- Registered whether or not buyouts are on, and refused while they are
     -- off: Config.Bailout.Enabled can be turned on from the admin panel, and
     -- a command registered only at a start with it on never came back.
+    --
+    -- Its answer goes to the player's F8 console, as every command's does
+    -- (Bridges.runCommand).
     if Config.Bailout.Command then
-        RegisterCommand(Config.Bailout.Command, function(src, args)
+        local function cleanse(src, args)
             if src == 0 then
                 return reply(src, 'This is for a player buying out a contract on themselves.')
             end
@@ -1164,6 +1285,9 @@ function Bridges.installCommands(modules)
                     .. (CLEANSE_REFUSALS[err] or tostring(err)))
             end
             reply(src, 'Paid. The contract closes shortly.')
+        end
+        RegisterCommand(Config.Bailout.Command, function(src, args)
+            Bridges.runCommand(src, cleanse, args or {})
         end, false)
     end
 

@@ -27,6 +27,8 @@
 --- Each job's window is allocated once, on its first run; a run after that
 --- writes two numbers into it and allocates nothing.
 
+local Log = CrimsonBoot.requireShared('log')
+
 local Timing = {}
 
 --- Read through the table, so a test can stand a clock of its own in.
@@ -91,7 +93,7 @@ function Timing.record(name, ms)
         local now = os.time()
         if not job.warnedAt or now - job.warnedAt >= Timing.WARN_EVERY_SECONDS then
             job.warnedAt = now
-            print(('[crimson-hitman] maintenance job %q took %.1f ms, over '
+            Log.debug(('maintenance job %q took %.1f ms, over '
                 .. 'Config.Diagnostics.SlowJobMs (%s ms). Said at most once every %d '
                 .. 'minutes per job; /ch-diag lists the slowest.')
                 :format(name, ms, tostring(over), math.floor(Timing.WARN_EVERY_SECONDS / 60)))

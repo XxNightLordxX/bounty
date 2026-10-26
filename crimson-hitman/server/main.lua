@@ -4,6 +4,7 @@
 --- the only recurring timer in the resource besides the kidnap countdown.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Storage
 local modules = {}
@@ -402,12 +403,14 @@ local function applyConfigDefaults(quiet)
         end
     end
 
+    -- A configuration problem (shared/log.lua): in full with Config.Debug,
+    -- and counted, once per setting, in the start's one line without it.
     if #filled > 0 and not quiet then
         table.sort(filled)
-        print(('[crimson-hitman] your config.lua does not set %d setting(s); the shipped '
+        Log.problem(('your config.lua does not set %d setting(s); the shipped '
             .. 'defaults are being used for them: %s. Copy them across from the config '
             .. 'that ships with this resource to set them yourself.')
-            :format(#filled, table.concat(filled, ', ')))
+            :format(#filled, table.concat(filled, ', ')), #filled)
     end
 
     return filled
@@ -424,6 +427,13 @@ end
 ---@return string[]|nil warn with `quiet`
 local function validateConfig(quiet)
     local fatal, warn = {}, {}
+    -- What is worth knowing and wrong with nothing: printed with
+    -- Config.Debug only, and never counted as a setting that needs
+    -- attention (shared/log.lua).
+    local notes = {}
+
+    -- Checked from scratch: what an earlier check found is not this one's.
+    if not quiet then Log.clearProblems() end
 
     -- Before anything is read: a setting this config never had is nil, and
     -- the checks below would report it as broken rather than as absent.
@@ -505,9 +515,12 @@ local function validateConfig(quiet)
     -- throws — so a hole in the config would take out the very code written
     -- to report it. Nothing else runs until the shapes are known good.
     if #fatal > 0 and quiet then return false, fatal, warn end
+    -- Refusing to start: in full whatever Config.Debug says, the problems
+    -- found so far with them, since no diagnosis can be run to read them.
     if #fatal > 0 then
+        Log.reportProblems(true)
         for _, message in ipairs(fatal) do
-            print('[crimson-hitman] FATAL: ' .. message)
+            Log.always('FATAL: ' .. message)
         end
         error('[crimson-hitman] refusing to start on an invalid configuration')
     end
@@ -798,8 +811,10 @@ local function validateConfig(quiet)
             .. 'every player too)'
     end
 
+    -- A note: memory mode is chosen on purpose, for testing, and the
+    -- diagnosis's first lines say which storage is in use.
     if mode == 'memory' then
-        warn[#warn + 1] = 'Database.Mode is "memory": contracts and escrow will NOT survive a restart'
+        notes[#notes + 1] = 'Database.Mode is "memory": contracts and escrow will NOT survive a restart'
     end
 
     -- A rule that cannot be evaluated is worse than one that is off, because
@@ -845,9 +860,12 @@ local function validateConfig(quiet)
         Config.Kidnap.RestraintProvider = nil
     end
 
+    -- A note, not a problem: it is how the shipped config works (QBox's own
+    -- playtime metadata), and it changes nothing. Said with Config.Debug,
+    -- and kept for the diagnosis; never counted as a setting to fix.
     if (tonumber(Config.Immunity.MinTargetPlaytimeHours) or 0) > 0
         and not (Config.Immunity.PlaytimeProvider and Config.Immunity.PlaytimeProvider.resource) then
-        warn[#warn + 1] = ('Immunity.MinTargetPlaytimeHours is %d but no PlaytimeProvider is set; ' ..
+        notes[#notes + 1] = ('Immunity.MinTargetPlaytimeHours is %d but no PlaytimeProvider is set; ' ..
             'the rule applies only where QBox metadata carries a playtime figure')
             :format(Config.Immunity.MinTargetPlaytimeHours)
     end
@@ -898,12 +916,19 @@ local function validateConfig(quiet)
 
     if quiet then return #fatal == 0, fatal, warn end
 
+    -- Configuration problems (shared/log.lua): each in full with
+    -- Config.Debug on, and one line for all of them at the end of the start
+    -- with it off (StartCrimsonHitman). Refusing to start says them all.
     for _, message in ipairs(warn) do
-        print('[crimson-hitman] warning: ' .. message)
+        Log.problem('warning: ' .. message)
+    end
+    for _, message in ipairs(notes) do
+        Log.debug('note: ' .. message)
     end
     if #fatal > 0 then
+        Log.reportProblems(true)
         for _, message in ipairs(fatal) do
-            print('[crimson-hitman] FATAL: ' .. message)
+            Log.always('FATAL: ' .. message)
         end
         error('[crimson-hitman] refusing to start on an invalid configuration')
     end
@@ -972,7 +997,7 @@ local function refuseModeSwitch()
                     or ('json mode: %d escrow line(s) and %d payout(s) owed, in %s/')
                         :format(held.lines, held.owed, Config.Database.Json.Directory or 'data')
             elseif held.contracts > 0 then
-                print(('[crimson-hitman] %s/store.json still names %d finished contract(s) from '
+                Log.debug(('%s/store.json still names %d finished contract(s) from '
                     .. 'json mode. They hold no money and %s mode does not read them.')
                     :format(Config.Database.Json.Directory or 'data', held.contracts, mode))
             end
@@ -990,8 +1015,9 @@ local function refuseModeSwitch()
     end
 
     if #found == 0 then return end
+    -- Money another mode holds, out of reach: said whatever Config.Debug says.
     if Config.Database.AllowModeSwitch == true then
-        print(('[crimson-hitman] warning: started in %s mode although %s. '
+        Log.always(('warning: started in %s mode although %s. '
             .. 'Config.Database.AllowModeSwitch is on, so none of it is visible or returned '
             .. 'from here.'):format(mode, table.concat(found, '; ')))
         return
@@ -1058,9 +1084,12 @@ end
 --- absent is the worst case: progression simply stops crediting and nothing
 --- anywhere says why.
 local function reportIntegrations()
+    -- The list itself only with Config.Debug on (and kept for the
+    -- diagnosis); one that is configured and missing is a configuration
+    -- problem, counted in the start's one line (shared/log.lua).
     local integrations = optionalIntegrations()
     if #integrations == 0 then
-        print('[crimson-hitman] no optional integrations configured')
+        Log.debug('no optional integrations configured')
         return integrations
     end
 
@@ -1071,19 +1100,19 @@ local function reportIntegrations()
         local found = GetResourceState(entry.resource) == 'started'
         if found and entry.purpose:find('true%-death') then deathFound = true end
 
-        print(('[crimson-hitman] integration %-16s %s  (%s)'):format(
+        Log.debug(('integration %-16s %s  (%s)'):format(
             entry.resource, found and 'found' or 'not found', entry.purpose))
 
         -- Only a resource the operator actually named is worth a warning.
         -- The alternatives in a provider list are not each expected.
         if not found and entry.configured then
-            print(('[crimson-hitman] warning: %s is configured but not started; %s will not work')
+            Log.problem(('warning: %s is configured but not started; %s will not work')
                 :format(entry.resource, entry.purpose))
         end
     end
 
     if not deathFound then
-        print('[crimson-hitman] warning: no death-state provider is running; ' ..
+        Log.problem('warning: no death-state provider is running; ' ..
             'eliminations fall back to QBox metadata for the downed check')
     end
 
@@ -1095,19 +1124,19 @@ local function reportIntegrations()
     local online = modules.identity and modules.identity.online() or {}
     local read = app.probeInventory(online[1])
     if read == nil then
-        print('[crimson-hitman] inventory read: nobody online to probe with; '
+        Log.debug('inventory read: nobody online to probe with; '
             .. 'it is checked again the first time someone opens the app')
     elseif read == false then
-        print('[crimson-hitman] warning: no ox_inventory read on this build answered. '
+        Log.problem('warning: no ox_inventory read on this build answered. '
             .. 'Items and weapons cannot be offered as rewards; money still works. '
             .. 'The app says so on the form rather than showing an empty picker.')
     else
-        print(('[crimson-hitman] inventory read: %s'):format(read))
+        Log.debug(('inventory read: %s'):format(read))
     end
 
     -- The roster setting is the other one whose failure looks like nothing
     -- at all: browsing off is an empty list, which reads as broken.
-    print(('[crimson-hitman] target browsing: %s, nearby: %s')
+    Log.debug(('target browsing: %s, nearby: %s')
         :format(Config.Targeting.AllowBrowseAll and 'everyone online' or 'off',
                 Config.Targeting.AllowNearby and 'on' or 'off'))
 
@@ -1117,6 +1146,10 @@ end
 
 
 function StartCrimsonHitman()
+    -- A start of its own: what an earlier one found and said is forgotten,
+    -- and every line until the start is over is kept whole for the
+    -- diagnosis (shared/log.lua).
+    Log.beginStart()
     validateConfig()
 
     refuseModeSwitch()
@@ -1237,13 +1270,16 @@ function StartCrimsonHitman()
     if not recovered then
         app.recoveryFailed = true
         pcall(audit.flush)
-        print('[crimson-hitman] ============================================')
-        print('[crimson-hitman] BOOT RECOVERY FAILED: ' .. tostring(recoverErr))
-        print('[crimson-hitman]   What the last shutdown left part-way is not settled, so the app,')
-        print('[crimson-hitman]   the login payouts and the staff commands that settle, void or')
-        print('[crimson-hitman]   list escrow stay closed, and the maintenance tick does not start.')
-        print('[crimson-hitman]   Fix the cause above, then restart the resource.')
-        print('[crimson-hitman] ============================================')
+        -- Money left as the last shutdown left it: whatever Config.Debug says.
+        Log.always('============================================')
+        Log.always('BOOT RECOVERY FAILED: ' .. tostring(recoverErr))
+        Log.always('  What the last shutdown left part-way is not settled, so the app,')
+        Log.always('  the login payouts and the staff commands that settle, void or')
+        Log.always('  list escrow stay closed, and the maintenance tick does not start.')
+        Log.always('  Fix the cause above, then restart the resource.')
+        Log.always('============================================')
+        Log.reportProblems()
+        Log.started()
         return modules
     end
 
@@ -1255,7 +1291,7 @@ function StartCrimsonHitman()
     local swept, sweepErr = true, nil
     if photos.inUse() then swept, sweepErr = pcall(photos.sweepFiles) end
     if not swept then
-        print(('[crimson-hitman] the sweep of kill photo files failed: %s'):format(tostring(sweepErr)))
+        Log.debug(('the sweep of kill photo files failed: %s'):format(tostring(sweepErr)))
     end
     amendments.reindex()
     -- Contracts already held when this process started, so an idle hold
@@ -1265,7 +1301,8 @@ function StartCrimsonHitman()
     -- decided them, now recovery has put back what their lines left.
     local reviewed, reviewErr = pcall(review.recover)
     if not reviewed then
-        print(('[crimson-hitman] finishing reviews left part-way failed: %s; /%s finishes each')
+        -- The review queue, left for staff: whatever Config.Debug says.
+        Log.always(('finishing reviews left part-way failed: %s; /%s finishes each')
             :format(tostring(reviewErr), tostring(Config.Admin.Commands.review)))
     end
     app.ready = true
@@ -1277,25 +1314,30 @@ function StartCrimsonHitman()
     -- without taking the whole resource down to get it.
     local held = Storage.quarantined and Storage.quarantined() or {}
     if #held > 0 then
-        print('[crimson-hitman] ============================================')
-        print(('[crimson-hitman] %d CONTRACT(S) COULD NOT BE LOADED and are not '
+        Log.always('============================================')
+        Log.always(('%d CONTRACT(S) COULD NOT BE LOADED and are not '
             .. 'on the board:'):format(#held))
         for i = 1, #held do
-            print(('[crimson-hitman]   %s  (%s)  %s')
+            Log.always(('  %s  (%s)  %s')
                 :format(held[i].id, held[i].reason, tostring(held[i].file)))
         end
-        print('[crimson-hitman]   Each held escrow that cannot now be returned '
+        Log.always('  Each held escrow that cannot now be returned '
             .. 'automatically.')
-        print('[crimson-hitman]   Restore those files from a backup and restart to '
+        Log.always('  Restore those files from a backup and restart to '
             .. 'recover them,')
-        print('[crimson-hitman]   or settle them by hand and remove their ids from '
+        Log.always('  or settle them by hand and remove their ids from '
             .. 'data/store.json.')
-        print('[crimson-hitman]   This resource started without them rather than '
+        Log.always('  This resource started without them rather than '
             .. 'not at all.')
-        print('[crimson-hitman] ============================================')
+        Log.always('============================================')
     end
 
-    print(('[crimson-hitman] started in %s mode'):format(Config.Database.Mode))
+    -- The configuration problems this start found: each in full with
+    -- Config.Debug on (the admin panel's included, applied above), or one
+    -- line for all of them, or nothing when there are none.
+    Log.reportProblems()
+    Log.debug(('started in %s mode'):format(Config.Database.Mode))
+    Log.started()
     return modules
 end
 
@@ -1388,7 +1430,7 @@ function Recover()
                 if stuck then
                     local parked = read.releasing_to ~= nil
                     unstuck = unstuck + 1
-                    print(('[crimson-hitman] escrow line %s was mid-release at shutdown; ' ..
+                    Log.always(('escrow line %s was mid-release at shutdown; ' ..
                            'returned to held%s')
                            :format(tostring(read.id), parked
                                and ' and left for staff (/ch-stuck) — check whether it was already paid'
@@ -1493,7 +1535,7 @@ function Recover()
         and modules.contracts.recoverNeverPlaced() or 0
 
     if recovered > 0 or unstuck > 0 or finished > 0 or returned > 0 then
-        print(('[crimson-hitman] recovery: %d contracts resumed, %d finished, %d escrow '
+        Log.debug(('recovery: %d contracts resumed, %d finished, %d escrow '
             .. 'lines unstuck, %d handed back from contracts never placed')
             :format(recovered, finished, unstuck, returned))
         modules.audit.action('startup_recovery', nil, nil,
@@ -1516,7 +1558,7 @@ function StartTick()
         while true do
             Wait(Config.Audit.FlushIntervalMs or 10000)
             local ok, err = pcall(Tick)
-            if not ok then print('[crimson-hitman] tick error: ' .. tostring(err)) end
+            if not ok then Log.debug('tick error: ' .. tostring(err)) end
         end
     end)
 end
@@ -1540,10 +1582,20 @@ local lastHostRefresh = 0
 --- And each is timed (server/timing.lua): one slower than
 --- Config.Diagnostics.SlowJobMs says so in the console, and /ch-diag lists
 --- the slowest.
+--- Jobs whose failure is a write that did not happen, so data could be
+--- lost: said whatever Config.Debug says. Any other job's failure is said
+--- with Debug on, and kept for the diagnosis either way (shared/log.lua).
+local WRITE_JOBS = {
+    ['audit.flush'] = true, ['storage.flush'] = true, ['storage.heartbeat'] = true,
+    -- The review queue's items the store would not take when they opened.
+    ['review.retryUnwritten'] = true,
+}
+
 local function job(name, fn, ...)
     local ok, err = modules.timing.run(name, fn, ...)
     if not ok then
-        print(('[crimson-hitman] maintenance job %q failed: %s'):format(name, tostring(err)))
+        local say = WRITE_JOBS[name] and Log.always or Log.debug
+        say(('maintenance job %q failed: %s'):format(name, tostring(err)))
     end
     return ok
 end

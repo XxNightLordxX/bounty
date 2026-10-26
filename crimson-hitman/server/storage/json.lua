@@ -13,6 +13,7 @@
 --- to rather than rewritten (see writeAudit).
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local JsonStore = {}
 
@@ -346,7 +347,7 @@ local function writeRaw(target, encoded)
     local fresh = target .. NEW
     local wrote = SaveResourceFile(resource, fresh, encoded, -1)
     if wrote == false then
-        print(('[crimson-hitman] could not write %s. Check that the directory exists '
+        Log.always(('could not write %s. Check that the directory exists '
             .. 'and the server can write to it.'):format(target))
         return false
     end
@@ -361,12 +362,12 @@ local function writeRaw(target, encoded)
     if not (verify and #verify == #encoded) then
         mismatches = mismatches + 1
         if mismatches <= 3 then
-            print(('[crimson-hitman] %s reads back as %s bytes after writing %d; the write '
+            Log.always(('%s reads back as %s bytes after writing %d; the write '
                 .. 'was accepted anyway. If contracts do not survive a restart, this is '
                 .. 'where to look.')
                 :format(target, verify and tostring(#verify) or 'missing', #encoded))
             if mismatches == 3 then
-                print('[crimson-hitman] further read-back mismatches will not be printed.')
+                Log.always('further read-back mismatches will not be printed.')
             end
         end
         -- The engine said it wrote it. Discarding on a disagreeing read is
@@ -377,13 +378,13 @@ local function writeRaw(target, encoded)
 
     if not renameRefusedSaid then
         renameRefusedSaid = true
-        print(('[crimson-hitman] this server would not rename %s over %s, so the json store '
+        Log.always(('this server would not rename %s over %s, so the json store '
             .. 'writes its files in place, each after a whole copy beside it (<file>%s) that '
             .. 'the next start puts back if a crash tears the file. Check that the server can '
             .. 'rename and remove files in %s.'):format(fresh, target, NEW, directory()))
     end
     if SaveResourceFile(resource, target, encoded, -1) == false then
-        print(('[crimson-hitman] could not write %s. Check that the directory exists '
+        Log.always(('could not write %s. Check that the directory exists '
             .. 'and the server can write to it.'):format(target))
         return false
     end
@@ -459,7 +460,7 @@ local function recoverFile(file, complete, place, torn)
         -- write leaves it for the next start, as it was for this one.
         SaveResourceFile(resource, file, raw, -1)
     end
-    print(('[crimson-hitman] %s was %s, as a write the server stopped part-way leaves it; '
+    Log.always(('%s was %s, as a write the server stopped part-way leaves it; '
         .. 'put back the last complete write of it, from %s.%s')
         :format(file, hadFile and 'torn' or 'missing', from,
             hadFile and (' The torn one is kept as ' .. file .. '.torn.') or ''))
@@ -519,7 +520,7 @@ local function readAuditDay(day)
         end
     end
     if bad > 0 then
-        print(('[crimson-hitman] %d line(s) of %s could not be read and were left out; '
+        Log.always(('%d line(s) of %s could not be read and were left out; '
             .. 'the rest of that day\'s audit log is kept.'):format(bad, file))
     end
     return lines, rows, bad == 0 and raw:sub(-1) == '\n'
@@ -646,7 +647,7 @@ local function loadRecords(decoded)
                 .. 'still holds them, unchanged, and the move is tried again on the next start.')
                 :format(recordsPath(), path(), path()))
         end
-        print(('[crimson-hitman] moved the records out of %s into %s, so a money write no '
+        Log.debug(('moved the records out of %s into %s, so a money write no '
             .. 'longer rewrites them.'):format(path(), recordsPath()))
         return
     end
@@ -763,7 +764,7 @@ local function loadAudit(decoded)
     end
     for day in pairs(auditLog.unread) do
         if not (cutoffDay and day < cutoffDay) then
-            print(('[crimson-hitman] %s is named in %s but is missing or read back empty. '
+            Log.always(('%s is named in %s but is missing or read back empty. '
                 .. 'It is left as it is, in case it was the read that failed; that day\'s new '
                 .. 'audit rows go to %s instead. Restore it from a backup if it should hold '
                 .. 'rows.'):format(auditPath(day), path(), auditPath(auditKey(day:sub(1, 10)))))
@@ -801,7 +802,7 @@ local function loadAudit(decoded)
             rowsByDay[day] = rows
             moved = moved + #set.lines
         end
-        print(('[crimson-hitman] moved %d audit row(s) out of %s into one file per day '
+        Log.debug(('moved %d audit row(s) out of %s into one file per day '
             .. '(%s/audit-<day>.jsonl).'):format(moved, path(), directory()))
     end
 
@@ -941,7 +942,7 @@ function JsonStore.open()
                    :format(path(), how))
         end
         if folderSays or ranHereBefore() then
-            print(('[crimson-hitman] starting with an empty store over one that has run here, '
+            Log.always(('starting with an empty store over one that has run here, '
                 .. 'because crimson_hitman_new_store is set. Unset it now: left set, the next '
                 .. 'lost %s/ starts empty without a word too.'):format(directory()))
         end
@@ -1075,7 +1076,7 @@ function JsonStore.open()
         indexDirty = true
         SaveResourceFile(resource, path() .. '.bak', raw, -1)
         JsonStore.save(true)
-        print(('[crimson-hitman] migrated %d contract(s) to one file each; the original ' ..
+        Log.debug(('migrated %d contract(s) to one file each; the original ' ..
                'store is kept at %s.bak'):format(migrated, path()))
     else
         error(('[crimson-hitman] %s has neither a contract index nor contracts. ' ..
@@ -1090,7 +1091,7 @@ function JsonStore.open()
         -- Moving to mysql is a fresh start there: nothing is carried over,
         -- and mysql mode refuses to start while this store still holds
         -- money (README, Changing storage mode).
-        print(('[crimson-hitman] json store holds %d contracts; a server this busy is better on '
+        Log.debug(('json store holds %d contracts; a server this busy is better on '
             .. 'mysql mode, which starts empty: let the open contracts here finish first (see '
             .. 'the README, Changing storage mode)'):format(count))
     end

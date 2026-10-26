@@ -81,6 +81,12 @@ function CrimsonBoot.requireShared(name)
     return loadModule('shared.' .. name)
 end
 
+--- The one way to the console (shared/log.lua), through this loader.
+---@return table
+function CrimsonBoot.log()
+    return CrimsonBoot.requireShared('log')
+end
+
 --------------------------------------------------------------------------
 -- Waiting for the resources this one is built on
 --------------------------------------------------------------------------
@@ -134,14 +140,14 @@ end
 ---@return string[]
 function CrimsonBoot.waitReport(missing, waited)
     local lines = {
-        ('[crimson-hitman] still waiting after %ds for %d resource(s) to start:')
+        ('still waiting after %ds for %d resource(s) to start:')
             :format(waited, #missing),
     }
     for i = 1, #missing do
-        lines[#lines + 1] = ('[crimson-hitman]   %s is %s — %s')
+        lines[#lines + 1] = ('  %s is %s — %s')
             :format(missing[i].name, GetResourceState(missing[i].name), missing[i].why)
     end
-    lines[#lines + 1] = '[crimson-hitman] a renamed or forked resource will never '
+    lines[#lines + 1] = 'a renamed or forked resource will never '
         .. 'match these names; nothing else is wrong and nothing will happen '
         .. 'until they do.'
     return lines
@@ -165,16 +171,20 @@ function CrimsonBoot.awaitDependencies(limit)
     while true do
         local missing = CrimsonBoot.missingDependencies()
         if #missing == 0 then
+            -- Start progress: with Config.Debug only, and kept for the
+            -- diagnosis (shared/log.lua).
             if waited >= GRACE_SECONDS then
-                print(('[crimson-hitman] everything it waits for is up after %ds; starting.')
+                CrimsonBoot.log().debug(('everything it waits for is up after %ds; starting.')
                     :format(waited))
             end
             return true
         end
 
+        -- Whatever Config.Debug says: the resource is not starting, and
+        -- nothing else will say why.
         if CrimsonBoot.shouldReport(waited) then
             for _, line in ipairs(CrimsonBoot.waitReport(missing, waited)) do
-                print(line)
+                CrimsonBoot.log().always(line)
             end
         end
 
@@ -191,6 +201,11 @@ CreateThread(function()
 
     local ok, err = pcall(StartCrimsonHitman)
     if not ok then
-        print('[crimson-hitman] failed to start: ' .. tostring(err))
+        -- Refusing to start, so in full whatever Config.Debug says: the
+        -- problems the start found as well, since no diagnosis can be run
+        -- to read them now.
+        local Log = CrimsonBoot.log()
+        Log.reportProblems(true)
+        Log.always('failed to start: ' .. tostring(err))
     end
 end)

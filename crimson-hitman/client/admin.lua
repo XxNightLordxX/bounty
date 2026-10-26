@@ -125,6 +125,23 @@ RegisterNetEvent('crimson-hitman:adminResult', function(result)
              data = result.data })
 end)
 
+--- The most lines one output event is printed for: the server batches a
+--- command's answer under about 8 KB an event (server/bridges.lua), and a
+--- list longer than this is not one it sends.
+local OUTPUT_LINES_MAX = 400
+
+--- What a command this player ran answers, from the server (Bridges.
+--- runCommand): every line printed in their F8 console, in order, never in
+--- chat. The staff commands' and the buyout command's alike, and the one
+--- thing this resource prints to F8 with Config.Debug off. Lines only: the
+--- server sends them as text, already without colour codes.
+RegisterNetEvent('crimson-hitman:commandOutput', function(lines)
+    if type(lines) ~= 'table' then return end
+    for i = 1, math.min(#lines, OUTPUT_LINES_MAX) do
+        if type(lines[i]) == 'string' then CrimsonLog.console(lines[i]) end
+    end
+end)
+
 --- A diagnosis line that had to wait for an answer, for the open page.
 RegisterNetEvent('crimson-hitman:adminPush', function(data)
     if not open or type(data) ~= 'table' then return end

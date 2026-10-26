@@ -1090,7 +1090,9 @@ Config.Admin = {
     --- named ACE itself. `command` is the ACE most admin groups already carry.
     ExtraAces = { 'command' },
 
-    --- Command names, without the leading slash.
+    --- Command names, without the leading slash. Staff run them in F8 (or
+    --- the server console): the answer prints there, never in chat. The
+    --- admin panel (panel, below) does each of them with a button instead.
     Commands = {
         timeline = 'ch-timeline',
         void     = 'ch-void',
@@ -1137,14 +1139,28 @@ Config.Diagnostics = {
     --- Every maintenance job (the ten-second tick's, and the death
     --- sampler's pass each second) times itself. One that takes longer than
     --- this, in milliseconds, prints one warning in the server console
-    --- naming it, at most once every five minutes per job. 0 turns the
-    --- warning off. Either way /ch-diag lists the slowest jobs with their
+    --- naming it (with Config.Debug on), at most once every five minutes per
+    --- job. 0 turns the warning off. Either way /ch-diag lists the slowest
+    --- jobs with their
     --- worst, average and last times over their recent runs. A job is timed
     --- only while it holds the server thread: on mysql, the time it spends
     --- waiting on the database (when everything else runs) is left out.
     SlowJobMs = 5,
 }
 
+--------------------------------------------------------------------------
+-- Console output
+--------------------------------------------------------------------------
+
+--- Debug output in the server console. false (as shipped): the console
+--- stays quiet. A normal start and normal play print nothing; only refusing
+--- to start, money left for staff (the review queue, a stuck escrow line,
+--- an ending that raised) and a write that failed are printed, and every
+--- setting that needs attention is counted in one line at start. Players'
+--- F8 consoles show nothing but a staff command's answer. true: everything,
+--- each setting problem in full, as before. ch-diag (and Run the diagnosis
+--- in the admin panel) lists all of it either way. Also in the admin
+--- panel's Features, kept across restarts.
 Config.Debug = false
 
 return Config

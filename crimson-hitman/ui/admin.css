@@ -439,7 +439,6 @@ ul, ol { padding: 0; list-style: none; }
 .facts dd { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
 .facts dd.text { white-space: pre-wrap; }
 .facts.is-terms { grid-template-columns: max-content minmax(0, 1fr); }
-.facts.is-commands dt { font-family: var(--f-mono); color: var(--ink-dim); }
 
 .table-wrap { overflow-x: auto; min-width: 0; }
 .results.is-loading { opacity: 0.55; }

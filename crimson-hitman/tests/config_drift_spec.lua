@@ -18,6 +18,10 @@ local function asOldConfig(overrides)
     for key, value in pairs(overrides or {}) do Config.Targeting[key] = value end
 end
 
+--- Every start here is told what it found in full, as the console prints it
+--- with Config.Debug on: these tests are about the words an operator is
+--- given for each drifted setting. With Debug off, as shipped, the start
+--- says one line for all of them instead, which console_spec holds it to.
 ---@param age function|nil applied to the config just before start
 local function boot(age)
     for name in pairs(package.loaded) do
@@ -32,6 +36,7 @@ local function boot(age)
     Natives.resetResourceStates()
     resetConfig()
     Config.Database.Mode = 'memory'
+    Config.Debug = true
     if age then age() end
 
     local main = require('server.main')
@@ -1560,6 +1565,8 @@ describe('a server whose phone uploads nowhere this resource accepts', function(
         local realPhone = Natives.phoneConfig
         Natives.phoneConfig = {}
         Config.Completion.ExtraPhotoHosts = {}
+        -- Said in full, as with Config.Debug on (see boot, above).
+        Config.Debug = true
         local printed = {}
         local realPrint = _G.print
         _G.print = function(...) printed[#printed + 1] = table.concat({ ... }, ' ') end
@@ -1671,6 +1678,8 @@ describe('a playtime provider in the wrong shape', function()
     local function validate(provider)
         newStack()
         local main = require('server.main')
+        -- Said in full, as with Config.Debug on (see boot, above).
+        Config.Debug = true
         Config.Immunity.PlaytimeProvider = provider
         Env.console = {}
         local ok, err = pcall(main.validateConfig)

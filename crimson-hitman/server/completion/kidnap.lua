@@ -6,6 +6,7 @@
 --- reports nothing.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Kidnap = {}
 
@@ -475,7 +476,7 @@ function Kidnap.tick(deltaMs)
             end
             end)
             if not stepped then
-                print(('[crimson-hitman] handover countdown %s failed: %s')
+                Log.debug(('handover countdown %s failed: %s')
                     :format(tostring(k), tostring(stepError)))
             end
         end
@@ -552,7 +553,7 @@ function Kidnap.tick(deltaMs)
             -- countdown was already out of `active`, and a throw here used
             -- to lose it with the page showing "being paid" for two minutes.
             local k = key(done.contractId, done.hitmanCid)
-            print(('[crimson-hitman] handover claim %s failed: %s')
+            Log.always(('handover claim %s failed: %s')
                 :format(tostring(k), tostring(settleError)))
             local readOk, now = pcall(Storage.readContract, done.contractId)
             local untouched = readOk and now and now.state == CH.STATE.ACCEPTED
@@ -692,7 +693,7 @@ function Kidnap.start()
             -- condition sampler are wrapped for the same reason.
             local ok, err = pcall(Kidnap.tick, Config.Kidnap.TickMs)
             if not ok then
-                print(('[crimson-hitman] handover tick failed: %s'):format(tostring(err)))
+                Log.debug(('handover tick failed: %s'):format(tostring(err)))
             end
         end
     end)

@@ -5,6 +5,7 @@
 --- on one contract cannot both win.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Contracts = {}
 
@@ -1476,7 +1477,7 @@ local function returnNeverPlaced(contractId)
             line = read
             line.state = CH.ESCROW_STATE.HELD
             if line.releasing_to then
-                print(('[crimson-hitman] escrow line %s of a contract never placed was mid-release; '
+                Log.always(('escrow line %s of a contract never placed was mid-release; '
                     .. 'returned to held and left for staff (/%s) — check whether it was already '
                     .. 'paid'):format(tostring(line.id), tostring(Config.Admin.Commands.stuck)))
                 Audit.financial('release_interrupted', line.releasing_to, contractId,
@@ -1502,7 +1503,7 @@ local function returnNeverPlaced(contractId)
                 -- settled: /ch-stuck lists it, and /ch-settle returns it to
                 -- whoever staff find it was. The audit row once per line,
                 -- not once a boot.
-                print(('[crimson-hitman] escrow line %s belongs to contract %s, which was never '
+                Log.always(('escrow line %s belongs to contract %s, which was never '
                     .. 'stored, and does not say whose it is; left held for staff (/%s)')
                     :format(tostring(line.id), tostring(contractId),
                         tostring(Config.Admin.Commands.stuck)))
@@ -1588,7 +1589,7 @@ function Contracts.recoverNeverPlaced()
         local n = Contracts.serialized({ 'contract:' .. ids[i] }, returnNeverPlaced, ids[i])
         if type(n) == 'number' and n > 0 then
             returned = returned + n
-            print(('[crimson-hitman] contract %s was never stored; %d escrow line(s) handed '
+            Log.debug(('contract %s was never stored; %d escrow line(s) handed '
                 .. 'back to whoever put them up'):format(tostring(ids[i]), n))
         end
     end
@@ -2948,13 +2949,13 @@ function Contracts.finishEndings()
             local ran, how, err = pcall(Contracts.serialized, { 'contract:' .. id },
                 Escrow.whileClaiming, id, Contracts.recoverEnded, id, 'ending_finished')
             if not ran then
-                print(('[crimson-hitman] finishing the ending of contract %s raised: %s')
+                Log.always(('finishing the ending of contract %s raised: %s')
                     :format(tostring(id), tostring(how)))
             elseif how == false and err == CH.ERR.BUSY then
                 more = true
             elseif how then
                 finished = finished + 1
-                print(('[crimson-hitman] contract %s had closed with escrow its ending never '
+                Log.debug(('contract %s had closed with escrow its ending never '
                     .. 'handed over (the ending raised part-way); handed over now as it would '
                     .. 'have been'):format(tostring(id)))
                 -- What finalise clears once a contract has ended, which an

@@ -195,6 +195,20 @@ function serverStub() {
       return out;
     })() } },
     flush: { ok: true, message: 'Audit log flushed: 12 row(s) written.', data: { written: 12 } },
+    // Every escrow line waiting for staff, with the longest things each holds.
+    stuck: { ok: true, data: { recovery: 'ready', reviews: 4, lines: (function () {
+      const out = [];
+      const whys = ['unknown', 'raised', 'unqueued', 'stalled_claim', 'releasing'];
+      for (let i = 1; i <= 8; i++) {
+        out.push({ line: 'ct1000000' + i + ':' + (i + 10), contract: 'ct1000000' + i, amount: 125000 * i,
+          source: i % 3 ? 'bank' : 'item', item: 'a_long_item_name_' + i, quantity: i, portion: i % 2 ? 'baseline' : 'owed',
+          intended: 'operative Ghost of the Eastern Docks', why: whys[i % whys.length], raised: i % 4, arrived: i * 100,
+          at: NOW - i * 600, actions: i === 3 ? ['return_owner'] : ['pay', 'pay_amount', 'return', 'delivered'] });
+      }
+      out.push({ line: 'ct10000099:1', contract: 'ct10000099', amount: 100, source: 'cash', portion: 'stake',
+        why: 'ending_unfinished', unfinished: true, actions: [] });
+      return out;
+    })() } },
     whois: { ok: true, data: { creator: { cid: 'CREATOR1', name: LONG, anonymous: true },
       target: { cid: 'TARGET01', name: 'Dana Reyes' }, hitmen: [] } }
   };
@@ -210,9 +224,7 @@ function serverStub() {
 }
 
 const ACCESS = { canWrite: true, canIdentify: true, pageSize: 25, refreshSeconds: 10, recovery: 'ready',
-  version: '1.1.0', commands: { panel: 'hitmanadmin', refresh: 'ch-refresh', diagnose: 'ch-diag',
-    stuck: 'ch-stuck', settle: 'ch-settle', void: 'ch-void', review: 'ch-review', timeline: 'ch-timeline',
-    contracts: 'ch-contracts', whois: 'ch-whois' } };
+  version: '1.1.0' };
 
 /* Everything that can go wrong on one screen of the panel, measured. */
 function measure(opts) {
@@ -334,7 +346,7 @@ async function main() {
     // Still usable: tables may scroll inside their own frame, never the page.
     { w: 1024, h: 768, tablesFit: false }
   ];
-  const sections = ['overview', 'contracts', 'reviews', 'logs', 'players', 'settings', 'tools'];
+  const sections = ['overview', 'contracts', 'stuck', 'reviews', 'logs', 'players', 'settings', 'tools'];
 
   for (const size of sizes) {
     const page = await openAt(browser, size.w, size.h);

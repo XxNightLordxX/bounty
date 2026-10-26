@@ -604,7 +604,9 @@ describe('kill photos off, from the first start', function()
     --- The real boot path (main.lua), as boot_spec runs it, with the photo
     --- settings given: an upload host the photos would use and a public
     --- address that would be warned about.
-    local function bootWith(killPhotos)
+    --- `debug` boots with Config.Debug on, so each warning is said in full
+    --- rather than counted in the start's one line.
+    local function bootWith(killPhotos, debug)
         for name in pairs(package.loaded) do
             if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
                 package.loaded[name] = nil
@@ -620,6 +622,7 @@ describe('kill photos off, from the first start', function()
         Config.Completion.PhotoStorage = 'host'
         Config.Completion.ExtraPhotoHosts = {}
         Config.Completion.PhotoPublicUrl = 'not an address'
+        Config.Debug = debug == true
         Env.console = {}
         local main = require('server.main')
         return main, main.start()
@@ -666,10 +669,11 @@ describe('kill photos off, from the first start', function()
         end
 
         -- The same start with them on asks, and warns: what the spy and the
-        -- console would have caught.
+        -- console would have caught. With Config.Debug on, so the warnings
+        -- are said in full rather than counted in one line.
         local onSaid
         local on = photoLookups(function()
-            local main, modules = bootWith(true)
+            local main, modules = bootWith(true, true)
             fixture(modules)
             Env.advance((Config.Completion.PhotoHostRefreshSeconds or 300) + 1)
             main.tick()

@@ -6,6 +6,7 @@
 --- from its payload, and none of them is reachable without passing the gate.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local App = {}
 
@@ -424,14 +425,13 @@ local function handler(name, action, fn)
         if not ok then
             deps.audit.rejected('error_' .. name, actor.cid, nil, { error = tostring(result) })
 
-            -- Printed, not only audited. A handler that throws is a fault in
-            -- this resource, and the audit queue is not somewhere an
-            -- operator looks — or can look, without a command they may not
-            -- be able to run. For a long time a crashing handler produced a
-            -- shrug on the player's screen and complete silence in the
-            -- console, which is the worst pairing available: the one person
-            -- who could fix it is the one person not told.
-            print(('[crimson-hitman] the %s handler threw: %s')
+            -- Kept for the diagnosis, not only audited, and printed with
+            -- Config.Debug on. A handler that throws is a fault in this
+            -- resource, and the audit queue is not somewhere an operator
+            -- looks. For a long time a crashing handler produced a shrug on
+            -- the player's screen and nothing anywhere to read: the
+            -- diagnosis lists it now, with the console quiet.
+            Log.debug(('the %s handler threw: %s')
                 :format(name, tostring(result)))
 
             if action then deps.ratelimit.refund(actor, action) end
@@ -1235,27 +1235,30 @@ function App.register()
         local stack = Util.sanitizeText(payload.stack, 900)
         local build = Util.sanitizeText(payload.build, 40)
 
-        -- Printed as well as audited. An operator does not read the audit
-        -- table, and the whole point of this path is that somebody who can
-        -- fix the page finds out the page is broken.
-        print(('[crimson-hitman] the app reported a fault: %s (%s, build %s, %s)')
-            :format(what, where or 'nowhere named', build or 'unknown', actor.cid))
-
-        -- The stack only under Config.Debug. It is what actually locates the
-        -- fault, and it is also several lines of console per report — which
-        -- on a busy server, from a page that breaks for everyone at once, is
-        -- the console gone. Kept in the audit row either way, so turning the
-        -- switch on is about where it is convenient to read, not about
-        -- whether it was recorded.
-        -- Except the log a staff member asked for with /ch-diag, which was
-        -- promised to them in this console and, with Debug off, never came.
-        -- One line per event, as the page recorded them.
+        -- The log a staff member asked for with the diagnosis, which was
+        -- promised to them in the server console: printed whatever
+        -- Config.Debug says, once, as a command's answer is. One line per
+        -- event, as the page recorded them.
         local requested = what == 'page diagnostics' and where == 'requested'
             and (dumpsAsked[actor.source] or 0) >= os.time()
         if requested then dumpsAsked[actor.source] = nil end
+        local say = requested and Log.always or Log.debug
+
+        -- Audited always, and kept for the diagnosis (app faults, below), so
+        -- with Config.Debug off a fault still reaches somebody who can fix
+        -- the page without a console line per report.
+        say(('the app reported a fault: %s (%s, build %s, %s)')
+            :format(what, where or 'nowhere named', build or 'unknown', actor.cid))
+
+        -- The stack only under Config.Debug, or when it was asked for. It is
+        -- what actually locates the fault, and it is also several lines of
+        -- console per report — which on a busy server, from a page that
+        -- breaks for everyone at once, is the console gone. Kept in the audit
+        -- row either way, so turning the switch on is about where it is
+        -- convenient to read, not about whether it was recorded.
         if (Config.Debug or requested) and stack and stack ~= '' then
             for line in (stack .. ' || '):gmatch('(.-) || ') do
-                if line ~= '' then print(('[crimson-hitman]   %s'):format(line)) end
+                if line ~= '' then say(('  %s'):format(line)) end
             end
         end
 

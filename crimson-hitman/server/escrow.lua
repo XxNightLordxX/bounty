@@ -7,6 +7,7 @@
 ---      exactly once, no matter which path reaches it.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Escrow = {}
 
@@ -1567,7 +1568,7 @@ end
 function Escrow.parkStuck(id)
     local stuck, line = Escrow.putBackStuck(id, true)
     if stuck then
-        print(('[crimson-hitman] escrow line %s was left mid-release by a call that raised; '
+        Log.always(('escrow line %s was left mid-release by a call that raised; '
             .. 'returned to held%s'):format(tostring(id), line.releasing_to
                 and ' and left for staff (/ch-stuck) — check whether it was already paid' or ''))
     end
@@ -1689,7 +1690,7 @@ local function afterRaise(recipientCid, line, name, count, raised, before, arriv
         elseif unknown then
             what = 'raised, and whether it arrived could not be checked'
         end
-        print(('[crimson-hitman] escrow line %s: giving %s x%s %s; left for staff (/ch-stuck)'
+        Log.always(('escrow line %s: giving %s x%s %s; left for staff (/ch-stuck)'
             .. ' — check what they have'):format(tostring(line.id), tostring(name), tostring(count), what))
     end
     return false
@@ -2155,7 +2156,7 @@ function Escrow.recoverOwed(lines)
                     -- Neither: not something one cut at a time can leave.
                     -- Neither paid nor voided, and put in front of staff.
                     doubtful = true
-                    print(('[crimson-hitman] owed line %s splits stake %s, which is at '
+                    Log.always(('owed line %s splits stake %s, which is at '
                         .. 'neither figure it knew; left for review')
                         :format(tostring(l.id), tostring(mark.splitFrom)))
                     if Audit then

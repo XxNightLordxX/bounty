@@ -25,6 +25,9 @@ client_scripts {
     -- and the mugshot floor is an elapsed subtraction against it. The server
     -- loads this same file through CrimsonBoot.requireShared instead.
     'shared/util.lua',
+    -- The one way to the console (CrimsonLog): with Config.Debug off the
+    -- client prints nothing to F8 but a staff command's own answer.
+    'shared/log.lua',
     'client/main.lua',
     'client/mugshot.lua',
     -- The admin panel's page: opening it, closing it, its requests.

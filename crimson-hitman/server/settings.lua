@@ -22,6 +22,8 @@
 --- with, and only new actions are refused, with CH.ERR.FEATURE_OFF (or the
 --- feature's own code) and words on the page. No switch here strands money.
 
+local Log = CrimsonBoot.requireShared('log')
+
 local Settings = {}
 
 local Storage, Audit, Check
@@ -170,7 +172,9 @@ local CATALOGUE = {
       inflight = AT_USE },
 
     { key = 'Bailout.Enabled', section = 'features', group = 'Buyouts', kind = 'switch',
-      label = 'Buyouts', about = 'A target may pay to close a contract on them (the app and /cleanse).',
+      label = 'Buyouts',
+      about = 'A target may pay to close a contract on them, in the app or with the buyout '
+          .. 'command for players the app is closed to.',
       inflight = 'A buyout already paid still closes the contract after its delay; new ones are '
           .. 'refused while it is off, and contracts placed meanwhile carry no buyout price.' },
     { key = 'Bailout.BlockWhileIncapacitated', section = 'features', group = 'Buyouts',
@@ -274,7 +278,14 @@ local CATALOGUE = {
     { key = 'Audit.LogReasonText', section = 'features', group = 'Audit and debug', kind = 'switch',
       label = 'Log contract reasons', about = 'The reason text goes into the log.', inflight = AT_USE },
     { key = 'Debug', section = 'features', group = 'Audit and debug', kind = 'switch',
-      label = 'Debug output', about = 'Full stacks of page faults in the console.', inflight = AT_USE },
+      label = 'Debug output in the server console',
+      about = 'Off: the server console prints only what needs you (refusing to start, money '
+          .. 'left for staff, a write that failed) and one line for every setting that needs '
+          .. 'attention. On: everything, each setting problem in full and page faults with their '
+          .. 'stack. The diagnosis lists all of it either way.',
+      inflight = 'Read at every line printed, with no restart. The lines of a start before the '
+          .. 'panel\'s settings are applied (the store opening, its migrations) follow config.lua; '
+          .. 'the diagnosis lists them either way.' },
 
     -- Read only, with the reason -----------------------------------------
     { key = 'Admin.Enabled', section = 'readonly', group = 'Staff', kind = 'switch',
@@ -870,7 +881,7 @@ end
 function Settings.boot()
     local ok, rows = pcall(Storage.readSettings)
     if not ok then
-        print(('[crimson-hitman] warning: could not read the settings changed from the admin '
+        Log.problem(('warning: could not read the settings changed from the admin '
             .. 'panel (%s); config.lua is used as it stands.'):format(tostring(rows)))
         return 0
     end
@@ -882,7 +893,7 @@ function Settings.boot()
     local function notApplied(key, why)
         local row = rowOf(key)
         ignored[key] = { value = copyOf(row.value), by = row.by, at = row.at, why = tostring(why) }
-        print(('[crimson-hitman] warning: the admin panel setting %s is not applied: %s. '
+        Log.problem(('warning: the admin panel setting %s is not applied: %s. '
             .. 'config.lua\'s value is used; reset it in the panel to clear this.')
             :format(key, tostring(why)))
     end
@@ -949,7 +960,7 @@ function Settings.boot()
         end
     end
     if #said > 0 then
-        print(('[crimson-hitman] %d setting(s) changed from the admin panel are in force over '
+        Log.debug(('%d setting(s) changed from the admin panel are in force over '
             .. 'config.lua: %s'):format(#said, table.concat(said, ', ')))
     end
     return #said

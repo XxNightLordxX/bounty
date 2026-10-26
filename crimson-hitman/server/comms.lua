@@ -5,6 +5,7 @@
 --- other participant; anonymity is enforced by what is *not* in the payload.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Comms = {}
 
@@ -489,7 +490,7 @@ local function findPlacer()
     if spec and spec.resource and spec.export then
         if not resolveExport(spec.resource, spec.export) then
             if GetResourceState(spec.resource) == 'started' then
-                print(('[crimson-hitman] warning: Relay.CallExport names %s:%s, which this build ' ..
+                Log.problem(('warning: Relay.CallExport names %s:%s, which this build ' ..
                        'does not export; call requests will be notifications only')
                        :format(spec.resource, spec.export))
             end

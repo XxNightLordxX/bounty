@@ -18,6 +18,7 @@
 --- lb-phone or an image host anything.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Photo = {}
 
@@ -97,6 +98,11 @@ end
 --- ExtraPhotoHosts shipped empty, and every kill photo on a stock install
 --- was refused.
 ---
+--- What the start says of a host server that allows no upload host.
+local NO_HOSTS = 'warning: no photo upload host is allowed, so every kill photo will be refused. '
+    .. 'Add your phone\'s image host to Config.Completion.ExtraPhotoHosts (for Fivemanage: '
+    .. '\'fivemanage.com\', \'fmfile.com\').'
+
 --- Re-read on the maintenance tick: an owner who changes upload provider
 --- would otherwise have to restart this resource too. A change is logged.
 ---@return table allowedDomains
@@ -150,7 +156,7 @@ function Photo.loadAllowedHosts()
         -- next(previous) is nil only on the very first load, which is not a
         -- change worth reporting as one.
         if next(previous) ~= nil then
-            print(('[crimson-hitman] photo host allowlist changed: %s%s%s'):format(
+            Log.debug(('photo host allowlist changed: %s%s%s'):format(
                 #added > 0 and ('+' .. table.concat(added, ' +')) or '',
                 (#added > 0 and #removed > 0) and ' ' or '',
                 #removed > 0 and ('-' .. table.concat(removed, ' -')) or ''))
@@ -167,17 +173,21 @@ function Photo.loadAllowedHosts()
     -- Only where photos come from a host. On 'server' storage the list is
     -- never consulted, and a warning that every kill photo will be refused
     -- would send the owner to fix an image host they do not use.
+    --
+    -- A configuration problem (shared/log.lua): in full with Config.Debug,
+    -- counted in the start's one line without it, and no longer listed by
+    -- the diagnosis once hosts are allowed again.
     if Photo.storage() ~= 'host' then
         Photo.warnedEmpty = false
+        Log.dropProblem(NO_HOSTS)
     elseif next(now) == nil then
         if not Photo.warnedEmpty then
             Photo.warnedEmpty = true
-            print('[crimson-hitman] warning: no photo upload host is allowed, so every kill photo '
-                .. 'will be refused. Add your phone\'s image host to Config.Completion.ExtraPhotoHosts '
-                .. '(for Fivemanage: \'fivemanage.com\', \'fmfile.com\').')
+            Log.problem(NO_HOSTS)
         end
     else
         Photo.warnedEmpty = false
+        Log.dropProblem(NO_HOSTS)
     end
 
     return allowedDomains

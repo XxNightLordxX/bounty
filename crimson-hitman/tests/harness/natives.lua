@@ -60,7 +60,17 @@ function Natives.install()
         if name == 'chat:addMessage' then
             local payload = ...
             local args = payload and payload.args or {}
-            table.insert(Env.chat, { target = target, text = tostring(args[2] or '') })
+            table.insert(Env.chat, { target = target, text = tostring(args[2] or ''), via = 'chat' })
+        end
+        -- A command's answer to a player, printed in their F8 console line
+        -- by line (Bridges.runCommand). Kept with the chat lines, where the
+        -- specs read what a command said back, marked so one can tell them
+        -- apart: a staff command's answer never goes to chat.
+        if name == 'crimson-hitman:commandOutput' then
+            local lines = ...
+            for _, line in ipairs(type(lines) == 'table' and lines or {}) do
+                table.insert(Env.chat, { target = target, text = tostring(line), via = 'f8' })
+            end
         end
         -- The popup the player's client raises, where lb-phone's server
         -- export could not take the notification (Notify's raise).

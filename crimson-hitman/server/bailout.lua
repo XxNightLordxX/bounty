@@ -6,6 +6,7 @@
 --- is queued for a short processing delay first.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Bailout = {}
 
@@ -548,7 +549,7 @@ function Bailout.owe(cid, contractId, amount, account, reason, raise)
             raises = line.deliver_raises, unknown = true, before = line.deliver_before,
             arrived = raise.arrived, review = true,
         })
-        print(('[crimson-hitman] escrow line %s: crediting %s %s raised, and only part of it '
+        Log.always(('escrow line %s: crediting %s %s raised, and only part of it '
             .. 'arrived or what did could not be read; left for staff (/ch-stuck) — check what '
             .. 'they have')
             :format(tostring(lineId), tostring(amount), tostring(line.source)))

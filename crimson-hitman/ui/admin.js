@@ -252,13 +252,13 @@
 
   /* ---------- state ---------------------------------------------------- */
 
-  var SECTIONS = ['overview', 'contracts', 'reviews', 'logs', 'players', 'settings', 'tools'];
+  var SECTIONS = ['overview', 'contracts', 'stuck', 'reviews', 'logs', 'players', 'settings', 'tools'];
 
   /** Ops that only read. A refusal of one as not_allowed means the staff
       member may no longer read at all (an ACE taken away while the panel was
       open), and the panel closes on it, as the README says it does. */
   var READ_OPS = { access: true, overview: true, contracts: true, contract: true, reviews: true,
-                   logs: true, player: true, settings: true, diag: true, whois: true };
+                   logs: true, player: true, settings: true, diag: true, whois: true, stuck: true };
 
   var DEBOUNCE_MS = 250;
   var CONFIRM_MS = 3000;
@@ -279,6 +279,7 @@
     pollGen: 0,             // the open whose overview refresh is running
     contracts: { page: 1, state: '', rule: '', range: '', data: null, timer: null },
     drawer: { id: null, data: null, answer: null, whois: null },
+    stuck: { data: null, error: null, answers: {} },
     reviews: { all: false, items: null, action: {}, answers: {} },
     logs: { kind: '', range: '', cursor: null, back: [], data: null, open: {}, timer: null },
     players: { data: null, whois: {} },
@@ -335,7 +336,7 @@
     invalid_input: 'The server could not read that request.',
     unknown_op: 'The server does not know that request: is the resource up to date?',
     admin_off: 'The staff tools are switched off (Config.Admin.Enabled).',
-    server_error: 'That raised an error on the server (the console says what).',
+    server_error: 'That raised an error on the server. Run the diagnosis, under Tools, to read it.',
     recovering: 'Still recovering from the restart: try again in a moment.',
     recovery_failed: 'Recovery failed at the last start: restart the resource once the cause in the console is fixed.',
     not_found: 'Not found.',
@@ -637,8 +638,9 @@
     var o = S.overview || {};
     setCount('count-reviews', o.reviews ? Number(o.reviews.open) || 0 : 0, 'open in the review queue');
     // What staff settle, not every line listed: one queued since, or an
-    // ending finishing itself, needs nobody.
-    setCount('count-overview', o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0, 'escrow line(s) left for you to settle');
+    // ending finishing itself, needs nobody. Beside Stuck escrow, where
+    // they are settled.
+    setCount('count-stuck', o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0, 'escrow line(s) left for you to settle');
     setCount('count-settings', Number(o.overrides) || 0, 'setting(s) changed from the panel');
   }
 
@@ -772,9 +774,9 @@
             + (nothingToDo === 1 ? 'it is' : 'they are') + ' owed, or an ending settling itself within a minute.')
           : null,
         listed > 0
-          ? h('p.note', 'Each contract\'s view lists its own and settles them; /'
-            + (S.access.commands && S.access.commands.stuck || 'ch-stuck') + ' lists every one.')
-          : null);
+          ? h('p.note', 'Stuck escrow lists every one and settles it; each contract\'s view lists its own.')
+          : null,
+        btn('.is-small', 'section', { 'data-section': 'stuck' }, 'Open Stuck escrow', 'arrow-right'));
     }
 
     var reviewsOpen = o.reviews ? Number(o.reviews.open) || 0 : 0;
@@ -1025,7 +1027,7 @@
     return frag(h('span.name', String(p.name || '—')), p.cid ? h('span.cid', String(p.cid)) : null);
   }
 
-  /** The words /ch-stuck uses for why a line waits. */
+  /** The words the stuck listing uses for why a line waits. */
   var WHY_LONG = {
     interrupted: 'the server stopped while it was being given',
     unknown: 'raised, and what arrived could not be read',
@@ -1064,7 +1066,10 @@
     delivered: ['Delivered', 'Click again: delivered']
   };
 
-  function stuckActions(entry) {
+  /** The settle buttons of one stuck line: in the contract's view
+      (`where` 'drawer') or in Stuck escrow ('stuck'), each answering
+      where it was pressed. */
+  function stuckActions(entry, where) {
     var actions = asList(entry.actions);
     if (!actions.length) return null;
     var line = String(entry.line);
@@ -1073,7 +1078,9 @@
       if (!label) return null;
       // All alike: which one is right is what staff check first, and none
       // of them is the one the drawer is for.
-      var button = writeBtn('', 'settle', { 'data-line': line, 'data-how': how }, label[0], label[1]);
+      var button = writeBtn('', 'settle', { 'data-line': line, 'data-how': how,
+        'data-where': where || 'drawer', 'data-contract': entry.contract ? String(entry.contract) : null },
+        label[0], label[1]);
       if (how === 'pay_amount') {
         return h('span.inline-form', field('dr.amount.' + line, { class: 'is-short', placeholder: 'Amount',
           inputmode: 'numeric', 'aria-label': 'Amount to pay for line ' + line,
@@ -1085,6 +1092,29 @@
       }
       return button;
     }));
+  }
+
+  /** One stuck line: what it holds, why it waits, what settles it. In
+      Stuck escrow it names its contract, which opens its view. */
+  function stuckItem(entry, where) {
+    var unknownArrival = entry.raised !== undefined && entry.raised !== null && entry.why !== 'raised'
+      && !NEVER_GIVEN[entry.why] && !entry.unfinished;
+    var answer = where === 'stuck' ? S.stuck.answers[String(entry.line)] : null;
+    return h('li.stuck-line',
+      h('p.stuck-head', h('span.mono', String(entry.line)), ' ', h('b', holds(entry)),
+        entry.portion ? h('span.chip', String(entry.portion)) : null,
+        entry.intended ? h('span.sub', ' owed to ' + entry.intended) : null,
+        entry.at ? h('span.sub', ' · ' + when(entry.at)) : null,
+        where === 'stuck' && entry.contract
+          ? h('span.sub', ' · contract ', h('button.link.mono', { type: 'button', 'data-act': 'contract',
+            'data-id': String(entry.contract), title: 'Open contract ' + entry.contract }, String(entry.contract)))
+          : null),
+      h('p.stuck-why', stuckWhy(entry)),
+      unknownArrival ? h('p.note.is-warn', 'Arrival unknown: check what they received, then pay the rest '
+        + 'with Pay amount, or Delivered.') : null,
+      NEVER_GIVEN[entry.why] ? h('p.note', 'Never given: only Pay settles it, to them.') : null,
+      stuckActions(entry, where),
+      answerBox(answer));
   }
 
   function slotSummary(escrow, contract) {
@@ -1153,18 +1183,7 @@
       stuckPart = card('Waiting for staff', h('p.note', 'Not listed while the server is recovering from the restart.'));
     } else if (stuck.length) {
       stuckPart = card('Waiting for staff', h('ul.stuck', stuck.map(function (entry) {
-        var unknownArrival = entry.raised !== undefined && entry.raised !== null && entry.why !== 'raised'
-          && !NEVER_GIVEN[entry.why] && !entry.unfinished;
-        return h('li.stuck-line',
-          h('p.stuck-head', h('span.mono', String(entry.line)), ' ', h('b', holds(entry)),
-            entry.portion ? h('span.chip', String(entry.portion)) : null,
-            entry.intended ? h('span.sub', ' owed to ' + entry.intended) : null,
-            entry.at ? h('span.sub', ' · ' + when(entry.at)) : null),
-          h('p.stuck-why', stuckWhy(entry)),
-          unknownArrival ? h('p.note.is-warn', 'Arrival unknown: check what they received, then pay the rest '
-            + 'with Pay amount, or Delivered.') : null,
-          NEVER_GIVEN[entry.why] ? h('p.note', 'Never given: only Pay settles it, to them.') : null,
-          stuckActions(entry));
+        return stuckItem(entry, 'drawer');
       })), '.is-warn');
     }
 
@@ -1243,6 +1262,64 @@
           m.anonymous ? h('span.chip.is-anon', 'anonymous') : null);
       })) : h('p.note', 'No operatives.'));
   }
+
+  /* ---- stuck escrow ---- */
+
+  /** Every escrow line waiting for staff, from the server (op stuck), as
+      the stuck listing has them, each settled here with its buttons. */
+  function loadStuck() {
+    return ask('stuck', {}, 'stuck').then(function (reply) {
+      if (!reply) return;
+      if (!reply.ok) {
+        S.stuck.error = words(reply);
+        toast(S.stuck.error, 'error');
+      } else {
+        S.stuck.data = reply.data || {};
+        S.stuck.error = null;
+        if (S.stuck.data.recovery) setRecovery(S.stuck.data.recovery);
+      }
+      drawStuck();
+    });
+  }
+
+  function drawStuck() {
+    if (S.section === 'stuck') setHtml(byId('sk-list'), stuckBody());
+  }
+
+  function stuckBody() {
+    var d = S.stuck.data;
+    if (!d) return S.stuck.error ? empty(S.stuck.error) : loading('Reading what waits for staff…');
+    var reviewsOpen = Number(d.reviews) || 0;
+    var reviews = reviewsOpen > 0
+      ? card('Needs review', frag(
+          h('p.about', num(reviewsOpen) + ' money event' + (reviewsOpen === 1 ? '' : 's')
+            + ' no rule could settle wait' + (reviewsOpen === 1 ? 's' : '') + ' in the review queue.'),
+          btn('.is-small', 'section', { 'data-section': 'reviews' }, 'Open the queue', 'arrow-right')), '.is-warn')
+      : null;
+    if (d.lines === undefined || d.lines === null) {
+      return frag(h('p.note', 'Not listed while the server is recovering from the restart.'), reviews);
+    }
+    var lines = asList(d.lines);
+    if (!lines.length) return frag(empty('No escrow line is waiting for staff.'), reviews);
+    var forYou = lines.filter(function (entry) { return asList(entry.actions).length > 0; }).length;
+    return frag(
+      h('p.hint', num(forYou) + ' left for you to settle, of ' + num(lines.length) + ' listed. One queued '
+        + 'since for whom it is owed, or an ending settling itself within a minute, needs nothing from you.'),
+      card('Waiting for staff', h('ul.stuck', lines.map(function (entry) {
+        return stuckItem(entry, 'stuck');
+      })), forYou > 0 ? '.is-warn' : ''),
+      reviews);
+  }
+
+  SHELL.stuck = function () {
+    return h('section.view',
+      h('div.toolbar', btn('.is-ghost', 'sk-refresh', {}, 'Refresh', 'rotate')),
+      h('p.hint', 'Every escrow line left for staff: a payout whose give raised or stopped part-way, one '
+        + 'the server stopped in the middle of, and escrow of a contract never stored. Check what the '
+        + 'player has before you settle one: Delivered if it is there, Pay if it is not.'),
+      h('div.stack', { id: 'sk-list' }, stuckBody()));
+  };
+  LOAD.stuck = function () { loadStuck(); };
 
   /* ---- needs review ---- */
 
@@ -1622,7 +1699,7 @@
               'Whois', 'user-secret')) : null),
             who ? h('tr.more', h('td', { colspan: canIdentify() ? '7' : '6' }, whoisBody(who))) : null);
         })))) : empty(canIdentify() ? 'No contracts on record.' : 'No contracts you may see.'),
-        '', h('span.sub', 'newest first, as /' + (S.access.commands && S.access.commands.contracts || 'ch-contracts') + ' lists them')));
+        '', h('span.sub', 'newest first')));
   }
 
   SHELL.players = function () {
@@ -1903,12 +1980,11 @@
 
   function toolsBody() {
     var t = S.tools;
-    var commands = S.access.commands || {};
     return frag(
       h('div.cols',
         card('Bring timers forward', frag(
-          h('p.about', 'Test servers only: brings every wait and cooldown forward, as /'
-            + (commands.refresh || 'ch-refresh') + ' timers does. Deadlines are only ever moved later. Audited.'),
+          h('p.about', 'Test servers only: brings every wait and cooldown forward. Deadlines are only ever '
+            + 'moved later. Audited.'),
           h('div.btn-row', writeBtn('.is-danger', 'tl-refresh', {}, 'Bring timers forward', 'Click again: test servers only', 'forward')),
           t.refresh ? answerBox(t.refresh.answer) : null,
           t.refresh ? linesBox(t.refresh.lines) : null)),
@@ -1918,21 +1994,13 @@
           h('div.btn-row', writeBtn('', 'tl-flush', {}, 'Flush the audit log', null, 'floppy-disk', true)),
           t.flush ? answerBox(t.flush) : null))),
       card('Diagnosis', frag(
-        h('p.about', 'Runs /' + (commands.diagnose || 'ch-diag') + ': why the app is not showing something, and '
-          + 'the server-wide checks. Name a player id to run the app\'s own reads as them.'),
+        h('p.about', 'Why the app is not showing something, the server-wide checks, the settings that need '
+          + 'attention, and what the console said. Name a player id to run the app\'s own reads as them.'),
         h('div.btn-row', field('tl.subject', { class: 'is-short', placeholder: 'Player id', inputmode: 'numeric',
           'data-enter': 'tl-diag', 'aria-label': 'Player id (optional)' }),
           btn('.is-primary', 'tl-diag', {}, 'Run the diagnosis', 'stethoscope')),
         t.diag && t.diag.error ? answerBox({ ok: false, text: t.diag.error }) : null,
-        t.diag ? linesBox(t.diag.lines, t.diag.later) : null)),
-      card('Commands', h('dl.facts.is-commands',
-        h('dt', '/' + (commands.stuck || 'ch-stuck')), h('dd', 'every escrow line waiting for staff'),
-        h('dt', '/' + (commands.settle || 'ch-settle')), h('dd', 'settle one (the contract view does it here)'),
-        h('dt', '/' + (commands.void || 'ch-void')), h('dd', 'close a contract and return its escrow'),
-        h('dt', '/' + (commands.review || 'ch-review')), h('dd', 'the review queue'),
-        h('dt', '/' + (commands.timeline || 'ch-timeline')), h('dd', 'one contract\'s state, escrow and trail'),
-        h('dt', '/' + (commands.contracts || 'ch-contracts')), h('dd', 'a player\'s contracts'),
-        h('dt', '/' + (commands.whois || 'ch-whois')), h('dd', 'who is behind an anonymous party (identity only)'))));
+        t.diag ? linesBox(t.diag.lines, t.diag.later) : null)));
   }
 
   SHELL.tools = function () { return h('section.view', h('div.stack', { id: 'tl' }, toolsBody())); };
@@ -2024,6 +2092,7 @@
   ACTIONS.settle = function (node) {
     var line = node.getAttribute('data-line');
     var how = node.getAttribute('data-how');
+    var inStuck = node.getAttribute('data-where') === 'stuck';
     var data = { line: line, disposition: how === 'pay_amount' ? 'pay' : (how === 'return_owner' ? 'return' : how) };
     var problem = null;
     if (how === 'pay_amount') {
@@ -2035,23 +2104,40 @@
     }
     if (problem) {
       disarm();
-      S.drawer.answer = { ok: false, text: problem };
-      drawDrawer();
+      if (inStuck) {
+        S.stuck.answers[line] = { ok: false, text: problem };
+        drawStuck();
+      } else {
+        S.drawer.answer = { ok: false, text: problem };
+        drawDrawer();
+      }
       return;
     }
     if (!confirmed(node)) return;
     var id = S.drawer.id;
     write('settle', data, 'settle:' + line, node).then(function (reply) {
-      if (!reply || S.drawer.id !== id) return;
-      drawerAnswer(reply);
+      if (!reply) return;
       if (reply.ok) {
         delete S.forms['dr.amount.' + line];
         delete S.forms['dr.owner.' + line];
       }
+      if (inStuck) {
+        // Its answer stays beside it, and the list is read again: a line
+        // settled leaves it, and one re-queued or left again says so.
+        S.stuck.answers[line] = { ok: reply.ok === true, text: words(reply) };
+        toast(words(reply), reply.ok ? 'ok' : 'error');
+        drawStuck();
+        loadStuck();
+        return;
+      }
+      if (S.drawer.id !== id) return;
+      drawerAnswer(reply);
       drawDrawer();
       loadContract();
     });
   };
+
+  ACTIONS['sk-refresh'] = function () { S.stuck.answers = {}; loadStuck(); };
 
   ACTIONS.whois = function (node) {
     if (!canIdentify()) return;
@@ -2371,6 +2457,7 @@
     S.seq = {};
     S.menu = null;
     S.drawer = { id: null, data: null, answer: null, whois: null };
+    S.stuck = { data: null, error: null, answers: {} };
   }
 
   /** The page's side of closing, however it closes. */

@@ -179,8 +179,10 @@ describe('a phone that is not ready when the client is', function()
     it('does not throw when lb-phone itself is hostile', function()
         -- Not a missing export: an export table that raises on every index,
         -- which is what indexing an escrowed resource that failed to start
-        -- has looked like.
+        -- has looked like. Told in F8 with Config.Debug on: with it off the
+        -- client prints nothing in normal play (console_spec).
         ready()
+        Config.Debug = true
         Client.exports = setmetatable({}, {
             __index = function() error('lb-phone: resource not started', 0) end,
         })
@@ -200,6 +202,7 @@ describe('a phone that is not ready when the client is', function()
         eq(#threw, 0,
             'registration must not throw out of its own thread: '
             .. table.concat(threw, ' | '))
+        resetConfig()
         truthy(Client.said('AddCustomApp'),
             'and the operator must be told which call failed: ' .. console())
 
@@ -292,12 +295,15 @@ describe('the app coming and going', function()
 
     it('keeps the app and says so when no removal export exists', function()
         ready()
+        -- Told in F8 with Config.Debug on (see above).
+        Config.Debug = true
         local model = phoneModel({ removeAs = false })
         Client.fire('crimson-hitman:access', true)
         heartbeats(1)
 
         Client.fire('crimson-hitman:access', false)
         heartbeats(3)
+        resetConfig()
         truthy(model.installed, 'nothing could have removed it')
         truthy(Client.said('no export for removing'),
             'an icon that cannot be removed has to be said out loud, or the '

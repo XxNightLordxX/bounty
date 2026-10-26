@@ -11,14 +11,27 @@ A staff account that can adjust money and spawn items makes this much faster.
 
 ## 1. It starts
 
-- [ ] `ensure crimson-hitman` produces `[crimson-hitman] started in json mode`
-      (the shipped `Config.Database.Mode`), and once a contract is placed its
-      files are in `crimson-hitman/data/` (`store.json`, `contracts/`)
+- [ ] With the shipped `Config.Debug = false`, `ensure crimson-hitman` prints
+      **nothing** to the server console, and once a contract is placed its
+      files are in `crimson-hitman/data/` (`store.json`, `contracts/`).
+      `ch-diag` in the server console ends with what the start would have
+      said, `started in json mode` (the shipped `Config.Database.Mode`) among it
+- [ ] Set `Config.Targeting.AllowNearby = true` and restart: the console prints
+      exactly one line, `[crimson-hitman] 1 setting(s) need attention; run
+      ch-diag (F8 or the server console) or open /hitmanadmin to see them`, and
+      `ch-diag` lists the setting under *settings that need attention*. Put it
+      back
+- [ ] Turn **Debug output in the server console** on in the admin panel
+      (**Features & limits → Audit and debug**) and restart: the console prints
+      the integration list, `started in json mode` and any warning in full, as
+      before. Turn it off again: nothing at the next restart
 - [ ] No errors in `txAdmin` console on start or on a `restart crimson-hitman`
 - [ ] Restarting twice in a row is clean (recovery runs, nothing duplicates)
 - [ ] An admin with `crimson.admin` (`add_ace group.admin crimson.admin allow`)
-      can run `/ch-diag` in game; a player without it is told "Not
-      authorised" and how to grant it
+      can run `ch-diag` in the F8 console in game: the whole report prints in
+      F8, nothing in chat, and a notice says *Printed to your F8 console*.
+      Typed in chat as `/ch-diag`, the same. A player without it is told "Not
+      authorised" and how to grant it, in F8 too
 - [ ] **mysql mode only** (`Config.Database.Mode = 'mysql'`, on a copy of the
       server): the console says `started in mysql mode`; the `crimson_*`
       tables exist in the database as InnoDB and `utf8mb4` (`SHOW TABLE STATUS
@@ -473,8 +486,9 @@ uploads, and with neither. Restart the resource between them.
       80 ms at the shipped `Config.Completion.PhotoMaxBytes` (600000) and a
       fifth of a second at 1500000; these are estimates until you measure them
 - [ ] A kidnap countdown running does not spike it
-- [ ] No console spam during normal play, and no
-      `maintenance job ... took ... ms` warning; `/ch-diag` lists the
+- [ ] No console line at all during normal play (place, take and deliver a
+      contract, open the app and the panel), and nothing in a player's F8;
+      `/ch-diag` lists the
       slowest jobs, every one under `Config.Diagnostics.SlowJobMs` (5 ms),
       in `mysql` mode too (time spent waiting on the database is not counted)
 - [ ] With the staff webhook set, a gunfight between players no contract
@@ -497,6 +511,17 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] The overview shows the contracts by state, money held by account, owed
       deliveries, stuck lines, open review items and photos, and refreshes
       every 10 seconds; it matches `/ch-stuck` and `/ch-review`
+- [ ] **Stuck escrow** lists the same lines as `/ch-stuck`, the badge beside it
+      counting the ones left for you; each line's **Delivered** or **Pay**
+      takes two clicks, its answer stays beside it, and its contract id opens
+      the contract's view
+- [ ] Nothing anywhere in the panel names a command: no `/ch-…`, no
+      `/hitmanadmin`, in any section, tooltip, empty list, answer or refusal
+      (an answer that sends you on names the section or button instead, *see
+      Stuck escrow*). Tools has no Commands card, and every command has a
+      button: timeline (a contract's view), contracts (Players), stuck (Stuck
+      escrow), diag (Run the diagnosis), void, settle, review (Needs review),
+      refresh (Bring timers forward) and whois
 - [ ] At your own game resolution (and at 1280x720 windowed, if you can) the
       panel fits the screen: the navigation, every toolbar and the contract
       drawer's Void and Close are on screen without scrolling sideways, and

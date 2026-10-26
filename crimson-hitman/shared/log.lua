@@ -1,0 +1,207 @@
+--- Crimson Hitman System — the one way to the console.
+---
+--- With Config.Debug = false (as shipped) the server console stays quiet: a
+--- normal start on a sound config, and normal play, print nothing at all.
+--- Every line this resource prints, on either side, goes through here as one
+--- of three kinds:
+---
+---   Log.always   printed whatever Debug says, and kept for nothing else:
+---                refusing to start (FATAL); money at risk, or something
+---                left for staff (the review queue, a stalled or parked
+---                escrow line, an ending that raised); a write that failed
+---                or read back wrong, so data could be lost.
+---   Log.problem  a configuration problem found at start. With Debug on each
+---                is printed in full as it is found; with it off they are
+---                counted, and the start prints one line for all of them
+---                (Log.reportProblems), or nothing when there are none.
+---   Log.debug    everything else, printed only with Debug on.
+---
+--- Nothing is lost when the console is quiet. The problems, everything the
+--- start said and the newest of what came after are kept here (Log.view),
+--- and the diagnosis lists them: ch-diag in F8 or the server console, and
+--- Run the diagnosis in the admin panel.
+---
+--- Log.console is a staff command's own answer, printed as it is to the
+--- console that asked: the owner wants that whatever Debug says.
+---
+--- Debug is read at every line, so switching it from the admin panel takes
+--- effect at the next line printed.
+
+local Log = {}
+
+local PREFIX = '[crimson-hitman] '
+
+--- Lines kept from the start, in order, for the diagnosis. A start says
+--- some thirty; the cap is only so a loop at start cannot grow it.
+Log.BOOT_KEPT = 120
+
+--- Lines kept from after the start, newest last. The same line again (a
+--- job failing every tick) is counted on the one it repeats, not kept twice.
+Log.KEPT = 40
+
+local problems = {}    -- { text = string, count = integer, printed = boolean }[] this start
+local reported = false -- whether this start has said its one summary line
+local booting = true   -- until Log.started(): lines go to `boot`
+local boot = {}        -- string[] what the start said, in order
+local recent = {}      -- { text = string, at = number|nil, times = integer }[] newest last
+
+--- Whether Debug output is on, read at every line.
+---@return boolean
+function Log.debugOn()
+    return type(Config) == 'table' and Config.Debug == true
+end
+
+--- The server's clock, where there is one (the client has no os.time).
+local function now()
+    if type(os) == 'table' and type(os.time) == 'function' then return os.time() end
+    return nil
+end
+
+--- The one print in the resource.
+local function emit(text)
+    print(PREFIX .. text)
+end
+
+--- Keep a line for the diagnosis.
+local function keep(text)
+    if booting then
+        if #boot < Log.BOOT_KEPT then boot[#boot + 1] = text end
+        return
+    end
+    for i = #recent, 1, -1 do
+        if recent[i].text == text then
+            local entry = table.remove(recent, i)
+            entry.times, entry.at = entry.times + 1, now()
+            recent[#recent + 1] = entry
+            return
+        end
+    end
+    recent[#recent + 1] = { text = text, at = now(), times = 1 }
+    while #recent > Log.KEPT do table.remove(recent, 1) end
+end
+
+--- How many settings this start found that need attention, each problem
+--- counted as many times as it names settings.
+local function counted()
+    local n = 0
+    for i = 1, #problems do n = n + problems[i].count end
+    return n
+end
+
+--- The one line a quiet start says about its problems.
+---@return string
+function Log.summary()
+    local names = type(Config) == 'table' and type(Config.Admin) == 'table'
+        and type(Config.Admin.Commands) == 'table' and Config.Admin.Commands or {}
+    return ('%d setting(s) need attention; run %s (F8 or the server console) or open /%s to '
+        .. 'see them'):format(counted(), tostring(names.diagnose or 'ch-diag'),
+            tostring(names.panel or 'hitmanadmin'))
+end
+
+--- Printed whatever Debug says. Only for refusing to start, money at risk
+--- or left for staff, and a write that failed or read back wrong.
+---@param text string
+function Log.always(text)
+    emit(text)
+    keep(text)
+end
+
+--- Printed only with Debug on, and kept for the diagnosis either way.
+---@param text string
+function Log.debug(text)
+    if Log.debugOn() then emit(text) end
+    keep(text)
+end
+
+--- A configuration problem. In full with Debug on; with it off, counted for
+--- the start's one line (Log.reportProblems). One found after that line was
+--- said (a host list read on the first tick) says the line again with the
+--- new count, so it is not missed. The same problem again is not counted
+--- twice, nor said again.
+---@param text string as it is printed, without the [crimson-hitman] prefix
+---@param count integer|nil how many settings it names (default 1)
+function Log.problem(text, count)
+    for i = 1, #problems do
+        if problems[i].text == text then return end
+    end
+    local entry = { text = text, count = math.max(1, math.floor(tonumber(count) or 1)), printed = false }
+    problems[#problems + 1] = entry
+    if Log.debugOn() then
+        emit(text)
+        entry.printed = true
+    elseif reported then
+        emit(Log.summary())
+    end
+end
+
+--- A problem that is not one any more (a host list that has hosts again):
+--- no longer listed by the diagnosis, nor counted.
+---@param text string as it was given to Log.problem
+function Log.dropProblem(text)
+    for i = #problems, 1, -1 do
+        if problems[i].text == text then table.remove(problems, i) end
+    end
+end
+
+--- Say this start's problems: each in full with Debug on (those not said
+--- yet, Debug having been turned on since they were found), or the one
+--- summary line with it off, or nothing when there are none.
+---@param full boolean|nil every one in full whatever Debug says: a start
+--- refusing to go on, where no diagnosis can be run to read them
+---@return integer said lines printed
+function Log.reportProblems(full)
+    reported = true
+    if #problems == 0 then return 0 end
+    if full or Log.debugOn() then
+        local said = 0
+        for i = 1, #problems do
+            if not problems[i].printed then
+                emit(problems[i].text)
+                problems[i].printed = true
+                said = said + 1
+            end
+        end
+        return said
+    end
+    emit(Log.summary())
+    return 1
+end
+
+--- A staff command's answer, printed as it is (no prefix) to the console
+--- that ran it, whatever Debug says.
+---@param line string
+function Log.console(line)
+    print(line)
+end
+
+--- A start begins: what an earlier one found and said is forgotten.
+function Log.beginStart()
+    problems, boot, recent = {}, {}, {}
+    reported, booting = false, true
+end
+
+--- The start is over: lines from here on are kept as the newest few.
+function Log.started()
+    booting = false
+end
+
+--- Forget the problems found so far (a check run again from scratch).
+function Log.clearProblems()
+    problems, reported = {}, false
+end
+
+--- What is kept, for the diagnosis: copies, so nothing outside changes them.
+---@return table { problems = string[], count = integer, boot = string[], recent = { text, at, times }[], debug = boolean }
+function Log.view()
+    local out = { problems = {}, count = counted(), boot = {}, recent = {}, debug = Log.debugOn() }
+    for i = 1, #problems do out.problems[i] = problems[i].text end
+    for i = 1, #boot do out.boot[i] = boot[i] end
+    for i = 1, #recent do
+        out.recent[i] = { text = recent[i].text, at = recent[i].at, times = recent[i].times }
+    end
+    return out
+end
+
+CrimsonLog = Log
+
+return Log

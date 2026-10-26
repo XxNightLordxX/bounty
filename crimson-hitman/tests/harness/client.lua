@@ -235,6 +235,11 @@ function Client.boot(opts)
         end
     end
 
+    -- The shared files the manifest loads before the client's own, which
+    -- publish CrimsonUtil and CrimsonLog.
+    require('crimson-hitman.shared.util')
+    require('crimson-hitman.shared.log')
+
     package.loaded['crimson-hitman.client.main'] = nil
     local ok, app = withPhone(require, 'crimson-hitman.client.main')
 

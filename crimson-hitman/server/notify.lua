@@ -150,6 +150,22 @@ local function raise(actor, cid, title, content)
     end)
 end
 
+--- A short notice on one player's screen, by server id, never saved on
+--- their phone: the popup their client raises (crimson-hitman:notify).
+--- For a staff command's "Printed to your F8 console", which is about this
+--- moment and nothing to keep; and by server id, since staff run commands
+--- before a character is loaded too. Not charged to any budget.
+---@param src number
+---@param title string
+---@param content string
+---@return boolean sent
+function Notify.onScreen(src, title, content)
+    src = tonumber(src)
+    if not src or src <= 0 then return false end
+    TriggerClientEvent('crimson-hitman:notify', src, { title = title, content = content })
+    return true
+end
+
 --- Send to one player by citizen id. Silently no-ops when they are offline.
 ---
 --- Saved on their phone through lb-phone's server export where it can be,

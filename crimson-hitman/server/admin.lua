@@ -12,6 +12,7 @@
 --- leaves no trace is a lookup nobody can review.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Admin = {}
 
@@ -116,8 +117,15 @@ end
 --- "Not authorised." is true and useless. An owner reading it has no way to
 --- know which ACE, or where to put it.
 ---@param ace string
+---@param panel boolean|nil worded for the admin panel, which has no
+--- commands in it: the grant alone, with no command to run instead
 ---@return string
-function Admin.howToAuthorise(ace)
+function Admin.howToAuthorise(ace, panel)
+    if panel then
+        return ('Not authorised: this needs the %s ACE. Grant it with add_ace group.admin %s '
+            .. 'allow, pasted into the server console until the next restart, or put in '
+            .. 'server.cfg to keep it.'):format(ace, ace)
+    end
     -- The console route matters more than the ACE for the one command an
     -- owner needs before anything is set up. Somebody locked out in game
     -- and told only about server.cfg has to restart their server to find
@@ -547,7 +555,9 @@ end
 --
 -- The commands (server/bridges.lua) and the admin panel (server/panel.lua)
 -- answer a void, a settle and a review resolved in these words, so staff
--- read the same thing whichever they used.
+-- read the same thing whichever they used. Where an answer sends staff
+-- somewhere next, `panel` names the panel's section or button instead of
+-- the command: the panel has no commands in it, only buttons.
 
 --- While boot recovery runs (App.ready): what a write would act on is not
 --- decided yet.
@@ -574,14 +584,23 @@ end
 ---@param id any the contract id as staff gave it
 ---@param ok boolean
 ---@param err string|nil
+---@param panel boolean|nil worded for the admin panel
 ---@return string
-function Admin.voidAnswer(id, ok, err)
+function Admin.voidAnswer(id, ok, err, panel)
     local names = Config.Admin.Commands
     if err == 'recovering' then return Admin.RECOVERING end
     if err == 'recovery_failed' then return Admin.RECOVERY_FAILED end
     -- Mid-claim with no claim running (Admin.void): the void waits for
     -- the restart that puts it back to accepted.
     if err == 'stalled_claim' then
+        if panel then
+            return ('Could not void it: contract %s is mid-claim with no claim running (a '
+                .. 'stalled claim: the claim paying a collection raised part-way), and only the '
+                .. 'next start puts it back. Pay each line Stuck escrow lists for it as a stalled '
+                .. 'claim with its Pay button, then restart the resource: recovery puts the contract '
+                .. 'back to accepted (or completes it, if that was its last collection), and Void '
+                .. 'contract closes it then.'):format(tostring(id))
+        end
         return ('Could not void it: contract %s is mid-claim with no claim running (a '
             .. 'stalled claim: the claim paying a collection raised part-way), and only the next '
             .. 'start puts it back. Pay each line /%s lists for it as a stalled claim with /%s '
@@ -597,12 +616,21 @@ end
 ---@param ok boolean
 ---@param err string|nil
 ---@param detail any
+---@param panel boolean|nil worded for the admin panel
 ---@return string
-function Admin.settleAnswer(ok, err, detail)
+function Admin.settleAnswer(ok, err, detail, panel)
     local names = Config.Admin.Commands
+    -- Where staff look again: the command, or the panel's section.
+    local stuck = panel and 'Stuck escrow' or ('/' .. tostring(names.stuck))
     if err == 'recovering' then return Admin.RECOVERING end
     if err == 'recovery_failed' then return Admin.RECOVERY_FAILED end
     if err == 'live' then
+        if panel then
+            return ('Not settled: contract %s is still live and this line is its own (a payout '
+                .. 'its next claim pays, a bonus or a stake), not one left for you. Void contract, '
+                .. 'in its view, closes a live contract and returns its escrow; settling is only '
+                .. 'for what Stuck escrow lists.'):format(tostring(detail))
+        end
         return ('Not settled: contract %s is still live and this line is its own (a payout '
             .. 'its next claim pays, a bonus or a stake), not one left for you. /%s %s closes a live '
             .. 'contract and returns its escrow; /%s settles only what /%s lists.')
@@ -621,7 +649,7 @@ function Admin.settleAnswer(ok, err, detail)
         return ('Queued: they are in the city, but the give was refused (no room in their '
             .. 'pockets, their account would not take it, or their inventory could not be read), '
             .. 'so it goes on their retry queue and is tried again while they are in the city and '
-            .. 'at their next login; see /%s.'):format(names.stuck)
+            .. 'at their next login; see %s.'):format(stuck)
     end
     if ok and err == 'queued' then
         return 'Queued: they are not in the city, so it is delivered at their next login.'
@@ -629,38 +657,42 @@ function Admin.settleAnswer(ok, err, detail)
     if ok and err == 'requeued' then
         return ('Re-queued after a failed give: giving it raised an error with nothing '
             .. 'arriving, so it goes back on their retry queue and is tried again while they are '
-            .. 'in the city and at their next login; three such raises leave it for staff (see /%s).')
-            :format(names.stuck)
+            .. 'in the city and at their next login; three such raises leave it for staff (see %s).')
+            :format(stuck)
     end
     if err == 'parked' then
         return ('Not settled: giving it raised again, so it is left for staff again; '
-            .. 'see /%s.'):format(names.stuck)
+            .. 'see %s.'):format(stuck)
     end
     if err == 'already_queued' then
         return ('Already queued for %s: it is theirs, given while they are in the city '
             .. 'or at their next login. Nothing to settle.'):format(tostring(detail))
     end
     if err == 'pay_only' then
+        if panel then
+            return ('Not settled: nothing of it was given (owed to %s and in no retry queue), '
+                .. 'so only Pay settles it, to them.'):format(tostring(detail))
+        end
         return ('Not settled: nothing of it was given (owed to %s and in no retry queue), '
             .. 'so only /%s <line> pay settles it, to them.'):format(tostring(detail), names.settle)
     end
     if err == 'owes_less' then
         return ('Not settled: the line now owes only %s, less than that amount; '
-            .. 'check again (/%s).'):format(tostring(detail), names.stuck)
+            .. 'check again (%s).'):format(tostring(detail), stuck)
     end
     if err == 'not_left' then
         return ('Not settled: it is no longer left for staff, as something settled or '
-            .. 'moved it since it was read; see /%s.'):format(names.stuck)
+            .. 'moved it since it was read; see %s.'):format(stuck)
     end
     if err == 'raised' then
         return ('Not settled: settling it raised an error (logged as admin_settle_raised, '
-            .. 'and in the console). Anything it left mid-give is left for staff; see /%s.')
-            :format(names.stuck)
+            .. 'and in the console). Anything it left mid-give is left for staff; see %s.')
+            :format(stuck)
     end
     if err == CH.ERR.LOCKED then
         return ('Not settled: something else is giving or settling it right now (a '
             .. 'release, a login retry, the claim on its contract, another settle), or it is owed '
-            .. 'to somebody else; nothing moved. Check again with /%s.'):format(names.stuck)
+            .. 'to somebody else; nothing moved. Check again with %s.'):format(stuck)
     end
     return ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err))
 end
@@ -670,8 +702,9 @@ end
 ---@param ok boolean
 ---@param err string|nil
 ---@param detail any
+---@param panel boolean|nil worded for the admin panel
 ---@return string
-function Admin.reviewAnswer(id, ok, err, detail)
+function Admin.reviewAnswer(id, ok, err, detail, panel)
     local names = Config.Admin.Commands
     if err == 'recovering' then return Admin.RECOVERING end
     if err == 'recovery_failed' then return Admin.RECOVERY_FAILED end
@@ -682,8 +715,9 @@ function Admin.reviewAnswer(id, ok, err, detail)
                 and ' It had been decided so before a stop, and is finished now.' or '')
         end
         return ('Resolved: %d line(s) given, %d owed and given while they are in '
-            .. 'the city or at their next login, %d left for /%s (giving raised). %s')
-            :format(r.settled or 0, r.pending or 0, r.parked or 0, names.stuck,
+            .. 'the city or at their next login, %d left for %s (giving raised). %s')
+            :format(r.settled or 0, r.pending or 0, r.parked or 0,
+                panel and 'Stuck escrow' or ('/' .. tostring(names.stuck)),
                 r.continued and 'It had been decided before a stop and was finished as decided, '
                     .. 'not as asked now.' or '')
     end
@@ -692,17 +726,24 @@ function Admin.reviewAnswer(id, ok, err, detail)
         [CH.ERR.ALREADY_SETTLED] = 'Already resolved; nothing was given again.',
         [CH.ERR.BUSY] = 'It is being resolved right now. Look again in a moment.',
         [CH.ERR.LOCKED] = 'Something else resolved or began resolving it meanwhile; look again.',
-        note_required = 'Say why: /' .. names.review .. ' <id> dismiss <note>.',
+        note_required = panel and 'Say why in the note: a dismissal gives nothing, and the note is '
+            .. 'the record of why.' or ('Say why: /' .. names.review .. ' <id> dismiss <note>.'),
         no_party = 'Name who it goes to: a citizen id, or a role the item names.',
         which_money = 'It records more than one kind of money: say which (cash, bank or dirty).',
         nothing_recorded = 'It records nothing of that to give; use pay, or items for goods.',
         over_recorded = ('That is more than it records (%s); refund at most that.')
             :format(tostring(detail)),
-        raised = ('Resolving it raised an error (in the console). It is left being resolved, '
-            .. 'with the decision on it: /%s %s finishes it.')
-            :format(names.review, tostring(id)),
+        raised = panel and ('Resolving it raised an error (in the console). It is left being '
+                .. 'resolved, with the decision on it: resolve it again in Needs review to finish it '
+                .. 'as decided.')
+            or ('Resolving it raised an error (in the console). It is left being resolved, '
+                .. 'with the decision on it: /%s %s finishes it.'):format(names.review, tostring(id)),
     }
-    return why[err] or ('Usage: /%s [all] | /%s <id> refund <citizenid|role> <amount> '
+    if why[err] then return why[err] end
+    if panel then
+        return 'Say refund, pay or dismiss, and whom it goes to: a role the item names, or a citizen id.'
+    end
+    return ('Usage: /%s [all] | /%s <id> refund <citizenid|role> <amount> '
         .. '[cash|bank|dirty] | refund <citizenid|role> items | pay <citizenid|role> | '
         .. 'dismiss <note>'):format(names.review, names.review)
 end
@@ -809,7 +850,7 @@ local function settleRaised(who, line, disposition, recipient, err)
           error = tostring(err), parked = (parkRan and stuck) or nil,
           park_error = not parkRan and tostring(stuck) or nil, review = true })
     logNow()
-    print(('[crimson-hitman] settling escrow line %s (%s) raised: %s'):format(
+    Log.always(('settling escrow line %s (%s) raised: %s'):format(
         tostring(line.id), disposition, tostring(err)))
     return false, 'raised'
 end
@@ -1281,7 +1322,7 @@ function Admin.resolveReview(src, id, args)
         Audit.financial('review_resolve_raised', who, nil,
             { review = id, action = action, error = tostring(ok) })
         logNow()
-        print(('[crimson-hitman] resolving review %s raised: %s'):format(tostring(id), tostring(ok)))
+        Log.always(('resolving review %s raised: %s'):format(tostring(id), tostring(ok)))
         return false, 'raised'
     end
     return ok, err, detail
@@ -1361,13 +1402,49 @@ end
 ---@param later fun(line: string)|nil where a check that has to wait for an
 --- answer (whether the public photo address reaches this resource) says
 --- what it found, after the report. Without it that check is not made.
+---@param opts table|nil { panel = true }: worded for the admin panel, which
+--- has no commands in it, so the report names its sections and buttons
 ---@return string[] lines
-function Admin.diagnose(source, subjectId, later)
+function Admin.diagnose(source, subjectId, later, opts)
+    local panel = type(opts) == 'table' and opts.panel == true
     local out = {}
-    local function say(line) out[#out + 1] = line end
+    -- In the panel, a line kept from the console that names a command
+    -- (a review left for staff: "see /ch-stuck") names the panel's place
+    -- for it instead (Admin.panelWords).
+    local function say(line) out[#out + 1] = panel and Admin.panelWords(line) or line end
 
     say('--- crimson-hitman diagnosis ---')
-    say(('storage: %s'):format(tostring(Config.Database.Mode)))
+    say(('storage: %s%s'):format(tostring(Config.Database.Mode), Config.Database.Mode == 'memory'
+        and ' (testing only: contracts and escrow do not survive a restart)' or ''))
+
+    -- What the start found wrong with the configuration (shared/log.lua):
+    -- with Config.Debug off the console said one line for all of them, and
+    -- this is where that line sends staff. First, so it is not missed.
+    local kept = Log.view()
+    if #kept.problems > 0 then
+        say(('settings that need attention: %d'):format(kept.count))
+        for _, text in ipairs(kept.problems) do
+            say('  -> ' .. (text:gsub('^warning: ', '')))
+        end
+    else
+        say('settings that need attention: none')
+    end
+
+    --- What the console said, and with Config.Debug off would have said
+    --- (shared/log.lua): the whole start, then the newest lines since, so
+    --- nothing a quiet console left out is lost. Last in the report, on
+    --- every way it ends. Marked with a dot, which the admin panel's
+    --- overview does not take for something to act on.
+    local function consoleNotes()
+        say(('console: debug output %s (Config.Debug); what this start said, and the newest '
+            .. 'since:'):format(kept.debug and 'on' or 'off, so only what needs you was printed'))
+        if #kept.boot == 0 and #kept.recent == 0 then say('  · nothing') end
+        for _, text in ipairs(kept.boot) do say('  · ' .. text) end
+        for _, entry in ipairs(kept.recent) do
+            say(('  · %s  %s%s'):format(entry.at and os.date('%H:%M:%S', entry.at) or '--:--:--',
+                entry.text, entry.times > 1 and (' (x%d)'):format(entry.times) or ''))
+        end
+    end
 
     -- How contracts are completed, server-wide and first: "my kill did not
     -- pay" has its whole answer here on a server that ships live transfer
@@ -1476,8 +1553,12 @@ function Admin.diagnose(source, subjectId, later)
     local reviewing = Review and Review.openCount() or 0
     if reviewing > 0 then
         say(('  %d MONEY EVENT(S) WAIT IN THE REVIEW QUEUE.'):format(reviewing))
-        say(('    -> /%s lists them with what is known, and /%s resolves each')
-            :format(tostring(Config.Admin.Commands.stuck), tostring(Config.Admin.Commands.review)))
+        if panel then
+            say('    -> Needs review lists them with what is known, and resolves each')
+        else
+            say(('    -> /%s lists them with what is known, and /%s resolves each')
+                :format(tostring(Config.Admin.Commands.stuck), tostring(Config.Admin.Commands.review)))
+        end
     end
 
     -- Settings changed from the admin panel, which are in force over
@@ -1519,8 +1600,12 @@ function Admin.diagnose(source, subjectId, later)
         else
             say('identity: COULD NOT RESOLVE this player. Nothing else can work.')
         end
-        say(('  -> name somebody who is in the city:  %s <playerid>')
-            :format(tostring(Config.Admin.Commands.diagnose)))
+        if panel then
+            say('  -> name somebody who is in the city: their player id, beside Run the diagnosis')
+        else
+            say(('  -> name somebody who is in the city:  %s <playerid>')
+                :format(tostring(Config.Admin.Commands.diagnose)))
+        end
         say('  the server-wide checks below still ran.')
     else
         say(('identity: %s (%s)'):format(tostring(actor.name), tostring(actor.cid)))
@@ -1591,6 +1676,7 @@ function Admin.diagnose(source, subjectId, later)
                 .. 'Config.Sources.item and .weapon.')
         end
         say('  name a player to test the ox_inventory reads themselves.')
+        consoleNotes()
         say('--- end ---')
         return out
     end
@@ -1902,8 +1988,8 @@ function Admin.diagnose(source, subjectId, later)
     say(('  keyed on: %s'):format(tostring(Config.RateLimit.Key)))
 
     if Config.Debug then
-        say('debug: ON — page faults print their full stack to this console. '
-            .. 'Leave it off on a busy server; the reports are recorded either way.')
+        say('debug: ON — the server console prints everything, page faults with their full '
+            .. 'stack. Leave it off on a busy server; the reports are recorded either way.')
     end
 
     -- What the app itself has reported.
@@ -1943,12 +2029,44 @@ function Admin.diagnose(source, subjectId, later)
         if App and App.expectDump then App.expectDump(subject) end
         TriggerClientEvent('crimson-hitman:askDiagnostics', subject)
         say(('  asked player %s\'s app for its own log; if it is open, the '
-            .. 'answer follows in this console within a second or two.')
+            .. 'answer follows in the server console within a second or two.')
             :format(tostring(subject)))
     end
 
+    consoleNotes()
     say('--- end ---')
     return out
+end
+
+--- Where the admin panel has each command: the panel has no commands in
+--- it, so a line written for the console ("left for staff (/ch-stuck)")
+--- reads with the section or button that does the same thing.
+local PANEL_PLACES = {
+    stuck = 'Stuck escrow', settle = 'Stuck escrow', review = 'Needs review',
+    void = 'Void contract', timeline = 'the contract\'s view', contracts = 'Players',
+    whois = 'Whois', diagnose = 'Run the diagnosis', refresh = 'Bring timers forward',
+    panel = 'the admin panel',
+}
+
+--- A console line in the admin panel's words: every /command in it named
+--- by the panel's place for it (PANEL_PLACES).
+---@param line string
+---@return string
+function Admin.panelWords(line)
+    line = tostring(line)
+    local names = {}
+    for key, name in pairs(Config.Admin.Commands or {}) do
+        if type(name) == 'string' and name ~= '' and PANEL_PLACES[key] then
+            names[#names + 1] = { name = name, place = PANEL_PLACES[key] }
+        end
+    end
+    -- Longest first, so ch-review is never read as a prefix of another.
+    table.sort(names, function(a, b) return #a.name > #b.name end)
+    for _, entry in ipairs(names) do
+        local pattern = '/' .. entry.name:gsub('%p', '%%%0') .. '%f[^%w_%-]'
+        line = line:gsub(pattern, (entry.place:gsub('%%', '%%%%')))
+    end
+    return line
 end
 
 --------------------------------------------------------------------------

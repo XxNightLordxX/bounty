@@ -37,7 +37,7 @@ local appReady = false
 local function phone(what, fn)
     local ok, result = pcall(fn)
     if ok then return true, result end
-    print(('[crimson-hitman] lb-phone %s failed on this build: %s')
+    CrimsonLog.debug(('lb-phone %s failed on this build: %s')
         :format(what, tostring(result)))
     return false
 end
@@ -69,7 +69,7 @@ function App.build()
         buildStamp = version
     else
         buildStamp = 'nover'
-        print('[crimson-hitman] fxmanifest.lua has no version line. The phone '
+        CrimsonLog.debug('fxmanifest.lua has no version line. The phone '
             .. 'page cannot then be cache-busted by version, so players may keep '
             .. 'an old copy of the app after an update. Add a version to the '
             .. 'manifest.')
@@ -105,7 +105,7 @@ local function unregisterApp()
         end
     end
 
-    print('[crimson-hitman] this lb-phone build has no export for removing a '
+    CrimsonLog.debug('this lb-phone build has no export for removing a '
         .. 'custom app, so the icon stays until the player reconnects. Every '
         .. 'request behind it is still refused.')
 end
@@ -167,7 +167,7 @@ local function registerApp()
 
     if not called then return false end
     if not ok then
-        print('[crimson-hitman] lb-phone rejected the app')
+        CrimsonLog.debug('lb-phone rejected the app')
         return false
     end
 
@@ -191,12 +191,12 @@ local function attemptRegistration()
 
     for attempt = 1, 10 do
         if registerApp() then return end
-        print(('[crimson-hitman] app registration attempt %d failed; retrying')
+        CrimsonLog.debug(('app registration attempt %d failed; retrying')
             :format(attempt))
         Wait(2000 * attempt)
     end
 
-    print('[crimson-hitman] lb-phone would not register the app. It will not appear '
+    CrimsonLog.debug('lb-phone would not register the app. It will not appear '
         .. 'on the phone until this resource or lb-phone is restarted.')
 end
 
@@ -219,7 +219,7 @@ local function registerWithRetries()
     registering = false
 
     if not ok then
-        print(('[crimson-hitman] app registration threw: %s'):format(tostring(err)))
+        CrimsonLog.debug(('app registration threw: %s'):format(tostring(err)))
     end
 end
 
@@ -1158,7 +1158,7 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
                 end)
             end)
             if not ok then
-                print(('[crimson-hitman] the camera callback threw: %s')
+                CrimsonLog.debug(('the camera callback threw: %s')
                     :format(tostring(err)))
                 cb({ ok = false, err = 'photo_rejected' })
             end

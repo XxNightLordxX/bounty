@@ -5,6 +5,7 @@
 --- or from a player — they are literals in this source.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 local MySQLStore = {}
 
 local seq = 0
@@ -545,7 +546,7 @@ function MySQLStore.migrate(failed)
             if engine and engine ~= '' and engine:lower() ~= 'innodb' then
                 if change(('ALTER TABLE %s ENGINE=InnoDB'):format(table_),
                     ('%s on the InnoDB engine (it is %s)'):format(table_, engine), failed) then
-                    print(('[crimson-hitman] migrated: moved %s from %s to InnoDB')
+                    Log.debug(('migrated: moved %s from %s to InnoDB')
                         :format(table_, engine))
                 end
             end
@@ -571,7 +572,7 @@ function MySQLStore.migrate(failed)
                 if change(('ALTER TABLE %s CONVERT TO CHARACTER SET %s COLLATE %s')
                     :format(table_, CHARSET, COLLATION),
                     ('%s in %s'):format(table_, COLLATION), failed) then
-                    print(('[crimson-hitman] migrated: converted %s to %s'):format(table_, COLLATION))
+                    Log.debug(('migrated: converted %s to %s'):format(table_, COLLATION))
                 end
             end
 
@@ -586,7 +587,7 @@ function MySQLStore.migrate(failed)
                             if change(('ALTER TABLE %s CHANGE COLUMN `%s` %s')
                                 :format(table_, old, column.definition),
                                 ('column %s.%s, renamed from %s'):format(table_, new, old), failed) then
-                                print(('[crimson-hitman] migrated: renamed %s.%s to %s')
+                                Log.debug(('migrated: renamed %s.%s to %s')
                                     :format(table_, old, new))
                                 present[old], present[new] = nil, true
                             end
@@ -601,7 +602,7 @@ function MySQLStore.migrate(failed)
                     if safeIdentifier(column.name) and not present[column.name:lower()] then
                         if change(('ALTER TABLE %s ADD COLUMN %s'):format(table_, column.definition),
                             ('column %s.%s'):format(table_, column.name), failed) then
-                            print(('[crimson-hitman] migrated: added %s.%s'):format(table_, column.name))
+                            Log.debug(('migrated: added %s.%s'):format(table_, column.name))
                             addedColumns = addedColumns + 1
                         end
                     end
@@ -623,7 +624,7 @@ function MySQLStore.migrate(failed)
                     if safeIdentifier(index.name) and not haveIndex[index.name:lower()] then
                         if change(('ALTER TABLE %s ADD %s'):format(table_, index.definition),
                             ('index %s on %s'):format(index.name, table_), failed) then
-                            print(('[crimson-hitman] migrated: added index %s on %s')
+                            Log.debug(('migrated: added index %s on %s')
                                 :format(index.name, table_))
                             addedIndexes = addedIndexes + 1
                         end
@@ -634,7 +635,7 @@ function MySQLStore.migrate(failed)
     end
 
     if addedColumns > 0 or addedIndexes > 0 then
-        print(('[crimson-hitman] schema migration: %d column(s), %d index(es) added')
+        Log.debug(('schema migration: %d column(s), %d index(es) added')
             :format(addedColumns, addedIndexes))
     end
 

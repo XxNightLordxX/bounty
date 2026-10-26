@@ -151,9 +151,13 @@ end)
 describe('the client on a phone missing an export', function()
     it('does not lose the notify handler', function()
         Env.reset()
+        -- Said in F8 with Config.Debug on; with it off the client prints
+        -- nothing in normal play (console_spec).
+        Config.Debug = true
         Client.boot({ without = { 'SendNotification' } })
 
         local ok = Client.fire('crimson-hitman:notify', { title = 'Paid', content = '5000' })
+        resetConfig()
         truthy(ok, 'a build without the export must not throw out of the handler')
         truthy(Client.said('SendNotification'),
             'and it must say which export is missing: ' .. table.concat(Client.console, ' | '))
@@ -1207,12 +1211,15 @@ end)
 describe('app registration that does not take the first time', function()
     it('retries until lb-phone accepts', function()
         Env.reset()
+        -- Said in F8 with Config.Debug on (see above).
+        Config.Debug = true
         Client.boot({ refuseRegistration = true })
         Natives.resourceStates = { ['lb-phone'] = 'started' }
         Client.fire('crimson-hitman:access', true)
 
         -- The first pass refuses throughout: ten attempts, no app.
         Client.runThreads()
+        resetConfig()
 
         local attempts = 0
         for _, call in ipairs(Client.phone) do
@@ -1226,11 +1233,14 @@ describe('app registration that does not take the first time', function()
 
     it('survives a build with no AddCustomApp at all', function()
         Env.reset()
+        -- Said in F8 with Config.Debug on (see above).
+        Config.Debug = true
         Client.boot({ without = { 'AddCustomApp' } })
         Natives.resourceStates = { ['lb-phone'] = 'started' }
         Client.fire('crimson-hitman:access', true)
 
         local ran = Client.runThreads()
+        resetConfig()
         truthy(ran > 0, 'the registration thread must have run')
         truthy(Client.said('AddCustomApp'),
             'a missing export must be named, not swallowed: '

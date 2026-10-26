@@ -24,6 +24,7 @@
 --- ask or the next start finishes from the lines it already wrote.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Review = {}
 
@@ -130,12 +131,12 @@ function Review.open(spec)
 
     local wrote, err = pcall(Storage.writeReview, item)
     if wrote then
-        print(('[crimson-hitman] left for staff: review %s (%s) on contract %s; see /%s')
+        Log.always(('left for staff: review %s (%s) on contract %s; see /%s')
             :format(id, item.kind, tostring(item.contract_id), tostring(Config.Admin.Commands.stuck)))
     else
         unwritten[#unwritten + 1] = item
         local encoded, text = pcall(json.encode, item)
-        print(('[crimson-hitman] left for staff: review %s (%s) on contract %s, but the store would '
+        Log.always(('left for staff: review %s (%s) on contract %s, but the store would '
             .. 'not take it (%s); it is kept here and written once the store answers. Until then '
             .. 'it exists only in this process: %s')
             :format(id, item.kind, tostring(item.contract_id), tostring(err),
@@ -156,7 +157,7 @@ function Review.retryUnwritten()
         local item = unwritten[i]
         if pcall(Storage.writeReview, item) then
             written = written + 1
-            print(('[crimson-hitman] review %s (%s) is in the store now; see /%s')
+            Log.always(('review %s (%s) is in the store now; see /%s')
                 :format(item.id, item.kind, tostring(Config.Admin.Commands.stuck)))
         else
             keep[#keep + 1] = item
@@ -531,7 +532,7 @@ function Review.recover()
         end
     end
     if finished > 0 then
-        print(('[crimson-hitman] recovery: finished %d review(s) the last shutdown left '
+        Log.debug(('recovery: finished %d review(s) the last shutdown left '
             .. 'part-way resolved'):format(finished))
     end
     return finished

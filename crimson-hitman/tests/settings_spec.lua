@@ -506,8 +506,12 @@ describe('settings changed from the panel, across a restart', function()
                 local printed = {}
                 local real = _G.print
                 _G.print = function(line) printed[#printed + 1] = tostring(line) end
+                -- Said in full, as with Config.Debug on; off, the start
+                -- counts it in its one line (console_spec).
+                Config.Debug = true
                 local settings = settingsOn(s, reopened(name, store))
                 local applied = settings.boot()
+                Config.Debug = false
                 _G.print = real
                 eq(applied, 0)
                 eq(Config.Bailout.MinMultiplier, 1, 'config.lua\'s value is used')
@@ -554,8 +558,11 @@ describe('settings changed from the panel, across a restart', function()
                 local printed = {}
                 local real = _G.print
                 _G.print = function(line) printed[#printed + 1] = tostring(line) end
+                -- Said in full, as with Config.Debug on (above).
+                Config.Debug = true
                 local settings = settingsOn(s, reopened(name, store))
                 local applied = settings.boot()
+                Config.Debug = false
                 _G.print = real
                 eq(applied, 2, 'the pair, though the most sorts first and does not fit config.lua\'s '
                     .. 'least alone')

@@ -1098,6 +1098,9 @@ describe('the loader and the wait in front of it', function()
         -- test nothing.
         local boot = loadBoot()
         Natives.resourceStates['qbx_core'] = 'missing'
+        -- That it starts is start progress, said with Config.Debug on; the
+        -- waiting itself is said whatever Debug says (above).
+        Config.Debug = true
 
         local realWait, ticks = _G.Wait, 0
         _G.Wait = function()
@@ -1109,6 +1112,7 @@ describe('the loader and the wait in front of it', function()
             told = said(function() ready = boot.awaitDependencies(120) end)
         end)
         _G.Wait = realWait
+        resetConfig()
         if not ok then error(err, 0) end
 
         truthy(ready, 'the dependency arrived, so it must have started')
@@ -1202,8 +1206,11 @@ describe('maintenance jobs that time themselves', function()
         return n
     end
 
+    -- A slow job is said with Config.Debug on, and listed by the
+    -- diagnosis either way (below).
     it('warns once about a slow job, and again only after a few minutes', function()
         local main, modules = boot()
+        Config.Debug = true
         local spend = clocked(modules)
         modules.photos.expire = function() spend(20) end
 
@@ -1242,6 +1249,7 @@ describe('maintenance jobs that time themselves', function()
 
     it('times the sampler\'s pass too', function()
         local main, modules = boot()
+        Config.Debug = true
         local spend = clocked(modules)
         local real = modules.storage.liveContracts
         modules.storage.liveContracts = function() spend(12) return real() end
@@ -1347,6 +1355,8 @@ describe('maintenance jobs that time themselves', function()
             Natives.resetResourceStates()
             resetConfig()
             Config.Database.Mode = 'memory'
+            -- Said in full, as with Config.Debug on.
+            Config.Debug = true
             Config.Diagnostics.SlowJobMs = 'fast'
             require('server.main').start()
         end)

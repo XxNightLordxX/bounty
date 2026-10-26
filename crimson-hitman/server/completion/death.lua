@@ -8,6 +8,7 @@
 --- them" is not evidence and is dropped.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Death = {}
 
@@ -667,7 +668,7 @@ function Death.startSampler()
             end
             -- A sampler that dies takes attribution with it, and silently.
             if not ok then
-                print('[crimson-hitman] condition sampler errored; retrying next tick')
+                Log.debug('condition sampler errored; retrying next tick')
             end
         end
     end)

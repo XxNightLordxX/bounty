@@ -921,17 +921,28 @@ describe('a handler that throws', function()
         eq(reply.err, CH.ERR.SERVER_ERROR)
     end)
 
-    it('tells the operator, in the console', function()
+    it('tells the operator, in the console with Config.Debug on and in the diagnosis always', function()
         -- The audit queue is not somewhere an operator looks, or can look
         -- without a command they may not be able to run. A crashing handler
-        -- producing a shrug on the player's screen and silence in the
-        -- console is the worst pairing available: the one person who could
-        -- fix it is the one person not told.
+        -- producing a shrug on the player's screen and nothing anywhere to
+        -- read is the worst pairing available: the one person who could fix
+        -- it is the one person not told. With the console quiet (Config.Debug
+        -- off, as shipped) the diagnosis lists it.
         local s = broken()
+        Config.Debug = true
         local told = said(function() call('list', 3, { page = 1 }) end)
         truthy(told:find('list', 1, true), 'the handler has to be named: ' .. told)
         truthy(told:find('something came apart', 1, true),
             'and the error with it: ' .. told)
+
+        Config.Debug = false
+        told = said(function() call('mine', 3, {}) end)
+        s.projection.listing = function() error('something else came apart') end
+        told = told .. said(function() call('list', 3, { page = 2 }) end)
+        eq(told, '', 'a quiet console stays quiet')
+        local report = table.concat(s.admin.diagnose(0), '\n')
+        truthy(report:find('the list handler threw: ', 1, true)
+            and report:find('something else came apart', 1, true), report)
     end)
 
     it('records it as a fault, not as a refusal', function()

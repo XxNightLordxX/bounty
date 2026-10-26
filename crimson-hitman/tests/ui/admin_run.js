@@ -69,13 +69,41 @@ async function settled() { await settle(); await settle(); await settle(); }
 const XSS = '<img src=x onerror=alert(1)>';
 const NOW = Math.floor(Date.now() / 1000);
 
-const COMMANDS = { panel: 'hitmanadmin', refresh: 'ch-refresh', diagnose: 'ch-diag', stuck: 'ch-stuck',
-  settle: 'ch-settle', void: 'ch-void', review: 'ch-review', timeline: 'ch-timeline',
-  contracts: 'ch-contracts', whois: 'ch-whois' };
+/* The staff commands' names, as config.lua ships them: nothing the panel
+   shows may name one (it is buttons only). Read from the file, so a command
+   added there is checked here too. */
+const CONFIG_LUA = fs.readFileSync(path.join(__dirname, '..', '..', 'config', 'config.lua'), 'utf8');
+const COMMAND_NAMES = (function () {
+  const block = /Commands\s*=\s*\{([\s\S]*?)\}/.exec(CONFIG_LUA);
+  const out = [];
+  const re = /=\s*'([^']+)'/g;
+  let m;
+  while (block && (m = re.exec(block[1])) !== null) out.push(m[1]);
+  return out;
+})();
+
+/* What in the page names a command: '/ch-', '/hitmanadmin', or '/' and a
+   command's name, in any text or attribute. */
+function commandMentions(app) {
+  const needles = ['/ch-', '/hitmanadmin'].concat(COMMAND_NAMES.map(function (n) { return '/' + n; }));
+  const found = [];
+  function check(text, where) {
+    needles.forEach(function (needle) {
+      if (String(text).indexOf(needle) !== -1) found.push(where + ': ' + String(text).slice(0, 160));
+    });
+  }
+  check(app.body.textContent, 'text');
+  (function walk(node) {
+    Object.keys(node.attributes || {}).forEach(function (k) { check(node.attributes[k], k); });
+    if (node.value) check(node.value, 'value');
+    (node.children || []).forEach(walk);
+  })(app.body);
+  return found;
+}
 
 function access(extra) {
   return Object.assign({ canWrite: true, canIdentify: true, pageSize: 25, refreshSeconds: 10,
-    recovery: 'ready', version: '1.1.0', commands: COMMANDS }, extra || {});
+    recovery: 'ready', version: '1.1.0' }, extra || {});
 }
 const FULL = access();
 const ADMIN = access({ canIdentify: false });
@@ -152,6 +180,22 @@ function contractDetail(extra, identity) {
     ],
     canVoid: true
   }, extra || {}) };
+}
+
+/* Every escrow line waiting for staff, as server/panel.lua's stuck op
+   answers: the stuck listing's entries, each with what settles it. */
+function stuckList(extra) {
+  return { ok: true, data: Object.assign({ recovery: 'ready', reviews: 2, lines: [
+    { line: 'ct00000001:2', contract: 'ct00000001', amount: 8000, source: 'bank', portion: 'baseline',
+      intended: 'operative Ghost', why: 'unknown', raised: 1, arrived: 2000, at: NOW - 600,
+      actions: ['pay', 'pay_amount', 'return', 'delivered'] },
+    { line: 'owe00000003', contract: 'ct00000004', amount: 900, source: 'cash', portion: 'owed',
+      intended: XSS, why: 'unqueued', raised: 0, actions: ['pay', 'pay_amount'] },
+    { line: 'ct00000009:1', contract: 'ct00000009', amount: 300, source: 'cash', portion: 'baseline',
+      orphan: true, actions: ['return_owner'] },
+    { line: 'ct00000008:1', contract: 'ct00000008', amount: 100, source: 'cash', portion: 'stake',
+      why: 'ending_unfinished', unfinished: true, actions: [] }
+  ] }, extra || {}) };
 }
 
 function reviews() {
@@ -238,6 +282,7 @@ function settingsView(extra) {
 function standardServer(extra) {
   return Object.assign({
     overview: overview(), contracts: contracts(), contract: contractDetail(null, false), reviews: reviews(),
+    stuck: stuckList(),
     logs: logs(), player: player(), settings: settingsView(),
     whois: { ok: true, data: { creator: { cid: 'CREATOR1', name: 'Vic Marlowe', anonymous: true },
       target: { cid: 'TARGET01', name: 'Dana Reyes' },
@@ -453,7 +498,8 @@ async function main() {
     it('counts open review items and the lines left for staff on the navigation', function () {
       eq(app.byId('count-reviews').textContent, '3');
       eq(app.byId('count-reviews').hidden, false);
-      eq(app.byId('count-overview').textContent, '1', 'left for staff, not every line listed');
+      eq(app.byId('count-stuck').textContent, '1', 'beside Stuck escrow: left for staff, not every line listed');
+      eq(app.byId('count-overview'), null, 'and not beside the overview');
       eq(app.byId('count-settings').textContent, '2');
     });
     it('marks what this staff member may do', function () {
@@ -1111,7 +1157,7 @@ async function main() {
     server.resolve = function () {
       resolved = true;
       return { ok: true, message: 'Resolved: 1 line(s) given, 0 owed and given while they are in the city or at '
-        + 'their next login, 0 left for /ch-stuck (giving raised). ', data: { detail: {} } };
+        + 'their next login, 0 left for Stuck escrow (giving raised). ', data: { detail: {} } };
     };
     const app = boot(server);
     app.open(ADMIN);
@@ -1473,6 +1519,291 @@ async function main() {
       eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 0 });
     });
     clean(app, 'a setting that deletes');
+  })();
+
+  /* ---- stuck escrow ---- */
+  await (async function () {
+    const server = standardServer();
+    let settledLine = false;
+    server.stuck = function () {
+      const list = stuckList();
+      if (settledLine) list.data.lines = list.data.lines.filter(function (l) { return l.line !== 'ct00000001:2'; });
+      return list;
+    };
+    server.settle = function () {
+      settledLine = true;
+      return { ok: true, message: 'Line settled.', data: { detail: {} } };
+    };
+    const app = boot(server);
+    app.open(FULL);
+    await settled();
+    app.click(app.button('Open Stuck escrow'));
+    await settled();
+    it('the overview opens Stuck escrow, where every waiting line is listed', function () {
+      eq(app.last('stuck').op, 'stuck');
+      eq(app.byId('nav-stuck').getAttribute('aria-current'), 'page');
+      has(app.main(), 'ct00000001:2');
+      has(app.main(), 'owe00000003');
+      has(app.main(), 'ct00000009:1');
+      has(app.main(), 'ending unfinished; it settles itself within a minute');
+      has(app.main(), '3 left for you to settle, of 4 listed');
+      has(app.main(), 'Arrival unknown');
+      has(app.main(), 'Never given: only Pay settles it');
+      has(app.main(), '2 money events no rule could settle wait in the review queue');
+    });
+    const item = function (id) {
+      return app.$$('li').filter(function (li) {
+        return li.classList.contains('stuck-line') && app.text(li).indexOf(id) !== -1;
+      })[0];
+    };
+    const delivered = app.button('Delivered', item('ct00000001:2'));
+    app.click(delivered);
+    await settled();
+    it('a settle from here takes two clicks, as in the contract\'s view', function () {
+      eq(app.requests('settle').length, 0);
+      truthy(delivered.classList.contains('is-armed'));
+    });
+    app.click(delivered);
+    await settled();
+    it('and reads the list again, with the server\'s answer said', function () {
+      eq(app.requests('settle').length, 1);
+      eq(app.last('settle').data, { line: 'ct00000001:2', disposition: 'delivered' });
+      has(app.toasts(), 'Line settled.');
+      truthy(app.requests('stuck').length >= 2, 'read again');
+      lacks(app.main(), 'ct00000001:2', 'a settled line leaves the list');
+    });
+    app.click(app.button('Pay amount', item('owe00000003')));
+    await settled();
+    it('Pay amount asks for an amount first, beside the line, and sends nothing', function () {
+      eq(app.requests('settle').length, 1);
+      has(app.text(item('owe00000003')), 'An amount is a whole number of at least 1.');
+    });
+    app.type(item('owe00000003').querySelector('[data-bind="dr.amount.owe00000003"]'), '400');
+    const payAmount = app.button('Pay amount', item('owe00000003'));
+    app.click(payAmount);
+    app.click(payAmount);
+    await settled();
+    it('and pays that amount once it has one', function () {
+      eq(app.last('settle').data, { line: 'owe00000003', disposition: 'pay', amount: 400 });
+    });
+    app.click(app.$$('button').filter(function (b) {
+      return b.getAttribute('data-act') === 'contract' && b.getAttribute('data-id') === 'ct00000004';
+    })[0]);
+    await settled();
+    it('a line\'s contract opens its view over the list', function () {
+      eq(app.last('contract').data, { id: 'ct00000004' });
+      eq(app.drawer().hidden, false);
+    });
+    const found = [];
+    markupFrom(app, 'stuck escrow', found);
+    it('player text in a stuck line is text, not markup', function () { eq(found, []); });
+    clean(app, 'stuck escrow');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer({ stuck: { ok: true, data: { recovery: 'ready', lines: [], reviews: 0 } } }));
+    app.open(READER);
+    await settled();
+    app.nav('stuck');
+    await settled();
+    it('says when nothing waits for staff', function () {
+      has(app.main(), 'No escrow line is waiting for staff.');
+    });
+    clean(app, 'stuck, empty');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer({ stuck: { ok: true, data: { recovery: 'recovering', reviews: 1 } } }));
+    app.open(FULL);
+    await settled();
+    app.nav('stuck');
+    await settled();
+    it('lists nothing while the server recovers, and says so', function () {
+      has(app.main(), 'Not listed while the server is recovering from the restart.');
+      has(app.main(), 'Open the queue');
+      eq(app.byId('banner').hidden, false);
+    });
+    clean(app, 'stuck, recovering');
+  })();
+
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(READER);
+    await settled();
+    app.nav('stuck');
+    await settled();
+    it('read-only staff see every settle in Stuck escrow disabled, saying why', function () {
+      ['Pay', 'Pay amount', 'Return', 'Delivered', 'Return to'].forEach(function (label) {
+        eq(app.button(label, app.byId('main')).disabled, true, label);
+      });
+    });
+    clean(app, 'stuck, read only');
+  })();
+
+  /* ---- no commands anywhere in the panel ---- */
+  await (async function () {
+    it('knows the commands config.lua ships, to look for them', function () {
+      truthy(COMMAND_NAMES.indexOf('ch-stuck') !== -1 && COMMAND_NAMES.indexOf('hitmanadmin') !== -1,
+        COMMAND_NAMES.join(','));
+    });
+    const mentions = [];
+    function sweep(app, where) {
+      if (app.byId('panel').hidden) throw new Error('the panel closed by ' + where + ': ' + app.toasts());
+      commandMentions(app).forEach(function (m) { mentions.push(where + ' ' + m); });
+    }
+    function flow(server, who) {
+      return (async function () {
+        const app = boot(server);
+        app.open(who);
+        await settled();
+        sweep(app, 'overview');
+        for (const section of ['contracts', 'stuck', 'reviews', 'logs', 'players', 'settings', 'tools']) {
+          app.nav(section);
+          await settled();
+          sweep(app, section);
+        }
+        // The contract's view, with whois, and its destructive buttons armed.
+        app.nav('contracts');
+        await settled();
+        const row = app.$('tr.row');
+        if (row) {
+          app.click(row);
+          await settled();
+          sweep(app, 'the contract view');
+          const drawer = app.drawer();
+          const whois = drawer.querySelectorAll('button').filter(function (b) { return b.getAttribute('data-act') === 'whois'; })[0];
+          if (whois) { app.click(whois); await settled(); sweep(app, 'whois'); }
+          const voidButton = drawer.querySelectorAll('button').filter(function (b) { return b.getAttribute('data-act') === 'void'; })[0];
+          if (voidButton && !voidButton.disabled) {
+            app.click(voidButton);
+            sweep(app, 'void armed');
+            app.click(voidButton);
+            await settled();
+            sweep(app, 'void answered');
+          }
+          const settle = app.drawer().querySelectorAll('button').filter(function (b) { return b.getAttribute('data-act') === 'settle'; })[0];
+          if (settle && !settle.disabled) {
+            app.click(settle);
+            app.click(settle);
+            await settled();
+            sweep(app, 'settle answered');
+          }
+          app.click(app.button('Close', app.drawer()));
+          await settled();
+        }
+        // A review resolved, and one refused.
+        app.nav('reviews');
+        await settled();
+        const resolve = app.$$('button').filter(function (b) { return b.getAttribute('data-act') === 'resolve'; })[0];
+        if (resolve && !resolve.disabled) {
+          app.click(resolve);
+          sweep(app, 'resolve armed');
+          app.click(resolve);
+          await settled();
+          sweep(app, 'resolve answered');
+        }
+        // A log row's whole detail, a player and their whois.
+        app.nav('logs');
+        await settled();
+        if (app.$('tr.row')) { app.click(app.$('tr.row')); sweep(app, 'a log row'); }
+        app.nav('players');
+        await settled();
+        app.type(app.byId('pl-q'), 'TARGET01');
+        app.key(app.byId('pl-q'), 'Enter');
+        await settled();
+        sweep(app, 'a player');
+        // Every settings tab, and a change answered.
+        app.nav('settings');
+        await settled();
+        for (const tab of ['features', 'limits', 'readonly']) {
+          const seg = app.$$('.seg-btn').filter(function (b) { return b.getAttribute('data-value') === tab; })[0];
+          if (seg) { app.click(seg); await settled(); sweep(app, 'settings ' + tab); }
+        }
+        const sw = app.$$('.switch').filter(function (b) { return !b.disabled; })[0];
+        if (sw) { app.click(sw); await settled(); sweep(app, 'a setting changed'); }
+        // The tools, each run.
+        app.nav('tools');
+        await settled();
+        const refresh = app.button('Bring timers forward');
+        if (!refresh.disabled) { app.click(refresh); sweep(app, 'refresh armed'); app.click(refresh); await settled(); }
+        app.click(app.button('Run the diagnosis'));
+        await settled();
+        if (!app.button('Flush the audit log').disabled) { app.click(app.button('Flush the audit log')); await settled(); }
+        sweep(app, 'the tools, run');
+        clean(app, 'the sweep');
+      })();
+    }
+
+    // The server's answers as it gives them, and as it refuses them.
+    await flow(standardServer(), FULL);
+    await flow(standardServer(), READER);
+    await flow(standardServer({ overview: overview({ recovery: 'recovering', stuck: undefined }) }), FULL);
+    const NOT_ALLOWED = 'Not authorised: this needs the crimson.admin ACE. Grant it with add_ace group.admin '
+      + 'crimson.admin allow, pasted into the server console until the next restart, or put in server.cfg to '
+      + 'keep it. Changing anything needs that ACE itself; the extra ACEs only read.';
+    const RAISED = 'That raised an error on the server. Run the diagnosis, under Tools, to read it.';
+    const refusing = standardServer({
+      void: { ok: false, err: 'stalled_claim', message: 'Could not void it: contract ct00000001 is mid-claim with '
+        + 'no claim running (a stalled claim: the claim paying a collection raised part-way), and only the next '
+        + 'start puts it back. Pay each line Stuck escrow lists for it as a stalled claim with its Pay button, '
+        + 'then restart the resource: recovery puts the contract back to accepted (or completes it, if that was '
+        + 'its last collection), and Void contract closes it then.' },
+      settle: { ok: false, err: 'parked', message: 'Not settled: giving it raised again, so it is left for staff '
+        + 'again; see Stuck escrow.' },
+      resolve: { ok: false, err: 'note_required', message: 'Say why in the note: a dismissal gives nothing, and '
+        + 'the note is the record of why.' },
+      setSetting: { ok: false, err: 'not_allowed', message: NOT_ALLOWED },
+      refresh: { ok: false, err: 'server_error', message: RAISED },
+      flush: { ok: false, err: 'server_error' },
+      diag: { ok: false, err: 'rate_limited', message: 'Slow down. Try again in 3 second(s).' },
+      player: { ok: false, err: 'not_found', message: 'Nobody in the city has that citizen id, and nothing you '
+        + 'may see here names it. Check how it is spelt.' },
+      whois: { ok: false, err: 'identity_required', message: 'Unmasking needs crimson.identity, a separate ACE.' },
+      stuck: { ok: false, err: 'server_error', message: RAISED },
+      logs: { ok: false, err: 'invalid_input', message: 'That is not a contract id.' }
+    });
+    await flow(refusing, FULL);
+    // And every answer the page words itself, for a refusal with no sentence.
+    await flow(standardServer({
+      void: { ok: false, err: 'recovering' }, settle: { ok: false, err: 'busy' },
+      resolve: { ok: false, err: 'unknown_op' }, refresh: { ok: false, err: 'timeout' },
+      setSetting: { ok: false, err: 'store_failed' }
+    }), FULL);
+    // A read refused outright closes the panel, saying why in a toast.
+    for (const refusal of [{ ok: false, err: 'not_allowed', message: NOT_ALLOWED }, { ok: false, err: 'admin_off' }]) {
+      const app = boot(standardServer({ overview: refusal }));
+      app.open(FULL);
+      await settled();
+      it('a refusal that closes the panel says so (' + refusal.err + ')', function () {
+        eq(app.byId('panel').hidden, true);
+        truthy(app.toasts().length > 0, 'and says why');
+      });
+      commandMentions(app).forEach(function (m) { mentions.push('closed: ' + m); });
+    }
+    it('no section, view, armed button, answer or refusal names a command', function () {
+      eq(mentions, [], 'a command named in the panel');
+    });
+    // Not vacuous: the same sweep finds one in an answer, and in a title.
+    const planted = boot(standardServer({ diag: { ok: true, data: { lines: ['-> see /ch-stuck'] } } }));
+    planted.open(FULL);
+    await settled();
+    planted.nav('tools');
+    await settled();
+    planted.click(planted.button('Run the diagnosis'));
+    await settled();
+    planted.byId('main').setAttribute('title', 'as /' + COMMAND_NAMES[0] + ' does');
+    it('(and the sweep would see one, in text or an attribute)', function () {
+      const found = commandMentions(planted);
+      truthy(found.some(function (f) { return f.indexOf('text:') === 0; }), 'in text: ' + found.join(' | '));
+      truthy(found.some(function (f) { return f.indexOf('title:') === 0; }), 'in a title: ' + found.join(' | '));
+    });
+    it('and the panel has no Commands card', function () {
+      const app = boot(standardServer());
+      app.open(FULL);
+      app.nav('tools');
+      lacks(app.main(), 'Commands');
+      lacks(app.main(), 'Runs ');
+    });
   })();
 
   /* ---- tools ---- */

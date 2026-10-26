@@ -2267,6 +2267,84 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 33. Nothing prints but the logger (shared/log.lua).
+--------------------------------------------------------------------------
+--
+-- With Config.Debug off the console stays quiet, and that holds only if
+-- every line goes through the one logger, which decides by kind whether it
+-- is printed (Log.always, Log.problem, Log.debug) and keeps it for the
+-- diagnosis either way. A bare print in server/, client/ or shared/ is a
+-- line that prints whatever Debug says and that the diagnosis never sees.
+-- The harness and the tests are not walked here, so they print as they like.
+--------------------------------------------------------------------------
+
+do
+    local LOGGER = 'crimson-hitman/shared/log.lua'
+    local SINKS = {
+        { pattern = '%f[%w_%.:]print%s*%(', name = 'print' },
+        { pattern = '%f[%w_%.:]warn%s*%(', name = 'warn' },
+        { pattern = 'Citizen%.Trace%s*%(', name = 'Citizen.Trace' },
+        { pattern = 'lib%.print', name = 'lib.print' },
+    }
+    -- Comments out, keeping every line where it was; string contents out
+    -- too, so a sentence that says print( is not a call.
+    local function codeOf(src)
+        return src:gsub('(%-%-%[(=*)%[.-%]%2%])', function(c) return (c:gsub('[^\n]', '')) end)
+            :gsub('%-%-[^\n]*', '')
+            :gsub("'[^'\n]*'", "''"):gsub('"[^"\n]*"', '""')
+    end
+    local function sinksIn(src)
+        local out = {}
+        local code = codeOf(src)
+        for _, sink in ipairs(SINKS) do
+            local at = 1
+            while true do
+                local s = code:find(sink.pattern, at)
+                if not s then break end
+                local _, lineNo = code:sub(1, s):gsub('\n', '')
+                out[#out + 1] = { line = lineNo + 1, name = sink.name }
+                at = s + 1
+            end
+        end
+        return out
+    end
+
+    -- Not vacuous: the patterns find each sink in a sample, and nothing in
+    -- a comment, a string or a table named warn.
+    local probe = sinksIn(table.concat({
+        'print("x")', 'local t = {} warn[#warn + 1] = 1', 'warn("y")', 'Citizen.Trace("z")',
+        'lib.print.info("w")', '-- print("in a comment")', "local s = 'print(it)'",
+        'Log.debug("fine") Log.always("fine")', 'x.print("a method")',
+    }, '\n'))
+    local names = {}
+    for _, hit in ipairs(probe) do names[#names + 1] = hit.name end
+    table.sort(names)
+    if table.concat(names, ',') ~= 'Citizen.Trace,lib.print,print,warn' then
+        failures[#failures + 1] = ('the bare-print check no longer finds exactly print, warn, '
+            .. 'Citizen.Trace and lib.print in its own sample (found %s), so a clean run of it '
+            .. 'means nothing'):format(table.concat(names, ','))
+    end
+
+    local logger = read(LOGGER) or ''
+    if not logger:find('local function emit%(text%)%s*print%(') then
+        failures[#failures + 1] = 'shared/log.lua no longer prints through its one emit(), which '
+            .. 'every kind of line is held to'
+    end
+
+    for _, path in ipairs(files) do
+        if path ~= LOGGER then
+            for _, hit in ipairs(sinksIn(read(path) or '')) do
+                failures[#failures + 1] = ('%s:%d calls %s directly. Every line goes through the '
+                    .. 'logger (shared/log.lua): Log.always for refusing to start, money left for '
+                    .. 'staff or a write that failed, Log.problem for a setting found wrong at '
+                    .. 'start, Log.debug for everything else, Log.console for a command\'s answer.')
+                    :format(path, hit.line, hit.name)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then

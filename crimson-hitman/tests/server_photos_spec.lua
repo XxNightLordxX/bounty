@@ -622,6 +622,9 @@ describe('the start\'s sweep of photo files nothing names', function()
     --- other mode kept or served, for good.
     it('leaves the files of another storage mode alone', function()
         local s = photographed()
+        -- The sweep's notes are said with Config.Debug on, and kept for the
+        -- diagnosis either way.
+        Config.Debug = true
         Natives.files['data/photos/ph0000000orphan.webp'] = WEBP
         Natives.files['data/photos/kept/ph000000kept01.webp'] = WEBP
         Natives.files['data/photos/.mode'] = 'mysql'
@@ -650,6 +653,7 @@ describe('the start\'s sweep of photo files nothing names', function()
 
     it('says so, and removes nothing, on a server that cannot list a folder', function()
         local s = photographed()
+        Config.Debug = true
         Natives.files['data/photos/ph0000000orphan.webp'] = WEBP
         local real = io.readdir
         io.readdir = nil
@@ -669,6 +673,8 @@ describe('the image host allowlist, only where photos come from a host', functio
 
     it('warns of an empty allowlist on a host server, and not on one that keeps its own', function()
         local s = newStack()
+        -- Said in full, as with Config.Debug on.
+        Config.Debug = true
         Config.Completion.ExtraPhotoHosts = {}
         Natives.phoneConfig.UploadWhitelistedDomains = {}
         Natives.phoneConfig.UploadWhitelistedHostnames = {}

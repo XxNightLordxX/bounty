@@ -23,6 +23,7 @@
 --- every citizen id is the party's role on the contract instead.
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Panel = {}
 
@@ -33,11 +34,40 @@ local READ, WRITE, IDENTITY = 'read', 'write', 'identity'
 --- Every request the page may make, and what it needs.
 local OPS = {
     access = READ, overview = READ, contracts = READ, contract = READ, reviews = READ,
-    logs = READ, player = READ, settings = READ, diag = READ,
+    logs = READ, player = READ, settings = READ, diag = READ, stuck = READ,
     void = WRITE, settle = WRITE, resolve = WRITE, setSetting = WRITE, resetSetting = WRITE,
     resetSettings = WRITE, refresh = WRITE, flush = WRITE,
     whois = IDENTITY,
 }
+
+--- Every staff command (Config.Admin.Commands, but the panel's own) and the
+--- button or form here that does the same thing: the ops it asks for, the
+--- permission they need (as the command's gate: Ace with ExtraAces is a
+--- read, Ace itself a write, IdentityAce identity), whether the button
+--- takes the two-click confirm, which anything that moves money does, and
+--- the audit row both write. The page has no commands in it, only these;
+--- a command added without an entry here fails the suite (staff_output_spec).
+Panel.COMMANDS = {
+    timeline  = { ops = { 'contract' }, level = READ,
+                  button = 'a row in Contracts, or any contract id: the contract\'s view' },
+    contracts = { ops = { 'player' }, level = READ, audit = 'admin_contracts',
+                  button = 'Players: Look up' },
+    stuck     = { ops = { 'stuck' }, level = READ, audit = 'admin_stuck',
+                  button = 'Stuck escrow' },
+    diagnose  = { ops = { 'diag' }, level = READ, button = 'Tools: Run the diagnosis' },
+    void      = { ops = { 'void' }, level = WRITE, confirm = true, audit = 'admin_void',
+                  button = 'the contract\'s view: Void contract' },
+    settle    = { ops = { 'settle' }, level = WRITE, confirm = true, audit = 'admin_settle_line',
+                  button = 'Stuck escrow, or the contract\'s view: Pay, Pay amount, Return, Delivered' },
+    review    = { ops = { 'reviews', 'resolve' }, level = WRITE, confirm = true,
+                  audit = 'review_resolved', button = 'Needs review: Refund, Pay, Dismiss' },
+    refresh   = { ops = { 'refresh' }, level = WRITE, confirm = true, audit = 'admin_timers_refreshed',
+                  button = 'Tools: Bring timers forward' },
+    whois     = { ops = { 'whois' }, level = IDENTITY, audit = 'admin_identify',
+                  button = 'the contract\'s view, or Players: Whois' },
+}
+Panel.LEVELS = { READ = READ, WRITE = WRITE, IDENTITY = IDENTITY }
+Panel.OPS = OPS
 
 --- Writes that wait for boot recovery, as the commands do. Flushing the
 --- log is not one: it moves nothing, and is how the log reaches the disk
@@ -128,9 +158,9 @@ local function recoveryState()
     return deps.admin.recovery() or 'ready'
 end
 
---- What the page needs to draw itself for this staff member.
+--- What the page needs to draw itself for this staff member. No command
+--- names: the page is buttons only, and says nothing about commands.
 local function accessFor(src)
-    local names = Config.Admin.Commands or {}
     local okVersion, version = pcall(GetResourceMetadata, GetCurrentResourceName(), 'version', 0)
     return {
         canWrite = allowed(src, WRITE),
@@ -139,12 +169,6 @@ local function accessFor(src)
         refreshSeconds = math.max(2, math.floor(tonumber(Config.Admin.PanelRefreshSeconds) or 10)),
         recovery = recoveryState(),
         version = okVersion and version or nil,
-        commands = {
-            panel = names.panel, refresh = names.refresh, diagnose = names.diagnose,
-            stuck = names.stuck, settle = names.settle, void = names.void,
-            review = names.review, timeline = names.timeline, contracts = names.contracts,
-            whois = names.whois,
-        },
     }
 end
 
@@ -349,20 +373,23 @@ end
 
 --- What the diagnosis says that wants doing (the lines with '->', or a
 --- word in capitals), run as the console would, which asks no player's
---- phone for anything. The lines only the console needs are left out.
+--- phone for anything, in the panel's words. The lines only the console
+--- needs are left out, and so are the console's own lines it keeps (marked
+--- with a dot), which are notes, not things to do.
 local CONSOLE_ONLY = {
     'name somebody who is in the city', 'run from the console', 'the server-wide checks below',
     'name a player to test',
 }
 
 local function diagWarnings()
-    local ok, lines = pcall(deps.admin.diagnose, 0, nil, nil)
+    local ok, lines = pcall(deps.admin.diagnose, 0, nil, nil, { panel = true })
     if not ok or type(lines) ~= 'table' then
         return { ('the diagnosis itself raised: %s'):format(tostring(lines)) }
     end
     local out = {}
     for _, line in ipairs(lines) do
-        local skip = line:find('^%-%-%-') ~= nil
+        local skip = line:find('^%-%-%-') ~= nil or line:find('^%s*·') ~= nil
+            or line:find('^console:') ~= nil
         for _, text in ipairs(CONSOLE_ONLY) do
             if line:find(text, 1, true) then skip = true end
         end
@@ -689,7 +716,7 @@ H.void = function(src, data)
     if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
     local reason = shortText(data.reason, 120)
     local ok, err = deps.admin.void(src, id, reason)
-    return ok, err, deps.admin.voidAnswer(id, ok, err)
+    return ok, err, deps.admin.voidAnswer(id, ok, err, true)
 end
 
 local DISPOSITIONS = { pay = true, ['return'] = true, delivered = true }
@@ -714,11 +741,32 @@ H.settle = function(src, data)
         if not extra then return false, CH.ERR.INVALID_INPUT, 'That is not a citizen id.' end
     end
     local ok, err, detail = deps.admin.settleLine(src, line, disposition, extra)
-    return ok, err, deps.admin.settleAnswer(ok, err, detail), { detail = detail }
+    return ok, err, deps.admin.settleAnswer(ok, err, detail, true), { detail = detail }
 end
 
 H.reviews = function(src, data)
     return true, nil, nil, { items = deps.admin.reviews(src, data.all == true) }
+end
+
+--- Every escrow line waiting for staff, with what settles each, as the
+--- stuck listing in F8 lists them (Admin.interrupted, audited the same
+--- way), and how many items wait in the review queue, which it lists
+--- below them. Not while recovery is still deciding them: that listing
+--- says nothing is listed then, and so does this.
+H.stuck = function(src)
+    local recovery = recoveryState()
+    local reviews = deps.review and deps.review.openCount() or 0
+    if recovery ~= 'ready' then
+        return true, nil, nil, { recovery = recovery, reviews = reviews }
+    end
+    local lines = {}
+    for _, entry in ipairs(deps.admin.interrupted(src) or {}) do
+        local view = {}
+        for k, v in pairs(entry) do view[k] = v end
+        view.actions = settleActions(entry)
+        lines[#lines + 1] = view
+    end
+    return true, nil, nil, { recovery = recovery, lines = lines, reviews = reviews }
 end
 
 local REVIEW_ACTIONS = { refund = true, pay = true, dismiss = true }
@@ -737,7 +785,7 @@ H.resolve = function(src, data)
         local who = type(data.who) == 'string' and #data.who <= 32
             and data.who:match('^[%w_%-]+$') and data.who or nil
         if not who then
-            return false, 'no_party', deps.admin.reviewAnswer(id, false, 'no_party')
+            return false, 'no_party', deps.admin.reviewAnswer(id, false, 'no_party', nil, true)
         end
         args[2] = who
         if action == 'refund' then
@@ -751,7 +799,7 @@ H.resolve = function(src, data)
                 args[3] = tostring(amount)
                 if data.account ~= nil then
                     if not CH.MONEY_SOURCES[data.account] then
-                        return false, 'which_money', deps.admin.reviewAnswer(id, false, 'which_money')
+                        return false, 'which_money', deps.admin.reviewAnswer(id, false, 'which_money', nil, true)
                     end
                     args[4] = data.account
                 end
@@ -759,7 +807,7 @@ H.resolve = function(src, data)
         end
     end
     local ok, err, detail = deps.admin.resolveReview(src, id, args)
-    return ok, err, deps.admin.reviewAnswer(id, ok, err, detail), { detail = detail }
+    return ok, err, deps.admin.reviewAnswer(id, ok, err, detail, true), { detail = detail }
 end
 
 --- The audit log, newest first, a page at a time (Storage.queryAudit). By
@@ -980,8 +1028,8 @@ H.diag = function(src, data)
     -- address leads here) says what it found after the report, pushed to
     -- the open panel.
     local lines = deps.admin.diagnose(src, subject, function(line)
-        Panel.push(src, { kind = 'diag', line = line })
-    end)
+        Panel.push(src, { kind = 'diag', line = deps.admin.panelWords(line) })
+    end, { panel = true })
     return true, nil, nil, { lines = lines }
 end
 
@@ -1035,7 +1083,7 @@ function Panel.handle(src, payload)
     local level = (op and OPS[op]) or READ
     if not allowed(src, level == IDENTITY and READ or level) then
         noteDenied(src, op, 'denied')
-        return answer(false, 'not_allowed', deps.admin.howToAuthorise(Config.Admin.Ace)
+        return answer(false, 'not_allowed', deps.admin.howToAuthorise(Config.Admin.Ace, true)
             .. (level == WRITE
                 and ' Changing anything needs that ACE itself; the extra ACEs only read.' or ''))
     end
@@ -1069,9 +1117,13 @@ function Panel.handle(src, payload)
     local ran, ok, err, message, result = pcall(H[op], src, data)
     if not ran then
         deps.audit.rejected('admin_panel_error', staffOf(src), nil, { op = op, error = tostring(ok) })
-        print(('[crimson-hitman] the admin panel\'s %s raised: %s'):format(op, tostring(ok)))
+        -- A write that raised may have moved money part-way, so the console
+        -- hears of it whatever Config.Debug says; a read only with it on.
+        -- Either is kept for the diagnosis, which is where this sends staff.
+        local say = level == WRITE and Log.always or Log.debug
+        say(('the admin panel\'s %s raised: %s'):format(op, tostring(ok)))
         return answer(false, CH.ERR.SERVER_ERROR,
-            'That raised an error on the server (the console says what).')
+            'That raised an error on the server. Run the diagnosis, under Tools, to read it.')
     end
     if level == WRITE then
         -- Whatever it moved shows in the next overview and search, not

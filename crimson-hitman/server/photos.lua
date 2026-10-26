@@ -36,6 +36,7 @@
 --- go of (release).
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Photos = {}
 
@@ -212,7 +213,7 @@ local function writeFile(file, data)
     makeFolder(PHOTO_DIR)
     local ok, wrote = pcall(SaveResourceFile, GetCurrentResourceName(), file, data, #data)
     if ok and wrote ~= false then return true end
-    print(('[crimson-hitman] could not write the kill photo %s. Make sure the folder %s '
+    Log.always(('could not write the kill photo %s. Make sure the folder %s '
         .. 'exists in this resource and the server can write to it. The kill was paid; '
         .. 'its client has no photo to open.'):format(file, PHOTO_DIR))
     return false
@@ -348,7 +349,7 @@ local function readBytes(record)
     local ok, bytes = pcall(LoadResourceFile, GetCurrentResourceName(), file)
     if not ok or type(bytes) ~= 'string' or bytes == '' then return nil end
     if record.size and #bytes ~= tonumber(record.size) then
-        print(('[crimson-hitman] the kill photo %s reads back as %d bytes, not the %s '
+        Log.always(('the kill photo %s reads back as %d bytes, not the %s '
             .. 'written. It cannot be shown.'):format(file, #bytes, tostring(record.size)))
         return nil
     end
@@ -1072,7 +1073,7 @@ function Photos.sweepFiles()
     local owner = LoadResourceFile(resource, MODE_FILE)
     owner = owner and owner:match('^%s*([%w_]+)')
     if owner and owner ~= mode and owner ~= 'memory' then
-        print(('[crimson-hitman] the kill photo files in %s were kept for %s mode, and this '
+        Log.debug(('the kill photo files in %s were kept for %s mode, and this '
             .. 'server is in %s mode, whose store names none of them. They are left alone: '
             .. 'the start-up sweep of photo files is off until the mode is switched back, or '
             .. 'until %s is deleted once those photos are no longer wanted.')
@@ -1082,7 +1083,7 @@ function Photos.sweepFiles()
     if owner ~= mode then pcall(SaveResourceFile, resource, MODE_FILE, mode, -1) end
     local readdir = io and io.readdir
     if type(readdir) ~= 'function' then
-        print('[crimson-hitman] this server build cannot list a folder (io.readdir), so kill '
+        Log.debug('this server build cannot list a folder (io.readdir), so kill '
             .. 'photo files left in ' .. PHOTO_DIR .. ' by a crash are not swept at start. '
             .. 'Update the server to have them removed.')
         return 0
@@ -1111,7 +1112,7 @@ function Photos.sweepFiles()
         end
     end
     if removed > 0 then
-        print(('[crimson-hitman] removed %d kill photo file(s) no record named any more.')
+        Log.debug(('removed %d kill photo file(s) no record named any more.')
             :format(removed))
     end
     return removed
