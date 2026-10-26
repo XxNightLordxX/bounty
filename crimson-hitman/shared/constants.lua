@@ -134,6 +134,10 @@ CH.ADDITIVE = {
 CH.ERR = {
     NO_PLAYER        = 'no_player',
     BLACKLISTED_JOB  = 'blacklisted_job',
+    --- The whitelisted-job view's read (Config.WhitelistedView), asked by a
+    --- player the app is open to: the whole app is theirs, and the page
+    --- goes back to it on this.
+    NOT_WHITELISTED  = 'not_whitelisted',
     RATE_LIMITED     = 'rate_limited',
     NOT_FOUND        = 'not_found',
     BAD_STATE        = 'bad_state',

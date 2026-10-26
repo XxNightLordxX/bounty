@@ -1302,6 +1302,11 @@ end)
 describe('the servers own access decision', function()
     local function wired()
         local s = newStack()
+        -- Hiding from barred jobs as it stands with the whitelisted-job view
+        -- off (Config.WhitelistedView.Enabled = false). It ships on, and
+        -- then a barred job has the app with its one screen: what that
+        -- answers is whitelisted_view_spec's business.
+        Config.WhitelistedView.Enabled = false
         s.app.init(s)
         require('crimson-hitman.server.bridges').install(s)
         return s

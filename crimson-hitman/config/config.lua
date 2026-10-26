@@ -42,7 +42,26 @@ Config.BlockOffDuty = true
 --- It is here because hiding the app is the only thing in this resource that
 --- can take something away from a player, and anything that can do that
 --- needs a switch an operator can reach without waiting for a patch.
+---
+--- Applies only while the whitelisted-job view below is off. With it on,
+--- barred jobs have the app, and it shows them that one screen.
 Config.HideAppFromBlockedJobs = true
+
+--- The whitelisted-job view. Players on a job barred above (police,
+--- sheriff, SAST, FIB, EMS, fire, DOJ, lawyers and the rest, decided exactly
+--- as BlockedJobTypes, BlockedJobNames and BlockOffDuty say, jobs held
+--- through sc-multijob included) can install and open the app, and see ONE
+--- read-only screen: the contracts on them, and the contracts on other
+--- whitelisted-job members, each with no more than the law enforcement
+--- advisory says (the name and job, when it was posted, open or taken by
+--- how many hitmen, when it runs out). Never who placed it, a hitman, the
+--- reason, a location, a photo or the reward. On a contract on them they
+--- also get the buyout a civilian target gets in On me, through the same
+--- server path as that button and /cleanse. Nothing else in the app answers
+--- them. A job change moves a player in or out of it at once.
+Config.WhitelistedView = {
+    Enabled = true,     -- true = whitelisted jobs get that one screen; false = the app is closed to them, as HideAppFromBlockedJobs says
+}
 
 --- How the app reaches players' phones.
 Config.App = {
@@ -54,7 +73,8 @@ Config.App = {
     --- price is on their head and whose only answer to it (On me, the
     --- buyout) is in this app — so say so in your server's guide, or turn
     --- this on. lb-phone does not let a player remove an app installed this
-    --- way. Barred jobs never get it either way (HideAppFromBlockedJobs).
+    --- way. Barred jobs get it only for the whitelisted-job view
+    --- (WhitelistedView, above), or with HideAppFromBlockedJobs off.
     --- Read by each player's game when the app is added to their phone, so
     --- a change reaches them when this resource or lb-phone next restarts,
     --- or when they next join.
@@ -182,7 +202,9 @@ Config.Bailout = {
     --- with a contract on them had no way to buy it out — the one mechanic
     --- the target of a contract is supposed to have. The command works only
     --- for the target of a contract, does exactly what the app's button
-    --- does, and is otherwise no different.
+    --- does, and is otherwise no different. With the whitelisted-job view on
+    --- (Config.WhitelistedView) they have that button too, on its one
+    --- screen; it runs the same server path as this.
     Command = 'cleanse',
     --- How many ticks a queued buyout waits on a contract that is mid-claim
     --- before giving up and refunding. A claim resolves within a tick or two,

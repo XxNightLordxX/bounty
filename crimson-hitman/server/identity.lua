@@ -417,6 +417,85 @@ function Identity.gate(source)
     return actor
 end
 
+--- Whether the whitelisted-job view is on (Config.WhitelistedView.Enabled):
+--- a player the app bars (isBarred) installs and opens it, and sees one
+--- read-only screen instead of an app that answers nothing. Read at every
+--- use, so the admin panel's switch applies to the next request.
+---@return boolean
+function Identity.whitelistedViewOn()
+    local view = Config.WhitelistedView
+    return type(view) == 'table' and view.Enabled == true
+end
+
+--- The gate for the two requests the whitelisted-job view makes.
+---
+--- 'view', its one read: only a player the app bars, and only while the
+--- view is on. With it off they are refused as the app has always refused
+--- them (BLACKLISTED_JOB). A player the app is open to is refused with
+--- NOT_WHITELISTED: the whole app is theirs, and the page goes back to it.
+---
+--- 'target', the buyout: as Identity.gate, and a player the app bars as
+--- well while the view is on. Bailout.buy acts only on a contract naming the
+--- caller, so this opens the one move a target has and nothing else.
+---@param source number
+---@param access string 'view' | 'target'
+---@return table|nil actor
+---@return string|nil err
+function Identity.gateFor(source, access)
+    local actor, err = Identity.resolve(source)
+    if not actor then return nil, err end
+    local barred = Identity.isBarred(actor)
+    if access == 'view' then
+        if not barred then return nil, CH.ERR.NOT_WHITELISTED end
+        if not Identity.whitelistedViewOn() then return nil, CH.ERR.BLACKLISTED_JOB end
+        return actor
+    end
+    if barred and not (access == 'target' and Identity.whitelistedViewOn()) then
+        return nil, CH.ERR.BLACKLISTED_JOB
+    end
+    return actor
+end
+
+--- The job a target is shown under in the whitelisted-job view, by its
+--- label where qbx_core gives one.
+---@param job table
+---@return string
+local function shownJob(job)
+    if type(job.label) == 'string' and job.label ~= '' then return job.label end
+    local definition = type(job.name) == 'string' and jobDefinition(job.name) or nil
+    if definition and type(definition.label) == 'string' and definition.label ~= '' then
+        return definition.label
+    end
+    return tostring(job.name or 'job')
+end
+
+--- Whether a contract's target is a member of a whitelisted job, by the
+--- rule that bars a player from the app (isBlockedJob, held jobs included,
+--- and off duty as Config.BlockOffDuty says): by the jobs they hold now
+--- when they are in the city, otherwise by the job recorded on the
+--- contract, read as off duty, since nobody offline is working it.
+---@param contract table
+---@return boolean member
+---@return string|nil job the job they are shown under, when they are one
+function Identity.whitelistedTarget(contract)
+    if type(contract) ~= 'table' then return false end
+    local online = Identity.byCitizenId(contract.target_cid)
+    if online then
+        if Identity.isBlockedJob(online.job) then return true, shownJob(online.job) end
+        local held = Identity.heldJobs(online)
+        for i = 1, #held do
+            if Identity.isBlockedJob(held[i]) then return true, shownJob(held[i]) end
+        end
+        return false
+    end
+    local name = contract.target_job
+    if type(name) ~= 'string' or name == '' then return false end
+    local definition = jobDefinition(name)
+    local job = { name = name, type = definition and definition.type or nil, onduty = false }
+    if Identity.isBlockedJob(job) then return true, shownJob(job) end
+    return false
+end
+
 --- Whether qbx_core's lookup export has handed back a verified player at
 --- least once since this resource started.
 ---

@@ -56,6 +56,8 @@ describe('access, switched from the panel', function()
 
     it('shows the app to barred jobs at once when hiding it is turned off, and hides it again', function()
         local s = stack()
+        -- Hiding decides only while the whitelisted-job view is off.
+        Config.WhitelistedView.Enabled = false
         withOfficer(s)
         Env.clientEvents = {}
         turn(s, 'HideAppFromBlockedJobs', false)

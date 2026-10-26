@@ -1785,10 +1785,19 @@ function Admin.diagnose(source, subjectId, later, opts)
             if Config.BlockOffDuty and (held or job.onduty == false) then
                 say('     off duty still counts while Config.BlockOffDuty is on')
             end
-            say('  -> ' .. (Config.HideAppFromBlockedJobs == false
-                    and 'the app is installed but answers nothing for them'
-                    or 'the app is hidden from their phone')
-                .. ', by design. Nothing else below will look wrong.')
+            -- With the whitelisted-job view on, the app is theirs with one
+            -- screen, whatever HideAppFromBlockedJobs says.
+            local shown
+            if Identity.whitelistedViewOn() then
+                shown = 'the app shows them the whitelisted-job view alone '
+                    .. '(Config.WhitelistedView): the contracts on them and on other '
+                    .. 'whitelisted-job members, and the buyout on their own'
+            elseif Config.HideAppFromBlockedJobs == false then
+                shown = 'the app is installed but answers nothing for them'
+            else
+                shown = 'the app is hidden from their phone'
+            end
+            say('  -> ' .. shown .. ', by design. Nothing else below will look wrong.')
         end
     else
         say('gate: passes')
@@ -1806,6 +1815,11 @@ function Admin.diagnose(source, subjectId, later, opts)
         list = { page = 1 },
         browseTargets = { scope = 'all' },
     }
+    -- A player the app bars is shown the whitelisted-job view instead while
+    -- it is on: its one read, run as the others are.
+    if actor and Identity.whitelistedViewOn() and Identity.isBarred(actor) then
+        probes[#probes + 1] = 'whitelistedView'
+    end
 
     say('handlers:')
     for i = 1, #probes do
@@ -1830,6 +1844,8 @@ function Admin.diagnose(source, subjectId, later, opts)
                     elseif result.contracts then size = ('%d contracts'):format(#result.contracts)
                     elseif result.items then size = ('%d items, %d weapons')
                         :format(#result.items, #(result.weapons or {}))
+                    elseif result.onYou then size = ('%d on them, %d on whitelisted jobs')
+                        :format(#result.onYou, #(result.colleagues or {}))
                     end
                 end
                 say(('  %s: ok%s'):format(probeName, size and ('  ' .. size) or ''))

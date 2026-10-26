@@ -99,6 +99,14 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   `GetPlayerData` export; headshots are paced and travel as latent events.
 - **Notices** are saved in the phone's notification list through lb-phone's
   server export; threads can be muted; masked calls go through `CreateCall`.
+- **Whitelisted-job view** (`Config.WhitelistedView.Enabled`, shipped on):
+  police, sheriff, SAST, FIB, EMS, fire, DOJ, lawyers and every other job the
+  app bars can install and open it, and see one read-only screen: the
+  contracts on them and the contracts on other whitelisted-job members, with
+  no more than the law enforcement advisory carries, and the buyout on a
+  contract on them, through the same server path as On me and `/cleanse`. A
+  job change moves them in or out of it at once. In the admin panel's
+  Features; off is the app closed to them, as before (see *Access*).
 
 ---
 
@@ -235,7 +243,9 @@ copy at the next start, and the console names it (see `data/README.md`).
 | `Config.Completion.ExtraPhotoHosts` | `'host'` storage only. Kill photos are accepted only from image hosts lb-phone itself allows uploads from, plus these. Ships with Fivemanage (`fivemanage.com`, `fmfile.com`), lb-phone's default uploader. If `/ch-diag` shows `photo hosts: 0`, or kill photos are refused with "not on this server's allow list", add your phone's upload host here (a bare domain, no `https://`). lb-phone's camera upload must work first |
 | `Config.Database.Mode` | `json` (as shipped; no database at all), `mysql` (oxmysql), `memory` (testing only — nothing survives a restart). Modes do not share data: see *Changing storage mode* |
 | `Config.App.DefaultInstalled` | Whether the app is on every eligible player's home screen (`true`) or left in the phone's App Store for each player to download (`false`, as shipped). Players are not told it exists either way; see *Install* |
-| `Config.BlockedJobTypes` / `BlockedJobNames` | Who cannot open the app. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit |
+| `Config.BlockedJobTypes` / `BlockedJobNames` | Who the app is barred to: the whitelisted jobs. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit. With the whitelisted-job view on they see its one screen and nothing else (see *Access*) |
+| `Config.WhitelistedView.Enabled` | The whitelisted-job view (`true`, as shipped): players on a job the app bars open it to one read-only screen, the contracts on them and on other whitelisted-job members, and the buyout on their own. `false` closes the app to them as before, and `Config.HideAppFromBlockedJobs` then decides whether they see the icon. Anything but `true` or `false` is read as `false`, with a warning at startup. In the admin panel's Features, kept across restarts |
+| `Config.HideAppFromBlockedJobs` | Whether a barred player's phone shows the app at all (`true`, as shipped: hidden). Applies only while the whitelisted-job view is off; with it on they have the app, showing that one screen, and the admin panel marks this as not applying |
 | `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry |
 | `Config.Limits` | Contract caps, payouts, cooldowns |
 | `Config.Limits.MaxPayoutSlots` | How many times one contract can be collected: `1` (as shipped; each contract is collected once), `2` or `3`. At 1 the Place form shows no extra-collection controls at all; at 2 or 3 the creator chooses how many, each funded and escrowed up front. Anything outside 1 to 3, or not a whole number, is read as the nearest of them with a warning at startup; the admin panel takes 1 to 3. Contracts already placed keep the number they were placed with, and can still give their last collection back |
@@ -602,8 +612,10 @@ and longer for a kill made, or a handover armed, before those two minutes
 ran out and still waiting for its photograph or counting down (up to two
 photo-token lifetimes more). If they finish, the premium goes back to the
 target.
-Players the app is closed to — law enforcement and EMS — do the same with
-`/cleanse` (lists what is on them) and `/cleanse <id>` (buys one out). Either
+Players on a whitelisted job — law enforcement, EMS and the rest — have the
+same button on the whitelisted-job view (see *Access*), and anyone can use
+`/cleanse` (lists what is on them) and `/cleanse <id>` (buys one out); all
+three go through the same server path. Either
 side can pay an informant to unmask one hitman. Creator and hitmen can
 message or call each other through the app without either learning who the
 other is (`Config.Relay`; switching it off removes messaging and calls
@@ -618,16 +630,64 @@ which still arrive and show in the thread, while contract updates still
 ring. The mute is theirs alone, is kept across restarts, and the other side
 cannot tell.
 
+**Access.** The app is criminal-only. Every job in `Config.BlockedJobTypes`
+or `Config.BlockedJobNames` is barred from it (police, sheriff, SAST, FIB,
+EMS, fire, DOJ, lawyers and so on): by the job they are working, or by any
+other job they hold through `qbx_core` multi-job or `sc-multijob`, and off
+duty too while `Config.BlockOffDuty` is on. The server decides this on every
+request; nothing a client says changes it.
+
+With `Config.WhitelistedView.Enabled = true` (as shipped) a barred player
+can still install and open the app, and sees **one read-only screen**:
+*You're on a whitelisted job, so this app only shows contracts on you and on
+other whitelisted-job members.*
+
+- **Contracts on you**: every live contract whose target is them.
+- **Contracts on whitelisted jobs**: every live contract whose target is a
+  member of a whitelisted job, by the same rule: the jobs the target holds
+  now when they are in the city, otherwise the job recorded on the contract.
+
+Each entry carries no more than the law enforcement advisory already says:
+the target's name and job, when it was posted (to the five minutes), open or
+taken by how many hitmen, and when it runs out. Never who placed it (named or
+anonymous), any hitman, the reason, a location, a photo or headshot, or the
+reward. A contract on anybody else is never shown or counted. Like On me, a
+new contract appears once its target may be shown it (their alert's wait, or
+at once where a bulletin has already gone out). With nothing to show it says
+*No contracts on you or other whitelisted-job members.*
+
+On a contract on them, and only there, they get the **buyout** a civilian
+target has in On me, priced and confirmed (two taps) the same way, with the
+same pending line and countdown once paid: it is the same request to the
+same server path as On me's button and `/cleanse`, so every buyout rule
+applies unchanged (`Config.Bailout.Enabled`, the premium's limits, the
+processing delay while a hitman is engaged, no buyout from the floor, the
+settle attempts and the refund, who it pays, its audit rows and notices).
+With buyouts off there is no button. Nothing else in the app answers them:
+not the board, Place, Accept, Deliver, Message, the wallet or the ledger,
+and every other request is refused as it always was.
+
+A job change (the QBox job update, an `sc-multijob` switch, or the next
+maintenance tick if no event comes) moves them at once: somebody who leaves
+a whitelisted job gets the whole app back, and a civilian who joins one is
+moved to the view, with everything the open page held from the other one
+dropped. Contracts they placed or took as a civilian carry on as before.
+`Config.WhitelistedView.Enabled = false` is the app closed to every barred
+job, as before the view, and `Config.HideAppFromBlockedJobs` then decides
+whether they see the icon. Both are in the admin panel's Features.
+
 **Putting a hit on a cop.** Allowed, and loud. Every officer online is advised when the
 contract is posted and again on each acceptance, with a running count, on
 their phone and in dispatch. Both the creator and the hitman are warned first,
 and the listing is flagged. Nobody puts a hit on a cop by accident. The dispatch entry
 is closed when the contract ends. An officer is an officer by every job they
 hold (`qbx_core` multi-job, `sc-multijob`): switching to a second job for the
-evening neither opens the app to them nor takes them off the protected list.
-A player barred by a job they hold but are not working is told which one on
-their phone, since a department boss can hire somebody through the MDT
-without asking them; quitting it from their job menu gives the app back.
+evening neither opens the whole app to them (they keep the whitelisted-job
+view) nor takes them off the protected list.
+With the whitelisted-job view off, a player barred by a job they hold but
+are not working is told which one on their phone, since a department boss can
+hire somebody through the MDT without asking them; quitting it from their job
+menu gives the app back.
 
 ---
 
@@ -978,8 +1038,9 @@ mode*), `Config.Database.AllowModeSwitch` and
 one of these from an older version is not applied, is listed as *not applied*,
 and **Reset to config.lua** on its row takes it away.
 There is no single switch for the phone app as a whole:
-`Config.HideAppFromBlockedJobs` and the job lists decide who sees it, and the
-panel works whatever they say.
+`Config.WhitelistedView.Enabled`, `Config.HideAppFromBlockedJobs` and the job
+lists decide who sees it and what it shows them, and the panel works whatever
+they say.
 
 ---
 
@@ -1001,7 +1062,7 @@ API, and they may change between versions. What it listens to:
 | `QBCore:Server:OnPlayerLoaded` | the client, net | The same, flood-guarded, and never the start of a watched session (any client can fire it) |
 | `QBCore:Server:OnPlayerUnload`, `qbx_core:server:playerLoggedOut` | `qbx_core`, local | Logout or character switch: cleans up on the first, and again on the second, after `qbx_core` has let the player go |
 | `playerDropped` | FXServer | Disconnect: the same cleanup |
-| `QBCore:Server:OnJobUpdate` (and `qbx_core:server:onSetJob`) | `qbx_core`, local | Re-checks whether the app is closed to the player's jobs |
+| `QBCore:Server:OnJobUpdate` (and `qbx_core:server:onSetJob`) | `qbx_core`, local | Re-checks whether the app is closed to the player's jobs, or shows them the whitelisted-job view, and moves an open page between the two at once |
 | `qbx_core:server:onSetMetaData` | `qbx_core`, local | An `injail` sentence starting or ending pauses or resumes contract clocks |
 | `weaponDamageEvent` | FXServer | The damage log kills are attributed from |
 | `sc-ambulance:server:UseDefib` | sc-ambulance's client, net | A defibrillator used on a target, flood-guarded |

@@ -78,18 +78,60 @@ A staff account that can adjust money and spawn items makes this much faster.
       the app is open: they sit on a pale band at the top and bottom, on
       every tab and over the viewfinder. Switch to dark with the app open:
       the bands go and the page is dark to its edges
-- [ ] A `sast` character does **not** see it, on duty or off
-- [ ] Nor does an `fib` character, on duty or off, or an `ambulance` character
+### 2a. The whitelisted-job view (as shipped, `Config.WhitelistedView.Enabled = true`)
+
+- [ ] A `sast` character finds the app in the App Store, on duty or off, and
+      opening it shows one screen with no tab bar: *You're on a whitelisted
+      job, so this app only shows contracts on you and on other
+      whitelisted-job members.*
+- [ ] The same for an `fib` character and an `ambulance` character, and, if
+      your server has them, one of each other law, medical or legal job
+      (`police`, `bcso`, `sheriff`, `trooper`, `sasp`, `ranger`, `fire`,
+      `doj`, `lawyer`)
+- [ ] With nothing on any of them it says *No contracts on you or other
+      whitelisted-job members.*
+- [ ] Place a contract on the SAST character from a civilian (named, with a
+      buyout price). Once their alert has arrived (or at once, with the
+      threat advisory on), it is under **Contracts on you**: their name and
+      job, *Posted … ago*, *Open — no hitman yet*, *Lapses in …* and
+      **Buy out — $…**. The FIB character sees it under **Contracts on
+      whitelisted jobs**, with no buyout button
+- [ ] Neither screen shows the placer's name, an operative, the reason, a
+      location, a face or the reward. A contract on a civilian is not on it,
+      and nothing says how many there are
+- [ ] A civilian hitman accepts it: both screens say *Taken by 1 hitman* once
+      the app is reopened (an acceptance does not ring the target's phone)
+- [ ] The SAST character taps **Buy out**: it asks first (two taps), the
+      price is the one On me would show a civilian, then *Paid. It closes in
+      about 2 minutes. You are still a target until then.*, the entry says
+      *Paid. A hitman still has … to finish this*, and after the delay it is
+      gone and the placer has their escrow and the premium
+- [ ] The same bought out from the floor (downed): refused, *Not from the
+      floor. Get up first.* With buyouts off in the panel, no button
+- [ ] `/cleanse` still lists it and buys it out exactly as the button does
 - [ ] A SAST officer who switches their primary job to a civilian one with
-      `sc-multijob` (F9) is still barred, and their phone says which job
-      they hold bars them
-- [ ] Take SAST off that character's jobs altogether: the app is in their App
-      Store again within about ten seconds (the maintenance tick,
-      `Config.Audit.FlushIntervalMs`; an estimate until you time it)
-- [ ] If your server also has other law, medical or legal jobs (`police`,
-      `bcso`, `sheriff`, `trooper`, `sasp`, `ranger`, `fire`, `doj`,
-      `lawyer`), one character of each does not see it either
-- [ ] Nothing appears in console when a blocked player's phone opens
+      `sc-multijob` (F9) keeps the view and nothing more
+- [ ] Take SAST off that character's jobs altogether with the app open: it
+      changes to the whole app (Board, Mine, Place, On Me, Ledger) at once,
+      or within about ten seconds if no job event arrives (the maintenance
+      tick, `Config.Audit.FlushIntervalMs`; an estimate until you time it)
+- [ ] Give a civilian with the app open the `police` job: it changes to the
+      view at once, and nothing of the board, their Place form or Mine
+      remains. A contract they placed or took as a civilian carries on
+- [ ] With `Config.BlockOffDuty = false`, an off-duty officer has the whole
+      app, and an off-duty colleague is not listed on the view
+- [ ] Nothing appears in console when a whitelisted player opens the app
+
+### 2b. The view switched off
+
+- [ ] Admin panel, Features, Access: turn **Whitelisted-job view** off. An
+      open view says *This app is not for you.* and, with **Hide the app from
+      barred jobs** on, the app leaves their phone at once (a held job is
+      named on their phone)
+- [ ] **Hide the app from barred jobs** says it does not apply while the view
+      is on, and applies again once it is off
+- [ ] Restart the resource: the view is still off; turn it back on and the
+      app returns to their phones with its one screen
 
 ## 3. Placing a contract
 

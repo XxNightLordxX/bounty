@@ -834,6 +834,7 @@ describe('what this file leaves out', function()
         browseTargets = true, mugshotImage = true, rewardOptions = true,
         rewardBreakdown = true, amendments = true, threads = true,
         readThread = true, kidnapProgress = true, pageError = true,
+        whitelistedView = true,
         -- Covered above under its own name rather than the handler's.
         create = 'covered by "cancelling twice" and the create-spam tests in '
             .. 'contracts_spec',

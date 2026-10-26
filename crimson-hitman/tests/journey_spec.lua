@@ -362,6 +362,9 @@ describe('what this suite really covered', function()
         informant      = 'interaction_spec',
         -- Not a contract action at all.
         pageError      = 'authz_matrix_spec, under "a page reporting its own fault"',
+        -- Answered only for a player on a whitelisted job, whom no journey
+        -- here plays.
+        whitelistedView = 'whitelisted_view_spec, through the net event',
     }
 
     it('got an ok from every handler the server registers', function()

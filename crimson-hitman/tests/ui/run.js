@@ -9911,6 +9911,239 @@ async function main() {
     drewCleanly(themed); drewCleanly(plain);
   })();
 
+  /* The whitelisted-job view (Config.WhitelistedView). A player on a job
+     the app bars opens it to one read-only screen: the contracts on them
+     and on other whitelisted-job members, and the buyout on their own. The
+     page learns it from the server, never by deciding for itself: its
+     opening reads come back blacklisted_job, and the view's read answers. */
+  const BARRED = { ok: false, err: 'blacklisted_job' };
+  function jobView(extra) {
+    const now = Math.floor(Date.now() / 1000);
+    const data = {
+      onYou: [{
+        id: 'ct00000031', targetName: 'Olive Ward', targetJob: 'Police',
+        postedAt: now - 25 * 60, state: 'open', hitmenActive: 0, secondsLeft: 7200,
+        bailoutAmount: 15000, bailoutAvailable: true
+      }],
+      colleagues: [{
+        targetName: 'Colin Hart', targetJob: 'SAST', postedAt: now - 3 * 3600,
+        state: 'taken', hitmenActive: 2, secondsLeft: 3000
+      }, {
+        targetName: 'Oona Fell', targetJob: 'EMS', postedAt: now - 120,
+        state: 'open', hitmenActive: 0, secondsLeft: 9000
+      }],
+      settings: { buyouts: true, buyoutDelaySeconds: 120 }
+    };
+    Object.assign(data, extra || {});
+    return { ok: true, data: data };
+  }
+  const VIEW_INTRO = 'You’re on a whitelisted job, so this app only shows contracts '
+    + 'on you and on other whitelisted-job members.';
+
+  await (async function whitelistedView() {
+    let bought = null;
+    let views = 0;
+    const app = boot({
+      list: BARRED, mine: BARRED, ledger: BARRED,
+      whitelistedView: function () { views += 1; return jobView(); },
+      bailout: function (body) { bought = body; return { ok: true, data: { queued: false } }; }
+    });
+    await settle(); await settle(); await settle();
+    const text = app.view.textContent;
+    const names = app.sent.map(function (r) { return r.name; });
+
+    it('opens a barred player\'s app on the whitelisted-job view, asked for once', function () {
+      eq(names.filter(function (n) { return n === 'whitelistedView'; }).length, 1,
+        'one read of the view for three refusals: ' + names.join(', '));
+      truthy(text.indexOf(VIEW_INTRO) !== -1, 'the screen says what it is: ' + text);
+      falsy(text.indexOf('This app is not for you.') !== -1, 'not a refusal: ' + text);
+      truthy(app.document.documentElement.classList.contains('is-whitelisted-view'),
+        'the root is marked, which takes the tab bar away');
+    });
+
+    it('draws both lists, each entry with no more than the advisory says', function () {
+      truthy(text.indexOf('Contracts on you') !== -1, text);
+      truthy(text.indexOf('Contracts on whitelisted jobs') !== -1, text);
+      ['Olive Ward', 'Police', 'Colin Hart', 'SAST', 'Oona Fell', 'EMS',
+       'Taken by 2 hitmen', 'Open — no hitman yet', 'Posted 25 min ago',
+       'Posted 3h ago', 'Posted 2 min ago', 'Lapses in 2h'].forEach(function (want) {
+        truthy(text.indexOf(want) !== -1, '"' + want + '" is on screen: ' + text);
+      });
+      eq(app.view.all().filter(function (n) { return n.tagName === 'IMG'; }).length, 0,
+        'no photo, ever');
+      falsy(text.indexOf('Ref ') !== -1, 'nor a reference to quote: nothing here is theirs to act on but the buyout');
+    });
+
+    it('offers the buyout on a contract on them, and only there', function () {
+      const buy = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Buy out') === 0;
+      });
+      eq(buy.length, 1, 'one button, on their own entry');
+      eq(buy[0].textContent, 'Buy out — $15,000', 'priced as On me prices it');
+    });
+
+    click(app, 'Buy out — $15,000');
+    it('asks before it pays, as On me does', function () {
+      truthy(app.view.textContent.indexOf('Pay $15,000') !== -1, app.view.textContent);
+      falsy(bought, 'nothing sent on the first tap');
+    });
+    const beforePay = app.sent.length;
+    click(app, 'Pay $15,000');
+    await settle(); await settle(); await settle();
+    it('pays through the same request as On me, and reads the view again', function () {
+      truthy(bought, 'the buyout reached the server');
+      eq(bought.id, 'ct00000031');
+      const after = app.sent.slice(beforePay).map(function (r) { return r.name; });
+      eq(after.join(','), 'bailout,whitelistedView', 'the view, never the board: ' + after.join(','));
+      truthy(app.notice().indexOf('Paid. Contract closed.') !== -1, app.notice());
+    });
+
+    const beforeTab = app.sent.length;
+    tab(app, 'board');
+    tab(app, 'place');
+    await settle();
+    it('goes nowhere else: the tab bar is gone and its tabs do nothing', function () {
+      eq(app.sent.length, beforeTab, 'nothing asked for');
+      truthy(app.view.textContent.indexOf(VIEW_INTRO) !== -1, 'still the view');
+    });
+
+    const beforePush = app.sent.length;
+    app.sandbox.window._message({ data: { type: 'push', reason: 'settings' } });
+    app.timers.filter(function (t) { return t.ms === 250 && !t.cleared; })
+      .forEach(function (t) { t.cleared = true; t.fn(); });
+    await settle(); await settle();
+    it('reads the view again on a push, and nothing of the app', function () {
+      const after = app.sent.slice(beforePush).map(function (r) { return r.name; });
+      eq(after.join(','), 'whitelistedView', after.join(','));
+    });
+    drewCleanly(app);
+  })();
+
+  await (async function whitelistedViewEmpty() {
+    const app = boot({
+      list: BARRED, mine: BARRED, ledger: BARRED,
+      whitelistedView: jobView({ onYou: [], colleagues: [] })
+    });
+    await settle(); await settle(); await settle();
+    it('says when there is nothing on them or on anybody on a whitelisted job', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('No contracts on you or other whitelisted-job members.') !== -1, text);
+      truthy(text.indexOf(VIEW_INTRO) !== -1, 'and what the screen is: ' + text);
+      falsy(text.indexOf('Contracts on you') !== -1, 'no empty headings: ' + text);
+    });
+    drewCleanly(app);
+  })();
+
+  await (async function whitelistedViewBuyouts() {
+    const off = boot({
+      list: BARRED, mine: BARRED, ledger: BARRED,
+      whitelistedView: (function () {
+        const r = jobView({ settings: { buyouts: false, buyoutDelaySeconds: 120 } });
+        r.data.onYou[0].bailoutAvailable = false;
+        return r;
+      })()
+    });
+    const paid = boot({
+      list: BARRED, mine: BARRED, ledger: BARRED,
+      whitelistedView: (function () {
+        const r = jobView();
+        r.data.onYou[0].bailoutPaid = true;
+        r.data.onYou[0].bailoutSecondsLeft = 90;
+        r.data.onYou[0].hitmenActive = 1;
+        r.data.onYou[0].state = 'taken';
+        return r;
+      })()
+    });
+    await settle(); await settle(); await settle();
+    it('draws no buyout button where buyouts are off, and says why as On me does', function () {
+      eq(off.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Buy out') === 0;
+      }).length, 0);
+      truthy(off.view.textContent.indexOf('This server does not offer buyouts.') !== -1,
+        off.view.textContent);
+    });
+    it('shows a buyout already paid and how long the hitman still has, as On me does', function () {
+      const text = paid.view.textContent;
+      truthy(text.indexOf('Paid. A hitman still has about 2 minutes to finish this') !== -1, text);
+      truthy(text.indexOf('Taken by 1 hitman') !== -1, text);
+    });
+    drewCleanly(off); drewCleanly(paid);
+  })();
+
+  await (async function whitelistedViewSwitches() {
+    // Leaving the job: the view's read sends them back to the whole app.
+    let onTheJob = true;
+    const leaving = boot({
+      list: function () { return onTheJob ? BARRED : BOARD; },
+      mine: function () { return onTheJob ? BARRED : MINE; },
+      ledger: function () { return onTheJob ? BARRED : LEDGER; },
+      whitelistedView: function () {
+        return onTheJob ? jobView() : { ok: false, err: 'not_whitelisted' };
+      }
+    });
+    await settle(); await settle(); await settle();
+    onTheJob = false;
+    leaving.sandbox.window._message({ data: { type: 'push', reason: 'access' } });
+    await settle(); await settle(); await settle(); await settle();
+    it('gives the whole app back the moment they leave the job', function () {
+      const text = leaving.view.textContent;
+      truthy(text.indexOf('Dana Reyes') !== -1, 'the board again: ' + text);
+      falsy(text.indexOf(VIEW_INTRO) !== -1, 'the view is gone: ' + text);
+      falsy(text.indexOf('Olive Ward') !== -1, 'and nothing it held: ' + text);
+      falsy(leaving.document.documentElement.classList.contains('is-whitelisted-view'),
+        'the tab bar is back');
+    });
+
+    // Joining one: the board, Mine and the draft are dropped for the view.
+    let hired = false;
+    const joining = boot({
+      list: function () { return hired ? BARRED : BOARD; },
+      mine: function () { return hired ? BARRED : MINE; },
+      ledger: function () { return hired ? BARRED : LEDGER; },
+      whitelistedView: function () {
+        return hired ? jobView() : { ok: false, err: 'not_whitelisted' };
+      }
+    });
+    await settle(); await settle(); await settle();
+    const civilianAsked = joining.sent.filter(function (r) {
+      return r.name === 'whitelistedView';
+    }).length;
+    // Hired with the Place form open: it goes, with whatever was typed.
+    tab(joining, 'place');
+    await settle(); await settle();
+    const placeDrawn = joining.view.textContent.indexOf('Subject') !== -1;
+    hired = true;
+    joining.sandbox.window._message({ data: { type: 'push', reason: 'access' } });
+    await settle(); await settle(); await settle(); await settle();
+    it('never asks a civilian\'s server for the view', function () {
+      eq(civilianAsked, 0);
+      truthy(placeDrawn, 'the Place form was open before the job change');
+    });
+    it('moves a civilian who joins a whitelisted job to the view, dropping the board', function () {
+      const text = joining.view.textContent;
+      truthy(text.indexOf(VIEW_INTRO) !== -1, text);
+      falsy(text.indexOf('Dana Reyes') !== -1, 'nothing of the board survives: ' + text);
+      falsy(text.indexOf('Subject') !== -1 || text.indexOf('Payment') !== -1,
+        'nor the Place form: ' + text);
+      truthy(joining.document.documentElement.classList.contains('is-whitelisted-view'));
+    });
+
+    // The view switched off: the app is closed to them, as it always was.
+    const closed = boot({
+      list: BARRED, mine: BARRED, ledger: BARRED,
+      whitelistedView: BARRED
+    });
+    await settle(); await settle(); await settle();
+    it('says the app is not for them where the view is off', function () {
+      const text = closed.view.textContent;
+      truthy(text.indexOf('This app is not for you.') !== -1, text);
+      falsy(text.indexOf(VIEW_INTRO) !== -1, text);
+      eq(closed.sent.filter(function (r) { return r.name === 'whitelistedView'; }).length, 1,
+        'asked once, not once per refusal');
+    });
+    drewCleanly(leaving); drewCleanly(joining); drewCleanly(closed);
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

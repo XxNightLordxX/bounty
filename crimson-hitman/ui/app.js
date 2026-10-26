@@ -34,6 +34,10 @@
     || 'crimson-hitman';
   var state = {
     tab: 'board', board: null, mine: null, ledger: null,
+    // Which app this player is shown: 'full', or 'whitelisted' for a player
+    // on a job the app bars, who is shown the whitelisted-job view alone
+    // (jobView, its one read) while the server keeps it on.
+    mode: 'full', jobView: null,
     progress: {}, dialog: null, leoConfirmed: false, wallet: null,
     busy: false, notice: null, walletFailed: null,
     // Why the board, Mine or the ledger has nothing in it, when the reason
@@ -404,6 +408,9 @@
     no_player: 'The server is still loading your character. Give it a few '
       + 'seconds and open this again.',
     blacklisted_job: 'This app is not for you.',
+    // The whitelisted-job view's read, answered for somebody who left the
+    // job: the page goes back to the whole app on it rather than say this.
+    not_whitelisted: 'That screen is only for players on a whitelisted job.',
     rate_limited: 'Slow down.',
     // Policy waits, not throttling. Both shared rate_limited, so a creator
     // with two hours to wait read "Slow down." — and three of this page's
@@ -2147,39 +2154,46 @@
     }
 
     if (contract.role === 'target') {
-      // Already paid for, and closing once the delay runs out. Drawn before
-      // the buy button so a player who has paid is not offered the same
-      // price again on a card identical to the one before their money left.
-      // Not "your money is already gone": it comes back if a hitman
-      // finishes it first, and until then they still can.
-      if (contract.bailoutPaid) {
-        var still = buyoutWait(secondsLeftOf({ secondsLeft: contract.bailoutSecondsLeft,
-          clockReadAt: contract.clockReadAt }));
-        row.appendChild(el('div', 'hint',
-          'Paid. A hitman still has ' + (still || 'a moment') + ' to finish this '
-          + '\u2014 stay out of sight. If they do, your money comes back.'));
-      } else if (contract.bailoutAvailable) {
-        var buyoutKey = 'bailout:' + contract.id;
-        var buyoutLabel = 'Buy out \u2014 ' + money(contract.bailoutAmount);
-        if (isBusy(buyoutKey)) {
-          row.appendChild(actionButton('primary danger', buyoutLabel, buyoutKey, 'Paying\u2026'));
-        } else {
-          var out = el('button', 'primary danger', buyoutLabel);
-          out.onclick = function () { bailout(contract); };
-          row.appendChild(out);
-        }
-      } else if (settings().buyouts === false) {
-        // Not the client's doing. Saying "no buyout was offered" here blamed
-        // the one person who had not decided it.
-        row.appendChild(el('div', 'hint', 'This server does not offer buyouts.'));
-      } else {
-        row.appendChild(el('div', 'hint', 'No buyout was offered on this contract.'));
-      }
+      appendBuyout(row, contract);
       if (settings().informant) { more.appendChild(informantButton(contract)); }
       return withMore();
     }
 
     return row;
+  }
+
+  /* The buyout on a contract on this player, into a card's action row: On
+     me's, and the same on the whitelisted-job view's "Contracts on you",
+     drawn by this one function so the two say and do exactly the same. */
+  function appendBuyout(row, contract) {
+    // Already paid for, and closing once the delay runs out. Drawn before
+    // the buy button so a player who has paid is not offered the same
+    // price again on a card identical to the one before their money left.
+    // Not "your money is already gone": it comes back if a hitman
+    // finishes it first, and until then they still can.
+    if (contract.bailoutPaid) {
+      var still = buyoutWait(secondsLeftOf({ secondsLeft: contract.bailoutSecondsLeft,
+        clockReadAt: contract.clockReadAt }));
+      row.appendChild(el('div', 'hint',
+        'Paid. A hitman still has ' + (still || 'a moment') + ' to finish this '
+        + '\u2014 stay out of sight. If they do, your money comes back.'));
+    } else if (contract.bailoutAvailable) {
+      var buyoutKey = 'bailout:' + contract.id;
+      var buyoutLabel = 'Buy out \u2014 ' + money(contract.bailoutAmount);
+      if (isBusy(buyoutKey)) {
+        row.appendChild(actionButton('primary danger', buyoutLabel, buyoutKey, 'Paying\u2026'));
+      } else {
+        var out = el('button', 'primary danger', buyoutLabel);
+        out.onclick = function () { bailout(contract); };
+        row.appendChild(out);
+      }
+    } else if (settings().buyouts === false) {
+      // Not the client's doing. Saying "no buyout was offered" here blamed
+      // the one person who had not decided it.
+      row.appendChild(el('div', 'hint', 'This server does not offer buyouts.'));
+    } else {
+      row.appendChild(el('div', 'hint', 'No buyout was offered on this contract.'));
+    }
   }
 
   // Why a hold is slipping, in words a player can act on. The server sends
@@ -2258,8 +2272,11 @@
 
   /* ---------- actions ---------- */
 
+  /* The server's settings, from the board; on the whitelisted-job view,
+     which is never sent the board, the few its buyout reads come with it. */
   function settings() {
-    return (state.board && state.board.settings) || {};
+    return (state.board && state.board.settings)
+      || (state.jobView && state.jobView.settings) || {};
   }
 
   /* Take a contract back down. Everything staked comes home, and the
@@ -4973,6 +4990,82 @@
     view.appendChild(refHint());
   }
 
+  /* ---------- the whitelisted-job view ----------
+
+     A player on a job the app bars (police, EMS, DOJ, lawyers and the rest)
+     is shown this one screen and nothing else, while the server keeps
+     Config.WhitelistedView on: the contracts on them, and the contracts on
+     other whitelisted-job members. Each entry is what the server sent and
+     no more, which is what the law enforcement advisory already says: who
+     it is on and their job, when it was posted, open or taken, and when it
+     runs out. No photo is drawn, ever: the monogram stands where a face
+     would be. On a contract on them, and only there, the buyout On me
+     offers a civilian target (appendBuyout). */
+  function viewJobView(view) {
+    if (drewFailure(view, 'jobview')) { return; }
+    if (drewPending(view, 'jobview')) { return; }
+    var data = state.jobView || {};
+    var mine = asList(data.onYou);
+    var others = asList(data.colleagues);
+
+    view.appendChild(el('div', 'notice ok', 'You\u2019re on a whitelisted job, so this app '
+      + 'only shows contracts on you and on other whitelisted-job members.'));
+    if (!mine.length && !others.length) {
+      view.appendChild(el('div', 'empty',
+        'No contracts on you or other whitelisted-job members.'));
+      return;
+    }
+
+    view.appendChild(el('h3', 'section', 'Contracts on you'));
+    if (mine.length) {
+      mine.forEach(function (entry) { view.appendChild(jobViewCard(entry, true)); });
+    } else {
+      view.appendChild(el('div', 'hint', 'None on you.'));
+    }
+    view.appendChild(el('h3', 'section', 'Contracts on whitelisted jobs'));
+    if (others.length) {
+      others.forEach(function (entry) { view.appendChild(jobViewCard(entry, false)); });
+    } else {
+      view.appendChild(el('div', 'hint', 'None on other whitelisted-job members.'));
+    }
+  }
+
+  /* One entry of the whitelisted-job view. `own` is a contract on this
+     player, the one place its buyout is drawn. */
+  function jobViewCard(entry, own) {
+    var node = el('div', 'card');
+    var head = el('div', 'card-head');
+    var left = el('div', 'card-identity');
+    left.appendChild(portrait(entry.targetName, null));
+    var who = el('div', 'identity');
+    who.appendChild(el('div', 'target', entry.targetName || 'Unknown'));
+    if (entry.targetJob) { who.appendChild(el('div', 'target-job', entry.targetJob)); }
+    left.appendChild(who);
+    head.appendChild(left);
+    node.appendChild(head);
+
+    var meta = el('div', 'meta');
+    var taken = Number(entry.hitmenActive) || 0;
+    meta.appendChild(taken > 0
+      ? chip('Taken by ' + taken + (taken === 1 ? ' hitman' : ' hitmen'), 'hot', 'i-users')
+      : chip('Open \u2014 no hitman yet', null, 'i-users'));
+    var posted = agoText(entry.postedAt);
+    if (posted) {
+      meta.appendChild(chip('Posted ' + posted.charAt(0).toLowerCase() + posted.slice(1),
+        null, 'i-flag'));
+    }
+    var clock = clockChip(entry);
+    if (clock) { meta.appendChild(clock); }
+    node.appendChild(meta);
+
+    if (own) {
+      var row = el('div', 'row actions');
+      appendBuyout(row, entry);
+      node.appendChild(row);
+    }
+    return node;
+  }
+
   function viewLedger(view) {
     if (drewFailure(view, 'ledger')) { return; }
     if (drewPending(view, 'ledger')) { return; }
@@ -6889,11 +6982,13 @@
       + 'and nothing has been lost.'));
 
     var row = el('div', 'row');
-    var back = el('button', 'primary', 'Back to the board');
+    // The whitelisted-job view has one screen and no board to go back to.
+    var whitelisted = state.mode === 'whitelisted';
+    var back = el('button', 'primary', whitelisted ? 'Try again' : 'Back to the board');
     back.onclick = function () {
       navigated();
       state.dialog = null;
-      state.tab = 'board';
+      state.tab = whitelisted ? 'jobview' : 'board';
       render();
     };
     row.appendChild(back);
@@ -6958,7 +7053,8 @@
 
     ({
       board: viewBoard, mine: viewMine, place: viewPlace,
-      onme: viewOnMe, ledger: viewLedger, thread: viewThread
+      onme: viewOnMe, ledger: viewLedger, thread: viewThread,
+      jobview: viewJobView
     })[state.tab](view);
     syncClockTicker();
 
@@ -7032,6 +7128,14 @@
       state.loaded[section] = true;
       return true;
     }
+    // Barred from the app by their job: they may be shown the
+    // whitelisted-job view instead, which only the server can say. Asked
+    // once for the three reads that all come back this way, and the section
+    // stays "asking" until it answers (probeJobView).
+    if (r.err === 'blacklisted_job' && state.mode !== 'whitelisted') {
+      probeJobView();
+      return false;
+    }
     state.loadFinal[section] = finalRefusal(r.err);
     state.loadFailed[section] = (r.err === 'rate_limited' && r.data && r.data.retryAfter)
       ? 'Asked too fast. Try again in ' + r.data.retryAfter + ' second'
@@ -7050,7 +7154,7 @@
      accepted a moment ago reappeared as available, and one that had just
      been placed vanished, until something else happened to trigger another
      refresh. */
-  var loadSeq = { board: 0, mine: 0, ledger: 0 };
+  var loadSeq = { board: 0, mine: 0, ledger: 0, jobview: 0 };
 
   function newestLoad(section) {
     loadSeq[section] += 1;
@@ -7068,6 +7172,9 @@
      is the costliest thing the server builds. A section skipped is read
      when its tab is opened. */
   function refresh(only) {
+    // The whitelisted-job view reads its one thing, whatever was asked for.
+    if (state.mode === 'whitelisted') { return readJobView(); }
+
     function asked(section) { return !only || only[section] === true; }
 
     function readBoard() {
@@ -7139,6 +7246,114 @@
     return Promise.all([board, mine, ledger]);
   }
 
+  /* ---------- which app this player is shown ----------
+
+     The whole app, or the whitelisted-job view for a player on a job the
+     app bars. The server decides, on every request: the page finds out
+     from the answers, never by deciding for itself. Its three opening reads
+     come back blacklisted_job for a barred player, and the view's read
+     either answers (the view is on) or does not (the app is closed to
+     them, as it always was). A job change while the page is open arrives
+     as a push ('access'), and the page drops everything it holds from the
+     app it was showing before asking again. */
+
+  /* Everything read for the app it was showing, forgotten: no board, Mine,
+     ledger, wallet, draft, thread or face survives into the other one, and
+     a reply still on its way for it lands nowhere (loadSeq). */
+  function forgetMode() {
+    navigated();
+    stopCountdown();
+    Object.keys(loadSeq).forEach(function (section) { loadSeq[section] += 1; });
+    state.board = null; state.mine = null; state.ledger = null; state.jobView = null;
+    state.wallet = null; state.walletFailed = null;
+    state.dialog = null; state.thread = null; state.call = null; state.reward = null;
+    state.draft = {}; state.picked = {}; state.proposals = {}; state.drafts = {};
+    state.lastRefusal = {}; state.progress = {}; state.images = {};
+    state.loadFailed = {}; state.loadFinal = {}; state.loaded = {};
+    state.boardPage = 1; state.leoConfirmed = false;
+    state.browse = { scope: 'all', query: '', page: 1, data: null, pending: null, draw: null,
+                     nearbyClosed: false };
+  }
+
+  /* The tab bar goes with the whole app: the view is one screen. */
+  function markMode() {
+    var root = document.documentElement;
+    if (root && root.classList) {
+      root.classList.toggle('is-whitelisted-view', state.mode === 'whitelisted');
+    }
+  }
+
+  /* The view's answer, as the page keeps it. A contract on this player is
+     read as the target reads it (clockWords, appendBuyout). */
+  function takeJobView(data) {
+    state.jobView = data;
+    asList(data.onYou).forEach(function (entry) {
+      if (entry && typeof entry === 'object') { entry.role = 'target'; }
+    });
+    stampClocks(data.onYou);
+    stampClocks(data.colleagues);
+  }
+
+  function enterJobView(data) {
+    if (state.mode !== 'whitelisted') {
+      forgetMode();
+      state.mode = 'whitelisted';
+      state.tab = 'jobview';
+      markMode();
+    }
+    delete state.loadFailed.jobview;
+    delete state.loadFinal.jobview;
+    state.loaded.jobview = true;
+    takeJobView(data);
+    redraw();
+  }
+
+  function leaveJobView() {
+    forgetMode();
+    state.mode = 'full';
+    state.tab = 'board';
+    markMode();
+    render();
+    return refresh();
+  }
+
+  function readJobView() {
+    var isCurrent = newestLoad('jobview');
+    return post('whitelistedView', {}).then(function (r) {
+      if (!isCurrent()) { return; }
+      // They have left the job: the whole app is theirs again.
+      if (!r.ok && r.err === 'not_whitelisted') { return leaveJobView(); }
+      if (!loadResult('jobview', r)) { return; }
+      takeJobView(r.data);
+      redrawFor(['jobview']);
+    });
+  }
+
+  /* Asked when an opening read comes back blacklisted_job. Once, however
+     many of the three do. */
+  var probing = null;
+  function probeJobView() {
+    if (probing) { return probing; }
+    probing = post('whitelistedView', {}).then(function (r) {
+      probing = null;
+      if (state.mode === 'whitelisted') { return; }
+      if (r.ok && r.data !== null && typeof r.data === 'object') {
+        enterJobView(r.data);
+        return;
+      }
+      // No view for them either: the app is closed to their job, as it
+      // always was, and each section says so where its contents would be.
+      var why = (r.err === 'not_whitelisted' || r.err === 'blacklisted_job' || !r.err)
+        ? ERRORS.blacklisted_job : (ERRORS[r.err] || ERRORS.blacklisted_job);
+      ['board', 'mine', 'ledger'].forEach(function (section) {
+        state.loadFinal[section] = false;
+        state.loadFailed[section] = why;
+      });
+      redraw();
+    });
+    return probing;
+  }
+
   /* What the open tab draws, as refresh() takes it: a push re-reads only
      that. Mine draws the ledger's record too, and a thread the proposals
      Mine's reply asks for; the Place form draws none of them. */
@@ -7153,6 +7368,8 @@
 
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
     tab.onclick = function () {
+      // The whitelisted-job view is one screen; its bar is not drawn.
+      if (state.mode === 'whitelisted') { return; }
       /* Not while the kill photo's one look is unanswered. Leaving it was a
          Delete (letGoOfProof), so a tap on the tab bar thirty pixels under
          Save to Photos threw away the photo the client had paid for, with
@@ -7214,6 +7431,21 @@
     var data = event.data || {};
 
     if (data.type === 'push') {
+      /* A job change that moved this player between the whole app and the
+         whitelisted-job view. Everything held for the one they had is
+         dropped, and the page asks again: the view's read in the view
+         (which sends them back to the app if they left the job), the
+         app's reads otherwise (which find the view if they joined one). */
+      if (data.reason === 'access') {
+        forgetMode();
+        // Whatever tab the whole app had open held what was just dropped
+        // (a thread, the Place form): it starts again from the board.
+        if (state.mode !== 'whitelisted') { state.tab = 'board'; }
+        render();
+        refresh();
+        return;
+      }
+
       /* A message changes one thing: the thread it was sent in. A full
          refresh for each one is three requests and more, and a quick
          exchange ran the page into its own rate limit. */

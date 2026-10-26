@@ -409,6 +409,14 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
   overflow-wrap: anywhere;
 }
 
+/* The job a target holds, on the whitelisted-job view, where the reason
+   would be on any other card: plain, since it is a fact and nobody's words. */
+.target-job {
+  color: var(--ink-dim); font-size: var(--t-sm); margin-top: 0.25rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 /* The reward used to be `flex: none`, so it never shrank.
 
    Measured at 390px wide with a reward of money plus three item labels and
@@ -1326,6 +1334,13 @@ button.person.is-chosen .portrait { color: var(--ink); box-shadow: inset 0 0 0 1
    is an icon over a small label now, and the active one is marked by a
    slim crimson line on the bar's top edge — enough to say where you are
    without competing with the page for attention. */
+/* The whitelisted-job view is one screen, so it has no tab bar, and the
+   view keeps the bar's clearance over lb-phone's home indicator itself. */
+html.is-whitelisted-view .tabs { display: none; }
+html.is-whitelisted-view main {
+  padding-bottom: max(calc(var(--view-pad) + var(--home-bar)), env(safe-area-inset-bottom, 0px));
+}
+
 .tabs {
   display: flex;
   flex: none;

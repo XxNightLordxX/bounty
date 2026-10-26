@@ -1226,6 +1226,117 @@ async function main() {
     atLeast(finderHintTop, STATUS_BAR_REM, 'the instruction starts (rem)');
   });
 
+  /* ---- the whitelisted-job view, at phone width ----
+   *
+   * A player on a job the app bars opens it to one screen with no tab bar:
+   * the contracts on them and on other whitelisted-job members. Measured at
+   * the narrowest phones as well as the default: the longest name and job
+   * the view can carry, the buyout on their own entry, and nothing cut off
+   * sideways, under lb-phone's status bar or over its home indicator. */
+  function jobViewStub() {
+    const now = Math.floor(Date.now() / 1000);
+    const barred = { ok: false, err: 'blacklisted_job' };
+    const answers = {
+      list: barred, mine: barred, ledger: barred,
+      whitelistedView: { ok: true, data: {
+        onYou: [{
+          id: 'ct00000031', targetName: 'Maximilian Featherstonehaugh-Cholmondeley',
+          targetJob: 'San Andreas State Troopers', postedAt: now - 25 * 60,
+          state: 'taken', hitmenActive: 2, secondsLeft: 7200,
+          bailoutAmount: 450000, bailoutAvailable: true
+        }, {
+          id: 'ct00000032', targetName: 'Olive Ward', targetJob: 'Police',
+          postedAt: now - 3 * 3600, state: 'taken', hitmenActive: 1, secondsLeft: 600,
+          bailoutAmount: 15000, bailoutAvailable: true, bailoutPaid: true,
+          bailoutSecondsLeft: 90
+        }],
+        colleagues: [1, 2, 3, 4, 5].map(function (i) {
+          return { targetName: 'Colleague Number ' + i, targetJob: i === 3
+            ? 'Department of Justice' : 'SAST', postedAt: now - i * 3600,
+            state: i % 2 ? 'taken' : 'open', hitmenActive: i % 2 ? i : 0,
+            secondsLeft: 3000 * i };
+        }),
+        settings: { buyouts: true, buyoutDelaySeconds: 120 }
+      } }
+    };
+    window.fetch = function (url) {
+      const name = url.split('/crimson:')[1];
+      return Promise.resolve({ json: function () {
+        return Promise.resolve(answers[name] || { ok: true });
+      } });
+    };
+  }
+
+  const viewFaults = [];
+  let viewMeasured = 0;
+  for (const [w, h, label] of [[280, 560, 'very small'], [320, 568, 'small'],
+                               [390, 720, 'default']]) {
+    const vp = await browser.newPage({ viewport: { width: w, height: h } });
+    await vp.addInitScript(jobViewStub);
+    await vp.goto('file://' + UI);
+    await vp.waitForTimeout(300);
+    const top = await clearOfStatusBar(vp, '#view > *');
+    const found = await vp.evaluate(function () {
+      const out = { faults: [], intro: false, buyout: false };
+      out.intro = document.getElementById('view').textContent
+        .indexOf('only shows contracts on you') !== -1;
+      const nav = document.querySelector('.tabs');
+      if (nav && nav.getBoundingClientRect().height > 0) { out.faults.push('the tab bar is drawn'); }
+      if (document.documentElement.scrollWidth > window.innerWidth + 1) {
+        out.faults.push('the page scrolls sideways');
+      }
+      document.querySelectorAll('main *').forEach(function (n) {
+        const st = getComputedStyle(n);
+        if (st.overflowX !== 'auto' && st.overflowX !== 'scroll'
+            && n.scrollWidth > n.clientWidth + 1) {
+          out.faults.push((n.className || n.tagName) + ' is cut off sideways');
+        }
+      });
+      document.querySelectorAll('.card').forEach(function (card) {
+        const box = card.getBoundingClientRect();
+        card.querySelectorAll('*').forEach(function (n) {
+          const r = n.getBoundingClientRect();
+          if (r.width === 0 && r.height === 0) { return; }
+          if (r.right > box.right + 1 || r.left < box.left - 1) {
+            out.faults.push((n.className || n.tagName) + ' escapes its card');
+          }
+        });
+      });
+      const buy = Array.prototype.slice.call(document.querySelectorAll('button'))
+        .filter(function (b) { return b.textContent.indexOf('Buy out') === 0; })[0];
+      if (buy) {
+        out.buyout = true;
+        const r = buy.getBoundingClientRect();
+        if (r.height < 36) { out.faults.push('the buyout button is ' + r.height + 'px tall'); }
+      }
+      // Scrolled to the end, the last entry clears the home indicator.
+      const main = document.querySelector('main');
+      main.scrollTop = main.scrollHeight;
+      const cards = document.querySelectorAll('.card');
+      const last = cards[cards.length - 1];
+      if (last && last.getBoundingClientRect().bottom > window.innerHeight - 16) {
+        out.faults.push('the last entry ends under the home indicator');
+      }
+      out.images = document.querySelectorAll('#view img').length;
+      return out;
+    });
+    await vp.close();
+    viewMeasured++;
+    if (!found.intro) { viewFaults.push(label + ': the view was not drawn'); }
+    if (!found.buyout) { viewFaults.push(label + ': no buyout button on their own entry'); }
+    if (found.images) { viewFaults.push(label + ': ' + found.images + ' image(s) drawn'); }
+    if (top === null || top < STATUS_BAR_REM) {
+      viewFaults.push(label + ': the first line starts at ' + top + 'rem, under the status bar');
+    }
+    found.faults.forEach(function (f) { viewFaults.push(label + ': ' + f); });
+  }
+
+  it('fits the whitelisted-job view on a phone, with no tab bar, photo or sideways scroll', function () {
+    truthy(viewMeasured === 3, 'measured ' + viewMeasured + ' sizes');
+    const unique = Array.from(new Set(viewFaults));
+    truthy(unique.length === 0, unique.length + ' fault(s): ' + unique.slice(0, 6).join(' | '));
+  });
+
   it('fits every screen size it might be opened on', function () {
     const unique = Array.from(new Set(sizeFaults));
     truthy(unique.length === 0,

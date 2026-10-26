@@ -864,9 +864,17 @@ describe('diagnosing an app that shows nothing', function()
             .. 'Config.BlockedJobNames (doj)', 1, true), byName)
         falsy(byType:find('Config.Blacklist', 1, true), 'a setting that does not exist: ' .. byType)
         falsy(byType:find('LSPD', 1, true), 'a label is not a key in config: ' .. byType)
-        truthy(byType:find('the app is hidden from their phone', 1, true),
-            'HideAppFromBlockedJobs is on as shipped, so the app is not empty, it is gone: '
-            .. byType)
+        truthy(byType:find('the whitelisted-job view alone', 1, true),
+            'the whitelisted-job view is on as shipped, so the app is not empty: it is '
+            .. 'that one screen: ' .. byType)
+        truthy(byType:find('whitelistedView: ok', 1, true),
+            'and its one read is run as the others are: ' .. byType)
+
+        Config.WhitelistedView.Enabled = false
+        local hidden = said(s.admin.diagnose(1))
+        truthy(hidden:find('the app is hidden from their phone', 1, true),
+            'with the view off, HideAppFromBlockedJobs is on as shipped, so the app is not '
+            .. 'empty, it is gone: ' .. hidden)
     end)
 
     it('names a job they hold but are not working, and why off duty counts', function()
@@ -876,7 +884,8 @@ describe('diagnosing an app that shows nothing', function()
         Env.players[1].PlayerData.jobs = { unemployed = 0, police = 2 }
 
         local out
-        withConfig({ { Config, 'HideAppFromBlockedJobs', false } }, function()
+        withConfig({ { Config, 'HideAppFromBlockedJobs', false },
+                     { Config.WhitelistedView, 'Enabled', false } }, function()
             out = said(s.admin.diagnose(1))
         end)
 

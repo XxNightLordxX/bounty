@@ -105,6 +105,11 @@ end
 --- changes rather than an event per player per tick.
 local lastAccess = {}
 
+--- Which screen each source was last given: 'full' (the app), 'whitelisted'
+--- (the whitelisted-job view, Config.WhitelistedView) or 'closed' (barred,
+--- with the view off). Forgotten with lastAccess.
+local lastMode = {}
+
 --- How many sources it is holding an answer for. Bounded by who is
 --- connected, not by who has ever connected: this table is written on every
 --- tick for the life of the server, so a leak here is one that only grows.
@@ -343,6 +348,10 @@ function Bridges.install(modules)
     --
     -- The decision is the server's, because the client cannot be trusted
     -- with it and because the job blacklist lives in the server's config.
+    --
+    -- With the whitelisted-job view on (Config.WhitelistedView, as shipped)
+    -- a barred player keeps the app, and it shows them one read-only screen:
+    -- the gate still refuses them everything else.
     --- The app going away because of a job the player holds but is not
     --- working. They may not have taken it themselves (a department boss
     --- can hire anybody through the MDT), so they are told which job it is
@@ -356,6 +365,36 @@ function Bridges.install(modules)
             .. 'menu to use it again.'):format(job), { bypassBudget = true })
     end
 
+    --- Whether a player may have the app on their phone, and which screen
+    --- it shows them. A player the app bars has it, with the one read-only
+    --- screen, while the whitelisted-job view is on
+    --- (Config.WhitelistedView); HideAppFromBlockedJobs decides only while
+    --- it is off.
+    ---@return boolean allowed
+    ---@return string mode 'full' | 'whitelisted' | 'closed'
+    local function accessOf(actor)
+        if not modules.identity.isBarred(actor) then return true, 'full' end
+        if modules.identity.whitelistedViewOn() then return true, 'whitelisted' end
+        return Config.HideAppFromBlockedJobs == false, 'closed'
+    end
+
+    --- A job change that moves a player between the app and the
+    --- whitelisted-job view, said at once to their open page, which drops
+    --- what it holds from the other one and asks again. A push like any
+    --- other, so it names no contract and carries nothing; not behind the
+    --- push floor or Config.Notifications.PushEnabled, since it is not news
+    --- about a contract but which screen is theirs. Only once a screen has
+    --- been given: the first answer is the page's own first read. And only
+    --- to or from the view: between the whole app and an app closed to them
+    --- (the view off) nothing is sent, as before the view existed.
+    local function tellMode(src, mode)
+        local was = lastMode[src]
+        lastMode[src] = mode
+        if was ~= nil and was ~= mode and (was == 'whitelisted' or mode == 'whitelisted') then
+            TriggerClientEvent('crimson-hitman:push', src, { reason = 'access' })
+        end
+    end
+
     local function tellAccess(src)
         if not src or src <= 0 then return end
         local actor = modules.identity.resolve(src)
@@ -366,11 +405,11 @@ function Bridges.install(modules)
         -- Known from here on, whichever way they arrived (see refreshAccess).
         connect(src, actor.cid)
 
-        local allowed = Config.HideAppFromBlockedJobs == false
-            or not modules.identity.isBarred(actor)
+        local allowed, mode = accessOf(actor)
         if not allowed then explainHeld(actor, lastAccess[src]) end
         lastAccess[src] = allowed
         TriggerClientEvent('crimson-hitman:access', src, allowed)
+        tellMode(src, mode)
     end
 
     Bridges.tellAccess = tellAccess
@@ -407,13 +446,13 @@ function Bridges.install(modules)
                     -- away and the contract expired the moment they came
                     -- back, their hitman's stake with it.
                     connect(src, actor.cid)
-                    local allowed = Config.HideAppFromBlockedJobs == false
-                        or not modules.identity.isBarred(actor)
+                    local allowed, mode = accessOf(actor)
                     if lastAccess[src] ~= allowed then
                         if not allowed then explainHeld(actor, lastAccess[src]) end
                         lastAccess[src] = allowed
                         TriggerClientEvent('crimson-hitman:access', src, allowed)
                     end
+                    tellMode(src, mode)
                 end
             end
         end
@@ -423,6 +462,9 @@ function Bridges.install(modules)
         -- stranger.
         for src in pairs(lastAccess) do
             if not seen[src] then lastAccess[src] = nil end
+        end
+        for src in pairs(lastMode) do
+            if not seen[src] then lastMode[src] = nil end
         end
     end
 
@@ -439,10 +481,13 @@ function Bridges.install(modules)
         Bridges.tellSettings(modules, src)
     end)
 
-    -- A player who takes a barred job loses the app, and one who leaves it
-    -- gets it back, without waiting for a reconnect. qbx_core fires
-    -- QBCore:Server:OnJobUpdate (source, job) whenever a job is set; the
-    -- other name is one it has never fired, kept for a build that does.
+    -- A player who takes a barred job loses the app (or, with the
+    -- whitelisted-job view on, is moved to its one screen), and one who
+    -- leaves it gets the whole app back, without waiting for a reconnect.
+    -- qbx_core fires QBCore:Server:OnJobUpdate (source, job) whenever a job
+    -- is set, an sc-multijob switch included, since that goes through
+    -- qbx_core; the other name is one it has never fired, kept for a build
+    -- that does.
     -- The maintenance tick (refreshAccess) catches whatever both miss.
     local function jobChanged(src)
         local id = tonumber(src)
@@ -629,7 +674,8 @@ function Bridges.install(modules)
                     pcall(modules.notify.push, actor.cid, 'settings')
                 end
             end
-            if key == 'HideAppFromBlockedJobs' or key == 'BlockOffDuty' then
+            if key == 'HideAppFromBlockedJobs' or key == 'BlockOffDuty'
+                or key == 'WhitelistedView.Enabled' then
                 for src in pairs(lastAccess) do lastAccess[src] = nil end
                 Bridges.refreshAccess()
             elseif (key == 'Completion.PhotoStorage' or key == 'Completion.KillPhotos')

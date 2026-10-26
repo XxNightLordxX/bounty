@@ -479,6 +479,38 @@ describe('settings changed from the panel, across a restart', function()
                 resetConfig()
             end)
 
+            it('keep the whitelisted-job view switched off across a restart', function()
+                local s = stack()
+                local store = freshStore(name)
+                local settings = settingsOn(s, store)
+                local function rows()
+                    local out = {}
+                    for _, r in ipairs(settings.view().features) do out[r.key] = r end
+                    return out
+                end
+                eq(rows()['WhitelistedView.Enabled'].group, 'Access', 'a feature, under Access')
+                truthy(rows()['HideAppFromBlockedJobs'].inactive,
+                    'hiding the app is marked as not applying while the view is on')
+
+                truthy(settings.set('WhitelistedView.Enabled', false, 'ADMIN001'))
+                eq(Config.WhitelistedView.Enabled, false, 'in force at once')
+                resetConfig()
+                eq(Config.WhitelistedView.Enabled, true, 'config.lua ships it on')
+                settings = settingsOn(s, reopened(name, store))
+                eq(settings.boot(), 1, 'applied at the next start')
+                eq(Config.WhitelistedView.Enabled, false)
+                eq(rows()['WhitelistedView.Enabled'].source, 'panel')
+                falsy(rows()['HideAppFromBlockedJobs'].inactive,
+                    'and with it off, hiding the app applies again')
+
+                truthy(settings.set('WhitelistedView.Enabled', true, 'ADMIN001'))
+                resetConfig()
+                settings = settingsOn(s, reopened(name, store))
+                settings.boot()
+                eq(Config.WhitelistedView.Enabled, true, 'back on, and that is what the next start finds')
+                resetConfig()
+            end)
+
             it('stay reset after a restart', function()
                 local s = stack()
                 local store = freshStore(name)

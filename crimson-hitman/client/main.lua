@@ -113,9 +113,11 @@ end
 --- Register the app, once. Returns false while it is still worth retrying.
 local function registerApp()
     if appReady then return true end
-    -- Barred jobs never get it. The gate refuses their every request anyway,
-    -- so the app they were being shown installed, opened, and answered
-    -- nothing — which reads as broken rather than as not for them.
+    -- Only where the server says so. A barred job gets it only for the
+    -- whitelisted-job view (Config.WhitelistedView), the one screen the gate
+    -- answers them on; otherwise the app they were being shown installed,
+    -- opened, and answered nothing — which reads as broken rather than as
+    -- not for them.
     if accessAllowed ~= true then return true end
 
     local called, ok = phone('AddCustomApp', function()
@@ -525,6 +527,9 @@ local UI_EVENTS = {
     -- token and no picture, so nothing here is held back from the page.
     'verifyKill',
     'bailout', 'informant',
+    -- The one read of the whitelisted-job view (Config.WhitelistedView),
+    -- which the server answers only for a player on a job the app bars.
+    'whitelistedView',
     'addEscrow', 'rewardBreakdown', 'withdrawReward',
     'improve', 'propose', 'respondAmendment', 'amendments',
     'threads', 'readThread', 'sendMessage', 'requestCall', 'endCall', 'muteThread',

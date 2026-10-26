@@ -328,6 +328,18 @@ MATRIX.searchTargets = { payload = { query = 'Bram' }, expect = ANYONE,
 MATRIX.browseTargets = { payload = { scope = 'online', page = 1 }, expect = ANYONE,
     namesMayCross = true,
     why = 'anyone may look for somebody to place a contract on' }
+-- The whitelisted-job view's one read (Config.WhitelistedView). Only a
+-- player on a job the app bars may ask, and every role in this cast is a
+-- civilian the whole app is open to, so each is refused and sent back to
+-- it. The barred column is a block of its own, below the grid ("a player
+-- on a whitelisted job").
+MATRIX.whitelistedView = {
+    payload = {},
+    expect = { creator = CH.ERR.NOT_WHITELISTED, target = CH.ERR.NOT_WHITELISTED,
+               hitman = CH.ERR.NOT_WHITELISTED, otherHitman = CH.ERR.NOT_WHITELISTED,
+               stranger = CH.ERR.NOT_WHITELISTED, admin = CH.ERR.NOT_WHITELISTED },
+    why = 'the view is the screen of a player the app bars, and nobody here is one',
+}
 MATRIX.rewardOptions = { payload = {}, expect = ANYONE,
     why = 'reads the caller own wallet' }
 
@@ -1072,6 +1084,109 @@ describe('the authorisation matrix, driven through the real net events', functio
             runRow(name)
         end)
     end
+end)
+
+--------------------------------------------------------------------------
+-- The barred column: a player on a whitelisted job
+--------------------------------------------------------------------------
+--
+-- The grid's six roles are all civilians. A player on a job the app bars
+-- (Config.BlockedJobTypes / BlockedJobNames) is the seventh, and with the
+-- whitelisted-job view on (as shipped) the matrix for them is exactly what
+-- it was with no view at all, apart from two cells: the view's own read,
+-- and the buyout, which answers only on a contract naming them. Every
+-- other handler refuses them at the gate, as blacklisted_job, carrying
+-- nothing, before it looks at what was sent.
+
+describe('a player on a whitelisted job', function()
+    local OFFICER = { source = 11, cid = 'OFFICER1' }
+    local COLLEAGUE = { source = 12, cid = 'OFFICER2' }
+
+    --- The grid's world, with two officers: one a contract names (placed
+    --- while they were a civilian, then hired), and a colleague with one of
+    --- their own.
+    local function barredWorld()
+        local w = world()
+        for _, who in ipairs({ OFFICER, COLLEAGUE }) do
+            Env.addPlayer({ source = who.source, citizenid = who.cid,
+                license = 'license:' .. who.cid, cash = 250000, bank = 250000,
+                firstname = 'Officer', lastname = who.cid })
+        end
+        local creator = w.s.identity.resolve(CAST.farCreator.source)
+        w.mine = w.s.contracts.create(creator, {
+            targetCid = OFFICER.cid, reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000,
+        })
+        truthy(w.mine, 'the world needs a contract on the officer')
+        w.theirs = w.s.contracts.create(w.who.creator, {
+            targetCid = COLLEAGUE.cid, reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } }, bailoutAmount = 15000,
+        })
+        truthy(w.theirs, 'the world needs a contract on a colleague')
+        -- Shown to their targets, as On me would be.
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        for _, who in ipairs({ OFFICER, COLLEAGUE }) do
+            Env.players[who.source].PlayerData.job =
+                { name = 'police', label = 'Police', type = 'leo', onduty = true }
+        end
+        return w
+    end
+
+    it('is answered on the view and refused, carrying nothing, everywhere else', function()
+        local App = require('crimson-hitman.server.app')
+        local names = {}
+        for name in pairs(App.handlers) do names[#names + 1] = name end
+        table.sort(names)
+        truthy(#names >= 30, 'the handler table has to be the whole surface: ' .. #names)
+
+        local wrong = {}
+        for _, name in ipairs(names) do
+            local w = barredWorld()
+            local reply = call(name, OFFICER.source, { id = w.mine.id, page = 1 })
+            if name == 'whitelistedView' or name == 'bailout' then
+                if not (reply and reply.ok) then
+                    wrong[#wrong + 1] = name .. ' refused them with ' .. tostring(reply and reply.err)
+                end
+            elseif not reply or reply.ok or reply.err ~= CH.ERR.BLACKLISTED_JOB
+                or hasPayload(reply) then
+                wrong[#wrong + 1] = ('%s answered %s'):format(name, reply and (reply.ok
+                    and 'ok' or ('%s with %s'):format(tostring(reply.err),
+                        hasPayload(reply) and 'data' or 'nothing')) or 'nothing')
+            end
+        end
+        eq(#wrong, 0, 'the view and their own buyout, and nothing else: '
+            .. table.concat(wrong, '; '))
+    end)
+
+    it('buys out only a contract naming them', function()
+        local w = barredWorld()
+        local colleague = call('bailout', OFFICER.source, { id = w.theirs.id })
+        eq(colleague.ok, false)
+        eq(colleague.err, CH.ERR.NOT_PARTICIPANT, 'a colleague\'s is not theirs to close')
+        falsy(hasPayload(colleague), 'and the refusal carries nothing')
+
+        local civilian = call('bailout', OFFICER.source, { id = w.held.id })
+        eq(civilian.err, CH.ERR.NOT_PARTICIPANT, 'nor a civilian\'s, which they cannot even see')
+
+        local forged = call('bailout', OFFICER.source, { id = 'ctforged00000' })
+        eq(forged.err, CH.ERR.NOT_FOUND, 'an id they made up names nothing')
+        local junk = call('bailout', OFFICER.source, { id = { 1, 2 } })
+        eq(junk.err, CH.ERR.INVALID_INPUT, 'and one that is not an id is not one')
+
+        eq(w.s.storage.readContract(w.theirs.id).state, CH.STATE.ACTIVE)
+        eq(w.s.storage.readContract(w.held.id).state, CH.STATE.ACCEPTED)
+    end)
+
+    it('refuses the view to them too while it is off, as the app always did', function()
+        local w = barredWorld()
+        Config.WhitelistedView.Enabled = false
+        local view = call('whitelistedView', OFFICER.source, {})
+        eq(view.err, CH.ERR.BLACKLISTED_JOB)
+        falsy(hasPayload(view))
+        local buyout = call('bailout', OFFICER.source, { id = w.mine.id })
+        eq(buyout.err, CH.ERR.BLACKLISTED_JOB, 'and the buyout goes back to the command alone')
+        eq(w.s.storage.readContract(w.mine.id).state, CH.STATE.ACTIVE)
+    end)
 end)
 
 --------------------------------------------------------------------------

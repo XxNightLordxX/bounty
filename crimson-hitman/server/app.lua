@@ -340,7 +340,10 @@ local function photosOff(name)
     return true
 end
 
-local function handler(name, action, fn)
+---@param access string|nil who the gate lets through: nil for everyone the
+--- app is open to (Identity.gate); 'view' or 'target' for the two requests
+--- of the whitelisted-job view (Identity.gateFor)
+local function handler(name, action, fn, access)
     App.handlers[name] = fn
 
     RegisterNetEvent('crimson-hitman:' .. name, function(payload)
@@ -378,7 +381,12 @@ local function handler(name, action, fn)
         -- the handler's own pcall — so it used to take the whole net event
         -- with it and leave the request with no reply at all. The page waits
         -- fifteen seconds on every request it sends.
-        local gateOk, actor, err = pcall(deps.identity.gate, src)
+        local gateOk, actor, err
+        if access then
+            gateOk, actor, err = pcall(deps.identity.gateFor, src, access)
+        else
+            gateOk, actor, err = pcall(deps.identity.gate, src)
+        end
         if not gateOk then
             actor, err = nil, CH.ERR.NO_PLAYER
         end
@@ -556,6 +564,17 @@ function App.register()
             onMe     = deps.projection.onMe(actor.cid),
         }
     end)
+
+    -- The whitelisted-job view (Config.WhitelistedView): the one screen a
+    -- player on a job the app bars is shown. The contracts on them, and the
+    -- contracts on other whitelisted-job members, each with no more than the
+    -- law enforcement advisory carries (Projection.whitelistedView). Gated
+    -- the other way round from every handler here ('view'): only a player
+    -- the app bars may ask, and only while the view is on. Rate-limited
+    -- with the other reads.
+    handler('whitelistedView', 'load', function(actor)
+        return deps.projection.whitelistedView(actor.cid)
+    end, 'view')
 
     -- The rows as the page is shown them (Ledger.entries), not as stored:
     -- a stored row carries cids and, on the client's own row, the handle of
@@ -1108,6 +1127,13 @@ function App.register()
 
     -- Target counter-play ----------------------------------------------
 
+    -- The On me button, and the same button on the whitelisted-job view's
+    -- "Contracts on you" (Config.WhitelistedView): one path for both, and
+    -- for the buyout command (Bridges' cleanse), so every rule of a buyout
+    -- is Bailout.buy's alone. Open to a player the app bars while the view
+    -- is on ('target'): Bailout.buy acts only on a contract naming the
+    -- caller, so a colleague's contract, or an id they made up, is refused
+    -- there as it is for anybody.
     handler('bailout', 'bailout', function(actor, payload)
         -- The third is whether it was queued, or on a refusal what the
         -- target was short of.
@@ -1117,7 +1143,7 @@ function App.register()
         -- which: "closed" while somebody can still finish it is the target
         -- walking into the open thinking they are safe.
         return { queued = third == true }
-    end)
+    end, 'target')
 
     handler('informant', 'informant', function(actor, payload)
         local ok, err, data = deps.informant.buy(actor, payload.id)

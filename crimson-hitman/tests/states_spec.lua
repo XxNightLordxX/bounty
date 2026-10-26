@@ -341,6 +341,9 @@ describe('the grid covers the whole action surface', function()
         -- A kill photo has states of its own, not the contract's, and they
         -- are walked in photos_spec.
         openPhoto = true, photoDecision = true,
+        -- Names no contract: the caller's whitelisted-job view, which lists
+        -- live contracts only (whitelisted_view_spec).
+        whitelistedView = true,
     }
 
     it('has a row for every contract action app.lua registers', function()

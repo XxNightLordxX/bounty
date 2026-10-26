@@ -623,6 +623,123 @@ local function buildOnMe(viewerCid)
     return out
 end
 
+--- One entry of the whitelisted-job view: what the law enforcement advisory
+--- already says about a contract, and nothing else. Who it is on and their
+--- job, when it was posted, whether a hitman has it and how many, and when
+--- it runs out.
+---
+--- Built key by key from the row rather than from Projection.contract, so
+--- what is left out (the person who placed it, named or not, every hitman,
+--- the reason, a headshot, the reward) is left out by never being read:
+--- there is nothing on the payload for a client-side inspector to find.
+---
+--- When it was posted to the five minutes (Util.CLOCK_STEP), as every other
+--- time a viewer is sent about a placement. When it runs out on the
+--- target's own reading (Projection.contract, role 'target'): as if the
+--- clock always ran, so a stopped clock cannot say a named placer has left
+--- the city.
+---@param contract table
+---@param job string the job the target is shown under
+---@return table
+local function whitelistedEntry(contract, job)
+    local hitmen = Storage.readHitmen(contract.id)
+    local active = 0
+    for i = 1, #hitmen do
+        if hitmen[i].state == 'active' then active = active + 1 end
+    end
+    local posted = tonumber(contract.created_at)
+    return {
+        targetName   = contract.target_name,
+        targetJob    = job,
+        postedAt     = posted and (posted - (posted % Util.CLOCK_STEP)) or nil,
+        state        = active > 0 and 'taken' or 'open',
+        hitmenActive = active,
+        secondsLeft  = contract.deadline_at
+            and math.max(0, contract.deadline_at - os.time()) or nil,
+    }
+end
+
+--- The whitelisted-job view (Config.WhitelistedView), for a player the app
+--- bars: every live contract naming them ("Contracts on you"), and every
+--- live contract naming another member of a whitelisted job
+--- (Identity.whitelistedTarget: their jobs now when they are in the city,
+--- otherwise the job recorded on the contract). Never the board, and
+--- nothing about a contract on anybody else, not even how many there are.
+---
+--- Each one only once its target may be shown it (Notify.shownToTarget), as
+--- On me: listed at once, it dated the placement to the target, or to a
+--- colleague who could tell them.
+---
+--- A contract on the viewer also carries its buyout, exactly as On me
+--- carries it to a civilian target: the price, whether one can be bought,
+--- and a buyout already paid with how long the hitman on it still has. Its
+--- id goes with it, for the buyout and nothing else; a colleague's does not.
+---@param viewerCid string
+---@return table { onYou = entry[], colleagues = entry[], settings = table }
+function Projection.whitelistedView(viewerCid)
+    local onYou, colleagues = {}, {}
+
+    local naming = Storage.contractsNaming(viewerCid)
+    for i = 1, #naming do
+        local c = naming[i]
+        if not CH.TERMINAL[c.state] and Notify.shownToTarget(c) then
+            local member, job = Identity.whitelistedTarget(c)
+            local entry = whitelistedEntry(c, member and job or nil)
+            entry.id = c.id
+            entry.bailoutAmount = c.bailout_amount
+            entry.bailoutAvailable = Config.Bailout.Enabled == true
+                and (c.bailout_amount or 0) > 0
+            entry.bailoutPaid = c.bailout_queued_at ~= nil or nil
+            if c.bailout_queued_at then
+                entry.bailoutSecondsLeft = math.max(0, c.bailout_queued_at
+                    + (Config.Bailout.ProcessingDelaySeconds or 0) - os.time())
+            end
+            onYou[#onYou + 1] = entry
+        end
+    end
+
+    local live = Storage.liveContracts()
+    for i = 1, #live do
+        local c = live[i]
+        if c.target_cid ~= viewerCid and Notify.shownToTarget(c) then
+            local member, job = Identity.whitelistedTarget(c)
+            if member then colleagues[#colleagues + 1] = whitelistedEntry(c, job) end
+        end
+    end
+
+    -- By who it is on, then by when it was posted: nothing about the order
+    -- the store keeps them in.
+    local function byTarget(a, b)
+        if a.targetName ~= b.targetName then
+            return tostring(a.targetName) < tostring(b.targetName)
+        end
+        return (a.postedAt or 0) < (b.postedAt or 0)
+    end
+    table.sort(onYou, byTarget)
+    table.sort(colleagues, byTarget)
+
+    return {
+        onYou = onYou,
+        colleagues = colleagues,
+        -- What the buyout dialog reads, which the page otherwise takes from
+        -- the board it is never sent here.
+        settings = {
+            buyouts = Config.Bailout.Enabled == true,
+            buyoutDelaySeconds = Config.Bailout.ProcessingDelaySeconds or 0,
+        },
+    }
+end
+
+--- The exact key set of a whitelisted-job view entry, asserted by the suite
+--- like ALLOWED_KEYS: `entry` for every one, `own` added to a contract on
+--- the viewer.
+Projection.WHITELISTED_KEYS = {
+    entry = { targetName = true, targetJob = true, postedAt = true, state = true,
+              hitmenActive = true, secondsLeft = true },
+    own   = { id = true, bailoutAmount = true, bailoutAvailable = true,
+              bailoutPaid = true, bailoutSecondsLeft = true },
+}
+
 --- The four reads a player's app makes, each with escrow memoised for the
 --- length of the call.
 ---

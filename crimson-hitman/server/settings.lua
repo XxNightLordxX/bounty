@@ -56,6 +56,13 @@ local AT_USE = 'Read each time it is used, so it applies to the next check, incl
 local CAP = 'Lowering it below what is in use now never cancels anything: it only refuses '
     .. 'new ones over it.'
 
+--- What the panel says beside a key whose `unless` switch is on.
+local UNLESS_ON = {
+    ['WhitelistedView.Enabled'] = 'Does not apply while the whitelisted-job view is on '
+        .. '(WhitelistedView.Enabled): barred jobs have the app, showing them its one '
+        .. 'read-only screen, so this changes nothing until the view is off.',
+}
+
 --- What the panel says beside a key whose `needs` switch is off.
 local NEEDS_OFF = {
     ['Completion.KillPhotos'] = 'Does not apply while kill photos are off (Completion.KillPhotos): '
@@ -69,7 +76,8 @@ local NEEDS_OFF = {
 --- kind: 'switch' (on/off), 'choice' (one of `choices`), 'number' (with
 --- min, max and `integer`), 'list' (job names). needs is a switch this key
 --- means nothing without: while it is off the panel says so beside the key
---- (`inactive`, from NEEDS_OFF). section: 'features' or
+--- (`inactive`, from NEEDS_OFF); unless is the other way round, a switch
+--- this key means nothing beside while it is ON (UNLESS_ON). section: 'features' or
 --- 'limits'. live = false is a key kept and applied at the next start (or
 --- the next time what reads it runs), and said so. client = true is a key
 --- players' games read too, sent to them when it changes. readonly is the
@@ -86,9 +94,18 @@ local CATALOGUE = {
       about = 'Barred jobs stay barred from the app while off duty.',
       inflight = AT_USE .. ' Who may see the app is checked again at once.' },
     { key = 'HideAppFromBlockedJobs', section = 'features', group = 'Access', kind = 'switch',
+      unless = 'WhitelistedView.Enabled',
       label = 'Hide the app from barred jobs',
       about = 'Keeps the app off a barred player\'s phone instead of showing one that answers nothing.',
       inflight = 'Every phone is told at once; barred jobs are refused either way.' },
+    { key = 'WhitelistedView.Enabled', section = 'features', group = 'Access', kind = 'switch',
+      label = 'Whitelisted-job view',
+      about = 'Barred jobs (police, EMS, DOJ, lawyers and the rest) open the app to one read-only '
+          .. 'screen: the contracts on them and on other whitelisted-job members, with no more '
+          .. 'than the law enforcement advisory says, and the buyout on a contract on them. '
+          .. 'Off: the app is closed to them, as Hide the app from barred jobs says.',
+      inflight = 'Every phone is told at once, and an open app changes screen at once. A buyout '
+          .. 'already paid still closes after its delay either way.' },
     { key = 'App.DefaultInstalled', section = 'features', group = 'The app', kind = 'switch',
       label = 'Put the app on every home screen', client = true, live = false,
       about = 'Installs the app on eligible phones instead of leaving it in the App Store.',
@@ -996,8 +1013,10 @@ function Settings.view()
             source = override and 'panel' or 'config',
             by = override and override.by or nil, at = override and override.at or nil,
             ignored = skipped and skipped.why or nil,
-            inactive = entry.needs and read(Config, entry.needs) ~= true
-                and NEEDS_OFF[entry.needs] or nil,
+            inactive = (entry.needs and read(Config, entry.needs) ~= true
+                and NEEDS_OFF[entry.needs])
+                or (entry.unless and read(Config, entry.unless) == true
+                and UNLESS_ON[entry.unless]) or nil,
         }
         if override then out.overrides = out.overrides + 1 end
         local list = out[entry.section]

@@ -360,6 +360,9 @@ describe('app access', function()
         -- A department boss can hire anybody through the MDT, with no say
         -- from them; the app then vanished with no word why.
         local s = newStack()
+        -- With the whitelisted-job view off: on (as shipped) the app stays,
+        -- showing its one screen, so nothing goes away to explain.
+        Config.WhitelistedView.Enabled = false
         s.bridges.install(s)
         Env.addPlayer({ source = 61, citizenid = 'HIRED001', license = 'license:hd',
             job = { name = 'mechanic', type = 'mechanic', onduty = true },
@@ -407,13 +410,26 @@ describe('app access', function()
         Env.addPlayer({ source = 60, citizenid = 'SWITCH07', license = 'license:sw7',
             job = { name = 'mechanic', type = 'mechanic', onduty = true },
             jobs = { mechanic = 0, police = 2 } })
-        Env.clientEvents = {}
-        s.bridges.tellAccess(60)
-        local told
-        for _, event in ipairs(Env.clientEvents) do
-            if event.name == 'crimson-hitman:access' and event.target == 60 then told = event.args[1] end
+        local function told()
+            Env.clientEvents = {}
+            s.bridges.tellAccess(60)
+            local answer
+            for _, event in ipairs(Env.clientEvents) do
+                if event.name == 'crimson-hitman:access' and event.target == 60 then
+                    answer = event.args[1]
+                end
+            end
+            return answer
         end
-        eq(told, false)
+        -- With the whitelisted-job view off, as before it: hidden.
+        Config.WhitelistedView.Enabled = false
+        eq(told(), false)
+        -- On, as shipped: the app, with the view's one screen, which the
+        -- gate answers them on (whitelisted_view_spec).
+        Config.WhitelistedView.Enabled = true
+        eq(told(), true, 'a held job puts them in the view as their primary one does')
+        truthy(s.identity.gateFor(60, 'view'), 'and the view is theirs')
+        falsy(s.identity.gate(60), 'and the rest of the app is not')
     end)
 
     it('admits an ordinary criminal', function()

@@ -183,6 +183,12 @@ local DEFAULTS = {
     Mugshot = {
         Enabled = true,
     },
+    --- The whitelisted-job view. A whole section a config from before it
+    --- lacks is filled from defaults.lua; this fills the key in one that
+    --- has the section without it, with what ships: on. Checked below.
+    WhitelistedView = {
+        Enabled = true,
+    },
     --- Added to a section every config has. Absent read as 0, which is off:
     --- on every upgraded server an exclusive contract could still be held
     --- by somebody who never went near the target.
@@ -613,14 +619,18 @@ local function validateConfig(quiet)
         Config.Completion.Fulfilment = CH.FULFILMENT_RULE.ALIVE
     end
 
-    -- Kill photos at all, and target headshots at all. Read as plain
-    -- truths everywhere, so anything but true or false is said and read
-    -- as off, the side that takes and keeps nothing: a string 'true' is
-    -- not an owner who chose to keep pictures.
+    -- Kill photos at all, target headshots at all, and the whitelisted-job
+    -- view. Read as plain truths everywhere, so anything but true or false
+    -- is said and read as off, the side that takes, keeps and shows
+    -- nothing: a string 'true' is not an owner who chose to keep pictures.
     for _, switch in ipairs({
         { section = 'Completion', key = 'KillPhotos',
           off = 'no kill photo is taken or kept, and Verify kill completes at the scene' },
         { section = 'Mugshot', key = 'Enabled', off = 'no target headshot is asked for or shown' },
+        -- Off is the app closed to whitelisted jobs, as before the view:
+        -- the side that shows them least.
+        { section = 'WhitelistedView', key = 'Enabled',
+          off = 'players on a whitelisted job get no screen in the app, as before the view' },
     }) do
         local value = Config[switch.section][switch.key]
         if type(value) ~= 'boolean' then
