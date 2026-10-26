@@ -4712,6 +4712,48 @@ async function main() {
         + 'stuck looking at a stale complaint: '
         + JSON.stringify(recovered.view.textContent));
     });
+
+    /* The server's boot recovery failed, and it answers nothing until staff
+       restart it. That answered busy, "busy for a moment", beside a Try
+       again that could never work, on every tab, On me's buyout included. */
+    function offersTryAgain(app) {
+      return app.view.all().some(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent === 'Try again';
+      });
+    }
+    const broken = await refusedWith('recovery_failed');
+    it('says the contract system failed to start, with no Try again, on every tab', function () {
+      ['board', 'mine', 'onme', 'ledger'].forEach(function (name) {
+        tab(broken, name);
+        const shown = broken.view.textContent;
+        truthy(shown.indexOf('contract system failed to start, and staff have been told') !== -1,
+          name + ': ' + JSON.stringify(shown));
+        falsy(shown.indexOf('busy for a moment') !== -1, name + ': ' + JSON.stringify(shown));
+        falsy(offersTryAgain(broken), name + ' offers a Try again that cannot work');
+      });
+    });
+    it('still offers Try again for a refusal a retry can clear', function () {
+      tab(joining, 'board');
+      truthy(offersTryAgain(joining));
+    });
+
+    const closedForm = boot({
+      list: { ok: false, err: 'recovery_failed' }, mine: { ok: false, err: 'recovery_failed' },
+      ledger: { ok: false, err: 'recovery_failed' },
+      rewardOptions: { ok: false, err: 'recovery_failed' }
+    });
+    await settle(); await settle();
+    tab(closedForm, 'place');
+    await settle(); await settle();
+    it('the Place form says so too, not that money still works, and offers no Try again', function () {
+      const shown = closedForm.view.textContent;
+      truthy(shown.indexOf('contract system failed to start, and staff have been told') !== -1,
+        JSON.stringify(shown));
+      falsy(shown.indexOf('Money still works') !== -1, JSON.stringify(shown));
+      falsy(shown.indexOf('Could not read what you are carrying') !== -1, JSON.stringify(shown));
+      falsy(offersTryAgain(closedForm), 'a Try again that cannot work');
+    });
+    drewCleanly(broken); drewCleanly(closedForm);
   })();
 
   /* The ways of finding somebody that this server actually offers.
@@ -9293,14 +9335,15 @@ async function main() {
       query.oninput();
       app.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
     }
-    async function placing(rule, list) {
-      const app = placeForm({
+    async function placing(rule, list, more) {
+      const app = placeForm(Object.assign({
         list: list || boardFor(rule),
         create: function (body) {
           app.body = body;
-          return { ok: true, data: { penaltyAmount: 0, secondsLeft: 10800 } };
+          return { ok: true, data: Object.assign({ penaltyAmount: 0, secondsLeft: 10800 },
+            (more && more.created) || {}) };
         }
-      });
+      }, more && more.rewardOptions ? { rewardOptions: more.rewardOptions } : {}));
       await settle(); await settle();
       tab(app, 'place');
       await settle(); await settle();
@@ -9382,10 +9425,58 @@ async function main() {
       eq(early.body.bonusPercent, 0);
     });
 
+    /* And with the wallet, which the form reads every time it opens. With
+       the board's read failed the form knew no rule, drew the bonus at 50%
+       on a server that places none, and confirmed a bonus taken that never
+       was: the server places the percentage as 0. */
+    const BOARD_FAILED = { ok: false, err: 'server_error' };
+    const blind = await placing(undefined, BOARD_FAILED, { rewardOptions: { ok: true,
+      data: Object.assign({}, GOODS, { caps: Object.assign({}, GOODS.caps, { fulfilment: 'alive' }) }) } });
+    it('alive, the board unread: the wallet says so, and no bonus or alive-only marking is drawn', function () {
+      falsy(blind.document.getElementById('bonus'), 'the bonus field is drawn');
+      falsy(blind.document.getElementById('slot-alive-1'), 'the alive-only toggle is drawn');
+      truthy(blind.view.textContent.indexOf('Contracts here pay only for delivering the '
+        + 'target alive') !== -1, blind.view.textContent);
+    });
+    pick(blind, 'slot-cash-1', 40000);
+    it('alive, the board unread: the total is the reward alone', function () {
+      eq(total(blind), 'Taken from you now: $40,000 cash.');
+    });
+    press(blind, 'place-submit');
+    await settle(); await settle();
+    it('alive, the board unread: no bonus is sent, and none is said to be held', function () {
+      truthy(blind.body, 'nothing was placed');
+      eq(blind.body.bonusPercent, 0);
+      truthy(blind.notice().indexOf('Held from you: $40,000 cash.') !== -1, blind.notice());
+      falsy(blind.notice().indexOf('bonus') !== -1, blind.notice());
+    });
+
+    // Neither read saying: the confirmation follows what the server placed.
+    const unsaid = await placing(undefined, BOARD_FAILED, { created: { bonusPercent: 0 } });
+    pick(unsaid, 'slot-cash-1', 40000);
+    press(unsaid, 'place-submit');
+    await settle(); await settle();
+    it('placed with no bonus whatever was sent: the confirmation says only the reward was held', function () {
+      truthy(unsaid.body, 'nothing was placed');
+      eq(unsaid.body.bonusPercent, 50, 'the form could not know, and sent its figure');
+      truthy(unsaid.notice().indexOf('Held from you: $40,000 cash.') !== -1, unsaid.notice());
+      falsy(unsaid.notice().indexOf('kidnapping bonus') !== -1, unsaid.notice());
+    });
+    // And one the server placed as sent is confirmed as it was.
+    const asSent = await placing(undefined, BOARD_FAILED, { created: { bonusPercent: 50 } });
+    pick(asSent, 'slot-cash-1', 40000);
+    press(asSent, 'place-submit');
+    await settle(); await settle();
+    it('placed with the bonus sent: the confirmation names it', function () {
+      truthy(asSent.notice().indexOf('Held from you: $60,000 cash ($40,000 + $20,000 '
+        + 'kidnapping bonus).') !== -1, asSent.notice());
+    });
+
     drewCleanly(aliveBoard); drewCleanly(eitherBoard); drewCleanly(aliveWork);
     drewCleanly(eitherWork); drewCleanly(older); drewCleanly(kept); drewCleanly(aliveOwn);
     drewCleanly(eitherOwn); drewCleanly(hunted); drewCleanly(alivePlace);
-    drewCleanly(eitherPlace); drewCleanly(early);
+    drewCleanly(eitherPlace); drewCleanly(early); drewCleanly(blind); drewCleanly(unsaid);
+    drewCleanly(asSent);
   })();
 
   /* lb-phone's light theme, its default. It draws its status bar and home

@@ -1031,17 +1031,24 @@ function Admin.diagnose(source, subjectId, later)
     for _, c in ipairs(okLive and live or {}) do
         if Util.fulfilmentRule(c) ~= placing then other = other + 1 end
     end
+    -- Whether a kill photo can be taken at all: under 'alive' only while a
+    -- contract placed under 'either' is still live. The photo section below
+    -- gives no advice when none can, since every line of it is about
+    -- setting up something nothing uses.
+    local photosUsed = placing == CH.FULFILMENT_RULE.EITHER or other > 0
+    -- Neither line below carries the '->' this report marks something to
+    -- act on with: there is nothing to do about a setting that is unused.
     if placing == CH.FULFILMENT_RULE.ALIVE then
         say('completion: alive (Config.Completion.Fulfilment): live transfer only. A '
             .. 'contract is completed by a handover to the client; a kill never completes one')
         if other > 0 then
-            say(('  -> the kill photo settings (Config.Completion.PhotoStorage and the other '
+            say(('  the kill photo settings (Config.Completion.PhotoStorage and the other '
                 .. 'Photo* settings, ExtraPhotoHosts, ProofWindowSeconds) and Config.Bonus are '
                 .. 'not used by new contracts. %d live contract(s) were placed under \'either\' '
                 .. 'and can still be completed by a kill until they end; those still use them.')
                 :format(other))
         else
-            say('  -> no kill photo is taken, so the kill photo settings '
+            say('  no kill photo is taken, so the kill photo settings '
                 .. '(Config.Completion.PhotoStorage and the other Photo* settings, '
                 .. 'ExtraPhotoHosts, ProofWindowSeconds) and Config.Bonus are not used, beyond '
                 .. 'photos taken before and still waiting for or kept by their clients')
@@ -1361,8 +1368,14 @@ function Admin.diagnose(source, subjectId, later)
     -- check next depends on it: the host allowlist only matters on 'host',
     -- and on 'server' a "no host allowed, every photo refused" line sent
     -- owners to fix an image host they do not use.
+    --
+    -- And none of it where no kill photo can be taken (photosUsed, above):
+    -- it told an owner on the shipped 'alive' to set a public address or an
+    -- upload host, right under the line saying those settings are unused.
     local storage = Photo and Photo.storage and Photo.storage() or 'server'
-    if storage == 'host' then
+    if not photosUsed then
+        say('photo settings: not used (live transfer only); nothing here needs setting up')
+    elseif storage == 'host' then
         say('photo storage: host (lb-phone\'s camera uploads to the phone\'s image host; '
             .. 'this server keeps the link)')
     else
@@ -1375,7 +1388,7 @@ function Admin.diagnose(source, subjectId, later)
     -- neither, the page uses lb-phone's upload if the phone has one, and
     -- otherwise keeps the photo in the app. Each line says which, so "my
     -- client could not save the photo" has an answer here.
-    if storage == 'server' and Photos and Photos.publicBase then
+    if photosUsed and storage == 'server' and Photos and Photos.publicBase then
         local base, from = Photos.publicBase()
         if base and type(GetPasswordHash) ~= 'function' then
             say(('photo links: none (this server build has no GetPasswordHash, so it cannot '
@@ -1435,13 +1448,13 @@ function Admin.diagnose(source, subjectId, later)
     if Photos and Photos.totals then
         local okTotals, totals = pcall(Photos.totals)
         okTotals = okTotals and type(totals) == 'table'
-        if okTotals and (storage == 'server'
+        if okTotals and ((photosUsed and storage == 'server')
                 or totals.waiting.count + totals.kept.count + totals.served.count > 0) then
             local function size(bytes)
                 return ('%.1f MB'):format((tonumber(bytes) or 0) / 1048576)
             end
-            say(('photos on disk: %d waiting (%s), %d kept in the app (%s), %d served to '
-                .. 'phones\' Photos (%s)'):format(
+            say(('photos on disk%s: %d waiting (%s), %d kept in the app (%s), %d served to '
+                .. 'phones\' Photos (%s)'):format(photosUsed and '' or ' (taken before)',
                 totals.waiting.count, size(totals.waiting.bytes),
                 totals.kept.count, size(totals.kept.bytes),
                 totals.served.count, size(totals.served.bytes)))
@@ -1454,7 +1467,7 @@ function Admin.diagnose(source, subjectId, later)
             end
         end
     end
-    if storage == 'host' and Photo and Photo.allowedHosts then
+    if photosUsed and storage == 'host' and Photo and Photo.allowedHosts then
         local okHosts, hosts = pcall(Photo.allowedHosts)
         hosts = okHosts and type(hosts) == 'table' and hosts or {}
         say(('photo hosts: %d%s'):format(#hosts,

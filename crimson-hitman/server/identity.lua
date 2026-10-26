@@ -603,12 +603,18 @@ end
 --- front of a hitman who could see otherwise. Qbox gives no health back on
 --- its own, and bleeding takes more, so it is the ordinary case after a
 --- rough abduction.
+---
+--- strict refuses the dead whatever Config.Kidnap.RejectDead says: a
+--- contract placed under 'alive' (Kidnap.conditionsMet), where a body
+--- handed over would be paid as a live delivery.
+---@param source number
+---@param strict boolean|nil
 ---@return boolean ok
 ---@return string|nil why 'target_too_hurt' for the health floor alone
-function Identity.isAliveAndConscious(source)
+function Identity.isAliveAndConscious(source, strict)
     local dead, lastStand, resolved = Identity.deathState(source)
     if not resolved then return false end
-    if Config.Kidnap.RejectDead and dead then return false end
+    if (strict or Config.Kidnap.RejectDead) and dead then return false end
     if Config.Kidnap.RejectLastStand and lastStand then return false end
 
     -- GTA health runs 100..200, where 100 is dead — so the percentage is

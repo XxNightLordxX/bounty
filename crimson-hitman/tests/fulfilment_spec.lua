@@ -270,6 +270,67 @@ describe('a kill on a contract that pays only for a live delivery', function()
         eq(Env.players[3].PlayerData.money.cash - cash, 5000)
         eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
     end)
+
+    -- The alive checks are the operator's to loosen, but not on these: a
+    -- handover is the only way one completes, so a body handed over would
+    -- be the kill the rule exists to refuse, paid in full.
+    for _, case in ipairs({
+        { switch = 'RequireConscious', how = 'vehicle' },
+        { switch = 'RejectDead',       how = 'restrained' },
+    }) do
+        it(('is never paid for a body handed over, with Config.Kidnap.%s off'):format(case.switch), function()
+            local s, f = shipped()
+            Config.Kidnap[case.switch] = false
+            local c = taken(s, f)
+            killed(s)
+            -- Raised where they fell at full health, as the medical
+            -- resource leaves a body: over any health floor.
+            Env.players[2]._health = 200
+            inHand(case.how)
+
+            local before = world(s)
+            local ok, err = s.kidnap.arm(c.id, 'HITMAN01')
+            falsy(ok, 'a body is not a live delivery')
+            eq(err, 'target_not_conscious')
+            local done = 0
+            for _ = 1, math.floor(Config.Kidnap.CountdownSeconds * 1000 / Config.Kidnap.TickMs) + 1 do
+                done = done + #s.kidnap.tick(Config.Kidnap.TickMs)
+            end
+            eq(done, 0, 'nothing completes')
+            eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'the contract stays open')
+            conserved(s, before, 'a body handed over')
+        end)
+
+        it(('fails a handover whose target dies in it, with Config.Kidnap.%s off'):format(case.switch), function()
+            local s, f = shipped()
+            Config.Kidnap[case.switch] = false
+            local c = taken(s, f)
+            Env.players[2]._health = 200
+            inHand(case.how)
+            truthy(s.kidnap.arm(c.id, 'HITMAN01'), 'armed while they are alive')
+
+            Env.players[2].PlayerData.metadata.isdead = true
+            local done = 0
+            for _ = 1, math.floor(Config.Kidnap.CountdownSeconds * 1000 / Config.Kidnap.TickMs) + 1 do
+                done = done + #s.kidnap.tick(Config.Kidnap.TickMs)
+            end
+            eq(done, 0, 'a target who dies in the countdown is not delivered')
+            eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED)
+        end)
+    end
+
+    it('leaves those switches loosening a contract a kill completes anyway', function()
+        local s, f = shipped()
+        Config.Completion.Fulfilment = 'either'
+        Config.Kidnap.RejectDead = false
+        local c = taken(s, f)
+        eq(s.storage.readContract(c.id).fulfilment_rule, 'either')
+        Env.players[2].PlayerData.metadata.isdead = true
+        Env.players[2]._health = 200
+        inHand()
+        local ok, err = s.kidnap.arm(c.id, 'HITMAN01')
+        truthy(ok, 'the operator\'s setting still holds there: ' .. tostring(err))
+    end)
 end)
 
 describe('delivering alive on a contract that pays only for it', function()
@@ -364,6 +425,25 @@ describe('what every party is shown', function()
         board = s.projection.listing('NOSY0001', 1)
         eq(board.settings.fulfilment, 'either', 'a new one would be either')
         eq(board.contracts[1].fulfilment, 'alive', 'this one is what it was placed as')
+    end)
+
+    -- The Place form read the rule off the board alone, so with that read
+    -- failed it offered a bonus the server then placed as 0.
+    it('says how new ones are placed with the wallet too, which the Place form reads each time', function()
+        local s, f = shipped()
+        local wallet = s.app.handlers.rewardOptions(f.creator, {})
+        eq(wallet.caps.fulfilment, 'alive')
+        eq(wallet.caps.bonusPercent, Config.Bonus.maxPercent,
+            'the cap is kept: a contract placed under either can still have its bonus raised')
+
+        Config.Completion.Fulfilment = 'either'
+        eq(s.app.handlers.rewardOptions(f.creator, {}).caps.fulfilment, 'either')
+    end)
+
+    it('answers the percentage it placed, which the confirmation is worded from', function()
+        local s, f = shipped()
+        local c = place(s, f, { baseline = { cash = 5000 } }, { bonusPercent = 50 })
+        eq(s.projection.contract(c, 'CREATOR1').bonusPercent, 0)
     end)
 end)
 

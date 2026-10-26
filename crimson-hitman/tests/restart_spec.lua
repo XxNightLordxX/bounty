@@ -3855,6 +3855,25 @@ describe('a boot whose recovery raises', function()
             eq(select(2, s2.admin.void(0, c.id, 'during it')), 'recovery_failed')
             eq(money(1), creator, 'nothing moved')
 
+            -- The app too, On me's buyout with it. It answered busy, which
+            -- the page words as a moment's wait, beside a Try again that
+            -- could never work in this process.
+            for _, name in ipairs({ 'list', 'mine', 'bailout' }) do
+                Env.clientEvents = {}
+                _G.source = 1
+                Env.events['crimson-hitman:' .. name]({ id = c.id, __rid = 7 })
+                _G.source = nil
+                local reply
+                for _, event in ipairs(Env.clientEvents) do
+                    if event.name == 'crimson-hitman:result' then reply = event.args[1] end
+                end
+                truthy(reply, name .. ' was not answered')
+                falsy(reply.ok, name)
+                eq(reply.err, CH.ERR.RECOVERY_FAILED, name)
+                eq(reply.rid, 7, name)
+            end
+            eq(money(1), creator, 'and nothing moved for those either')
+
             -- The cause fixed, the next start recovers and opens.
             local _, s3 = restart(mode, s2)
             eq(s3.app.ready, true)

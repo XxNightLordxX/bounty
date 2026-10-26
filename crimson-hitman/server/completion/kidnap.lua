@@ -94,8 +94,18 @@ function Kidnap.conditionsMet(contract, hitman, target, creator)
     -- The target must be alive and conscious for the entire delivery.
     -- Delivering a corpse is not a kidnapping (§7.4). Under the health floor
     -- is its own reason: they are neither, and the hitman can see it.
-    if Config.Kidnap.RequireConscious then
-        local alive, why = Identity.isAliveAndConscious(target.source)
+    --
+    -- On a contract placed under 'alive' the check is not the operator's to
+    -- switch off. A handover is the only way it completes, so with
+    -- RequireConscious or RejectDead off a hitman could kill the target,
+    -- cuff the body (the medical resource raises it at full health, over
+    -- any floor) or put it in their car, and be paid the whole reward for
+    -- the one thing the rule exists to stop. Those switches loosen only
+    -- contracts a kill completes anyway.
+    local aliveOnly = contract ~= nil
+        and Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE
+    if Config.Kidnap.RequireConscious or aliveOnly then
+        local alive, why = Identity.isAliveAndConscious(target.source, aliveOnly)
         if not alive then return false, why or 'target_not_conscious' end
     end
 

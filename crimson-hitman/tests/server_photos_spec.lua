@@ -1257,6 +1257,13 @@ describe('a photo kept for the client in the app, on this server', function()
         local said = table.concat(s.admin.diagnose(1) or {}, '\n')
         truthy(said:find('1 kept in the app', 1, true), said)
         truthy(said:find('photos on disk:', 1, true), said)
+
+        -- Still counted on a server since switched to live transfer only,
+        -- as what is left from before.
+        Config.Completion.Fulfilment = 'alive'
+        said = table.concat(s.admin.diagnose(1) or {}, '\n')
+        truthy(said:find('photos on disk (taken before): 0 waiting', 1, true), said)
+        truthy(said:find('1 kept in the app', 1, true), said)
     end)
 end)
 
@@ -1370,6 +1377,52 @@ describe('what /ch-diag says about saving photos kept on this server', function(
         truthy(said:find('photo links: none (web_baseUrl is not set)', 1, true), said)
         truthy(said:find('kept in the app', 1, true), said)
         truthy(said:find('server.qbox.re', 1, true), 'the Nucleus replacement is named: ' .. said)
+    end)
+
+    --- Under 'alive', as shipped, no kill photo is taken. The report said
+    --- the photo settings were unused, and then told the owner to set up
+    --- every one of them.
+    it('gives no photo advice where no kill photo can be taken, and gives it once one can', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Completion.Fulfilment = 'alive'
+        Config.Completion.PhotoStorage = 'server'
+        Natives.convars.web_baseUrl = 'r2.qbox.re'
+        local asked = 0
+        Natives.httpAnswer = function() asked = asked + 1; return 200, '', {} end
+        local after = {}
+        local said = table.concat(s.admin.diagnose(1, nil,
+            function(line) after[#after + 1] = line end) or {}, '\n')
+        Natives.httpAnswer = nil
+        truthy(said:find('photo settings: not used (live transfer only)', 1, true), said)
+        falsy(said:find('photo storage:', 1, true), said)
+        falsy(said:find('photo links', 1, true), said)
+        eq(asked, 0, 'nor is the address asked whether it reaches a page nothing uses')
+        eq(#after, 0, table.concat(after, '\n'))
+        truthy(said:find('\n  no kill photo is taken', 1, true), said)
+        falsy(said:find('-> no kill photo', 1, true), 'an unused setting is nothing to act on: ' .. said)
+
+        Natives.convars.web_baseUrl = nil
+        said = diag(s)
+        falsy(said:find('PhotoPublicUrl', 1, true), 'no address to set: ' .. said)
+
+        Config.Completion.PhotoStorage = 'host'
+        Config.Completion.ExtraPhotoHosts = {}
+        said = diag(s)
+        falsy(said:find('photo hosts:', 1, true), said)
+        falsy(said:find('every kill photo will be refused', 1, true), said)
+
+        -- One placed under 'either' and still live is completed by a kill,
+        -- and the advice is back for it.
+        Config.Completion.PhotoStorage = 'server'
+        Config.Completion.Fulfilment = 'either'
+        truthy(s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } } }))
+        Config.Completion.Fulfilment = 'alive'
+        said = diag(s)
+        falsy(said:find('photo settings: not used', 1, true), said)
+        truthy(said:find('photo storage: server', 1, true), said)
+        truthy(said:find('photo links: none (web_baseUrl is not set)', 1, true), said)
     end)
 
     it('takes lb-phone\'s own allow list as lb-phone reads it', function()

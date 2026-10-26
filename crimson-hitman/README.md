@@ -104,7 +104,9 @@ statements, word for word). If a later version needs something that user
 cannot add, the start stops and the console names each thing missing, with
 the `ALTER TABLE` statement to run as a user that may; this version adds the
 columns `crimson_escrow.deliver_raises`, `deliver_before`, `deliver_arrived`,
-`settled_by_staff` and `settled_staff`. A busy server
+`settled_by_staff` and `settled_staff`, and `crimson_contracts.fulfilment_rule`
+(how each contract may be completed; NULL on older rows, which read as
+`'either'`). A busy server
 (thousands of contracts a month) is better on `mysql` from the start: see
 *Changing storage mode* before switching a server that already has players'
 money in one.
@@ -218,8 +220,11 @@ before anybody is killed. A contract is completed only by a live handover:
 the hitman restrains the target or gets them into the hitman's own vehicle,
 brings them to the client alive and holds them there for the handover
 countdown. Killing the target never completes it: they die and respawn as
-normal, the contract stays open, and there is no **Verify kill**. The whole
-reward is paid on delivery, so there is no separate kidnapping bonus, and
+normal, the contract stays open, and there is no **Verify kill**. Nor is a
+body handed over: the target must be alive and conscious for the whole
+countdown, and a dead one is refused, whatever `Config.Kidnap.RequireConscious`
+and `Config.Kidnap.RejectDead` say (those loosen only contracts placed under
+`'either'`). The whole reward is paid on delivery, so there is no separate kidnapping bonus, and
 the kill photo settings are not used. In the app, every card of such a
 contract is marked **Alive only**, the accept dialog says a kill does not
 complete it, the hitman's card offers **Deliver alive** alone, and the Place
@@ -256,7 +261,8 @@ collected) — each payout is funded separately and all of it is escrowed up
 front. Under `'either'`, optionally set a kidnapping bonus (a percentage on
 top, plus any items or weapons marked to pay only if the target is delivered
 alive); under `'alive'` there is none, since the whole reward pays for the
-delivery, and the server refuses a bonus sent anyway (`no_bonus`). Set a
+delivery: a percentage sent anyway is placed as 0, and money or goods set
+apart as a bonus are refused (`no_bonus`). Set a
 buyout price, and a stake the hitman puts up when they accept. The form shows what
 it will take from you before you place it, and the contract runs for
 `Config.Limits.DefaultDeadlineSeconds` (3 hours as shipped) unless you extend
@@ -719,7 +725,7 @@ headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
 | A player cannot find the app | It is in the phone's App Store, not on the home screen: each player downloads it. Set `Config.App.DefaultInstalled = true` to put it on every eligible phone. Players with a barred job (`Config.BlockedJobTypes` / `Config.BlockedJobNames`, any job they hold) never see it. `/ch-diag <player id>` says why it is not showing for them |
 | A kill does not complete a contract, or there is no Verify kill | As shipped, `Config.Completion.Fulfilment` is `'alive'`: contracts are completed only by a live handover to the client, and a kill never completes one (the server answers `kill_not_allowed`). Set it to `'either'` to let kills complete contracts placed from then on; ones already placed keep their rule. `/ch-diag` says which is in use |
 | A staff command answers "Not authorised" in game | Grant the ACE in `server.cfg`: `add_ace group.admin crimson.admin allow` (and `crimson.identity` for `/ch-whois`). The server console never refuses, so you can run any of them there meanwhile |
-| The console printed `BOOT RECOVERY FAILED`, and `/ch-settle`, `/ch-void` and `/ch-stuck` answer *Recovery failed at the last start* | Boot recovery raised an error (the text after `BOOT RECOVERY FAILED:` says what), so what the last shutdown left part-way is not settled. Rather than act on it, the resource keeps the app, the login payouts, the maintenance tick and those commands closed until it is restarted; players running `/cleanse <id>` are told the server's contract system failed to start and staff have been told. Fix the cause (a database that refused the query, say), then restart the resource (`restart crimson-hitman`): the next start runs recovery again |
+| The console printed `BOOT RECOVERY FAILED`, and `/ch-settle`, `/ch-void` and `/ch-stuck` answer *Recovery failed at the last start* | Boot recovery raised an error (the text after `BOOT RECOVERY FAILED:` says what), so what the last shutdown left part-way is not settled. Rather than act on it, the resource keeps the app, the login payouts, the maintenance tick and those commands closed until it is restarted; players running `/cleanse <id>` are told the server's contract system failed to start and staff have been told, and so is everyone who opens the app, on every tab, with no *Try again* (it answers `recovery_failed`). Fix the cause (a database that refused the query, say), then restart the resource (`restart crimson-hitman`): the next start runs recovery again |
 | The console keeps printing `[crimson-hitman] still waiting after ...s for ... resource(s) to start` | The lines under it name `qbx_core` or `ox_inventory`, which is not started or runs under another name. Start it under that name; a renamed or forked copy never matches |
 | The app stopped answering after you restarted `qbx_core`, `ox_inventory` or `oxmysql` | FiveM stops this resource with them and does not start it again. Run `ensure crimson-hitman` |
 | `json` mode refuses to start on an empty `data/` | You replaced the resource folder and lost `data/`, which is the store. Put the old `data/` back and start it again. To start empty on purpose, run `set crimson_hitman_new_store 1` in the console, start the resource, then leave it unset (see *Updating*) |

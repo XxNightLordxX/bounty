@@ -26,7 +26,8 @@ App.ready = true
 
 --- Set when boot recovery raised (StartCrimsonHitman): App.ready then stays
 --- down for the life of the process, and the staff commands say that a
---- restart, once the logged cause is fixed, is what opens it.
+--- restart, once the logged cause is fixed, is what opens it. Every app
+--- request is answered CH.ERR.RECOVERY_FAILED then, not busy.
 App.recoveryFailed = false
 
 function App.init(d)
@@ -320,8 +321,13 @@ local function handler(name, action, fn)
     RegisterNetEvent('crimson-hitman:' .. name, function(payload)
         local src = source
 
+        -- Busy while boot recovery runs, which a moment later fixes. Once it
+        -- has raised it never finishes in this process, and every Board,
+        -- Mine and On me (its buyout too) answered "busy for a moment" with
+        -- a Try again that could never work; /cleanse already said why.
         if not App.ready then
-            return App.reply(src, name, false, CH.ERR.BUSY, nil,
+            return App.reply(src, name, false,
+                App.recoveryFailed and CH.ERR.RECOVERY_FAILED or CH.ERR.BUSY, nil,
                 type(payload) == 'table' and tonumber(payload.__rid) or nil)
         end
 
@@ -722,6 +728,14 @@ function App.register()
                 cash = Config.Sources.cash.max, bank = Config.Sources.bank.max,
                 dirty = Config.Sources.dirty.max, slots = Config.Limits.MaxPayoutSlots,
                 bonusPercent = Config.Bonus.maxPercent,
+                -- How a contract placed now may be completed, as the board's
+                -- settings say it too. The Place form learned it from the
+                -- board alone, so with that read failed it offered a
+                -- kidnapping bonus under 'alive', which create places as 0,
+                -- and told the creator it had taken one. This is read every
+                -- time the form opens. The bonus cap stays as it is: a
+                -- contract placed under 'either' can still have its raised.
+                fulfilment = Util.placingRule(),
                 maxStacks = Config.Sources.item.maxStacks,
                 maxPerStack = Config.Sources.item.maxPerStack,
                 maxWeapons = Config.Sources.weapon.max,

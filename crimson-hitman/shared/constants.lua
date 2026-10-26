@@ -317,6 +317,10 @@ CH.ERR = {
     -- player, in this instant; or the resource is still starting. Nothing
     -- was changed, and the same request a moment later goes through.
     BUSY             = 'busy',
+    -- Boot recovery raised (App.recoveryFailed), so the app stays closed
+    -- until staff fix the logged cause and restart the resource. Not busy:
+    -- that says a moment changes it, and here nothing in this process does.
+    RECOVERY_FAILED  = 'recovery_failed',
     -- A hitman holds the contract, so its creator can no longer withdraw it,
     -- edit it or take reward back; only add to it or propose a change.
     CONTRACT_TAKEN   = 'contract_taken',

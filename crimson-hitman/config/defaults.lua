@@ -551,6 +551,12 @@ ConfigDefaults.Kidnap = {
     --- whole way: not dead, not downed / bleeding out, and above the health
     --- floor. Both states are re-checked on every countdown sample, so a
     --- target who dies or goes down mid-countdown fails the delivery.
+    ---
+    --- RequireConscious and RejectDead loosen only contracts placed under
+    --- 'either' (Config.Completion.Fulfilment). One placed under 'alive' is
+    --- completed only by a live handover, so its target is always checked
+    --- and a dead one is always refused, whatever these two say: a body in
+    --- cuffs or in the hitman's car is never paid as a delivery.
     RequireConscious   = true,
     RejectDead         = true,
     RejectLastStand    = true,

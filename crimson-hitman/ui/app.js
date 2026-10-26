@@ -39,6 +39,9 @@
     // Why the board, Mine or the ledger has nothing in it, when the reason
     // is that the server refused rather than that there is nothing to show.
     loadFailed: {},
+    // Which of those refusals asking again cannot change (finalRefusal), so
+    // their card offers no Try again.
+    loadFinal: {},
     // Which sections have had an answer at all. Without this the app has no
     // way to tell "asked, and there is nothing" from "have not been told
     // yet", and every view took the second for the first: On me announced
@@ -561,6 +564,12 @@
        that instant, or the server had only just started. Asking again
        works, so it says so rather than calling it a failure. */
     busy: 'That was busy for a moment. Try again.',
+    /* Boot recovery failed, so the server answers nothing until staff fix
+       it and restart the resource. It was "busy for a moment", beside a Try
+       again that could never work; this is what /cleanse says. Final, so
+       nothing offers to ask again (finalRefusal). */
+    recovery_failed: 'The server\u2019s contract system failed to start, and staff '
+      + 'have been told.',
     /* A hitman took the contract while the creator was looking at it. It
        was "Not right now." for Withdraw, Edit and Take back, and the retry
        got the same words, with nothing saying why or what still works. */
@@ -4641,11 +4650,20 @@
     if (!why) { return false; }
     var failed = el('div', 'card');
     failed.appendChild(el('div', 'hint', why));
-    var again = el('button', 'ghost ico i-refresh', 'Try again');
-    again.onclick = function () { delete state.loadFailed[section]; refresh(); render(); };
-    failed.appendChild(again);
+    if (!state.loadFinal[section]) {
+      var again = el('button', 'ghost ico i-refresh', 'Try again');
+      again.onclick = function () { delete state.loadFailed[section]; refresh(); render(); };
+      failed.appendChild(again);
+    }
     view.appendChild(failed);
     return true;
+  }
+
+  /* A refusal no retry from this page can change: the server's boot
+     recovery failed, and it answers nothing until staff restart it. A Try
+     again beside it was a button that could never work. */
+  function finalRefusal(code) {
+    return code === 'recovery_failed';
   }
 
   /* The card that goes where the missing thing should be while the answer
@@ -5008,7 +5026,11 @@
     // that had not arrived, and taking the whole form with it. Rebuilds
     // during that window are the normal case, not a rare one: the target
     // list lands in it.
-    if (state.walletFailed) {
+    if (state.walletFailed && state.walletFailed.final) {
+      var closed = el('div', 'card');
+      closed.appendChild(el('div', 'hint', state.walletFailed.text));
+      form.appendChild(closed);
+    } else if (state.walletFailed) {
       var failed = el('div', 'card');
       failed.appendChild(el('div', 'hint', state.walletFailed.text
         + ' Money still works; items and weapons need another look.'
@@ -5056,10 +5078,14 @@
             // fault the server could have named in one word. Labelled and
             // put last, after the sentence, so it reads as something to
             // quote rather than as part of what the player is being told.
+            // Not "Money still works" where nothing does: the server's
+            // boot recovery failed, and placing is refused too.
             state.walletFailed = (r.err === 'rate_limited')
               ? { text: 'Reading your pockets too fast. Try again in a moment.' }
-              : { text: 'Could not read what you are carrying.',
-                  code: r.err || 'no reply' };
+              : finalRefusal(r.err)
+                ? { text: ERRORS[r.err], final: true }
+                : { text: 'Could not read what you are carrying.',
+                    code: r.err || 'no reply' };
           }
           redraw();
         });
@@ -6097,7 +6123,15 @@
         }
         return fail(r);
       }
-      say(placedText(held, r.data || {}, asked), 'ok');
+      // What was held, at the percentage the server placed rather than the
+      // one sent: it places none where contracts pay only for a live
+      // delivery, and the confirmation said a bonus had been taken that
+      // never was.
+      var placed = r.data || {};
+      if (typeof placed.bonusPercent === 'number' && placed.bonusPercent !== bonusPct) {
+        held = takenText(composeTotals(slots, placed.bonusPercent));
+      }
+      say(placedText(held, placed, asked), 'ok');
       // The goods are gone from the player's pockets now; leaving them
       // staged would offer them again on the next contract.
       state.picked = {};
@@ -6179,9 +6213,17 @@
 
   /* The same for a contract placed now, from the server's rule for new
      ones, which comes with the board's settings. A server that does not
-     say is one from before the rule, where every contract was 'either'. */
+     say is one from before the rule, where every contract was 'either'.
+
+     And with the wallet, which the Place form reads every time it opens:
+     with the board's read failed, the form went on offering a kidnapping
+     bonus on a server that places none, and said it had taken one. */
   function placingAliveOnly() {
     var rule = settings().fulfilment;
+    if (rule === undefined || rule === null) {
+      var caps = state.wallet && state.wallet.caps;
+      rule = caps && caps.fulfilment;
+    }
     return rule !== undefined && rule !== null && rule !== 'either';
   }
 
@@ -6728,9 +6770,11 @@
     // the failure card that already exists, with the retry already on it.
     if (r.ok && r.data !== null && typeof r.data === 'object') {
       delete state.loadFailed[section];
+      delete state.loadFinal[section];
       state.loaded[section] = true;
       return true;
     }
+    state.loadFinal[section] = finalRefusal(r.err);
     state.loadFailed[section] = (r.err === 'rate_limited' && r.data && r.data.retryAfter)
       ? 'Asked too fast. Try again in ' + r.data.retryAfter + ' second'
         + (r.data.retryAfter === 1 ? '' : 's') + '.'
