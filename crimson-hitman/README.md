@@ -708,6 +708,27 @@ flushing the log is refused, in the commands' own words.
 | **Features, limits & settings** | Every on/off switch in `config.lua`, grouped by section, with a line on what it does and what turning it off does to things already under way, and the two multi-choice features (`Config.Completion.Fulfilment`, `Config.Completion.PhotoStorage`). Then the limits: every number in `Config.Limits`, the anonymity fees and their account, the informant's price, the stake ceilings, the handover countdown, radius and health floor, buyout pricing, the targeting radii and page sizes, `Config.Ledger.PhotoRetentionDays`, the advisory job lists and every rate limit. Each with its value now, what `config.lua` says, and whether the value comes from `config.lua` or the panel | **Change** one, **reset** one, **reset all** |
 | **Tools** | — | The timer refresh (`/ch-refresh`, test servers), **run the diagnosis** and read it, **flush the audit log** |
 
+**Using the page.** The panel is sized for a game window 1280 to 1920 pixels
+wide, and still works at 1024. It opens on the overview, with the open review
+items, the lines waiting for staff and the settings changed from the panel
+counted beside their sections. A contract opens in a drawer over the list,
+with what you can do to it first: void, whois, and each stuck line's settle
+buttons. Anything that moves money or cannot be undone (void, settle, resolve,
+reset, the timer refresh) takes two clicks: the first turns the button brass
+and says what the second does, and it disarms itself after three seconds. The
+server's answer is shown in its exact words where you asked, and as a toast in
+the corner; a refusal (a rate limit with its wait, a recovering server, a
+value the start-up checks refuse) is shown the same way. The contract search
+asks once you stop typing, and an answer to an older search never replaces a
+newer one. Read-only staff see every write control disabled, with why on
+hover, and a banner says when recovery holds writes back. The page never asks
+for whois, a player's log rows or anything that unmasks without
+`crimson.identity`; what it shows is only what the server sent, already
+redacted for you. Escape, or Close, closes it; so does the server refusing a
+read (the ACE taken away), with why. The icons come from Font Awesome's CDN,
+and every control has its words beside its icon, so a game that cannot reach
+the CDN loses nothing but the icons.
+
 **Settings changed from the panel** are kept as overrides in the store your
 server runs: `data/records.json` in `json` mode, the `crimson_settings` table in
 `mysql` mode (created at start, and in `install/sql/crimson_hitman.sql`), and in
@@ -953,7 +974,7 @@ sh crimson-hitman/tests/all.sh    # everything
 CH_SUITES=journeys_spec lua crimson-hitman/tests/run.lua   # one area, in seconds
 ```
 
-Five kinds of check, because each catches what the others cannot:
+Six kinds of check, because each catches what the others cannot:
 
 - **Server suite** (about 2,700 tests) — escrow arithmetic, the state machine,
   every payout and refund path, whole player journeys, every action against
@@ -980,6 +1001,16 @@ Five kinds of check, because each catches what the others cannot:
   home indicator, the page's top under lb-phone's status bar, and the pale
   bands that keep both readable in lb-phone's light theme. Skipped
   where Playwright is not installed.
+- **Staff panel suites** — the real `ui/admin.js` driven through the same DOM
+  shim, which parses its markup (`tests/ui/admin_run.js`): every section and
+  every action against a scripted server, the two-click confirms, the exact
+  answers, read-only and identity access, recovery, stale answers, and player
+  text that looks like markup staying text. And the page at 1280, 1920 and
+  1024 wide in a real browser, without its icon font
+  (`tests/layout/admin_run.js`): nothing off the window or cut off, no
+  sideways scrolling, controls at least 28px, text at least 12px, the drawer
+  and dropdowns inside the window, and nothing drawn over the game while it
+  is closed.
 
 **What it cannot prove:** behaviour against the real `ox_inventory`,
 `lb-phone` and `qbx_core` builds. Work through `../docs/in-game-checklist.md` (in the repository, next to this resource folder) on

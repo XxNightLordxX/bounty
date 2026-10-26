@@ -406,6 +406,22 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] The overview shows the contracts by state, money held by account, owed
       deliveries, stuck lines, open review items and photos, and refreshes
       every 10 seconds; it matches `/ch-stuck` and `/ch-review`
+- [ ] At your own game resolution (and at 1280x720 windowed, if you can) the
+      panel fits the screen: the navigation, every toolbar and the contract
+      drawer's Void and Close are on screen without scrolling sideways, and
+      the dropdowns open inside the window. The icons show; if the game cannot
+      reach cdnjs.cloudflare.com, every button still says what it does
+- [ ] Type a target's name into the contract search: the list answers once you
+      stop typing, and clicking a row opens its drawer. A dropdown (state, rule,
+      placed) opens and picks with the mouse, and Clear brings the full list back
+- [ ] Every destructive button (void, settle, resolve, reset, reset all, the
+      timer refresh) turns brass on the first click and says *Click again*;
+      leave it three seconds and it goes back without doing anything
+- [ ] Type a citizen id into the log's citizen id box on the account without
+      `crimson.identity`: the box is greyed out and nothing is filtered by it
+- [ ] Turn a feature switch off and on again from **Features & limits**: each
+      click answers in a toast and on the row, and the row says *changed from
+      the panel* with `config.lua`'s value beside it until you reset it
 - [ ] On the `command`-only account the panel opens, every section reads, and
       void, settle, resolve and every setting answer *Not authorised*
 - [ ] Place an anonymous contract and accept it anonymously on another

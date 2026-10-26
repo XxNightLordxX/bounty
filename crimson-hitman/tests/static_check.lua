@@ -2139,6 +2139,135 @@ do
 end
 
 --------------------------------------------------------------------------
+-- 32. The staff panel's page (ui/admin.js) asks only for what is answered,
+-- and builds markup only through its escaping helper.
+--------------------------------------------------------------------------
+--
+-- The panel's page posts an op to the client, which carries it to
+-- server/panel.lua; an op the server does not list answers unknown_op, and
+-- the button that sent it does nothing a staff member can understand. Its
+-- rows carry player-written text in nearly every cell, so the one way
+-- markup reaches the page is setHtml(), which takes only what h() made, and
+-- h() escapes every value. And it is a CEF page: no native dialog (they
+-- never show), no native <select> (its popup is drawn wrongly).
+--------------------------------------------------------------------------
+
+do
+    local page = read('crimson-hitman/ui/admin.js') or ''
+    local html = read('crimson-hitman/ui/admin.html') or ''
+    local css = (read('crimson-hitman/ui/admin.css') or ''):gsub('/%*.-%*/', '')
+    local panelSrc = read('crimson-hitman/server/panel.lua') or ''
+    local clientAdmin = read('crimson-hitman/client/admin.lua') or ''
+    local code = page:gsub('/%*.-%*/', ''):gsub('\n%s*//[^\n]*', '\n')
+
+    if page == '' then failures[#failures + 1] = 'ui/admin.js is missing' end
+
+    -- Every op the page asks for is one the server answers, and every op
+    -- the server answers has a control on the page (but `access`, which the
+    -- page is told as it opens).
+    local ops, used = {}, {}
+    for name in (panelSrc:match('local OPS = (%b{})') or ''):gmatch('([%a_][%w_]*)%s*=%s*%u+') do
+        ops[name] = true
+    end
+    for _, call in ipairs({ "ask%('([%w_]+)'", "write%('([%w_]+)'" }) do
+        for name in code:gmatch(call) do
+            used[name] = true
+            if not ops[name] then
+                failures[#failures + 1] = ('ui/admin.js asks for "%s", which server/panel.lua does '
+                    .. 'not answer (OPS)'):format(name)
+            end
+        end
+    end
+    for name in pairs(ops) do
+        if not used[name] and name ~= 'access' then
+            failures[#failures + 1] = ('server/panel.lua answers "%s", and nothing on the staff '
+                .. 'panel\'s page asks for it'):format(name)
+        end
+    end
+
+    -- Every NUI callback it posts to is one client/admin.lua registers.
+    local callbacks = {}
+    for name in clientAdmin:gmatch("RegisterNUICallback%('([%w_]+)'") do callbacks[name] = true end
+    for name in code:gmatch("nui%('([%w_]+)'") do
+        if not callbacks[name] then
+            failures[#failures + 1] = ('ui/admin.js posts to "%s", which client/admin.lua does not '
+                .. 'register'):format(name)
+        end
+    end
+
+    -- The resource's name from FiveM, never written into a URL.
+    if not code:find('GetParentResourceName', 1, true) then
+        failures[#failures + 1] = 'ui/admin.js does not take its resource name from GetParentResourceName()'
+    end
+    if code:find("https://crimson%-hitman") then
+        failures[#failures + 1] = 'ui/admin.js posts to a hard-coded resource name'
+    end
+
+    -- One innerHTML assignment, of what h() made; nothing else that parses.
+    local assignments = {}
+    for value in code:gmatch('innerHTML%s*=%s*([^;\n]+)') do assignments[#assignments + 1] = value end
+    if #assignments ~= 1 or not assignments[1]:find("markup instanceof Markup ? markup.html : ''", 1, true) then
+        failures[#failures + 1] = ('ui/admin.js sets innerHTML %d time(s); the one place is setHtml(), '
+            .. 'which takes only what h() made'):format(#assignments)
+    end
+    for _, sink in ipairs({ 'insertAdjacentHTML', 'document%.write', 'outerHTML%s*=', 'new Markup%(' }) do
+        local count = select(2, code:gsub(sink, ''))
+        -- Markup objects are made in h() and frag() only.
+        local allowed = sink == 'new Markup%(' and 3 or 0
+        if count > allowed then
+            failures[#failures + 1] = ('ui/admin.js uses %s outside h() and frag()'):format((sink:gsub('%%', '')))
+        end
+    end
+    if not code:find("return esc(child);", 1, true) or not code:find("'=\"' + esc(v) + '\"'", 1, true) then
+        failures[#failures + 1] = 'ui/admin.js: h() no longer escapes every text and attribute value'
+    end
+
+    -- No native dialog, no native select.
+    for _, dialog in ipairs({ 'confirm', 'prompt', 'alert' }) do
+        local call = dialog .. '%s*%('
+        if code:find('window%.' .. call) or code:find('[^%w_%.]' .. call) then
+            failures[#failures + 1] = ('ui/admin.js uses a native browser dialog (%s), which FiveM NUI '
+                .. 'never shows'):format(dialog)
+        end
+    end
+    if code:find("h%('select") or code:find("createElement%('select'%)") or html:find('<select') then
+        failures[#failures + 1] = 'the staff panel draws a native <select>; use its own dropdown (CEF draws the popup wrongly)'
+    end
+
+    -- Its script and stylesheet are loaded with a build query, as the phone
+    -- page's are, or CEF keeps the copy it first saw.
+    if html:match('src%s*=%s*"admin%.js"') or html:match('href%s*=%s*"admin%.css"')
+        or not html:find("'admin.js?v='", 1, true) or not html:find("'admin.css?v='", 1, true) then
+        failures[#failures + 1] = 'ui/admin.html loads admin.js or admin.css without a build query'
+    end
+
+    -- Every class it draws is one admin.css defines (Font Awesome's aside).
+    local seen = {}
+    local function check(class, where)
+        if seen[class] or class == '' or class:find('^fa%-') or class:sub(-1) == '-' then return end
+        seen[class] = true
+        if not css:find('%.' .. class:gsub('%-', '%%-') .. '[^%w_%-]') then
+            failures[#failures + 1] = ('%s draws the class %q, which ui/admin.css does not define. '
+                .. 'It renders unstyled and says nothing.'):format(where, class)
+        end
+    end
+    for spec in code:gmatch("h%('[%a%d]+([%.%w_%-]*)'") do
+        for class in spec:gmatch('%.([%w_%-]+)') do check(class, 'ui/admin.js') end
+    end
+    for _, fn in ipairs({ 'btn', 'writeBtn', 'card', 'tile', 'dropdown' }) do
+        for spec in code:gmatch(fn .. "%(%s*'([%.%w_%-]+)'") do
+            for class in spec:gmatch('%.([%w_%-]+)') do check(class, 'ui/admin.js') end
+        end
+    end
+    for list in code:gmatch("class: '([%w_%- ]+)'") do
+        for class in list:gmatch('[%w_%-]+') do check(class, 'ui/admin.js') end
+    end
+    for list in html:gmatch('class="([^"]+)"') do
+        for class in list:gmatch('[%w_%-]+') do check(class, 'ui/admin.html') end
+    end
+end
+
+--------------------------------------------------------------------------
 
 io.write(('\nstatic check: %d files\n'):format(checked))
 if #failures == 0 then
