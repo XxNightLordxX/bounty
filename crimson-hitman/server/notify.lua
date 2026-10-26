@@ -532,6 +532,19 @@ local function tellOrKeep(cid, title, content, opts)
     return false
 end
 
+--- How many notices wait for a player's next login, and their titles, for
+--- the admin panel's player view. Titles only: the text can name a
+--- contract's other parties, and the panel shows those under its own rules.
+---@param cid string
+---@return integer count
+---@return string[] titles
+function Notify.waitingFor(cid)
+    local list = cid and waiting[cid] or {}
+    local titles = {}
+    for i = 1, #list do titles[#titles + 1] = tostring(list[i].title) end
+    return #list, titles
+end
+
 --- Hand a player what was kept for them while they were away. Called from
 --- Bridges.onPlayerReady, once they can receive it.
 ---@return integer delivered

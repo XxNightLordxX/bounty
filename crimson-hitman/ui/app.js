@@ -430,6 +430,9 @@
       + 'it. It is not yours to take again.',
     relay_off: 'This server does not run messages through the app.',
     calls_off: 'This server does not place calls through the app.',
+    // A feature staff turned off (proposals, the informant). Only new
+    // actions are refused; whatever was under way carries on.
+    feature_off: 'That is turned off by the server right now.',
     call_unmasked: 'They are staying anonymous, and a call from this phone '
       + 'would show their number. Send a message instead.',
     limit_reached: 'You are holding too many contracts.',
@@ -3171,7 +3174,8 @@
           // "You do not have that."
           insufficient_funds: 'You cannot afford the informant.',
           not_participant: 'This is not yours to ask about.',
-          bad_state: 'This server does not run informants.'
+          bad_state: 'This server does not run informants.',
+          feature_off: 'The informant is turned off by the server right now.'
         };
         if (reasons[r.err]) { return say(reasons[r.err]); }
         return fail(r);
@@ -3797,7 +3801,8 @@
             + 'another.',
           invalid_input: 'That change no longer fits this contract \u2014 it '
             + 'has moved on since you opened it. Look again.',
-          bad_state: 'This contract cannot be changed right now.'
+          bad_state: 'This contract cannot be changed right now.',
+          feature_off: 'Proposing changes is turned off by the server right now.'
         };
         // A new reason is refused for its words — too long, too many
         // digits, a banned pattern — not because the contract moved on.

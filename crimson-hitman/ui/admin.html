@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crimson Hitman Admin</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <!-- The admin panel (/hitmanadmin). Hidden, and taking no input, until
+       the client says it is open (client/admin.lua). -->
+  <div id="panel" class="panel" hidden>
+    <header class="bar">
+      <h1>Crimson Hitman <span class="muted">admin</span></h1>
+      <button id="close" class="icon" type="button" aria-label="Close">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </header>
+    <main id="body" class="body"></main>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script src="admin.js"></script>
+</body>
+</html>

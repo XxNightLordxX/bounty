@@ -425,6 +425,32 @@ function Util.escrowTotals(lines, portion)
     return totals
 end
 
+--- Whether an audit row passes the admin panel's log filters
+--- (Storage.queryAudit): its kind, a piece of its action, the contract it
+--- names, the citizen id that acted, and a time range in os.time seconds.
+--- A filter left out passes everything. One test for every backend, so a
+--- page of the log reads the same whichever store keeps it.
+---@param row table { ts, kind, action, actor_cid, contract_id }
+---@param filter table|nil { kind, action, contract, actor, from, to }
+---@return boolean
+function Util.auditMatches(row, filter)
+    if type(row) ~= 'table' then return false end
+    if type(filter) ~= 'table' then return true end
+    if filter.kind and row.kind ~= filter.kind then return false end
+    if filter.contract and row.contract_id ~= filter.contract then return false end
+    if filter.actor and row.actor_cid ~= filter.actor then return false end
+    local ts = tonumber(row.ts) or 0
+    if filter.from and ts < filter.from then return false end
+    if filter.to and ts > filter.to then return false end
+    -- A plain substring, never a pattern: the text comes from a staff
+    -- member's search box, and a stray % or [ in it is not a request to
+    -- run Lua pattern matching over the whole log.
+    if filter.action and not tostring(row.action or ''):find(filter.action, 1, true) then
+        return false
+    end
+    return true
+end
+
 --- True when the escrow set holds nothing at all.
 function Util.escrowIsEmpty(lines, portion)
     local t = Util.escrowTotals(lines, portion)

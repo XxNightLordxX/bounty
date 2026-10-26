@@ -373,6 +373,11 @@ function Photo.issue(actor, contractId)
         diedAt     = record.at,
         issuedAt   = Util.monotonicMs(),
         used       = false,
+        -- How the photo is to be taken, as the hitman is told with the
+        -- token. Config.Completion.PhotoStorage can be changed from the
+        -- admin panel while they line up the shot, and a token is used the
+        -- way it was issued: the page already opened that camera.
+        storage    = Photo.storage(),
     }
     -- The kill this token proves is kept as long as the token is good, and
     -- the token is good no longer than the kill is kept. A token asked for
@@ -560,7 +565,7 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
     -- many decodes as the flood guard let through. A link costs a string
     -- match, and its refusal is given back like any other.
     local capture
-    if Photo.storage() == 'host' then
+    if (record.storage or Photo.storage()) == 'host' then
         if type(rawUrl) ~= 'string' or #rawUrl > Util.MAX_URL_LENGTH or not Photo.hostAllowed(rawUrl) then
             Audit.rejected('photo_host_not_allowed', actor.cid, record.contractId,
                 { host = Util.urlHost(rawUrl) })

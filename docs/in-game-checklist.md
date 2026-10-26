@@ -394,6 +394,56 @@ uploads, and with neither. Restart the resource between them.
 - [ ] On qbx_medical (no sc-ambulance), `/ch-diag <id>` says the death state
       came from QBox metadata, and a kill on a target still pays
 
+## 13. Admin panel
+
+Grant yourself `crimson.admin` (and, on a second account, only `command`, the
+usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
+
+- [ ] `/hitmanadmin` opens the panel full screen with a cursor; the phone app
+      still opens from the phone as before. Escape closes it, so does its close
+      button, and the game takes input again at once. `restart crimson-hitman`
+      with it open leaves no cursor behind
+- [ ] The overview shows the contracts by state, money held by account, owed
+      deliveries, stuck lines, open review items and photos, and refreshes
+      every 10 seconds; it matches `/ch-stuck` and `/ch-review`
+- [ ] On the `command`-only account the panel opens, every section reads, and
+      void, settle, resolve and every setting answer *Not authorised*
+- [ ] Place an anonymous contract and accept it anonymously on another
+      character. Without `crimson.identity` the contract shows *Anonymous* for
+      both, no citizen id appears anywhere (contract, log, player view), and
+      searching the client's citizen id or name does not find it; with it,
+      both are named and whois answers. `/ch-timeline` shows the matching
+      `admin_panel_contract_identified` row
+- [ ] Void a contract from the panel: the client gets their escrow back and the
+      answer reads exactly as `/ch-void`'s
+- [ ] Leave a payout for staff (fill the hitman's pockets, or stop the server
+      mid-payout) and settle it from the contract view with `delivered` and
+      then with `pay <amount>` on another: the answers read as `/ch-settle`'s
+- [ ] Resolve a review item twice: the second says it is already resolved, and
+      the player is paid once
+- [ ] The log pages back with Older and forward again, and a filter by contract
+      shows that contract's rows only
+- [ ] Turn **Buyouts** off: the app's On me tab stops offering a buyout,
+      `/cleanse` says buyouts are off, and a buyout paid just before still
+      closes its contract after `Config.Bailout.ProcessingDelaySeconds`
+- [ ] Turn **Proposals** off: a proposal already open can still be answered; a
+      new one says it is turned off by the server
+- [ ] Turn **List the people nearby** on from the panel: within a second or two
+      a player's own unmasked face makes them appear on others' nearby lists,
+      with no restart
+- [ ] Change **Contracts a hitman may hold** to 1 with a hitman holding two:
+      both stay, and a third is refused
+- [ ] Try a least buyout above the most: refused with the start's own words
+- [ ] Restart the resource: every changed setting is still in force,
+      `/ch-diag` lists them as *admin panel settings in force over
+      config.lua*, and the panel shows each with *panel* as its source and
+      `config.lua`'s value beside it. Reset all: after another restart,
+      `config.lua` is in force again
+- [ ] In `mysql` mode the `crimson_settings` table holds the changes; in
+      `json` mode `data/records.json` does
+- [ ] `resmon` with the panel open stays under 0.35ms, and back near idle once
+      it is closed (the Escape watch runs every frame only while it is open)
+
 ---
 
 ## If something fails

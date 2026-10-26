@@ -14,8 +14,10 @@ which days have an audit file, and whether `records.json` has been written.
 `records.json` holds the records: the ledger, pending payouts (money owed to
 players who were offline), the stats, the informant reveals, the kill photo
 records (a handle, a state and at most a link or the name of a file in
-`photos/` each, never an image) and the review queue (money events no rule
-could settle, kept until staff resolve them with `/ch-review`). It is written
+`photos/` each, never an image), the review queue (money events no rule
+could settle, kept until staff resolve them with `/ch-review`) and the
+settings staff changed from the admin panel (`/hitmanadmin`), applied over
+`config.lua` at every start. It is written
 only when one of those changes, so a money write never rewrites the history
 it carries; a `store.json` from an older version that still holds them is
 moved into it on the first start. `contracts/<id>.json` holds one contract

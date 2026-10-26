@@ -176,6 +176,9 @@ function Client.boot(opts)
     Client.drawables, Client.drawableThrows = nil, nil
     Client.refuseRegistration = opts.refuseRegistration or false
     Client.console = {}
+    -- The admin panel's page: what the focus was set to, in order, what was
+    -- sent to the page, and the controls it reads (a key a test releases).
+    Client.focus, Client.nuiMessages, Client.released = {}, {}, {}
 
     Client.exports = defaultExports()
     for _, name in ipairs(opts.without or {}) do
@@ -184,6 +187,15 @@ function Client.boot(opts)
 
     -- The client half of the runtime.
     _G.RegisterNUICallback = function(name, fn) Client.nui[name] = fn end
+    _G.SetNuiFocus = function(hasFocus, hasCursor)
+        table.insert(Client.focus, { focus = hasFocus, cursor = hasCursor })
+    end
+    _G.SendNUIMessage = function(message) table.insert(Client.nuiMessages, message) end
+    _G.DisableControlAction = function() end
+    -- A BOOL native: 1 or false, never true.
+    _G.IsDisabledControlJustReleased = function(_, control)
+        return Client.released[control] and 1 or false
+    end
     -- The build Qbox enforces, whose event layouts the client reads.
     _G.GetGameBuildNumber = function() return Client.gameBuild or opts.gameBuild or 3258 end
     _G.PlayerPedId = function() return Client.ped or 1003 end
@@ -209,7 +221,19 @@ function Client.boot(opts)
     -- into the client's own tables rather than the server's.
     local realNet, realAdd = _G.RegisterNetEvent, _G.AddEventHandler
     _G.RegisterNetEvent = function(name, fn) Client.netEvents[name] = fn end
-    _G.AddEventHandler = function(name, fn) Client.handlers[name] = fn end
+    -- Several files can listen for one engine event (onResourceStop is
+    -- main.lua's and admin.lua's), as the engine lets them: each runs.
+    _G.AddEventHandler = function(name, fn)
+        local before = Client.handlers[name]
+        if before then
+            Client.handlers[name] = function(...)
+                before(...)
+                return fn(...)
+            end
+        else
+            Client.handlers[name] = fn
+        end
+    end
 
     package.loaded['crimson-hitman.client.main'] = nil
     local ok, app = withPhone(require, 'crimson-hitman.client.main')
@@ -225,11 +249,20 @@ function Client.boot(opts)
         mugOk, mugErr = withPhone(require, 'crimson-hitman.client.mugshot')
     end
 
+    -- And the admin panel's page, last, as the manifest lists it.
+    local adminOk, admin = true, nil
+    if ok and mugOk then
+        package.loaded['crimson-hitman.client.admin'] = nil
+        adminOk, admin = withPhone(require, 'crimson-hitman.client.admin')
+    end
+
     _G.RegisterNetEvent, _G.AddEventHandler = realNet, realAdd
 
     if not ok then error(app, 0) end
     if not mugOk then error(mugErr, 0) end
+    if not adminOk then error(admin, 0) end
     Client.app = app
+    Client.admin = admin
     return Client
 end
 

@@ -696,6 +696,10 @@ local CUSTOM = {
     -- Names no contract and nobody; it is kept against the caller's own
     -- server id (anonymity_spec has what it does to the list).
     maskState = 'a mask reported by its own client',
+    -- The admin panel's requests, registered in bridges.lua. Not a player
+    -- surface at all: every op is staff-only, by ACE, checked on every
+    -- request (admin_panel_spec has every op).
+    admin = 'the admin panel requests',
 }
 
 -- Registered in bridges.lua, which is how three events any player on the
@@ -721,6 +725,74 @@ MATRIX.photoArrived = { custom = true,
 
 MATRIX.maskState = { custom = true,
     why = 'says whether the caller wears a mask, and nothing about anybody else' }
+
+MATRIX.admin = { custom = true,
+    why = 'staff only, by ACE on every request; no role a player holds on a contract opens it' }
+
+describe('the admin panel requests', function()
+    --- Every op the page may ask for. Each role in the cast is a player
+    --- with no ACE, whatever they are to a contract, except `admin`, who
+    --- holds crimson.admin: the grid's own admin column.
+    local OPS = { 'access', 'overview', 'contracts', 'contract', 'reviews', 'logs', 'player',
+                  'settings', 'diag', 'void', 'settle', 'resolve', 'setSetting',
+                  'resetSetting', 'resetSettings', 'refresh', 'flush', 'whois' }
+
+    local function ask(src, op, data)
+        Env.clientEvents = {}
+        _G.source = src
+        local fired, err = pcall(Env.events['crimson-hitman:admin'],
+            { op = op, data = data or {}, __rid = 1 })
+        _G.source = nil
+        truthy(fired, 'raised: ' .. tostring(err))
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:adminResult' then return event.args[1], event.target end
+        end
+        return nil
+    end
+
+    it('refuses every op to every role on a contract, and sends them nothing', function()
+        local w = world()
+        w.s.bridges.install(w.s)
+        for _, role in ipairs(ROLES) do
+            if role ~= 'admin' then
+                for _, op in ipairs(OPS) do
+                    local reply, target = ask(CAST[role].source, op,
+                        { id = w.held.id, key = 'Relay.Enabled', value = false })
+                    truthy(reply, role .. ' ' .. op .. ' is answered')
+                    eq(target, CAST[role].source, 'to them alone')
+                    eq(reply.err, 'not_allowed', role .. ' ' .. op)
+                    eq(reply.data, nil, role .. ' ' .. op .. ' carries nothing')
+                end
+            end
+        end
+        eq(w.s.storage.readContract(w.held.id).state, CH.STATE.ACCEPTED, 'nothing was voided')
+        eq(Config.Relay.Enabled, true, 'and nothing changed')
+    end)
+
+    it('lets the admin column read and write, and not unmask', function()
+        local w = world({ anonymous = true })
+        w.s.bridges.install(w.s)
+        local reply = ask(CAST.admin.source, 'contract', { id = w.held.id })
+        eq(reply.ok, true, tostring(reply.message))
+        local seen = {}
+        local function walk(value)
+            if type(value) == 'string' then seen[#seen + 1] = value
+            elseif type(value) == 'table' then
+                for k, v in pairs(value) do walk(k) walk(v) end
+            end
+        end
+        walk(reply.data)
+        local text = table.concat(seen, '\n')
+        for _, who in pairs(CAST) do
+            falsy(text:find(who.cid, 1, true),
+                who.cid .. ': no citizen id reaches staff without crimson.identity')
+        end
+        eq(reply.data.contract.client.name, 'Anonymous')
+        eq(ask(CAST.admin.source, 'whois', { id = w.held.id }).err, 'identity_required')
+        eq(ask(CAST.admin.source, 'void', { id = w.held.id, reason = 'x' }).ok, true,
+            'crimson.admin itself writes')
+    end)
+end)
 
 describe('a photo reported as arrived', function()
     --- Fired by the client's photoImage handler when a kill photo lands, so

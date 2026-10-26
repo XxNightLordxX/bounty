@@ -115,7 +115,9 @@ end
 function Informant.buy(actor, contractId)
     contractId = Util.toId(contractId)
     if not contractId then return false, CH.ERR.INVALID_INPUT end
-    if not Config.Informant.Enabled then return false, CH.ERR.BAD_STATE end
+    -- Turned off, from the admin panel or config.lua: new purchases only.
+    -- A name already bought stays shown.
+    if not Config.Informant.Enabled then return false, CH.ERR.FEATURE_OFF end
 
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end

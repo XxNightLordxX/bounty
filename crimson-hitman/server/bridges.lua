@@ -315,6 +315,7 @@ function Bridges.install(modules)
         if modules.app and modules.app.forgetMask then modules.app.forgetMask(src) end
         remember(src)
         Bridges.tellAccess(src)
+        Bridges.tellSettings(modules, src)
         scheduleReady(src)
     end
 
@@ -431,6 +432,9 @@ function Bridges.install(modules)
         local src = source
         if not modules.app.floodOk(src, 'whoami') then return end
         tellAccess(src)
+        -- And the settings their game reads that staff changed from the
+        -- admin panel, which their copy of config.lua does not have.
+        Bridges.tellSettings(modules, src)
     end)
 
     -- A player who takes a barred job loses the app, and one who leaves it
@@ -593,7 +597,55 @@ function Bridges.install(modules)
         end
     end
 
+    -- The admin panel's requests. The engine's source and nothing else
+    -- decides who is asking; Panel.handle checks them against the ACEs on
+    -- every request, rate-limits them, checks every field, and answers each
+    -- one, refusals included, so the page is never left waiting.
+    RegisterNetEvent('crimson-hitman:admin', function(payload)
+        local src = source
+        if not modules.panel then return end
+        local reply = modules.panel.handle(src, payload)
+        if reply then modules.panel.send(src, reply) end
+    end)
+
+    -- A setting changed from the admin panel takes effect at once where
+    -- something holds on to it between uses: who may see the app is sent
+    -- to every phone again, and a switch to photos from an image host reads
+    -- the host list now rather than at its next refresh.
+    if modules.settings then
+        modules.settings.onChanged = function(key)
+            -- Every open app reads its settings again (the switches the
+            -- page draws by, the limits on its forms): one push each, as a
+            -- state change sends, under the same floor (Notify.push).
+            if modules.notify and modules.notify.push then
+                for _, actor in ipairs(modules.identity.online()) do
+                    pcall(modules.notify.push, actor.cid, 'settings')
+                end
+            end
+            if key == 'HideAppFromBlockedJobs' or key == 'BlockOffDuty' then
+                for src in pairs(lastAccess) do lastAccess[src] = nil end
+                Bridges.refreshAccess()
+            elseif key == 'Completion.PhotoStorage' and Config.Completion.PhotoStorage == 'host'
+                and modules.photo and modules.photo.loadAllowedHosts then
+                pcall(modules.photo.loadAllowedHosts)
+            end
+        end
+    end
+
     Bridges.installCommands(modules)
+    return true
+end
+
+--- Send one player the settings their game reads that staff changed from
+--- the admin panel (Settings.clientValues), if any were: their copy of the
+--- config is config.lua's until it is told otherwise.
+---@param modules table
+---@param src number
+---@return boolean sent
+function Bridges.tellSettings(modules, src)
+    local values = modules.settings and modules.settings.clientValues()
+    if not values or not src or src <= 0 then return false end
+    TriggerClientEvent('crimson-hitman:settings', src, values)
     return true
 end
 
@@ -643,21 +695,10 @@ function Bridges.installCommands(modules)
     local names = Config.Admin.Commands
 
     --- What a command that settles, voids or lists escrow says while boot
-    --- recovery runs (App.ready): what it would act on is not decided yet.
-    local RECOVERING = 'Still recovering from the restart: nothing is settled, voided or listed '
-        .. 'until that has finished. Try again in a moment.'
-
-    --- And once recovery has raised (App.recoveryFailed): it never finishes
-    --- in this process, so waiting a moment changes nothing.
-    local RECOVERY_FAILED = 'Recovery failed at the last start (the server console says why): '
-        .. 'nothing is settled, voided or listed, and the app stays closed. Fix the logged cause, '
-        .. 'then restart the resource.'
-
-    --- What one of those says while recovery has not finished
-    --- (App.ready), or nil once it has.
+    --- recovery runs (App.ready), or once it has raised; nil once it has
+    --- finished. The admin panel says the same (Admin.notRecovered).
     local function notRecovered()
-        if not (modules.app and modules.app.ready == false) then return nil end
-        return modules.app.recoveryFailed and RECOVERY_FAILED or RECOVERING
+        return Admin.notRecovered()
     end
 
     --- Wrap a command in its permission check. A caller without the ACE is
@@ -747,20 +788,8 @@ function Bridges.installCommands(modules)
     command(names.void, Config.Admin.Ace, function(src, args)
         local reason = table.concat(args, ' ', math.min(2, #args + 1))
         local ok, err = Admin.void(src, args[1], reason)
-        if err == 'recovering' then return reply(src, RECOVERING) end
-        if err == 'recovery_failed' then return reply(src, RECOVERY_FAILED) end
-        -- Mid-claim with no claim running (Admin.void): the void waits for
-        -- the restart that puts it back to accepted.
-        if err == 'stalled_claim' then
-            return reply(src, ('Could not void it: contract %s is mid-claim with no claim running (a '
-                .. 'stalled claim: the claim paying a collection raised part-way), and only the next '
-                .. 'start puts it back. Pay each line /%s lists for it as a stalled claim with /%s '
-                .. '<line> pay, then restart the resource: recovery puts the contract back to accepted '
-                .. '(or completes it, if that was its last collection), and /%s %s closes it then.')
-                :format(tostring(args[1]), names.stuck, names.settle, names.void, tostring(args[1])))
-        end
-        reply(src, ok and 'Contract voided; escrow returned to the creator.'
-                       or ('Could not void it: ' .. tostring(err)))
+        -- In the words the admin panel uses too (Admin.voidAnswer).
+        reply(src, Admin.voidAnswer(args[1], ok, err))
     end, true)
 
     --- One review item in words (Admin.reviews), for /ch-stuck and /ch-review.
@@ -999,69 +1028,8 @@ function Bridges.installCommands(modules)
 
     command(names.settle, Config.Admin.Ace, function(src, args)
         local ok, err, detail = Admin.settleLine(src, args[1], args[2], args[3])
-        if err == 'recovering' then return reply(src, RECOVERING) end
-        if err == 'recovery_failed' then return reply(src, RECOVERY_FAILED) end
-        if err == 'live' then
-            return reply(src, ('Not settled: contract %s is still live and this line is its own (a payout '
-                .. 'its next claim pays, a bonus or a stake), not one left for you. /%s %s closes a live '
-                .. 'contract and returns its escrow; /%s settles only what /%s lists.')
-                :format(tostring(detail), names.void, tostring(detail), names.settle, names.stuck))
-        end
-        -- Closed, by an ending that raised before it handed this over
-        -- (Admin.settleLine): the maintenance tick finishes it.
-        if err == 'ending_unfinished' then
-            return reply(src, ('Not settled: ending unfinished; it settles itself within a minute. '
-                .. 'Contract %s closed, but its ending raised before it handed this line over; the '
-                .. 'server finishes that ending as a restart would (a stake by why it ended, the rest '
-                .. 'back to the client), so there is nothing for you to settle. Nothing moved.')
-                :format(tostring(detail)))
-        end
-        if ok and err == 'queued' and detail == 'refused' then
-            return reply(src, ('Queued: they are in the city, but the give was refused (no room in their '
-                .. 'pockets, their account would not take it, or their inventory could not be read), '
-                .. 'so it goes on their retry queue and is tried again while they are in the city and '
-                .. 'at their next login; see /%s.'):format(names.stuck))
-        end
-        if ok and err == 'queued' then
-            return reply(src, 'Queued: they are not in the city, so it is delivered at their next login.')
-        end
-        if ok and err == 'requeued' then
-            return reply(src, ('Re-queued after a failed give: giving it raised an error with nothing '
-                .. 'arriving, so it goes back on their retry queue and is tried again while they are '
-                .. 'in the city and at their next login; three such raises leave it for staff (see /%s).')
-                :format(names.stuck))
-        end
-        if err == 'parked' then
-            return reply(src, ('Not settled: giving it raised again, so it is left for staff again; '
-                .. 'see /%s.'):format(names.stuck))
-        end
-        if err == 'already_queued' then
-            return reply(src, ('Already queued for %s: it is theirs, given while they are in the city '
-                .. 'or at their next login. Nothing to settle.'):format(tostring(detail)))
-        end
-        if err == 'pay_only' then
-            return reply(src, ('Not settled: nothing of it was given (owed to %s and in no retry queue), '
-                .. 'so only /%s <line> pay settles it, to them.'):format(tostring(detail), names.settle))
-        end
-        if err == 'owes_less' then
-            return reply(src, ('Not settled: the line now owes only %s, less than that amount; '
-                .. 'check again (/%s).'):format(tostring(detail), names.stuck))
-        end
-        if err == 'not_left' then
-            return reply(src, ('Not settled: it is no longer left for staff, as something settled or '
-                .. 'moved it since it was read; see /%s.'):format(names.stuck))
-        end
-        if err == 'raised' then
-            return reply(src, ('Not settled: settling it raised an error (logged as admin_settle_raised, '
-                .. 'and in the console). Anything it left mid-give is left for staff; see /%s.')
-                :format(names.stuck))
-        end
-        if err == CH.ERR.LOCKED then
-            return reply(src, ('Not settled: something else is giving or settling it right now (a '
-                .. 'release, a login retry, the claim on its contract, another settle), or it is owed '
-                .. 'to somebody else; nothing moved. Check again with /%s.'):format(names.stuck))
-        end
-        reply(src, ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err)))
+        -- In the words the admin panel uses too (Admin.settleAnswer).
+        reply(src, Admin.settleAnswer(ok, err, detail))
     end, true)
 
     -- The review queue: list it, or resolve one item. Strict, as /ch-settle
@@ -1084,38 +1052,8 @@ function Bridges.installCommands(modules)
             local rest = {}
             for i = 2, #args do rest[#rest + 1] = args[i] end
             local ok, err, detail = Admin.resolveReview(src, args[1], rest)
-            if err == 'recovering' then return reply(src, RECOVERING) end
-            if err == 'recovery_failed' then return reply(src, RECOVERY_FAILED) end
-            if ok then
-                local r = detail or {}
-                if r.action == 'dismiss' then
-                    return reply(src, 'Dismissed. Nothing was given.' .. (r.continued
-                        and ' It had been decided so before a stop, and is finished now.' or ''))
-                end
-                return reply(src, ('Resolved: %d line(s) given, %d owed and given while they are in '
-                    .. 'the city or at their next login, %d left for /%s (giving raised). %s')
-                    :format(r.settled or 0, r.pending or 0, r.parked or 0, names.stuck,
-                        r.continued and 'It had been decided before a stop and was finished as decided, '
-                            .. 'not as asked now.' or ''))
-            end
-            local why = {
-                [CH.ERR.NOT_FOUND] = 'No review item has that id.',
-                [CH.ERR.ALREADY_SETTLED] = 'Already resolved; nothing was given again.',
-                [CH.ERR.BUSY] = 'It is being resolved right now. Look again in a moment.',
-                [CH.ERR.LOCKED] = 'Something else resolved or began resolving it meanwhile; look again.',
-                note_required = 'Say why: /' .. names.review .. ' <id> dismiss <note>.',
-                no_party = 'Name who it goes to: a citizen id, or a role the item names.',
-                which_money = 'It records more than one kind of money: say which (cash, bank or dirty).',
-                nothing_recorded = 'It records nothing of that to give; use pay, or items for goods.',
-                over_recorded = ('That is more than it records (%s); refund at most that.')
-                    :format(tostring(detail)),
-                raised = ('Resolving it raised an error (in the console). It is left being resolved, '
-                    .. 'with the decision on it: /%s %s finishes it.')
-                    :format(names.review, tostring(args[1])),
-            }
-            reply(src, why[err] or ('Usage: /%s [all] | /%s <id> refund <citizenid|role> <amount> '
-                .. '[cash|bank|dirty] | refund <citizenid|role> items | pay <citizenid|role> | '
-                .. 'dismiss <note>'):format(names.review, names.review))
+            -- In the words the admin panel uses too (Admin.reviewAnswer).
+            reply(src, Admin.reviewAnswer(args[1], ok, err, detail))
         end, true)
     end
 
@@ -1141,10 +1079,17 @@ function Bridges.installCommands(modules)
     -- target of a contract is supposed to have. Not ACE-gated — anyone may
     -- run it — because it only ever acts on a contract naming the caller,
     -- and every check the app's button passes is applied here too.
-    if Config.Bailout.Enabled and Config.Bailout.Command then
+    --
+    -- Registered whether or not buyouts are on, and refused while they are
+    -- off: Config.Bailout.Enabled can be turned on from the admin panel, and
+    -- a command registered only at a start with it on never came back.
+    if Config.Bailout.Command then
         RegisterCommand(Config.Bailout.Command, function(src, args)
             if src == 0 then
                 return reply(src, 'This is for a player buying out a contract on themselves.')
+            end
+            if not Config.Bailout.Enabled then
+                return reply(src, 'Could not buy it out: ' .. CLEANSE_REFUSALS[CH.ERR.BAILOUT_OFF])
             end
 
             local actor = modules.identity.resolve(src)
@@ -1207,6 +1152,24 @@ function Bridges.installCommands(modules)
             end
             reply(src, 'Paid. The contract closes shortly.')
         end, false)
+    end
+
+    -- The admin panel. Opening it reads, so the gate is the one the read
+    -- commands use (Ace, or one of ExtraAces); every request the page makes
+    -- afterwards is checked again on the server (Panel.handle), and
+    -- anything that writes needs Ace itself. The page is drawn by the
+    -- player's own game, so there is nothing to open from the console.
+    if names.panel then
+        command(names.panel, Config.Admin.Ace, function(src)
+            if src == 0 then
+                return reply(src, ('The admin panel opens in game. From the console: /%s, /%s, '
+                    .. '/%s and /%s.'):format(names.diagnose, names.stuck, names.contracts,
+                    names.timeline))
+            end
+            local access = modules.panel and modules.panel.open(src)
+            if not access then return reply(src, Admin.howToAuthorise(Config.Admin.Ace)) end
+            TriggerClientEvent('crimson-hitman:adminOpen', src, access)
+        end)
     end
 
     -- Its own ACE: reading a history and unmasking a person are different

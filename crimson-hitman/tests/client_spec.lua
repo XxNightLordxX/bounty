@@ -2395,3 +2395,196 @@ describe('saying whether you wear a mask', function()
             'a client-only native left as a global is one every server spec after this could call')
     end)
 end)
+
+--- The admin panel's page (client/admin.lua). It opens only on the
+--- server's word, holds the focus while it is open, and gives it back
+--- whichever way it closes; every request the page makes is answered,
+--- once, on every path.
+describe('the admin panel page', function()
+    local function booted()
+        Env.reset()
+        Client.boot()
+        return Client
+    end
+
+    local function opened()
+        booted()
+        Client.fire('crimson-hitman:adminOpen', { canWrite = true })
+        return Client
+    end
+
+    local function lastFocus()
+        return Client.focus[#Client.focus]
+    end
+
+    local function sent(type_)
+        for i = #Client.nuiMessages, 1, -1 do
+            if Client.nuiMessages[i].type == type_ then return Client.nuiMessages[i] end
+        end
+        return nil
+    end
+
+    it('opens only on the server\'s word, with the focus, asked for again five times', function()
+        booted()
+        eq(Client.admin.isOpen(), false)
+        Client.fire('crimson-hitman:adminOpen', 'not a table')
+        eq(Client.admin.isOpen(), false, 'an event that is not the server\'s shape opens nothing')
+        eq(#Client.focus, 0)
+
+        local before = #Env.threads
+        Client.fire('crimson-hitman:adminOpen', { canWrite = false, canIdentify = false })
+        eq(Client.admin.isOpen(), true)
+        eq(lastFocus().focus, true)
+        eq(lastFocus().cursor, true)
+        eq(sent('open').access.canWrite, false, 'the page is told what this player may do')
+
+        -- The page's own two threads, as the engine runs them: the focus
+        -- asked for again, then the Escape watch, which closes it on its
+        -- first frame with Escape released in the game. Not the client's
+        -- other loops, which never end.
+        Client.released[200] = true
+        for i = before + 1, #Env.threads do Env.threads[i]() end
+        local asked = 0
+        for _, call in ipairs(Client.focus) do if call.focus then asked = asked + 1 end end
+        eq(asked, 6, 'once, then five more times')
+        eq(Client.admin.isOpen(), false, 'Escape in the game closes it')
+        eq(lastFocus().focus, false, 'and gives the focus back')
+        eq(lastFocus().cursor, false)
+        truthy(sent('close'), 'and the page is told')
+    end)
+
+    it('runs one Escape watch however often the server says to open', function()
+        opened()
+        local before = #Env.threads
+        Client.fire('crimson-hitman:adminOpen', { canWrite = true })
+        eq(#Env.threads - before, 1, 'the focus asked for again, and no second watch')
+        eq(Client.admin.isOpen(), true)
+    end)
+
+    it('closes from the page, and answers it', function()
+        opened()
+        local answered, answer = Client.nuiCall('adminClose', {})
+        truthy(answered)
+        eq(answer.ok, true)
+        eq(Client.admin.isOpen(), false)
+        eq(lastFocus().focus, false)
+    end)
+
+    it('gives the focus back when this resource stops, and not when another does', function()
+        opened()
+        Client.fire('onResourceStop', 'some-other-resource')
+        eq(Client.admin.isOpen(), true)
+        Client.fire('onResourceStop', 'crimson-hitman')
+        eq(Client.admin.isOpen(), false)
+        eq(lastFocus().focus, false)
+    end)
+
+    it('sends a request on, and answers the page once with what the server said', function()
+        opened()
+        local answered = Client.nuiCall('adminRequest', { op = 'overview', data = { page = 2 } })
+        falsy(answered, 'waits for the server')
+        local request = Client.toServer[#Client.toServer]
+        eq(request.name, 'crimson-hitman:admin')
+        eq(request.args[1].op, 'overview')
+        eq(request.args[1].data.page, 2)
+        local rid = request.args[1].__rid
+        truthy(rid)
+
+        Client.fire('crimson-hitman:adminResult', { rid = rid, ok = true, message = 'fine',
+            data = { total = 3 }, extra = 'dropped' })
+        truthy(Client.answered)
+        eq(Client.answer.ok, true)
+        eq(Client.answer.message, 'fine')
+        eq(Client.answer.data.total, 3)
+        eq(Client.answer.extra, nil, 'only what the page is promised')
+        Client.fire('crimson-hitman:adminResult', { rid = rid, ok = false })
+        eq(Client.answerCount, 1, 'answered once')
+    end)
+
+    it('answers on every path: closed, a bad op, a timeout, and closing with one waiting', function()
+        booted()
+        local answered, answer = Client.nuiCall('adminRequest', { op = 'overview' })
+        truthy(answered)
+        eq(answer.err, 'closed', 'a page asking while closed')
+
+        Client.fire('crimson-hitman:adminOpen', {})
+        answered, answer = Client.nuiCall('adminRequest', { data = {} })
+        eq(answer.err, 'invalid_input')
+        answered, answer = Client.nuiCall('adminRequest', { op = string.rep('x', 40) })
+        eq(answer.err, 'invalid_input')
+        answered, answer = Client.nuiCall('adminRequest', 'not a table')
+        eq(answer.err, 'invalid_input')
+
+        Client.nuiCall('adminRequest', { op = 'logs' })
+        Client.runTimeouts()
+        eq(Client.answer.err, 'timeout', 'a server that never answers')
+        eq(Client.answerCount, 1)
+
+        Client.nuiCall('adminRequest', { op = 'logs' })
+        Client.admin.close()
+        eq(Client.answer.err, 'closed', 'closing answers what was still waiting')
+        eq(Client.answerCount, 1)
+        Client.runTimeouts()
+        eq(Client.answerCount, 1, 'and its timeout answers nothing again')
+    end)
+
+    it('ignores a result it did not ask for, and one that is not a table', function()
+        opened()
+        truthy(Client.fire('crimson-hitman:adminResult', 'junk') ~= false)
+        truthy(Client.fire('crimson-hitman:adminResult', { rid = 999, ok = true }) ~= false)
+    end)
+
+    it('passes a line pushed for it to the open page, and nothing to a closed one', function()
+        opened()
+        Client.fire('crimson-hitman:adminPush', { kind = 'diag', line = 'photo links: yes' })
+        eq(sent('push').line, 'photo links: yes')
+        Client.admin.close()
+        Client.nuiMessages = {}
+        Client.fire('crimson-hitman:adminPush', { kind = 'diag', line = 'late' })
+        eq(sent('push'), nil)
+    end)
+end)
+
+--- Settings staff changed from the admin panel that this game reads.
+describe('settings the server says this game reads', function()
+    it('takes the keys it reads, in their types, and nothing else', function()
+        Env.reset()
+        Client.boot()
+        local ok, err = pcall(function()
+            Client.fire('crimson-hitman:settings', 'junk')
+            Client.fire('crimson-hitman:settings', {
+                ['Targeting.AllowNearby'] = 'yes',
+                ['Mugshot.RemoveBackground'] = true,
+                ['App.DefaultInstalled'] = true,
+                ['Database.Mode'] = 'mysql',
+            })
+            eq(Config.Mugshot.RemoveBackground, true)
+            eq(Config.App.DefaultInstalled, true)
+            eq(Config.Targeting.AllowNearby, false, 'a switch is a boolean or nothing')
+            eq(Config.Database.Mode, 'json', 'and a key it does not read is left alone')
+        end)
+        resetConfig()
+        if not ok then error(err, 0) end
+    end)
+
+    it('starts saying whether a mask is on when the nearby list is turned on', function()
+        Env.reset()
+        Natives.resetResourceStates()
+        require('crimson-hitman.shared.util').resetMonotonic()
+        Env.addPlayer({ source = 3, citizenid = 'HITMAN01', license = 'license:ccc',
+            firstname = 'Rook', lastname = 'Ash' })
+        Client.boot()
+        Client.ped = 1003
+        local ok, err = pcall(function()
+            Client.fire('crimson-hitman:settings', { ['Targeting.AllowNearby'] = true })
+            Client.ticks(2)
+            local reports = 0
+            for _, call in ipairs(Client.toServer) do
+                if call.name == 'crimson-hitman:maskState' then reports = reports + 1 end
+            end
+            eq(reports, 1, 'said once, by the watch the setting started')
+        end)
+        resetConfig()
+        if not ok then error(err, 0) end
+    end)
+end)

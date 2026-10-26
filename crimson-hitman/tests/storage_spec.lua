@@ -2423,7 +2423,7 @@ describe('the install SQL', function()
         local shipped = statements(handle:read('a'))
         handle:close()
 
-        eq(#ran, 14, 'the fourteen crimson_* tables')
+        eq(#ran, 15, 'the fifteen crimson_* tables')
         eq(#shipped, #ran, 'one statement for every table')
         for i = 1, #ran do
             eq(shipped[i], ran[i], 'statement ' .. i .. ' as mysql mode runs it')
@@ -2543,6 +2543,15 @@ describe('every mysql statement is executable', function()
             function() m.reviewItems(true, 10) end,
             function() m.reviewItems(false, 10) end,
             function() m.setReviewState('rv1', 'open', 'resolving', { resolution = { action = 'dismiss' }, resolved_by = 'console' }) end,
+            function() m.writeSetting('Bailout.Enabled', false, 'STAFF01', 1) end,
+            function() m.writeSetting('Advisory.TriggerJobNames', { 'fib', 'sast' }, 'STAFF01', 2) end,
+            function() m.readSettings() end,
+            function() m.deleteSetting('Bailout.Enabled') end,
+            function() m.clearSettings() end,
+            function() m.unsettledEscrow() end,
+            function() m.queryAudit({}, nil, 10) end,
+            function() m.queryAudit({ contract = 'c1', kind = 'financial', action = 'x' }, 50, 10) end,
+            function() m.queryAudit({ actor = 'A', from = 0, to = 10 }, nil, 10) end,
             function() m.prune() end,
             function() m.migrate() end,
         }

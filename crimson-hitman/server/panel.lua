@@ -1,0 +1,998 @@
+--- The admin panel's server side (/hitmanadmin, Config.Admin.Commands.panel).
+---
+--- The page (ui/admin.html) asks for everything through one net event,
+--- crimson-hitman:admin, with an `op` and its `data`, and is answered on
+--- crimson-hitman:adminResult (README, Integration Guide, has every shape).
+--- Nothing the page sends is trusted, and nothing the client says about
+--- who is asking is either: every request runs, in this order,
+---
+---   1. the engine's source, above zero;
+---   2. the ACE check, again, every time (Admin.allowed): reading needs
+---      Config.Admin.Ace or one of ExtraAces, as the read-only commands do;
+---      anything that writes needs Ace itself; unmasking needs IdentityAce;
+---   3. a per-source token bucket (Config.Cooldowns.admin, and adminWrite
+---      on top for writes);
+---   4. type checks and clamps on every field;
+---   5. the work, through the same functions the commands use (Admin.void,
+---      Admin.settleLine, Admin.resolveReview, ...), answered in the same
+---      words, audited, and the log written at once for every write.
+---
+--- A write waits for boot recovery, and is refused after one that failed,
+--- as /ch-settle is. Who is behind an anonymous party is shown only to staff
+--- with IdentityAce: to everyone else an anonymous party is 'Anonymous', and
+--- every citizen id is the party's role on the contract instead.
+
+local Util = CrimsonBoot.requireShared('util')
+
+local Panel = {}
+
+local deps
+
+local READ, WRITE, IDENTITY = 'read', 'write', 'identity'
+
+--- Every request the page may make, and what it needs.
+local OPS = {
+    access = READ, overview = READ, contracts = READ, contract = READ, reviews = READ,
+    logs = READ, player = READ, settings = READ, diag = READ,
+    void = WRITE, settle = WRITE, resolve = WRITE, setSetting = WRITE, resetSetting = WRITE,
+    resetSettings = WRITE, refresh = WRITE, flush = WRITE,
+    whois = IDENTITY,
+}
+
+--- Writes that wait for boot recovery, as the commands do. Flushing the
+--- log is not one: it moves nothing, and is how the log reaches the disk
+--- after a recovery that failed.
+local WAITS_FOR_RECOVERY = {
+    void = true, settle = true, resolve = true, setSetting = true, resetSetting = true,
+    resetSettings = true, refresh = true,
+}
+
+--- How long one overview is shared between requests. Each open panel asks
+--- for it every Config.Admin.PanelRefreshSeconds, and it reads every
+--- contract and every unsettled escrow line, so several staff with the
+--- panel open read the store once between them.
+local OVERVIEW_SECONDS = 5
+local overviewCache = nil   -- { at = os.time(), data = table }
+
+--- Refusals already written down, by source and when, so a page posting in
+--- a loop cannot fill the audit log with one fact.
+local deniedLogged = {}     -- [src] = Util.monotonicMs()
+local DENIED_LOG_MS = 10000
+
+--- A reply above this many bytes goes as a latent event, at LATENT_BPS: a
+--- page of the log or a long contract timeline, which would otherwise hold
+--- up the player's reliable channel.
+local LATENT_OVER, LATENT_BPS = 16000, 200000
+
+--- Rows the logs return per page at most, whatever the page asks for.
+local LOG_ROWS_MAX = 100
+
+function Panel.init(d)
+    deps = d
+    overviewCache = nil
+    deniedLogged = {}
+end
+
+--------------------------------------------------------------------------
+-- Who is asking
+--------------------------------------------------------------------------
+
+--- Whether a source may make a request at a level.
+---@param src number
+---@param level string READ | WRITE | IDENTITY
+---@return boolean
+local function allowed(src, level)
+    local Admin = deps.admin
+    if level == WRITE then return Admin.allowed(src, Config.Admin.Ace, true) end
+    if not Admin.allowed(src, Config.Admin.Ace) then return false end
+    if level == IDENTITY then return Admin.allowed(src, Config.Admin.IdentityAce, true) end
+    return true
+end
+
+--- Whether this staff member may see who is behind an anonymous party.
+local function identifies(src)
+    return deps.admin.allowed(src, Config.Admin.IdentityAce, true)
+end
+
+--- The staff member's citizen id, for the audit row, and how they are
+--- named on a record (a resolution, a setting).
+---@return string|nil cid
+---@return string who
+local function staffOf(src)
+    local actor = deps.identity.resolve(src)
+    local cid = actor and actor.cid or nil
+    return cid, cid or ('player ' .. tostring(src))
+end
+
+--- Where boot recovery stands: 'ready', 'recovering' or 'recovery_failed'.
+local function recoveryState()
+    return deps.admin.recovery() or 'ready'
+end
+
+--- What the page needs to draw itself for this staff member.
+local function accessFor(src)
+    local names = Config.Admin.Commands or {}
+    local okVersion, version = pcall(GetResourceMetadata, GetCurrentResourceName(), 'version', 0)
+    return {
+        canWrite = allowed(src, WRITE),
+        canIdentify = identifies(src),
+        pageSize = math.max(5, math.min(100, math.floor(tonumber(Config.Admin.PanelPageSize) or 25))),
+        refreshSeconds = math.max(2, math.floor(tonumber(Config.Admin.PanelRefreshSeconds) or 10)),
+        recovery = recoveryState(),
+        version = okVersion and version or nil,
+        commands = {
+            panel = names.panel, refresh = names.refresh, diagnose = names.diagnose,
+            stuck = names.stuck, settle = names.settle, void = names.void,
+            review = names.review, timeline = names.timeline, contracts = names.contracts,
+            whois = names.whois,
+        },
+    }
+end
+
+--- Open the panel for a player: what the page is told when it opens, or
+--- nil when they may not open it. Written to the log either way it goes.
+---@param src number
+---@return table|nil access
+function Panel.open(src)
+    src = tonumber(src) or 0
+    if src <= 0 or not Config.Admin.Enabled or not allowed(src, READ) then return nil end
+    local cid = staffOf(src)
+    local access = accessFor(src)
+    deps.audit.staff('admin_panel_opened', cid, nil,
+        { write = access.canWrite or nil, identify = access.canIdentify or nil })
+    return access
+end
+
+--------------------------------------------------------------------------
+-- Showing people
+--------------------------------------------------------------------------
+
+--- Detail fields that hold a citizen id. One of these holding something
+--- shaped like one (qbx_core's are capitals and digits) is redacted even
+--- when it names nobody on the contract in view.
+local CID_KEYS = {
+    actor_cid = true, cid = true, to = true, from = true, recipient = true, staker = true,
+    payer = true, owed_to = true, releasing_to = true, taken_from = true, settled_to = true,
+    creator = true, target = true, hitman = true, subject = true, owed = true, by = true,
+    creator_cid = true, target_cid = true, hitman_cid = true, buyer = true, buyer_cid = true,
+    killer = true, victim = true, intended = true, owner = true, owner_cid = true,
+    proposer = true, declined_by = true, actor = true, who = true,
+}
+
+--- How one staff member is shown the people of one contract.
+---
+--- With IdentityAce, as they are. Without it, every citizen id is the
+--- party's place on the contract ('the client', 'the target', 'operative
+--- <alias>', or '(a player)' for anybody else, as /ch-stuck says it), and
+--- the name of a party who paid to stay anonymous is 'Anonymous'.
+---@param canIdentify boolean
+---@param contract table|nil
+---@param hitmen table[]|nil
+local function redactor(canIdentify, contract, hitmen)
+    local labels, hidden = {}, {}
+    if contract then
+        if contract.target_cid then labels[contract.target_cid] = 'the target' end
+        if contract.creator_cid then labels[contract.creator_cid] = 'the client' end
+        if contract.anon_creator == true and contract.creator_name then
+            hidden[contract.creator_name] = true
+        end
+    end
+    for _, hitman in ipairs(hitmen or {}) do
+        if hitman.hitman_cid and not labels[hitman.hitman_cid] then
+            labels[hitman.hitman_cid] = ('operative %s'):format(tostring(hitman.alias or '?'))
+        end
+        if hitman.anon == true and hitman.hitman_name then hidden[hitman.hitman_name] = true end
+    end
+
+    local r = {}
+
+    --- A citizen id as this staff member may see it.
+    function r.who(cid)
+        if cid == nil then return nil end
+        if canIdentify then return cid end
+        return labels[cid] or '(a player)'
+    end
+
+    --- A creator's or a hitman's name as this staff member may see it.
+    function r.name(name, anonymous)
+        if anonymous and not canIdentify then return 'Anonymous' end
+        return name
+    end
+
+    --- Anything read from the log, copied, with every citizen id and every
+    --- anonymous name in it put the way this staff member may see them.
+    local function value(key, v)
+        if type(v) == 'table' then
+            local out = {}
+            for k, inner in pairs(v) do out[k] = value(k, inner) end
+            return out
+        end
+        if canIdentify or type(v) ~= 'string' then return v end
+        if labels[v] then return labels[v] end
+        if hidden[v] then return 'Anonymous' end
+        if CID_KEYS[key] and v:match('^[%u%d]+$') and #v >= 3 then return '(a player)' end
+        return v
+    end
+    r.value = value
+    return r
+end
+
+--- The parties of one contract, read once per request.
+local function partiesReader()
+    local contracts, hitmen = {}, {}
+    return function(contractId)
+        if not contractId then return nil, nil end
+        if contracts[contractId] == nil then
+            local ok, found = pcall(deps.storage.readContract, contractId)
+            contracts[contractId] = ok and found or false
+            local okH, list = pcall(deps.storage.readHitmen, contractId)
+            hitmen[contractId] = okH and list or {}
+        end
+        return contracts[contractId] or nil, hitmen[contractId]
+    end
+end
+
+--- One escrow line, as the panel shows it.
+local function lineView(line, r)
+    local escrow = deps.escrow
+    return {
+        id = line.id, contract = line.contract_id, slot = line.slot, portion = line.portion,
+        source = line.source,
+        amount = CH.MONEY_SOURCES[line.source] and (tonumber(line.amount) or 0) or nil,
+        item = line.item, quantity = tonumber(line.quantity), state = line.state,
+        owed_to = r.who(line.owed_to), releasing_to = r.who(line.releasing_to),
+        taken_from = r.who(line.taken_from), staker = r.who(line.staker),
+        settled_to = r.who(line.settled_to), settled_at = line.settled_at,
+        settled_by_staff = line.settled_by_staff,
+        arrived = tonumber(line.deliver_arrived), raised = tonumber(line.deliver_raises) or 0,
+        parked = escrow.parked(line),
+        owes = line.state ~= CH.ESCROW_STATE.SETTLED and escrow.stillOwed(line) or 0,
+    }
+end
+
+--- One audit row, as the panel shows it.
+local function rowView(row, r)
+    return {
+        ts = row.ts, kind = row.kind, action = row.action, contract = row.contract_id,
+        actor = r.who(row.actor_cid), detail = r.value(nil, row.detail or {}),
+    }
+end
+
+--------------------------------------------------------------------------
+-- Reading the values a request carries
+--------------------------------------------------------------------------
+
+local function wholeNumber(value, min, max)
+    local n = tonumber(value)
+    if not n or n ~= n or n == math.huge or n == -math.huge or math.floor(n) ~= n then return nil end
+    n = math.tointeger(n)
+    if not n or (min and n < min) or (max and n > max) then return nil end
+    return n
+end
+
+local function shortText(value, max)
+    if type(value) ~= 'string' then return nil end
+    return Util.sanitizeText(value, max)
+end
+
+local VALID_STATE = {}
+for _, state in pairs(CH.STATE) do VALID_STATE[state] = true end
+
+local VALID_KIND = { financial = true, conduct = true, rejected = true, system = true }
+
+local function pageSize()
+    return math.max(5, math.min(100, math.floor(tonumber(Config.Admin.PanelPageSize) or 25)))
+end
+
+--------------------------------------------------------------------------
+-- The overview
+--------------------------------------------------------------------------
+
+--- What the diagnosis says that wants doing (the lines with '->', or a
+--- word in capitals), run as the console would, which asks no player's
+--- phone for anything. The lines only the console needs are left out.
+local CONSOLE_ONLY = {
+    'name somebody who is in the city', 'run from the console', 'the server-wide checks below',
+    'name a player to test',
+}
+
+local function diagWarnings()
+    local ok, lines = pcall(deps.admin.diagnose, 0, nil, nil)
+    if not ok or type(lines) ~= 'table' then
+        return { ('the diagnosis itself raised: %s'):format(tostring(lines)) }
+    end
+    local out = {}
+    for _, line in ipairs(lines) do
+        local skip = line:find('^%-%-%-') ~= nil
+        for _, text in ipairs(CONSOLE_ONLY) do
+            if line:find(text, 1, true) then skip = true end
+        end
+        if not skip and (line:find('->', 1, true) or line:find('%u%u%u%u')) then
+            out[#out + 1] = (line:gsub('^%s+', ''))
+        end
+    end
+    return out
+end
+
+local function addLine(bucket, line, owes)
+    if CH.MONEY_SOURCES[line.source] then
+        bucket[line.source] = bucket[line.source] + (owes or tonumber(line.amount) or 0)
+    elseif line.source == CH.SOURCE.ITEM then
+        bucket.items = bucket.items + (owes or tonumber(line.quantity) or 0)
+    elseif line.source == CH.SOURCE.WEAPON then
+        bucket.weapons = bucket.weapons + 1
+    end
+    bucket.lines = bucket.lines + 1
+end
+
+local function buildOverview()
+    local Storage = deps.storage
+    local out = { at = os.time() }
+
+    local byState, total = {}, 0
+    for _, contract in ipairs(Storage.allContracts() or {}) do
+        byState[contract.state] = (byState[contract.state] or 0) + 1
+        total = total + 1
+    end
+    out.contracts = { byState = byState, total = total }
+
+    local active, operatives, distinct = 0, {}, 0
+    for _, list in pairs(Storage.liveHitmen() or {}) do
+        for _, hitman in ipairs(list) do
+            if hitman.state == 'active' then
+                active = active + 1
+                if not operatives[hitman.hitman_cid] then
+                    operatives[hitman.hitman_cid] = true
+                    distinct = distinct + 1
+                end
+            end
+        end
+    end
+    out.hitmen = { active = active, operatives = distinct }
+
+    -- Money still in escrow for contracts, and money owed to somebody: the
+    -- second is what the owed-delivery queue holds (or waits on staff for).
+    local held = { cash = 0, bank = 0, dirty = 0, items = 0, weapons = 0, lines = 0 }
+    local owed = { cash = 0, bank = 0, dirty = 0, items = 0, weapons = 0, lines = 0,
+                   players = 0, queued = 0 }
+    local owedTo, queues = {}, {}
+    for _, line in ipairs(Storage.unsettledEscrow and Storage.unsettledEscrow() or {}) do
+        if line.owed_to then
+            addLine(owed, line, deps.escrow.stillOwed(line))
+            if not owedTo[line.owed_to] then
+                owedTo[line.owed_to] = true
+                owed.players = owed.players + 1
+            end
+            if deps.escrow.queued(line, queues) then owed.queued = owed.queued + 1 end
+        else
+            addLine(held, line)
+        end
+    end
+    out.held, out.owed = held, owed
+
+    -- What waits for staff, as /ch-stuck lists it. Not while recovery is
+    -- still deciding it: the command says nothing is listed then, and so
+    -- does this.
+    out.recovery = recoveryState()
+    if out.recovery == 'ready' then
+        local ok, lines = pcall(deps.admin.interrupted, 0, true)
+        if ok and type(lines) == 'table' then
+            local byWhy, leftForStaff = {}, 0
+            for _, entry in ipairs(lines) do
+                local why = entry.why or (entry.orphan and 'orphan') or 'interrupted'
+                byWhy[why] = (byWhy[why] or 0) + 1
+                if entry.raised ~= nil then leftForStaff = leftForStaff + 1 end
+            end
+            out.stuck = { total = #lines, byWhy = byWhy, leftForStaff = leftForStaff }
+        end
+    end
+
+    out.reviews = { open = deps.review and deps.review.openCount() or 0 }
+
+    local okPhotos, totals = pcall(deps.photos.totals)
+    out.photos = okPhotos and totals or nil
+
+    out.storage = Config.Database.Mode
+    out.fulfilment = Util.placingRule()
+    out.photoStorage = Config.Completion.PhotoStorage
+    out.slowest = deps.timing and deps.timing.slowest(5) or {}
+    out.slowMs = tonumber(Config.Diagnostics.SlowJobMs) or 0
+    out.warnings = diagWarnings()
+    out.overrides = deps.settings and #deps.settings.active() or 0
+    out.auditQueued = deps.audit.pending()
+    return out
+end
+
+--------------------------------------------------------------------------
+-- Requests
+--------------------------------------------------------------------------
+
+--- One function per op: (src, data) -> ok, err, message, data.
+local H = {}
+
+H.access = function(src)
+    return true, nil, nil, accessFor(src)
+end
+
+H.overview = function()
+    local now = os.time()
+    if not overviewCache or now - overviewCache.at >= OVERVIEW_SECONDS then
+        overviewCache = { at = now, data = buildOverview() }
+    end
+    return true, nil, nil, overviewCache.data
+end
+
+--- Contracts, searched and filtered, newest first, a page at a time.
+---
+--- `query` is a contract id (or part of one), a citizen id, or part of a
+--- name. A citizen id finds every contract it is party to through the
+--- store's own index, and a name the client's or the target's: but a
+--- party who paid to stay anonymous is matched only for staff with
+--- IdentityAce, or a search would be a way round whois.
+H.contracts = function(src, data)
+    local Storage = deps.storage
+    local canIdentify = identifies(src)
+    local query = shortText(data.query, 64)
+    local state = VALID_STATE[data.state] and data.state or nil
+    local rule = (data.rule == CH.FULFILMENT_RULE.ALIVE or data.rule == CH.FULFILMENT_RULE.EITHER)
+        and data.rule or nil
+    local from = wholeNumber(data.from, 0)
+    local to = wholeNumber(data.to, 0)
+    local page = wholeNumber(data.page, 1, 100000) or 1
+
+    local viaCid = {}
+    local cid = query and Util.toCitizenId(query)
+    if cid then
+        for _, contract in ipairs(Storage.contractsInvolving(cid) or {}) do
+            local visible
+            if contract.target_cid == cid then
+                visible = true
+            elseif contract.creator_cid == cid then
+                visible = canIdentify or contract.anon_creator ~= true
+            else
+                local hitman = Storage.readHitman(contract.id, cid)
+                visible = canIdentify or not (hitman and hitman.anon == true)
+            end
+            if visible then viaCid[contract.id] = true end
+        end
+    end
+
+    local lowered = query and query:lower()
+    local matched = {}
+    for _, contract in ipairs(Storage.allContracts() or {}) do
+        local hit = not lowered
+        if lowered and not hit then
+            hit = viaCid[contract.id]
+                or tostring(contract.id):lower():find(lowered, 1, true) ~= nil
+                or tostring(contract.target_name or ''):lower():find(lowered, 1, true) ~= nil
+                or ((canIdentify or contract.anon_creator ~= true)
+                    and tostring(contract.creator_name or ''):lower():find(lowered, 1, true) ~= nil)
+        end
+        if hit and state and contract.state ~= state then hit = false end
+        if hit and rule and Util.fulfilmentRule(contract) ~= rule then hit = false end
+        if hit and from and (tonumber(contract.created_at) or 0) < from then hit = false end
+        if hit and to and (tonumber(contract.created_at) or 0) > to then hit = false end
+        if hit then matched[#matched + 1] = contract end
+    end
+    table.sort(matched, function(a, b)
+        if (a.created_at or 0) ~= (b.created_at or 0) then
+            return (a.created_at or 0) > (b.created_at or 0)
+        end
+        return tostring(a.id) > tostring(b.id)
+    end)
+
+    local size = pageSize()
+    local pages = math.max(1, math.ceil(#matched / size))
+    if page > pages then page = pages end
+    local rows = {}
+    for i = (page - 1) * size + 1, math.min(#matched, page * size) do
+        local contract = matched[i]
+        rows[#rows + 1] = {
+            id = contract.id, state = contract.state, mode = contract.mode,
+            rule = Util.fulfilmentRule(contract), created_at = contract.created_at,
+            deadline_at = contract.deadline_at, resolved_at = contract.resolved_at,
+            resolution = contract.resolution, target = contract.target_name,
+            client = (contract.anon_creator == true and not canIdentify) and 'Anonymous'
+                or contract.creator_name,
+            anonymous = contract.anon_creator == true,
+            slots = contract.payout_slots, claimed = contract.slots_claimed,
+        }
+    end
+
+    -- A search by a person is a lookup, and every lookup is on the record.
+    if query then
+        deps.audit.staff(canIdentify and 'admin_panel_search_identified' or 'admin_panel_search',
+            staffOf(src), nil, { query = query, rows = #matched })
+    end
+    return true, nil, nil, { rows = rows, page = page, pages = pages, total = #matched }
+end
+
+--- What a stuck line can be settled with, as /ch-stuck says (Admin.interrupted).
+local function settleActions(entry)
+    if entry.unfinished then return {} end
+    if entry.orphan then return { 'return_owner' } end
+    if entry.raised ~= nil then
+        if deps.escrow.NEVER_GIVEN[entry.why] then return { 'pay', 'pay_amount' } end
+        return { 'pay', 'pay_amount', 'return', 'delivered' }
+    end
+    if entry.settles == 'queued' then return {} end
+    if entry.settles == 'return_owner' then return { 'return_owner' } end
+    if entry.settles == 'pay_or_return' then return { 'pay', 'return' } end
+    return { 'return' }
+end
+
+--- One contract, whole: its terms, payouts, escrow, operatives, open
+--- proposals, the lines /ch-stuck lists for it, and its audit timeline.
+H.contract = function(src, data)
+    local Storage = deps.storage
+    local id = Util.toId(data.id)
+    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    local contract = Storage.readContract(id)
+    if not contract then return false, CH.ERR.NOT_FOUND, 'No contract has that id.' end
+
+    -- The log written first, as the timeline command does: a staff member
+    -- looking into something that just happened is asking about the last
+    -- ten seconds.
+    deps.audit.flush()
+    local canIdentify = identifies(src)
+    local hitmen = Storage.readHitmen(id) or {}
+    local r = redactor(canIdentify, contract, hitmen)
+
+    local escrow = {}
+    for _, line in ipairs(Storage.readEscrow(id) or {}) do escrow[#escrow + 1] = lineView(line, r) end
+
+    local operatives = {}
+    for _, hitman in ipairs(hitmen) do
+        operatives[#operatives + 1] = {
+            id = hitman.id, alias = hitman.alias, anonymous = hitman.anon == true,
+            name = r.name(hitman.hitman_name, hitman.anon == true),
+            cid = canIdentify and hitman.hitman_cid or nil,
+            state = hitman.state, accepted_at = hitman.accepted_at, left_at = hitman.left_at,
+            claims = tonumber(hitman.claims) or 0, stake = tonumber(hitman.stake_amount) or 0,
+            last_claim_at = hitman.last_claim_at,
+        }
+    end
+
+    local amendments = {}
+    for _, proposal in ipairs(Storage.readOpenAmendments(id) or {}) do
+        amendments[#amendments + 1] = {
+            id = proposal.id, kind = proposal.kind, proposer = r.who(proposal.proposer),
+            outcome = proposal.outcome, expires_at = proposal.expires_at,
+            payload = r.value(nil, proposal.payload),
+        }
+    end
+
+    local timeline = {}
+    for _, row in ipairs(Storage.auditForContract(id, Config.Admin.TimelineRows) or {}) do
+        timeline[#timeline + 1] = rowView(row, r)
+    end
+
+    -- The lines /ch-stuck lists for this contract, with what settles each.
+    -- Not while recovery is still deciding them.
+    local stuck
+    if recoveryState() == 'ready' then
+        stuck = {}
+        local ok, lines = pcall(deps.admin.interrupted, src, true)
+        for _, entry in ipairs(ok and lines or {}) do
+            if entry.contract == id then
+                local view = {}
+                for k, v in pairs(entry) do view[k] = v end
+                view.actions = settleActions(entry)
+                stuck[#stuck + 1] = view
+            end
+        end
+    end
+
+    deps.audit.staff(canIdentify and 'admin_panel_contract_identified' or 'admin_panel_contract',
+        staffOf(src), id, {})
+
+    return true, nil, nil, {
+        contract = {
+            id = contract.id, state = contract.state, mode = contract.mode,
+            rule = Util.fulfilmentRule(contract), reason = contract.reason,
+            created_at = contract.created_at, deadline_at = contract.deadline_at,
+            expires_at = contract.expires_at, resolved_at = contract.resolved_at,
+            resolution = contract.resolution, paused_since = contract.paused_since,
+            bailout_amount = tonumber(contract.bailout_amount) or 0,
+            penalty_amount = tonumber(contract.penalty_amount) or 0,
+            bonus_percent = tonumber(contract.bonus_percent) or 0,
+            slots = contract.payout_slots, claimed = contract.slots_claimed,
+            next_slot = contract.next_slot,
+            buyout_queued = contract.bailout_queued_at ~= nil,
+            target_protected = contract.target_protected == true,
+            anonymous = contract.anon_creator == true,
+            client = { name = r.name(contract.creator_name, contract.anon_creator == true),
+                       cid = canIdentify and contract.creator_cid or nil },
+            target = { name = contract.target_name, cid = canIdentify and contract.target_cid or nil },
+        },
+        escrow = escrow, hitmen = operatives, amendments = amendments,
+        timeline = timeline, stuck = stuck,
+        canVoid = not CH.TERMINAL[contract.state],
+    }
+end
+
+H.void = function(src, data)
+    local id = Util.toId(data.id)
+    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a contract id.' end
+    local reason = shortText(data.reason, 120)
+    local ok, err = deps.admin.void(src, id, reason)
+    return ok, err, deps.admin.voidAnswer(id, ok, err)
+end
+
+local DISPOSITIONS = { pay = true, ['return'] = true, delivered = true }
+
+H.settle = function(src, data)
+    local line = Util.toLineId(data.line)
+    if not line then return false, CH.ERR.INVALID_INPUT, 'Give an escrow line id.' end
+    local disposition = DISPOSITIONS[data.disposition] and data.disposition or nil
+    if not disposition then
+        return false, CH.ERR.INVALID_INPUT, 'Say pay, return or delivered.'
+    end
+    local extra
+    if disposition == 'pay' and data.amount ~= nil then
+        extra = wholeNumber(data.amount, 1, 1000000000)
+        if not extra then
+            return false, CH.ERR.INVALID_INPUT, 'An amount is a whole number of at least 1.'
+        end
+    elseif disposition == 'return' and data.owner ~= nil then
+        extra = Util.toCitizenId(data.owner)
+        if not extra then return false, CH.ERR.INVALID_INPUT, 'That is not a citizen id.' end
+    end
+    local ok, err, detail = deps.admin.settleLine(src, line, disposition, extra)
+    return ok, err, deps.admin.settleAnswer(ok, err, detail), { detail = detail }
+end
+
+H.reviews = function(src, data)
+    return true, nil, nil, { items = deps.admin.reviews(src, data.all == true) }
+end
+
+local REVIEW_ACTIONS = { refund = true, pay = true, dismiss = true }
+
+H.resolve = function(src, data)
+    local id = Util.toId(data.id)
+    if not id then return false, CH.ERR.INVALID_INPUT, 'Give a review item id.' end
+    local action = REVIEW_ACTIONS[data.action] and data.action or nil
+    if not action then return false, CH.ERR.INVALID_INPUT, 'Say refund, pay or dismiss.' end
+    -- Built into the words the command takes, so it is resolved by exactly
+    -- the path /ch-review resolves it by (Admin.resolveReview).
+    local args = { action }
+    if action == 'dismiss' then
+        args[2] = shortText(data.note, 200)
+    else
+        local who = type(data.who) == 'string' and #data.who <= 32
+            and data.who:match('^[%w_%-]+$') and data.who or nil
+        if not who then
+            return false, 'no_party', deps.admin.reviewAnswer(id, false, 'no_party')
+        end
+        args[2] = who
+        if action == 'refund' then
+            if data.goods == true then
+                args[3] = 'items'
+            else
+                local amount = wholeNumber(data.amount, 1, 1000000000)
+                if not amount then
+                    return false, CH.ERR.INVALID_INPUT, 'An amount is a whole number of at least 1.'
+                end
+                args[3] = tostring(amount)
+                if data.account ~= nil then
+                    if not CH.MONEY_SOURCES[data.account] then
+                        return false, 'which_money', deps.admin.reviewAnswer(id, false, 'which_money')
+                    end
+                    args[4] = data.account
+                end
+            end
+        end
+    end
+    local ok, err, detail = deps.admin.resolveReview(src, id, args)
+    return ok, err, deps.admin.reviewAnswer(id, ok, err, detail), { detail = detail }
+end
+
+--- The audit log, newest first, a page at a time (Storage.queryAudit). By
+--- a citizen id only for staff with IdentityAce: the rows a player acted in
+--- include the ones they acted in anonymously.
+H.logs = function(src, data)
+    local canIdentify = identifies(src)
+    local filter = {
+        kind = VALID_KIND[data.kind] and data.kind or nil,
+        action = shortText(data.action, 48),
+        contract = data.contract ~= nil and Util.toId(data.contract) or nil,
+        from = wholeNumber(data.from, 0),
+        to = wholeNumber(data.to, 0),
+    }
+    if data.contract ~= nil and not filter.contract then
+        return false, CH.ERR.INVALID_INPUT, 'That is not a contract id.'
+    end
+    if data.actor ~= nil then
+        if not canIdentify then
+            return false, 'identity_required', ('Finding a player\'s rows needs %s.')
+                :format(tostring(Config.Admin.IdentityAce))
+        end
+        filter.actor = Util.toCitizenId(data.actor)
+        if not filter.actor then return false, CH.ERR.INVALID_INPUT, 'That is not a citizen id.' end
+    end
+    local limit = math.min(LOG_ROWS_MAX, wholeNumber(data.limit, 1, LOG_ROWS_MAX) or pageSize())
+    local cursor = wholeNumber(data.cursor, 0)
+
+    -- The queue first, so the newest rows are there to read.
+    deps.audit.flush()
+    local rows, next_ = deps.storage.queryAudit(filter, cursor, limit)
+    local parties = partiesReader()
+    local out = {}
+    for _, row in ipairs(rows or {}) do
+        local contract, hitmen = parties(row.contract_id)
+        out[#out + 1] = rowView(row, redactor(canIdentify, contract, hitmen))
+    end
+    if canIdentify then
+        deps.audit.staff('admin_panel_logs_identified', staffOf(src), filter.contract,
+            { actor = filter.actor, rows = #out })
+    end
+    return true, nil, nil, { rows = out, next = next_ }
+end
+
+--- One player: their contracts as /ch-contracts lists them, their record,
+--- what they are owed, and the notices kept for their next login.
+H.player = function(src, data)
+    local Storage = deps.storage
+    local canIdentify = identifies(src)
+    local subject = data.subject
+    local cid, actor, typedCid
+    local serverId = (type(subject) == 'number' or (type(subject) == 'string'
+        and subject:match('^%d+$') and #subject <= 6)) and wholeNumber(subject, 1, 65535) or nil
+    if serverId then
+        actor = deps.identity.resolve(serverId)
+        if not actor then
+            return false, CH.ERR.NOT_FOUND, 'Nobody with that player id is online. Give their citizen id instead.'
+        end
+        cid = actor.cid
+    else
+        cid = Util.toCitizenId(subject)
+        if not cid then return false, CH.ERR.INVALID_INPUT, 'Give a player id or a citizen id.' end
+        typedCid = true
+        actor = deps.identity.byCitizenId(cid)
+    end
+
+    local contracts = deps.admin.contractsOf(src, cid) or {}
+
+    -- A line owed to them on a contract they were an anonymous party to
+    -- says they were, so it is left out for staff who may not see that,
+    -- as /ch-contracts leaves the contract out.
+    local parties = partiesReader()
+    local owed, queues = {}, {}
+    for _, line in ipairs(Storage.owedHeldEscrow and Storage.owedHeldEscrow() or {}) do
+        if line.owed_to == cid then
+            local contract, hitmen = parties(line.contract_id)
+            local anonymous = contract and contract.anon_creator == true and contract.creator_cid == cid
+            for _, hitman in ipairs(hitmen or {}) do
+                if hitman.hitman_cid == cid and hitman.anon == true then anonymous = true end
+            end
+            if canIdentify or not anonymous then
+                local view = lineView(line, redactor(canIdentify, contract, hitmen))
+                view.queued = deps.escrow.queued(line, queues)
+                owed[#owed + 1] = view
+            end
+        end
+    end
+    local pending = #(Storage.readPending(cid) or {})
+    local notices, titles = 0, {}
+    if deps.notify and deps.notify.waitingFor then notices, titles = deps.notify.waitingFor(cid) end
+
+    -- A name for somebody offline, from a contract that names them openly.
+    local name = actor and actor.name or nil
+    if not name then
+        for _, contract in ipairs(Storage.contractsInvolving(cid) or {}) do
+            if contract.target_cid == cid then
+                name = contract.target_name
+            elseif contract.creator_cid == cid and contract.anon_creator ~= true then
+                name = contract.creator_name
+            end
+            if name then break end
+        end
+    end
+
+    deps.audit.staff(canIdentify and 'admin_panel_player_identified' or 'admin_panel_player',
+        staffOf(src), nil, { subject = cid, typed = typedCid or nil })
+
+    return true, nil, nil, {
+        player = {
+            cid = (canIdentify or typedCid) and cid or nil, name = name,
+            online = actor ~= nil, server = actor and actor.source or nil,
+        },
+        contracts = contracts,
+        stats = deps.progression.record(cid),
+        owed = owed, pending = pending,
+        notices = { count = notices, titles = titles },
+    }
+end
+
+H.whois = function(src, data)
+    local who, err = deps.admin.identify(src, data.id)
+    if not who then
+        return false, err, err == CH.ERR.NOT_FOUND and 'No contract has that id.' or 'Give a contract id.'
+    end
+    return true, nil, nil, who
+end
+
+H.settings = function()
+    return true, nil, nil, deps.settings.view()
+end
+
+--- What a refused setting says.
+local function settingRefusal(key, err, why)
+    if err == 'not_allowed' then return 'Not a setting the panel may change.' end
+    if err == 'read_only' then return ('Not changed: %s'):format(tostring(why)) end
+    if err == 'not_overridden' then return ('%s is what config.lua says already.'):format(key) end
+    if err == 'store_failed' then
+        return ('Not changed: the store would not take it (%s). Nothing changed.'):format(tostring(why))
+    end
+    return ('Not changed: %s %s.'):format(key, tostring(why))
+end
+
+H.setSetting = function(src, data)
+    local key = type(data.key) == 'string' and #data.key <= 64 and data.key or nil
+    if not key then return false, CH.ERR.INVALID_INPUT, 'Name a setting.' end
+    local cid, who = staffOf(src)
+    local ok, err, detail = deps.settings.set(key, data.value, who, cid)
+    if not ok then return false, err, settingRefusal(key, err, detail) end
+    local entry = deps.settings.entry(key)
+    return true, nil, ('%s is now %s%s.'):format(key, deps.settings.describe(detail.value),
+        detail.source == 'config' and ' (what config.lua says)'
+            or ((entry and entry.live == false) and '; applies after restart' or '')), detail
+end
+
+H.resetSetting = function(src, data)
+    local key = type(data.key) == 'string' and #data.key <= 64 and data.key or nil
+    if not key then return false, CH.ERR.INVALID_INPUT, 'Name a setting.' end
+    local cid, who = staffOf(src)
+    local ok, err, detail = deps.settings.reset(key, who, cid)
+    if not ok then return false, err, settingRefusal(key, err, detail) end
+    return true, nil, ('%s is back to what config.lua says (%s).')
+        :format(key, deps.settings.describe(detail.value)), detail
+end
+
+H.resetSettings = function(src)
+    local cid, who = staffOf(src)
+    local ok, err, detail = deps.settings.resetAll(who, cid)
+    if not ok then return false, err, settingRefusal('every setting', err, detail) end
+    return true, nil, ('Every setting is back to what config.lua says (%d were changed).')
+        :format(detail.keys), detail
+end
+
+H.refresh = function(src)
+    local lines = deps.admin.refreshTimers(src)
+    return true, nil, table.concat(lines, ' '), { lines = lines }
+end
+
+H.diag = function(src, data)
+    local subject = data.subject ~= nil and wholeNumber(data.subject, 1, 65535) or nil
+    if data.subject ~= nil and not subject then
+        return false, CH.ERR.INVALID_INPUT, 'Give a player id, or nothing to run it as yourself.'
+    end
+    -- The one check that waits for an answer (whether the public photo
+    -- address leads here) says what it found after the report, pushed to
+    -- the open panel.
+    local lines = deps.admin.diagnose(src, subject, function(line)
+        Panel.push(src, { kind = 'diag', line = line })
+    end)
+    return true, nil, nil, { lines = lines }
+end
+
+H.flush = function(src)
+    local written = deps.audit.flush() or 0
+    local stored = true
+    if deps.storage.flush then stored = pcall(deps.storage.flush) end
+    deps.audit.staff('admin_log_flushed', staffOf(src), nil, { rows = written })
+    deps.audit.flush()
+    return true, nil, ('Audit log flushed: %d row(s) written%s.')
+        :format(written, stored and '' or ', but the store did not save'), { written = written }
+end
+
+--------------------------------------------------------------------------
+-- The one way in
+--------------------------------------------------------------------------
+
+--- Note a refusal once per window per source.
+local function noteDenied(src, op, why)
+    local now = Util.monotonicMs()
+    local last = deniedLogged[src]
+    if last and now - last < DENIED_LOG_MS then return end
+    deniedLogged[src] = now
+    deps.audit.rejected('admin_panel_' .. why, nil, nil,
+        { source = src, op = type(op) == 'string' and op:sub(1, 32) or nil })
+end
+
+--- Answer one request from the page, in the house order: the source, the
+--- ACE, the rate limit, the fields, the work. Every request is answered,
+--- refusals included, so the page never waits for one that is not coming.
+---@param src number the engine's source
+---@param payload any { op, data, __rid }
+---@return table|nil reply { rid, op, ok, err, message, data }; nil for the console
+function Panel.handle(src, payload)
+    src = tonumber(src) or 0
+    if src <= 0 then return nil end
+    local rid = type(payload) == 'table' and wholeNumber(payload.__rid, 0) or nil
+    local op = type(payload) == 'table' and type(payload.op) == 'string'
+        and payload.op:sub(1, 32) or nil
+    local function answer(ok, err, message, data)
+        return { rid = rid, op = op, ok = ok == true, err = err, message = message, data = data }
+    end
+
+    if not Config.Admin.Enabled then
+        return answer(false, 'admin_off', 'The staff tools are switched off (Config.Admin.Enabled).')
+    end
+
+    -- Permission, before anything about the request is looked at. An op
+    -- nobody knows is checked as a read, so it answers the same as any
+    -- other to somebody who may not read.
+    local level = (op and OPS[op]) or READ
+    if not allowed(src, level == IDENTITY and READ or level) then
+        noteDenied(src, op, 'denied')
+        return answer(false, 'not_allowed', deps.admin.howToAuthorise(Config.Admin.Ace)
+            .. (level == WRITE
+                and ' Changing anything needs that ACE itself; the extra ACEs only read.' or ''))
+    end
+    if level == IDENTITY and not identifies(src) then
+        noteDenied(src, op, 'identity_denied')
+        return answer(false, 'identity_required', ('Unmasking needs %s, a separate ACE.')
+            :format(tostring(Config.Admin.IdentityAce)))
+    end
+
+    -- Per staff member's source, and once more for anything that writes.
+    local key = 'panel:' .. tostring(src)
+    for _, bucket in ipairs(level == WRITE and { 'admin', 'adminWrite' } or { 'admin' }) do
+        if not deps.ratelimit.check(key, bucket) then
+            local wait = deps.ratelimit.retryAfter(key, bucket) or 0
+            return answer(false, CH.ERR.RATE_LIMITED,
+                wait > 0 and ('Slow down. Try again in %d second(s).'):format(wait) or 'Slow down.',
+                { retryAfter = wait })
+        end
+    end
+
+    if not op or not OPS[op] then
+        return answer(false, 'unknown_op', 'The page asked for something this server does not do.')
+    end
+    local data = type(payload.data) == 'table' and payload.data or {}
+
+    if WAITS_FOR_RECOVERY[op] then
+        local waiting = deps.admin.recovery()
+        if waiting then return answer(false, waiting, deps.admin.notRecovered()) end
+    end
+
+    local ran, ok, err, message, result = pcall(H[op], src, data)
+    if not ran then
+        deps.audit.rejected('admin_panel_error', staffOf(src), nil, { op = op, error = tostring(ok) })
+        print(('[crimson-hitman] the admin panel\'s %s raised: %s'):format(op, tostring(ok)))
+        return answer(false, CH.ERR.SERVER_ERROR,
+            'That raised an error on the server (the console says what).')
+    end
+    if level == WRITE then
+        -- Whatever it moved shows in the next overview, not one cached
+        -- from before it.
+        overviewCache = nil
+        -- Every write on the record at once, not at the next flush.
+        pcall(deps.audit.flush)
+        if deps.storage.flush then pcall(deps.storage.flush) end
+    end
+    return answer(ok, err, message, result)
+end
+
+--- Send a reply to the page's client: as a latent event when it is large.
+---@param src number
+---@param reply table
+function Panel.send(src, reply)
+    local okSize, encoded = pcall(json.encode, reply)
+    if okSize and type(encoded) == 'string' and #encoded > LATENT_OVER then
+        TriggerLatentClientEvent('crimson-hitman:adminResult', src, LATENT_BPS, reply)
+    else
+        TriggerClientEvent('crimson-hitman:adminResult', src, reply)
+    end
+end
+
+--- Something the server has for an open panel that no request asked for
+--- just now: a diagnosis line that had to wait for an answer.
+---@param src number
+---@param data table { kind, line }
+function Panel.push(src, data)
+    TriggerClientEvent('crimson-hitman:adminPush', src, data)
+end
+
+return Panel

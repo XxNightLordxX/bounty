@@ -1,0 +1,26 @@
+/* The admin panel (/hitmanadmin): the same dark look as the phone app. */
+:root {
+  --bg: #0d0d10;
+  --panel: #16161b;
+  --line: #2a2a31;
+  --text: #ececf1;
+  --muted: #8b8b96;
+  --accent: #c8102e;
+  --radius: 10px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: transparent; color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+[hidden] { display: none !important; }
+.panel { position: fixed; inset: 2vh 2vw; min-width: 960px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: var(--radius); display: flex; flex-direction: column; }
+.bar { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px;
+  border-bottom: 1px solid var(--line); background: var(--panel); border-radius: var(--radius) var(--radius) 0 0; }
+.bar h1 { margin: 0; font-size: 18px; }
+.muted { color: var(--muted); font-weight: 400; }
+.body { flex: 1; overflow: auto; padding: 18px; }
+.icon { background: none; border: 0; color: var(--text); font-size: 18px; cursor: pointer; }
+.icon:hover { color: var(--accent); }
+.toasts { position: fixed; right: 24px; bottom: 24px; display: flex; flex-direction: column; gap: 8px; }
+.toast { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 8px; padding: 10px 14px; max-width: 420px; }

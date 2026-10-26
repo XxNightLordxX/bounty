@@ -257,6 +257,9 @@ function _G.newCopyingStack()
                             mugshot = stack.mugshot, progression = stack.progression,
                             informant = stack.informant, notify = stack.notify })
 
+    stack.settings.init({ storage = copying, audit = stack.audit,
+                          check = require('crimson-hitman.server.main').checkCandidate })
+
     stack.storage = copying
     return stack
 end
@@ -305,6 +308,9 @@ function _G.newStack()
     package.loaded['crimson-hitman.server.amendments'] = nil
     package.loaded['crimson-hitman.server.informant'] = nil
     package.loaded['crimson-hitman.server.bailout'] = nil
+    package.loaded['crimson-hitman.server.settings'] = nil
+    package.loaded['crimson-hitman.server.panel'] = nil
+    package.loaded['crimson-hitman.server.timing'] = nil
 
     local storage   = require('crimson-hitman.server.storage.memory')
     local audit     = require('crimson-hitman.server.audit')
@@ -329,8 +335,15 @@ function _G.newStack()
     local progression = require('crimson-hitman.server.progression')
     local app        = require('crimson-hitman.server.app')
     local admin      = require('crimson-hitman.server.admin')
+    local settings   = require('crimson-hitman.server.settings')
+    local panel      = require('crimson-hitman.server.panel')
+    local timing     = require('crimson-hitman.server.timing')
 
     storage.open()
+    -- As main.lua wires it, checked by the start-up checks themselves run
+    -- against a copy (main.lua's checkCandidate), right after the store.
+    settings.init({ storage = storage, audit = audit,
+                    check = require('crimson-hitman.server.main').checkCandidate })
     audit.init(storage)
     notify.init({ identity = identity })
     review.init({ storage = storage, escrow = escrow, audit = audit })
@@ -383,9 +396,13 @@ function _G.newStack()
         -- real handlers in a diagnosis, and requiring it there instead
         -- hands back a second copy of the module under a different path.
         app = app, admin = admin,
+        -- The admin panel and the settings it changes, and the job timing
+        -- its overview lists.
+        settings = settings, panel = panel, timing = timing,
     }
     app.init(wiring)
     admin.init(wiring)
+    panel.init(wiring)
 
     return {
         storage = storage, audit = audit, kidnap = kidnap, projection = projection,
@@ -393,7 +410,7 @@ function _G.newStack()
         escrow = escrow, contracts = contracts, ratelimit = ratelimit,
         ledger = ledger, death = death, photo = photo, bridges = bridges,
         mugshot = mugshot, progression = progression, app = app, admin = admin,
-        photos = photos, review = review,
+        photos = photos, review = review, settings = settings, panel = panel, timing = timing,
     }
 end
 
@@ -430,7 +447,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec', 'anonymity_spec', 'fulfilment_spec', 'review_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec', 'anonymity_spec', 'fulfilment_spec', 'review_spec', 'admin_panel_spec', 'settings_spec', 'features_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

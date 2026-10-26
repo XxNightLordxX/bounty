@@ -12,6 +12,8 @@
 --- RECORDS). The audit log is not in the index: it is a file per day, added
 --- to rather than rewritten (see writeAudit).
 
+local Util = CrimsonBoot.requireShared('util')
+
 local JsonStore = {}
 
 local db, dirty, seq = nil, false, 0
@@ -20,7 +22,7 @@ local resource = GetCurrentResourceName and GetCurrentResourceName() or 'crimson
 local EMPTY = {
     contracts = {}, escrow = {}, hitmen = {}, amendments = {},
     messages = {}, ledger = {}, pending = {}, audit = {}, stats = {}, reveals = {}, mutes = {},
-    photos = {}, reviews = {}, seq = 0,
+    photos = {}, reviews = {}, settings = {}, seq = 0,
 }
 
 --- Which contracts have unwritten changes, and whether the index itself has.
@@ -35,7 +37,8 @@ local indexDirty = false
 
 --- The records: everything that is not per-contract and is not the index's
 --- own bookkeeping. The ledger, pending payouts, the stats, the informant
---- reveals, the kill photo records and the review queue.
+--- reveals, the kill photo records, the review queue and the settings staff
+--- changed from the admin panel.
 ---
 --- They were fields of store.json, and store.json was rewritten whole on
 --- every financial write, even one that changed only a contract's own file.
@@ -46,7 +49,7 @@ local indexDirty = false
 --- on it. So they are a file of their own, records.json, written only when
 --- one of them changed: a money write on a contract writes that contract's
 --- file and, at most, a store.json small enough not to matter.
-local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews' }
+local RECORDS = { 'ledger', 'pending', 'stats', 'reveals', 'photos', 'reviews', 'settings' }
 local recordsDirty = false
 
 --- Whether records.json is known to be on disk: read at this start, or
@@ -1456,6 +1459,42 @@ function JsonStore.setReviewState(id, expected, next_, fields)
     return true
 end
 
+--------------------------------------------------------------------------
+-- Settings changed from the admin panel
+--------------------------------------------------------------------------
+
+--- See the memory backend. In records.json, and written at once as a money
+--- write is: a staff member who turns a feature off and restarts the
+--- server a moment later expects it to be off when it comes back.
+function JsonStore.readSettings()
+    local out = {}
+    for key, row in pairs(db.settings or {}) do
+        if type(row) == 'table' then
+            out[key] = { value = Util.copy(row.value), by = row.by, at = row.at }
+        end
+    end
+    return out
+end
+
+function JsonStore.writeSetting(key, value, by, at)
+    db.settings = db.settings or {}
+    db.settings[key] = { value = Util.copy(value), by = by, at = at }
+    touch(true)
+    return true
+end
+
+function JsonStore.deleteSetting(key)
+    if db.settings then db.settings[key] = nil end
+    touch(true)
+    return true
+end
+
+function JsonStore.clearSettings()
+    db.settings = {}
+    touch(true)
+    return true
+end
+
 --- When this process was last known to be running.
 ---
 --- A file of its own rather than a field in the index: the index is
@@ -1832,6 +1871,19 @@ function JsonStore.releasingEscrow()
     local out = {}
     for _, line in pairs(db.escrow) do
         if line.state == CH.ESCROW_STATE.RELEASING then out[#out + 1] = line end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+--- Every escrow line not settled yet, held or mid-release. See the memory
+--- backend.
+function JsonStore.unsettledEscrow()
+    local out = {}
+    for _, line in pairs(db.escrow) do
+        if line.state == CH.ESCROW_STATE.HELD or line.state == CH.ESCROW_STATE.RELEASING then
+            out[#out + 1] = line
+        end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
@@ -2362,6 +2414,22 @@ function JsonStore.auditByAction(action, limit)
         return trimmed
     end
     return out
+end
+
+--- A page of the audit log for the admin panel, newest first. See the
+--- memory backend: the rows within the retention age are all in memory
+--- here too (db.audit), whichever day's file they are written in.
+function JsonStore.queryAudit(filter, cursor, limit)
+    local log = db.audit
+    local start = math.tointeger(tonumber(cursor)) or #log
+    local out = {}
+    for i = math.min(start, #log), 1, -1 do
+        if Util.auditMatches(log[i], filter) then
+            if #out >= limit then return out, i end
+            out[#out + 1] = log[i]
+        end
+    end
+    return out, nil
 end
 
 --- Every audit row naming one contract, oldest first.

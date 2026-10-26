@@ -4,6 +4,8 @@
 --- Holds no durable escrow, so main.lua refunds everything on resource stop
 --- and cancels a creator's contracts when they disconnect (§10.3).
 
+local Util = CrimsonBoot.requireShared('util')
+
 local Memory = {}
 
 local db
@@ -44,7 +46,7 @@ function Memory.open()
     db = {
         contracts = {}, escrow = {}, hitmen = {}, amendments = {},
         messages = {}, ledger = {}, pending = {}, audit = {}, reveals = {}, mutes = {},
-        photos = {}, reviews = {}, seq = 0,
+        photos = {}, reviews = {}, settings = {}, seq = 0,
     }
     return true
 end
@@ -444,6 +446,20 @@ function Memory.releasingEscrow()
     local out = {}
     for _, line in pairs(db.escrow) do
         if line.state == CH.ESCROW_STATE.RELEASING then out[#out + 1] = line end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+--- Every escrow line not settled yet, held or mid-release, by id: what the
+--- admin panel's overview adds up as money held. One read, where asking
+--- each contract for its lines was a query per contract on mysql.
+function Memory.unsettledEscrow()
+    local out = {}
+    for _, line in pairs(db.escrow) do
+        if line.state == CH.ESCROW_STATE.HELD or line.state == CH.ESCROW_STATE.RELEASING then
+            out[#out + 1] = line
+        end
     end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
@@ -938,6 +954,29 @@ function Memory.auditByAction(action, limit)
     return out
 end
 
+--- A page of the audit log for the admin panel, newest first: at most
+--- `limit` rows passing the filters (Util.auditMatches), from `cursor` back,
+--- and the cursor the next page starts from, nil on the last. The cursor is
+--- opaque to callers: here it is a position in the log, the row it names
+--- included.
+---@param filter table|nil { kind, action, contract, actor, from, to }
+---@param cursor integer|nil
+---@param limit integer
+---@return table[] rows
+---@return integer|nil next
+function Memory.queryAudit(filter, cursor, limit)
+    local log = db.audit
+    local start = math.tointeger(tonumber(cursor)) or #log
+    local out = {}
+    for i = math.min(start, #log), 1, -1 do
+        if Util.auditMatches(log[i], filter) then
+            if #out >= limit then return out, i end
+            out[#out + 1] = log[i]
+        end
+    end
+    return out, nil
+end
+
 --- Every audit row naming one contract, oldest first. The admin timeline
 --- reads this; walking the whole log per lookup is a full scan on mysql.
 function Memory.auditForContract(contractId, limit)
@@ -1128,6 +1167,45 @@ function Memory.setReviewState(id, expected, next_, fields)
     row.state = next_
     row.resolution, row.resolved_by, row.resolved_at =
         fields.resolution, fields.resolved_by, fields.resolved_at
+    return true
+end
+
+--------------------------------------------------------------------------
+-- Settings changed from the admin panel
+--------------------------------------------------------------------------
+
+--- What staff changed from the admin panel (server/settings.lua), by
+--- config key ('Bailout.Enabled'): { value, by, at }. Applied over
+--- config.lua at every start, so they outlive a restart in the two stores
+--- that do; this one keeps them as long as it keeps anything, which is
+--- until the resource stops.
+---@return table [key] = { value, by, at }
+function Memory.readSettings()
+    local out = {}
+    for key, row in pairs(db.settings) do
+        out[key] = { value = Util.copy(row.value), by = row.by, at = row.at }
+    end
+    return out
+end
+
+---@param key string
+---@param value any a boolean, a number, a string or a list of strings
+---@param by string|nil who changed it
+---@param at integer os.time
+function Memory.writeSetting(key, value, by, at)
+    db.settings[key] = { value = Util.copy(value), by = by, at = at }
+    return true
+end
+
+--- One back to what config.lua says.
+function Memory.deleteSetting(key)
+    db.settings[key] = nil
+    return true
+end
+
+--- Every one back to what config.lua says.
+function Memory.clearSettings()
+    db.settings = {}
     return true
 end
 

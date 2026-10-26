@@ -16,7 +16,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Admin = {}
 
 local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit, Death, Photo
-local Informant, Kidnap, Mugshot, Photos, Timing, Review
+local Informant, Kidnap, Mugshot, Photos, Timing, Review, Settings
 
 function Admin.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
@@ -47,6 +47,8 @@ function Admin.init(deps)
     -- The review queue: money no rule here could settle, which /ch-stuck
     -- lists and /ch-review resolves.
     Review = deps.review
+    -- What staff changed from the admin panel, which the diagnosis lists.
+    Settings = deps.settings
 end
 
 --- How many of the slowest maintenance jobs the diagnosis lists.
@@ -214,7 +216,10 @@ end
 --- as the party's role to them; shown as the id, and recorded, to staff
 --- who hold it.
 ---@param src number|nil who is asking
-function Admin.interrupted(src)
+---@param quiet boolean|nil leave no audit row: the admin panel's overview
+--- counts these every ten seconds while it is open, and its contract view
+--- writes a row of its own
+function Admin.interrupted(src, quiet)
     Audit.flush()
 
     local canIdentify = src == nil or src == 0
@@ -427,8 +432,10 @@ function Admin.interrupted(src)
         end
     end
 
-    Audit.staff(canIdentify and 'admin_stuck_identified' or 'admin_stuck', callerCid(src), nil,
-        { lines = #out })
+    if not quiet then
+        Audit.staff(canIdentify and 'admin_stuck_identified' or 'admin_stuck', callerCid(src), nil,
+            { lines = #out })
+    end
     return out
 end
 
@@ -524,6 +531,180 @@ end
 local function recovering()
     if App == nil or App.ready ~= false then return nil end
     return App.recoveryFailed and 'recovery_failed' or 'recovering'
+end
+
+--- Whether boot recovery is still running ('recovering') or raised
+--- ('recovery_failed'), or nil once it has finished: what refuses a staff
+--- write, from a command or from the admin panel alike.
+---@return string|nil
+function Admin.recovery()
+    return recovering()
+end
+
+--------------------------------------------------------------------------
+-- What the staff tools say
+--------------------------------------------------------------------------
+--
+-- The commands (server/bridges.lua) and the admin panel (server/panel.lua)
+-- answer a void, a settle and a review resolved in these words, so staff
+-- read the same thing whichever they used.
+
+--- While boot recovery runs (App.ready): what a write would act on is not
+--- decided yet.
+Admin.RECOVERING = 'Still recovering from the restart: nothing is settled, voided or listed '
+    .. 'until that has finished. Try again in a moment.'
+
+--- And once recovery has raised (App.recoveryFailed): it never finishes in
+--- this process, so waiting a moment changes nothing.
+Admin.RECOVERY_FAILED = 'Recovery failed at the last start (the server console says why): '
+    .. 'nothing is settled, voided or listed, and the app stays closed. Fix the logged cause, '
+    .. 'then restart the resource.'
+
+--- What a staff write says while recovery has not finished, or nil once
+--- it has.
+---@return string|nil
+function Admin.notRecovered()
+    local waiting = recovering()
+    if waiting == 'recovery_failed' then return Admin.RECOVERY_FAILED end
+    if waiting == 'recovering' then return Admin.RECOVERING end
+    return nil
+end
+
+--- What a void says (Admin.void).
+---@param id any the contract id as staff gave it
+---@param ok boolean
+---@param err string|nil
+---@return string
+function Admin.voidAnswer(id, ok, err)
+    local names = Config.Admin.Commands
+    if err == 'recovering' then return Admin.RECOVERING end
+    if err == 'recovery_failed' then return Admin.RECOVERY_FAILED end
+    -- Mid-claim with no claim running (Admin.void): the void waits for
+    -- the restart that puts it back to accepted.
+    if err == 'stalled_claim' then
+        return ('Could not void it: contract %s is mid-claim with no claim running (a '
+            .. 'stalled claim: the claim paying a collection raised part-way), and only the next '
+            .. 'start puts it back. Pay each line /%s lists for it as a stalled claim with /%s '
+            .. '<line> pay, then restart the resource: recovery puts the contract back to accepted '
+            .. '(or completes it, if that was its last collection), and /%s %s closes it then.')
+            :format(tostring(id), names.stuck, names.settle, names.void, tostring(id))
+    end
+    return ok and 'Contract voided; escrow returned to the creator.'
+        or ('Could not void it: ' .. tostring(err))
+end
+
+--- What a settle says (Admin.settleLine).
+---@param ok boolean
+---@param err string|nil
+---@param detail any
+---@return string
+function Admin.settleAnswer(ok, err, detail)
+    local names = Config.Admin.Commands
+    if err == 'recovering' then return Admin.RECOVERING end
+    if err == 'recovery_failed' then return Admin.RECOVERY_FAILED end
+    if err == 'live' then
+        return ('Not settled: contract %s is still live and this line is its own (a payout '
+            .. 'its next claim pays, a bonus or a stake), not one left for you. /%s %s closes a live '
+            .. 'contract and returns its escrow; /%s settles only what /%s lists.')
+            :format(tostring(detail), names.void, tostring(detail), names.settle, names.stuck)
+    end
+    -- Closed, by an ending that raised before it handed this over
+    -- (Admin.settleLine): the maintenance tick finishes it.
+    if err == 'ending_unfinished' then
+        return ('Not settled: ending unfinished; it settles itself within a minute. '
+            .. 'Contract %s closed, but its ending raised before it handed this line over; the '
+            .. 'server finishes that ending as a restart would (a stake by why it ended, the rest '
+            .. 'back to the client), so there is nothing for you to settle. Nothing moved.')
+            :format(tostring(detail))
+    end
+    if ok and err == 'queued' and detail == 'refused' then
+        return ('Queued: they are in the city, but the give was refused (no room in their '
+            .. 'pockets, their account would not take it, or their inventory could not be read), '
+            .. 'so it goes on their retry queue and is tried again while they are in the city and '
+            .. 'at their next login; see /%s.'):format(names.stuck)
+    end
+    if ok and err == 'queued' then
+        return 'Queued: they are not in the city, so it is delivered at their next login.'
+    end
+    if ok and err == 'requeued' then
+        return ('Re-queued after a failed give: giving it raised an error with nothing '
+            .. 'arriving, so it goes back on their retry queue and is tried again while they are '
+            .. 'in the city and at their next login; three such raises leave it for staff (see /%s).')
+            :format(names.stuck)
+    end
+    if err == 'parked' then
+        return ('Not settled: giving it raised again, so it is left for staff again; '
+            .. 'see /%s.'):format(names.stuck)
+    end
+    if err == 'already_queued' then
+        return ('Already queued for %s: it is theirs, given while they are in the city '
+            .. 'or at their next login. Nothing to settle.'):format(tostring(detail))
+    end
+    if err == 'pay_only' then
+        return ('Not settled: nothing of it was given (owed to %s and in no retry queue), '
+            .. 'so only /%s <line> pay settles it, to them.'):format(tostring(detail), names.settle)
+    end
+    if err == 'owes_less' then
+        return ('Not settled: the line now owes only %s, less than that amount; '
+            .. 'check again (/%s).'):format(tostring(detail), names.stuck)
+    end
+    if err == 'not_left' then
+        return ('Not settled: it is no longer left for staff, as something settled or '
+            .. 'moved it since it was read; see /%s.'):format(names.stuck)
+    end
+    if err == 'raised' then
+        return ('Not settled: settling it raised an error (logged as admin_settle_raised, '
+            .. 'and in the console). Anything it left mid-give is left for staff; see /%s.')
+            :format(names.stuck)
+    end
+    if err == CH.ERR.LOCKED then
+        return ('Not settled: something else is giving or settling it right now (a '
+            .. 'release, a login retry, the claim on its contract, another settle), or it is owed '
+            .. 'to somebody else; nothing moved. Check again with /%s.'):format(names.stuck)
+    end
+    return ok and 'Line settled.' or ('Could not settle it: ' .. tostring(err))
+end
+
+--- What resolving a review item says (Admin.resolveReview).
+---@param id any the item id as staff gave it
+---@param ok boolean
+---@param err string|nil
+---@param detail any
+---@return string
+function Admin.reviewAnswer(id, ok, err, detail)
+    local names = Config.Admin.Commands
+    if err == 'recovering' then return Admin.RECOVERING end
+    if err == 'recovery_failed' then return Admin.RECOVERY_FAILED end
+    if ok then
+        local r = detail or {}
+        if r.action == 'dismiss' then
+            return 'Dismissed. Nothing was given.' .. (r.continued
+                and ' It had been decided so before a stop, and is finished now.' or '')
+        end
+        return ('Resolved: %d line(s) given, %d owed and given while they are in '
+            .. 'the city or at their next login, %d left for /%s (giving raised). %s')
+            :format(r.settled or 0, r.pending or 0, r.parked or 0, names.stuck,
+                r.continued and 'It had been decided before a stop and was finished as decided, '
+                    .. 'not as asked now.' or '')
+    end
+    local why = {
+        [CH.ERR.NOT_FOUND] = 'No review item has that id.',
+        [CH.ERR.ALREADY_SETTLED] = 'Already resolved; nothing was given again.',
+        [CH.ERR.BUSY] = 'It is being resolved right now. Look again in a moment.',
+        [CH.ERR.LOCKED] = 'Something else resolved or began resolving it meanwhile; look again.',
+        note_required = 'Say why: /' .. names.review .. ' <id> dismiss <note>.',
+        no_party = 'Name who it goes to: a citizen id, or a role the item names.',
+        which_money = 'It records more than one kind of money: say which (cash, bank or dirty).',
+        nothing_recorded = 'It records nothing of that to give; use pay, or items for goods.',
+        over_recorded = ('That is more than it records (%s); refund at most that.')
+            :format(tostring(detail)),
+        raised = ('Resolving it raised an error (in the console). It is left being resolved, '
+            .. 'with the decision on it: /%s %s finishes it.')
+            :format(names.review, tostring(id)),
+    }
+    return why[err] or ('Usage: /%s [all] | /%s <id> refund <citizenid|role> <amount> '
+        .. '[cash|bank|dirty] | refund <citizenid|role> items | pay <citizenid|role> | '
+        .. 'dismiss <note>'):format(names.review, names.review)
 end
 
 --- Close a contract and return everything to the creator.
@@ -1236,6 +1417,22 @@ function Admin.diagnose(source, subjectId, later)
         say(('  %d MONEY EVENT(S) WAIT IN THE REVIEW QUEUE.'):format(reviewing))
         say(('    -> /%s lists them with what is known, and /%s resolves each')
             :format(tostring(Config.Admin.Commands.stuck), tostring(Config.Admin.Commands.review)))
+    end
+
+    -- Settings changed from the admin panel, which are in force over
+    -- config.lua: an owner reading their config.lua and seeing one value
+    -- while the server runs another needs to be told here.
+    local active = Settings and Settings.active() or {}
+    if #active > 0 then
+        say(('admin panel settings in force over config.lua: %d'):format(#active))
+        for _, row in ipairs(active) do
+            say(('  %s = %s  (by %s, %s)%s'):format(row.key, Settings.describe(row.value),
+                tostring(row.by or '?'), row.at and os.date('%Y-%m-%d %H:%M', row.at) or '?',
+                row.ignored and ('  -> NOT APPLIED: ' .. row.ignored .. '; reset it in the panel')
+                    or ''))
+        end
+    else
+        say('admin panel settings: none; config.lua is in force as it stands')
     end
 
     -- Server-wide, so before the player checks, which can stop early.

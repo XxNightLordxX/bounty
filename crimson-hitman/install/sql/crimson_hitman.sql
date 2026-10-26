@@ -259,6 +259,13 @@ CREATE TABLE IF NOT EXISTS crimson_review (
     INDEX idx_review_state (state, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS crimson_settings (
+    setting_key VARCHAR(64) PRIMARY KEY,
+    setting_value TEXT,
+    set_by VARCHAR(64),
+    set_at INT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS crimson_meta (
     meta_key VARCHAR(32) PRIMARY KEY,
     meta_value INT NOT NULL

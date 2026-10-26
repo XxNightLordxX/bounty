@@ -301,6 +301,17 @@ local SCHEMA = {
         resolved_at INT,
         INDEX idx_review_state (state, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    -- Settings staff changed from the admin panel (server/settings.lua),
+    -- by config key ('Bailout.Enabled'), applied over config.lua at every
+    -- start. The value is JSON, so a switch, a number, a word and a list of
+    -- job names all keep their type. Created on an existing database by the
+    -- CREATE TABLE IF NOT EXISTS at the next start, like any table added since.
+    [[CREATE TABLE IF NOT EXISTS crimson_settings (
+        setting_key VARCHAR(64) PRIMARY KEY,
+        setting_value TEXT,
+        set_by VARCHAR(64),
+        set_at INT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Small facts about the store itself. Holds the heartbeat: when this
     -- process was last known to be running, so a boot can tell how long
     -- nobody could play.
@@ -1119,6 +1130,15 @@ end
 --- nothing else of a finished contract, and it asked every contract the
 --- table keeps for its lines, twice, before the app answered anybody: some
 --- four awaited queries per contract, thirty days of them.
+--- Every escrow line not settled yet, held or mid-release, in one query
+--- served by idx_state. See the memory backend.
+function MySQLStore.unsettledEscrow()
+    local rows = db.query(
+        "SELECT * FROM crimson_escrow WHERE state IN ('held', 'releasing') ORDER BY id") or {}
+    for i = 1, #rows do hydrateEscrow(rows[i]) end
+    return rows
+end
+
 function MySQLStore.unsettledEscrowContracts()
     local rows = db.query(
         "SELECT DISTINCT contract_id FROM crimson_escrow WHERE state IN ('held', 'releasing')") or {}
@@ -1598,6 +1618,55 @@ function MySQLStore.readAudit(limit)
             { limit or 100 }) or {})
 end
 
+--- Rows the admin panel's log reads per round trip, and at most per page.
+local AUDIT_BATCH, AUDIT_SCAN_ROWS = 500, 5000
+
+--- A page of the audit log for the admin panel, newest first. See the
+--- memory backend; the cursor here is the id to read below.
+---
+--- Read in batches by id, newest first, through the one index the filters
+--- can use (the contract's, or the actor's), and filtered as the other
+--- backends filter (Util.auditMatches). At most AUDIT_SCAN_ROWS rows are
+--- looked at for one page: a filter that matches almost nothing in a long
+--- log answers with what it found so far and a cursor to go on from, rather
+--- than reading the whole log in one request. Rows come in the order they
+--- were written, so the first one older than the time range ends the read.
+function MySQLStore.queryAudit(filter, cursor, limit)
+    filter = type(filter) == 'table' and filter or {}
+    local below = math.tointeger(tonumber(cursor)) or 2147483647
+    local out, scanned = {}, 0
+    while scanned < AUDIT_SCAN_ROWS do
+        local batch
+        if filter.contract then
+            batch = db.query(
+                'SELECT * FROM crimson_audit WHERE contract_id = ? AND id < ? ORDER BY id DESC LIMIT ?',
+                { filter.contract, below, AUDIT_BATCH })
+        elseif filter.actor then
+            batch = db.query(
+                'SELECT * FROM crimson_audit WHERE actor_cid = ? AND id < ? ORDER BY id DESC LIMIT ?',
+                { filter.actor, below, AUDIT_BATCH })
+        else
+            batch = db.query('SELECT * FROM crimson_audit WHERE id < ? ORDER BY id DESC LIMIT ?',
+                { below, AUDIT_BATCH })
+        end
+        batch = batch or {}
+        for i = 1, #batch do
+            local row = hydrateAudit(batch[i])
+            local id = tonumber(row.id) or 0
+            scanned = scanned + 1
+            if filter.from and (tonumber(row.ts) or 0) < filter.from then return out, nil end
+            if Util.auditMatches(row, filter) then
+                -- Full: the next page starts at this row (id below id + 1).
+                if #out >= limit then return out, id + 1 end
+                out[#out + 1] = row
+            end
+            below = id
+        end
+        if #batch < AUDIT_BATCH then return out, nil end
+    end
+    return out, below
+end
+
 --- Every audit row naming one contract, oldest first. Indexed, so the
 --- admin timeline is a lookup rather than a scan of the whole log.
 ---
@@ -1941,6 +2010,46 @@ function MySQLStore.setReviewState(id, expected, next_, fields)
     ]], { next_, encoded(fields.resolution), fields.resolved_by, fields.resolved_at,
           id, expected })
     return (tonumber(affected) or 0) > 0
+end
+
+--------------------------------------------------------------------------
+-- Settings changed from the admin panel
+--------------------------------------------------------------------------
+
+--- See the memory backend. The value is kept as JSON, wrapped so a bare
+--- switch or number encodes as a document.
+function MySQLStore.readSettings()
+    local rows = db.query('SELECT * FROM crimson_settings') or {}
+    local out = {}
+    for i = 1, #rows do
+        local row = rows[i]
+        local ok, decoded = pcall(json.decode, row.setting_value or '')
+        if ok and type(decoded) == 'table' and row.setting_key then
+            out[row.setting_key] = { value = decoded.value, by = row.set_by,
+                                     at = tonumber(row.set_at) }
+        end
+    end
+    return out
+end
+
+function MySQLStore.writeSetting(key, value, by, at)
+    db.query([[
+        INSERT INTO crimson_settings (setting_key, setting_value, set_by, set_at)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value),
+            set_by = VALUES(set_by), set_at = VALUES(set_at)
+    ]], { key, json.encode({ value = value }), by, at })
+    return true
+end
+
+function MySQLStore.deleteSetting(key)
+    db.query('DELETE FROM crimson_settings WHERE setting_key = ?', { key })
+    return true
+end
+
+function MySQLStore.clearSettings()
+    db.query('DELETE FROM crimson_settings')
+    return true
 end
 
 function MySQLStore.heartbeat(at)

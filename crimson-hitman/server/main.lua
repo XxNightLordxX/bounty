@@ -95,6 +95,11 @@ local DEFAULTS = {
         -- allowance it was built against, as the three above do.
         photoView   = { per = 10, burst = 5 },
         photoDecide = { per = 5, burst = 5 },
+        -- The admin panel's, which no config before it names. Its overview
+        -- refreshes itself while it is open, and the fallback rule of ten
+        -- would refuse a staff member clicking through a few contracts.
+        admin      = { per = 10, burst = 30 },
+        adminWrite = { per = 10, burst = 6 },
     },
     --- The names the admin commands register under. Indexed directly while
     --- registering them, so a config carrying an Admin section without this
@@ -111,7 +116,15 @@ local DEFAULTS = {
             diagnose = 'ch-diag',
             -- The review queue's, added to a list every config has.
             review   = 'ch-review',
+            -- The timer refresh had /hitmanadmin, which is the admin
+            -- panel's now: a config without either has both under their
+            -- names (and one that still gives the refresh /hitmanadmin is
+            -- moved off it at start, below).
+            refresh  = 'ch-refresh',
+            panel    = 'hitmanadmin',
         },
+        PanelPageSize = 25,
+        PanelRefreshSeconds = 10,
     },
     Immunity = {
         MinTargetPlaytimeHours = 5,
@@ -305,7 +318,8 @@ local function isRecord(value)
     return false
 end
 
-local function applyConfigDefaults()
+---@param quiet boolean|nil fill without saying so: a copy being checked, not the config
+local function applyConfigDefaults(quiet)
     local filled = {}
 
     -- Whole sections the operator's config does not have at all.
@@ -372,7 +386,7 @@ local function applyConfigDefaults()
         end
     end
 
-    if #filled > 0 then
+    if #filled > 0 and not quiet then
         table.sort(filled)
         print(('[crimson-hitman] your config.lua does not set %d setting(s); the shipped '
             .. 'defaults are being used for them: %s. Copy them across from the config '
@@ -383,12 +397,21 @@ local function applyConfigDefaults()
     return filled
 end
 
-local function validateConfig()
+---
+--- `quiet` checks without printing or raising, and answers what it found:
+--- the admin panel runs these same checks against a copy of the config
+--- with a staff member's change in it (checkCandidate), so a value the
+--- start would refuse, or quietly correct, is refused there in these words.
+---@param quiet boolean|nil
+---@return boolean ok
+---@return string[]|nil fatal with `quiet`
+---@return string[]|nil warn with `quiet`
+local function validateConfig(quiet)
     local fatal, warn = {}, {}
 
     -- Before anything is read: a setting this config never had is nil, and
     -- the checks below would report it as broken rather than as absent.
-    applyConfigDefaults()
+    applyConfigDefaults(quiet)
 
     -- Every value the code puts straight into arithmetic or a comparison.
     -- A key an operator deleted or misspelled while editing their config is
@@ -466,6 +489,7 @@ local function validateConfig()
     -- Every check below compares these values, and a comparison against nil
     -- throws — so a hole in the config would take out the very code written
     -- to report it. Nothing else runs until the shapes are known good.
+    if #fatal > 0 and quiet then return false, fatal, warn end
     if #fatal > 0 then
         for _, message in ipairs(fatal) do
             print('[crimson-hitman] FATAL: ' .. message)
@@ -809,6 +833,20 @@ local function validateConfig()
         warn[#warn + 1] = 'Advisory is enabled but nobody is configured to receive it'
     end
 
+    -- The timer refresh was /hitmanadmin until the admin panel took the
+    -- name. A config.lua from before that still gives it to the refresh,
+    -- and two commands under one name is whichever registered last: the
+    -- refresh moves to its new name, and the panel keeps /hitmanadmin.
+    local commands = Config.Admin.Commands
+    if type(commands) == 'table' and commands.panel ~= nil and commands.refresh == commands.panel then
+        warn[#warn + 1] = ('Admin.Commands.refresh is \'%s\', which is the admin panel\'s '
+            .. 'command (Admin.Commands.panel). Using \'ch-refresh\' for the timer refresh; set '
+            .. 'Admin.Commands.refresh = \'ch-refresh\' in config.lua.'):format(tostring(commands.panel))
+        commands.refresh = 'ch-refresh'
+    end
+
+    if quiet then return #fatal == 0, fatal, warn end
+
     for _, message in ipairs(warn) do
         print('[crimson-hitman] warning: ' .. message)
     end
@@ -820,6 +858,27 @@ local function validateConfig()
     end
 
     return true
+end
+
+--- Run the start-up checks against a copy of the config rather than the
+--- live one, and answer what they found (validateConfig's quiet mode).
+---
+--- The admin panel's settings (server/settings.lua) are checked this way,
+--- with the change in the copy, so a value is held to exactly what the
+--- start holds config.lua to. The checks read the global Config, so it is
+--- the copy for the length of the call and the live one again after it,
+--- whatever happens: nothing in them waits, so nothing else runs meanwhile.
+---@param candidate table
+---@return boolean ok
+---@return string[] fatal
+---@return string[] warn
+local function checkCandidate(candidate)
+    local live = Config
+    Config = candidate
+    local ran, ok, fatal, warn = pcall(validateConfig, true)
+    Config = live
+    if not ran then return false, { tostring(ok) }, {} end
+    return ok, fatal or {}, warn or {}
 end
 
 --------------------------------------------------------------------------
@@ -1010,6 +1069,14 @@ function StartCrimsonHitman()
     Storage = selectStorage()
     Storage.open()
 
+    -- What staff changed from the admin panel, over config.lua: after the
+    -- start-up checks, which it is held to as well, and before anything
+    -- reads the config (server/settings.lua).
+    local settings = CrimsonBoot.require('server.settings')
+    settings.init({ storage = Storage, audit = CrimsonBoot.require('server.audit'),
+                    check = checkCandidate })
+    settings.boot()
+
     local identity   = CrimsonBoot.require('server.identity')
     local ratelimit  = CrimsonBoot.require('server.ratelimit')
     local audit      = CrimsonBoot.require('server.audit')
@@ -1032,6 +1099,7 @@ function StartCrimsonHitman()
     local projection = CrimsonBoot.require('server.projection')
     local app        = CrimsonBoot.require('server.app')
     local timing     = CrimsonBoot.require('server.timing')
+    local panel      = CrimsonBoot.require('server.panel')
 
     -- A job is charged for the time it holds the thread, not for the time
     -- it waits on the database while everything else runs (Timing.await).
@@ -1079,6 +1147,9 @@ function StartCrimsonHitman()
         -- How long each tick job and sampler pass takes, for the console
         -- warning and /ch-diag.
         timing = timing,
+        -- The settings changed from the admin panel, and the panel's own
+        -- requests (server/panel.lua).
+        settings = settings, panel = panel,
         -- The expiry pass owns these; the bridge and contracts call them so
         -- it knows when a skip is no longer safe.
         scheduler = {
@@ -1092,6 +1163,7 @@ function StartCrimsonHitman()
     app.recoveryFailed = false
     app.init(modules)
     admin.init(modules)
+    panel.init(modules)
     CrimsonBoot.require('server.bridges').install(modules)
 
     -- Its own clock, faster than the maintenance tick: attribution is only
@@ -1817,4 +1889,6 @@ return {
     -- Exposed for the same reason: a setting that is silently corrected has
     -- to be provable, not taken on trust.
     validateConfig = validateConfig,
+    -- The same checks against a copy, as the admin panel's settings run them.
+    checkCandidate = checkCandidate,
 }

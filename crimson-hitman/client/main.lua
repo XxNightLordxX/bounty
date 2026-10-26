@@ -301,6 +301,35 @@ RegisterNetEvent('crimson-hitman:access', function(allowed)
     CreateThread(App.reconcile)
 end)
 
+--- Settings staff changed from the admin panel that this game reads too,
+--- and the type each must have. This game's copy of the config is
+--- config.lua as every player downloads it; the server's, with the panel's
+--- changes in it, is the one in force, and it says so when one of these
+--- changes and when this player joins. Only these keys, and only values of
+--- these types, are taken.
+local CLIENT_SETTINGS = {
+    -- Whether to say when this player's mask goes on or comes off.
+    ['Targeting.AllowNearby'] = 'boolean',
+    -- Whether a headshot this game renders has its background cut out.
+    ['Mugshot.RemoveBackground'] = 'boolean',
+    -- Whether the app goes on the home screen when it is next added.
+    ['App.DefaultInstalled'] = 'boolean',
+}
+
+RegisterNetEvent('crimson-hitman:settings', function(values)
+    if type(values) ~= 'table' then return end
+    for key, kind in pairs(CLIENT_SETTINGS) do
+        local value = values[key]
+        if type(value) == kind then
+            local section, name = key:match('^([%w_]+)%.([%w_]+)$')
+            if type(Config[section]) ~= 'table' then Config[section] = {} end
+            Config[section][name] = value
+        end
+    end
+    -- The nearby list turned on: start saying when the mask changes.
+    if App.watchMask then App.watchMask() end
+end)
+
 --- And on a slow heartbeat, because an answer that never changes is exactly
 --- when a phone that lost the app has nothing coming to fix it.
 CreateThread(function()
@@ -894,13 +923,26 @@ local function wearingMask(ped)
     return not ok or drawable ~= 0
 end
 
-CreateThread(function()
+--- Whether the watcher below is running.
+local maskWatching = false
+
+--- Watch this player's mask while the nearby list is on, and stop when it
+--- goes off.
+local function watchLoop()
     -- Nothing to say while the list is off (Config.Targeting.AllowNearby):
     -- the server never asks.
     local rules = Config and Config.Targeting
     if type(rules) ~= 'table' or not rules.AllowNearby then return end
+    maskWatching = true
     while true do
         Wait(MASK_CHECK_MS)
+        local now = Config and Config.Targeting
+        if type(now) ~= 'table' or not now.AllowNearby then
+            -- Turned off: nothing more to say, and everything to say again
+            -- from the start if it comes back on.
+            maskSaid, maskWatching = nil, false
+            return
+        end
         if not loggedIn() then
             -- The next character says it again.
             maskSaid = nil
@@ -912,7 +954,17 @@ CreateThread(function()
             end
         end
     end
-end)
+end
+
+--- Start watching, unless a watch is running already. Called when staff
+--- turn the list on from the admin panel (crimson-hitman:settings): it was
+--- decided once, at load, so a list turned on later heard from nobody.
+function App.watchMask()
+    if maskWatching then return end
+    CreateThread(watchLoop)
+end
+
+CreateThread(watchLoop)
 
 --------------------------------------------------------------------------
 -- Verification photo (§7.4)

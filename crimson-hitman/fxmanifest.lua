@@ -27,6 +27,8 @@ client_scripts {
     'shared/util.lua',
     'client/main.lua',
     'client/mugshot.lua',
+    -- The admin panel's page: opening it, closing it, its requests.
+    'client/admin.lua',
 }
 
 server_scripts {
@@ -48,11 +50,20 @@ server_scripts {
 -- for as long as their Photos keeps it. That needs a public https address
 -- (Config.Completion.PhotoPublicUrl, or web_baseUrl) and that host in
 -- lb-phone's Config.UploadWhitelistedHostnames; /ch-diag checks both.
+-- The admin panel (/hitmanadmin) is this resource's own NUI page. The phone
+-- app is not: lb-phone draws ui/index.html in a frame of its own, from the
+-- files below, and setting a page here changes nothing about it. The page
+-- stays hidden, and takes no input, until staff open it.
+ui_page 'ui/admin.html'
+
 files {
     'ui/index.html',
     'ui/app.css',
     'ui/app.js',
     'ui/icon.png',
+    'ui/admin.html',
+    'ui/admin.css',
+    'ui/admin.js',
 }
 
 -- Not lb-phone. FiveM stops every resource that depends on one being

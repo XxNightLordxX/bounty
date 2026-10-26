@@ -339,6 +339,12 @@ Config.Cooldowns = {
     --- face per viewer, cached by reference afterwards, so a full page of
     --- fifteen unseen targets needs fifteen — hence the generous burst.
     image     = { per = 2, burst = 20 },
+    --- The admin panel (/hitmanadmin), per staff member: every request it
+    --- makes, its overview refreshing itself included, and separately
+    --- everything that writes (a void, a settle, a review resolved, a
+    --- setting changed).
+    admin      = { per = 10, burst = 30 },
+    adminWrite = { per = 10, burst = 6 },
 }
 
 --------------------------------------------------------------------------
@@ -1045,9 +1051,10 @@ Config.Admin = {
     --- need before they have set anything up.
     ---
     --- Anything here is accepted as well, for the read-only commands only
-    --- (diag, timeline, stuck, contracts). Void, settle and whois move money or unmask
-    --- an anonymous party, so they need the named ACE itself. `command` is
-    --- the ACE most admin groups already carry.
+    --- (diag, timeline, stuck, contracts) and for opening the admin panel to
+    --- read. Void, settle and whois move money or unmask an anonymous party,
+    --- and so does everything in the panel that writes, so they need the
+    --- named ACE itself. `command` is the ACE most admin groups already carry.
     ExtraAces = { 'command' },
 
     --- Command names, without the leading slash.
@@ -1064,12 +1071,25 @@ Config.Admin = {
         diagnose = 'ch-diag',
         --- Brings every wait forward so a test server can be tested. ACE
         --- only — the extra ACEs above do NOT open it, because it writes.
-        refresh  = 'hitmanadmin',
+        --- It was /hitmanadmin, which is the admin panel's now.
+        refresh  = 'ch-refresh',
         --- Lists and resolves the review queue: money no rule here could
         --- settle by itself, which ch-stuck also lists. ACE only, as
         --- ch-settle is, because it moves money.
         review   = 'ch-review',
+        --- Opens the admin panel: a full-screen page with everything the
+        --- commands above do, an overview, the audit log, a player lookup,
+        --- and every feature switch and limit, changed live and kept
+        --- across restarts. Opening it and reading need Ace (or one of
+        --- ExtraAces); everything that writes needs Ace itself, and
+        --- unmasking anybody needs IdentityAce.
+        panel    = 'hitmanadmin',
     },
+    --- Rows per page in the admin panel's lists (contracts, the audit log).
+    PanelPageSize = 25,
+    --- How often the admin panel's overview refreshes itself while it is
+    --- open, in seconds.
+    PanelRefreshSeconds = 10,
     --- Rows read per contract for a timeline. A cap, because the audit log
     --- is the largest table here and a staff command should not be able to
     --- pull an unbounded amount of it into memory.

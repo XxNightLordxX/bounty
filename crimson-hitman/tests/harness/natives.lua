@@ -418,7 +418,12 @@ local function encodeValue(v, out)
                 if i > 1 then out[#out + 1] = ',' end
                 encodeValue(keys[i], out)
                 out[#out + 1] = ':'
-                encodeValue(v[keys[i]] ~= nil and v[keys[i]] or v[tonumber(keys[i])], out)
+                -- Not `a ~= nil and a or b`: a false under the key took the
+                -- `or`, and a switch turned off was written as null, which no
+                -- real encoder does.
+                local value = v[keys[i]]
+                if value == nil then value = v[tonumber(keys[i])] end
+                encodeValue(value, out)
             end
             out[#out + 1] = '}'
         end

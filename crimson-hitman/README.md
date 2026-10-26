@@ -49,6 +49,11 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
   know what arrived (the server stopped part-way through a give),
   `/ch-stuck` says so, and `/ch-settle <line> pay <amount>` gives exactly what
   you found missing. Nothing is given again blind.
+- **Admin panel** (`/hitmanadmin`): an overview, contracts with their whole
+  history, the review queue, the audit log, a player lookup, and every
+  feature switch and limit, changed live and kept across restarts in every
+  storage mode (see *Admin panel*). The timer refresh that had
+  `/hitmanadmin` is `/ch-refresh` now.
 - **Staff:** `/ch-contracts`, a contract **Ref** on every card, in-game ACE
   checks that work (`IsPlayerAceAllowed` answers 1, not `true`), `/ch-diag`
   job timings and a photo-address check.
@@ -94,7 +99,8 @@ Nothing to import either way. The tables are
 `crimson_contracts`, `crimson_escrow`, `crimson_hitmen`, `crimson_amendments`,
 `crimson_messages`, `crimson_ledger`, `crimson_pending`, `crimson_stats`,
 `crimson_audit`, `crimson_reveals`, `crimson_mutes`, `crimson_photos`,
-`crimson_review` and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
+`crimson_review`, `crimson_settings` (what staff changed from the admin panel)
+and `crimson_meta`. Each start in `mysql` mode asks `information_schema` what is
 there and creates or alters only what is missing: a table, a column or index a
 newer version needs, a table in another character set, or one on another
 engine. So a database user without `CREATE`, `ALTER` and `INDEX` starts on
@@ -594,11 +600,12 @@ The full reasoning is in `../docs/hitman-app-spec.md` (in the repository) §14. 
 
 ## Staff commands
 
-All work from the server console. In game they need the `crimson.admin` ACE
+All work from the server console except `/hitmanadmin`, which opens a page in
+game. In game they need the `crimson.admin` ACE
 (`add_ace group.admin crimson.admin allow`). `Config.Admin.ExtraAces` also opens
-the read-only ones (`ch-diag`, `ch-timeline`, `ch-stuck`, `ch-contracts`); `ch-void`,
-`ch-settle` and `ch-review` always need `crimson.admin` itself, and `ch-whois`
-`crimson.identity`.
+the read-only ones (`ch-diag`, `ch-timeline`, `ch-stuck`, `ch-contracts`) and
+the admin panel to read; `ch-void`, `ch-settle`, `ch-review` and `ch-refresh`
+always need `crimson.admin` itself, and `ch-whois` `crimson.identity`.
 
 The `<contract>` the commands take is the contract's id. Players see it as the
 **Ref** at the foot of each card on their Mine and On Me tabs and on each Ledger
@@ -615,7 +622,8 @@ entry, and `/ch-contracts` lists it for any player.
 | `/ch-settle <line> pay [amount]\|return [citizenid]\|delivered` | Finish one of those by hand. `pay` goes to the player the line is owed to, as `/ch-stuck` names them (whom the interrupted payment was for; for a `return` the server stopped, the one it was returning to); `return` goes to whoever put the line up, so a hitman's stake goes back to that hitman. Either gives only the part that has not already arrived. `delivered` only on a line whose give may have run (left for you, or marked *arrival unknown*), and `return` on such a line too, or on a held line owed to nobody of a contract that was never stored, or of one that has closed where the line names whom an interrupted give was going to (one naming nobody is its ending's: every disposition is refused with *ending unfinished; it settles itself within a minute*, and the server hands it over as that ending would have, at its next pass for such endings): one *in no retry queue*, or a *stalled claim*, was never given, so only `pay` settles it, to the player it is owed to (given now, or queued again), and the others answer *Not settled: nothing of it was given*. A line owed to nobody of a contract still live (active, accepted, or mid-claim) is that contract's own (a collection its next claim pays, a bonus, a stake): every disposition is refused, and the command says the contract is still live and that `/ch-void <contract>` closes it and returns its escrow (a contract mid-claim once its claim is done, or, left by a *stalled claim*, after the restart `/ch-void` then asks for). `pay <amount>` (a count for an item), only on a line `/ch-stuck` lists as left for you, gives exactly that much and counts the rest as already with them on the line (`deliver_arrived`), with the amount in the log: for a line whose arrival is unknown, once you have checked what they received. The amount has to be a whole number of at least 1 and no more than the line still owes, or it is refused as `invalid_input`. Every check on the line is made again on it as the settle claims it, a `delivered` included (whether its contract is closed is not: a closed contract never opens again): if another settle queued it, left it owing less than the amount you named, or left it owed to somebody else since, nothing moves and the command says why (already queued for them; now owes only that much; that something else is giving or settling it, for one another call asks for, or whose contract a claim or an ending has started on, since; no longer left for you; or, for one now owed to somebody else, that something else holds it or it is owed elsewhere). A plain `pay`, or an amount the line still covers, gives what is left after another settle gave part of it. A line something on the server is working on right now (a release or login retry giving it, another settle, a contract still being placed, whose escrow is taken before its row is written, a claim running on its contract, which owes a collection's lines before it pays them, and until it has owed them is refused as still live, or an ending running on its contract, which writes the contract closed before it moves its escrow, so a stake an expiry is about to forfeit reads as a held line of a closed contract until it has) is that one's: nothing moves, and the command says something else is giving or settling it; check again with `/ch-stuck`, which lists it once nothing is (a claim that raised leaves its payout there as a *stalled claim*). While the server is still recovering from a restart, nothing moves: the command says to try again in a moment; if recovery failed at the start, it says so instead, and that the resource needs a restart once the cause the console logged is fixed. If the give raises again with nothing arriving, the line goes back on their retry queue, tried again while they are in the city and at their next login and left for you after three such raises, and the command says it was re-queued after a failed give; if part of it arrived or what arrived cannot be told, it is left for you again at once and the command says so (see `/ch-stuck`). `delivered`, only on a line `/ch-stuck` lists as left for you, settles it to that player without giving anything, for one you found already there, and the line itself records it (`settled_by_staff` = `delivered`, `settled_staff` = who, `settled_at` = when). Every settle is logged, and the log written at once, not at the next flush: a `pay` or `return` before anything moves (`admin_settle_line`: who, the line, the amount asked for and what the line owed) and what came of it after (`admin_settle_result`: what was actually given, and what the line owed once claimed); a `delivered`, which gives nothing, as it settles (`admin_settle_line`, with what the line owed). A settle that raises an error is logged too (`admin_settle_raised`, with the error in the console), anything it stopped mid-give is left for you in `/ch-stuck` with its arrival unknown, and the command says so. A line already queued for the player it names needs nothing: `pay` answers *Already queued for* them, named as `/ch-stuck` names them. A line that does not say whose it is needs `return <citizenid>` once you know who put it up; the citizen id is refused on any other line. A player who is offline gets it at their next login, and the command says so; one in the city whose give was refused (no room in their pockets, or an account that would not take it) has it queued too, tried again while they are in the city, and the command says the give was refused |
 | `/ch-review [all]` | The **review queue**: money events no rule on the server can settle by itself, kept in the store (in every mode) until you resolve them, and listed by `/ch-stuck` below its escrow lines while they are open. One is left for you when a buyout was charged and the store would neither record it nor say whether it had (`bailout_unrecorded`); a buyout premium handed back reached nobody (`bailout_refund_stranded`); money owed could not be put on the books (`owe_id_exhausted`); an anonymity fee could not be credited back (`anonymity_fee_refund_failed`); escrow was taken and the store would not confirm the write (`escrow_take_unverified`), or taking a line raised (`escrow_take_raised`), or escrow taken for a contract that was not placed could not be given back (`escrow_rollback_failed`); a contract's escrow was taken and the store would neither write it nor read it back (`contract_unrecorded`, closed by the server itself if the store answers before a restart); or a payout reached its recipient and something else settled its line as well (`escrow_settle_lost`). Each item says what happened and what settles it, who was involved (as roles to staff without `crimson.identity`), how much or which goods, what was known (what arrived, the error), and what the store says now (the contract's state, whether the escrow lines it names are there). With no argument it lists the open ones; `all` lists the latest fifty, resolved ones with how, by whom and when. The audit log keeps the same events, but is pruned after `Config.Audit.RetentionDays`; the queue keeps an item until it is resolved |
 | `/ch-review <id> refund <citizenid\|role> <amount> [cash\|bank\|dirty]`, `refund <citizenid\|role> items`, `pay <citizenid\|role>`, `dismiss <note>` | Resolve one. A role is one the item names (`payer`, `creator`, `from`, `owed`, `recipient`), so staff who may not see who is behind an anonymous party still resolve it. `refund` gives that amount of one money the item records (at most what it records there; name the money where it records more than one), or with `items` every item and weapon it records, as they were. `pay` gives everything it records, less any part known to have arrived. `dismiss` gives nothing and needs a note saying why. What is given is given as every payout here is: an escrow line owed to them under an id that comes from the item, handed over now if they are in the city and at their next login if not, and, if the give raises without telling what arrived, left for you in `/ch-stuck` like any other line. Resolving an item twice gives nothing the second time, and a resolution the server stopped part-way is finished at the next start, or by the next `/ch-review` of it, as it was decided rather than as asked again. Every resolution is logged (`review_resolved`) and written at once. Waits for recovery after a restart, as `/ch-settle` does. `crimson.admin` only |
-| `/hitmanadmin timers` | Test servers: bring every wait and cooldown forward. Deadlines are only ever moved later, never earlier. `crimson.admin` itself only — the extra ACEs do not open it — and audited |
+| `/hitmanadmin` | Opens the **admin panel** (see *Admin panel*). In game only; `Config.Admin.Commands.panel` |
+| `/ch-refresh timers` | Test servers: bring every wait and cooldown forward. Deadlines are only ever moved later, never earlier. `crimson.admin` itself only — the extra ACEs do not open it — and audited. It was `/hitmanadmin`, which is the panel's now: a `config.lua` that still gives the refresh that name has it moved to `ch-refresh` at start, with a warning |
 
 Faults the phone page hits are reported to the server, printed to the console
 and kept for `/ch-diag`; `Config.Debug = true` adds each one's full stack trace.
@@ -654,6 +662,103 @@ waits, the server runs everything else, and that is not this job's work.
 
 ---
 
+## Admin panel
+
+`/hitmanadmin` (`Config.Admin.Commands.panel`) opens a full-screen panel in
+game: everything the staff commands do, an overview, the audit log, a player
+lookup, and every feature switch and limit, changed live and kept across
+restarts. It is this resource's own page (`ui/admin.html`), apart from the
+phone app, which lb-phone draws from `ui/index.html` as before. The page stays
+hidden and takes no input until you open it; Escape or its close button closes
+it, and a restart of the resource gives the focus back.
+
+**Who may do what.** The server checks the ACE again on every request the page
+makes, not only when it opens, so taking an ACE away closes the panel at its
+next request.
+
+| Permission | What it opens |
+|---|---|
+| `crimson.admin` (`Config.Admin.Ace`), or one of `Config.Admin.ExtraAces` | Opening the panel, and every section that reads: the overview, contracts and their detail, the review queue, the audit log, players, the settings (to look at), the diagnosis |
+| `crimson.admin` itself | Everything that writes: void, settle, resolve a review item, change or reset a setting, the timer refresh, flushing the log |
+| `crimson.identity` (`Config.Admin.IdentityAce`) as well | Who is behind an anonymous client or hitman, anywhere in the panel; every citizen id; finding a player's rows in the log; whois |
+
+Without `crimson.identity` an anonymous party is shown as *Anonymous*, every
+citizen id is the party's place on the contract (*the client*, *the target*,
+*operative &lt;alias&gt;*, or *(a player)*) in contract details, the log and
+the player view alike, a search by citizen id or name never finds a contract
+through a party who placed or took it anonymously, and what a player is owed
+on a contract they were anonymous on is left out of their view. Each lookup
+that unmasks is its own audit row (`admin_panel_contract_identified`,
+`admin_panel_logs_identified`, `admin_panel_player_identified`). Every request
+is rate-limited per staff member (`Config.Cooldowns.admin`, and
+`Config.Cooldowns.adminWrite` as well for a write). Every write is in the audit
+log, written at once rather than at the next flush. While the server is still
+recovering from a restart, or after recovery failed, every write except
+flushing the log is refused, in the commands' own words.
+
+**Sections.**
+
+| Section | What it shows | What you can do |
+|---|---|---|
+| **Overview** | Contracts by state; active operatives; money held in escrow by account, and items and weapons held; owed deliveries (lines, players, and how many are in a retry queue); stuck and parked lines, as `/ch-stuck` lists them; open review items; kill photos waiting, kept and served, with their size; the storage mode, the rule new contracts are placed under and the recovery state; the slowest maintenance jobs; the `/ch-diag` warnings; how many settings are changed from the panel. Refreshes itself every `Config.Admin.PanelRefreshSeconds` (10) while open | — |
+| **Contracts** | Search by contract id, citizen id or name, and filter by state, completion rule and date; `Config.Admin.PanelPageSize` (25) a page, newest first. The detail: terms, payouts, every escrow line with its state and what it owes and what arrived, the operatives, open proposals, the lines `/ch-stuck` lists for it with what settles each, and its audit timeline | **Void** with a reason, as `/ch-void`; **settle** a listed stuck line `pay`, `pay <amount>`, `return` or `delivered`, as `/ch-settle`. Both answer in the commands' exact words |
+| **Needs review** | The review queue's open items with what is known and what the store says now, and the latest resolved ones with how, by whom and when | **Refund**, **pay** or **dismiss** (with a note), as `/ch-review`: given once, however often it is asked |
+| **Logs** | The audit log, newest first, a page at a time, filtered by kind, part of the action, contract id, citizen id (with `crimson.identity`) and time. Read from whichever store keeps it (the json day files, the `crimson_audit` table, or memory) | — |
+| **Players** | By server id or citizen id: their contracts (as `/ch-contracts`), their record, what they are owed and whether it is queued for them, and how many notices wait for their next login | **Whois** on a contract, with `crimson.identity` |
+| **Features, limits & settings** | Every on/off switch in `config.lua`, grouped by section, with a line on what it does and what turning it off does to things already under way, and the two multi-choice features (`Config.Completion.Fulfilment`, `Config.Completion.PhotoStorage`). Then the limits: every number in `Config.Limits`, the anonymity fees and their account, the informant's price, the stake ceilings, the handover countdown, radius and health floor, buyout pricing, the targeting radii and page sizes, `Config.Ledger.PhotoRetentionDays`, the advisory job lists and every rate limit. Each with its value now, what `config.lua` says, and whether the value comes from `config.lua` or the panel | **Change** one, **reset** one, **reset all** |
+| **Tools** | — | The timer refresh (`/ch-refresh`, test servers), **run the diagnosis** and read it, **flush the audit log** |
+
+**Settings changed from the panel** are kept as overrides in the store your
+server runs: `data/records.json` in `json` mode, the `crimson_settings` table in
+`mysql` mode (created at start, and in `install/sql/crimson_hitman.sql`), and in
+memory mode for as long as it keeps anything, which is until the resource
+stops. They are applied over `config.lua` at every start, right after the
+start-up checks and before anything reads the config, and they are in force
+the moment you change them, because the code reads the config when it uses
+it. `config.lua` is never rewritten: setting a value back to what it says, or
+resetting it, makes it the file's again. Each value is checked the way the
+start checks `config.lua` (the same checks, run against a copy of the config
+with your change in it), so a value the start would refuse, or quietly
+correct, is refused, in the start's own words: a least buyout above the most,
+a deadline past the lifetime, a least reward above `Config.MaxContractValue`.
+Every change is in the audit log with the old and the new value and who made
+it (`admin_setting_changed`, `admin_setting_reset`,
+`admin_settings_reset_all`). `/ch-diag` lists every setting in force over
+`config.lua`, and any the store holds that the start did not apply (one an edit
+to `config.lua` has since made invalid, say), with why; the console says the
+same at start. The settings players' games read themselves (the nearby list,
+headshot backgrounds, the app on the home screen) are sent to every game when
+they change and to each player as they join, and every open phone app re-reads
+its settings at once.
+
+**What turning something off does to what is under way.** A contract already
+placed, and money already owed, finish under the rules they started with: only
+new actions are refused, and the app says the feature is turned off by the
+server (or uses the feature's own words, for buyouts, messages and calls). A
+buyout already paid still closes its contract after its delay, and `/cleanse`
+says buyouts are off; proposals already open can still be answered; a contract
+keeps the completion rule it was placed under; a kill photo is taken the way
+its token was issued; an anonymity fee refunded is always the one charged, to
+the account it came from; money already in escrow for a reward source you turn
+off is paid out or returned as before. Lowering a cap below what is in use
+cancels nothing and only refuses new ones. A rule read each time it is used
+(the handover's and the kill's checks) applies from the next check. The panel
+says which for every key. `Config.App.DefaultInstalled` is kept and sent to
+every game but applies when the app is next added to a phone (after this
+resource or lb-phone restarts, or when a player rejoins), and the panel marks it
+*applies after restart*.
+
+Shown read-only, with why: `Config.Admin.Enabled`, `Config.Admin.Ace` and
+`Config.Admin.IdentityAce` (changed from the panel, a slip could lock staff
+out), `Config.Database.Mode` (changing storage needs the old mode's money
+settled and a restart; see *Changing storage mode*),
+`Config.Database.AllowModeSwitch` and `Config.Database.Json.SyncOnFinancialWrite`.
+There is no single switch for the phone app as a whole:
+`Config.HideAppFromBlockedJobs` and the job lists decide who sees it, and the
+panel works whatever they say.
+
+---
+
 ## Integration Guide
 
 **Exports.** None. Nothing here is meant to be called by another resource:
@@ -682,6 +787,67 @@ API, and they may change between versions. What it listens to:
 | `gameEventTriggered` (`CEventNetworkEntityDamage`) | the game, client | The blow that killed the player, so their death report can name who dealt it |
 | `onClientResourceStart` | FiveM, client | `lb-phone` starting again: the app is added to it again |
 | `qb-clothing:client:loadOutfit`, `illenium-appearance:client:reloadSkin`, `rcore_clothing:outfitChanged` | a clothing resource, client | The player's appearance changed: the server drops their cached headshot |
+
+
+**The admin panel's protocol.** Between `ui/admin.js`, `client/admin.lua` and
+`server/panel.lua`; not an API for other resources. The page posts to its own
+resource (`GetParentResourceName()`):
+
+- `adminRequest` with `{ op, data }`, answered `{ ok, err, message, data }`.
+  `message` is a sentence to show whenever there is one; for `void`, `settle`
+  and `resolve` it is exactly what the command would have said.
+- `adminClose` with `{}`, answered `{ ok = true }`. The client gives the focus
+  back and answers every request still waiting with `err = 'closed'`.
+- The client answers without the server: `closed` (the panel is not open),
+  `invalid_input` (no `op`, or one over 32 characters), `timeout` (no answer in
+  15 s).
+- Messages to the page, keyed `type`: `{ type = 'open', access }` (the `access`
+  shape below), `{ type = 'close' }`, `{ type = 'push', kind = 'diag', line }`
+  (a diagnosis line that had to wait for an answer).
+- Every op can be refused with `not_allowed` (no ACE for it), `rate_limited`
+  (`data.retryAfter` seconds), `unknown_op`, `admin_off`, `server_error` and
+  `invalid_input`; every write also with `recovering` or `recovery_failed`;
+  `whois`, and `logs` with an `actor`, with `identity_required`.
+- A list arrives as `{}` when it is empty (it is a Lua table on the way), so
+  read every list through a helper that takes either.
+- People are shown as the staff member may see them (*Who may do what*): a
+  `cid` field is absent without `crimson.identity`, and every citizen id
+  elsewhere is a role.
+
+| op | Needs | `data` sent | `data` answered |
+|---|---|---|---|
+| `access` | read | — | `{ canWrite, canIdentify, pageSize, refreshSeconds, recovery = 'ready'\|'recovering'\|'recovery_failed', version, commands = { panel, refresh, diagnose, stuck, settle, void, review, timeline, contracts, whois } }` |
+| `overview` | read | — | `{ at, contracts = { total, byState = { [state] = n } }, hitmen = { active, operatives }, held = { cash, bank, dirty, items, weapons, lines }, owed = { cash, bank, dirty, items, weapons, lines, players, queued }, stuck = { total, leftForStaff, byWhy = { [why] = n } }` (absent while recovering)`, reviews = { open }, photos = { waiting, kept, served }` (each `{ count, bytes }`)`, storage, fulfilment, photoStorage, recovery, slowest = [{ name, max, avg, last, runs }], slowMs, warnings = [line], overrides, auditQueued }` |
+| `contracts` | read | `{ query?, state?, rule?, from?, to?, page? }` (times in os.time seconds) | `{ rows = [{ id, state, mode, rule, created_at, deadline_at, resolved_at, resolution, target, client, anonymous, slots, claimed }], page, pages, total }` |
+| `contract` | read | `{ id }` | `{ contract = { id, state, mode, rule, reason, created_at, deadline_at, expires_at, resolved_at, resolution, paused_since, bailout_amount, penalty_amount, bonus_percent, slots, claimed, next_slot, buyout_queued, target_protected, anonymous, client = { name, cid? }, target = { name, cid? } }, escrow = [line], hitmen = [{ id, alias, anonymous, name, cid?, state, accepted_at, left_at, claims, stake, last_claim_at }], amendments = [{ id, kind, proposer, outcome, expires_at, payload }], timeline = [row]` (oldest first)`, stuck = [stuck]` (absent while recovering)`, canVoid }` |
+| `void` | write | `{ id, reason? }` | — (`message` is `/ch-void`'s answer) |
+| `settle` | write | `{ line, disposition = 'pay'\|'return'\|'delivered', amount?` (with `pay`)`, owner?` (with `return`, a citizen id) `}` | `{ detail }` (`message` is `/ch-settle`'s answer) |
+| `reviews` | read | `{ all? }` | `{ items = [{ id, kind, about, contract, parties = [{ role, who }], amount, account, items, known, now, state, created_at, resolution, resolved_by, resolved_at, unwritten }] }` |
+| `resolve` | write | `{ id, action = 'refund'\|'pay'\|'dismiss', who?` (a role the item names, or a citizen id)`, amount?, account?, goods?, note? }` | `{ detail = { action, settled, pending, parked, continued } }` (`message` is `/ch-review`'s answer) |
+| `logs` | read | `{ kind?, action?, contract?, actor?, from?, to?, limit?, cursor? }` | `{ rows = [row], next }`: pass `next` back as `cursor` for the page after; absent on the last |
+| `player` | read | `{ subject }` (a server id, or a citizen id) | `{ player = { cid?, name, online, server }, contracts = [{ id, state, role, anonymous, target, created_at, resolution }], stats = { completed, failed, placed, survived, rate, standing }, owed = [line + queued], pending, notices = { count, titles } }` |
+| `whois` | identity | `{ id }` | `{ creator = { cid, name, anonymous }, target = { cid, name }, hitmen = [{ alias, cid, name, anonymous, state }] }` |
+| `settings` | read | — | `{ features = [setting], limits = [setting], readonly = [setting], overrides }` |
+| `setSetting` | write | `{ key, value }` (a boolean, a number, one of `choices`, or a list of job names) | `{ key, value, old, source }`; refused `not_allowed`, `read_only`, `invalid_value` or `store_failed`, with why in `message` |
+| `resetSetting` | write | `{ key }` | `{ key, value, old, source }`; also `not_overridden` |
+| `resetSettings` | write | — | `{ keys }` |
+| `refresh` | write | — | `{ lines }` |
+| `diag` | read | `{ subject? }` (a server id) | `{ lines }` |
+| `flush` | write | — | `{ written }` |
+
+`line` (an escrow line) is `{ id, contract, slot, portion, source, amount?,
+item, quantity, state, owed_to, releasing_to, taken_from, staker, settled_to,
+settled_at, settled_by_staff, arrived, raised, parked, owes }`; `row` (an audit
+row) is `{ ts, kind, action, contract, actor, detail }`; `stuck` is a `/ch-stuck`
+entry, `{ line, contract, amount, source, item, quantity, portion, intended,
+why, at, raised, arrived, settles, orphan, unfinished, actions }`, where
+`actions` lists what settles it: `pay`, `pay_amount`, `return`, `return_owner`
+(a `return` naming a citizen id) and `delivered`. `setting` is `{ key, group,
+label, about, kind = 'switch'\|'choice'\|'number'\|'list'\|'text', choices?, min?,
+max?, integer?, live, inflight, readonly?, value, default, source =
+'config'\|'panel', by?, at?, ignored? }`: `live = false` is *applies after
+restart*, `readonly` is why it cannot be changed, and `ignored` is why a value
+the store holds was not applied at start.
 
 **Convars.**
 
@@ -741,7 +907,11 @@ headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
 | The app stopped answering after you restarted `qbx_core`, `ox_inventory` or `oxmysql` | FiveM stops this resource with them and does not start it again. Run `ensure crimson-hitman` |
 | `json` mode refuses to start on an empty `data/` | You replaced the resource folder and lost `data/`, which is the store. Put the old `data/` back and start it again. To start empty on purpose, run `set crimson_hitman_new_store 1` in the console, start the resource, then leave it unset (see *Updating*) |
 | The resource refuses to start after you changed `Config.Database.Mode` | The mode you left still holds players' money, and the console says where and how much. Switch back, let those contracts finish or cancel them, then switch. `Config.Database.AllowModeSwitch = true` starts anyway, for money you have settled by hand (see *Changing storage mode*) |
-| With `Config.Targeting.AllowNearby` on, somebody standing beside you is not on the nearby list | They are listed only once their own game has said they wear no mask, about a second after their character loads; their game reads the setting when the resource starts, so restart it after turning it on. Anyone masked, invisible or in another routing bucket is left off by design, and the list is closed to you while you are on a live contract |
+| With `Config.Targeting.AllowNearby` on, somebody standing beside you is not on the nearby list | They are listed only once their own game has said they wear no mask, about a second after their character loads. Turned on from the admin panel, every game is told at once; turned on in `config.lua`, their game reads it when the resource starts, so restart it. Anyone masked, invisible or in another routing bucket is left off by design, and the list is closed to you while you are on a live contract |
+| `/hitmanadmin` used to refresh the timers | It opens the admin panel now; the timer refresh is `/ch-refresh timers` (`Config.Admin.Commands.refresh`). A `config.lua` that still names the refresh `hitmanadmin` is moved to `ch-refresh` at start, with a warning: set it there to stop the warning |
+| The admin panel opens but every button says *Not authorised*, or nothing changes | Reading needs `crimson.admin` or one of `Config.Admin.ExtraAces`; changing anything needs `crimson.admin` itself, and unmasking `crimson.identity`. The server checks on every request, so an ACE granted while the panel is open works at the next click |
+| A setting changed from the admin panel is back to `config.lua`'s value after a restart | The start checks every override against `config.lua` as it is now, and one an edit has made invalid (a least buyout above a most you lowered in the file, say) is not applied. The console says so at start, and `/ch-diag` lists it as *NOT APPLIED* with why; reset it in the panel, or set it again |
+| A value is refused in the admin panel with a sentence about another setting | It is checked against everything else in force, as the start would check it: a deadline past the lifetime, a least buyout above the most. Change the other one first |
 | `/ch-diag` shows `photo hosts: 0`, or kill photos are refused as "not on this server's allow list" | `'host'` storage only. Add your phone's upload host to `Config.Completion.ExtraPhotoHosts` (a bare domain), and check that lb-phone's own camera upload works |
 | Save to Photos keeps the photo in the app instead | `'server'` storage needs a public https address: set `Config.Completion.PhotoPublicUrl` or `web_baseUrl`, and add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. `/ch-diag` says which address it uses and whether it reaches this resource |
 | The startup warning says `Config.Audit.Webhook` is ignored | The URL in `config.lua` has already been sent to every player. Regenerate it in Discord and set the new one in `server.cfg` with `set crimson_hitman_webhook "..."` (never `setr`) |
@@ -785,11 +955,15 @@ CH_SUITES=journeys_spec lua crimson-hitman/tests/run.lua   # one area, in second
 
 Five kinds of check, because each catches what the others cannot:
 
-- **Server suite** (about 2,300 tests) — escrow arithmetic, the state machine,
+- **Server suite** (about 2,700 tests) — escrow arithmetic, the state machine,
   every payout and refund path, whole player journeys, every action against
   every contract state, deliberate exploit attempts, storage conformance
-  across all three backends, and randomised simulations asserting that no
-  sequence of operations creates or destroys value.
+  across all three backends, every admin panel request against every
+  permission (with what each staff member may see of an anonymous party),
+  every feature switch turned off and on with what it does to things under
+  way, settings kept across a restart in each backend, and randomised
+  simulations asserting that no sequence of operations creates or destroys
+  value.
 - **Store invariants** — the same suite again with a monitor auditing the
   whole store after every write.
 - **Static checks** — rules no unit test can see: no SQL built by

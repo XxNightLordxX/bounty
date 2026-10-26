@@ -606,7 +606,9 @@ end
 function Amendments.propose(actor, contractId, kind, payload)
     contractId = Util.toId(contractId)
     if not contractId then return nil, CH.ERR.INVALID_INPUT end
-    if not Config.Amendments.Enabled then return nil, CH.ERR.BAD_STATE end
+    -- Turned off, from the admin panel or config.lua: new proposals only.
+    -- One already open is still answered, and runs out, as it would have.
+    if not Config.Amendments.Enabled then return nil, CH.ERR.FEATURE_OFF end
     -- A kind is a string or nothing at all. kind:upper() below threw for a
     -- missing or numeric kind, which reached the player as a server fault,
     -- printed a line to the console, and handed the request's allowance

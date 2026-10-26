@@ -719,7 +719,6 @@ do
         ['Mugshot.get']                = 'the stored image, without going through a handle',
         ['Notify.clearPush']           = 'the push cooldown, so a test can send twice',
         ['Photo.tokenCount']           = 'how many photo tokens are outstanding',
-        ['Audit.pending']              = 'how many rows are queued but not yet flushed',
         ['RateLimit.count']            = 'how many buckets are held, so a test can watch them expire',
         ['Mugshot.count']              = 'how many faces are cached, so a test can watch the '
             .. 'cache let go of players who left',
@@ -734,6 +733,8 @@ do
         -- Client and shared.
         ['App.forgetRegistration']     = 'the client forgetting it registered the '
             .. 'app, so a test can watch the reconciler put it back',
+        ['AdminPanel.isOpen']          = 'whether the admin page holds the focus, which '
+            .. 'the client spec checks after each way of closing it',
         ['Util.resetMonotonic']        = 'the wrap-absorbing clock, which is not '
             .. 'reloaded between stacks and would otherwise carry one test\'s '
             .. 'elapsed time into the next',
@@ -1808,6 +1809,7 @@ do
         ['crimson_contracts.state']           = 'moves only through compareSetContractState, which '
             .. 'is guarded; writing it from a caller-held copy could resurrect a contract that '
             .. 'closed while the caller was reading',
+        ['crimson_settings.setting_key']      = 'the primary key: which setting it is',
         ['crimson_escrow.id']                 = 'the primary key',
         ['crimson_escrow.contract_id']        = 'a line does not move between contracts',
         ['crimson_escrow.slot']               = 'which payout slot it belongs to',

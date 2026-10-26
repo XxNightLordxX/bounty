@@ -206,6 +206,12 @@ CH.ERR = {
     RELAY_OFF            = 'relay_off',
     --- This server does not place calls through the app.
     CALLS_OFF            = 'calls_off',
+    --- Turned off by the server: a feature staff switched off, from the
+    --- admin panel or config.lua (proposals, the informant). It answered
+    --- bad_state, "Not right now.", which reads as something to wait out on
+    --- a feature that may stay off for good. Only new actions are refused:
+    --- whatever was already under way finishes under the rules it began.
+    FEATURE_OFF          = 'feature_off',
     --- A call would show a number the other party paid to keep hidden, and
     --- this phone build cannot mask it, so it is not placed (§11.3). It was
     --- BAD_STATE, which says nothing about why or what to do instead.

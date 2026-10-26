@@ -469,14 +469,20 @@ end
 --- ceiling a server has patched in — and losing the fee quietly is the one
 --- thing that must not happen here: the audit row is what tells staff to
 --- return it by hand.
+---
+--- What comes back is what was taken, as it was taken: the amount and the
+--- account are recorded when the fee is charged (Contracts.create), never
+--- read from the config again. Both can be changed from the admin panel
+--- while a create is under way, and a refund read from the config after
+--- that handed back the new figure, to the new account, for the old charge.
 ---@param actor table
 ---@param contractId string
----@param anonymous boolean whether the fee was charged at all
-local function refundAnonymityFee(actor, contractId, anonymous)
-    local fee = Config.Anonymity.CreatorFee or 0
-    if not anonymous or fee <= 0 then return true end
+---@param taken table|nil { amount, account } as charged, nil when none was
+local function refundAnonymityFee(actor, contractId, taken)
+    local fee = type(taken) == 'table' and math.floor(tonumber(taken.amount) or 0) or 0
+    if fee <= 0 then return true end
 
-    local account = Config.Anonymity.FeeAccount or 'bank'
+    local account = taken.account or 'bank'
     local credited, raised, arrived = Util.credit(actor.player, account, fee)
     if credited then return true end
 
@@ -502,13 +508,14 @@ end
 --- the same key and is turned away.
 ---@return boolean|nil placed
 ---@return string|nil err
-local function placeUnlocked(actor, contract, lines)
+---@param feeTaken table|nil { amount, account } of the anonymity fee charged
+local function placeUnlocked(actor, contract, lines, feeTaken)
     local ran, took, err = pcall(Escrow.take, actor, contract.id, lines)
     if not ran or not took then
         -- Put the anonymity fee back: nothing else was charged. A take
         -- that raises places no contract either, and the fee used to go
         -- with the raise.
-        refundAnonymityFee(actor, contract.id, contract.anon_creator)
+        refundAnonymityFee(actor, contract.id, feeTaken)
         if not ran then
             -- It may have stored lines it could not confirm
             -- (escrow_take_unverified). Whatever is there goes back once
@@ -539,16 +546,16 @@ local function placeUnlocked(actor, contract, lines)
             -- contract that said there was one is the thing that may not
             -- exist. So the question is left for staff as well, and closed
             -- by the tick if it answers it first (retryStuckCreates).
-            local fee = contract.anon_creator and (Config.Anonymity.CreatorFee or 0) or 0
+            local fee = feeTaken and math.floor(tonumber(feeTaken.amount) or 0) or 0
             local review = Review and Review.open({
                 kind = 'contract_unrecorded', contract_id = contract.id,
                 cids = { creator = actor.cid },
                 amount = fee > 0 and fee or nil,
-                account = fee > 0 and (Config.Anonymity.FeeAccount or 'bank') or nil,
+                account = fee > 0 and (feeTaken.account or 'bank') or nil,
                 known = { error = tostring(stored), read_error = tostring(found),
                           fee = fee > 0 or nil },
             })
-            stuckCreates[contract.id] = { cid = actor.cid, fee = contract.anon_creator,
+            stuckCreates[contract.id] = { cid = actor.cid, fee = fee > 0 and feeTaken or nil,
                                           review = review }
             error(found, 0)
         end
@@ -558,7 +565,7 @@ local function placeUnlocked(actor, contract, lines)
         -- The contract could not be stored, so everything taken comes back:
         -- the escrow, and the anonymity fee charged before it.
         Escrow.release(contract.id, actor.cid, nil, 'contract_write_failed')
-        refundAnonymityFee(actor, contract.id, contract.anon_creator)
+        refundAnonymityFee(actor, contract.id, feeTaken)
         return nil, CH.ERR.BAD_STATE
     end
     return true
@@ -869,13 +876,19 @@ function Contracts.create(actor, req)
     -- Anonymity is free by default; where a server charges for it, the fee
     -- is taken before the escrow so a creator who cannot afford it is
     -- refused rather than half-charged (§4).
-    if contract.anon_creator and (Config.Anonymity.CreatorFee or 0) > 0 then
+    --
+    -- The figure and the account are read once, here, and carried to every
+    -- refund of this charge (refundAnonymityFee).
+    local feeTaken
+    local creatorFee = math.floor(tonumber(Config.Anonymity.CreatorFee) or 0)
+    if contract.anon_creator and creatorFee > 0 then
         local account = Config.Anonymity.FeeAccount or 'bank'
-        if not Util.charge(actor.player, account, Config.Anonymity.CreatorFee) then
+        if not Util.charge(actor.player, account, creatorFee) then
             return nil, CH.ERR.INSUFFICIENT
         end
+        feeTaken = { amount = creatorFee, account = account }
         Audit.financial('anonymity_fee', actor.cid, contract.id,
-            { amount = Config.Anonymity.CreatorFee, role = 'creator' })
+            { amount = creatorFee, role = 'creator' })
     end
 
     -- Escrow is taken before the contract is persisted, so a failure leaves
@@ -889,11 +902,11 @@ function Contracts.create(actor, req)
     -- /ch-settle refuses them as locked, and /ch-stuck lists none of them.
     local placed
     placed, err = Contracts.serialized({ 'contract:' .. contract.id },
-        Escrow.whileClaiming, contract.id, placeUnlocked, actor, contract, lines)
+        Escrow.whileClaiming, contract.id, placeUnlocked, actor, contract, lines, feeTaken)
     if not placed then
         -- False is busy, and nothing ran: an id the sweep is handing escrow
         -- back under, which a fresh one is not. The fee comes back anyway.
-        if placed == false then refundAnonymityFee(actor, contract.id, contract.anon_creator) end
+        if placed == false then refundAnonymityFee(actor, contract.id, feeTaken) end
         return nil, err
     end
 
@@ -1530,7 +1543,7 @@ function Contracts.retryStuckCreates()
             -- an item of its own (refundAnonymityFee).
             if stuck.fee then
                 refundAnonymityFee(Identity.byCitizenId(stuck.cid) or { cid = stuck.cid },
-                    contractId, true)
+                    contractId, stuck.fee)
             end
             return 'returned'
         end)
