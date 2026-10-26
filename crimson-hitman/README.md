@@ -90,8 +90,9 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 - **Quiet console:** with `Config.Debug = false` (as shipped) a normal start
   and normal play print nothing at all. Only refusing to start, money left for
   staff (the review queue, a stuck escrow line, an ending that raised, a
-  maintenance job that moves money failing) and a write that failed are
-  printed; the settings a start finds wrong are counted
+  maintenance job that moves money failing, and an app request, staff command
+  or `/cleanse` that moves money and raised, once every five minutes each) and
+  a write that failed are printed; the settings a start finds wrong are counted
   in one line (*N setting(s) need attention; run ch-diag …*). `ch-diag`, and
   **Run the diagnosis** in the panel, list everything a quiet console left out
   (see *Console output*). `Config.Debug` is in the panel's Features too.
@@ -110,8 +111,9 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 - **Whitelisted-job view** (`Config.WhitelistedView.Enabled`, shipped on):
   police, sheriff, SAST, FIB, EMS, fire, DOJ, lawyers and every other job the
   app bars can install and open it, and see one read-only screen: the
-  contracts on them and the contracts on other whitelisted-job members, with
-  no more than the law enforcement advisory carries, and the buyout on a
+  contracts on them and, for those the law enforcement advisory reaches, the
+  contracts on other whitelisted-job members, with no more than the advisory
+  carries, and the buyout on a
   contract on them, through the same server path as On me and `/cleanse`. A
   job change moves them in or out of it at once. In the admin panel's
   Features; off is the app closed to them, as before (see *Access*).
@@ -252,9 +254,9 @@ copy at the next start, and the console names it (see `data/README.md`).
 | `Config.Database.Mode` | `json` (as shipped; no database at all), `mysql` (oxmysql), `memory` (testing only — nothing survives a restart). Modes do not share data: see *Changing storage mode* |
 | `Config.App.DefaultInstalled` | Whether the app is on every eligible player's home screen (`true`) or left in the phone's App Store for each player to download (`false`, as shipped). Players are not told it exists either way; see *Install* |
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who the app is barred to: the whitelisted jobs. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit. With the whitelisted-job view on they see its one screen and nothing else (see *Access*) |
-| `Config.WhitelistedView.Enabled` | The whitelisted-job view (`true`, as shipped): players on a job the app bars open it to one read-only screen, the contracts on them and on other whitelisted-job members, and the buyout on their own. `false` closes the app to them as before, and `Config.HideAppFromBlockedJobs` then decides whether they see the icon. Anything but `true` or `false` is read as `false`, with a warning at startup. In the admin panel's Features, kept across restarts |
+| `Config.WhitelistedView.Enabled` | The whitelisted-job view (`true`, as shipped): players on a job the app bars open it to one read-only screen, the contracts on them and (for those the advisory reaches) on other whitelisted-job members, and the buyout on their own. `false` closes the app to them as before, and `Config.HideAppFromBlockedJobs` then decides whether they see the icon. Anything but `true` or `false` is read as `false`, with a warning at startup. In the admin panel's Features, kept across restarts |
 | `Config.HideAppFromBlockedJobs` | Whether a barred player's phone shows the app at all (`true`, as shipped: hidden). Applies only while the whitelisted-job view is off; with it on they have the app, showing that one screen, and the admin panel marks this as not applying |
-| `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry |
+| `Config.Advisory` | Who gets the threat advisory when a contract is placed on an officer, and whether it also raises an `sc-dispatch` entry. `TriggerJobNames` ships with every name in `Config.BlockedJobNames`, so a barred job whose type `qbx_core` leaves out still counts; a barred job in neither trigger list is warned about at startup |
 | `Config.Limits` | Contract caps, payouts, cooldowns |
 | `Config.Limits.MaxPayoutSlots` | How many times one contract can be collected: `1` (as shipped; each contract is collected once), `2` or `3`. At 1 the Place form shows no extra-collection controls at all; at 2 or 3 the creator chooses how many, each funded and escrowed up front. Anything outside 1 to 3, or not a whole number, is read as the nearest of them with a warning at startup; the admin panel takes 1 to 3. Contracts already placed keep the number they were placed with, and can still give their last collection back |
 | `Config.Limits.MinContractReward` | The least a new contract's reward may be worth in money (1000 as shipped; `0` turns it off): cash, bank and dirty money summed across every payout, the kidnapping bonus included. Items and weapons do not count, since nothing prices them. A contract worth less is refused (`reward_too_small`) and the app says the figure, on the Place form before anything is typed and in the refusal; a reward cannot be taken back out below it either, by Withdraw part or by giving back a payout. Without it two one-dollar contracts fill a target's `Config.Limits.MaxActiveContractsPerTarget` and nobody else can list them until both close. Anything that is not a whole number of dollars is read as 1000, and one above `Config.MaxContractValue` is held to it, with a warning at startup |
@@ -587,8 +589,10 @@ image host for one:
   applying.
 
 A photo kept before they were turned off keeps its normal expiry, and its
-client can still open it once; the start-up sweep of photo files and the
-retention run only while such a photo is kept.
+client can still open it once, to keep it in the app, save it on their device
+or delete it: **Save to Photos** offers no link, since nothing is served while
+photos are off. The start-up sweep of photo files and the retention run only
+while such a photo is kept.
 
 `Config.Mugshot.Enabled = false` turns target headshots off the same way: no
 render is ever asked of a target's game, a headshot a client sends anyway is
@@ -651,15 +655,27 @@ can still install and open the app, and sees **one read-only screen**:
 other whitelisted-job members.*
 
 - **Contracts on you**: every live contract whose target is them.
-- **Contracts on whitelisted jobs**: every live contract whose target is a
-  member of a whitelisted job, by the same rule: the jobs the target holds
-  now when they are in the city, otherwise the job recorded on the contract.
+- **Contracts on whitelisted jobs**: every live contract whose target was
+  law enforcement to the advisory when it was placed: the flag the listing
+  carries and the job the advisory names, both recorded on the contract.
+  Never by a lookup of the target now, so an entry does not come and go as
+  they log in and out, or change job. Only for a viewer the advisory reaches
+  (`Config.Advisory.RecipientJobTypes` / `RecipientJobNames`, by the job they
+  are working: law enforcement, as shipped, not EMS, fire, DOJ or lawyers),
+  and only while advisories go out (`Config.Advisory.Enabled`). Anybody else
+  has no such section, and the screen says *this app only shows contracts on
+  you.*
 
 Each entry carries no more than the law enforcement advisory already says:
-the target's name and job, when it was posted (to the five minutes), open or
-taken by how many hitmen, and when it runs out at the latest (*Runs out
-within 47h*). That last is the contract's lifetime
-(`Config.Limits.ContractLifetimeSeconds`), which no one's presence moves: the
+the target's name and job, when it was posted (to the five minutes; only
+while `OnCreate` bulletins go out), open or taken by how many hitmen (only
+while `OnAccept` ones do: each operative who takes it up is one bulletin, and
+one walking away is not announced, so the count does not drop for it), and
+when it runs out at the latest (*Runs out within 47h*). With only acceptance
+bulletins going out, a contract is listed once one has. That last is the
+contract's lifetime (`Config.Limits.ContractLifetimeSeconds`, counted from the
+end of the five minutes it was placed in, so it dates the placement no more
+finely than when it was posted does), which no one's presence moves: the
 hitmen's deadline stops while a named placer is offline and jumps on when they
 come back, so a countdown read from it would tell every officer when the
 placer reconnected. Never who placed it (named or anonymous), any hitman, the
@@ -677,7 +693,9 @@ processing delay while a hitman is engaged, no buyout from the floor, the
 settle attempts and the refund, who it pays, its audit rows and notices).
 With buyouts off there is no button. Nothing else in the app answers them:
 not the board, Place, Accept, Deliver, Message, the wallet or the ledger,
-and every other request is refused as it always was.
+and every other request is refused as it always was, apart from the page's
+own fault report, so a fault on this screen reaches `/ch-diag` and the page
+log the diagnosis asks their app for comes back.
 
 A job change (the QBox job update, an `sc-multijob` switch, or the next
 maintenance tick if no event comes) moves them at once: somebody who leaves
@@ -823,9 +841,11 @@ entry, and `/ch-contracts` lists it for any player.
 
 Faults the phone page hits are reported to the server and kept for `/ch-diag`;
 `Config.Debug = true` prints each in the console too, with its full stack
-trace. The page log `/ch-diag` asks a player's phone for is printed in the
-server console whatever Debug says, once, and only within thirty seconds of
-being asked for.
+trace. The page log `/ch-diag` asks a player's phone for goes to whoever asked:
+their F8, their open admin panel, or the server console that ran it, once, and
+only within thirty seconds of being asked for. A player on the whitelisted-job
+view sends it too; with the view off, the diagnosis says a barred player's app
+cannot.
 
 The staff webhook is optional and is set in `server.cfg`, never in
 `config.lua`, which every player's game downloads:
@@ -868,9 +888,9 @@ line this resource prints is one of three kinds.
 
 | Kind | Printed | What |
 |---|---|---|
-| **Always** | Whatever `Config.Debug` says | Refusing to start (`FATAL`, `failed to start`, waiting for `qbx_core` or `ox_inventory`); money at risk or left for staff (a review item opened, a stuck or parked escrow line, an ending or a handover claim that raised, `BOOT RECOVERY FAILED`, contracts that could not be loaded, starting over money another storage mode holds, a maintenance job that moves money failing: the buyout queue, expiry, owed payouts, unfinished endings, placements and acceptances left part-way, idle holds, or the tick as a whole); a write that failed or read back wrong (a `json` file that could not be written, was torn or is missing, a kill photo that could not be written or reads back short, the audit or storage flush failing). A job that fails on every tick is printed once every five minutes, each failure in between counted in the diagnosis |
+| **Always** | Whatever `Config.Debug` says | Refusing to start (`FATAL`, `failed to start`, waiting for `qbx_core` or `ox_inventory`); money at risk or left for staff (a review item opened, a stuck or parked escrow line, an ending or a handover claim that raised, an app request, staff command, admin panel write or `/cleanse` that moves money and raised, each request or command once every five minutes, `BOOT RECOVERY FAILED`, contracts that could not be loaded, starting over money another storage mode holds, a maintenance job that moves money failing: the buyout queue, expiry, owed payouts, unfinished endings, placements and acceptances left part-way, idle holds, or the tick as a whole); a write that failed or read back wrong (a `json` file that could not be written, was torn or is missing, a kill photo that could not be written or reads back short, the audit or storage flush failing). A job that fails on every tick is printed once every five minutes, each failure in between counted in the diagnosis |
 | **Settings that need attention** | One line at the end of a start with `Config.Debug` off: `[crimson-hitman] N setting(s) need attention; run ch-diag (F8 or the server console) or open /hitmanadmin to see them`, and nothing when there are none. Each in full with it on | Every startup warning about `config.lua` (a value read as the nearest it may be, a setting your config lacks, counted once for each, an integration you configured that is not running, an admin panel setting not applied). One found later (an empty photo host list on the first tick) says the line again with the new count |
-| **Everything else** | Only with `Config.Debug` on | The integration list, start progress (`started in json mode`), finished migrations, photo sweeps, photo host list changes, slow maintenance jobs and failing ones that move no money, the settings changed from the panel in force, the `json` size advice, page faults players' phones report (marked *page stack from …*, with colour codes taken out), notes (memory mode, the playtime rule reading QBox metadata) |
+| **Everything else** | Only with `Config.Debug` on | The integration list, start progress (`started in json mode`), finished migrations, photo sweeps, photo host list changes, slow maintenance jobs and failing ones that move no money, a read the app or a staff command asked for that raised, the settings changed from the panel in force, the `json` size advice, page faults players' phones report (marked *page stack from …*, with colour codes taken out), notes (memory mode, the playtime rule reading QBox metadata) |
 
 Nothing is lost: `ch-diag` (in F8 or the server console) and **Run the
 diagnosis** in the admin panel list the settings that need attention in full,

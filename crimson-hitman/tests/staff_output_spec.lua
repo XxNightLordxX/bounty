@@ -269,6 +269,37 @@ describe('the page log the diagnosis asks a player\'s app for', function()
         truthy(said:find('page: first event', 1, true) and said:find('page: second event', 1, true), said)
         eq(#sent('crimson-hitman:commandOutput', 6), 0)
     end)
+
+    --- The diagnosis runs the whitelisted-job view's read for a player the
+    --- app bars, and asks their page for its log as it asks anybody's: the
+    --- answer comes back through the page's fault report, which refused them.
+    it('comes back from a player on the whitelisted-job view, as from anybody', function()
+        local s = stack()
+        s.app.init(s)
+        Config.Debug = false
+        Env.players[2].PlayerData.job = { name = 'police', label = 'Police', type = 'leo', onduty = true }
+        local report = table.concat(run(6, 'diagnose', { '2' }).f8, '\n')
+        truthy(report:find('whitelistedView', 1, true), 'the view\'s read is run: ' .. report)
+        truthy(report:find('the answer follows here', 1, true), report)
+
+        Env.clientEvents, Env.console = {}, {}
+        pageAnswers(2, 'post whitelistedView || reply whitelistedView ok')
+        local events = sent('crimson-hitman:commandOutput', 6)
+        eq(#events, 1, 'the log reached the staff member who asked')
+        local said = table.concat(events[1].args[1], '\n')
+        truthy(said:find('page: reply whitelistedView ok', 1, true), said)
+        eq(#Env.console, 0, 'and nothing reached the server console')
+    end)
+
+    it('is said not to come from a player the app bars while the view is off', function()
+        local s = stack()
+        s.app.init(s)
+        Config.WhitelistedView.Enabled = false
+        Env.players[2].PlayerData.job = { name = 'police', label = 'Police', type = 'leo', onduty = true }
+        local report = table.concat(run(6, 'diagnose', { '2' }).f8, '\n')
+        truthy(report:find('their app cannot send its log', 1, true), report)
+        falsy(report:find('the answer follows here', 1, true), 'nothing is promised: ' .. report)
+    end)
 end)
 
 describe('batching a command\'s answer', function()
@@ -341,6 +372,25 @@ describe('batching a command\'s answer', function()
             end
         end
         eq(table.concat(whole), dashes)
+    end)
+
+    --- A player's game prints at most CH.OUTPUT_LINES_MAX lines of one
+    --- event (client/admin.lua), and short lines fit far more than that
+    --- under the byte limit: the rest were dropped without a word.
+    it('starts a new event at the most lines a player\'s game prints of one', function()
+        local s = stack()
+        local lines = {}
+        for i = 1, 1200 do lines[i] = tostring(i % 10) end
+        Env.clientEvents = {}
+        eq(s.bridges.sendOutput(6, lines, false), 3, 'three events of four hundred')
+        local joined = {}
+        for _, batch in ipairs(sent()) do
+            truthy(#batch <= CH.OUTPUT_LINES_MAX, 'a batch of ' .. #batch .. ' lines')
+            for _, line in ipairs(batch) do joined[#joined + 1] = line end
+        end
+        eq(table.concat(joined), table.concat(lines), 'every line, in order')
+        truthy(read_file('crimson-hitman/client/admin.lua'):find('= CH.OUTPUT_LINES_MAX', 1, true),
+            'and the client prints by the same number')
     end)
 
     it('sends nothing, and no notice, for an answer with no lines', function()
@@ -577,5 +627,38 @@ describe('nothing in the admin panel names a command', function()
         truthy(atConsole:find('/' .. Config.Admin.Commands.stuck, 1, true), 'the console keeps its words')
         eq(s.admin.panelWords('left for staff (/ch-stuck) and /ch-settle <line>; /ch-stucker'),
             'left for staff (Stuck escrow) and Stuck escrow <line>; /ch-stucker')
+    end)
+
+    --- A line written with '/ch-diag' in it named a command that does not
+    --- exist on a server that renamed them, and the panel, which reads each
+    --- configured name as its place, showed it as written.
+    it('with the commands renamed, a console line in the diagnosis included', function()
+        local s = stack()
+        for key, name in pairs(Config.Admin.Commands) do
+            if type(name) == 'string' then Config.Admin.Commands[key] = name:gsub('^ch%-', 'hm-') end
+        end
+        Config.Diagnostics.SlowJobMs = 1
+        s.timing.record('audit.flush', 50)
+        local reply = ask(6, 'diag', {})
+        truthy(reply and reply.ok, tostring(reply and reply.message))
+        local text = table.concat(reply.data.lines, '\n')
+        truthy(text:find('took 50.0 ms', 1, true), 'the slow job is listed: ' .. text)
+        falsy(commandMention(reply.data.lines), tostring(commandMention(reply.data.lines)))
+    end)
+
+    it('in no line the server prints: each names the command as configured', function()
+        local found = {}
+        local list = io.popen('ls crimson-hitman/server/*.lua crimson-hitman/server/*/*.lua')
+        for path in list:lines() do
+            local n = 0
+            for line in io.lines(path) do
+                n = n + 1
+                if not line:match('^%s*%-%-') and line:find('/ch-', 1, true) then
+                    found[#found + 1] = path .. ':' .. n
+                end
+            end
+        end
+        list:close()
+        eq(#found, 0, 'a command named as /ch-: ' .. table.concat(found, ', '))
     end)
 end)

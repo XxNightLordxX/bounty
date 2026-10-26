@@ -349,4 +349,10 @@ CH.ERR = {
     BUYOUT_NEEDS_CLEAN = 'buyout_needs_clean',
 }
 
+--- The most lines one staff command output event carries
+--- (crimson-hitman:commandOutput). The server starts a new event at this
+--- many lines as well as at its byte limit (Bridges.sendOutput), and a
+--- player's game prints no more than this many of one (client/admin.lua).
+CH.OUTPUT_LINES_MAX = 400
+
 return CH

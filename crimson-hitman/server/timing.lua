@@ -95,8 +95,9 @@ function Timing.record(name, ms)
             job.warnedAt = now
             Log.debug(('maintenance job %q took %.1f ms, over '
                 .. 'Config.Diagnostics.SlowJobMs (%s ms). Said at most once every %d '
-                .. 'minutes per job; /ch-diag lists the slowest.')
-                :format(name, ms, tostring(over), math.floor(Timing.WARN_EVERY_SECONDS / 60)))
+                .. 'minutes per job; /%s lists the slowest.')
+                :format(name, ms, tostring(over), math.floor(Timing.WARN_EVERY_SECONDS / 60),
+                    tostring(Config.Admin.Commands.diagnose)))
         end
     end
 end

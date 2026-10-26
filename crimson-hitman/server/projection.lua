@@ -642,21 +642,33 @@ end
 --- they were away, so its countdown jumped up the second they came back —
 --- to every officer, on every colleague's contract — saying the placer is
 --- named, when they reconnected and how long they had been gone.
+---
+--- A colleague's entry (`advised`) carries what the bulletins about it
+--- said, and only what they said (Notify.advisory): when it was posted only
+--- where a posting bulletin goes, and open or taken only where acceptance
+--- bulletins go. Taken by as many hitmen as have taken it up, one bulletin
+--- each: one walking away is not announced, so it is not shown either.
 ---@param contract table
 ---@param job string the job the target is shown under
+---@param advised table|nil { posted = boolean, accepted = boolean } for a
+--- colleague's contract; nil for one on the viewer
 ---@return table
-local function whitelistedEntry(contract, job)
+local function whitelistedEntry(contract, job, advised)
     local hitmen = Storage.readHitmen(contract.id)
-    local active = 0
+    local active, takenUp = 0, 0
     for i = 1, #hitmen do
-        if hitmen[i].state == 'active' then active = active + 1 end
+        local state = hitmen[i].state
+        if state == 'active' then active = active + 1 end
+        if state ~= 'refused' and state ~= 'joining' then takenUp = takenUp + 1 end
     end
+    if advised then active = advised.accepted and takenUp or nil end
     local posted = tonumber(contract.created_at)
+    if advised and not advised.posted then posted = nil end
     return {
         targetName   = contract.target_name,
         targetJob    = job,
         postedAt     = posted and (posted - (posted % Util.CLOCK_STEP)) or nil,
-        state        = active > 0 and 'taken' or 'open',
+        state        = active and (active > 0 and 'taken' or 'open') or nil,
         hitmenActive = active,
         secondsLeft  = contract.expires_at
             and math.max(0, contract.expires_at - os.time()) or nil,
@@ -665,10 +677,16 @@ end
 
 --- The whitelisted-job view (Config.WhitelistedView), for a player the app
 --- bars: every live contract naming them ("Contracts on you"), and every
---- live contract naming another member of a whitelisted job
---- (Identity.whitelistedTarget: their jobs now when they are in the city,
---- otherwise the job recorded on the contract). Never the board, and
---- nothing about a contract on anybody else, not even how many there are.
+--- live contract naming another member of a whitelisted job, as the
+--- contract recorded them when it was placed (Identity.whitelistedTarget).
+--- Never the board, and nothing about a contract on anybody else, not even
+--- how many there are.
+---
+--- The colleagues' list only for a viewer the law enforcement advisory goes
+--- to (Identity.isAdvisoryRecipient, as Notify.advisory asks it), and only
+--- while bulletins go out (Util.advises), each entry no more than they say
+--- (whitelistedEntry). For anybody else, and with the advisory off, there is
+--- no list at all (`colleagues` absent), not an empty one.
 ---
 --- Each one only once its target may be shown it (Notify.shownToTarget), as
 --- On me: listed at once, it dated the placement to the target, or to a
@@ -679,9 +697,11 @@ end
 --- and a buyout already paid with how long the hitman on it still has. Its
 --- id goes with it, for the buyout and nothing else; a colleague's does not.
 ---@param viewerCid string
----@return table { onYou = entry[], colleagues = entry[], settings = table }
-function Projection.whitelistedView(viewerCid)
-    local onYou, colleagues = {}, {}
+---@param viewerJob table|nil the job the viewer is working, which decides
+--- whether the advisory reaches them
+---@return table { onYou = entry[], colleagues = entry[]|nil, settings = table }
+function Projection.whitelistedView(viewerCid, viewerJob)
+    local onYou, colleagues = {}, nil
 
     local naming = Storage.contractsNaming(viewerCid)
     for i = 1, #naming do
@@ -702,12 +722,20 @@ function Projection.whitelistedView(viewerCid)
         end
     end
 
-    local live = Storage.liveContracts()
-    for i = 1, #live do
-        local c = live[i]
-        if c.target_cid ~= viewerCid and Notify.shownToTarget(c) then
-            local member, job = Identity.whitelistedTarget(c)
-            if member then colleagues[#colleagues + 1] = whitelistedEntry(c, job) end
+    local advised = { posted = Util.advises('posted'), accepted = Util.advises('accepted') }
+    if Identity.isAdvisoryRecipient(viewerJob) and (advised.posted or advised.accepted) then
+        colleagues = {}
+        local live = Storage.liveContracts()
+        for i = 1, #live do
+            local c = live[i]
+            if c.target_cid ~= viewerCid and Notify.shownToTarget(c) then
+                local member, job = Identity.whitelistedTarget(c)
+                local entry = member and whitelistedEntry(c, job, advised)
+                -- With no posting bulletin, only once an acceptance one went.
+                if entry and (advised.posted or entry.hitmenActive > 0) then
+                    colleagues[#colleagues + 1] = entry
+                end
+            end
         end
     end
 
@@ -720,7 +748,7 @@ function Projection.whitelistedView(viewerCid)
         return (a.postedAt or 0) < (b.postedAt or 0)
     end
     table.sort(onYou, byTarget)
-    table.sort(colleagues, byTarget)
+    if colleagues then table.sort(colleagues, byTarget) end
 
     return {
         onYou = onYou,

@@ -870,7 +870,13 @@ function Contracts.create(actor, req)
         -- Never past the lifetime, which would be a deadline that never came.
         deadline_at   = Util.roundClock(now + math.min(Config.Limits.DefaultDeadlineSeconds,
                             Config.Limits.ContractLifetimeSeconds)),
-        expires_at    = Util.roundClock(now + Config.Limits.ContractLifetimeSeconds),
+        -- From the end of the five minutes it was placed in, not from the
+        -- second: every placement in the same five minutes runs out at the
+        -- same moment whatever the lifetime is, so the time left a viewer
+        -- is sent (the whitelisted-job view's) dates it no more finely than
+        -- its posted time does. Never sooner than the lifetime from now.
+        expires_at    = Util.roundClock(now - (now % Util.CLOCK_STEP) + Util.CLOCK_STEP
+                            + Config.Limits.ContractLifetimeSeconds),
         paused_ms     = 0,
     }
 

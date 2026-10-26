@@ -2045,7 +2045,12 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- or the server console. Never only the server console: staff without
     -- access to it never saw it, and with Config.Debug off it was the one
     -- line a staff command still printed there.
-    if subject then
+    if subject and actor and Identity.isBarred(actor) and not Identity.whitelistedViewOn() then
+        -- The app is closed to their job, and so is the one way its log
+        -- comes back (pageError, open to them only beside the view).
+        say(('  player %s is on a job the app bars and the whitelisted-job view is off, so '
+            .. 'their app cannot send its log.'):format(tostring(subject)))
+    elseif subject then
         local function toAsker(said)
             if later then return later(said) end
             local list = type(said) == 'table' and said or { said }

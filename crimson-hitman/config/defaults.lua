@@ -65,15 +65,17 @@ ConfigDefaults.HideAppFromBlockedJobs = true
 --- sheriff, SAST, FIB, EMS, fire, DOJ, lawyers and the rest, decided exactly
 --- as BlockedJobTypes, BlockedJobNames and BlockOffDuty say, jobs held
 --- through sc-multijob included) can install and open the app, and see ONE
---- read-only screen: the contracts on them, and the contracts on other
---- whitelisted-job members, each with no more than the law enforcement
---- advisory says (the name and job, when it was posted, open or taken by
---- how many hitmen, when it runs out at the latest). Never who placed it,
---- a hitman, the reason, a location, a photo or the reward. On a contract
---- on them they also get the buyout a civilian target gets in On me,
---- through the same server path as that button and /cleanse. Nothing else
---- in the app answers them. A job change moves a player in or out of it at
---- once.
+--- read-only screen: the contracts on them, and, for those the law
+--- enforcement advisory reaches (Advisory.RecipientJobTypes and
+--- RecipientJobNames, while Advisory.Enabled is on), the contracts on other
+--- whitelisted-job members as each contract recorded them when it was
+--- placed. Each with no more than the advisory says (the name and job, when
+--- it was posted, open or taken by how many hitmen, when it runs out at the
+--- latest). Never who placed it, a hitman, the reason, a location, a photo
+--- or the reward. On a contract on them they also get the buyout a civilian
+--- target gets in On me, through the same server path as that button and
+--- /cleanse. Nothing else in the app answers them but the page's own fault
+--- report. A job change moves a player in or out of it at once.
 ConfigDefaults.WhitelistedView = {
     Enabled = true,     -- true = whitelisted jobs get that one screen; false = the app is closed to them, as HideAppFromBlockedJobs says
 }
@@ -242,8 +244,8 @@ ConfigDefaults.Limits = {
     --- collection carries its own reward, all escrowed at creation.
     MaxPayoutSlots               = 1,
     --- Ceiling on escrow lines in one contract, across every payout, both
-    --- portions and any later top-up. The per-payout limits multiply: five
-    --- payouts, two portions and ten item stacks each is a hundred and sixty
+    --- portions and any later top-up. The per-payout limits multiply: three
+    --- payouts, two portions and ten item stacks each is nearly a hundred
     --- rows for one contract, every one of them read on every release. The
     --- property is the creator's own, so this is not an economy limit — it
     --- bounds the work a single contract can cost the database.
@@ -259,7 +261,7 @@ ConfigDefaults.Limits = {
     TargetCooldownAfterResolveSeconds = 1800,
     SameCreatorSameTargetCooldownSeconds = 7200,
 
-    ContractLifetimeSeconds = 172800,   -- absolute ceiling, pause included
+    ContractLifetimeSeconds = 172800,   -- absolute ceiling, pause included; from the end of the five minutes it is placed in
     --- How long a contract runs before it expires, unless the client
     --- extends it. A kill made before it that is still waiting for its
     --- photo, or a handover armed before it and still counting down, holds
@@ -744,8 +746,16 @@ ConfigDefaults.Advisory = {
     Enabled = true,
     --- Job types that trigger an advisory when targeted.
     TriggerJobTypes = { leo = true, police = true, ems = true, fire = true },
-    --- Job names that trigger one, for jobs with an unusual type.
-    TriggerJobNames = { doj = true, lawyer = true, ranger = true, sast = true, fib = true, k9 = true },
+    --- Job names that trigger one, for jobs with an unusual type. Every job
+    --- barred by name (BlockedJobNames) is here too, so one whose type
+    --- qbx_core leaves out or names oddly still raises its advisory, is
+    --- flagged on the listing and is listed on the whitelisted-job view. A
+    --- barred job missing from both lists here is warned about at start.
+    TriggerJobNames = {
+        doj = true, lawyer = true, ranger = true, sast = true, fib = true, k9 = true,
+        police = true, sheriff = true, leo = true, trooper = true, sasp = true,
+        bcso = true, ambulance = true, fire = true,
+    },
     --- Who receives the advisory. Law enforcement only by default; EMS are
     --- not a response unit for a contract killing.
     RecipientJobTypes = { leo = true, police = true },
@@ -1135,8 +1145,10 @@ ConfigDefaults.Diagnostics = {
 --- Debug output in the server console. false (as shipped): the console
 --- stays quiet. A normal start and normal play print nothing; only refusing
 --- to start, money left for staff (the review queue, a stuck escrow line,
---- an ending that raised) and a write that failed are printed, and every
---- setting that needs attention is counted in one line at start. Players'
+--- an ending that raised, and a request, staff command or /cleanse that
+--- moves money and raised, once every five minutes each) and a write that
+--- failed are printed, and every setting that needs attention is counted in
+--- one line at start. Players'
 --- F8 consoles show nothing but a staff command's answer. true: everything,
 --- each setting problem in full, as before. ch-diag (and Run the diagnosis
 --- in the admin panel) lists all of it either way. Also in the admin

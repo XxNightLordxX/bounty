@@ -9,7 +9,9 @@
 ---                refusing to start (FATAL); money at risk, or something
 ---                left for staff (the review queue, a stalled or parked
 ---                escrow line, an ending that raised); a write that failed
----                or read back wrong, so data could be lost.
+---                or read back wrong, so data could be lost. Log.raised is
+---                the same for a request or command that may have moved
+---                money and raised, once every few minutes per name.
 ---   Log.problem  a configuration problem found at start. With Debug on each
 ---                is printed in full as it is found; with it off they are
 ---                counted, and the start prints one line for all of them
@@ -53,6 +55,12 @@ local boot = {}        -- string[] what the start said, in order
 local recent = {}      -- { text, key, at, times, seq }[] Log.debug lines, newest last
 local loud = {}        -- { text, key, at, times, seq }[] Log.always lines, newest last
 local seq = 0          -- the order lines were kept in, across both lists
+local raisedAt = {}    -- [name] = os.time() Log.raised last printed under it
+
+--- How long Log.raised waits before printing under the same name again.
+--- An app request is one a player can send again as fast as its allowance
+--- lets them, and one that raises every time must not fill the console.
+Log.RAISED_EVERY = 300
 
 --- Whether Debug output is on, read at every line.
 ---@return boolean
@@ -132,6 +140,21 @@ function Log.always(text)
     keep(text, loud, Log.KEPT_ALWAYS)
 end
 
+--- A raise in something that may have moved money part-way before it
+--- raised: an app request (a cancel whose ending raised, a buyout whose
+--- record would not write), a staff command that writes, or the buyout
+--- command. Printed whatever Debug says, as the admin panel's own writes
+--- are, at most once every Log.RAISED_EVERY seconds for the same name; one
+--- in between is a Log.debug line, kept and counted for the diagnosis.
+---@param name string what raised ('request cancel', 'command ch-void')
+---@param text string
+function Log.raised(name, text)
+    local at, last = now(), raisedAt[name]
+    if at and last and at - last < Log.RAISED_EVERY then return Log.debug(text) end
+    raisedAt[name] = at
+    Log.always(text)
+end
+
 --- Printed only with Debug on, and kept for the diagnosis either way.
 ---@param text string
 ---@param key string|nil lines with the same key are kept as one entry, the
@@ -208,7 +231,7 @@ end
 
 --- A start begins: what an earlier one found and said is forgotten.
 function Log.beginStart()
-    problems, boot, recent, loud = {}, {}, {}, {}
+    problems, boot, recent, loud, raisedAt = {}, {}, {}, {}, {}
     reported, booting = false, true
 end
 

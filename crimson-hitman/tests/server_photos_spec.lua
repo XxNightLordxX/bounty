@@ -1542,6 +1542,26 @@ describe('kill photos switched off', function()
         eq(call('openPhoto', 1, { handle = handle }).err, CH.ERR.PHOTO_GONE)
     end)
 
+    --- Nothing is served while they are off, so a link handed out then is a
+    --- broken picture on the phone, and the client's one look spent on it.
+    it('offers no link to the phone\'s Photos for a photo kept from before', function()
+        local s, _, _, handle = photographed()
+        Natives.convars.web_baseUrl = QBOX
+        s.bridges.install(s)
+        truthy(s.photos.linkable(), 'this server could link one while photos are on')
+        Config.Completion.KillPhotos = false
+        local reply = call('openPhoto', 1, { handle = handle })
+        truthy(reply and reply.ok, tostring(reply and reply.err))
+        if reply.data.latent then landed(1, handle) end
+        falsy(reply.data.link, 'no link is offered')
+        local asked = call('photoDecision', 1, { handle = handle, choice = 'link' })
+        eq(asked.err, CH.ERR.PHOTO_NO_LINK, 'nor given when asked for')
+        local record = s.storage.readPhoto(handle)
+        falsy(record.public_id, 'nothing is published')
+        eq(record.state, CH.PHOTO.OPEN, 'and it is still open, to keep in the app or delete')
+        truthy(call('photoDecision', 1, { handle = handle, choice = 'keep' }).ok, 'kept in the app')
+    end)
+
     it('serves nothing over HTTP, even a photo saved to a phone\'s Photos before', function()
         local _, _, _, _, _, _, name = savedByLink()
         eq(Natives.httpRequest('GET', '/p/' .. name .. '.jpg').status, 200, 'served while on')

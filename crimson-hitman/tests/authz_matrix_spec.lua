@@ -1093,10 +1093,11 @@ end)
 -- The grid's six roles are all civilians. A player on a job the app bars
 -- (Config.BlockedJobTypes / BlockedJobNames) is the seventh, and with the
 -- whitelisted-job view on (as shipped) the matrix for them is exactly what
--- it was with no view at all, apart from two cells: the view's own read,
--- and the buyout, which answers only on a contract naming them. Every
--- other handler refuses them at the gate, as blacklisted_job, carrying
--- nothing, before it looks at what was sent.
+-- it was with no view at all, apart from three cells: the view's own read,
+-- the buyout, which answers only on a contract naming them, and the page's
+-- own fault report (pageError), which changes nothing and answers nothing
+-- about anybody. Every other handler refuses them at the gate, as
+-- blacklisted_job, carrying nothing, before it looks at what was sent.
 
 describe('a player on a whitelisted job', function()
     local OFFICER = { source = 11, cid = 'OFFICER1' }
@@ -1143,7 +1144,7 @@ describe('a player on a whitelisted job', function()
         for _, name in ipairs(names) do
             local w = barredWorld()
             local reply = call(name, OFFICER.source, { id = w.mine.id, page = 1 })
-            if name == 'whitelistedView' or name == 'bailout' then
+            if name == 'whitelistedView' or name == 'bailout' or name == 'pageError' then
                 if not (reply and reply.ok) then
                     wrong[#wrong + 1] = name .. ' refused them with ' .. tostring(reply and reply.err)
                 end
@@ -1154,7 +1155,7 @@ describe('a player on a whitelisted job', function()
                         hasPayload(reply) and 'data' or 'nothing')) or 'nothing')
             end
         end
-        eq(#wrong, 0, 'the view and their own buyout, and nothing else: '
+        eq(#wrong, 0, 'the view, their own buyout and their page\'s report, and nothing else: '
             .. table.concat(wrong, '; '))
     end)
 
@@ -1186,6 +1187,8 @@ describe('a player on a whitelisted job', function()
         local buyout = call('bailout', OFFICER.source, { id = w.mine.id })
         eq(buyout.err, CH.ERR.BLACKLISTED_JOB, 'and the buyout goes back to the command alone')
         eq(w.s.storage.readContract(w.mine.id).state, CH.STATE.ACTIVE)
+        eq(call('pageError', OFFICER.source, { what = 'render', where = 'jobview' }).err,
+            CH.ERR.BLACKLISTED_JOB, 'and a page\'s report, with no view to report from')
     end)
 end)
 

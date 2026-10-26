@@ -519,8 +519,15 @@ end
 --- the photo is still open, and the time to decide still runs out on it
 --- (Photos.expire), which takes the link with it. A link handed to a page
 --- that then never answered is served for minutes, not for good.
+---
+--- None while kill photos are off (Config.Completion.KillPhotos): nothing
+--- is served then (Photos.serveHttp), so a link would be one the phone
+--- saves as a broken picture, and the client's one look spent on it. The
+--- page keeps the photo in the app or on the device instead.
 local function publish(actor, record)
-    if record.kind ~= 'file' or not fileOf(record) then return nil, CH.ERR.PHOTO_NO_LINK end
+    if not Util.killPhotos() or record.kind ~= 'file' or not fileOf(record) then
+        return nil, CH.ERR.PHOTO_NO_LINK
+    end
     if served(record) and type(record.saved_link) == 'string' then
         return { handle = record.id, state = record.state, link = record.saved_link }
     end
@@ -734,7 +741,8 @@ function Photos.open(actor, rawHandle)
     end
 
     if not Storage.openPhoto(record.id, os.time()) then return nil, CH.ERR.PHOTO_GONE end
-    if record.kind == 'file' and Photos.linkable() then view.link = true end
+    -- Not while kill photos are off: nothing is served then (publish).
+    if record.kind == 'file' and Util.killPhotos() and Photos.linkable() then view.link = true end
 
     Audit.action('photo_opened', actor.cid, record.contract_id, {})
     return view

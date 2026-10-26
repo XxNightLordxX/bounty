@@ -437,8 +437,13 @@ end
 --- 'target', the buyout: as Identity.gate, and a player the app bars as
 --- well while the view is on. Bailout.buy acts only on a contract naming the
 --- caller, so this opens the one move a target has and nothing else.
+---
+--- 'report', the page's own fault report and the log the diagnosis asks it
+--- for (pageError): the same people as 'target'. It changes nothing and
+--- answers nothing about anybody; what it carries is cleaned and its
+--- allowance is its own.
 ---@param source number
----@param access string 'view' | 'target'
+---@param access string 'view' | 'target' | 'report'
 ---@return table|nil actor
 ---@return string|nil err
 function Identity.gateFor(source, access)
@@ -450,7 +455,8 @@ function Identity.gateFor(source, access)
         if not Identity.whitelistedViewOn() then return nil, CH.ERR.BLACKLISTED_JOB end
         return actor
     end
-    if barred and not (access == 'target' and Identity.whitelistedViewOn()) then
+    if barred and not ((access == 'target' or access == 'report')
+        and Identity.whitelistedViewOn()) then
         return nil, CH.ERR.BLACKLISTED_JOB
     end
     return actor
@@ -469,31 +475,21 @@ local function shownJob(job)
     return tostring(job.name or 'job')
 end
 
---- Whether a contract's target is a member of a whitelisted job, by the
---- rule that bars a player from the app (isBlockedJob, held jobs included,
---- and off duty as Config.BlockOffDuty says): by the jobs they hold now
---- when they are in the city, otherwise by the job recorded on the
---- contract, read as off duty, since nobody offline is working it.
+--- Whether a contract's target is listed in the whitelisted-job view as a
+--- member of a whitelisted job, and the job they are shown under: by what
+--- the contract recorded when it was placed, the flag the listing and the
+--- advisory read (target_protected) and the job the advisory names
+--- (target_job). Never by a lookup of the player now. Their job now when
+--- they are in the city and the record when they are not made an entry
+--- that came and went as they logged in and out, wherever the two differed.
 ---@param contract table
 ---@return boolean member
 ---@return string|nil job the job they are shown under, when they are one
 function Identity.whitelistedTarget(contract)
-    if type(contract) ~= 'table' then return false end
-    local online = Identity.byCitizenId(contract.target_cid)
-    if online then
-        if Identity.isBlockedJob(online.job) then return true, shownJob(online.job) end
-        local held = Identity.heldJobs(online)
-        for i = 1, #held do
-            if Identity.isBlockedJob(held[i]) then return true, shownJob(held[i]) end
-        end
-        return false
-    end
+    if type(contract) ~= 'table' or contract.target_protected ~= true then return false end
     local name = contract.target_job
-    if type(name) ~= 'string' or name == '' then return false end
-    local definition = jobDefinition(name)
-    local job = { name = name, type = definition and definition.type or nil, onduty = false }
-    if Identity.isBlockedJob(job) then return true, shownJob(job) end
-    return false
+    if type(name) ~= 'string' or name == '' then return true, nil end
+    return true, shownJob({ name = name })
 end
 
 --- Whether qbx_core's lookup export has handed back a verified player at

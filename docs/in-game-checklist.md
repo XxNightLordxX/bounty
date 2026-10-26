@@ -91,10 +91,13 @@ A staff account that can adjust money and spawn items makes this much faster.
       opening it shows one screen with no tab bar: *You're on a whitelisted
       job, so this app only shows contracts on you and on other
       whitelisted-job members.*
-- [ ] The same for an `fib` character and an `ambulance` character, and, if
-      your server has them, one of each other law, medical or legal job
-      (`police`, `bcso`, `sheriff`, `trooper`, `sasp`, `ranger`, `fire`,
-      `doj`, `lawyer`)
+- [ ] The same for an `fib` character and, if your server has them, one of
+      each other law enforcement job (`police`, `bcso`, `sheriff`,
+      `trooper`, `sasp`, `ranger`)
+- [ ] An `ambulance` character (and `fire`, `doj` or `lawyer`, whom the
+      threat advisory does not reach) gets the same one screen, saying *…
+      this app only shows contracts on you.*, with no **Contracts on
+      whitelisted jobs** section at all
 - [ ] With nothing on any of them it says *No contracts on you or other
       whitelisted-job members.*
 - [ ] Place a contract on the SAST character from a civilian (named, with a
@@ -111,6 +114,15 @@ A staff account that can adjust money and spawn items makes this much faster.
       and nothing says how many there are
 - [ ] A civilian hitman accepts it: both screens say *Taken by 1 hitman* once
       the app is reopened (an acceptance does not ring the target's phone)
+- [ ] The hitman abandons it: the FIB character's entry still says *Taken by
+      1 hitman*, as no bulletin says one walked away
+- [ ] Log the SAST character off and back on: the FIB character's entry for
+      them is there throughout, the same. Place a contract on a civilian, then
+      give them the `police` job: it is not under **Contracts on whitelisted
+      jobs**, online or off (no advisory went out for it)
+- [ ] Admin panel, Features, Law enforcement advisory: turn **Advisories** off: the
+      FIB character's screen has no **Contracts on whitelisted jobs** section;
+      turn it back on
 - [ ] The SAST character taps **Buy out**: it asks first (two taps), the
       price is the one On me would show a civilian, then *Paid. It closes in
       about 2 minutes. You are still a target until then.*, the entry says
@@ -129,7 +141,11 @@ A staff account that can adjust money and spawn items makes this much faster.
       view at once, and nothing of the board, their Place form or Mine
       remains. A contract they placed or took as a civilian carries on
 - [ ] With `Config.BlockOffDuty = false`, an off-duty officer has the whole
-      app, and an off-duty colleague is not listed on the view
+      app, and an off-duty colleague is still listed on the view, as the
+      advisory names them on duty or off
+- [ ] Run `ch-diag <the SAST character's id>` in F8 with their app open: the
+      report runs `whitelistedView`, says the answer follows here, and their
+      app's log prints in your F8 a moment later
 - [ ] Nothing appears in console when a whitelisted player opens the app
 
 ### 2b. The view switched off
@@ -311,6 +327,9 @@ served, and no image host is asked anything.
       nothing about a photo; their Ledger row has no **View photo**
 - [ ] With a link to a photo saved before (on a server that had them on),
       `https://<address>/crimson-hitman/p/<name>.webp` answers "Not found."
+- [ ] A photo kept from before, opened by its client: **Save to Photos**
+      offers no link (it keeps the photo in the app or saves it on the
+      device), and the one look is not spent on a broken picture
 - [ ] In the admin panel, **Kill photos** is under **Features → Completion**,
       and **Where kill photos are kept** and **Keep kill photos for the
       client** say they do not apply now. Turn **Kill photos** on there:

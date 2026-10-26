@@ -2856,6 +2856,12 @@ async function main() {
       falsy(/payout/i.test(text), 'a payout named where there is one collection: ' + text);
     });
 
+    it('nor anywhere else in the form, the kidnapping bonus\'s hint included', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('Paid on top of the reward when the target is delivered alive') !== -1, text);
+      falsy(/payout/i.test(text), 'a payout named where there is one collection: ' + text);
+    });
+
     pick(app, 'slot-cash-1', 6000);
     pick(app, 'target-handle', 'tg00000001');
     pick(app, 'reason', 'Unpaid debt');
@@ -2867,6 +2873,38 @@ async function main() {
       truthy(sent, 'the contract went to the server');
       eq(sent.reward.slots.length, 1);
       eq(sent.reward.slots[0].baseline.cash, 6000);
+    });
+  })();
+
+  /* The same, where the goods the reward can carry run out: each refusal
+     names the reward, not a payout there is only one of. */
+  await (async function collectedOnceFull() {
+    const app = placeForm({
+      rewardOptions: { ok: true, data: Object.assign({}, GOODS,
+        { caps: { maxStacks: 1, maxPerStack: 10, maxWeapons: 1, slots: 1, minValue: 1000 } }) }
+    });
+    await settle(); await settle();
+    app.document.querySelectorAll('.tab')
+      .filter(function (t) { return t.dataset.tab === 'place'; })[0].onclick();
+    await settle(); await settle();
+
+    it('says the reward, not a payout, when it cannot carry more', function () {
+      pick(app, 'slot-item-1').value = 'bandage';
+      pick(app, 'slot-item-count-1', 20);
+      press(app, 'slot-item-add-1');
+      eq(app.notice(), 'That is more than the reward can hold of a single item.');
+      pick(app, 'slot-item-1').value = 'bandage';
+      pick(app, 'slot-item-count-1', 5);
+      press(app, 'slot-item-add-1');
+      pick(app, 'slot-item-1').value = 'lockpick';
+      pick(app, 'slot-item-count-1', 1);
+      press(app, 'slot-item-add-1');
+      eq(app.notice(), 'The reward is already carrying as many kinds of item as it can.');
+      pick(app, 'slot-weapon-1').value = '3';
+      press(app, 'slot-weapon-add-1');
+      pick(app, 'slot-weapon-1').value = '4';
+      press(app, 'slot-weapon-add-1');
+      eq(app.notice(), 'The reward is already carrying as many weapons as it can.');
     });
   })();
 
@@ -10072,6 +10110,54 @@ async function main() {
       falsy(text.indexOf('Contracts on you') !== -1, 'no empty headings: ' + text);
     });
     drewCleanly(app);
+  })();
+
+  /* A viewer the advisory does not reach (EMS, a lawyer), or a server with
+     it off: the server sends no colleagues' list at all, and the page draws
+     no such section, nor says there is nothing in it. An entry whose
+     acceptances no bulletin announces carries no count, and is drawn
+     neither open nor taken. */
+  await (async function whitelistedViewOwnOnly() {
+    const own = jobView();
+    delete own.data.colleagues;
+    const app = boot({ list: BARRED, mine: BARRED, ledger: BARRED, whitelistedView: own });
+    await settle(); await settle(); await settle();
+    it('draws only their own contracts where no colleagues\' list is sent', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('this app only shows contracts on you.') !== -1, text);
+      falsy(text.indexOf('whitelisted-job members') !== -1, text);
+      falsy(text.indexOf('Contracts on whitelisted jobs') !== -1, text);
+      truthy(text.indexOf('Olive Ward') !== -1, 'their own entry: ' + text);
+    });
+    drewCleanly(app);
+
+    const none = jobView({ onYou: [] });
+    delete none.data.colleagues;
+    const empty = boot({ list: BARRED, mine: BARRED, ledger: BARRED, whitelistedView: none });
+    await settle(); await settle(); await settle();
+    it('says only that there is nothing on them', function () {
+      const text = empty.view.textContent;
+      truthy(text.indexOf('No contracts on you.') !== -1, text);
+      falsy(text.indexOf('whitelisted-job members') !== -1, text);
+    });
+    drewCleanly(empty);
+
+    const now = Math.floor(Date.now() / 1000);
+    const quiet = boot({ list: BARRED, mine: BARRED, ledger: BARRED, whitelistedView: jobView({
+      colleagues: [{ targetName: 'Colin Hart', targetJob: 'SAST', secondsLeft: 3000 }],
+      onYou: [{ id: 'ct00000031', targetName: 'Olive Ward', postedAt: now - 60, state: 'open',
+        hitmenActive: 0, secondsLeft: 7200 }]
+    }) });
+    await settle(); await settle(); await settle();
+    it('draws neither open nor taken where the entry carries no count', function () {
+      const cards = quiet.view.all().filter(function (n) {
+        return n.className === 'card' && n.textContent.indexOf('Colin Hart') !== -1;
+      });
+      eq(cards.length, 1);
+      falsy(/Open|Taken by/.test(cards[0].textContent), cards[0].textContent);
+      falsy(cards[0].textContent.indexOf('Posted') !== -1, 'nor when it was posted: ' + cards[0].textContent);
+    });
+    drewCleanly(quiet);
   })();
 
   await (async function whitelistedViewBuyouts() {

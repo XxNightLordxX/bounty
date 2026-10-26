@@ -1570,7 +1570,8 @@ function Escrow.parkStuck(id)
     if stuck then
         Log.always(('escrow line %s was left mid-release by a call that raised; '
             .. 'returned to held%s'):format(tostring(id), line.releasing_to
-                and ' and left for staff (/ch-stuck) — check whether it was already paid' or ''))
+                and (' and left for staff (/%s) — check whether it was already paid')
+                    :format(tostring(Config.Admin.Commands.stuck)) or ''))
     end
     return stuck
 end
@@ -1685,13 +1686,14 @@ local function afterRaise(recipientCid, line, name, count, raised, before, arriv
         })
         local what = ('raised %d times with nothing arriving'):format(raises)
         if arrived and arrived > 0 then
-            what = ('raised with %d of it arriving; /ch-settle pay gives only the rest')
-                :format(arrived)
+            what = ('raised with %d of it arriving; /%s pay gives only the rest')
+                :format(arrived, tostring(Config.Admin.Commands.settle))
         elseif unknown then
             what = 'raised, and whether it arrived could not be checked'
         end
-        Log.always(('escrow line %s: giving %s x%s %s; left for staff (/ch-stuck)'
-            .. ' — check what they have'):format(tostring(line.id), tostring(name), tostring(count), what))
+        Log.always(('escrow line %s: giving %s x%s %s; left for staff (/%s)'
+            .. ' — check what they have'):format(tostring(line.id), tostring(name), tostring(count), what,
+                tostring(Config.Admin.Commands.stuck)))
     end
     return false
 end

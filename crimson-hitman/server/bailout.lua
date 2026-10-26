@@ -550,9 +550,10 @@ function Bailout.owe(cid, contractId, amount, account, reason, raise)
             arrived = raise.arrived, review = true,
         })
         Log.always(('escrow line %s: crediting %s %s raised, and only part of it '
-            .. 'arrived or what did could not be read; left for staff (/ch-stuck) — check what '
+            .. 'arrived or what did could not be read; left for staff (/%s) — check what '
             .. 'they have')
-            :format(tostring(lineId), tostring(amount), tostring(line.source)))
+            :format(tostring(lineId), tostring(amount), tostring(line.source),
+                tostring(Config.Admin.Commands.stuck)))
     end
     return lineId
 end

@@ -289,7 +289,11 @@ local DEFAULTS = {
     Advisory = {
         AlwaysAlertTarget = true,
         TriggerJobTypes = { leo = true, police = true, ems = true, fire = true },
-        TriggerJobNames = { doj = true, lawyer = true, ranger = true, sast = true, fib = true, k9 = true },
+        TriggerJobNames = {
+            doj = true, lawyer = true, ranger = true, sast = true, fib = true, k9 = true,
+            police = true, sheriff = true, leo = true, trooper = true, sasp = true,
+            bcso = true, ambulance = true, fire = true,
+        },
         RecipientJobTypes = { leo = true, police = true },
         RecipientJobNames = {
             police = true, sheriff = true, bcso = true, fib = true,
@@ -925,6 +929,34 @@ local function validateConfig(quiet)
         warn[#warn + 1] = 'Advisory is enabled but nobody is configured to receive it'
     end
 
+    -- A job barred from the app that does not count as law enforcement
+    -- here: a contract on its members raises no advisory, carries no
+    -- listing flag and warns nobody, and the whitelisted-job view, which
+    -- lists only what the advisory covers, leaves them out. Unless
+    -- qbx_core gives the job a type in TriggerJobTypes, which only a
+    -- running server can say.
+    local unprotected = {}
+    local triggerNames = Config.Advisory.TriggerJobNames or {}
+    local triggerTypes = Config.Advisory.TriggerJobTypes or {}
+    for name, on in pairs(Config.BlockedJobNames or {}) do
+        if on and not triggerNames[tostring(name):lower()] then
+            unprotected[#unprotected + 1] = tostring(name)
+        end
+    end
+    for jobType, on in pairs(Config.BlockedJobTypes or {}) do
+        if on and not triggerTypes[tostring(jobType):lower()] then
+            unprotected[#unprotected + 1] = 'type ' .. tostring(jobType)
+        end
+    end
+    if #unprotected > 0 then
+        table.sort(unprotected)
+        warn[#warn + 1] = ('barred from the app but not law enforcement to the advisory: %s. A '
+            .. 'contract on them raises no advisory and no listing flag, and the whitelisted-job '
+            .. 'view does not list it, unless qbx_core gives the job a type in '
+            .. 'Advisory.TriggerJobTypes. Add each to Advisory.TriggerJobNames (or TriggerJobTypes)')
+            :format(table.concat(unprotected, ', '))
+    end
+
     -- The timer refresh was /hitmanadmin until the admin panel took the
     -- name. A config.lua from before that still gives it to the refresh,
     -- and two commands under one name is whichever registered last: the
@@ -1462,7 +1494,8 @@ function Recover()
                     Log.always(('escrow line %s was mid-release at shutdown; ' ..
                            'returned to held%s')
                            :format(tostring(read.id), parked
-                               and ' and left for staff (/ch-stuck) — check whether it was already paid'
+                               and (' and left for staff (/%s) — check whether it was already '
+                                   .. 'paid'):format(tostring(Config.Admin.Commands.stuck))
                                or ''))
                     if modules.audit then
                         modules.audit.financial('release_interrupted', read.releasing_to,

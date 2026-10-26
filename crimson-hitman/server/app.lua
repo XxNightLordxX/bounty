@@ -340,9 +340,20 @@ local function photosOff(name)
     return true
 end
 
+--- The requests that move money, or start what does (an ending, a
+--- handover). One that raises may have moved some of it before it did:
+--- printed whatever Config.Debug says (Log.raised), as the admin panel's
+--- own writes are. A read that raises is said with Debug on.
+local MONEY_REQUESTS = {
+    create = true, accept = true, cancel = true, abandon = true, withdrawReward = true,
+    addEscrow = true, improve = true, propose = true, respondAmendment = true,
+    bailout = true, informant = true, submitPhoto = true, verifyKill = true,
+    armKidnap = true,
+}
+
 ---@param access string|nil who the gate lets through: nil for everyone the
---- app is open to (Identity.gate); 'view' or 'target' for the two requests
---- of the whitelisted-job view (Identity.gateFor)
+--- app is open to (Identity.gate); 'view', 'target' or 'report' for the
+--- requests of the whitelisted-job view (Identity.gateFor)
 local function handler(name, action, fn, access)
     App.handlers[name] = fn
 
@@ -433,14 +444,19 @@ local function handler(name, action, fn, access)
         if not ok then
             deps.audit.rejected('error_' .. name, actor.cid, nil, { error = tostring(result) })
 
-            -- Kept for the diagnosis, not only audited, and printed with
-            -- Config.Debug on. A handler that throws is a fault in this
-            -- resource, and the audit queue is not somewhere an operator
-            -- looks. For a long time a crashing handler produced a shrug on
-            -- the player's screen and nothing anywhere to read: the
-            -- diagnosis lists it now, with the console quiet.
-            Log.debug(('the %s handler threw: %s')
-                :format(name, tostring(result)))
+            -- Kept for the diagnosis, not only audited. A handler that
+            -- throws is a fault in this resource, and the audit queue is not
+            -- somewhere an operator looks. For a long time a crashing
+            -- handler produced a shrug on the player's screen and nothing
+            -- anywhere to read: the diagnosis lists it now. One that moves
+            -- money is printed whatever Config.Debug says, once every few
+            -- minutes per request (MONEY_REQUESTS); a read with Debug on.
+            local text = ('the %s handler threw: %s'):format(name, tostring(result))
+            if MONEY_REQUESTS[name] then
+                Log.raised('request ' .. name, text)
+            else
+                Log.debug(text)
+            end
 
             if action then deps.ratelimit.refund(actor, action) end
             -- Not INVALID_INPUT. Nothing the player typed is wrong, and
@@ -574,14 +590,14 @@ function App.register()
     end)
 
     -- The whitelisted-job view (Config.WhitelistedView): the one screen a
-    -- player on a job the app bars is shown. The contracts on them, and the
-    -- contracts on other whitelisted-job members, each with no more than the
-    -- law enforcement advisory carries (Projection.whitelistedView). Gated
-    -- the other way round from every handler here ('view'): only a player
-    -- the app bars may ask, and only while the view is on. Rate-limited
-    -- with the other reads.
+    -- player on a job the app bars is shown. The contracts on them, and, to
+    -- a viewer the law enforcement advisory reaches, the contracts on other
+    -- whitelisted-job members, each with no more than the advisory carries
+    -- (Projection.whitelistedView). Gated the other way round from every
+    -- handler here ('view'): only a player the app bars may ask, and only
+    -- while the view is on. Rate-limited with the other reads.
     handler('whitelistedView', 'load', function(actor)
-        return deps.projection.whitelistedView(actor.cid)
+        return deps.projection.whitelistedView(actor.cid, actor.job)
     end, 'view')
 
     -- The rows as the page is shown them (Ledger.entries), not as stored:
@@ -1259,7 +1275,11 @@ function App.register()
     --- that is the entire diagnostic anyone had.
     ---
     --- Gated, throttled and rate-limited like every other handler, because
-    --- it is reachable from any frame the phone draws. Everything in the
+    --- it is reachable from any frame the phone draws. Open to a player the
+    --- app bars while the whitelisted-job view is on ('report'): that view is
+    --- a page of its own whose faults are worth hearing of, and the log the
+    --- diagnosis asks a barred subject's page for comes back this way.
+    --- Everything in the
     --- payload came from a browser and is treated as such: truncated to
     --- lengths the audit detail can hold, and never interpolated into
     --- anything but a log line.
@@ -1337,7 +1357,7 @@ function App.register()
         -- reply today, but a report that silently vanishes is the thing
         -- this handler exists to stop happening.
         return { recorded = true }
-    end)
+    end, 'report')
 
     -- Death reporting ---------------------------------------------------
     --

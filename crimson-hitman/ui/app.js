@@ -5014,25 +5014,34 @@
 
      A player on a job the app bars (police, EMS, DOJ, lawyers and the rest)
      is shown this one screen and nothing else, while the server keeps
-     Config.WhitelistedView on: the contracts on them, and the contracts on
-     other whitelisted-job members. Each entry is what the server sent and
-     no more, which is what the law enforcement advisory already says: who
-     it is on and their job, when it was posted, open or taken, and when it
-     runs out at the latest. No photo is drawn, ever: the monogram stands where a face
-     would be. On a contract on them, and only there, the buyout On me
-     offers a civilian target (appendBuyout). */
+     Config.WhitelistedView on: the contracts on them, and, where the law
+     enforcement advisory reaches them, the contracts on other
+     whitelisted-job members. Each entry is what the server sent and no
+     more, which is what the advisory already says: who it is on and their
+     job, when it was posted, open or taken, and when it runs out at the
+     latest, any of the middle two left out where no bulletin says it. With
+     no colleagues' list sent at all, there is no such section. No photo is
+     drawn, ever: the monogram stands where a face would be. On a contract on
+     them, and only there, the buyout On me offers a civilian target
+     (appendBuyout). */
   function viewJobView(view) {
     if (drewFailure(view, 'jobview')) { return; }
     if (drewPending(view, 'jobview')) { return; }
     var data = state.jobView || {};
     var mine = asList(data.onYou);
+    var shared = data.colleagues !== undefined && data.colleagues !== null;
     var others = asList(data.colleagues);
 
     view.appendChild(el('div', 'notice ok', 'You\u2019re on a whitelisted job, so this app '
-      + 'only shows contracts on you and on other whitelisted-job members.'));
+      + (shared ? 'only shows contracts on you and on other whitelisted-job members.'
+        : 'only shows contracts on you.')));
     if (!mine.length && !others.length) {
-      view.appendChild(el('div', 'empty',
-        'No contracts on you or other whitelisted-job members.'));
+      view.appendChild(el('div', 'empty', shared
+        ? 'No contracts on you or other whitelisted-job members.' : 'No contracts on you.'));
+      return;
+    }
+    if (!shared) {
+      mine.forEach(function (entry) { view.appendChild(jobViewCard(entry, true)); });
       return;
     }
 
@@ -5065,10 +5074,14 @@
     node.appendChild(head);
 
     var meta = el('div', 'meta');
-    var taken = Number(entry.hitmenActive) || 0;
-    meta.appendChild(taken > 0
-      ? chip('Taken by ' + taken + (taken === 1 ? ' hitman' : ' hitmen'), 'hot', 'i-users')
-      : chip('Open \u2014 no hitman yet', null, 'i-users'));
+    // Left out where no acceptance bulletin goes: not "open", which it
+    // may not be.
+    if (entry.hitmenActive !== undefined && entry.hitmenActive !== null) {
+      var taken = Number(entry.hitmenActive) || 0;
+      meta.appendChild(taken > 0
+        ? chip('Taken by ' + taken + (taken === 1 ? ' hitman' : ' hitmen'), 'hot', 'i-users')
+        : chip('Open \u2014 no hitman yet', null, 'i-users'));
+    }
     var posted = agoText(entry.postedAt);
     if (posted) {
       meta.appendChild(chip('Posted ' + posted.charAt(0).toLowerCase() + posted.slice(1),
@@ -5571,7 +5584,8 @@
       // holding exactly what they entered was refused for the half on top.
       // The total it comes to is said above the Place button.
       terms.appendChild(el('div', 'hint',
-        'Paid on top of a payout when the target is delivered alive, plus any '
+        'Paid on top of ' + (slotCeiling() > 1 ? 'a payout' : 'the reward')
+        + ' when the target is delivered alive, plus any '
         + 'items marked alive only. It is taken from you now with the rest, and '
         + 'comes back if nobody earns it. Set 0 for none. Delivered alive means '
         + 'brought to you: you have to be there in person for the handover.'));
@@ -6037,11 +6051,13 @@
         return say('You only have ' + (held - allocatedItem(name)) + ' of those spare.');
       }
       if ((picked.items[name] || 0) + wanted > (caps.maxPerStack || Infinity)) {
-        return say('That is more than one payout can hold of a single item.');
+        return say('That is more than ' + (slotCeiling() > 1 ? 'one payout' : 'the reward')
+          + ' can hold of a single item.');
       }
       if (picked.items[name] === undefined
           && Object.keys(picked.items).length >= (caps.maxStacks || Infinity)) {
-        return say('This payout is already carrying as many kinds of item as it can.');
+        return say((slotCeiling() > 1 ? 'This payout' : 'The reward')
+          + ' is already carrying as many kinds of item as it can.');
       }
 
       picked.items[name] = (picked.items[name] || 0) + wanted;
@@ -6074,7 +6090,8 @@
       var picked = pickedFor(index);
       if (picked.aliveOnly) { picked = picked.alive; }
       if (Object.keys(picked.weapons).length >= (caps.maxWeapons || Infinity)) {
-        return say('This payout is already carrying as many weapons as it can.');
+        return say((slotCeiling() > 1 ? 'This payout' : 'The reward')
+          + ' is already carrying as many weapons as it can.');
       }
 
       var found = null;

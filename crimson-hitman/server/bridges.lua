@@ -766,8 +766,10 @@ local function piecesOf(line)
     return out
 end
 
---- Send a player their lines, in order, batched under OUTPUT_EVENT_BYTES.
---- A single line longer than that goes in pieces, one after another.
+--- Send a player their lines, in order, batched under OUTPUT_EVENT_BYTES
+--- and CH.OUTPUT_LINES_MAX lines an event, the most their game prints of
+--- one (client/admin.lua). A single line longer than that goes in pieces,
+--- one after another.
 ---@param src number
 ---@param lines string[]
 ---@param notice boolean whether to say on screen where they went
@@ -785,7 +787,7 @@ function Bridges.sendOutput(src, lines, notice)
         local line = lines[i]
         local pieces = #line > OUTPUT_EVENT_BYTES and piecesOf(line) or { line }
         for _, piece in ipairs(pieces) do
-            if size + #piece > OUTPUT_EVENT_BYTES then flush() end
+            if size + #piece > OUTPUT_EVENT_BYTES or #batch >= CH.OUTPUT_LINES_MAX then flush() end
             batch[#batch + 1] = piece
             size = size + #piece
         end
@@ -813,19 +815,28 @@ end
 
 --- Run one command for whoever typed it, its answer gathered and sent to a
 --- player's F8 console as it ends (reply). One that raises is answered so,
---- in F8 too, and the error kept for the diagnosis.
+--- in F8 too, and the error kept for the diagnosis: printed whatever
+--- Config.Debug says when the command moves money (Log.raised, as the admin
+--- panel's writes are), with Debug on otherwise.
 ---@param src number
 ---@param fn function
-function Bridges.runCommand(src, fn, ...)
-    if src == 0 then return fn(src, ...) end
+---@param moves string|nil the command's name, for one that moves money
+function Bridges.runCommand(src, fn, moves)
+    if src == 0 then return fn(src) end
     local key = coroutine.running()
     local outer = Gathering[key]
     local gathering = { src = src, lines = {} }
     Gathering[key] = gathering
-    local ok, err = pcall(fn, src, ...)
+    local ok, err = pcall(fn, src)
     Gathering[key] = outer
     if not ok then
-        Log.debug(('a staff command run by player %s raised: %s'):format(tostring(src), tostring(err)))
+        if moves then
+            Log.raised('command ' .. moves, ('/%s run by player %s raised: %s')
+                :format(moves, tostring(src), tostring(err)))
+        else
+            Log.debug(('a staff command run by player %s raised: %s')
+                :format(tostring(src), tostring(err)))
+        end
         gathering.lines[#gathering.lines + 1] = 'That raised an error on the server; the diagnosis '
             .. 'lists it.'
     end
@@ -878,10 +889,12 @@ function Bridges.installCommands(modules)
     ---@param strict boolean|nil only the named ACE: Config.Admin.ExtraAces
     --- opens the read-only commands, never one that moves money or unmasks
     --- an anonymous party.
+    ---@param moves boolean|nil it moves money: one that raises is printed
+    --- whatever Config.Debug says (Bridges.runCommand)
     ---
     --- Its answer goes to the console that ran it, or to the player's own
     --- F8 console (Bridges.runCommand), never chat.
-    local function command(name, ace, fn, strict)
+    local function command(name, ace, fn, strict, moves)
         RegisterCommand(name, function(src, args)
             Bridges.runCommand(src, function()
                 if not Admin.allowed(src, ace, strict) then
@@ -889,7 +902,7 @@ function Bridges.installCommands(modules)
                     return
                 end
                 fn(src, args or {})
-            end)
+            end, moves and name or nil)
         end, false)
     end
 
@@ -978,7 +991,7 @@ function Bridges.installCommands(modules)
         local ok, err = Admin.void(src, args[1], reason)
         -- In the words the admin panel uses too (Admin.voidAnswer).
         reply(src, Admin.voidAnswer(args[1], ok, err))
-    end, true)
+    end, true, true)
 
     --- One review item in words (Admin.reviews), for /ch-stuck and /ch-review.
     local function sayReview(src, item)
@@ -1212,7 +1225,7 @@ function Bridges.installCommands(modules)
                 end
                 local lines = Admin.refreshTimers(src)
                 for i = 1, #lines do reply(src, lines[i]) end
-            end)
+            end, names.refresh)
         end, false)
     end
 
@@ -1220,7 +1233,7 @@ function Bridges.installCommands(modules)
         local ok, err, detail = Admin.settleLine(src, args[1], args[2], args[3])
         -- In the words the admin panel uses too (Admin.settleAnswer).
         reply(src, Admin.settleAnswer(ok, err, detail))
-    end, true)
+    end, true, true)
 
     -- The review queue: list it, or resolve one item. Strict, as /ch-settle
     -- is, because it moves money; the list is in /ch-stuck for the rest.
@@ -1244,7 +1257,7 @@ function Bridges.installCommands(modules)
             local ok, err, detail = Admin.resolveReview(src, args[1], rest)
             -- In the words the admin panel uses too (Admin.reviewAnswer).
             reply(src, Admin.reviewAnswer(args[1], ok, err, detail))
-        end, true)
+        end, true, true)
     end
 
     --- What /cleanse says for each refusal, where the app's words do not
@@ -1356,8 +1369,11 @@ function Bridges.installCommands(modules)
         RegisterCommand(Config.Bailout.Command, function(src, args)
             local ok, err = pcall(cleanse, src, args or {})
             if not ok then
-                Log.debug(('the buyout command run by player %s raised: %s')
-                    :format(tostring(src), tostring(err)))
+                -- A buyout takes the premium before it records it, so one
+                -- that raised may have charged part of it: printed whatever
+                -- Config.Debug says, as an app request's would be.
+                Log.raised('command ' .. Config.Bailout.Command, ('/%s run by player %s raised: %s')
+                    :format(Config.Bailout.Command, tostring(src), tostring(err)))
                 answer(src, 'That raised an error on the server; staff can see what in the '
                     .. 'diagnosis.')
             end

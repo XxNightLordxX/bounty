@@ -345,6 +345,132 @@ describe('a quiet console, with Config.Debug off as shipped', function()
     end)
 end)
 
+--- A request, a staff command or the buyout command that raised part-way
+--- through moving money. The admin panel's writes printed it whatever Debug
+--- said; the same raise from the app, from F8 or from /cleanse was a debug
+--- line, the console quiet over an ending left half done.
+describe('a raise in something that moves money, with Config.Debug off', function()
+    local function said(needle)
+        local n = 0
+        for _, line in ipairs(Env.console) do
+            if line:find(needle, 1, true) then n = n + 1 end
+        end
+        return n
+    end
+
+    --- One request as the page sends it.
+    local function request(name, src, payload)
+        _G.source = src
+        local ok, err = pcall(Env.events['crimson-hitman:' .. name], payload)
+        _G.source = nil
+        truthy(ok, name .. ' raised past its handler: ' .. tostring(err))
+    end
+
+    local function placed(s, f)
+        local c, err = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'Unpaid debt',
+            mode = CH.MODE.COMPETITIVE, reward = { baseline = { cash = 5000 } }, bailoutAmount = 12000 })
+        truthy(c, 'placing it: ' .. tostring(err))
+        return c
+    end
+
+    it('is printed from an app request: a cancel whose ending raised', function()
+        local _, s = boot('memory')
+        local f = fixture(s)
+        local c = placed(s, f)
+        Env.console = {}
+        local release = s.escrow.release
+        local raises = 1
+        s.escrow.release = function(...)
+            if raises > 0 then
+                raises = raises - 1
+                error('database went away')
+            end
+            return release(...)
+        end
+        request('cancel', 1, { id = c.id, __rid = 1 })
+        s.escrow.release = release
+        eq(s.storage.readContract(c.id).state, CH.STATE.CANCELLED, 'the ending had begun')
+        eq(said('[crimson-hitman] the cancel handler threw: '), 1, 'said once: ' .. console())
+        truthy(console():find('database went away', 1, true), console())
+
+        -- And the maintenance pass finishes the ending, as it always did.
+        truthy(s.contracts.finishEndings() >= 1, 'the ending is finished')
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            falsy(line.state == CH.ESCROW_STATE.HELD and not line.owed_to,
+                'nothing is left held for nobody: ' .. tostring(line.id))
+        end
+    end)
+
+    it('is printed once every few minutes for the same request, and kept every time', function()
+        local _, s = boot('memory')
+        local f = fixture(s)
+        local c = placed(s, f)
+        Env.console = {}
+        s.contracts.abandon = function() error('store went away') end
+        local function abandon()
+            Env.advance(10)
+            request('abandon', 3, { id = c.id, __rid = 1 })
+        end
+        abandon()
+        abandon()
+        eq(said('the abandon handler threw: '), 1, 'not every time: ' .. console())
+        local report = table.concat(s.admin.diagnose(0), '\n')
+        truthy(report:find('the abandon handler threw: ', 1, true), 'but kept: ' .. report)
+        Env.advance(Log.RAISED_EVERY)
+        abandon()
+        eq(said('the abandon handler threw: '), 2, 'and again once the few minutes are up')
+    end)
+
+    it('is not printed from a read, which is kept for the diagnosis', function()
+        local _, s = boot('memory')
+        fixture(s)
+        Env.console = {}
+        s.projection.listing = function() error('read went wrong') end
+        request('list', 2, { page = 1, __rid = 1 })
+        eq(console(), '', 'a read that raised moved nothing')
+        truthy(table.concat(s.admin.diagnose(0), '\n'):find('the list handler threw: ', 1, true))
+    end)
+
+    it('is printed from a staff command that moves money, run in F8, and not from a read', function()
+        local _, s = boot('memory')
+        local f = fixture(s)
+        local c = placed(s, f)
+        Env.addPlayer({ source = 6, citizenid = 'ADMIN001', license = 'license:ADMIN001' })
+        Env.aces[6] = { ['crimson.admin'] = true }
+        Env.console = {}
+        s.admin.void = function() error('void went wrong') end
+        Env.commands[Config.Admin.Commands.void](6, { c.id, 'test' })
+        eq(said(('[crimson-hitman] /%s run by player 6 raised: '):format(Config.Admin.Commands.void)), 1,
+            console())
+        Env.console = {}
+        s.admin.timeline = function() error('timeline went wrong') end
+        Env.commands[Config.Admin.Commands.timeline](6, { c.id })
+        eq(console(), '', 'a read command that raised moved nothing')
+    end)
+
+    it('is printed from the buyout command', function()
+        local _, s = boot('memory')
+        local f = fixture(s)
+        placed(s, f)
+        Env.console = {}
+        s.bailout.available = function() error('buyout went wrong') end
+        Env.commands[Config.Bailout.Command](2, {})
+        eq(said(('[crimson-hitman] /%s run by player 2 raised: '):format(Config.Bailout.Command)), 1,
+            console())
+    end)
+
+    it('names only requests there are', function()
+        boot('memory')
+        local App = require('server.app')
+        local source = read_file('crimson-hitman/server/app.lua')
+        local block = source:match('local MONEY_REQUESTS = (%b{})')
+        truthy(block, 'the list')
+        for name in block:gmatch('([%a]+) = true') do
+            truthy(App.handlers[name], name .. ' is not a request')
+        end
+    end)
+end)
+
 describe('the console with Config.Debug on', function()
     it('says what a start says, as it did before', function()
         boot('memory', function() Config.Debug = true end)

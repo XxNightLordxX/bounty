@@ -37,7 +37,9 @@ end
 --- Everyone the view is about. Creator (1), hitman (3) and a stranger with
 --- a civilian contract on them (2, TARGET01) from the fixture; an officer
 --- who opens the app (11); a colleague with a contract on them (12); an
---- officer who is offline (13, gone after their contract is placed).
+--- officer who is offline (13, gone after their contract is placed). All
+--- three on `opts.job` (police) when their contracts are placed, which is
+--- what each contract records and what the view reads of a colleague.
 local function world(opts)
     opts = opts or {}
     local s = newStack()
@@ -62,10 +64,13 @@ local function world(opts)
         return c
     end
 
-    -- Placed while they were civilians, then they took the job: the job on
-    -- the contract is what they held then, and the view reads the job they
-    -- hold now.
-    local w = { s = s, f = f }
+    for _, src in ipairs({ 11, 12, 13 }) do
+        local job = {}
+        for k, v in pairs(opts.job or POLICE) do job[k] = v end
+        Env.players[src].PlayerData.job = job
+    end
+
+    local w = { s = s, f = f, place = place }
     w.civilian = place('TARGET01', { anonymous = true })
     w.mine = place('OFFICER1')
     w.colleague = place('OFFICER2')
@@ -73,15 +78,7 @@ local function world(opts)
     Env.players[3].PlayerData.money.cash = 50000
     w.offline = place('OFFICER3', nil, f.hitman)
     truthy(s.contracts.accept(f.hitman, w.colleague.id, true), 'a hitman on the colleague')
-
-    for _, src in ipairs({ 11, 12 }) do
-        local job = {}
-        for k, v in pairs(opts.job or POLICE) do job[k] = v end
-        Env.players[src].PlayerData.job = job
-    end
-    -- Offline, with the job on their contract the one the view reads: an
-    -- officer by the record.
-    s.storage.readContract(w.offline.id).target_job = 'police'
+    -- Offline: read by their contract, as everybody on the list is.
     Env.removePlayer(13)
 
     -- Past the wait before a target is shown a contract, as On me waits.
@@ -121,13 +118,13 @@ describe('the whitelisted-job view', function()
         eq(#data.onYou, 1, 'the one contract on them')
         eq(data.onYou[1].id, w.mine.id)
         eq(data.onYou[1].targetName, 'Olive Ward')
-        eq(data.onYou[1].targetJob, 'Police', 'by the job they hold now, by its label')
+        eq(data.onYou[1].targetJob, 'Police', 'by the job on the contract, by its label')
 
         local names = {}
         for _, entry in ipairs(data.colleagues) do names[#names + 1] = entry.targetName end
         table.sort(names)
         eq(table.concat(names, ','), 'Colin Hart,Oona Fell',
-            'an officer in the city, and one offline by the job on the contract')
+            'an officer in the city and one offline, each by the job on the contract')
         for _, entry in ipairs(data.colleagues) do
             eq(entry.targetJob, 'Police')
             eq(entry.id, nil, 'a colleague\'s contract carries no id: nothing here acts on it')
@@ -280,6 +277,20 @@ describe('the whitelisted-job view', function()
         eq(refused.err, CH.ERR.RATE_LIMITED)
     end)
 
+    --- A screen of its own, whose faults went nowhere: the page's report
+    --- was refused at the gate like every other request from a barred job.
+    it('hears of a fault on its page, as it hears of the app\'s', function()
+        local w = world()
+        local reply = call('pageError', 11, { what = 'render', where = 'jobview', build = 'test' })
+        truthy(reply and reply.ok, tostring(reply and reply.err))
+        local newest = w.s.app.recentPageFaults()[1]
+        eq(newest and newest.cid, 'OFFICER1', 'kept for the diagnosis')
+        eq(newest.where, 'jobview')
+        Config.WhitelistedView.Enabled = false
+        eq(call('pageError', 11, { what = 'render', where = 'jobview' }).err, CH.ERR.BLACKLISTED_JOB,
+            'and not with the view off, when there is no page to report from')
+    end)
+
     it('refuses the players the whole app is open to, and sends them back to it', function()
         world()
         for _, src in ipairs({ 1, 2, 3 }) do
@@ -302,24 +313,34 @@ describe('who the view is for', function()
         Env.players[11].PlayerData.jobs = { unemployed = 0, police = 2 }
         local data = view(11)
         eq(#data.onYou, 1, 'a held police job puts them in the view')
-        eq(data.onYou[1].targetJob, 'Police', 'under the job that bars them')
+        eq(data.onYou[1].targetJob, nil, 'placed while they were a civilian: no job on the contract')
         falsy(w.s.identity.gate(11), 'and keeps them out of the app')
+        eq(data.colleagues, nil, 'working a civilian job, the advisory does not reach them, '
+            .. 'and nor does a colleagues\' list')
 
-        -- And a colleague by a held job is listed as one.
-        Env.players[12].PlayerData.job = CIVILIAN
+        -- And a contract placed on somebody holding police while working
+        -- another job records them as an officer, as the advisory names them.
+        Env.players[11].PlayerData.job = { name = 'police', label = 'Police', type = 'leo', onduty = true }
         Env.players[12].PlayerData.jobs = { unemployed = 0, police = 1 }
+        Env.addPlayer({ source = 14, citizenid = 'PLACER02', license = 'license:pl2',
+            cash = 50000, bank = 50000, firstname = 'Pia', lastname = 'Lund' })
+        local held = w.place('OFFICER2', nil, w.s.identity.resolve(14))
+        eq(w.s.storage.readContract(held.id).target_protected, true, 'an officer by a held job')
         local again = {}
-        for _, entry in ipairs(view(11).colleagues) do again[entry.targetName] = true end
+        for _, entry in ipairs(view(11).colleagues) do again[entry.targetName] = entry end
         truthy(again['Colin Hart'], 'a colleague by a held job is one')
+        eq(again['Colin Hart'].targetJob, 'Police')
     end)
 
-    it('counts off duty as BlockOffDuty says', function()
+    --- The advisory names an officer whatever their duty, and so does the
+    --- record the list is read from.
+    it('lists a colleague by the contract, on duty or off, as the advisory has them', function()
         world({ job = { name = 'police', label = 'Police', type = 'leo', onduty = false } })
         Config.BlockOffDuty = true
         eq(#view(11).onYou, 1, 'off duty, still an officer while off duty counts')
         local names = {}
         for _, entry in ipairs(view(11).colleagues) do names[entry.targetName] = true end
-        truthy(names['Colin Hart'], 'and so is an off-duty colleague')
+        truthy(names['Colin Hart'], 'and an off-duty colleague is listed')
 
         Config.BlockOffDuty = false
         local reply = call('whitelistedView', 11, {})
@@ -327,16 +348,154 @@ describe('who the view is for', function()
         Env.players[11].PlayerData.job.onduty = true
         local shown = {}
         for _, entry in ipairs(view(11).colleagues) do shown[entry.targetName] = true end
-        falsy(shown['Colin Hart'], 'an off-duty colleague is no member then')
-        falsy(shown['Oona Fell'], 'nor one offline, whose recorded job is read as off duty')
+        truthy(shown['Colin Hart'], 'an off-duty colleague is still on the list')
+        truthy(shown['Oona Fell'], 'and so is one offline')
     end)
 
-    it('lists an offline target only by a whitelisted job on the contract', function()
+    --- Read by their jobs now while they were in the city and by the record
+    --- while they were not, a target who had changed job since was listed
+    --- or not as they logged in and out: the entry said when they did.
+    it('lists a colleague by the contract, never by a lookup of them now, so an entry '
+        .. 'never says when they log in or out', function()
         local w = world()
-        w.s.storage.readContract(w.offline.id).target_job = 'mechanic'
-        local names = {}
-        for _, entry in ipairs(view(11).colleagues) do names[entry.targetName] = true end
-        falsy(names['Oona Fell'], 'an offline mechanic is not on a whitelisted job')
+        -- Placed as an officer, since left the police.
+        Env.players[12].PlayerData.job = CIVILIAN
+        Env.players[12].PlayerData.jobs = { unemployed = 0 }
+        -- Placed as a civilian, since joined it.
+        Env.addPlayer({ source = 15, citizenid = 'RECRUIT1', license = 'license:rc1',
+            cash = 50000, bank = 50000, firstname = 'Rhys', lastname = 'Cole' })
+        Env.addPlayer({ source = 14, citizenid = 'PLACER02', license = 'license:pl2',
+            cash = 50000, bank = 50000, firstname = 'Pia', lastname = 'Lund' })
+        w.place('RECRUIT1', nil, w.s.identity.resolve(14))
+        Env.players[15].PlayerData.job = { name = 'police', label = 'Police', type = 'leo', onduty = true }
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+
+        local function listed()
+            local out = {}
+            for _, entry in ipairs(view(11).colleagues) do out[entry.targetName] = true end
+            return out
+        end
+        local online = listed()
+        Env.removePlayer(12)
+        Env.removePlayer(15)
+        local offline = listed()
+        for _, name in ipairs({ 'Colin Hart', 'Rhys Cole' }) do
+            eq(online[name] == true, offline[name] == true,
+                name .. ' is listed the same in the city and away')
+        end
+        truthy(online['Colin Hart'], 'placed as an officer: listed, as the advisory went out')
+        falsy(online['Rhys Cole'], 'placed as a civilian: not, as no advisory did')
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- No more than the advisory says, to nobody it does not reach
+--------------------------------------------------------------------------
+
+describe('the colleagues\' list', function()
+    local function byName(data)
+        local out = {}
+        for _, entry in ipairs(data.colleagues or {}) do out[entry.targetName] = entry end
+        return out
+    end
+
+    it('is not sent to a viewer the advisory does not reach', function()
+        for _, job in ipairs({
+            { name = 'lawyer', label = 'Lawyer', type = 'none', onduty = true },
+            { name = 'ambulance', label = 'EMS', type = 'ems', onduty = true },
+        }) do
+            local w = world()
+            Env.players[11].PlayerData.job = job
+            local data = view(11)
+            eq(data.colleagues, nil, job.name .. ': no list at all, not an empty one')
+            eq(#data.onYou, 1, job.name .. ': their own contract is still theirs')
+            falsy(contains(data, 'Colin Hart'), job.name .. ': nor any colleague named')
+            falsy(contains(data, w.colleague.target_name), job.name)
+        end
+    end)
+
+    it('is not sent while the advisory is off, whose bulletins it repeats', function()
+        world()
+        Config.Advisory.Enabled = false
+        local data = view(11)
+        eq(data.colleagues, nil)
+        eq(#data.onYou, 1)
+    end)
+
+    it('says open or taken only where acceptance bulletins go', function()
+        world()
+        Config.Advisory.OnAccept = false
+        local entries = byName(view(11))
+        truthy(entries['Colin Hart'], 'still listed: a posting bulletin went')
+        eq(entries['Colin Hart'].state, nil, 'but not taken, which no bulletin said')
+        eq(entries['Colin Hart'].hitmenActive, nil)
+        truthy(entries['Colin Hart'].postedAt, 'posted, which one did')
+    end)
+
+    it('lists only what an acceptance bulletin went out for where no posting one goes', function()
+        world()
+        Config.Advisory.OnCreate = false
+        local entries = byName(view(11))
+        truthy(entries['Colin Hart'], 'taken, so announced')
+        eq(entries['Colin Hart'].hitmenActive, 1)
+        eq(entries['Colin Hart'].postedAt, nil, 'but not when it was posted, which nobody said')
+        falsy(entries['Oona Fell'], 'nobody has taken hers, so nothing was said of it')
+    end)
+
+    --- Each operative taking it up is a bulletin with the running count;
+    --- one walking away is none.
+    it('does not show a hitman walking away, which no bulletin says', function()
+        local w = world()
+        eq(byName(view(11))['Colin Hart'].hitmenActive, 1)
+        truthy(w.s.contracts.abandon(w.f.hitman, w.colleague.id))
+        local entry = byName(view(11))['Colin Hart']
+        eq(entry.hitmenActive, 1, 'still the count the bulletin said')
+        eq(entry.state, 'taken')
+    end)
+
+    --- Barred by name with no type qbx_core gives it: the advisory used to
+    --- miss them, while the view listed them.
+    it('lists a job barred by name, which the advisory covers whatever its type', function()
+        local w = world()
+        Env.jobDefinitions.bcso = nil
+        Env.addPlayer({ source = 14, citizenid = 'PLACER02', license = 'license:pl2',
+            cash = 50000, bank = 50000, firstname = 'Pia', lastname = 'Lund' })
+        Env.addPlayer({ source = 16, citizenid = 'DEPUTY01', license = 'license:dp1',
+            cash = 50000, bank = 50000, firstname = 'Dee', lastname = 'Puty',
+            job = { name = 'bcso', onduty = true } })
+        local c = w.place('DEPUTY01', nil, w.s.identity.resolve(14))
+        eq(w.s.storage.readContract(c.id).target_protected, true, 'an officer to the advisory')
+        truthy(byName(view(11))['Dee Puty'], 'and listed')
+    end)
+
+    --- A lifetime that is not a whole number of five minutes ran out at a
+    --- different moment for two placements in the same five minutes, which
+    --- dated each more finely than its posted time does.
+    it('runs out at the same moment for every placement in the same five minutes', function()
+        local w = world()
+        Config.Limits.ContractLifetimeSeconds = 172950
+        Env.addPlayer({ source = 14, citizenid = 'PLACER02', license = 'license:pl2',
+            cash = 50000, bank = 50000, firstname = 'Pia', lastname = 'Lund' })
+        Env.addPlayer({ source = 15, citizenid = 'OFFICER5', license = 'license:of5',
+            cash = 50000, bank = 50000, firstname = 'Fay', lastname = 'Lowe',
+            job = { name = 'police', label = 'Police', type = 'leo', onduty = true } })
+        local placer = w.s.identity.resolve(14)
+        Env.time = Env.time - (Env.time % 300) + 300 + 10
+        local early = w.place('OFFICER2', nil, placer)
+        Env.time = Env.time + 200
+        local late = w.place('OFFICER5', nil, placer)
+        local a, b = w.s.storage.readContract(early.id), w.s.storage.readContract(late.id)
+        eq(a.expires_at, b.expires_at, 'the same moment')
+        truthy(a.expires_at >= a.created_at + 172950, 'and never sooner than the lifetime')
+        local left = {}
+        for _, entry in ipairs(view(11).colleagues) do
+            if entry.targetName == 'Fay Lowe' or (entry.targetName == 'Colin Hart'
+                and entry.hitmenActive == 0) then
+                left[#left + 1] = entry.secondsLeft
+            end
+        end
+        eq(#left, 2)
+        eq(left[1], left[2], 'nor does the time left the view sends tell them apart')
     end)
 end)
 
@@ -734,6 +893,20 @@ describe('Config.WhitelistedView', function()
             truthy(ok, 'not a reason to refuse to start')
             eq(result, false, tostring(value) .. ' is not a choice, and off shows least')
             truthy(warned:find('WhitelistedView.Enabled', 1, true), warned)
+        end
+    end)
+
+    it('warns at start of a job barred by name that the advisory does not cover', function()
+        local ok, _, warned = checked(function() Config.Advisory.TriggerJobNames.bcso = nil end)
+        truthy(ok, 'not a reason to refuse to start')
+        truthy(warned:find('not law enforcement to the advisory: bcso.', 1, true), warned)
+        local _, _, shipped = checked(function() end)
+        falsy(shipped:find('not law enforcement to the advisory', 1, true),
+            'none as shipped, where every barred name triggers one: ' .. shipped)
+        for _, set in ipairs({ ConfigDefaults, Main.configDefaults }) do
+            for name in pairs(set.BlockedJobNames or Config.BlockedJobNames) do
+                truthy(set.Advisory.TriggerJobNames[name], name .. ' is in TriggerJobNames')
+            end
         end
     end)
 

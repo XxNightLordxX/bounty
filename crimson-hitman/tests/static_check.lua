@@ -967,13 +967,15 @@ end
 --
 -- The client has no module loader, so shared code reaches it through a
 -- global that the shared file assigns. That only works if the manifest lists
--- the file under client_scripts. Miss it and the global is nil on the
--- client, which throws the first time the code path runs — usually the one
--- path nobody tests by hand, since the server suite loads shared modules
--- through require_shared and never notices.
+-- the file under client_scripts, or under shared_scripts, which FiveM loads
+-- on both sides. Miss it and the global is nil on the client, which throws
+-- the first time the code path runs — usually the one path nobody tests by
+-- hand, since the server suite loads shared modules through require_shared
+-- and never notices.
 
 do
-    local clientBlock = manifest:match('client_scripts%s*{(.-)}') or ''
+    local clientBlock = (manifest:match('client_scripts%s*{(.-)}') or '')
+        .. (manifest:match('shared_scripts%s*{(.-)}') or '')
 
     for _, sharedPath in ipairs(walk('crimson-hitman/shared')) do
         local src = read(sharedPath) or ''
@@ -990,8 +992,8 @@ do
             if usedByClient and not clientBlock:find(relative, 1, true) then
                 failures[#failures + 1] =
                     ('the client reads the global %s, which %s assigns, but the manifest '
-                     .. 'does not list %s under client_scripts — the global is nil on the '
-                     .. 'client'):format(name, relative, relative)
+                     .. 'does not list %s under client_scripts or shared_scripts — the '
+                     .. 'global is nil on the client'):format(name, relative, relative)
             end
         end
     end
