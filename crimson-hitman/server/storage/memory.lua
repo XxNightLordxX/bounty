@@ -464,6 +464,25 @@ function Memory.unsettledEscrowContracts()
     return out
 end
 
+--- Held escrow owed to nobody and naming no give, of a closed contract: what
+--- an ending hands over as it closes, left there by one that raised part-way
+--- (Contracts.finishEndings, which the maintenance tick runs, and /ch-stuck).
+--- At most `limit` lines, by id.
+---@param limit integer
+function Memory.strandedEscrow(limit)
+    local out = {}
+    for _, line in pairs(db.escrow) do
+        if line.state == CH.ESCROW_STATE.HELD and line.owed_to == nil
+            and line.releasing_to == nil then
+            local contract = db.contracts[line.contract_id]
+            if contract and CH.TERMINAL[contract.state] then out[#out + 1] = line end
+        end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    for i = #out, (tonumber(limit) or #out) + 1, -1 do out[i] = nil end
+    return out
+end
+
 --- The compare-and-set that makes double release impossible (§14.3).
 function Memory.claimEscrowLine(id, expected, next_)
     local line = db.escrow[id]

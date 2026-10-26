@@ -2014,6 +2014,33 @@ describe('a player the app is closed to can still buy out', function()
         truthy(said:find('Slow down', 1, true), 'a purchase is what the allowance is for: ' .. said)
         eq(s.storage.readContract(c2.id).state, CH.STATE.ACTIVE)
     end)
+
+    --- After a boot whose recovery raised (App.recoveryFailed), the gate never
+    --- opens in that process, and "still starting, try again in a moment"
+    --- sent the player back for nothing.
+    it('says the contract system failed to start once boot recovery has failed', function()
+        local s, f, c = officer()
+        local ready, failed = s.app.ready, s.app.recoveryFailed
+        s.app.ready, s.app.recoveryFailed = false, true
+        Env.chat = {}
+        Env.commands[Config.Bailout.Command](2, { c.id })
+        local said = ''
+        for _, line in ipairs(Env.chat) do said = said .. line.text end
+        truthy(said:find('contract system failed to start', 1, true), said)
+        truthy(said:find('staff have been told', 1, true), said)
+        falsy(said:find('Try again in a moment', 1, true), said)
+        eq(Env.players[2].PlayerData.money.bank, 100000, 'nothing was charged')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE)
+
+        -- While recovery still runs, a moment is what it takes.
+        s.app.recoveryFailed = false
+        Env.chat = {}
+        Env.commands[Config.Bailout.Command](2, { c.id })
+        said = ''
+        for _, line in ipairs(Env.chat) do said = said .. line.text end
+        truthy(said:find('still starting', 1, true), said)
+        s.app.ready, s.app.recoveryFailed = ready, failed
+    end)
 end)
 
 describe('a buyout on a server that has switched them off', function()

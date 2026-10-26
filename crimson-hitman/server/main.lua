@@ -1420,6 +1420,29 @@ function ForgetOldPhotos()
     return forgotten, photos
 end
 
+--- How often the maintenance tick looks for endings that stopped part-way
+--- while it finds none. Staff are told such a line settles itself within a
+--- minute (/ch-settle), which this and the tick's own interval have to keep
+--- true; every tick, it was a read of the held escrow on mysql every ten
+--- seconds for something that happens only when an ending raises.
+local FINISH_ENDINGS_EVERY_SECONDS = 30
+local nextFinish = 0
+
+--- Endings that raised part-way on the running server, finished as the next
+--- start would (Contracts.finishEndings), at most every
+--- FINISH_ENDINGS_EVERY_SECONDS. Back next tick while it leaves any: more
+--- than a pass takes, or one an ending or an acceptance still held.
+function FinishEndings()
+    local now = os.time()
+    if now < nextFinish then return 0 end
+    -- Marked before the call, like the photo retention: a pass that throws
+    -- is not retried every tick.
+    nextFinish = now + FINISH_ENDINGS_EVERY_SECONDS
+    local finished, more = modules.contracts.finishEndings()
+    if more then nextFinish = 0 end
+    return finished
+end
+
 function Tick()
     job('audit.flush', modules.audit.flush)
     job('amendments.expire', modules.amendments.expire)
@@ -1472,6 +1495,9 @@ function Tick()
         job('contracts.retryStuckCreates', modules.contracts.retryStuckCreates)
     end
     job('expireContracts', ExpireContracts)
+    -- A closed contract whose ending raised before it handed its escrow
+    -- over: finished as the next start would (Contracts.finishEndings).
+    if modules.contracts.finishEndings then job('contracts.finishEndings', FinishEndings) end
     -- When this process was last known to be running, so the next boot can
     -- tell how long nobody could play. See Recover.
     if Storage.heartbeat then job('storage.heartbeat', Storage.heartbeat, os.time()) end
@@ -1734,7 +1760,7 @@ end)
 
 return {
     start = StartCrimsonHitman, recover = Recover, tick = Tick, expire = ExpireContracts,
-    forgetOldPhotos = ForgetOldPhotos,
+    forgetOldPhotos = ForgetOldPhotos, finishEndings = FinishEndings,
     -- The expiry pass skips itself when nothing could have changed. These
     -- are how it is told that something did.
     markPresenceChanged = MarkPresenceChanged,

@@ -1378,6 +1378,65 @@ describe('escrow left for staff', function()
             eq(b.store.releasingEscrow()[1].releasing_to, 'HITMAN01', b.name)
         end
     end)
+
+    --- An ending that raised between writing the closed state and handing
+    --- the escrow over leaves a closed contract holding lines owed to nobody,
+    --- which the maintenance tick finishes (Contracts.finishEndings). Read in
+    --- one query, at most `limit` lines; nothing of a contract still live,
+    --- nothing owed or naming a give, and nothing of one never stored.
+    it('finds held lines of closed contracts owed to nobody in every backend', function()
+        for _, b in ipairs(backends()) do
+            -- Rows written by hand, as an ending that raised leaves them.
+            rawset(b.store, '__rawFixture', true)
+            local closed = contractFixture('ct00000005')
+            closed.state = CH.STATE.EXPIRED
+            b.store.writeContract(closed)
+            b.store.writeContract(contractFixture('ct00000006'))
+            local function line(contractId, n, fields)
+                local out = { id = contractId .. ':' .. n, contract_id = contractId, slot = 1,
+                    portion = 'baseline', source = 'cash', amount = 100 * n, state = 'held' }
+                for k, v in pairs(fields or {}) do out[k] = v end
+                return out
+            end
+            b.store.writeEscrow('ct00000005', {
+                line('ct00000005', 1),
+                line('ct00000005', 2, { owed_to = 'CREATOR1' }),
+                line('ct00000005', 3, { releasing_to = 'HITMAN01' }),
+                line('ct00000005', 4, { portion = 'stake', staker = 'HITMAN01' }),
+                line('ct00000005', 5),
+                line('ct00000005', 6),
+            })
+            b.store.claimEscrowLine('ct00000005:5', CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING)
+            b.store.claimEscrowLine('ct00000005:6', CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING)
+            b.store.settleEscrowLine('ct00000005:6', 'CREATOR1')
+            b.store.writeEscrow('ct00000006', { line('ct00000006', 1) })
+            b.store.writeEscrow('ct00000007', { line('ct00000007', 1) })
+
+            local function ids(limit)
+                local out = {}
+                for _, l in ipairs(b.store.strandedEscrow(limit)) do out[#out + 1] = l.id end
+                return table.concat(out, ',')
+            end
+            eq(ids(10), 'ct00000005:1,ct00000005:4',
+                b.name .. ': held, owed to nobody, naming no give, of a closed contract')
+            eq(ids(1), 'ct00000005:1', b.name .. ': and no more than asked for')
+            local stake = b.store.strandedEscrow(10)[2]
+            eq(stake.portion, 'stake', b.name)
+            eq(stake.staker, 'HITMAN01', b.name)
+            eq(stake.amount, 400, b.name)
+
+            -- Settled, so nothing is left stranded for a store opened later
+            -- on the same tables.
+            for _, n in ipairs({ 1, 3, 4 }) do
+                b.store.claimEscrowLine('ct00000005:' .. n, CH.ESCROW_STATE.HELD,
+                    CH.ESCROW_STATE.RELEASING)
+            end
+            for _, n in ipairs({ 1, 3, 4, 5 }) do
+                b.store.settleEscrowLine('ct00000005:' .. n, 'CREATOR1')
+            end
+            eq(ids(10), '', b.name .. ': and none once they are settled')
+        end
+    end)
 end)
 
 describe('indexed contract lookups agree across backends', function()
@@ -2436,6 +2495,7 @@ describe('every mysql statement is executable', function()
             function() m.parkedEscrow(3) end,
             function() m.owedHeldEscrow() end,
             function() m.releasingEscrow() end,
+            function() m.strandedEscrow(10) end,
             function() m.claimEscrowLine('c1:1','held','releasing') end,
             function() m.setEscrowAmount('c1:1','releasing',50,100) end,
             function() m.settleEscrowLine('c1:1','A') end,

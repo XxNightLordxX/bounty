@@ -623,6 +623,49 @@ local function liveHitmen(sql)
     return out
 end
 
+--- SELECT e.* FROM crimson_escrow e JOIN crimson_contracts c ON c.id =
+--- e.contract_id WHERE ... [ORDER BY e.id] [LIMIT ?]: each condition read by
+--- the generic reader and asked of the row its alias names, so a condition
+--- this cannot place raises like any other it cannot read.
+local function escrowOfContracts(sql, params)
+    if not sql:find('JOIN crimson_contracts c ON c%.id = e%.contract_id') then
+        error('mysql_exec: cannot read the join in: ' .. sql)
+    end
+    local whereClause = sql:match('WHERE (.-)%s*ORDER BY') or sql:match('WHERE (.-)%s*LIMIT')
+        or sql:match('WHERE (.*)$')
+    local onEscrow, onContract = {}, {}
+    for _, term in ipairs(andTerms(whereClause or '')) do
+        local alias = term:match('^(%a)%.')
+        if term:find('?', 1, true) then
+            error('mysql_exec: a bound parameter in this join\'s WHERE is not supported: ' .. sql)
+        elseif alias == 'e' then
+            onEscrow[#onEscrow + 1] = term
+        elseif alias == 'c' then
+            onContract[#onContract + 1] = term
+        else
+            error('mysql_exec: `' .. term .. '` names neither table in: ' .. sql)
+        end
+    end
+    local escrowConditions = parseConditions(#onEscrow > 0 and table.concat(onEscrow, ' AND ') or nil, sql)
+    local contractConditions =
+        parseConditions(#onContract > 0 and table.concat(onContract, ' AND ') or nil, sql)
+
+    local out = {}
+    for _, row in pairs(Exec.tables.crimson_escrow or {}) do
+        local contract = (Exec.tables.crimson_contracts or {})[row.contract_id]
+        if contract and matches(row, escrowConditions, params, 1)
+            and matches(contract, contractConditions, params, 1) then
+            out[#out + 1] = copy(row)
+        end
+    end
+    if sql:find('ORDER BY e%.id') then sortRows(out, { 'id' }, false) end
+    if sql:find('LIMIT %?') then
+        local n = tonumber(params[#params]) or #out
+        while #out > n do table.remove(out) end
+    end
+    return out
+end
+
 local function pruneLedger(params)
     local cid, depth = params[1], tonumber(params[3]) or 10
     local mine = {}
@@ -708,6 +751,9 @@ function Exec.run(sql, params)
     if flat:find('^SELECT c%.state AS state') then return hitmanContractStates(flat, params) end
     if flat:find('^SELECT h%.%* FROM crimson_hitmen h JOIN crimson_contracts c') then
         return liveHitmen(flat)
+    end
+    if flat:find('^SELECT e%.%* FROM crimson_escrow e JOIN crimson_contracts c') then
+        return escrowOfContracts(flat, params)
     end
     -- A count with a condition is the rows the same SELECT * would return.
     if flat:find('^SELECT COUNT%(%*%) FROM [%w_]+ WHERE ') then

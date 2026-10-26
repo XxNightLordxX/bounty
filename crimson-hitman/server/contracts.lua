@@ -824,10 +824,15 @@ function Contracts.create(actor, req)
     -- Escrow is taken before the contract is persisted, so a failure leaves
     -- no row behind at all rather than a cancelled shell that still counts
     -- against the creator's cooldowns. Held while that happens; see
-    -- placeUnlocked.
+    -- placeUnlocked. And counted with the claims on the contract
+    -- (Escrow.whileClaiming) until the row is written or the create has
+    -- failed and handed everything back: its lines read as a contract never
+    -- stored until then, and a staff `return` in between handed the reward
+    -- back while the create went on to place a contract holding nothing.
+    -- /ch-settle refuses them as locked, and /ch-stuck lists none of them.
     local placed
     placed, err = Contracts.serialized({ 'contract:' .. contract.id },
-        placeUnlocked, actor, contract, lines)
+        Escrow.whileClaiming, contract.id, placeUnlocked, actor, contract, lines)
     if not placed then
         -- False is busy, and nothing ran: an id the sweep is handing escrow
         -- back under, which a fresh one is not. The fee comes back anyway.
@@ -1380,6 +1385,12 @@ end
 ---@param contractId string
 ---@return integer returned lines handed back or queued
 local function returnNeverPlaced(contractId)
+    -- Still being placed in this process (Contracts.create, counted with the
+    -- claims, Escrow.whileClaiming): its lines are that create's, and it
+    -- hands them back itself if its row cannot be written. The key the
+    -- create holds already turns this away; asked again in case anything
+    -- reaches here without it.
+    if Escrow.claimRunning(contractId) then return 0 end
     -- Placed after all: the lines are its escrow.
     if Storage.readContract(contractId) then return 0 end
 
@@ -2647,23 +2658,42 @@ end
 -- Restart recovery (§10.4)
 --------------------------------------------------------------------------
 
---- Hand over what an ending interrupted by a crash never reached.
+--- Whether a line is one only its contract's ending hands over: still
+--- `held`, owed to nobody, naming no give that may have run, not left for
+--- staff (Escrow.parked), not a buyout's own (owed to whom it names), and,
+--- for a stake, saying whose it is. An ending releases every such line as
+--- it closes (finalise), so one on a closed contract with no ending running
+--- on it is one an ending that stopped part-way never reached
+--- (releaseUntouched).
+---@param line table
+---@return boolean
+local function endingOwes(line)
+    return line.state == CH.ESCROW_STATE.HELD and not line.owed_to
+        and not line.releasing_to and line.portion ~= CH.PORTION.OWED
+        and not Escrow.parked(line)
+        and not (line.portion == CH.PORTION.STAKE and not line.staker)
+end
+Contracts.endingOwes = endingOwes
+
+--- Hand over what an ending interrupted by a crash, or by a raise on the
+--- running server (Contracts.finishEndings), never reached.
 ---
---- Only lines nobody has tried to pay: still `held`, owed to nobody, and
---- with no `releasing_to`. A line that was mid-release when the process died
---- carries the name it was going to and may already have been paid, so it is
---- left exactly where recovery puts it — logged for staff. Everything else is
---- the ending's own unfinished business, released the way the ending would
---- have: stakes to whoever put them up (to the creator, for a hitman still on
---- a contract that expired), the rest back to the creator.
+--- Only lines nobody has tried to pay (endingOwes): still `held`, owed to
+--- nobody, and with no `releasing_to`. A line that was mid-release when the
+--- process died carries the name it was going to and may already have been
+--- paid, so it is left exactly where recovery puts it — logged for staff.
+--- Everything else is the ending's own unfinished business, released the
+--- way the ending would have: stakes to whoever put them up (to the
+--- creator, for a hitman still on a contract that expired), the rest back
+--- to the creator.
 ---@param contract table
 ---@param forfeit boolean
+---@param reason string|nil the audit tag, 'recovered_after_restart' by default
 ---@return integer released
-local function releaseUntouched(contract, forfeit)
+local function releaseUntouched(contract, forfeit, reason)
     local released = 0
     for _, line in ipairs(Storage.readEscrow(contract.id) or {}) do
-        if line.state == CH.ESCROW_STATE.HELD and not line.owed_to
-            and not line.releasing_to and line.portion ~= CH.PORTION.OWED then
+        if endingOwes(line) then
             local recipient = contract.creator_cid
             if line.portion == CH.PORTION.STAKE then
                 local hitman = line.staker and Storage.readHitman(contract.id, line.staker)
@@ -2671,7 +2701,8 @@ local function releaseUntouched(contract, forfeit)
                 recipient = keeps and contract.creator_cid or line.staker
             end
             if recipient then
-                Escrow.release(contract.id, recipient, { line = line.id }, 'recovered_after_restart')
+                Escrow.release(contract.id, recipient, { line = line.id },
+                    reason or 'recovered_after_restart')
                 released = released + 1
             end
         end
@@ -2729,16 +2760,20 @@ end
 ---   * A terminal contract still holding escrow. `resolve` moves the state
 ---     first and the money after, so a crash in between left the creator's
 ---     escrow — and any stake — on a closed contract that nothing ever
----     releases again, and that no staff tool reported.
+---     releases again, and that no staff tool reported. A raise in between
+---     on the running server leaves the same, which the maintenance tick
+---     finishes through here too (Contracts.finishEndings).
 ---@param contractId string
+---@param reason string|nil the audit tag of what it releases, 'recovered_after_restart'
+--- by default
 ---@return string|nil what 'completed' | 'released' | nil when nothing was done
-function Contracts.recoverEnded(contractId)
+function Contracts.recoverEnded(contractId, reason)
     local contract = Storage.readContract(contractId)
     if not contract then return nil end
 
     if contract.state == CH.STATE.COMPLETING
         and (contract.next_slot or 1) > (contract.payout_slots or 1) then
-        releaseUntouched(contract, false)
+        releaseUntouched(contract, false, reason)
         contract.resolved_at = contract.resolved_at or os.time()
         contract.resolution = contract.resolution or 'completed'
         Storage.setContractFields(contractId,
@@ -2762,11 +2797,81 @@ function Contracts.recoverEnded(contractId)
             forfeit = not contract.paused_since and contract.deadline_at ~= nil
                 and at > contract.deadline_at
         end
-        local released = releaseUntouched(contract, forfeit)
+        local released = releaseUntouched(contract, forfeit, reason)
         return released > 0 and 'released' or nil
     end
 
     return nil
+end
+
+--- How many closed contracts one pass of Contracts.finishEndings finishes,
+--- and how many escrow lines it reads to find them.
+local FINISH_PER_PASS = 10
+local STRANDED_READ = 200
+
+--- Finish endings that stopped part-way on the running server.
+---
+--- `resolve` writes the closed state first and moves the escrow after
+--- (finalise), so an expiry, a void, a cancel or a buyout that raised in
+--- between (a dropped connection, a hook that threw) left a closed contract
+--- holding what its ending never reached, with nothing running on it any
+--- more. Only the next start settled it (Recover, through recoverEnded);
+--- until then /ch-stuck listed none of it, and a staff `return` of a stake
+--- an expiry was forfeiting handed it back to the hitman, and the client
+--- lost the forfeit. Finished here instead, by the same recovery the boot
+--- runs, so it is handed over as the ending would have: stakes by why it
+--- ended, the rest back to the client.
+---
+--- Not a contract a claim or an ending is still running on
+--- (Escrow.claimRunning), whose lines are its own, nor one whose key
+--- something holds (an acceptance or a top-up handing back what it found
+--- closed under it): left for the next pass. Counted as an ending itself
+--- while it runs, so a staff settle meanwhile is refused as locked; until
+--- it has run, /ch-settle refuses such a line as an unfinished ending and
+--- /ch-stuck lists it as one (Admin.settleLine, Admin.interrupted). At most
+--- FINISH_PER_PASS contracts a pass, each on its own, so one that keeps
+--- raising is said in the console and holds up none of the others.
+---@return integer finished contracts it handed something over for
+---@return boolean more whether it left any for the next pass to try sooner
+function Contracts.finishEndings()
+    if not Storage.strandedEscrow then return 0, false end
+    local lines = Storage.strandedEscrow(STRANDED_READ) or {}
+    local ids, seen = {}, {}
+    for _, line in ipairs(lines) do
+        local id = line.contract_id
+        if id and not seen[id] and endingOwes(line) then
+            seen[id] = true
+            ids[#ids + 1] = id
+        end
+    end
+
+    local finished = 0
+    local more = #lines >= STRANDED_READ or #ids > FINISH_PER_PASS
+    for i = 1, math.min(#ids, FINISH_PER_PASS) do
+        local id = ids[i]
+        if Escrow.claimRunning(id) then
+            more = true
+        else
+            local ran, how, err = pcall(Contracts.serialized, { 'contract:' .. id },
+                Escrow.whileClaiming, id, Contracts.recoverEnded, id, 'ending_finished')
+            if not ran then
+                print(('[crimson-hitman] finishing the ending of contract %s raised: %s')
+                    :format(tostring(id), tostring(how)))
+            elseif how == false and err == CH.ERR.BUSY then
+                more = true
+            elseif how then
+                finished = finished + 1
+                print(('[crimson-hitman] contract %s had closed with escrow its ending never '
+                    .. 'handed over (the ending raised part-way); handed over now as it would '
+                    .. 'have been'):format(tostring(id)))
+                -- What finalise clears once a contract has ended, which an
+                -- ending that raised before it never did: a handover still
+                -- armed on it holds a countdown slot for good.
+                if Contracts.onResolved then Contracts.onResolved(id) end
+            end
+        end
+    end
+    return finished, more
 end
 
 return Contracts

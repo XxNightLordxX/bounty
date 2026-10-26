@@ -772,11 +772,27 @@ function Bridges.installCommands(modules)
         local lines = Admin.interrupted(src)
         if #lines == 0 then return reply(src, 'No interrupted releases.') end
 
-        local interrupted, nameless, parked = {}, {}, {}
+        local interrupted, nameless, parked, unfinished = {}, {}, {}, {}
         for i = 1, #lines do
-            local list = (lines[i].orphan and nameless) or (lines[i].raised and parked)
-                or interrupted
+            local list = (lines[i].unfinished and unfinished) or (lines[i].orphan and nameless)
+                or (lines[i].raised and parked) or interrupted
             list[#list + 1] = lines[i]
+        end
+
+        -- Lines of a closed contract whose ending raised before it handed
+        -- them over (Admin.interrupted): not left for staff, and settled by
+        -- the server itself (Contracts.finishEndings).
+        if #unfinished > 0 then
+            reply(src, ('%d escrow line(s) of contracts whose ending did not finish (it raised part-way) '
+                .. 'wait to be handed over:'):format(#unfinished))
+            for i = 1, #unfinished do
+                local line = unfinished[i]
+                reply(src, ('  %s  contract %s  %s %s  ending unfinished; it settles itself within a '
+                    .. 'minute'):format(line.line, line.contract, tostring(line.portion),
+                    describeLine(line)))
+            end
+            reply(src, ('The server finishes each ending as a restart would: a stake by why the contract '
+                .. 'ended, the rest back to the client. Nothing for /%s to do.'):format(names.settle))
         end
 
         -- Lines left for staff (Escrow.parked): a give that kept raising with
@@ -917,6 +933,15 @@ function Bridges.installCommands(modules)
                 .. 'contract and returns its escrow; /%s settles only what /%s lists.')
                 :format(tostring(detail), names.void, tostring(detail), names.settle, names.stuck))
         end
+        -- Closed, by an ending that raised before it handed this over
+        -- (Admin.settleLine): the maintenance tick finishes it.
+        if err == 'ending_unfinished' then
+            return reply(src, ('Not settled: ending unfinished; it settles itself within a minute. '
+                .. 'Contract %s closed, but its ending raised before it handed this line over; the '
+                .. 'server finishes that ending as a restart would (a stake by why it ended, the rest '
+                .. 'back to the client), so there is nothing for you to settle. Nothing moved.')
+                :format(tostring(detail)))
+        end
         if ok and err == 'queued' and detail == 'refused' then
             return reply(src, ('Queued: they are in the city, but the give was refused (no room in their '
                 .. 'pockets, their account would not take it, or their inventory could not be read), '
@@ -1030,7 +1055,14 @@ function Bridges.installCommands(modules)
             end
 
             -- Not while boot recovery runs (App.ready), like every app request.
+            -- Nor ever, once it has raised (App.recoveryFailed): the gate stays
+            -- shut until a restart, so a moment changes nothing, and the
+            -- console has told staff (BOOT RECOVERY FAILED).
             if modules.app and modules.app.ready == false then
+                if modules.app.recoveryFailed then
+                    return reply(src, 'The server\'s contract system failed to start, and staff have '
+                        .. 'been told. Nothing was charged.')
+                end
                 return reply(src, 'The server is still starting. Try again in a moment.')
             end
             if not modules.ratelimit.check(actor, 'bailout') then return slowDown('bailout') end

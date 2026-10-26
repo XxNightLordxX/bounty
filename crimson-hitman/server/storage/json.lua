@@ -1617,6 +1617,23 @@ function JsonStore.unsettledEscrowContracts()
     return out
 end
 
+--- Held escrow owed to nobody and naming no give, of a closed contract; see
+--- the memory backend.
+---@param limit integer
+function JsonStore.strandedEscrow(limit)
+    local out = {}
+    for _, line in pairs(db.escrow) do
+        if line.state == CH.ESCROW_STATE.HELD and line.owed_to == nil
+            and line.releasing_to == nil then
+            local contract = db.contracts[line.contract_id]
+            if contract and CH.TERMINAL[contract.state] then out[#out + 1] = line end
+        end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    for i = #out, (tonumber(limit) or #out) + 1, -1 do out[i] = nil end
+    return out
+end
+
 function JsonStore.claimEscrowLine(id, expected, next_)
     local line = db.escrow[id]
     if not line or line.state ~= expected then return false end

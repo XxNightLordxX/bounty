@@ -3913,3 +3913,305 @@ describe('a parked line another staff settle holds', function()
         end)
     end
 end)
+
+--- Make the release of a contract's stakes raise, once, before it claims
+--- anything: what an ending's finalise does first once the contract is
+--- closed and the rest of its escrow handed back. Returns the real release,
+--- to put back, and a function saying whether it has raised.
+local function stakeRaises(s, contractId)
+    local release, raised = s.escrow.release, false
+    s.escrow.release = function(id, cid, filter, ...)
+        if id == contractId and not raised and type(filter) == 'table'
+            and filter.portion == CH.PORTION.STAKE then
+            raised = true
+            error('the connection dropped', 0)
+        end
+        return release(id, cid, filter, ...)
+    end
+    return release, function() return raised end
+end
+
+--- A contract whose expiry raised between writing EXPIRED and handing its
+--- escrow over (finalise's release of the stake, here): closed, the reward
+--- back with the client, and the hitman's stake still held with nothing
+--- running on it. /ch-stuck listed nothing, a staff `return` of the stake handed the
+--- forfeit to the hitman, and only the next start settled it. `before`
+--- runs just before the expiry.
+local function raisingExpiry(mode, before)
+    local main, s = boot(mode)
+    local f = fixture(s)
+    local c = s.contracts.create(f.creator, {
+        targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+        reward = { baseline = { cash = 5000 } }, penaltyAmount = 1000,
+    })
+    truthy(c)
+    truthy(s.contracts.accept(f.hitman, c.id, false))
+    local stake
+    for _, l in ipairs(s.storage.readEscrow(c.id)) do
+        if l.portion == CH.PORTION.STAKE then stake = l end
+    end
+    truthy(stake, 'the hitman staked')
+    local creator, hitman = money(1), money(3)
+
+    -- Well past the deadline, so the expiry is the hitman's failure.
+    Env.advance(Config.Limits.DefaultDeadlineSeconds + 3600)
+    if before then before(main, s, c) end
+    local release, raised = stakeRaises(s, c.id)
+    main.markPresenceChanged()
+    local ran = pcall(main.expire)
+    s.escrow.release = release
+    falsy(ran, 'the expiry raised')
+    truthy(raised(), 'it raised after writing EXPIRED')
+    eq(s.storage.readContract(c.id).state, CH.STATE.EXPIRED)
+    eq(money(1) - creator, 5000, 'the reward was back before it raised')
+    eq(s.storage.readEscrowLine(stake.id).state, CH.ESCROW_STATE.HELD, 'the stake left held')
+    return main, s, f, c, stake, creator, hitman
+end
+
+describe('an ending that raised before handing its escrow over', function()
+    for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
+        it(mode .. ': is listed and refused as unfinished, and the tick finishes it as a restart would', function()
+            -- A pass just before, so the next one is due no sooner than its
+            -- interval allows.
+            local main, s, _, c, stake, creator, hitman = raisingExpiry(mode, function(m)
+                eq(m.finishEndings(), 0, 'nothing to finish yet')
+            end)
+
+            local rows = s.admin.interrupted(0)
+            eq(#rows, 1, 'listed for staff')
+            eq(rows[1].line, stake.id)
+            eq(rows[1].why, 'ending_unfinished')
+            Env.console = {}
+            Env.commands[Config.Admin.Commands.stuck](0, {})
+            local said = table.concat(Env.console, '\n')
+            truthy(said:find('ending unfinished; it settles itself within a minute', 1, true), said)
+
+            for _, how in ipairs({ 'return', 'pay', 'delivered' }) do
+                local ok, err, which = s.admin.settleLine(0, stake.id, how)
+                falsy(ok, how .. ' settled a line its ending still owes')
+                eq(err, 'ending_unfinished', how)
+                eq(which, c.id)
+            end
+            Env.console = {}
+            Env.commands[Config.Admin.Commands.settle](0, { stake.id, 'return' })
+            said = table.concat(Env.console, '\n')
+            truthy(said:find('ending unfinished; it settles itself within a minute', 1, true), said)
+            eq(money(1) - creator, 5000, 'nothing moved')
+            eq(money(3), hitman, 'nothing moved')
+
+            -- Inside its interval nothing is read; within a minute it is done.
+            main.tick()
+            eq(s.storage.readEscrowLine(stake.id).state, CH.ESCROW_STATE.HELD, 'before its interval')
+            Env.advance(30)
+            main.tick()
+            eq(s.storage.readEscrowLine(stake.id).state, CH.ESCROW_STATE.SETTLED, 'finished by the tick')
+            eq(money(1) - creator, 6000, 'the reward back and the stake forfeited, once')
+            eq(money(3), hitman, 'the forfeited stake is not the hitman\'s')
+            eq(#s.admin.interrupted(0), 0)
+            eq(select(2, s.admin.settleLine(0, stake.id, 'return')), CH.ERR.ALREADY_SETTLED)
+            Env.advance(30)
+            main.tick()
+            eq(money(1) - creator, 6000, 'and once only')
+        end)
+
+        it(mode .. ': a void that raised hands the stake back to the hitman, as the void would', function()
+            local main, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } }, penaltyAmount = 1000,
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local creator, hitman = money(1), money(3)
+            local release, raised = stakeRaises(s, c.id)
+            falsy(pcall(s.admin.void, 0, c.id, 'staff'), 'the void raised')
+            s.escrow.release = release
+            truthy(raised())
+            eq(s.storage.readContract(c.id).state, CH.STATE.VOIDED)
+            eq(money(3), hitman, 'the stake still held')
+
+            local rows = s.admin.interrupted(0)
+            eq(#rows, 1)
+            eq(rows[1].why, 'ending_unfinished')
+            eq(main.finishEndings(), 1)
+            eq(money(3) - hitman, 1000, 'a void is not the hitman failing')
+            eq(money(1) - creator, 5000, 'the reward back once')
+            eq(#s.admin.interrupted(0), 0)
+        end)
+
+        it(mode .. ': is left alone while its ending is still running', function()
+            local main, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } }, penaltyAmount = 1000,
+            })
+            truthy(c)
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            local stake
+            for _, l in ipairs(s.storage.readEscrow(c.id)) do
+                if l.portion == CH.PORTION.STAKE then stake = l end
+            end
+            local creator, hitman = money(1), money(3)
+
+            -- The expiry, suspended once EXPIRED is written and the reward
+            -- is back, before it releases the stake.
+            local release, ending = s.escrow.release, nil
+            local held = false
+            s.escrow.release = function(id, cid, filter, ...)
+                if not held and coroutine.running() == ending and id == c.id
+                    and type(filter) == 'table' and filter.portion == CH.PORTION.STAKE then
+                    held = true
+                    coroutine.yield('finalising')
+                end
+                return release(id, cid, filter, ...)
+            end
+            ending = coroutine.create(function()
+                return s.contracts.resolve(c.id, CH.STATE.EXPIRED, f.creator.cid, nil, 'expired')
+            end)
+            local ran, step = coroutine.resume(ending)
+            truthy(ran, tostring(step))
+            eq(step, 'finalising')
+
+            local finished, more = s.contracts.finishEndings()
+            eq(finished, 0, 'finished an ending still running')
+            truthy(more, 'left for a pass soon after')
+            eq(s.storage.readEscrowLine(stake.id).state, CH.ESCROW_STATE.HELD)
+            for _, row in ipairs(s.admin.interrupted(0)) do
+                falsy(row.line == stake.id, 'listed a stake its ending is still settling')
+            end
+            eq(select(2, s.admin.settleLine(0, stake.id, 'return')), CH.ERR.LOCKED)
+
+            local ran2, ok = coroutine.resume(ending)
+            s.escrow.release = release
+            truthy(ran2, tostring(ok))
+            truthy(ok, 'the expiry')
+            eq(main.finishEndings(), 0, 'nothing left for the tick')
+            eq(money(1) - creator, 6000, 'the reward back and the stake forfeited, once')
+            eq(money(3), hitman)
+        end)
+
+        it(mode .. ': finishes a bounded number a pass, and the rest on the passes after', function()
+            local main, s = boot(mode)
+            local f = fixture(s)
+            Config.Limits.MaxActiveContractsPerCreator = 20
+            Config.Limits.MaxActiveContractsPerTarget = 20
+            Env.players[1].PlayerData.money.cash = 400000
+            local ids = {}
+            for i = 1, 12 do
+                local c = s.contracts.create(f.creator, {
+                    targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                    reward = { baseline = { cash = 1000 } },
+                })
+                truthy(c, 'contract ' .. i)
+                ids[#ids + 1] = c.id
+            end
+            local creator = money(1)
+            -- Each cancel raises after writing CANCELLED, before its release.
+            local release, raising = s.escrow.release, true
+            s.escrow.release = function(...)
+                if raising then error('the connection dropped', 0) end
+                return release(...)
+            end
+            for i = 1, #ids do
+                falsy(pcall(s.contracts.cancel, f.creator, ids[i]), 'cancel ' .. i .. ' raised')
+                eq(s.storage.readContract(ids[i]).state, CH.STATE.CANCELLED)
+            end
+            raising = false
+            s.escrow.release = release
+            eq(money(1), creator, 'nothing handed back')
+
+            local finished, more = s.contracts.finishEndings()
+            eq(finished, 10, 'a pass is bounded')
+            truthy(more, 'and says there is more')
+            eq(money(1) - creator, 10000)
+            -- The tick comes back at once for the rest.
+            main.tick()
+            eq(money(1) - creator, 12000, 'every reward back, once')
+            local _, again = s.contracts.finishEndings()
+            falsy(again)
+            for i = 1, #ids do
+                for _, l in ipairs(s.storage.readEscrow(ids[i])) do
+                    eq(l.state, CH.ESCROW_STATE.SETTLED)
+                end
+            end
+        end)
+    end
+end)
+
+--- A contract being placed takes its escrow before it writes its row, and
+--- its lines read as those of a contract never stored until it has: a staff
+--- `return` in between handed the reward back to the client, and the create
+--- went on to place a contract holding nothing. Tried before every store
+--- call the create makes between taking the escrow and writing the row.
+describe('a staff settle of a line of a contract still being placed', function()
+    for _, mode in ipairs({ 'memory', 'json', 'mysql' }) do
+        it(mode .. ': is refused as locked at every await, and the contract keeps its escrow', function()
+            local tried, finished = 0, false
+            for n = 1, 60 do
+                local _, s = boot(mode)
+                local f = fixture(s)
+                local creator = money(1)
+
+                local store, real, placing = s.storage, {}, nil
+                local taken, written, seen = false, false, 0
+                for name, fn in pairs(store) do
+                    if type(fn) == 'function' then
+                        real[name] = fn
+                        store[name] = function(...)
+                            local mine = coroutine.running() == placing
+                            if mine and taken and not written then
+                                seen = seen + 1
+                                if seen == n then coroutine.yield(name) end
+                            end
+                            -- Up to the row's write, not what it calls itself.
+                            if mine and name == 'writeContract' then written = true end
+                            local out = table.pack(fn(...))
+                            if mine and name == 'writeEscrow' then taken = true end
+                            return table.unpack(out, 1, out.n)
+                        end
+                    end
+                end
+                placing = coroutine.create(function()
+                    return s.contracts.create(f.creator, {
+                        targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                        reward = { baseline = { cash = 5000 } },
+                    })
+                end)
+                local ran, step = coroutine.resume(placing)
+                local paused = ran and coroutine.status(placing) == 'suspended'
+                if paused then
+                    tried = tried + 1
+                    local lines = store.orphanEscrow()
+                    truthy(#lines > 0, ('no line taken before store call %d'):format(n))
+                    for _, line in ipairs(lines) do
+                        for _, how in ipairs({ 'return', 'pay', 'delivered' }) do
+                            local ok, err = s.admin.settleLine(0, line.id, how)
+                            falsy(ok, ('a %s before store call %d settled a line being placed')
+                                :format(how, n))
+                            eq(err, CH.ERR.LOCKED, ('%s before store call %d'):format(how, n))
+                        end
+                        for _, row in ipairs(s.admin.interrupted(0)) do
+                            falsy(row.line == line.id, 'listed a line being placed')
+                        end
+                    end
+                    eq(s.contracts.recoverNeverPlaced(), 0, 'swept a contract being placed')
+                    ran, step = coroutine.resume(placing)
+                end
+                for name, fn in pairs(real) do store[name] = fn end
+                truthy(ran, tostring(step))
+                eq(coroutine.status(placing), 'dead')
+                truthy(type(step) == 'table' and step.id, 'placed')
+                eq(s.storage.readContract(step.id).state, CH.STATE.ACTIVE)
+                for _, line in ipairs(s.storage.readEscrow(step.id)) do
+                    eq(line.state, CH.ESCROW_STATE.HELD, 'its escrow still behind it')
+                end
+                eq(creator - money(1), 5000, 'charged once, and nothing handed back')
+                if not paused then finished = true; break end
+            end
+            truthy(finished, 'the create never got as far as its row')
+            truthy(tried >= 1, 'the create has to touch the store between taking and writing')
+        end)
+    end
+end)

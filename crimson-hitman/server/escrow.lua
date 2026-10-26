@@ -52,7 +52,12 @@ local inFlight = {}  -- { [lineId] = count }
 --- `return` of a stake in between handed it to the hitman. A contract
 --- COMPLETING that is not here has no claim paying it any more: the one
 --- that took it raised part-way, and it stays so until the next start
---- (leftAs: 'stalled_claim').
+--- (leftAs: 'stalled_claim'). A contract being placed (Contracts.create)
+--- is here too, from before its escrow is taken until its row is written
+--- or the create has failed and handed it back: until then its lines are
+--- those of a contract never stored, and a staff `return` handed the
+--- reward back while the create went on to write a contract with nothing
+--- behind it.
 local claiming = {}  -- { [contractId] = count }
 
 --- The ox_inventory items that are a money account, by name; read once per
@@ -1453,10 +1458,12 @@ function Escrow.inFlight(id)
     return inFlight[id] ~= nil
 end
 
---- Run fn(...) as a claim on a contract (Contracts.claimSlot), or as its
---- ending (Contracts.resolve), counted in `claiming` from before it starts
---- until it returns or raises: a contract COMPLETING that none is paying is
---- one a claim left so when it raised.
+--- Run fn(...) as a claim on a contract (Contracts.claimSlot), as its
+--- ending (Contracts.resolve, or the maintenance tick finishing one that
+--- raised, Contracts.finishEndings), or as its placing (Contracts.create),
+--- counted in `claiming` from before it starts until it returns or raises:
+--- a contract COMPLETING that none is paying is one a claim left so when it
+--- raised.
 ---@param contractId string
 ---@param fn function
 ---@return any ... what fn returns
@@ -1470,8 +1477,9 @@ function Escrow.whileClaiming(contractId, fn, ...)
     return table.unpack(out, 2, out.n)
 end
 
---- Whether a claim or an ending runs on a contract in this process
---- (Escrow.whileClaiming): its lines are that call's until it returns.
+--- Whether a claim, an ending or a create runs on a contract in this
+--- process (Escrow.whileClaiming): its lines are that call's until it
+--- returns.
 ---@param contractId string|nil
 ---@return boolean
 function Escrow.claimRunning(contractId)

@@ -321,6 +321,27 @@ function Admin.interrupted(src)
         end
     end
 
+    -- Lines of a closed contract whose ending raised before it handed them
+    -- over, with nothing running on it any more (Contracts.endingOwes): the
+    -- maintenance tick finishes that ending as the next start would
+    -- (Contracts.finishEndings), and /ch-settle refuses them until it has.
+    -- Listed so staff see why, and not as theirs to settle. Before the log's
+    -- rows, so one of them is shown for what it is now. Not one a call here
+    -- holds, nor one of a contract a claim or an ending (that finishing one
+    -- included) is running on.
+    local stranded = Storage.strandedEscrow and Storage.strandedEscrow(1000) or {}
+    for _, line in ipairs(stranded) do
+        if not seen[line.id] and Contracts.endingOwes(line) and not Escrow.inFlight(line.id)
+            and not Escrow.claimRunning(line.contract_id) then
+            seen[line.id] = true
+            out[#out + 1] = {
+                line = line.id, contract = line.contract_id, amount = line.amount,
+                source = line.source, item = line.item, quantity = line.quantity,
+                portion = line.portion, why = 'ending_unfinished', unfinished = true,
+            }
+        end
+    end
+
     for i = #rows, 1, -1 do
         local row = rows[i]
         local detail = row.detail or {}
@@ -384,9 +405,12 @@ function Admin.interrupted(src)
     -- whose they were (Contracts.recoverNeverPlaced): held, and naming
     -- nobody to hand it back to. Not an interrupted payment, but the same
     -- question for staff, and the boot told them to look here for it. Not
-    -- one a call here holds: a staff return giving it, say.
+    -- one a call here holds: a staff return giving it, say; nor one of a
+    -- contract a create here is still placing (Escrow.claimRunning), which
+    -- reads as never stored until its row is written.
     for _, line in ipairs(Storage.orphanEscrow and Storage.orphanEscrow() or {}) do
-        if not seen[line.id] and namesNobody(line) and not Escrow.inFlight(line.id) then
+        if not seen[line.id] and namesNobody(line) and not Escrow.inFlight(line.id)
+            and not Escrow.claimRunning(line.contract_id) then
             seen[line.id] = true
             out[#out + 1] = {
                 line = line.id,
@@ -626,7 +650,8 @@ end
 ---@return string|nil err
 ---@return string|integer|nil detail whose queue it is in ('already_queued'), whom only a
 --- pay settles it to ('pay_only'), what it owes ('owes_less'), the live contract it
---- belongs to ('live'), or for 'queued' why it was not given: 'away' (not in the
+--- belongs to ('live'), the closed contract whose ending has still to hand it over
+--- ('ending_unfinished'), or for 'queued' why it was not given: 'away' (not in the
 --- city) or 'refused' (the give was refused). 'recovering' while boot recovery runs,
 --- and 'recovery_failed' once it has raised.
 function Admin.settleLine(src, lineId, disposition, owner)
@@ -741,6 +766,17 @@ function Admin.settleLine(src, lineId, disposition, owner)
     -- the forfeit. Asked after the contract was read: an ending that closed
     -- it is counted from before its write.
     if not parked and Escrow.claimRunning(line.contract_id) then return false, CH.ERR.LOCKED end
+
+    -- Closed, with no ending running on it any more, and still holding a
+    -- line only its ending hands over (Contracts.endingOwes): the ending
+    -- raised between writing the closed state and moving the escrow. Its
+    -- line is not one left for staff: settled here, a `return` of a stake an
+    -- expiry was forfeiting handed it back to the hitman. The maintenance
+    -- tick finishes that ending as the next start would
+    -- (Contracts.finishEndings), within a minute, and the command says so.
+    if not parked and contract and CH.TERMINAL[contract.state] and Contracts.endingOwes(line) then
+        return false, 'ending_unfinished', contract.id
+    end
 
     -- Nothing of it was given (Escrow.NEVER_GIVEN: owed, in no retry queue,
     -- and naming no give that may have run, or owed by a claim that raised

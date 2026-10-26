@@ -1151,6 +1151,24 @@ function MySQLStore.releasingEscrow()
     return rows
 end
 
+--- Held escrow owed to nobody and naming no give, of a closed contract; see
+--- the memory backend. Read by the maintenance tick, so served by idx_state
+--- on the held lines and the contracts' primary key, never a scan of the
+--- settled ones. The closed states are CH.TERMINAL's.
+---@param limit integer
+function MySQLStore.strandedEscrow(limit)
+    local rows = db.query([[
+        SELECT e.* FROM crimson_escrow e
+        JOIN crimson_contracts c ON c.id = e.contract_id
+        WHERE e.state = 'held' AND e.owed_to IS NULL AND e.releasing_to IS NULL
+          AND c.state IN ('completed', 'bailed_out', 'expired', 'cancelled', 'voided')
+        ORDER BY e.id
+        LIMIT ?
+    ]], { math.floor(tonumber(limit) or 100) }) or {}
+    for i = 1, #rows do hydrateEscrow(rows[i]) end
+    return rows
+end
+
 --- The compare-and-set that makes double release impossible (§14.3).
 --- One statement, so the check and the write cannot be interleaved.
 function MySQLStore.claimEscrowLine(id, expected, next_)

@@ -181,7 +181,17 @@ describe('interrupted releases', function()
     --- contract that has closed (its ending's release was interrupted): a
     --- line of a live one is that contract's, and /ch-settle refuses it.
     --- Closed by hand, with its escrow still held, which only an ending the
-    --- server stopped leaves: a fixture, not the resource's output.
+    --- server stopped leaves: a fixture, not the resource's output. The line
+    --- names whom the interrupted give was going to (`releasing_to`), as one
+    --- an older version put back without leaving it for staff does: one
+    --- naming nobody on a closed contract is its ending's to hand over
+    --- (Contracts.finishEndings), not staff's to settle.
+    local function nameGoing(s, c, line, cid)
+        local held = s.storage.readEscrowLine(line.id)
+        held.releasing_to = cid
+        s.storage.writeEscrow(c.id, { held })
+    end
+
     local function stranded()
         local s, f, c = seeded()
         rawset(s.storage, '__rawFixture', true)
@@ -191,6 +201,7 @@ describe('interrupted releases', function()
         truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
         -- Recovery's half: back to held, logged for review.
         truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
+        nameGoing(s, c, line, 'HITMAN01')
         s.audit.financial('release_interrupted', 'HITMAN01', c.id,
             { line = line.id, amount = line.amount, review = true })
         s.audit.flush()
@@ -230,6 +241,7 @@ describe('interrupted releases', function()
         truthy(s.storage.compareSetContractState(c.id, CH.STATE.ACCEPTED, CH.STATE.CANCELLED))
         truthy(s.storage.claimEscrowLine(stake.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
         truthy(s.storage.claimEscrowLine(stake.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
+        nameGoing(s, c, stake, 'HITMAN01')
         s.audit.financial('release_interrupted', 'HITMAN01', c.id, { line = stake.id, review = true })
         s.audit.flush()
         local creatorBefore, hitmanBefore = money(1), money(3)
@@ -361,11 +373,15 @@ describe('interrupted releases', function()
         eq(#lines, 2)
         rawset(s.storage, '__rawFixture', true)
         truthy(s.storage.compareSetContractState(c.id, CH.STATE.ACTIVE, CH.STATE.CANCELLED))
+        -- The first interrupted on its way to somebody, so it is staff's.
+        nameGoing(s, c, lines[1], 'HITMAN01')
 
         truthy(s.admin.settleLine(0, lines[1].id, 'return'))
         eq(s.storage.readEscrowLine(lines[1].id).state, CH.ESCROW_STATE.SETTLED)
         eq(s.storage.readEscrowLine(lines[2].id).state, CH.ESCROW_STATE.HELD,
             'a named line must not release the whole contract')
+        -- The other is the ending's still, and not staff's to settle.
+        eq(select(2, s.admin.settleLine(0, lines[2].id, 'return')), 'ending_unfinished')
     end)
 
     it('refuses a disposition it does not understand', function()
@@ -402,7 +418,10 @@ describe('interrupted releases', function()
 
     --- Recovery logs a line it put back naming nobody with no recipient, and
     --- only a return settles one (a pay has nobody to go to): /ch-stuck told
-    --- staff `pay|return` for every line it listed from the log.
+    --- staff `pay|return` for every line it listed from the log. Of a contract
+    --- that has closed, such a line is one its ending never handed over
+    --- (Contracts.endingOwes): listed as an unfinished ending, which the
+    --- server finishes itself, and refused to staff until it has.
     it('gives each line listed from the log the command that settles it', function()
         local s, _, c = seeded()
         rawset(s.storage, '__rawFixture', true)
@@ -416,24 +435,49 @@ describe('interrupted releases', function()
 
         local rows = s.admin.interrupted(0)
         eq(#rows, 1)
-        eq(rows[1].settles, 'return')
-        eq(rows[1].intended, '(nobody)')
+        eq(rows[1].why, 'ending_unfinished', 'of a closed contract: its ending\'s, not staff\'s')
         local cmd = commands(s)
         Env.aces[3] = { ['crimson.admin'] = true }
         Env.chat = {}
         truthy(pcall(cmd[Config.Admin.Commands.stuck], 3, {}))
         local out = said(3)
-        truthy(out:find(('only /%s %s return settles it'):format(Config.Admin.Commands.settle, line.id),
+        truthy(out:find('ending unfinished; it settles itself within a minute', 1, true), out)
+        falsy(out:find('pay|return', 1, true), out)
+        for _, how in ipairs({ 'pay', 'return', 'delivered' }) do
+            eq(select(2, s.admin.settleLine(0, line.id, how)), 'ending_unfinished', how)
+        end
+        local creator = money(1)
+        eq(s.contracts.finishEndings(), 1, 'finished as the cancel would have')
+        eq(money(1) - creator, 5000, 'back to the client')
+        eq(#s.admin.interrupted(0), 0)
+
+        -- Of a contract never stored, nothing else hands it over: only a
+        -- return settles it, to whoever put it up.
+        local orphan = { id = 'ctnever00001:1', contract_id = 'ctnever00001', slot = 1,
+            portion = CH.PORTION.BASELINE, source = 'cash', amount = 5000,
+            state = CH.ESCROW_STATE.HELD, taken_from = 'CREATOR1' }
+        s.storage.writeEscrow('ctnever00001', { orphan })
+        s.audit.financial('release_interrupted', nil, 'ctnever00001',
+            { line = orphan.id, amount = 5000, review = true })
+        s.audit.flush()
+        rows = s.admin.interrupted(0)
+        eq(#rows, 1)
+        eq(rows[1].settles, 'return')
+        eq(rows[1].intended, '(nobody)')
+        Env.chat = {}
+        truthy(pcall(cmd[Config.Admin.Commands.stuck], 3, {}))
+        out = said(3)
+        truthy(out:find(('only /%s %s return settles it'):format(Config.Admin.Commands.settle, orphan.id),
             1, true), out)
         falsy(out:find('pay|return', 1, true), out)
         falsy(out:find(' pay (to them)', 1, true), out)
 
         -- As it says: a pay has nobody to go to, and a return settles it.
-        local ok, err = s.admin.settleLine(0, line.id, 'pay')
+        local ok, err = s.admin.settleLine(0, orphan.id, 'pay')
         falsy(ok)
         eq(err, CH.ERR.INVALID_INPUT)
-        local creator = money(1)
-        truthy(s.admin.settleLine(0, line.id, 'return'))
+        creator = money(1)
+        truthy(s.admin.settleLine(0, orphan.id, 'return'))
         eq(money(1) - creator, 5000)
 
         -- One whose row names whom it was paying: either settles it.
@@ -945,6 +989,10 @@ describe('what a staff command prints', function()
                 CH.ESCROW_STATE.HELD)
             local stored = s.storage.readEscrowLine(line.id)
             if stored and stored.source == 'item' then stored.amount = 0 end
+            -- Naming whom the give was going to, as one an older version put
+            -- back without leaving it for staff does: one naming nobody is
+            -- the closed contract's ending's to hand over, not staff's.
+            if stored then stored.releasing_to = f.hitman.cid end
             s.audit.financial('release_interrupted', f.hitman.cid, c.id,
                 { line = line.id })
         end
@@ -1684,10 +1732,13 @@ describe('the party /ch-stuck names for an interrupted line', function()
         local line = s.storage.readEscrow(c.id)[1]
         truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
         truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
+        -- Naming whom the interrupted give was going to: one naming nobody
+        -- is the closed contract's ending's to hand over, not staff's.
+        s.storage.readEscrowLine(line.id).releasing_to = 'HITMAN01'
         s.audit.financial('release_interrupted', 'HITMAN01', c.id,
             { line = line.id, amount = line.amount, review = true })
         s.audit.flush()
-        eq(s.admin.interrupted(0)[1].intended, 'HITMAN01', 'whom the row names, while the line names nobody')
+        eq(s.admin.interrupted(0)[1].intended, 'HITMAN01', 'whom the interrupted give was going to')
 
         Env.removePlayer(1)
         local ok, note = s.admin.settleLine(0, line.id, 'return')
@@ -1710,6 +1761,7 @@ describe('a pay on a line already queued for whom it names', function()
         local line = s.storage.readEscrow(c.id)[1]
         truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.HELD, CH.ESCROW_STATE.RELEASING))
         truthy(s.storage.claimEscrowLine(line.id, CH.ESCROW_STATE.RELEASING, CH.ESCROW_STATE.HELD))
+        s.storage.readEscrowLine(line.id).releasing_to = 'HITMAN01'
         s.audit.financial('release_interrupted', 'HITMAN01', c.id,
             { line = line.id, amount = line.amount, review = true })
         s.audit.flush()
