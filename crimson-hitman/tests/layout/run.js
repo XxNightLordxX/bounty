@@ -138,6 +138,16 @@ function serverStub() {
   // where the other card has Verify kill beside it.
   taken[1].fulfilment = 'alive';
   taken[1].reward = { baseline: taken[1].reward.baseline, bonus: 0 };
+  // And on the board, where the line under the reward says to whom the
+  // target is brought; and on a placer's own card once a hitman has it,
+  // which says a hitman is bringing the target to them. Both measured with
+  // every other card, at phone width.
+  contracts[1].fulfilment = 'alive';
+  contracts[1].reward = { baseline: contracts[1].reward.baseline, bonus: 0 };
+  own[2].fulfilment = 'alive';
+  own[2].reward = { baseline: own[2].reward.baseline, bonus: 0 };
+  own[2].hitmenActive = 1;
+  own[2].hitmen = [{ alias: 'Operative #1' }];
 
   const answers = {
     list: { ok: true, data: { page: 1, pages: 1, contracts: contracts,

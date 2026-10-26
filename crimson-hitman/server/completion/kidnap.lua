@@ -27,6 +27,17 @@ end
 
 local function key(contractId, hitmanCid) return contractId .. ':' .. hitmanCid end
 
+--- A handover radius in the words a player reads: "12", not "12.0", and
+--- Config.Kidnap.Radius when none is given. Every notice that says how close
+--- the person who placed the contract has to be says it from the config.
+---@param radius number|nil
+---@return string
+local function metres(radius)
+    local r = tonumber(radius) or tonumber(Config.Kidnap.Radius) or 0
+    if r > -1e9 and r < 1e9 and r == math.floor(r) then return ('%d'):format(math.floor(r)) end
+    return ('%.1f'):format(r)
+end
+
 --------------------------------------------------------------------------
 -- Coercion
 --------------------------------------------------------------------------
@@ -229,9 +240,12 @@ function Kidnap.arm(contractId, hitmanCid)
     outcomes[key(contractId, hitmanCid)] = nil
 
     -- The creator has to be present for the whole countdown, so they are
-    -- told the moment it starts rather than discovering it failed.
+    -- told the moment it starts rather than discovering it failed, and how
+    -- close to stand: "Be there now" did not say where "there" ended.
     Notify.toCitizen(contract.creator_cid, 'Handover starting',
-        'An operative has your target in hand. Be there now.')
+        ('A hitman has brought your target to you for the handover. Stay where you '
+            .. 'are, within %s m of them both, for %d seconds.')
+            :format(metres(radius), tonumber(Config.Kidnap.CountdownSeconds) or 0))
 
     Audit.action('kidnap_armed', hitmanCid, contractId, {})
     -- An attempt on the target, which is what keeps an exclusive hold.
@@ -422,16 +436,31 @@ function Kidnap.tick(deltaMs)
                         -- sending them after a target who was still in their
                         -- hands. The target is checked first: if they are the one
                         -- who went, the hitman really has lost them.
+                        --
+                        -- The person who placed the contract by that name, with
+                        -- the distance they had to keep: "your client" named
+                        -- somebody a hitman may never have been told about. An
+                        -- absent anonymous one fails as creator_too_far, and its
+                        -- words say "online and within" so as not to say which.
                         local why
                         if reason == 'party_offline' and not targetActor then
                             why = 'The target left the city before the handover finished.'
                         elseif reason == 'party_offline' and not creatorActor then
-                            why = 'Your client went offline before the handover finished.'
+                            why = ('The person who placed this contract went offline before '
+                                .. 'the handover finished. They have to be online and within '
+                                .. '%s m of you and the target for it.'):format(metres(state.radius))
                         elseif reason == 'creator_too_far' then
-                            why = 'Your client did not arrive in time.'
+                            why = ('The person who placed this contract did not arrive in '
+                                .. 'time. They have to be online and within %s m of you and '
+                                .. 'the target for the whole handover.'):format(metres(state.radius))
                         elseif reason == 'target_not_conscious' then
                             why = 'The target went down before the handover finished. '
                                 .. 'A handover has to be alive.'
+                            -- Where nothing but a handover pays, what still does.
+                            if Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
+                                why = why .. ' Killing them does not count: once they are '
+                                    .. 'back on their feet, bring them in alive again.'
+                            end
                         elseif reason == 'target_too_hurt' then
                             why = 'The target got too badly hurt before the handover '
                                 .. 'finished. Get them patched up first.'
@@ -564,6 +593,10 @@ function Kidnap.progress(contractId, hitmanCid)
         -- than a bare number of milliseconds with nothing to compare it to.
         graceTotal = Config.Kidnap.MaxTotalGraceMs,
         breaking  = state.breaking,
+        -- The distance this countdown measures against (the one it was
+        -- armed with), so the page can say how close the person who placed
+        -- the contract has to be when that is what is slipping.
+        radius    = state.radius,
     }
 end
 

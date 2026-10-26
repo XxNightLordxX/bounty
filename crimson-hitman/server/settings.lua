@@ -111,7 +111,11 @@ local CATALOGUE = {
 
     { key = 'Completion.Fulfilment', section = 'features', group = 'Completion', kind = 'choice',
       choices = { 'alive', 'either' }, label = 'How contracts are completed',
-      about = '\'alive\': live handover only. \'either\': a photographed kill or a handover.',
+      -- Who the target is handed to, said here as everywhere a player reads
+      -- it; and no photograph, which under KillPhotos off is never taken.
+      about = '\'alive\': live transfer only. The target has to be brought alive to the '
+          .. 'person who placed the contract, who has to be there for the handover; a kill '
+          .. 'never completes one. \'either\': a verified kill, or that handover.',
       inflight = 'Each contract keeps the rule it was placed under; this changes new contracts only.' },
     { key = 'Completion.KillPhotos', section = 'features', group = 'Completion', kind = 'switch',
       label = 'Kill photos',

@@ -231,7 +231,12 @@ describe('why a handover failed', function()
         local said = failWith(function() Env.removePlayer(1) end)
         falsy(said:find('lost hold', 1, true), 'sent after a target still in '
             .. 'their hands: ' .. said)
-        truthy(said:find('client', 1, true), said)
+        -- Named as what they are to the hitman, with the distance they have
+        -- to keep, from Config.Kidnap rather than a figure in the words.
+        truthy(said:find('The person who placed this contract went offline', 1, true), said)
+        truthy(said:find(('online and within %d m'):format(math.floor(Config.Kidnap.Radius)),
+            1, true), said)
+        falsy(said:find('client', 1, true), 'a hitman may not know who "the client" is: ' .. said)
     end)
 
     it('says so when it is the target who left', function()

@@ -143,37 +143,75 @@ A staff account that can adjust money and spawn items makes this much faster.
 ## 4a. Live transfer only (as shipped)
 
 `Config.Completion.Fulfilment = 'alive'`: a contract is completed only by
-delivering the target alive to the client. Run these before changing it.
+bringing the target **alive** to **the person who placed the contract**, who
+has to be in the city and there for the handover. Run these before changing
+it. Every line below that names a distance or a time uses your
+`Config.Kidnap.Radius` and `CountdownSeconds` (12 m and 30 seconds as
+shipped); set them to something else once (say 8 and 20), restart, and check
+the app follows. Nothing a player reads here calls that person "the client",
+and nothing mentions a photo while `Config.Completion.KillPhotos` is off.
 
-- [ ] `/ch-diag` says `completion: alive` and that the kill photo settings
-      are not used
+- [ ] `/ch-diag` says `completion: alive`, that a contract is completed only
+      when the target is brought alive to the person who placed it, who has
+      to be there for the handover, and that the kill photo settings are not
+      used; in the admin panel, **How contracts are completed** says the same
 - [ ] The Place form offers no kidnapping bonus and no "alive only" marking
-      on goods, says contracts pay only for delivering the target alive, and
-      the placed contract holds no bonus line
+      on goods, says *Contracts here only pay when the target is brought to
+      you alive. You need to be in the city to meet the hitman for the
+      handover.*, and the placed contract holds no bonus line
 - [ ] The contract's card says **Alive only** on the board, under Mine and
-      under On Me, with nothing priced "if alive"; the accept dialog says a
-      kill does not complete it; the hitman's card has **Deliver alive** alone,
-      and a hitman who has never finished one is told how to deliver
+      under On Me, with nothing priced "if alive"; on the board, the line under
+      the reward says *Bring the target alive to the person who placed this
+      contract.*; the card names who placed it (**Placed by …** or **Placed
+      anonymously**)
+- [ ] The accept dialog says *This contract only pays when you bring the
+      target, alive, to the person who placed it. Killing them does not
+      count.*
+- [ ] The hitman's card has **Deliver alive** alone, and a hitman who has
+      never finished one reads *Bring them in alive: cuff them or get them
+      into your vehicle, take them to the person who placed this contract, get
+      within 12 m of that person, tap Deliver alive and hold for 30 seconds.
+      Killing them does not count — they respawn and the contract stays
+      open.* On an anonymous contract it adds *The person who placed it is
+      anonymous — use Message to agree where to meet.*; on a named one it
+      names them
+- [ ] As the placer, once a hitman takes it: the phone notice and your card
+      under Mine say *A hitman took your contract. They'll bring the target to
+      you alive — stay in the city and watch your messages.* When the
+      handover starts you are told to stay within 12 m of them both for 30
+      seconds
 - [ ] Place a contract, take it with a second character, **restrain** the
-      target (cuffs) and bring them to the client: the handover arms, counts
-      down and pays the **whole reward**; the contract closes
+      target (cuffs) and bring them to the person who placed it: the handover
+      arms, counts down and pays the **whole reward**; the contract closes
 - [ ] Again, with the target uncuffed in the **hitman's vehicle**: the
       handover arms and pays the same
+- [ ] Again, but tap **Deliver alive** with the placer 30 m away: *The person
+      who placed this contract must be online and within 12 m of you and the
+      target.* With the placer logged off: the same for an anonymous placer,
+      and *Everyone has to be online for a handover: the person who placed
+      this contract must be in the city and within 12 m …* for a named one.
+      Arm it with them there, then have them walk off: the countdown says
+      they must be within 12 m, and the failure notice says they did not
+      arrive in time and must be online and within 12 m
 - [ ] Again, but **kill** the target first: they die and respawn as normal,
-      the contract stays open under Mine for the client and the hitman,
-      there is no **Verify kill**, and nothing is paid; `/ch-timeline` on it
-      shows no `death_attributed`. Restrain them after the respawn and the
-      handover still pays
-- [ ] The client's **Change reward** offers no kidnapping bonus to raise;
+      the contract stays open under Mine for the placer and the hitman,
+      there is no **Verify kill**, and nothing is paid; **Deliver alive** on
+      the body says killing them does not count and to bring them in alive
+      once they are back up; `/ch-timeline` on it shows no
+      `death_attributed`. Restrain them after the respawn and the handover
+      still pays
+- [ ] The placer's **Change reward** offers no kidnapping bonus to raise;
       adding money still works, and it is paid on the handover
 - [ ] **One `'either'` smoke test** (on a copy, or set it back afterwards):
       set `Config.Completion.Fulfilment = 'either'` and restart. `/ch-diag`
       says `completion: either`, and counts any contract still open from the
       step above as placed under `'alive'`: a kill on that one still pays
-      nothing. Place a new contract with a 50% kidnapping bonus: a kill
-      verified with **Verify kill** (no camera, kill photos being off as
-      shipped) pays the baseline and the bonus goes back to the client; on a
-      second one, a handover pays baseline plus bonus
+      nothing. A new contract's cards, dialog and how-to read as they always
+      did (no line under the reward, no "only pays when"). Place one with a
+      50% kidnapping bonus: a kill verified with **Verify kill** (no camera,
+      kill photos being off as shipped) pays the baseline and the bonus goes
+      back to the person who placed it; on a second one, a handover pays
+      baseline plus bonus
 
 ## 5. Elimination
 

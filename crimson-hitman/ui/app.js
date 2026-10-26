@@ -449,7 +449,7 @@
     terms_changed: 'The stake or the deadline on this contract changed while you '
       + 'were looking at it. Refreshing now — check the new terms before you take it.',
     too_little_time: 'This contract runs out too soon to stake on. Taking it now '
-      + 'would hand your stake to the client before you could work it.',
+      + 'would hand your stake to the person who placed it before you could work it.',
     target_protected: 'That target cannot be listed right now.',
 
     /* One message covered six different rules, and a player reading it had
@@ -500,14 +500,18 @@
       + 'explosives, fire, run-overs and falls do not.',
     // A contract placed for a live delivery only (its fulfilment is
     // 'alive'): a kill never completes it, so there is never one to verify.
-    kill_not_allowed: 'This contract pays only for delivering the target alive. '
-      + 'A kill does not complete it: restrain them or get them into your '
-      + 'vehicle, bring them to the client and hold them there for the handover.',
+    // What to do instead, with the server's distance and hold, is said by
+    // failText (aliveOnlyRefusal); this is what is left when the page has
+    // not read them. "The client" is gone from every line about it: a
+    // hitman had no way to know it meant the person who placed the contract.
+    kill_not_allowed: 'This contract only pays when you bring the target, alive, to '
+      + 'the person who placed it. Killing them does not count: cuff them or get '
+      + 'them into your vehicle, take them to that person and tap Deliver alive.',
     // The same contracts pay their whole reward for that delivery, so there
     // is no bonus on top to set, raise or add to.
-    no_bonus: 'Contracts that pay only for delivering the target alive pay the '
-      + 'whole reward for it, so there is no separate bonus. Add it to the '
-      + 'reward instead.',
+    no_bonus: 'Contracts here only pay when the target is brought alive to the '
+      + 'person who placed the contract, and that pays the whole reward, so '
+      + 'there is no separate bonus. Add it to the reward instead.',
     // Not a fault. The poller stops on this and says the handover ended.
     no_handover: 'That handover is not running.',
     // A page that thought kill photos were off, on a server that takes
@@ -565,8 +569,8 @@
        long you wait, and one of them means it IS working. This is the one
        move a target has. */
     bailout_off: 'This server does not offer buyouts.',
-    no_buyout_price: 'The client did not put a price on closing this one. '
-      + 'There is nothing to pay.',
+    no_buyout_price: 'The person who placed this contract did not put a price on '
+      + 'closing it. There is nothing to pay.',
     buyout_pending: 'You have already paid. It closes shortly — a hitman is '
       + 'engaged, so it is not instant.',
     incapacitated: 'Not from the floor. Get up first.',
@@ -1423,6 +1427,10 @@
       if (least > 0) { return minRewardText(least); }
     }
 
+    // A kill on a contract only a live handover completes: what to do
+    // instead, with the server's own distance and hold.
+    if (result.err === 'kill_not_allowed') { return aliveOnlyRefusal(); }
+
     return ERRORS[result.err] || 'Something went wrong.';
   }
 
@@ -1674,6 +1682,14 @@
     // few letters a line — on exactly the contracts that pay the most.
     var notes = el('div', 'reward-notes');
 
+    // What the reward is paid for, first under it, on the board where a
+    // hitman decides. The chip below says "Alive only"; this says to whom,
+    // which the chip cannot, and which is the half nobody guessed.
+    if (context === 'board' && aliveOnly(contract)) {
+      notes.appendChild(el('div', 'hint ico i-usercheck',
+        'Bring the target alive to the person who placed this contract.'));
+    }
+
     // How much of that is dirty money, when any of it is. "Dirty money",
     // the Place form's and the wallet's word for it: this note said "black
     // money", so one currency went by two names a screen apart.
@@ -1763,8 +1779,10 @@
       // "1 operative" on their own card read as a rival, and nothing said
       // whether they had taken it anonymously or what alias the client sees.
       // The cap is left off — it only matters before accepting.
+      // "Under your name", the accept dialog's own words for it: "client
+      // sees your name" named a client nobody had been introduced to.
       meta.appendChild(chip('You' + (contract.myAlias ? ': ' + contract.myAlias : '')
-        + (contract.myAnonymous ? ' · anonymous' : ' · client sees your name'),
+        + (contract.myAnonymous ? ' · anonymous' : ' · under your name'),
         null, 'i-user'));
       var rivals = (Number(contract.hitmenActive) || 0) - 1;
       if (rivals > 0) {
@@ -1809,8 +1827,10 @@
       meta.appendChild(chip(contract.creatorAnonymous ? 'Placed anonymously'
         : 'Placed under your name', null, 'i-briefcase'));
     } else if (contract.creatorAnonymous || contract.creatorName) {
-      meta.appendChild(chip(contract.creatorAnonymous ? 'Anonymous client' : contract.creatorName,
-        null, 'i-briefcase'));
+      // Who placed it, said as that: "Anonymous client", or a bare name
+      // beside the target's, left a hitman to guess who either one was.
+      meta.appendChild(chip(contract.creatorAnonymous ? 'Placed anonymously'
+        : 'Placed by ' + contract.creatorName, null, 'i-briefcase'));
     }
     if (contract.targetProtected && settings().flagListing !== false) {
       meta.appendChild(chip('Law enforcement', 'warn', 'i-shield'));
@@ -1829,6 +1849,15 @@
     if (contract.targetProtected && context === 'board') {
       node.appendChild(el('div', 'notice gold', 'This target is a sworn officer.'
         + (advised('posted') ? ' Their department has been advised.' : '')));
+    }
+
+    // The placer's half of a live handover, on their own card once it is
+    // taken: the hitman comes to them, so they have to be in the city to be
+    // met. The phone notice that it was taken says the same (Notify
+    // .contractAccepted); this is where it stays.
+    if (mine && context !== 'board' && aliveOnly(contract)
+        && Number(contract.hitmenActive) > 0) {
+      node.appendChild(el('div', 'notice ok', placerTakenText()));
     }
 
     node.appendChild(actionsFor(contract, context));
@@ -1997,7 +2026,8 @@
       quit.onclick = function () {
         ask('Walk away from this contract?',
             contract.penaltyAmount > 0
-              ? 'The client keeps the ' + money(contract.penaltyAmount) + ' you staked.'
+              ? 'The person who placed it keeps the ' + money(contract.penaltyAmount)
+                + ' you staked.'
               : 'You staked nothing on this one, so it costs you nothing.',
             function () {
               post('abandon', { id: contract.id }).then(function (r) {
@@ -2156,14 +2186,29 @@
   // the reason and always has; the app used to render none of it, so a hitman
   // whose delivery was failing had no idea until it did.
   // Every reason Kidnap.conditionsMet can return, and nothing it cannot.
+  // The two that mean the person who placed the contract is missing say who
+  // that is and how close they have to be: "The client is too far away" was
+  // read as somebody's game client, or as nobody in particular. The radius
+  // is the one this countdown was armed with (progress.radius).
   var BREAKING = {
-    party_offline: 'Someone this handover needs has gone offline',
+    party_offline: function (radius) {
+      return 'Someone has gone offline. The person who placed this contract must be '
+        + 'online and ' + nearPlacer(radius);
+    },
     target_not_conscious: 'Your target must be alive and conscious',
     target_too_hurt: 'Your target is too badly hurt',
     not_coerced: 'Your target is not restrained',
     target_too_far: 'Your target is too far from you',
-    creator_too_far: 'The client is too far away'
+    creator_too_far: function (radius) {
+      return 'The person who placed this contract must be ' + nearPlacer(radius);
+    }
   };
+
+  // A reason as the countdown says it, or null for one it has no words for.
+  function breakingText(progress) {
+    var said = BREAKING[progress.breaking];
+    return typeof said === 'function' ? said(progress.radius) : (said || null);
+  }
 
   /* The countdown bars on screen, by contract, from the last draw. The
      poll repaints a bar in place, as the clock chips are (paintClock),
@@ -2199,13 +2244,13 @@
 
       wrap.appendChild(el('div', 'label' + (progress.breaking ? ' warn' : ''),
         progress.breaking
-          ? (BREAKING[progress.breaking] || 'Hold position')
+          ? (breakingText(progress) || 'Hold position')
               + ' — handover fails in ' + (left / 1000).toFixed(1) + 's'
           : (left / 1000).toFixed(1) + 's of leeway left — the handover '
               + 'fails if it runs out'));
     } else if (progress.breaking) {
       wrap.appendChild(el('div', 'label warn',
-        BREAKING[progress.breaking] || 'Hold position'));
+        breakingText(progress) || 'Hold position'));
     }
 
     return wrap;
@@ -2488,7 +2533,8 @@
         var recorded = r.data && typeof r.data.myAnonymous === 'boolean'
           ? r.data.myAnonymous : anonymous;
         say(recorded ? 'Contract accepted, anonymously.'
-          : anonymous ? 'Contract accepted under your name: the client already knows you on this one.'
+          : anonymous ? 'Contract accepted under your name: the person who placed it '
+            + 'already knows you on this one.'
           : 'Contract accepted.', 'ok');
         // Held until the refresh lands, not just the reply: the board still
         // has the card as it was, and Accept came back live on it for one
@@ -2502,13 +2548,15 @@
       state.dialog = {
         kind: 'choice',
         question: 'Take this one anonymously?',
-        detail: 'The client will see an operative, not a name.'
+        detail: 'The person who placed it will see an operative, not your name.'
           // What finishes it, before it is taken: the card's chip says it,
           // and this is where a hitman agrees to the terms. One used to
           // being paid for a kill would otherwise find out after making one.
+          // To whom, too: "delivering the target alive" left a hitman asking
+          // where, and "the client" did not tell them.
           + (aliveOnly(contract)
-            ? ' This contract pays only for delivering the target alive: '
-              + 'a kill does not complete it.'
+            ? ' This contract only pays when you bring the target, alive, to the '
+              + 'person who placed it. Killing them does not count.'
             : '')
           + (anonymityFee('hitman') > 0
             ? ' Anonymity costs ' + money(anonymityFee('hitman')) + ' from your '
@@ -2519,7 +2567,7 @@
           + (contract.penaltyAmount > 0
             ? ' Accepting stakes ' + money(contract.penaltyAmount)
               + ' of yours, taken whole from your bank or whole from your cash,'
-              + ' returned when you finish and forfeit to the client'
+              + ' returned when you finish and forfeit to the person who placed it'
               + ' if you walk away or run out of time.'
             : '')
           // How much time that is. The stake is forfeit to the deadline, and
@@ -2559,21 +2607,23 @@
   function howToFinish(contract) {
     var record = state.ledger && state.ledger.record;
     if (!record || record.completed !== 0) { return null; }
+    // On a contract a kill cannot finish, the kill's half of this told a
+    // new hitman the one thing that would never pay. What it does instead
+    // is said, since a kill still happens: they come back, and the contract
+    // is still open. And to whom: "the client" named nobody a new hitman
+    // knew, on the one rule this server is run on.
+    if (aliveOnly(contract)) {
+      return el('div', 'hint', deliverAliveSteps() + placerLine(contract));
+    }
+    // A contract a kill can finish too keeps the words it had.
     var kidnap = settings().kidnap || {};
     var deliver = 'restrain them or get them into your vehicle, bring them '
       + (kidnap.radius ? 'within ' + kidnap.radius + ' m of' : 'to')
       + ' the client, tap Deliver alive and hold '
       + (kidnap.seconds ? 'for ' + kidnap.seconds + 's.' : 'until it finishes.');
-    // On a contract a kill cannot finish, the kill's half of this told a
-    // new hitman the one thing that would never pay. What it does instead
-    // is said, since a kill still happens: they come back, and the contract
-    // is still open.
     // With kill photos off (settings().killPhotos) nothing is photographed:
     // Verify kill is checked at the scene.
-    var text = aliveOnly(contract)
-      ? 'This one pays only for delivering them alive. A kill does not complete '
-        + 'it, and it stays open if they die. To deliver, ' + deliver
-      : 'Kill: a downed target is not dead. Finish them, then stand over '
+    var text = 'Kill: a downed target is not dead. Finish them, then stand over '
         + (settings().killPhotos === false
           ? 'the body and tap Verify kill before they are revived. '
           : 'the body and tap Verify kill to photograph it before they are revived. ')
@@ -2584,6 +2634,69 @@
         + 'before you grab them.';
     }
     return el('div', 'hint', text);
+  }
+
+  /* ---------- the live handover, in words ----------
+
+     Every line that tells somebody how a live handover works says it the
+     same way, from the server's own Config.Kidnap (settings().kidnap): how
+     close the person who placed the contract has to be, and how long the
+     target is held there. Nothing here hard-codes either figure; a page
+     that has not read them says "close" and "until it finishes". */
+
+  // Metres as the server set them, without a trailing ".0".
+  function metres(radius) {
+    var r = Number(radius);
+    if (!(r > 0)) { r = Number((settings().kidnap || {}).radius); }
+    if (!(r > 0)) { return null; }
+    return String(Math.round(r * 10) / 10);
+  }
+
+  // "within 12 m of you and the target", for a missing placer.
+  function nearPlacer(radius) {
+    var m = metres(radius);
+    return m ? 'within ' + m + ' m of you and the target'
+      : 'right there with you and the target';
+  }
+
+  // What a hitman does to finish a contract only a live handover completes.
+  function deliverAliveSteps() {
+    var m = metres();
+    var seconds = Number((settings().kidnap || {}).seconds);
+    return 'Bring them in alive: cuff them or get them into your vehicle, take them '
+      + 'to the person who placed this contract, '
+      + (m ? 'get within ' + m + ' m of that person' : 'get close to that person')
+      + ', tap Deliver alive and hold '
+      + (seconds > 0 ? 'for ' + seconds + ' seconds' : 'until it finishes')
+      + '. Killing them does not count \u2014 they respawn and the contract stays open.';
+  }
+
+  // Who that person is, as far as this hitman may know: an anonymous one has
+  // to be found, a named one is named.
+  function placerLine(contract) {
+    var relay = settings().relay !== false;
+    if (contract.creatorAnonymous) {
+      return relay ? ' The person who placed it is anonymous \u2014 use Message to '
+        + 'agree where to meet.' : '';
+    }
+    if (contract.creatorName) {
+      return ' The person who placed it is ' + contract.creatorName
+        + (relay ? ' \u2014 use Message to agree where to meet.' : '.');
+    }
+    return '';
+  }
+
+  // The kill refusal on such a contract, with what to do instead.
+  function aliveOnlyRefusal() {
+    return 'This contract only pays when you bring the target, alive, to the '
+      + 'person who placed it. ' + deliverAliveSteps();
+  }
+
+  // The placer's own card once a hitman has taken it, and the phone notice.
+  function placerTakenText() {
+    return 'A hitman took your contract. They\u2019ll bring the target to you alive '
+      + '\u2014 stay in the city' + (settings().relay !== false
+        ? ' and watch your messages.' : '.');
   }
 
   /* ---------- the kill photo viewfinder ----------
@@ -2906,12 +3019,25 @@
     delete state.lastRefusal[contract.id];
     return post('armKidnap', { id: contract.id }).then(function (r) {
       if (!r.ok) {
+        // The person who placed it, by what they are to this hitman. An
+        // anonymous one has to be found first, and Message is how.
+        var findThem = contract.creatorAnonymous && settings().relay !== false
+          ? ' They are anonymous \u2014 use Message to agree where to meet.' : '';
         var reasons = {
-          target_not_conscious: 'The target must be alive and conscious.',
+          // On a contract only a handover completes, a dead target is the
+          // kill that does not count: said, with what still works.
+          target_not_conscious: 'The target must be alive and conscious.'
+            + (aliveOnly(contract) ? ' Killing them does not count \u2014 once they '
+              + 'are back on their feet, bring them in alive.' : ''),
           target_too_hurt: 'The target is too badly hurt to hand over. Get them '
             + 'patched up first.',
           not_coerced: 'The target must be restrained or in your vehicle.',
-          creator_too_far: 'Get the target to the client.',
+          // Said as the rule, which is the same whether they are offline or
+          // only far away: an anonymous one absent is told as this too
+          // (Kidnap.conditionsMet), so neither may be guessed from it.
+          creator_too_far: 'The person who placed this contract must be online and '
+            + nearPlacer() + '. Take the target to them, then tap Deliver alive '
+            + 'again.' + findThem,
           target_too_far: 'Keep the target close.',
           // A live delivery skips the rule about getting back up, so that is
           // never why; it said so to hitmen holding somebody fresh in town.
@@ -2919,7 +3045,8 @@
             + 'will not count until they have been here a few minutes.',
           target_protected: 'They are protected from contracts right now, so a '
             + 'handover will not count.',
-          party_offline: 'Everyone has to be online for a handover.',
+          party_offline: 'Everyone has to be online for a handover: the person who '
+            + 'placed this contract must be in the city and ' + nearPlacer() + '.',
           limit_reached: 'Too many handovers in progress. Try shortly.'
         };
         return say(reasons[r.err] || ERRORS[r.err] || 'Cannot start the handover.');
@@ -2952,8 +3079,9 @@
      snapshot, and Mine as last read still carried one: the first redraw
      after an ending — the board's reply, landing before Mine's — drew the
      old bar again and polled a handover that was over, so "You are off the
-     contract." became "The handover ended. Get them back to the client and
-     try again." The snapshot is trusted again from the next Mine read. */
+     contract." became "The handover ended. Get them back to the person who
+     placed this contract and try again." The snapshot is trusted again from
+     the next Mine read. */
   var countdownOver = {};
 
   function stopCountdown() {
@@ -3016,7 +3144,8 @@
           endCountdown(id);
           say(r.err === 'no_handover' || r.err === 'not_found'
                 || r.err === 'bad_state'
-            ? 'The handover ended. Get them back to the client and try again.'
+            ? 'The handover ended. Get them back to the person who placed this '
+              + 'contract and try again.'
             : (ERRORS[r.err] || 'Lost track of the handover.'));
           refresh();
           return;
@@ -3080,16 +3209,21 @@
       return say('The handover finished but was not paid. '
         + (refused[ended.reason] || ERRORS[ended.reason] || ''));
     }
+    // The two that mean the person who placed the contract was missing say
+    // so, with how close they have to be. "Your client did not arrive"
+    // named somebody a hitman may never have been told about.
     var failed = {
-      party_offline: 'Someone the handover needed went offline.',
-      creator_too_far: 'Your client did not arrive in time.',
+      party_offline: 'Someone the handover needed went offline. The person who placed '
+        + 'this contract must be online and ' + nearPlacer() + '.',
+      creator_too_far: 'The person who placed this contract did not arrive in time. '
+        + 'They must be online and ' + nearPlacer() + ' for the whole handover.',
       target_not_conscious: 'The target went down. A handover has to be alive.',
       target_too_hurt: 'The target got too badly hurt. Get them patched up first.',
       contract_locked: 'The contract was stuck settling another payout.'
     };
     return say('The handover failed. ' + (failed[ended.reason]
-      || 'You lost hold of the target.') + ' Get them back to the client and '
-      + 'try again in a minute.');
+      || 'You lost hold of the target.') + ' Get them back to the person who placed '
+      + 'this contract and try again in a minute.');
   }
 
   /* "about 2 minutes", for the wait a hitman on the contract still has;
@@ -3114,7 +3248,7 @@
        it between this dialog and the tap, and the reply says which. */
     var wait = buyoutWait(Number(settings().buyoutDelaySeconds) || 0);
     ask('Pay ' + amount + ' to close this contract?',
-        'The client gets their money back along with your payment. It is paid in '
+        'The person who placed it gets their money back, along with your payment. It is paid in '
           + 'full from your bank, or from your cash if the bank cannot cover it '
           + '\u2014 never split between them. '
           + (wait && Number(contract.hitmenActive) > 0
@@ -3266,7 +3400,7 @@
       // collection. Describing it as money was describing a payload the
       // server has never accepted.
       return 'Give back payout ' + ((p && p.slot) || '?')
-        + ', returning what funds it to the client';
+        + ', returning what funds it to the person who placed the contract';
     },
     // With the before and after, which is what the hitman is agreeing to.
     shorten_deadline: function (p, contract) {
@@ -3296,11 +3430,11 @@
        two-hour wait before they could list the same person again. */
     withdraw: function () {
       return 'Call the whole contract off — it closes for everyone on it, '
-        + 'and what the client put up goes back to them';
+        + 'and what the person who placed it put up goes back to them';
     },
     cancel: function () {
       return 'Cancel this contract outright — it closes for everyone on '
-        + 'it, and what the client put up goes back to them';
+        + 'it, and what the person who placed it put up goes back to them';
     }
   };
 
@@ -3437,7 +3571,7 @@
       if (proposal.kind === 'shorten_deadline' && contract.role === 'hitman'
           && Number(contract.penaltyAmount) > 0) {
         item.appendChild(el('div', 'hint is-warn', 'Your ' + money(contract.penaltyAmount)
-          + ' stake goes to the client if you have not finished by then.'));
+          + ' stake goes to the person who placed it if you have not finished by then.'));
       }
       var lapses = lapsesIn(proposal);
 
@@ -3668,7 +3802,7 @@
           }
           askNumber('Shorten the deadline',
             hitman
-              ? 'You are asking the client for less time than you have.'
+              ? 'You are asking the person who placed it for less time than you have.'
               : (untaken ? 'Nobody has taken it, so this applies at once.'
                          : 'You are asking the operative to finish sooner.'),
             function (minutes) {
@@ -3799,9 +3933,8 @@
         // alone is Abandon.
         note: hitman
           ? 'Ask for the whole contract to be cancelled. If everyone agrees it '
-            + 'closes for all of you, the client gets back what they put up, '
-            + 'and your stake comes back to you. To leave on your own, use '
-            + 'Abandon.'
+            + 'closes for all of you, and everything put up goes back, your stake '
+            + 'included. To leave on your own, use Abandon.'
           : (untaken
             ? 'Nobody has taken it, so this is Withdraw, which asks first.'
             : 'Close it and take back what you put up, if the operative agrees.'),
@@ -3830,11 +3963,11 @@
           // Nobody holds it, so there is nobody to wait for.
           ? '. Nobody has taken it, so this applies as soon as you confirm.'
           : '. Nothing happens until '
-            + (hitman ? 'the client' : 'the operative') + ' agrees.')
+            + (hitman ? 'the person who placed it' : 'the operative') + ' agrees.')
         // More time and more money are the client's to give, at once, and
         // a hitman looking here for them found only ways to make it worse.
         + (hitman && settings().relay !== false
-          ? ' For more time or money, message the client.'
+          ? ' For more time or money, message them.'
           : ''),
       // An option the server would refuse whatever the player enters is not
       // an option; it is a button that wastes their time and reads as a
@@ -4988,7 +5121,7 @@
        wrapping, so a long name cannot push Back and Call apart. */
     var withWhom = t.thread && t.thread.alias
       ? t.thread.alias + (t.thread.name ? ' (' + t.thread.name + ')' : '')
-      : (t.contract.role === 'hitman' ? 'the client' : null);
+      : (t.contract.role === 'hitman' ? 'the person who placed it' : null);
     var about = el('div', 'hint');
     if (t.contract.targetName) {
       about.appendChild(el('div', 'about', t.contract.targetName));
@@ -5277,9 +5410,8 @@
     // thing that told a creator they have to be at the handover.
     if (placingAliveOnly()) {
       pay.appendChild(el('div', 'hint',
-        'Contracts here pay only for delivering the target alive: a kill does not '
-        + 'complete one. Delivered means brought to you, so you have to be there in '
-        + 'person for the handover.'));
+        'Contracts here only pay when the target is brought to you alive. You need '
+        + 'to be in the city to meet the hitman for the handover.'));
     }
 
     var slotBox = el('div');

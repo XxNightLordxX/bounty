@@ -1674,7 +1674,7 @@ describe('open amendments', function()
     it('does not name an anonymous creator who proposed it', function()
         local s, f, c = proposed({ anonCreator = true })
         local open = s.amendments.openFor(f.hitman, c.id)
-        eq(open[1].proposer, 'The client',
+        eq(open[1].proposer, 'The person who placed it',
             'a proposal is not a hole in anonymity')
         falsy(tostring(open[1].proposer):find('Vic'))
     end)
@@ -1793,7 +1793,7 @@ describe('a handover cannot be retried in a loop', function()
         for _, note in ipairs(Natives.calls.notifications) do
             said = said .. tostring(note.content)
         end
-        truthy(said:find('client did not arrive'),
+        truthy(said:find('placed this contract did not arrive', 1, true),
             'rather than leaving them to assume the script ate it: ' .. said)
     end)
 end)

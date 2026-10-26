@@ -422,9 +422,22 @@ end
 
 function Notify.contractAccepted(contract, hitmanRecord, activeHitmen)
     local who = hitmanRecord.anon and 'an operative' or hitmanRecord.hitman_name
-    Notify.toCitizen(contract.creator_cid, 'Contract accepted',
-        ('Your contract on %s has been accepted by %s. %d operative%s now active.')
-            :format(contract.target_name, who, activeHitmen, activeHitmen == 1 and ' is' or 's are'))
+    local body = ('Your contract on %s has been accepted by %s. %d operative%s now active.')
+        :format(contract.target_name, who, activeHitmen, activeHitmen == 1 and ' is' or 's are')
+    -- Live transfer only: the hitman comes to the person who placed it, so
+    -- this is the moment that person learns they have to be in the city to
+    -- be met. The page's own card under Mine says the same (placerTakenText).
+    -- A contract a kill completes too keeps its words.
+    if Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
+        body = ("A hitman%s took your contract on %s. They'll bring the target to you "
+            .. 'alive — stay in the city%s.%s')
+            :format(hitmanRecord.anon and '' or (' (' .. tostring(hitmanRecord.hitman_name) .. ')'),
+                tostring(contract.target_name),
+                Config.Relay.Enabled == true and ' and watch your messages' or '',
+                (tonumber(activeHitmen) or 0) > 1
+                    and (' %d hitmen are on it now.'):format(activeHitmen) or '')
+    end
+    Notify.toCitizen(contract.creator_cid, 'Contract accepted', body)
 
     -- Every acceptance raises an advisory carrying the running count, so law
     -- enforcement can judge the scale of the threat and not just its
@@ -580,7 +593,8 @@ end
 local function stakeSentence(outcome)
     if (outcome.stake or 0) <= 0 then return '' end
     if outcome.forfeited then
-        return (' Your %s stake went to the client.'):format(dollars(outcome.stake))
+        return (' Your %s stake went to the person who placed the contract.')
+            :format(dollars(outcome.stake))
     end
     if outcome.owed then
         return (' Your %s stake is held for you and is handed back as soon as '

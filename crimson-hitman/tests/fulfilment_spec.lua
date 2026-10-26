@@ -531,3 +531,119 @@ describe('a target named by a contract of each kind', function()
         falsy(s.death.getPending(alive.id, 'HITMAN01'), 'and only where a kill counts')
     end)
 end)
+
+describe('the words for a live handover', function()
+    --- Everything a player was told on this server is now said to whom:
+    --- the person who placed the contract, never "the client", with the
+    --- distance and the seconds from Config.Kidnap rather than written in.
+    local function said(title)
+        local out = {}
+        for _, note in ipairs(Natives.calls.notifications or {}) do
+            if not title or tostring(note.title) == title then out[#out + 1] = tostring(note.content) end
+        end
+        return table.concat(out, ' | ')
+    end
+
+    it('tells the person who placed it that a hitman is coming to them, alive', function()
+        local s, f = shipped()
+        local c = place(s, f, { baseline = { cash = 5000 } })
+        Natives.calls.notifications = {}
+        truthy(s.contracts.accept(f.hitman, c.id, true), 'taken anonymously')
+        local note = said('Contract accepted')
+        truthy(note:find("A hitman took your contract on Dana Reyes. They'll bring the target "
+            .. 'to you alive — stay in the city and watch your messages.', 1, true), note)
+        falsy(note:find('Rook', 1, true), 'an anonymous hitman is not named: ' .. note)
+        falsy(note:lower():find('client', 1, true), note)
+        falsy(note:lower():find('photo', 1, true), note)
+    end)
+
+    it('names a hitman who took it under their name, and counts a crowd', function()
+        local s, f = shipped()
+        local c = place(s, f, { baseline = { cash = 5000 } })
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+            cash = 5000, bank = 5000, firstname = 'Kade', lastname = 'Wolfe' })
+        Natives.calls.notifications = {}
+        truthy(s.contracts.accept(s.identity.resolve(4), c.id, false))
+        local note = said('Contract accepted')
+        truthy(note:find('A hitman (Kade Wolfe) took your contract on Dana Reyes.', 1, true), note)
+        truthy(note:find('2 hitmen are on it now.', 1, true), note)
+    end)
+
+    it('does not send them to their messages on a server without them', function()
+        local s, f = shipped()
+        Config.Relay.Enabled = false
+        local c = place(s, f, { baseline = { cash = 5000 } })
+        Natives.calls.notifications = {}
+        truthy(s.contracts.accept(f.hitman, c.id, true))
+        local note = said('Contract accepted')
+        truthy(note:find('to you alive — stay in the city.', 1, true), note)
+        falsy(note:find('messages', 1, true), note)
+    end)
+
+    it('keeps the old words on a contract a kill completes too', function()
+        local s, f = shipped()
+        Config.Completion.Fulfilment = 'either'
+        local c = place(s, f, { baseline = { cash = 5000 } })
+        Natives.calls.notifications = {}
+        truthy(s.contracts.accept(f.hitman, c.id, true))
+        local note = said('Contract accepted')
+        truthy(note:find('Your contract on Dana Reyes has been accepted by an operative.', 1, true), note)
+        falsy(note:find('bring the target to you alive', 1, true), note)
+    end)
+
+    it('tells the person who placed it how close to stand, from the config', function()
+        local s, f = shipped()
+        Config.Kidnap.Radius = 7.0
+        Config.Kidnap.CountdownSeconds = 45
+        local c = taken(s, f)
+        inHand()
+        Natives.calls.notifications = {}
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+        local note = said('Handover starting')
+        truthy(note:find('within 7 m of them both, for 45 seconds', 1, true), note)
+        eq(s.kidnap.progress(c.id, 'HITMAN01').radius, 7.0,
+            'the page is told the distance this countdown measures against')
+    end)
+
+    it('says the person who placed it had to be within the radius when they were not', function()
+        local s, f = shipped()
+        Config.Kidnap.Radius = 9.0
+        local c = taken(s, f)
+        inHand()
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+        Env.players[1]._coords = { x = 3000.0, y = 3000.0, z = 30.0 }
+        Natives.calls.notifications = {}
+        for _ = 1, 10 do s.kidnap.tick(Config.Kidnap.MaxTotalGraceMs) end
+        local note = said('Handover failed')
+        truthy(note:find('The person who placed this contract did not arrive in time. They have '
+            .. 'to be online and within 9 m of you and the target', 1, true), note)
+        falsy(note:lower():find('client', 1, true), note)
+    end)
+
+    it('says what still pays when the target goes down mid-handover', function()
+        local s, f = shipped()
+        local c = taken(s, f)
+        inHand()
+        truthy(s.kidnap.arm(c.id, 'HITMAN01'))
+        Env.players[2].PlayerData.metadata.isdead = true
+        Natives.calls.notifications = {}
+        for _ = 1, 10 do s.kidnap.tick(Config.Kidnap.MaxTotalGraceMs) end
+        local note = said('Handover failed')
+        truthy(note:find('A handover has to be alive. Killing them does not count: once they '
+            .. 'are back on their feet, bring them in alive again.', 1, true), note)
+    end)
+
+    it('names the person who placed it to an owner too, and no photograph', function()
+        local s = shipped()
+        local out = table.concat(s.admin.diagnose(0), '\n')
+        truthy(out:find('brought alive to the person who placed it, who has to be there for the '
+            .. 'handover', 1, true), out)
+        local entry = s.settings.entry('Completion.Fulfilment')
+        truthy(entry, 'the panel offers the rule')
+        truthy(entry.about:find('brought alive to the person who placed the contract, who has '
+            .. 'to be there for the handover', 1, true), entry.about)
+        falsy(entry.about:lower():find('photo', 1, true),
+            'kill photos ship off, so nothing about a photo: ' .. entry.about)
+    end)
+end)

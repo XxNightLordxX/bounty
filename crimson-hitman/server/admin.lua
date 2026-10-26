@@ -1391,7 +1391,8 @@ function Admin.diagnose(source, subjectId, later)
     -- act on with: there is nothing to do about a setting that is unused.
     if placing == CH.FULFILMENT_RULE.ALIVE then
         say('completion: alive (Config.Completion.Fulfilment): live transfer only. A '
-            .. 'contract is completed by a handover to the client; a kill never completes one')
+            .. 'contract is completed only when the target is brought alive to the person '
+            .. 'who placed it, who has to be there for the handover; a kill never completes one')
         if other > 0 then
             say(('  the kill photo settings (Config.Completion.PhotoStorage and the other '
                 .. 'Photo* settings, ExtraPhotoHosts, ProofWindowSeconds) and Config.Bonus are '
@@ -1406,7 +1407,7 @@ function Admin.diagnose(source, subjectId, later)
         end
     else
         say(('completion: either (Config.Completion.Fulfilment): a kill, verified %s, or a '
-            .. 'handover to the client completes a contract')
+            .. 'live handover to the person who placed it completes a contract')
             :format(killPhotos and 'with a photo' or 'at the scene with no photo'))
         if other > 0 then
             say(('  %d live contract(s) were placed under \'alive\' and are completed only by '

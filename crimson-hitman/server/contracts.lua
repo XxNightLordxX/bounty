@@ -1385,8 +1385,8 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
             { amount = fee, role = 'hitman' })
     elseif renamed then
         Notify.toCitizen(actor.cid, 'Not anonymous',
-            'The client already knows you by name on this contract, so you are '
-            .. 'back on it under your name. You were not charged for anonymity.')
+            'The person who placed this contract already knows you by name on it, so '
+            .. 'you are back on it under your name. You were not charged for anonymity.')
     end
 
     -- Start watching the target's health now, so damage claimed against
@@ -2547,8 +2547,8 @@ local function withdrawRewardUnlocked(actor, contractId, lineIds)
         for i = 1, #hitmen do
             if hitmen[i].state == 'active' then
                 Notify.toCitizen(hitmen[i].hitman_cid, 'Reward changed',
-                    'The client was reducing the reward as you accepted this '
-                    .. 'contract. Part of it was already withdrawn. Check what '
+                    'The person who placed this contract was reducing the reward as '
+                    .. 'you accepted it. Part of it was already withdrawn. Check what '
                     .. 'it pays now before you go to work.',
                     { bypassBudget = true })
             end

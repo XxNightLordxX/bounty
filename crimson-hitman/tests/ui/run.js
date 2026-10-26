@@ -2225,11 +2225,12 @@ async function main() {
 
     it('says why the hold is slipping, in words', function () {
       const text = slipping.view.textContent;
-      truthy(text.indexOf('The client is too far away') !== -1,
-        'the reason, not the code: ' + text);
+      truthy(text.indexOf('The person who placed this contract must be') !== -1,
+        'the reason, not the code, and who it is about: ' + text);
       falsy(text.indexOf('creator_too_far') !== -1,
         'a raw reason code must not reach the player: ' + text);
-      truthy(text.indexOf('The client is too far away — handover fails in 0.9s') !== -1,
+      truthy(text.indexOf('The person who placed this contract must be right there with you and '
+        + 'the target — handover fails in 0.9s') !== -1,
         'and what is left of the allowance: ' + text);
     });
 
@@ -5674,7 +5675,7 @@ async function main() {
       ['not_coerced', 'restrained'],
       ['target_not_conscious', 'conscious'],
       ['target_too_hurt', 'too badly hurt'],
-      ['creator_too_far', 'client'],
+      ['creator_too_far', 'person who placed this contract must be online'],
       ['target_too_far', 'close'],
       ['target_just_on', 'come into the city'],
       ['target_protected', 'protected'],
@@ -8371,8 +8372,8 @@ async function main() {
       await settle(); await settle(); await settle();
       tab(app, 'mine'); await settle(); await settle();
       it('says the stake goes if the shorter clock is missed', function () {
-        truthy(app.view.textContent.indexOf('Your $10,000 stake goes to the client') !== -1,
-          app.view.textContent);
+        truthy(app.view.textContent.indexOf('Your $10,000 stake goes to the person who placed '
+          + 'it if you have not finished by then') !== -1, app.view.textContent);
       });
       it('says when the proposal lapses', function () {
         truthy(app.view.textContent.indexOf('Lapses in 4 minutes if you do not answer') !== -1,
@@ -8857,7 +8858,7 @@ async function main() {
       });
       it('names the contract and who the thread is with', function () {
         const text = app.view.textContent;
-        truthy(text.indexOf('Dana Reyes') !== -1 && text.indexOf('with the client') !== -1,
+        truthy(text.indexOf('Dana Reyes') !== -1 && text.indexOf('with the person who placed it') !== -1,
           'two threads from anonymous clients looked exactly alike: ' + text.slice(0, 120));
       });
 
@@ -8935,7 +8936,7 @@ async function main() {
     it('says who the hitman is on it, and counts only the others', function () {
       truthy(shown.indexOf('You: Operative #1 · anonymous') !== -1, shown);
       truthy(shown.indexOf('+2 rivals') !== -1, shown);
-      truthy(shown.indexOf('You: Operative #2 · client sees your name') !== -1, shown);
+      truthy(shown.indexOf('You: Operative #2 · under your name') !== -1, shown);
       falsy(shown.indexOf('1 operative') !== -1, 'their own card counted them: ' + shown);
     });
     it('tells a client where their contract stands', function () {
@@ -9357,9 +9358,12 @@ async function main() {
     });
     click(aliveBoard, 'Accept contract');
     await settle();
-    it('alive: the accept dialog says a kill does not complete it', function () {
-      truthy(aliveBoard.view.textContent.indexOf('This contract pays only for delivering the '
-        + 'target alive: a kill does not complete it.') !== -1, aliveBoard.view.textContent);
+    it('alive: the accept dialog says a kill does not complete it, and to whom they are taken', function () {
+      truthy(aliveBoard.view.textContent.indexOf('This contract only pays when you bring the '
+        + 'target, alive, to the person who placed it. Killing them does not count.') !== -1,
+        aliveBoard.view.textContent);
+      falsy(aliveBoard.view.textContent.toLowerCase().indexOf('client') !== -1,
+        aliveBoard.view.textContent);
     });
 
     const eitherBoard = await onBoard('either', 'either');
@@ -9402,10 +9406,11 @@ async function main() {
     });
     it('alive: the how-to says only a live delivery pays, with the server\'s handover terms', function () {
       const text = aliveWork.view.textContent;
-      truthy(text.indexOf('This one pays only for delivering them alive. A kill does not '
-        + 'complete it, and it stays open if they die. To deliver, restrain them or get them '
-        + 'into your vehicle, bring them within 10 m of the client, tap Deliver alive and '
-        + 'hold for 30s.') !== -1, text);
+      truthy(text.indexOf('Bring them in alive: cuff them or get them into your vehicle, take '
+        + 'them to the person who placed this contract, get within 10 m of that person, tap '
+        + 'Deliver alive and hold for 30 seconds. Killing them does not count \u2014 they '
+        + 'respawn and the contract stays open.') !== -1, text);
+      falsy(text.toLowerCase().indexOf('client') !== -1, 'nobody is "the client": ' + text);
       falsy(text.indexOf('Verify kill') !== -1, 'nothing tells them to photograph a body: ' + text);
       truthy(chips(aliveWork).indexOf('Alive only') !== -1, chips(aliveWork).join(' | '));
     });
@@ -9547,9 +9552,10 @@ async function main() {
       falsy(alivePlace.view.textContent.indexOf('kidnapping bonus included') !== -1,
         'the buyout hint names a bonus there is none of: ' + alivePlace.view.textContent);
     });
-    it('alive: and says contracts pay for delivering the target alive', function () {
-      truthy(alivePlace.view.textContent.indexOf('Contracts here pay only for delivering the '
-        + 'target alive: a kill does not complete one.') !== -1, alivePlace.view.textContent);
+    it('alive: and says contracts pay only when the target is brought to the placer alive', function () {
+      truthy(alivePlace.view.textContent.indexOf('Contracts here only pay when the target is '
+        + 'brought to you alive. You need to be in the city to meet the hitman for the '
+        + 'handover.') !== -1, alivePlace.view.textContent);
     });
     pick(alivePlace, 'slot-cash-1', 40000);
     pick(alivePlace, 'slot-item-1').value = 'lockpick';
@@ -9575,7 +9581,7 @@ async function main() {
       truthy(eitherPlace.document.getElementById('slot-alive-1'), 'no alive-only toggle');
       truthy(eitherPlace.view.textContent.indexOf('kidnapping bonus included') !== -1,
         eitherPlace.view.textContent);
-      falsy(eitherPlace.view.textContent.indexOf('Contracts here pay only') !== -1,
+      falsy(eitherPlace.view.textContent.indexOf('Contracts here only pay') !== -1,
         eitherPlace.view.textContent);
     });
     pick(eitherPlace, 'slot-cash-1', 40000);
@@ -9616,8 +9622,8 @@ async function main() {
     it('alive, the board unread: the wallet says so, and no bonus or alive-only marking is drawn', function () {
       falsy(blind.document.getElementById('bonus'), 'the bonus field is drawn');
       falsy(blind.document.getElementById('slot-alive-1'), 'the alive-only toggle is drawn');
-      truthy(blind.view.textContent.indexOf('Contracts here pay only for delivering the '
-        + 'target alive') !== -1, blind.view.textContent);
+      truthy(blind.view.textContent.indexOf('Contracts here only pay when the target is '
+        + 'brought to you alive') !== -1, blind.view.textContent);
     });
     pick(blind, 'slot-cash-1', 40000);
     it('alive, the board unread: the total is the reward alone', function () {
@@ -9652,6 +9658,224 @@ async function main() {
       truthy(asSent.notice().indexOf('Held from you: $60,000 cash ($40,000 + $20,000 '
         + 'kidnapping bonus).') !== -1, asSent.notice());
     });
+
+    /* ---------- to whom, said everywhere ----------
+       On this server a contract pays only when the target is brought
+       alive to the person who placed it, who has to be there. Every line
+       says that person, never "the client", with the distance and the hold
+       from the server's own Config.Kidnap (here 10 m and 30 s, then 7 m and
+       45 s to show nothing is written in). None of it speaks of a photo:
+       kill photos ship off. */
+    function boardWith(rule, contracts, extra) {
+      const b = boardFor(rule, contracts);
+      Object.assign(b.data.settings, extra || {});
+      return b;
+    }
+    const NO_PHOTOS = { killPhotos: false };
+    function noClientNoPhoto(text, label) {
+      falsy(/\bclient\b/i.test(text), label + ' names "the client": ' + text);
+      falsy(/photo/i.test(text), label + ' speaks of a photo with kill photos off: ' + text);
+    }
+
+    const lineBoard = boot({ list: boardWith('alive', [contractFor('alive')], NO_PHOTOS),
+      mine: MINE, ledger: LEDGER });
+    await settle(); await settle();
+    it('alive: the board card says, under the reward, to whom the target is brought', function () {
+      const notes = lineBoard.view.all().filter(function (n) {
+        return n.classList.contains('reward-notes');
+      })[0];
+      truthy(notes, 'no line under the reward');
+      truthy(notes.textContent.indexOf('Bring the target alive to the person who placed this '
+        + 'contract.') !== -1, notes.textContent);
+      noClientNoPhoto(lineBoard.view.textContent, 'the board');
+    });
+    it('either: the board card has no such line', function () {
+      falsy(eitherBoard.view.textContent.indexOf('Bring the target alive') !== -1,
+        eitherBoard.view.textContent);
+    });
+
+    // The how-to, for a placer who is named and for one who is anonymous.
+    async function workingOn(card, extra) {
+      const app = boot({ list: boardWith('alive', [], extra), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [card], onMe: [] } },
+        amendments: { ok: true, data: [] } });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      return app;
+    }
+    const heldFrom = function (over) {
+      return contractFor('alive', Object.assign({ role: 'hitman', state: 'accepted',
+        hitmenActive: 1, myAlias: 'Operative #1', myAnonymous: true }, over || {}));
+    };
+    const namedPlacer = await workingOn(heldFrom(), NO_PHOTOS);
+    it('alive, named placer: the how-to names them, with no line about anonymity', function () {
+      const text = namedPlacer.view.textContent;
+      truthy(text.indexOf('The person who placed it is Vic Marlowe — use Message to agree '
+        + 'where to meet.') !== -1, text);
+      falsy(text.indexOf('is anonymous') !== -1, text);
+      noClientNoPhoto(text, 'the how-to');
+    });
+    const anonPlacer = await workingOn(heldFrom({ creatorName: undefined, creatorAnonymous: true }),
+      NO_PHOTOS);
+    it('alive, anonymous placer: the how-to says so, and how to find them', function () {
+      const text = anonPlacer.view.textContent;
+      truthy(text.indexOf('Bring them in alive: cuff them or get them into your vehicle, take '
+        + 'them to the person who placed this contract, get within 10 m of that person, tap '
+        + 'Deliver alive and hold for 30 seconds. Killing them does not count — they '
+        + 'respawn and the contract stays open. The person who placed it is anonymous — '
+        + 'use Message to agree where to meet.') !== -1, text);
+      falsy(text.indexOf('Vic') !== -1, 'an anonymous placer is named: ' + text);
+      noClientNoPhoto(text, 'the how-to');
+    });
+    const quietPlacer = await workingOn(heldFrom({ creatorName: undefined, creatorAnonymous: true }),
+      { killPhotos: false, relay: false });
+    it('alive, anonymous placer, no messages: nothing offers Message', function () {
+      falsy(quietPlacer.view.textContent.indexOf('use Message') !== -1, quietPlacer.view.textContent);
+    });
+    const otherTerms = await workingOn(heldFrom(), { killPhotos: false,
+      kidnap: { radius: 7, seconds: 45 } });
+    it('alive: the distance and the hold are the server\'s, not written in', function () {
+      const text = otherTerms.view.textContent;
+      truthy(text.indexOf('get within 7 m of that person, tap Deliver alive and hold for 45 '
+        + 'seconds.') !== -1, text);
+    });
+
+    // The board chip names who placed it, as that.
+    it('says who placed a contract, as that, on the hitman\'s card', function () {
+      truthy(chips(namedPlacer).indexOf('Placed by Vic Marlowe') !== -1, chips(namedPlacer).join(' | '));
+      truthy(chips(anonPlacer).indexOf('Placed anonymously') !== -1, chips(anonPlacer).join(' | '));
+    });
+
+    // A kill refused on such a contract, the card having offered one (a
+    // contract stored before the rule, read as either by an older page).
+    const refusedKill = boot({ list: boardWith('alive', [], NO_PHOTOS), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [heldFrom({ fulfilment: undefined })],
+        onMe: [] } },
+      amendments: { ok: true, data: [] },
+      verifyKill: { ok: false, err: 'kill_not_allowed' } });
+    await settle(); await settle(); await settle();
+    tab(refusedKill, 'mine');
+    await settle(); await settle();
+    click(refusedKill, 'Verify kill');
+    await settle(); await settle();
+    it('kill_not_allowed says what to do instead, with the server\'s terms', function () {
+      const said = refusedKill.notice();
+      truthy(said.indexOf('This contract only pays when you bring the target, alive, to the '
+        + 'person who placed it. Bring them in alive: cuff them or get them into your '
+        + 'vehicle, take them to the person who placed this contract, get within 10 m of '
+        + 'that person, tap Deliver alive and hold for 30 seconds.') !== -1, said);
+      noClientNoPhoto(said, 'the refusal');
+    });
+
+    // Deliver alive refused because the person who placed it is missing.
+    async function armRefused(err, card) {
+      const app = boot({ list: boardWith('alive', [], NO_PHOTOS), ledger: LEDGER,
+        mine: { ok: true, data: { created: [], accepted: [card || heldFrom()], onMe: [] } },
+        amendments: { ok: true, data: [] }, armKidnap: { ok: false, err: err } });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      click(app, 'Deliver alive');
+      await settle(); await settle();
+      return app.notice();
+    }
+    const tooFar = await armRefused('creator_too_far');
+    it('creator_too_far says the person who placed it must be online and within the radius', function () {
+      truthy(tooFar.indexOf('The person who placed this contract must be online and within '
+        + '10 m of you and the target. Take the target to them, then tap Deliver alive '
+        + 'again.') !== -1, tooFar);
+      noClientNoPhoto(tooFar, 'the refusal');
+    });
+    const tooFarAnon = await armRefused('creator_too_far',
+      heldFrom({ creatorName: undefined, creatorAnonymous: true }));
+    it('and, for an anonymous one, how to find them', function () {
+      truthy(tooFarAnon.indexOf('They are anonymous — use Message to agree where to '
+        + 'meet.') !== -1, tooFarAnon);
+    });
+    const offline = await armRefused('party_offline');
+    it('party_offline says the person who placed it must be in the city and within the radius', function () {
+      truthy(offline.indexOf('the person who placed this contract must be in the city and '
+        + 'within 10 m of you and the target.') !== -1, offline);
+      noClientNoPhoto(offline, 'the refusal');
+    });
+    const downed = await armRefused('target_not_conscious');
+    it('a dead or downed target says killing them does not count, and what does', function () {
+      truthy(downed.indexOf('Killing them does not count — once they are back on their '
+        + 'feet, bring them in alive.') !== -1, downed);
+    });
+
+    // The countdown, slipping because the person who placed it walked off,
+    // at the radius this countdown was armed with.
+    const slipping = await workingOn(heldFrom({ kidnapProgress: { elapsed: 5, required: 30,
+      graceLeft: 1200, graceTotal: 3000, breaking: 'creator_too_far', radius: 8 } }), NO_PHOTOS);
+    it('a slipping countdown says how close the person who placed it has to be', function () {
+      truthy(slipping.view.textContent.indexOf('The person who placed this contract must be '
+        + 'within 8 m of you and the target — handover fails in 1.2s') !== -1,
+        slipping.view.textContent);
+    });
+
+    // How a failed handover is told, when the placer never came.
+    const failedPage = boot({ list: boardWith('alive', [], NO_PHOTOS), ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [heldFrom()], onMe: [] } },
+      amendments: { ok: true, data: [] },
+      armKidnap: { ok: true, data: true },
+      kidnapProgress: { ok: true, data: { done: true, outcome: 'failed', reason: 'creator_too_far' } } });
+    await settle(); await settle(); await settle();
+    tab(failedPage, 'mine');
+    await settle(); await settle();
+    click(failedPage, 'Deliver alive');
+    await settle();
+    failedPage.timers.filter(function (t) { return t.repeating && t.ms === 1000; })[0].fn();
+    await settle(); await settle();
+    it('a handover that failed for want of the placer says they must be online and within the radius', function () {
+      const said = failedPage.notice();
+      truthy(said.indexOf('The person who placed this contract did not arrive in time. They '
+        + 'must be online and within 10 m of you and the target for the whole handover.') !== -1,
+        said);
+      noClientNoPhoto(said, 'the ending');
+    });
+
+    // The placer's own card under Mine, once a hitman has it.
+    async function placedAndTaken(rule, active, extra) {
+      const own = contractFor(rule, { role: 'creator', hitmenActive: active,
+        hitmen: active ? [{ alias: 'Operative #1' }] : [] });
+      const app = boot({ list: boardWith(rule, [], extra), ledger: LEDGER,
+        mine: { ok: true, data: { created: [own], accepted: [], onMe: [] } },
+        amendments: { ok: true, data: [] } });
+      await settle(); await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      return app;
+    }
+    const TAKEN = 'A hitman took your contract. They’ll bring the target to you alive '
+      + '— stay in the city and watch your messages.';
+    const takenOwn = await placedAndTaken('alive', 1, NO_PHOTOS);
+    it('alive: the placer\'s card says a hitman is bringing the target to them', function () {
+      truthy(takenOwn.view.textContent.indexOf(TAKEN) !== -1, takenOwn.view.textContent);
+      noClientNoPhoto(takenOwn.view.textContent, 'the placer\'s card');
+    });
+    const untakenOwn = await placedAndTaken('alive', 0, NO_PHOTOS);
+    it('alive: and says nothing of it before anybody has taken it', function () {
+      falsy(untakenOwn.view.textContent.indexOf('A hitman took your contract') !== -1,
+        untakenOwn.view.textContent);
+    });
+    const eitherOwnTaken = await placedAndTaken('either', 1);
+    it('either: the placer\'s card is as it was', function () {
+      falsy(eitherOwnTaken.view.textContent.indexOf('A hitman took your contract') !== -1,
+        eitherOwnTaken.view.textContent);
+    });
+    const quietOwn = await placedAndTaken('alive', 1, { killPhotos: false, relay: false });
+    it('alive, no messages: the placer is not sent to their messages', function () {
+      truthy(quietOwn.view.textContent.indexOf('They’ll bring the target to you alive '
+        + '— stay in the city.') !== -1, quietOwn.view.textContent);
+      falsy(quietOwn.view.textContent.indexOf('watch your messages') !== -1, quietOwn.view.textContent);
+    });
+
+    drewCleanly(lineBoard); drewCleanly(namedPlacer); drewCleanly(anonPlacer);
+    drewCleanly(quietPlacer); drewCleanly(otherTerms); drewCleanly(refusedKill);
+    drewCleanly(slipping); drewCleanly(failedPage); drewCleanly(takenOwn);
+    drewCleanly(untakenOwn); drewCleanly(eitherOwnTaken); drewCleanly(quietOwn);
 
     drewCleanly(aliveBoard); drewCleanly(eitherBoard); drewCleanly(aliveWork);
     drewCleanly(eitherWork); drewCleanly(older); drewCleanly(kept); drewCleanly(aliveOwn);

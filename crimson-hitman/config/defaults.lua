@@ -375,18 +375,21 @@ ConfigDefaults.Completion = {
     --- How a contract is completed: 'alive' (as shipped) or 'either'.
     ---
     --- 'alive' is live transfer only, because this city wants roleplay
-    --- before anybody is killed. The hitman restrains the target, or gets
-    --- them into the hitman's own vehicle, brings them to the client alive
-    --- and holds them there for the handover countdown (Config.Kidnap).
-    --- Killing the target never completes the contract: they die and
-    --- respawn as normal, the contract stays open, and Verify kill is not
-    --- offered. The whole reward is paid on delivery, so there is no
+    --- before anybody is killed. The hitman cuffs the target, or gets them
+    --- into the hitman's own vehicle, brings them ALIVE to the person who
+    --- placed the contract and holds them there for the handover countdown
+    --- (Config.Kidnap: within Radius metres of that person, for
+    --- CountdownSeconds). That person has to be in the city and there for
+    --- the handover. Killing the target never completes the contract: they
+    --- die and respawn as normal, the contract stays open, and Verify kill
+    --- is not offered. The whole reward is paid on delivery, so there is no
     --- separate kidnapping bonus (Config.Bonus is not used), and the kill
-    --- photo settings below are not used.
+    --- photo settings below are not used. The app says all of this to both
+    --- sides, with the distance and the seconds read from Config.Kidnap.
     ---
     --- 'either' turns kills back on: a contract is completed by a kill
-    --- (photographed with Verify kill) or by a live handover, which pays
-    --- the kidnapping bonus on top.
+    --- (verified with Verify kill) or by a live handover, which pays the
+    --- kidnapping bonus on top.
     ---
     --- Each contract keeps the rule it was placed under, so changing this
     --- changes new contracts only. Anything else is read as 'alive', with a

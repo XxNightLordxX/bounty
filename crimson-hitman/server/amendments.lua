@@ -279,7 +279,7 @@ addEscrowUnlocked = function(actor, contractId, rewardSpec)
     for cid, role in pairs(people) do
         if role == 'hitman' then
             Notify.toCitizen(cid, 'Contract improved',
-                'The client has increased the reward on a contract you hold.')
+                'The person who placed a contract you hold has increased its reward.')
         end
     end
     pushOthers(contract, actor.cid, 'improved')
@@ -529,7 +529,7 @@ improveUnlocked = function(actor, contractId, kind, payload)
     for cid, role in pairs(people) do
         if role == 'hitman' then
             Notify.toCitizen(cid, 'Contract improved',
-                'The client has improved the terms of a contract you hold.')
+                'The person who placed a contract you hold has improved its terms.')
         end
     end
     pushOthers(contract, actor.cid, 'improved')
@@ -745,7 +745,10 @@ function Amendments.openFor(actor, contractId)
 
         local proposerName
         if proposal.proposer == contract.creator_cid then
-            proposerName = contract.anon_creator and 'The client' or contract.creator_name
+            -- By what they are to the reader, not "The client", which named
+            -- nobody a hitman had been introduced to.
+            proposerName = contract.anon_creator and 'The person who placed it'
+                or contract.creator_name
         else
             local hitman = Storage.readHitman(contractId, proposal.proposer)
             proposerName = hitman and hitman.alias or 'An operative'

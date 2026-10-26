@@ -1074,7 +1074,7 @@ function Bridges.installCommands(modules)
     --- reach because the app is closed to the player running it.
     local CLEANSE_REFUSALS = {
         [CH.ERR.BAILOUT_OFF] = 'this server does not offer buyouts.',
-        [CH.ERR.NO_BUYOUT_PRICE] = 'the client did not put a price on closing that one.',
+        [CH.ERR.NO_BUYOUT_PRICE] = 'the person who placed it did not put a price on closing it.',
         [CH.ERR.BUYOUT_PENDING] = 'you have already paid; it closes shortly.',
         [CH.ERR.INCAPACITATED] = 'not from the floor. Get up first.',
         [CH.ERR.HANDOVER_IN_PROGRESS] = 'somebody has hold of you.',
