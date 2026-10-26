@@ -166,7 +166,7 @@ describe('what the admin panel can change', function()
         local s = stack()
         for _, key in ipairs({ 'Admin.Enabled', 'Admin.Ace', 'Admin.IdentityAce', 'Database.Mode',
             'Cooldowns.admin.per', 'Cooldowns.admin.burst', 'Cooldowns.adminWrite.per',
-            'Cooldowns.adminWrite.burst' }) do
+            'Cooldowns.adminWrite.burst', 'Database.QueryTimeoutSeconds' }) do
             local value, err, why = s.settings.check(key, false)
             eq(value, nil, key)
             eq(err, 'read_only', key)

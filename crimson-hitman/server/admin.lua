@@ -1876,6 +1876,64 @@ function Admin.diagnose(source, subjectId, later, opts)
     say(('storage: %s%s'):format(tostring(Config.Database.Mode), Config.Database.Mode == 'memory'
         and ' (testing only: contracts and escrow do not survive a restart)' or ''))
 
+    -- Whether the app is open at all, first (W122): while boot recovery runs,
+    -- or after it failed, every request is refused at a gate the handler
+    -- checks below do not pass through, so they read as healthy on a server
+    -- whose players are told only "busy" or "failed to start".
+    local closed = recovering()
+    if closed == 'recovering' then
+        say('recovery: still running from the start')
+        say('  -> the app answers every request "busy" until it finishes: '
+            .. Admin.RECOVERING)
+    elseif closed == 'recovery_failed' then
+        say('recovery: FAILED at the start')
+        say('  -> the app answers every request "failed to start", and the login payouts and '
+            .. 'the maintenance tick do not run: ' .. Admin.RECOVERY_FAILED)
+    end
+
+    -- The database and the loops, read without asking the database (mysql's
+    -- breaker, server/storage/mysql.lua): this is what staff look at during
+    -- an outage, so none of it may wait on one.
+    local health = Storage and Storage.health and Storage.health() or nil
+    if health then
+        if health.down then
+            local since = tonumber(health.since) or os.time()
+            local seconds = math.max(0, os.time() - since)
+            say(('database: NOT ANSWERING since %s (%dm%02ds); last given up on: "%s"')
+                :format(os.date('%H:%M:%S', since), seconds // 60, seconds % 60,
+                    tostring(health.lastWhat)))
+            say(('  -> what needs it is refused until it answers; a payment it caught is settled '
+                .. 'by the server once it does, or left for staff (/%s). Restart the resource '
+                .. 'only once this says answering.'):format(tostring(Config.Admin.Commands.stuck)))
+        else
+            local slow = (tonumber(health.oldestMs) or 0) >= 2000
+                and ('; one statement has waited %d s so far ("%s")')
+                    :format(math.floor(health.oldestMs / 1000), tostring(health.oldestWhat))
+                or ''
+            say(('database: answering (%d statement(s) given up on since start, %d answered '
+                .. 'after that)%s'):format(tonumber(health.gaveUp) or 0, tonumber(health.late) or 0,
+                slow))
+        end
+        local missing = Audit and Audit.unconfirmed and Audit.unconfirmed() or 0
+        if missing > 0 then
+            say(('  %d audit row(s) may be missing: their write got no answer'):format(missing))
+        end
+    end
+    local function ago(at)
+        if not at then return 'not run yet' end
+        return ('%d s ago'):format(math.max(0, os.time() - at))
+    end
+    local tickAt = Timing and Timing.lastAt and Timing.lastAt('audit.flush') or nil
+    local sampledAt = Timing and Timing.lastAt and Timing.lastAt('death.sampler') or nil
+    local handover = 'idle'
+    if Kidnap and Kidnap.lastPassAt then
+        local passAt, running = Kidnap.lastPassAt()
+        if running then handover = ago(passAt) end
+    end
+    say(('loops: maintenance tick %s | condition sampler %s | handover tick %s')
+        :format(closed == 'recovery_failed' and 'not started' or ago(tickAt), ago(sampledAt),
+            handover))
+
     -- What the start found wrong with the configuration (shared/log.lua):
     -- with Config.Debug off the console said one line for all of them, and
     -- this is where that line sends staff. First, so it is not missed.
@@ -2280,7 +2338,9 @@ function Admin.diagnose(source, subjectId, later, opts)
         probes[#probes + 1] = 'whitelistedView'
     end
 
-    say('handlers:')
+    -- Run directly, so past the gate that is closed while recovery has not
+    -- finished (above): an answer here is not what a player gets then.
+    say(closed and 'handlers (run directly, past the closed gate above):' or 'handlers:')
     for i = 1, #probes do
         local probeName = probes[i]
         local fn = App and App.handlers and App.handlers[probeName]

@@ -957,7 +957,15 @@ takeUnlocked = function(actor, contractId, lines)
     if not wrote or not ok then
         Audit.rejected('escrow_write_failed', actor.cid, contractId,
             { error = not wrote and tostring(ok) or nil })
-        local read, rows = pcall(Storage.readEscrow, contractId)
+        -- A write the database never answered (Storage.timedOut) may still
+        -- land, so a read now that finds nothing cannot mean it will stay
+        -- that way: not read back at all, and left undecided as below.
+        local read, rows
+        if not wrote and Storage.timedOut and Storage.timedOut(ok) then
+            read, rows = false, ok
+        else
+            read, rows = pcall(Storage.readEscrow, contractId)
+        end
         if not read then
             -- Nothing says whether it landed: the store that refused the
             -- write is refusing the read too. Refunded blind, a copy that

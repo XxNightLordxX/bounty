@@ -674,6 +674,16 @@ function Kidnap.clearContract(contractId)
     end
 end
 
+--- When the shared thread last finished a pass (os.time()), and whether it
+--- is running at all: /ch-diag's loops line.
+local lastPass = nil
+
+---@return integer|nil at the last finished pass, nil before the first
+---@return boolean running whether a countdown keeps the thread going
+function Kidnap.lastPassAt()
+    return lastPass, running == true
+end
+
 --- Start the shared thread. Idempotent: only one ever runs.
 function Kidnap.start()
     if running then return end
@@ -692,6 +702,7 @@ function Kidnap.start()
             -- it was armed and sat at nought. The maintenance tick and the
             -- condition sampler are wrapped for the same reason.
             local ok, err = pcall(Kidnap.tick, Config.Kidnap.TickMs)
+            lastPass = os.time()
             if not ok then
                 Log.debug(('handover tick failed: %s'):format(tostring(err)))
             end

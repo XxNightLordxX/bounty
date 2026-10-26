@@ -45,12 +45,20 @@ function Bridges.onWeaponDamage(modules, sender, data)
 end
 
 --- Deliver anything owed to a player who has just come online (§9.3).
+---
+--- The maintenance tick's retry is told of them first (Escrow.noteWaiting),
+--- before this pass reads their queue: a pass that raised (a database that
+--- stopped answering, a store error mid-claim) used to leave their owed
+--- payout for a relog, since only this pass ever put a player who had been
+--- offline back on the tick's list (W085). What happened to their contracts
+--- is told even then.
 function Bridges.onPlayerReady(modules, src)
     local actor = modules.identity and modules.identity.resolve(src)
     if not actor then return 0 end
 
-    local delivered = modules.escrow.retryPending(actor.cid)
-    if delivered > 0 then
+    if modules.escrow.noteWaiting then modules.escrow.noteWaiting(actor.cid) end
+    local ran, delivered = pcall(modules.escrow.retryPending, actor.cid)
+    if ran and delivered > 0 then
         modules.notify.toCitizen(actor.cid, 'Outstanding payment',
             ('%d outstanding item%s been delivered.')
                 :format(delivered, delivered == 1 and ' has' or 's have'),
@@ -58,6 +66,7 @@ function Bridges.onPlayerReady(modules, src)
     end
     -- And what happened to their contracts while they were away.
     modules.notify.deliverWaiting(actor.cid)
+    if not ran then error(delivered, 0) end
     return delivered
 end
 
@@ -200,18 +209,47 @@ function Bridges.install(modules)
     --- server timers and 200 reads of the pending-payout table, five seconds
     --- later, with nothing to stop the next 200.
     local readying = {}
+    --- Bumped when a player leaves or switches character (W004): a pass
+    --- scheduled before that is not theirs any more, and stops. Each one
+    --- waiting for recovery set itself again every few seconds, and a drop
+    --- cleared the latch only for the next run to set it again: after a
+    --- failed recovery every player who had logged in left a timer behind
+    --- that ran for the life of the process.
+    local generation = {}   -- [src] = integer
+
+    --- A player who left, or whose character went, during the wait.
+    local function forgetReady(src)
+        readying[src] = nil
+        generation[src] = (generation[src] or 0) + 1
+    end
 
     local function scheduleReady(src)
         if not src or readying[src] then return false end
         readying[src] = true
-        SetTimeout(Config.PendingEscrow.LoginRetryDelayMs or 5000, function()
+        local mine = generation[src] or 0
+        -- Up to two seconds more at random (Config.PendingEscrow), so a
+        -- restart with a full server does not run every player's pass in
+        -- the same tick.
+        SetTimeout((Config.PendingEscrow.LoginRetryDelayMs or 5000) + math.random(0, 2000), function()
+            if (generation[src] or 0) ~= mine then return end
             readying[src] = nil
             -- Owed money is not delivered while boot recovery is still
-            -- deciding what is owed (App.ready): asked again shortly.
+            -- deciding what is owed (App.ready): asked again shortly. Not
+            -- once recovery has failed, which nothing in this process
+            -- changes, nor for a player who is no longer there.
             if modules.app and modules.app.ready == false then
+                if modules.app.recoveryFailed then return end
+                local found, actor = pcall(modules.identity.resolve, src)
+                if not (found and actor) then return end
                 return scheduleReady(src)
             end
-            Bridges.onPlayerReady(modules, src)
+            -- In pcall: a pass that raised is the tick's to finish
+            -- (Bridges.onPlayerReady), and a timer that raises says nothing.
+            local ok, err = pcall(Bridges.onPlayerReady, modules, src)
+            if not ok then
+                Log.debug(('the login pass for player %s raised: %s; the maintenance tick tries '
+                    .. 'their owed payouts again'):format(tostring(src), tostring(err)))
+            end
         end)
         return true
     end
@@ -529,7 +567,7 @@ function Bridges.install(modules)
             cid = actor and actor.cid
         end
         connect(src, nil)
-        readying[src] = nil
+        forgetReady(src)
         -- A photo on its way to them is not any more, whoever gets this
         -- server id next.
         if modules.app.forgetSource then modules.app.forgetSource(src) end
@@ -576,6 +614,8 @@ function Bridges.install(modules)
             cid = actor and actor.cid
         end
         connect(src, nil)
+        -- A pass scheduled for the character that went is not the next one's.
+        forgetReady(src)
         if loggedOut then loggingOut[src] = nil else loggingOut[src] = cid end
         -- What their client said about their mask was said for the
         -- character that has gone; the next one says it again.

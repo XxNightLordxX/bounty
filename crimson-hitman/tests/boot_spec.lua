@@ -1714,3 +1714,117 @@ describe('PendingEscrow.MaxRetriesPerLogin below 1', function()
         eq(client.PlayerData.money.cash - before, 5000)
     end)
 end)
+
+--- S17, W151: a start the database holds up, or that raises before the
+--- app's gate opens.
+describe('a start the database holds up, or a raise interrupts', function()
+    local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+
+    local function fresh(mode)
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Natives.files = {}
+        Config.Database.Mode = mode
+        Exec.install(Natives)
+        Env.console = {}
+        return require('server.main')
+    end
+
+    local function console() return table.concat(Env.console, '\n') end
+
+    local function answer(name, src)
+        Env.clientEvents = {}
+        _G.source = src
+        Env.events['crimson-hitman:' .. name]({ __rid = 4 })
+        _G.source = nil
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:result' then return event.args[1] end
+        end
+    end
+
+    it('waits for the database and says so, then starts once it answers', function()
+        local main = fresh('mysql')
+        Exec.down = true
+        local starting = Env.spawn(main.start)
+        for _ = 1, 8 do Env.advance(5) end
+        falsy(starting.done, 'still waiting')
+        truthy(console():find('waiting for the database (', 1, true), console())
+        Exec.down = false
+        for _ = 1, 3 do Env.advance(5) end
+        truthy(starting.done, 'it waited on its first statement for good, with nothing registered')
+        eq(starting.results[1].app.ready, true)
+        truthy(Env.events['crimson-hitman:list'], 'and the app answers')
+    end)
+
+    it('a json start with oxmysql up and the database down goes on, and says it could not ask', function()
+        local main = fresh('json')
+        Natives.resourceStates.oxmysql = 'started'
+        Exec.down = true
+        local starting = Env.spawn(main.start)
+        Env.advance(11)
+        truthy(starting.done, 'held for good by a question to a database it does not use')
+        eq(starting.results[1].app.ready, true)
+        truthy(console():find('could not ask the database whether mysql mode still holds '
+            .. 'players\' money', 1, true), console())
+        truthy(console():find('starting in json mode', 1, true), console())
+    end)
+
+    it('an index rebuild that raises at start opens the app all the same, and says so', function()
+        local main = fresh('memory')
+        require('server.amendments').reindex = function() error('db hiccup in reindex', 0) end
+        local ok, s = pcall(main.start)
+        truthy(ok, 'the start raised with the gate shut: ' .. tostring(s))
+        eq(s.app.ready, true)
+        truthy(console():find('rebuilding the list of contracts with open proposed changes at '
+            .. 'start failed: db hiccup in reindex', 1, true), console())
+    end)
+
+    it('anything else that raises before the gate opens is a failed recovery, and said as one', function()
+        local main = fresh('memory')
+        require('server.bridges').install = function() error('a bridge raised', 0) end
+        local ok, s = pcall(main.start)
+        truthy(ok, 'the start raised, and every request answered busy for good: ' .. tostring(s))
+        eq(s.app.ready, false)
+        eq(s.app.recoveryFailed, true)
+        truthy(console():find('BOOT RECOVERY FAILED: a bridge raised', 1, true), console())
+        fixture(s)
+        eq(answer('list', 1).err, CH.ERR.RECOVERY_FAILED)
+    end)
+
+    it('keeps the audit queue on this machine at a stop the database does not answer', function()
+        local main = fresh('mysql')
+        local s = main.start()
+        s.audit.financial('kept_row', 'A', 'ctKept', {})
+        Exec.down = true
+        -- A statement waiting longer than two seconds: not healthy.
+        Env.spawn(function() return pcall(s.storage.readContract, 'ctKept') end)
+        Env.advance(3)
+        eq(s.audit.flush(), 0, 'nothing sent into the outage')
+        eq(s.audit.pending(), 1, 'and the row is still queued')
+        Env.handlers['onResourceStop'](GetCurrentResourceName())
+
+        -- Restarted once it answers, on the same machine.
+        Exec.down = false
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        Env.events, Env.handlers, Env.threads, Env.timers, Env.commands = {}, {}, {}, {}, {}
+        local s2 = require('server.main').start()
+        s2.audit.flush()
+        local seen = 0
+        for _, row in pairs(Exec.tables.crimson_audit or {}) do
+            if row.action == 'kept_row' then seen = seen + 1 end
+        end
+        eq(seen, 1, 'written by the next start, once')
+        eq(s2.audit.pending(), 0)
+    end)
+end)

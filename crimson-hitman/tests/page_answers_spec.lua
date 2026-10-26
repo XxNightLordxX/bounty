@@ -369,3 +369,28 @@ describe('a refusal that says what was missing', function()
         eq(refusal and refusal.max, 1, 'the create handler passes this on as the reply data')
     end)
 end)
+
+--- S14: a request the database did not answer (mysql) was told
+--- "Something broke on the server", or nothing at all, while a payment it
+--- was recording could still go through.
+describe('a request the database did not answer', function()
+    it('is told so, and an SQL error is still a server error', function()
+        local s = newStack()
+        local f = fixture(s)
+        local c = placed(s, f)
+        s.storage.timedOut = require('crimson-hitman.server.storage.mysql').timedOut
+        local real = s.storage.readContract
+        s.storage.readContract = function()
+            error('crimson-hitman: the database did not answer within 10 s (SELECT); it may still run', 0)
+        end
+        local reply = call('accept', 3, { id = c.id })
+        eq(reply.err, CH.ERR.DB_TIMEOUT)
+        s.storage.readContract = function()
+            error('crimson-hitman was unable to execute a query!\nQuery: SELECT\n[]\nUnknown column', 0)
+        end
+        Env.advance(5)
+        reply = call('accept', 3, { id = c.id })
+        s.storage.readContract = real
+        eq(reply.err, CH.ERR.SERVER_ERROR)
+    end)
+end)

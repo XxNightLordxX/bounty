@@ -312,6 +312,9 @@ local DEFAULTS = {
             WarnContractCount = 2000,
             MaxDirtyShardsPerFlush = 25,
         },
+        -- A Database section from before the limit existed waits 10 s, as
+        -- shipped, not for ever.
+        QueryTimeoutSeconds = 10,
     },
     --- A whole section a config from before it had is filled from
     --- defaults.lua; this fills the key in one that has the section.
@@ -620,6 +623,19 @@ local function validateConfig(quiet)
     if allowSwitch ~= nil and type(allowSwitch) ~= 'boolean' then
         warn[#warn + 1] = ('Config.Database.AllowModeSwitch is %s, not true or false; it is read '
             .. 'as false'):format(tostring(allowSwitch))
+    end
+    -- How long one mysql statement may go unanswered (server/storage/mysql.lua).
+    -- Not a number, or below 0, is the shipped 10; over 12, the phone's own
+    -- 15 s wait can run out first.
+    local answerLimit = Config.Database.QueryTimeoutSeconds
+    if type(answerLimit) ~= 'number' or answerLimit ~= answerLimit or answerLimit < 0 then
+        warn[#warn + 1] = ('Config.Database.QueryTimeoutSeconds is %s; expected 0 or more seconds. '
+            .. 'Using 10.'):format(tostring(answerLimit))
+        Config.Database.QueryTimeoutSeconds = 10
+    elseif answerLimit > 12 then
+        warn[#warn + 1] = ('Config.Database.QueryTimeoutSeconds is %s; the phone gives up after '
+            .. '15 s, so a player may be told "no answer yet" before the server answers')
+            :format(tostring(answerLimit))
     end
     -- Read by every player's game, not here, as a plain `== true`: a
     -- string 'true' leaves the app in the App Store with nothing to say
@@ -1257,7 +1273,13 @@ local function refuseModeSwitch()
     -- Only where oxmysql is running: a json server without a database has
     -- nothing there to find, and asking would wait on a connection forever.
     if mode ~= 'mysql' and GetResourceState('oxmysql') == 'started' and MySQL then
+        -- Bounded, as every statement of the mysql store is: a database that
+        -- does not answer held this start for ever, silently.
         local ok, held = pcall(CrimsonBoot.require('server.storage.mysql').inspect)
+        if not ok then
+            Log.always(('could not ask the database whether mysql mode still holds players\' '
+                .. 'money (%s); starting in %s mode'):format(Util.dbError(held), tostring(mode)))
+        end
         local reviews = ok and held and held.reviews or {}
         if ok and held and (held.lines > 0 or held.owed > 0 or #reviews > 0) then
             if held.lines > 0 or held.owed > 0 then
@@ -1543,14 +1565,47 @@ function StartCrimsonHitman()
     -- Nothing is answered until recovery has finished (App.ready).
     app.ready = false
     app.recoveryFailed = false
-    app.init(modules)
-    admin.init(modules)
-    panel.init(modules)
-    CrimsonBoot.require('server.bridges').install(modules)
 
-    -- Its own clock, faster than the maintenance tick: attribution is only
-    -- as precise as the last condition sample.
-    death.startSampler()
+    --- Recovery that did not finish: the gate stays shut and the console says
+    --- why. Everything between closing the gate and opening it is guarded so
+    --- that a raise anywhere in it lands here (W151). It used to raise out of
+    --- the start with the gate shut and recoveryFailed unset, so every request
+    --- answered "busy, try again" for the life of the process, the commands
+    --- said "try again in a moment", no maintenance tick ran, and the console
+    --- said only "failed to start".
+    local function recoveryFailed(err)
+        app.recoveryFailed = true
+        pcall(audit.flush)
+        -- Money left as the last shutdown left it: whatever Config.Debug says.
+        Log.always('============================================')
+        Log.always('BOOT RECOVERY FAILED: ' .. tostring(err))
+        Log.always('  What the last shutdown left part-way is not settled, so the app,')
+        Log.always('  the login payouts and the staff commands that settle, void or')
+        Log.always('  list escrow stay closed, and the maintenance tick does not start.')
+        if Storage.timedOut and Storage.timedOut(err) then
+            Log.always('  The database stopped answering during recovery; restart the')
+            Log.always(('  resource once /%s says it answers.')
+                :format(tostring(Config.Admin.Commands.diagnose)))
+        else
+            Log.always('  Fix the cause above, then restart the resource.')
+        end
+        Log.always('============================================')
+        Log.reportProblems()
+        Log.started()
+        return modules
+    end
+
+    local wired, wireErr = pcall(function()
+        app.init(modules)
+        admin.init(modules)
+        panel.init(modules)
+        CrimsonBoot.require('server.bridges').install(modules)
+
+        -- Its own clock, faster than the maintenance tick: attribution is
+        -- only as precise as the last condition sample.
+        death.startSampler()
+    end)
+    if not wired then return recoveryFailed(wireErr) end
 
     -- A recovery that raises has left part of what the last shutdown left
     -- as it was: a line still `releasing`, a contract still mid-claim, a
@@ -1575,21 +1630,7 @@ function StartCrimsonHitman()
             tostring(Config.Admin.Commands.stuck)))
     end
     local recovered, recoverErr = pcall(Recover)
-    if not recovered then
-        app.recoveryFailed = true
-        pcall(audit.flush)
-        -- Money left as the last shutdown left it: whatever Config.Debug says.
-        Log.always('============================================')
-        Log.always('BOOT RECOVERY FAILED: ' .. tostring(recoverErr))
-        Log.always('  What the last shutdown left part-way is not settled, so the app,')
-        Log.always('  the login payouts and the staff commands that settle, void or')
-        Log.always('  list escrow stay closed, and the maintenance tick does not start.')
-        Log.always('  Fix the cause above, then restart the resource.')
-        Log.always('============================================')
-        Log.reportProblems()
-        Log.started()
-        return modules
-    end
+    if not recovered then return recoveryFailed(recoverErr) end
 
     -- Kill photo files no record names any more. Before the app answers:
     -- a photo is written to its file a moment before its record, and a
@@ -1601,7 +1642,18 @@ function StartCrimsonHitman()
     if not swept then
         Log.debug(('the sweep of kill photo files failed: %s'):format(tostring(sweepErr)))
     end
-    amendments.reindex()
+    -- The two indexes below are rebuilt in memory, and every start rebuilds
+    -- them again: one that raised is not worth keeping the app closed for,
+    -- so the start goes on and says so (W151).
+    local function reindexed(name, fn, meanwhile)
+        local ok, err = pcall(fn)
+        if not ok then
+            Log.always(('rebuilding %s at start failed: %s; the server started anyway, and until '
+                .. 'the next start %s'):format(name, Util.dbError(err), meanwhile))
+        end
+    end
+    reindexed('the list of contracts with open proposed changes', amendments.reindex,
+        'a change proposed before this start does not lapse on its own')
     -- An agreed change the last process stopped part-way through applying
     -- is closed as 'unknown', never applied a second time, and both sides
     -- are told to look at the contract (Amendments.recoverApplying).
@@ -1612,7 +1664,8 @@ function StartCrimsonHitman()
     end
     -- Contracts already held when this process started, so an idle hold
     -- from before a restart is still one the sweep can see.
-    contracts.reindexHolds()
+    reindexed('the list of held contracts', contracts.reindexHolds,
+        'a hold taken before this start is not released for being idle')
     -- Reviews the last shutdown left part-way resolved, finished as staff
     -- decided them, now recovery has put back what their lines left.
     local reviewed, reviewErr = pcall(review.recover)
@@ -1969,7 +2022,12 @@ local function job(name, fn, ...)
     local ok, err = modules.timing.run(name, fn, ...)
     if not ok then
         local text = ('maintenance job %q failed: %s'):format(name, tostring(err))
-        if WRITE_JOBS[name] or MONEY_JOBS[name] then
+        -- The database not answering (mysql) fails every job that asks it,
+        -- every tick, and the store says when that starts and when it ends:
+        -- with Debug on only, so those two lines bracket the outage.
+        if Storage.timedOut and Storage.timedOut(err) then
+            Log.debug(text)
+        elseif WRITE_JOBS[name] or MONEY_JOBS[name] then
             sayFailure(name, text)
         else
             Log.debug(text)
@@ -2428,8 +2486,15 @@ AddEventHandler('onResourceStop', function(name)
         end
     end
 
-    -- The last moment anybody could play, to the second.
-    if Storage and Storage.heartbeat then pcall(Storage.heartbeat, os.time()) end
+    -- The last moment anybody could play, to the second. Only from an app
+    -- that was open: while recovery runs, or after it failed, the app was
+    -- closed, and the heartbeat Recover goes by stands at the last moment it
+    -- served. Written at this stop, the next start charged the whole outage
+    -- (the crash, the failed boot, the time staff took to fix it) to every
+    -- deadline Recover had not yet paused, and a contract that fell due in
+    -- it expired at the first tick with the hitman's stake forfeited (W150).
+    local served = modules.app and modules.app.ready == true and not modules.app.recoveryFailed
+    if served and Storage and Storage.heartbeat then pcall(Storage.heartbeat, os.time()) end
     if Storage and Storage.close then Storage.close() end
 end)
 

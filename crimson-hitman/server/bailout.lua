@@ -188,7 +188,15 @@ local function recordPaid(contractId, fields)
     local err = recorded
     Audit.financial('bailout_record_failed', payer, contractId,
         { amount = fields.bailout_paid_amount, error = tostring(err) })
-    local read, stored = pcall(Storage.readContract, contractId)
+    -- Unanswered (Storage.timedOut), the record may still land: not read
+    -- back and never handed back on what the read finds, but left to the
+    -- server as below.
+    local read, stored
+    if Storage.timedOut and Storage.timedOut(err) then
+        read, stored = false, err
+    else
+        read, stored = pcall(Storage.readContract, contractId)
+    end
     if not read then
         -- The double fault: the store would neither take the record nor
         -- say whether it had. Never decided on absence: left for the server

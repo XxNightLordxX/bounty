@@ -982,21 +982,20 @@ describe('a claim that stalls between the lines of its marks', function()
         truthy(s.contracts.accept(f.hitman, c.id, false))
 
         -- The claim stalls after its first write to escrow: after one line
-        -- of its marks, if they go one statement a line.
+        -- of its marks, if they go one statement a line. Through the store's
+        -- own await seam, in the caller's thread: each statement runs in a
+        -- thread of its own beneath it (server/storage/mysql.lua).
         local claim, paused = nil, false
-        local realQuery, realTx = MySQL.query, MySQL.transaction
-        local function stallAfter(fn)
-            return { await = function(sql, params)
-                local out = fn.await(sql, params)
-                local text = type(sql) == 'string' and sql or ''
-                if type(sql) == 'table' then text = sql[1] and (sql[1].query or sql[1][1]) or '' end
-                if claim and coroutine.running() == claim and not paused
-                    and text:find('INSERT INTO crimson_escrow') then
-                    paused = true
-                    coroutine.yield()
-                end
-                return out
-            end }
+        local function stallAfter(fn, sql, ...)
+            local out = fn(sql, ...)
+            local text = type(sql) == 'string' and sql or ''
+            if type(sql) == 'table' then text = sql[1] and (sql[1].query or sql[1][1]) or '' end
+            if claim and coroutine.running() == claim and not paused
+                and text:find('INSERT INTO crimson_escrow') then
+                paused = true
+                coroutine.yield()
+            end
+            return out
         end
         local realTake = s.escrow.take
         local started = false
@@ -1004,7 +1003,7 @@ describe('a claim that stalls between the lines of its marks', function()
             local a, b, d = realTake(actor, id, lines)
             if not started then
                 started = true
-                MySQL.query, MySQL.transaction = stallAfter(realQuery), stallAfter(realTx)
+                s.storage.timeWaitsWith(stallAfter)
                 claim = coroutine.create(function()
                     return s.contracts.claimSlot(c.id, 'HITMAN01', CH.FULFILMENT.ELIMINATION)
                 end)
@@ -1018,7 +1017,7 @@ describe('a claim that stalls between the lines of its marks', function()
         s.escrow.take = realTake
         truthy(paused, 'the claim stalled in its marks')
         coroutine.resume(claim)
-        MySQL.query, MySQL.transaction = realQuery, realTx
+        s.storage.timeWaitsWith(nil)
 
         local baseline
         for _, l in ipairs(s.storage.readEscrow(c.id)) do

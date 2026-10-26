@@ -2398,3 +2398,56 @@ describe('the timer refresh while the server recovers', function()
         end)
     end
 end)
+
+--- W122, S15: the diagnosis said "gate: passes" and every handler answered
+--- on a server whose app refused every request while recovery ran or after
+--- it failed, since its probes run the handlers past that gate. And it had
+--- nothing to say about a database that stopped answering, or a loop that
+--- stopped.
+describe('the diagnosis of a server whose app is closed, or whose database is not answering', function()
+    local function diagnose(s) return table.concat(s.admin.diagnose(0, '3'), '\n') end
+
+    for _, case in ipairs({ { failed = false, says = 'recovery: still running' },
+                            { failed = true, says = 'recovery: FAILED at the start' } }) do
+        it(('says %s first, and that the handler checks bypass the gate'):format(case.says), function()
+            local s = newStack()
+            fixture(s)
+            s.app.ready, s.app.recoveryFailed = false, case.failed
+            local out = diagnose(s)
+            s.app.ready, s.app.recoveryFailed = true, false
+            local at = out:find(case.says, 1, true)
+            truthy(at, out)
+            truthy(at < out:find('gate:', 1, true), 'before anything that reads as healthy')
+            truthy(out:find('handlers (run directly, past the closed gate above):', 1, true), out)
+        end)
+    end
+
+    it('says the database is not answering and how old each loop is, without asking it', function()
+        local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        Env.reset()
+        Natives.resetResourceStates()
+        resetConfig()
+        Natives.files = {}
+        Config.Database.Mode = 'mysql'
+        Exec.install(Natives)
+        local main = require('server.main')
+        local s = main.start()
+        fixture(s)
+        main.tick()
+        Exec.down = true
+        Env.spawn(function() return pcall(s.storage.readContract, 'ctDiag01') end)
+        Env.advance(14)
+        local sent = #Exec.statements
+        local out = diagnose(s)
+        truthy(out:find('database: NOT ANSWERING since', 1, true), out)
+        truthy(out:find('last given up on: "SELECT * FROM crimson_contracts WHERE id = ?"', 1, true), out)
+        truthy(out:find('loops: maintenance tick 14 s ago', 1, true), out)
+        truthy(out:find('handover tick idle', 1, true), out)
+        eq(#Exec.statements, sent, 'and nothing was sent to the database it says is not answering')
+    end)
+end)

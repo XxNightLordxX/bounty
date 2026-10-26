@@ -2680,3 +2680,86 @@ describe('settings the server says this game reads', function()
         if not ok then error(err, 0) end
     end)
 end)
+
+--- W004, W085, W091: the pass a login schedules to hand over what a player
+--- is owed (Bridges scheduleReady and onPlayerReady).
+describe('the pass a login schedules', function()
+    local function wired()
+        local s = newStack()
+        s.bridges.install(s)
+        return s
+    end
+
+    local function login(src)
+        _G.source = src
+        Env.events['QBCore:Server:OnPlayerLoaded']()
+        _G.source = nil
+    end
+
+    local function lockpicks(src)
+        local n = 0
+        for _, slot in ipairs(Env.players[src]._inventory or {}) do
+            if slot.name == 'lockpick' then n = n + (slot.count or 0) end
+        end
+        return n
+    end
+
+    it('leaves no timer behind for players who log in and leave while recovery has failed', function()
+        local s = wired()
+        fixture(s)
+        s.app.ready, s.app.recoveryFailed = false, true
+        local before = #Env.timers
+        for src = 1, 3 do login(src) end
+        Env.advance(10)
+        for src = 1, 3 do
+            _G.source = src
+            Env.handlers['playerDropped']()
+            _G.source = nil
+        end
+        Env.advance(60)
+        eq(#Env.timers, before, 'a timer each, re-arming every few seconds for good')
+    end)
+
+    it('a pass that raises leaves the payout to the tick, and still says what happened', function()
+        local s = wired()
+        local f = fixture(s)
+        local lines = s.escrow.validate(f.creator, { baseline = { items = { { name = 'lockpick', count = 2 } } } })
+        s.escrow.take(f.creator, 'ct1', lines)
+        Env.players[3]._inventoryFull = true
+        s.escrow.release('ct1', 'HITMAN01', CH.PORTION.BASELINE, 'test')
+        Env.players[3]._inventoryFull = false
+        -- Offline at a tick, which forgets them until a login says otherwise.
+        s.escrow.retryWaiting(function() return false end)
+
+        local real, told = s.storage.readPending, false
+        s.storage.readPending = function(...)
+            s.storage.readPending = real
+            error('mysql: connection lost', 0)
+        end
+        local deliver = s.notify.deliverWaiting
+        s.notify.deliverWaiting = function(...) told = true return deliver(...) end
+        falsy(pcall(s.bridges.onPlayerReady, s, 3), 'the pass raised')
+        s.notify.deliverWaiting = deliver
+        truthy(told, 'what happened while they were away is told even so')
+
+        Env.advance(30)
+        s.escrow.retryWaiting(function() return true end)
+        eq(lockpicks(3), 2, 'the tick hands it over: it waited for a relog')
+    end)
+
+    it('waits the configured delay and up to two seconds more', function()
+        local s = wired()
+        fixture(s)
+        local reads = 0
+        local real = s.storage.readPending
+        s.storage.readPending = function(...) reads = reads + 1 return real(...) end
+        local random = math.random
+        math.random = function(a, b) if a == 0 and b == 2000 then return 2000 end return random(a, b) end
+        login(3)
+        math.random = random
+        Env.advance(Config.PendingEscrow.LoginRetryDelayMs / 1000 + 1)
+        eq(reads, 0, 'every player at once after a restart: no spread at all')
+        Env.advance(1.5)
+        eq(reads, 1)
+    end)
+end)

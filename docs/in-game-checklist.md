@@ -641,6 +641,35 @@ uploads, and with neither. Restart the resource between them.
       log and nothing about it on the staff webhook
 - [ ] Right after a payout, the player's `money` in the `players` table already
       shows it (qbx_core's `Save`), not five minutes later
+- [ ] With boot recovery failed (`BOOT RECOVERY FAILED` in the console), stop
+      and start the resource after an hour with the cause fixed: a contract
+      that fell due in that hour is still running with its stake, its
+      deadline moved on by the hour; `/ch-diag` meanwhile said *recovery:
+      FAILED at the start* above the handler checks
+
+### 11a. The outage drill (test server, `mysql` mode)
+
+Stop MariaDB for 30 seconds (a) while placing a contract, (b) while buying
+out, (c) while accepting with a stake, (d) during a handover countdown.
+
+- [ ] The console says `the database stopped answering (...)` once, and `the
+      database answers again after N s` once it is back
+- [ ] The phone says *The server's records did not answer in time. If you
+      were paying for something, look before you try again: it may still go
+      through.* within 15 seconds, never nothing
+- [ ] Within a minute of starting MariaDB again each payment is settled by
+      the server (the reward back or the contract on the board; the buyout
+      recorded or refunded; the stake back), with a phone notice
+- [ ] The countdown carries on, and nothing answers *busy* a minute later
+- [ ] `/ch-diag` showed `database: NOT ANSWERING since ...` during it, and
+      `database: answering` and every loop a few seconds old after it
+- [ ] Restart the resource **while** MariaDB is stopped: the console says
+      `waiting for the database (N s): ...` every 30 seconds, the start goes on
+      once it is back, the same payments are settled, and the audit rows from
+      before the stop are in `crimson_audit`
+- [ ] resmon idle is unchanged, before and after the drill (estimate: no new
+      threads; the connection is checked only when a statement went
+      unanswered)
 
 ## 12. Performance
 

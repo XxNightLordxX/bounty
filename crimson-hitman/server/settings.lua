@@ -326,6 +326,9 @@ local CATALOGUE = {
     { key = 'Database.Json.SyncOnFinancialWrite', section = 'readonly', group = 'Storage',
       kind = 'switch', label = 'Write money to disk as it moves',
       readonly = 'Off, a crash could lose money that had moved. Set it in config.lua.' },
+    { key = 'Database.QueryTimeoutSeconds', section = 'readonly', group = 'Storage',
+      kind = 'number', label = 'Database answer limit (s)',
+      readonly = 'mysql only. Set it in config.lua; it takes effect at the next start.' },
 
     -- Limits and settings -------------------------------------------------
     { key = 'Limits.MaxActiveContractsPerCreator', section = 'limits', group = 'Contract limits',

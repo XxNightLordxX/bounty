@@ -1040,6 +1040,8 @@ local function execute(sql, params, flat)
         return rows
     end
     if flat:find('information_schema') then return {} end
+    -- The store's probe of the connection (server/storage/mysql.lua).
+    if flat == 'SELECT 1' then return 1 end
 
     if flat:find('^INSERT INTO crimson_ledger') and flat:find('DELETE') then
         return pruneLedger(params)

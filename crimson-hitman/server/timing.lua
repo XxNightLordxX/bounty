@@ -42,7 +42,7 @@ Timing.WINDOW = 30
 Timing.WARN_EVERY_SECONDS = 300
 
 --- [name] = { ms = { ...WINDOW }, n = runs so far, sum = over the window,
----            last = ms, warnedAt = os.time() }
+---            last = ms, warnedAt = os.time(), at = os.time() of the last run }
 local jobs = {}
 
 --- [coroutine] = clock seconds it has spent inside Timing.await. By the
@@ -87,6 +87,7 @@ function Timing.record(name, ms)
     job.ms[slot] = ms
     job.n = job.n + 1
     job.last = ms
+    job.at = os.time()
 
     local over = limit()
     if over and ms > over then
@@ -115,6 +116,15 @@ function Timing.run(name, fn, ...)
     local held = (Timing.clock() - started) - ((waited[thread] or 0) - waitedBefore)
     Timing.record(name, math.max(0, held) * 1000)
     return ok, err
+end
+
+--- When a job last finished a run (os.time()), or nil before its first:
+--- /ch-diag's loops line, which tells a loop that stopped from one that runs.
+---@param name string
+---@return integer|nil
+function Timing.lastAt(name)
+    local job = jobs[name]
+    return job and job.at or nil
 end
 
 --- The jobs by their slowest run in the window, slowest first.

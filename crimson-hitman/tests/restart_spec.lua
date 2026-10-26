@@ -4768,3 +4768,70 @@ describe('changing storage mode with money waiting for staff', function()
         truthy(GetResourceKvpString(key), 'and leaves the key for mysql mode')
     end)
 end)
+
+--- W150: a stop while the app was closed (recovery still running, or
+--- failed) moved the heartbeat on to the moment of the stop, and the next
+--- start paused every contract only from there: the whole outage was
+--- charged to the deadlines, and a contract that fell due in it expired at
+--- the first tick with the hitman's stake forfeited.
+describe('a stop before recovery has finished', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': leaves the heartbeat, so the outage is not charged to a deadline', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+                mode = CH.MODE.EXCLUSIVE, penaltyAmount = 2000,
+                reward = { baseline = { cash = 10000 } } })
+            truthy(c)
+            truthy(s.contracts.accept(f.hitman, c.id))
+            local hitman = money(3)
+
+            -- Crashed; the next start's recovery raises, and staff take four
+            -- hours, past the three-hour deadline, before they restart it.
+            rawset(s.storage, '__rawFixture', true)
+            forgetServerModules()
+            Env.events, Env.clientEvents, Env.notifications = {}, {}, {}
+            Env.handlers, Env.threads, Env.timers, Env.commands = {}, {}, {}, {}
+            local store = require('server.storage.' .. mode)
+            local heartbeat = store.lastHeartbeat
+            store.lastHeartbeat = function() error('the recovery read failed', 0) end
+            local s2 = require('server.main').start()
+            store.lastHeartbeat = heartbeat
+            eq(s2.app.recoveryFailed, true)
+            Env.advance(4 * 3600)
+            Env.handlers['onResourceStop'](GetCurrentResourceName())
+
+            local main3, s3 = restart(mode, s2)
+            main3.tick()
+            local now = s3.storage.readContract(c.id)
+            eq(now.state, CH.STATE.ACCEPTED, 'the closed hours were charged to the deadline')
+            eq(money(3), hitman, 'and the stake is not forfeited')
+        end)
+    end
+
+    it('mysql: a stop arriving while recovery waits on the database leaves the heartbeat', function()
+        local _, s = boot('mysql')
+        local function stored()
+            for _, row in pairs(Exec.tables.crimson_meta or {}) do
+                if row.meta_key == 'heartbeat' then return tonumber(row.meta_value) end
+            end
+        end
+        local before = stored()
+        truthy(before)
+        Env.advance(600)
+        rawset(s.storage, '__rawFixture', true)
+        forgetServerModules()
+        Env.events, Env.handlers, Env.threads, Env.timers, Env.commands = {}, {}, {}, {}, {}
+        local store = require('server.storage.mysql')
+        local real = store.allContracts
+        store.allContracts = function(...)
+            store.allContracts = real
+            Exec.lateNext = 1
+            return real(...)
+        end
+        local starting = Env.spawn(require('server.main').start)
+        falsy(starting.done, 'recovery is waiting on the database')
+        Env.handlers['onResourceStop'](GetCurrentResourceName())
+        eq(stored(), before, 'the stop moved the heartbeat on while the app was closed')
+    end)
+end)

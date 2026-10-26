@@ -6,18 +6,87 @@
 local Audit = {}
 
 local Util = CrimsonBoot.requireShared('util')
+local Log = CrimsonBoot.requireShared('log')
 
 local Storage
 local queue = {}
 local head, tail = 1, 0
 local dropped = 0
+--- Rows whose write the database never answered (mysql): each may or may
+--- not be in the log, and is not sent again. /ch-diag says how many.
+local unconfirmed = 0
 
 --- Rows per INSERT where the store can write several at once (mysql).
 local BATCH_ROWS = 200
 
+--------------------------------------------------------------------------
+-- Kept on this machine across a stop (resource KVP)
+--------------------------------------------------------------------------
+
+--- A stop while the database is not answering (mysql) cannot hand the queue
+--- to oxmysql: a statement it cannot send is never run and never comes back
+--- (OXMYSQL.md §6, §7), and every queued row, financial ones among them, was
+--- lost on the restart staff make for an outage. So the queue goes to
+--- FXServer's KVP store instead, `auditKept:<mode>:<n>`, KEPT_CHUNK rows a
+--- key, and the next start in that mode puts it back at the front of the
+--- queue, each row with its own time.
+local KEPT = 'auditKept:'
+local KEPT_CHUNK = 200
+
+--- The keys this start put back into the queue: deleted once a flush has
+--- written their rows, or a stop has handed them on.
+local keptKeys = {}
+
+---@param mode string|nil
+---@return string
+local function keptPrefix(mode)
+    return KEPT .. tostring(mode or Config.Database.Mode) .. ':'
+end
+
+--- This mode's kept keys, in the order they were written.
+---@return string[]
+local function keptInOrder()
+    local keys = {}
+    if type(StartFindKvp) ~= 'function' or type(FindKvp) ~= 'function' then return keys end
+    local prefix = keptPrefix()
+    local ok, handle = pcall(StartFindKvp, prefix)
+    if not ok or not handle or handle == -1 then return keys end
+    while true do
+        local key = FindKvp(handle)
+        if not key then break end
+        if tonumber(key:sub(#prefix + 1)) then keys[#keys + 1] = key end
+    end
+    if type(EndFindKvp) == 'function' then pcall(EndFindKvp, handle) end
+    table.sort(keys, function(a, b)
+        return tonumber(a:sub(#prefix + 1)) < tonumber(b:sub(#prefix + 1))
+    end)
+    return keys
+end
+
+local function forgetKept()
+    if type(DeleteResourceKvp) == 'function' then
+        for i = 1, #keptKeys do pcall(DeleteResourceKvp, keptKeys[i]) end
+    end
+    keptKeys = {}
+end
+
 function Audit.init(storage)
     Storage = storage
-    queue, head, tail, dropped = {}, 1, 0, 0
+    queue, head, tail, dropped, unconfirmed, keptKeys = {}, 1, 0, 0, 0, {}
+    -- What a stop kept on this machine for this mode, written by the next
+    -- flush that can (Audit.flush).
+    for _, key in ipairs(keptInOrder()) do
+        keptKeys[#keptKeys + 1] = key
+        local text = type(GetResourceKvpString) == 'function' and GetResourceKvpString(key) or nil
+        local decoded, rows = pcall(json.decode, text or '')
+        for _, row in ipairs(decoded and type(rows) == 'table' and rows or {}) do
+            if type(row) == 'table' and row.action then
+                row.detail = type(row.detail) == 'table' and row.detail or {}
+                tail = tail + 1
+                queue[tail] = row
+            end
+        end
+    end
 end
 
 --- Detail fields that hold an error's text, at any depth (and any key that
@@ -222,8 +291,21 @@ end
 --- database answer (mysql) hands each row over without waiting instead
 --- (writeAuditNoWait): waiting there yields the stop handler, and nothing
 --- resumes it before this resource's Lua is torn down.
+---
+--- A store that is not answering (mysql: Storage.healthy) keeps its rows
+--- queued rather than sending them into the outage, bounded by
+--- Config.Audit.MaxQueueSize as ever, and at a stop keeps them on this
+--- machine for the next start (spill). A batch the store never sent goes
+--- back to the front of the queue in order; one sent and never answered may
+--- have been written, so it is not sent again but counted
+--- (Audit.unconfirmed). Either way the flush stops there, and what it had
+--- not reached goes back too.
 ---@param stopping boolean|nil
 function Audit.flush(stopping)
+    if Storage.healthy and not Storage.healthy() then
+        if not stopping then return 0 end
+        if type(SetResourceKvp) == 'function' then return Audit.spill() end
+    end
     local write = (stopping and Storage.writeAuditNoWait) or Storage.writeAudit
 
     -- An overflow is reported even when there is nothing else to write.
@@ -252,12 +334,26 @@ function Audit.flush(stopping)
     end
 
     local written = 0
+    -- Where the flush stopped on a database that did not answer: the rows
+    -- from here on go back to the front of the queue.
+    local stoppedAt
+    local function unanswered(err)
+        return Storage.timedOut and Storage.timedOut(err)
+    end
+    --- One row on its own; false when the store did not answer it.
     local function one(entry)
-        if pcall(write, entry) then
+        local ok, err = pcall(write, entry)
+        if ok then
             written = written + 1
+        elseif Storage.notSent and Storage.notSent(err) then
+            return false
+        elseif unanswered(err) then
+            unconfirmed = unconfirmed + 1
+            return false, true
         else
             dropped = dropped + 1
         end
+        return true
     end
 
     -- Many rows a statement where the store can (mysql: one awaited round
@@ -268,17 +364,58 @@ function Audit.flush(stopping)
     local several = not stopping and Storage.writeAuditBatch or nil
     if several then
         for from = 1, #drained, BATCH_ROWS do
-            local chunk = table.move(drained, from, math.min(#drained, from + BATCH_ROWS - 1), 1, {})
-            if pcall(several, chunk) then
+            local last = math.min(#drained, from + BATCH_ROWS - 1)
+            local chunk = table.move(drained, from, last, 1, {})
+            local ok, err = pcall(several, chunk)
+            if ok then
                 written = written + #chunk
+            elseif Storage.notSent and Storage.notSent(err) then
+                stoppedAt = from
+            elseif unanswered(err) then
+                unconfirmed = unconfirmed + #chunk
+                stoppedAt = last + 1
             else
-                for k = 1, #chunk do one(chunk[k]) end
+                for k = 1, #chunk do
+                    local went, sent = one(chunk[k])
+                    if not went then
+                        stoppedAt = from + k - (sent and 0 or 1)
+                        break
+                    end
+                end
             end
+            if stoppedAt then break end
         end
     else
-        for k = 1, #drained do one(drained[k]) end
+        for k = 1, #drained do
+            local went, sent = one(drained[k])
+            if not went then
+                stoppedAt = k + (sent and 1 or 0)
+                break
+            end
+        end
+    end
+
+    if stoppedAt then
+        -- In order, ahead of anything pushed meanwhile, and held to the
+        -- queue's size as push holds it: the oldest go first.
+        for i = #drained, stoppedAt, -1 do
+            head = head - 1
+            queue[head] = drained[i]
+        end
+        local cap = math.max(1, math.floor(tonumber(Config.Audit.MaxQueueSize) or 5000))
+        while (tail - head + 1) > cap do
+            queue[head] = nil
+            head = head + 1
+            dropped = dropped + 1
+        end
+        for i = #drained, stoppedAt, -1 do drained[i] = nil end
+        pcall(mirrorBatch, drained)
+        return written
     end
     pcall(mirrorBatch, drained)
+    -- Every row this start put back from the last stop has been through a
+    -- flush that ran to the end, or been handed on at this one.
+    if #keptKeys > 0 then forgetKept() end
 
     -- A silent drop is worse than a noisy one: if the queue overflowed, the
     -- server owner needs to know their log has gaps.
@@ -294,7 +431,46 @@ function Audit.flush(stopping)
     return written
 end
 
+--- At a stop with the store not answering (Audit.flush): the queue, financial
+--- rows first, to this machine's KVP store in chunks of KEPT_CHUNK, for the
+--- next start in this mode (Audit.init). What this start had put back from
+--- the last stop is in the queue still, so its keys are replaced. Without
+--- KVP here the flush hands the rows over as before (writeAuditNoWait).
+---@return integer kept
+function Audit.spill()
+    local rows = {}
+    for i = head, tail do
+        if queue[i] and queue[i].kind == 'financial' then rows[#rows + 1] = queue[i] end
+    end
+    for i = head, tail do
+        if queue[i] and queue[i].kind ~= 'financial' then rows[#rows + 1] = queue[i] end
+    end
+    if dropped > 0 then
+        rows[#rows + 1] = { ts = os.time(), kind = 'system', action = 'audit_overflow',
+                            detail = { dropped = dropped } }
+    end
+    queue, head, tail, dropped = {}, 1, 0, 0
+    forgetKept()
+
+    local cap = math.max(1, math.floor(tonumber(Config.Audit.MaxQueueSize) or 5000))
+    local kept, n = 0, 0
+    for from = 1, math.min(#rows, cap), KEPT_CHUNK do
+        local chunk = table.move(rows, from, math.min(#rows, cap, from + KEPT_CHUNK - 1), 1, {})
+        local encoded, text = pcall(json.encode, chunk)
+        n = n + 1
+        if encoded and pcall(SetResourceKvp, keptPrefix() .. n, text) then kept = kept + #chunk end
+    end
+    if kept > 0 then
+        Log.debug(('the database is not answering at this stop: %d audit row(s) are kept on this '
+            .. 'machine and written at the next start'):format(kept))
+    end
+    return kept
+end
+
 function Audit.pending() return math.max(0, tail - head + 1) end
 function Audit.droppedCount() return dropped end
+--- Rows sent to the store that it never answered (mysql): they may be
+--- missing from the log.
+function Audit.unconfirmed() return unconfirmed end
 
 return Audit

@@ -170,6 +170,25 @@ describe('starting on a config that predates a setting', function()
         resetConfig()
     end)
 
+    --- S15: a Database section from before the answer limit waited on a
+    --- database that does not answer for ever; one set past the phone's own
+    --- wait says so.
+    it('fills the database answer limit, and holds it to the phone\'s wait', function()
+        boot(function()
+            Config.Database.QueryTimeoutSeconds = nil
+        end)
+        eq(Config.Database.QueryTimeoutSeconds, 10)
+        boot(function() Config.Database.QueryTimeoutSeconds = 'soon' end)
+        eq(Config.Database.QueryTimeoutSeconds, 10, 'not a number is the shipped 10')
+        local problems = table.concat(require('crimson-hitman.shared.log').view().problems, '\n')
+        truthy(problems:find('Config.Database.QueryTimeoutSeconds is soon', 1, true), problems)
+        boot(function() Config.Database.QueryTimeoutSeconds = 20 end)
+        problems = table.concat(require('crimson-hitman.shared.log').view().problems, '\n')
+        truthy(problems:find('the phone gives up after 15 s', 1, true), problems)
+        eq(Config.Database.QueryTimeoutSeconds, 20, 'their own value stands')
+        resetConfig()
+    end)
+
     it('keeps the ten-second tick for an Audit section without a flush interval', function()
         -- Missing read as below the floor, and every maintenance job, the
         -- prune among them, ran each second.

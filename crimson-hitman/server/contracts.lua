@@ -624,7 +624,14 @@ local function placeUnlocked(actor, contract, lines, feeDue)
     local wrote, stored = pcall(Storage.insertContract, contract)
     if not wrote then
         Audit.financial('contract_write_failed', actor.cid, contract.id, { error = tostring(stored) })
-        local read, found = pcall(Storage.readContract, contract.id)
+        -- Unanswered (Storage.timedOut), it may still land: not read back,
+        -- since nothing found now could be trusted to stay absent.
+        local read, found
+        if Storage.timedOut and Storage.timedOut(stored) then
+            read, found = false, stored
+        else
+            read, found = pcall(Storage.readContract, contract.id)
+        end
         if not read then
             -- A read that raises too decides nothing. Never on its absence
             -- (DESIGN O7): the item prepared above is opened, the server

@@ -298,6 +298,52 @@ in, and a heartbeat file the crash left empty is replaced by the newest audit
 row or the index's own time, so the downtime is still not charged to any
 deadline.
 
+### When the database stops answering
+
+`mysql` mode only. While oxmysql's pool exists, a statement it cannot get a
+connection for is never answered at all, so a database that stops answering
+used to stop the maintenance tick, the handover countdowns and every request
+that was waiting until a restart, and a payment caught between its charge and
+its first write was lost with no record. Now:
+
+- **No statement waits longer than `Config.Database.QueryTimeoutSeconds`**
+  (10 s). The first one given up on starts one check of the connection; only
+  if that goes unanswered too is the database taken to be down. The console
+  then says `the database stopped answering ("<statement>" had no answer in
+  10 s); what needs it is refused until it answers`, and nothing more is sent
+  until a check is answered: `the database answers again after N s`. Those two
+  lines bracket the outage; the maintenance jobs it fails meanwhile print only
+  with `Config.Debug` on.
+- **Players are told the truth**: a request it caught answers *The server's
+  records did not answer in time. If you were paying for something, look
+  before you try again: it may still go through.* (`db_timeout`), within about
+  13 seconds, under the phone's own 15-second wait.
+- **Payments it caught are settled by the server** once the database answers:
+  a contract's reward, a hitman's stake or a buyout taken before its record
+  was written is kept as a review item (on this machine, in resource KVP, until
+  the database takes it), then written again and placed or handed back, and
+  the player is told. A restart meanwhile loses none of them: the next start
+  settles each before anything else.
+- **`/ch-diag`** says `database: answering (...)` or `database: NOT ANSWERING
+  since <time> (<how long>); last given up on: "<statement>"`, how many audit
+  rows may be missing because their write got no answer, and how long ago the
+  maintenance tick, the condition sampler and the handover tick last ran. None
+  of it asks the database.
+- **A start waits for the database** and says so every 30 seconds
+  (`waiting for the database (N s): ...`), then carries on once it answers,
+  rather than waiting on its first statement for ever with nothing registered.
+  A `json` start on a server where oxmysql runs and the database does not
+  answer goes on after about 10 seconds and says it could not ask whether
+  `mysql` mode still holds money.
+- **A stop during an outage keeps the audit log's queue** on this machine
+  (resource KVP) instead of handing it to an oxmysql that cannot send it, and
+  the next `mysql` start writes it.
+
+What to do: wait, and watch `/ch-diag`. A restart is safe but not needed;
+restart only once it says `database: answering`. For backups use
+`mysqldump --single-transaction` (an InnoDB snapshot, no table locks):
+`--lock-tables` during play holds every crimson write past the limit.
+
 ### Configuration worth reading before you start
 
 | Setting | Why it matters |
@@ -310,6 +356,7 @@ deadline.
 | `Config.Completion.KeptPhotoDays` | How many days a photo kept for its client in the app (because their phone could not save it) lasts. Unset (as shipped), it stays until they delete it. `/ch-diag` says how many are kept and how much disk they take |
 | `Config.Completion.ExtraPhotoHosts` | `'host'` storage only. Kill photos are accepted only from image hosts lb-phone itself allows uploads from, plus these. Ships with Fivemanage (`fivemanage.com`, `fmfile.com`), lb-phone's default uploader. If `/ch-diag` shows `photo hosts: 0`, or kill photos are refused with "not on this server's allow list", add your phone's upload host here (a bare domain, no `https://`). lb-phone's camera upload must work first |
 | `Config.Database.Mode` | `json` (as shipped; no database at all), `mysql` (oxmysql), `memory` (testing only — nothing survives a restart). Modes do not share data: see *Changing storage mode* |
+| `Config.Database.QueryTimeoutSeconds` | `mysql` only: how long one database statement may go unanswered (10 seconds, as shipped) before this resource stops waiting for it and says so. oxmysql has no limit of its own, and while MariaDB is unreachable it never answers at all. Keep it under the phone's 15-second wait: above 12 the start warns, and anything that is not 0 or more seconds is read as 10. `0` waits for ever, as before. Read-only in the admin panel. See *When the database stops answering* |
 | `Config.App.DefaultInstalled` | Whether the app is on every eligible player's home screen (`true`) or left in the phone's App Store for each player to download (`false`, as shipped). Players are not told it exists either way; see *Install* |
 | `Config.BlockedJobTypes` / `BlockedJobNames` | Who the app is barred to: the whitelisted jobs. Blocks by job **type** as well as name, so a new LEO job is blocked without a config edit. With the whitelisted-job view on they see its one screen and nothing else (see *Access*) |
 | `Config.WhitelistedView.Enabled` | The whitelisted-job view (`true`, as shipped): players on a job the app bars open it to one read-only screen, the contracts on them and (for those the advisory reaches) on other whitelisted-job members, and the buyout on their own. `false` closes the app to them as before, and `Config.HideAppFromBlockedJobs` then decides whether they see the icon. Anything but `true` or `false` is read as `false`, with a warning at startup. In the admin panel's Features, kept across restarts |
@@ -983,7 +1030,7 @@ entry, and `/ch-contracts` lists it for any player.
 
 | Command | What it does |
 |---|---|
-| `/ch-diag [player id]` | Why the app is not showing something: runs the app's own reads as that player and says what each answered (including which medical resource, or QBox metadata, answered for their death state), plus the last faults their phone reported. Also lists the slowest maintenance jobs with their worst, average and last times |
+| `/ch-diag [player id]` | Why the app is not showing something: says first whether the app is closed because boot recovery is still running or failed, then (`mysql`) whether the database answers and how long ago each loop last ran; runs the app's own reads as that player and says what each answered (including which medical resource, or QBox metadata, answered for their death state), plus the last faults their phone reported. Also lists the slowest maintenance jobs with their worst, average and last times |
 | `/ch-contracts <player id\|citizen id>` | A player's contracts, newest first, closed ones included while they are kept: each id, its state, their role and the target. Lists the ids for `/ch-timeline`, `/ch-void` and `/ch-whois`. Contracts they placed or took anonymously are left out unless you also hold `crimson.identity` |
 | `/ch-timeline <contract>` | One contract's state, escrow lines and audit trail. It only reads, so it answers while the server is still recovering from a restart too, and then shows the lines as they stand at that moment, which recovery may still change |
 | `/ch-whois <contract>` | Who is really behind an anonymous creator or hitman. Needs `crimson.identity`, a separate ACE |
@@ -1415,7 +1462,8 @@ headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
 | The console prints `N setting(s) need attention` at start | `config.lua` has settings the start read as something else, or lacks some. Run `ch-diag` in F8 or the server console, or open the admin panel's **Tools** and **Run the diagnosis**: *settings that need attention* lists each in full. Or set `Config.Debug = true` to have the start print each |
 | The console says nothing at all, not even that it started | That is the shipped `Config.Debug = false`: a sound start says nothing. `ch-diag` lists what it would have said |
 | A staff command answers "Not authorised" in game | Grant the ACE in `server.cfg`: `add_ace group.admin crimson.admin allow` (and `crimson.identity` for `/ch-whois`). The server console never refuses, so you can run any of them there meanwhile |
-| The console printed `BOOT RECOVERY FAILED`, and `/ch-settle`, `/ch-void` and `/ch-stuck` answer *Recovery failed at the last start* | Boot recovery raised an error (the text after `BOOT RECOVERY FAILED:` says what), so what the last shutdown left part-way is not settled. Rather than act on it, the resource keeps the app, the login payouts, the maintenance tick and those commands closed until it is restarted; players running `/cleanse <id>` are told the server's contract system failed to start and staff have been told, and so is everyone who opens the app, on every tab, with no *Try again* (it answers `recovery_failed`). Fix the cause (a database that refused the query, say), then restart the resource (`restart crimson-hitman`): the next start runs recovery again |
+| The console printed `BOOT RECOVERY FAILED`, and `/ch-settle`, `/ch-void` and `/ch-stuck` answer *Recovery failed at the last start* | Boot recovery raised an error (the text after `BOOT RECOVERY FAILED:` says what), so what the last shutdown left part-way is not settled. Rather than act on it, the resource keeps the app, the login payouts, the maintenance tick and those commands closed until it is restarted; players running `/cleanse <id>` are told the server's contract system failed to start and staff have been told, and so is everyone who opens the app, on every tab, with no *Try again* (it answers `recovery_failed`). Fix the cause (a database that refused the query, say), then restart the resource (`restart crimson-hitman`): the next start runs recovery again. Where the banner says *the database stopped answering during recovery*, restart once `/ch-diag` says `database: answering`. A stop while recovery is failed or still running leaves the last heartbeat as it was, so the time the app was closed is not charged to any deadline |
+| The app says *The server's records did not answer in time* | `mysql` mode: the database was unreachable, or a statement was held longer than `Config.Database.QueryTimeoutSeconds` (a backup taken with `--lock-tables`, say). `/ch-diag` says whether it answers now. A payment that request was making is settled by the server once it does, and the player is told; see *When the database stops answering* |
 | The console keeps printing `[crimson-hitman] still waiting after ...s for ... resource(s) to start` | The lines under it name `qbx_core` or `ox_inventory`, which is not started or runs under another name. Start it under that name; a renamed or forked copy never matches |
 | The app stopped answering after you restarted `qbx_core`, `ox_inventory` or `oxmysql` | FiveM stops this resource with them and does not start it again. Run `ensure crimson-hitman` |
 | `json` mode refuses to start on an empty `data/` | You replaced the resource folder and lost `data/`, which is the store. Put the old `data/` back and start it again. To start empty on purpose, run `set crimson_hitman_new_store 1` in the console, start the resource, then leave it unset (see *Updating*) |

@@ -17,15 +17,250 @@ MySQLStore.remote = true
 
 local seq = 0
 
+--------------------------------------------------------------------------
+-- Bounded awaits and the breaker
+--------------------------------------------------------------------------
+
+--- Once oxmysql's pool exists, a statement that cannot get a connection is
+--- never answered at all (OXMYSQL.md §6), and a thread waiting on it is
+--- never resumed, so no pcall around it ever returns. An outage of a second
+--- stopped the handover loop, the condition sampler and the maintenance
+--- tick until a restart, left every request that was waiting holding its
+--- busy keys, and destroyed the money of a create, an acceptance or a
+--- buyout caught between its charge and its first write, with nothing to
+--- say so. So every statement here runs in a thread of its own, raced
+--- against Config.Database.QueryTimeoutSeconds: whichever settles first is
+--- the answer, and an answer that comes after is counted and changes
+--- nothing (a promise settles once).
+---
+--- And a breaker, so an outage does not drain oxmysql's shared pool: one
+--- statement given up on starts one probe of the connection; only when that
+--- goes unanswered too is the store taken to be down, every statement still
+--- waiting is answered at once, and nothing more is sent until a probe (made
+--- only when something asks, at most every PROBE_EVERY_MS) is answered. Two
+--- console lines an outage, one as it starts and one as it ends.
+
+--- Two ways a statement can end that the database itself never said.
+--- Sent and unanswered: it may still run, once a lock frees or a
+--- connection does, so a caller never decides on "the store does not have
+--- it" after one (MySQLStore.timedOut).
+local NO_ANSWER = 'crimson-hitman: the database did not answer within '
+--- Never sent, because the store had already found the database gone: it
+--- certainly did not run (MySQLStore.notSent).
+local NOT_SENT = 'crimson-hitman: not sent, the database is not answering'
+
+--- Words the driver uses for a connection lost under a statement: the
+--- statement may or may not have committed (OXMYSQL.md §6), so for a caller
+--- it is the same as no answer.
+local LOST = { 'Connection lost', 'ECONNRESET', 'PROTOCOL_CONNECTION_LOST' }
+
+local DDL_SECONDS = 600        -- schema changes at start: an index on a long audit log takes a while
+local PROBE_MS = 3000          -- the probe of the connection, after a statement went unanswered
+local PROBE_EVERY_MS = 5000    -- while down, at most one probe this often, and only when asked
+local SLOW_MS = 2000           -- a statement waiting longer makes the store "not healthy"
+
+--- What the breaker knows. `since` is os.time() the outage began, `gaveUp`
+--- and `late` count statements given up on and answered after that, and
+--- `lastWhat` is the last one given up on (its first words, never its values).
+local health = { down = false, since = nil, gaveUp = 0, late = 0, lastWhat = nil,
+                 probing = false, probedAt = nil }
+local waiting = {}             -- [promise] = { since = Util.monotonicMs(), what = string, timer = id }
+
+--- A statement's first 60 characters, whitespace squashed, or what a
+--- transaction is: what the console and /ch-diag name it by. Never its
+--- parameters (OXMYSQL.md §12.7): they carry citizen ids and names.
+---@param sql string|table
+---@return string
+local function words(sql)
+    if type(sql) == 'table' then return ('a transaction of %d statements'):format(#sql) end
+    return (tostring(sql):gsub('%s+', ' '):gsub('^ ', ''):sub(1, 60))
+end
+
+--- How long one statement may wait, in ms, or 0 for no limit. `long` is a
+--- schema change at start.
+---@param long boolean|nil
+---@return integer
+local function limitMs(long)
+    local seconds = tonumber(Config.Database.QueryTimeoutSeconds) or 10
+    if seconds <= 0 then return 0 end
+    if long then seconds = math.max(seconds, DDL_SECONDS) end
+    return math.floor(seconds * 1000)
+end
+
+--- Said only in mysql mode: a json start asks the database once, whether
+--- mysql mode still holds money (main.lua refuseModeSwitch), and says so
+--- itself when it could not.
+---@param text string
+local function sayOutage(text)
+    if Config.Database.Mode == 'mysql' then Log.always(text) else Log.debug(text) end
+end
+
+local probe
+
+--- The store found the database gone: every statement still waiting is
+--- answered now (sent, so each may still land), and nothing more is sent
+--- until a probe is answered. Once an outage.
+local function goDown()
+    if health.down then return end
+    health.down, health.since = true, os.time()
+    local pending = {}
+    for p, entry in pairs(waiting) do pending[#pending + 1] = { p = p, entry = entry } end
+    waiting = {}
+    for i = 1, #pending do
+        local entry = pending[i].entry
+        if entry.timer then ClearTimeout(entry.timer) end
+        pending[i].p:resolve({ ok = false, value = ('%s%d s (%s); it may still run')
+            :format(NO_ANSWER, math.floor(limitMs() / 1000), entry.what) })
+    end
+    sayOutage(('the database stopped answering ("%s" had no answer in %d s); what needs it is '
+        .. 'refused until it answers (/%s)'):format(tostring(health.lastWhat),
+        math.floor(limitMs() / 1000), tostring(Config.Admin.Commands.diagnose)))
+end
+
+--- A probe was answered. Said once an outage, and nothing at all when the
+--- one slow statement that started the probe was all there was.
+local function comeBack()
+    if not health.down then return end
+    local seconds = os.time() - (health.since or os.time())
+    health.down, health.since = false, nil
+    sayOutage(('the database answers again after %d s'):format(seconds))
+end
+
+--- One statement, in a thread of its own, raced against `ms` (0: no limit).
+--- The answer travels packed, so a raised SQL error reaches the caller with
+--- its words exactly as oxmysql raised them.
+---@param kind string an oxmysql method
+---@param ms integer
+---@param what string words(sql)
+---@param probing boolean|nil the probe itself, which the breaker does not count
+local function awaitWithin(kind, ms, what, probing, ...)
+    local p = promise.new()
+    local args = table.pack(...)
+    Citizen.CreateThreadNow(function()
+        local ok, result = pcall(MySQL[kind].await, table.unpack(args, 1, args.n))
+        if p.state ~= 0 then
+            -- Given up on already: the caller was told, and this changes nothing.
+            health.late = health.late + 1
+            return
+        end
+        local entry = waiting[p]
+        waiting[p] = nil
+        if entry and entry.timer then ClearTimeout(entry.timer) end
+        p:resolve({ ok = ok, value = result })
+    end)
+    -- Answered already (a parse error is raised without waiting).
+    if p.state == 0 then
+        local entry = { since = Util.monotonicMs(), what = what }
+        waiting[p] = entry
+        if ms > 0 then
+            entry.timer = SetTimeout(ms, function()
+                if p.state ~= 0 then return end
+                waiting[p] = nil
+                p:resolve({ ok = false, value = ('%s%d s (%s); it may still run')
+                    :format(NO_ANSWER, math.floor(ms / 1000), what) })
+                if not probing then
+                    health.gaveUp = health.gaveUp + 1
+                    health.lastWhat = what
+                    if not health.down then probe() end
+                end
+            end)
+        end
+    end
+    local answer = Citizen.Await(p)
+    if not answer.ok then error(answer.value, 0) end
+    return answer.value
+end
+
+--- Is the connection there? One `SELECT 1`, past the breaker, in a thread
+--- of its own. No loop: it runs only when a statement went unanswered, or
+--- while down when something asks the store for something.
+probe = function()
+    if health.probing then return end
+    health.probing, health.probedAt = true, Util.monotonicMs()
+    Citizen.CreateThreadNow(function()
+        local answered = pcall(awaitWithin, 'scalar', PROBE_MS, 'SELECT 1', true, 'SELECT 1')
+        health.probing = false
+        if answered then comeBack() else goDown() end
+    end)
+end
+
+--- A statement, unless the store has found the database gone: then it is
+--- not sent at all, and a probe is made if none was made lately.
+local function bounded(kind, long, ...)
+    local what = words((...))
+    if health.down then
+        if not health.probing and (not health.probedAt
+            or Util.monotonicMs() - health.probedAt >= PROBE_EVERY_MS) then
+            probe()
+        end
+        error(('%s (%s)'):format(NOT_SENT, what), 0)
+    end
+    return awaitWithin(kind, limitMs(long), what, false, ...)
+end
+
 --- Every oxmysql await this file makes goes through `db`, so the time spent
 --- waiting on the database can be told from the time spent working
 --- (MySQLStore.timeWaitsWith, which main points at Timing.await). Without
 --- it a maintenance job was charged for everything the server did while it
---- waited. Looked up at call time, as oxmysql's own table is.
+--- waited. Looked up at call time, as oxmysql's own table is. `db.ddl` is a
+--- schema change, allowed DDL_SECONDS.
 local awaitVia = function(fn, ...) return fn(...) end
 local db = {}
 for _, kind in ipairs({ 'query', 'update', 'insert', 'scalar', 'transaction' }) do
-    db[kind] = function(...) return awaitVia(MySQL[kind].await, ...) end
+    local send = function(...) return bounded(kind, false, ...) end
+    db[kind] = function(...) return awaitVia(send, ...) end
+end
+local sendDdl = function(...) return bounded('query', true, ...) end
+db.ddl = function(...) return awaitVia(sendDdl, ...) end
+
+--- Whether an error is a statement the database never answered: given up
+--- on, never sent, or a connection lost under it. The database's answer is
+--- missing in every one, so it may or may not have run; a caller never
+--- decides on what the store does not hold after one. An SQL error, and a
+--- transaction answering false, are answers.
+---@param err any
+---@return boolean
+function MySQLStore.timedOut(err)
+    local text = tostring(err)
+    if text:find(NO_ANSWER, 1, true) or text:find(NOT_SENT, 1, true) then return true end
+    for i = 1, #LOST do
+        if text:find(LOST[i], 1, true) then return true end
+    end
+    return false
+end
+
+--- Whether an error is a statement that was never sent: it certainly did
+--- not run. The audit flush queues such a batch again.
+---@param err any
+---@return boolean
+function MySQLStore.notSent(err)
+    return tostring(err):find(NOT_SENT, 1, true) ~= nil
+end
+
+--- Answering, with nothing waiting longer than SLOW_MS: an outage that began
+--- a few seconds ago counts as one.
+---@return boolean
+function MySQLStore.healthy()
+    if health.down then return false end
+    local now = Util.monotonicMs()
+    for _, entry in pairs(waiting) do
+        if now - entry.since > SLOW_MS then return false end
+    end
+    return true
+end
+
+--- What the breaker knows, for /ch-diag: a copy of it, with `oldestMs` the
+--- longest any statement still waiting has waited, and `oldestWhat` which.
+---@return table
+function MySQLStore.health()
+    local out = {}
+    for k, v in pairs(health) do out[k] = v end
+    local now = Util.monotonicMs()
+    for _, entry in pairs(waiting) do
+        local age = now - entry.since
+        if not out.oldestMs or age > out.oldestMs then out.oldestMs, out.oldestWhat = age, entry.what end
+    end
+    return out
 end
 
 --- Hand every await to `wrapper(fn, ...)`, which must call fn(...) and
@@ -585,8 +820,10 @@ end
 ---@param whole boolean|nil a whole table, which the install SQL makes
 ---@return boolean made
 local function change(sql, what, failed, whole)
-    local ok, err = pcall(db.query, sql)
+    local ok, err = pcall(db.ddl, sql)
     if ok then return true end
+    -- Not a refusal: nothing answered it, so no grant would help.
+    if MySQLStore.timedOut(err) then error(err, 0) end
     failed[#failed + 1] = { what = what, sql = sql, err = tostring(err), whole = whole }
     return false
 end
@@ -844,13 +1081,54 @@ function MySQLStore.inspect()
     return out
 end
 
+--- Wait `ms` without holding the thread: on a timer, so whatever drives
+--- timers (the engine, or the test harness) resumes it.
+---@param ms integer
+local function sleep(ms)
+    local p = promise.new()
+    SetTimeout(ms, function() p:resolve(true) end)
+    Citizen.Await(p)
+end
+
+--- The first statement of a start, asked again every OPEN_RETRY_MS while
+--- the database does not answer it, with a console line every
+--- OPEN_SAY_EVERY seconds. During a full server start oxmysql's pool may
+--- not exist yet, and every statement then waits for its next connection
+--- try, every 30 s (OXMYSQL.md §6). This start used to wait on that first
+--- statement for ever, silently, with no handler registered, and stayed
+--- dead after the database came back. Any other error raises as before.
+local OPEN_RETRY_MS, OPEN_SAY_EVERY = 5000, 30
+
+---@return table<string, string> tablesPresent()
+local function tablesWhenAnswering()
+    local started, said = os.time(), os.time()
+    while true do
+        local ok, present = pcall(tablesPresent)
+        if ok then return present end
+        if not MySQLStore.timedOut(present) then error(present, 0) end
+        sleep(OPEN_RETRY_MS)
+        local now = os.time()
+        if now - said >= OPEN_SAY_EVERY then
+            said = now
+            local readyOk, ready = pcall(function() return MySQL.isReady() end)
+            local why = 'the database does not answer'
+            if readyOk and ready == false then
+                why = 'oxmysql has not connected yet; it retries every 30 s'
+            elseif readyOk and ready then
+                why = 'oxmysql is connected but the database does not answer'
+            end
+            Log.always(('waiting for the database (%d s): %s'):format(now - started, why))
+        end
+    end
+end
+
 function MySQLStore.open()
     -- Only the tables that are not there. CREATE TABLE IF NOT EXISTS for a
     -- table that is there still needs CREATE, so a database user without it
     -- failed here even after install/sql/crimson_hitman.sql had made every
     -- table, which the README said was all it needed.
     local failed, cache = {}, {}
-    local present = tablesPresent()
+    local present = tablesWhenAnswering()
 
     -- Before anything is made or changed: a table of one of these names that
     -- is not this resource's is refused with nothing touched (foreignTables).

@@ -459,6 +459,12 @@ local function handler(name, action, fn, access)
             end
 
             if action then deps.ratelimit.refund(actor, action) end
+            -- The database did not answer (mysql): said as that, since a
+            -- payment it was recording may still go through or be settled
+            -- by the server, and a second tap could pay twice.
+            if deps.storage and deps.storage.timedOut and deps.storage.timedOut(result) then
+                return App.reply(src, name, false, CH.ERR.DB_TIMEOUT, nil, rid)
+            end
             -- Not INVALID_INPUT. Nothing the player typed is wrong, and
             -- telling them to check it sends them searching for a fault they
             -- cannot reach.

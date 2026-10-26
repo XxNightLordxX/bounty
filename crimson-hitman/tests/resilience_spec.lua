@@ -203,8 +203,12 @@ end)
 describe('the harness can leave an await unanswered, or answer it late', function()
     local Exec = require('crimson-hitman.tests.harness.mysql_exec')
 
+    -- With no limit on an await (QueryTimeoutSeconds = 0), as oxmysql has
+    -- none: these hold the harness, not the store's own bounds, which the
+    -- next describe holds.
     local function store()
         newStack()
+        Config.Database.QueryTimeoutSeconds = 0
         Exec.install(Natives)
         package.loaded['crimson-hitman.server.storage.mysql'] = nil
         local m = require('crimson-hitman.server.storage.mysql')
@@ -224,7 +228,9 @@ describe('the harness can leave an await unanswered, or answer it late', functio
         Exec.down = true
         local reader = Env.spawn(function() return m.readContract('c1') end)
         falsy(reader.done, 'the read is waiting')
-        eq(#Env.parked, 1, 'parked in Citizen.Await')
+        -- The statement's own thread, and its caller waiting on it
+        -- (server/storage/mysql.lua runs every statement in a thread of its own).
+        eq(#Env.parked, 2, 'parked in Citizen.Await')
 
         local fired = false
         SetTimeout(500, function() fired = true end)
@@ -325,5 +331,198 @@ describe('the harness can leave an await unanswered, or answer it late', functio
         EndFindKvp(handle)
         eq(table.concat(keys, ','), 'crimson:review:1,crimson:review:2')
         eq(GetResourceKvpString('crimson:review:2'), nil, 'deleted on the way')
+    end)
+end)
+
+--- S14, S15, S16: the store's own bounds (server/storage/mysql.lua). A
+--- statement oxmysql never answers used to park whatever was waiting on it
+--- for good: a payment caught between its charge and its first write was
+--- gone with no record, the request was never answered, its busy keys were
+--- never let go, and a maintenance tick caught in one was the last.
+describe('the database stops answering (mysql)', function()
+    local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+
+    local function boot()
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        -- A fresh disk, and this machine's KVP with it.
+        Natives.files = {}
+        Config.Database.Mode = 'mysql'
+        Exec.install(Natives)
+        local main = require('server.main')
+        return main, main.start()
+    end
+
+    local function money(src)
+        local m = Env.players[src].PlayerData.money
+        return m.cash + m.bank
+    end
+
+    local function itemsOf(s, kind)
+        local out = {}
+        for _, item in ipairs(s.review.list(false, 50)) do
+            if item.kind == kind then out[#out + 1] = item end
+        end
+        return out
+    end
+
+    --- What this machine keeps (resource KVP) of the payments the store
+    --- could not take: what is there to settle while the store is down.
+    local function keptOnMachine(kind)
+        local n = 0
+        local handle = StartFindKvp('reviewKept:mysql:')
+        local key = FindKvp(handle)
+        while key do
+            if GetResourceKvpString(key):find(kind, 1, true) then n = n + 1 end
+            key = FindKvp(handle)
+        end
+        EndFindKvp(handle)
+        return n
+    end
+
+    --- The database back: the next thing that asks the store (the
+    --- condition sampler does, every second) starts the probe that closes
+    --- the breaker, and is itself refused.
+    local function back(s)
+        Exec.down = false
+        Env.advance(5)
+        pcall(s.storage.readContract, 'ct-asking')
+        truthy(s.storage.healthy(), 'the probe found it answering')
+    end
+
+    local function place(s, f, extra)
+        local spec = { targetCid = 'TARGET01', reason = 'x', reward = { baseline = { bank = 5000 } } }
+        for k, v in pairs(extra or {}) do spec[k] = v end
+        return s.contracts.create(f.creator, spec)
+    end
+
+    it('a buyout whose record gets no answer is answered in time, kept, and settled once it answers', function()
+        local main, s = boot()
+        local f = fixture(s)
+        Env.players[2].PlayerData.money.bank = 100000
+        local c = place(s, f, { reward = { baseline = { cash = 10000 } }, bailoutAmount = 15000 })
+        truthy(c)
+        local before = money(2)
+        local real = s.storage.recordBailout
+        s.storage.recordBailout = function(...) Exec.down = true return real(...) end
+        Env.clientEvents = {}
+        _G.source = 2
+        local buying = Env.spawn(Env.events['crimson-hitman:bailout'], { id = c.id, __rid = 9 })
+        _G.source = nil
+        Env.advance(14)
+        s.storage.recordBailout = real
+        truthy(buying.done, 'never answered: the page gave up after 15 s')
+        local reply
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:result' then reply = event.args[1] end
+        end
+        truthy(reply and not reply.ok, 'refused')
+        eq(reply.err, CH.ERR.DB_TIMEOUT, 'said as the database not answering')
+        eq(money(2), before - 15000, 'the premium taken')
+        eq(keptOnMachine('bailout_unrecorded'), 1, 'and its record kept on this machine')
+
+        back(s)
+        for _ = 1, 3 do
+            Env.advance(10)
+            main.tick()
+        end
+        eq(#itemsOf(s, 'bailout_unrecorded'), 0, 'settled by the server once it answers')
+        local now = s.storage.readContract(c.id)
+        truthy(money(2) == before or now.bailout_paid_by == 'TARGET01'
+            or now.state == CH.STATE.BAILED_OUT, 'the premium is recorded or back with the target')
+    end)
+
+    it('a create whose escrow write is given up on is handed back once, and its late landing adds nothing', function()
+        local main, s = boot()
+        local f = fixture(s)
+        local before = money(1)
+        local real = s.storage.insertEscrow
+        s.storage.insertEscrow = function(...)
+            s.storage.insertEscrow = real
+            Exec.lateNext = 1
+            return real(...)
+        end
+        local creating = Env.spawn(function() return pcall(place, s, f) end)
+        Env.advance(11)
+        truthy(creating.done, 'answered at the limit')
+        falsy(creating.results[1])
+        truthy(s.storage.timedOut(creating.results[2]), tostring(creating.results[2]))
+        eq(money(1), before - 5000, 'not handed back on what a read found while it may still land')
+
+        main.tick()
+        eq(money(1), before, 'handed back by the server, which wrote the lines again')
+        eq(Exec.releaseLate(), 1, 'the original lands now')
+        Env.runTimers()
+        main.tick()
+        s.contracts.retryStuckCreates()
+        s.contracts.recoverNeverPlaced()
+        eq(money(1), before, 'once')
+    end)
+
+    it('a take write that lost its connection is left undecided, not refunded on a read', function()
+        local main, s = boot()
+        local f = fixture(s)
+        local before = money(1)
+        local real = s.storage.insertEscrow
+        s.storage.insertEscrow = function()
+            s.storage.insertEscrow = real
+            error('Connection lost: The server closed the connection.', 0)
+        end
+        falsy(pcall(place, s, f))
+        eq(money(1), before - 5000, 'it may have committed, so nothing was handed back on a read')
+        eq(#itemsOf(s, 'escrow_take_unverified'), 1)
+        main.tick()
+        eq(money(1), before, 'the server wrote it again and handed it back')
+    end)
+
+    it('an acceptance caught in it lets go of the contract once it is answered', function()
+        local main, s = boot()
+        local f = fixture(s)
+        local creator, hitman = money(1), money(3)
+        local c = place(s, f, { penaltyAmount = 1000 })
+        truthy(c)
+        local real = s.storage.insertEscrow
+        s.storage.insertEscrow = function(...)
+            s.storage.insertEscrow = real
+            Exec.down = true
+            return real(...)
+        end
+        local accepting = Env.spawn(function() return pcall(s.contracts.accept, f.hitman, c.id) end)
+        Env.advance(14)
+        truthy(accepting.done, 'answered within the page\'s wait')
+        falsy(accepting.results[1])
+        back(s)
+        for _ = 1, 2 do
+            Env.advance(10)
+            main.tick()
+        end
+        local ok, err = s.contracts.cancel(f.creator, c.id)
+        truthy(ok, 'the contract was held busy for good: ' .. tostring(err))
+        eq(money(1), creator, 'the reward back')
+        eq(money(3), hitman, 'and the stake')
+    end)
+
+    it('a maintenance tick caught in it finishes, and the next expires what fell due', function()
+        local main, s = boot()
+        local f = fixture(s)
+        local c = place(s, f)
+        truthy(c)
+        Exec.down = true
+        local ticking = Env.spawn(main.tick)
+        Env.advance(14)
+        truthy(ticking.done, 'parked for good on the first statement nobody answered')
+        back(s)
+        Env.advance(s.storage.readContract(c.id).expires_at - os.time() + 61)
+        main.tick()
+        main.tick()
+        eq(s.storage.readContract(c.id).state, CH.STATE.EXPIRED)
+        eq(s.storage.lastHeartbeat(), os.time(), 'and the heartbeat goes on')
     end)
 end)

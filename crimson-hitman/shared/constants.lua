@@ -314,6 +314,12 @@ CH.ERR = {
     --- fault is a nil index on the server sends them looking at their own
     --- typing for a bug they cannot reach, and tells the operator nothing.
     SERVER_ERROR     = 'server_error',
+    --- mysql mode only: the database did not answer within
+    --- Config.Database.QueryTimeoutSeconds, or the store had already found
+    --- it gone. A read that timed out moved nothing; a write may still land,
+    --- or is settled by the server once the database answers, which tells
+    --- the player. Not SERVER_ERROR: nothing in this resource broke.
+    DB_TIMEOUT       = 'db_timeout',
     NOT_PARTICIPANT  = 'not_participant',
     ALREADY_SETTLED  = 'already_settled',
     TOKEN_INVALID    = 'token_invalid',

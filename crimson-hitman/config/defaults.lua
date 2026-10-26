@@ -1023,6 +1023,15 @@ ConfigDefaults.Database = {
     --- players' money. That money is then invisible from here and nothing
     --- returns it, so only for a server that has settled it by hand.
     AllowModeSwitch = false,
+    --- mysql only. How long one database statement may go unanswered before
+    --- this resource stops waiting for it. oxmysql has no limit of its own,
+    --- and while MariaDB is unreachable it never answers at all: without this,
+    --- the maintenance tick, the handover countdowns and every request that
+    --- was waiting stopped until a restart. Past it the request is told the
+    --- truth, and a payment it was recording is settled by the server once the
+    --- database answers again (README, When the database stops answering).
+    --- Keep it under the phone's 15 s wait. 0 waits for ever, as before.
+    QueryTimeoutSeconds = 10,
     --- json keeps its files in the resource folder, so an update that
     --- replaces the folder takes them with it: keep data/ when updating
     --- (README, Updating). The server also remembers, outside the folder,
@@ -1052,7 +1061,10 @@ ConfigDefaults.PendingEscrow = {
     --- At least 1: below it no owed payout would ever be delivered, so it is
     --- read as 1, with a warning at startup.
     MaxRetriesPerLogin = 5,
-    --- Randomised slightly in code so a reconnect wave does not converge.
+    --- How long after a login (or a restart of this resource with players
+    --- connected) their owed payouts are handed over, in ms. Up to two
+    --- seconds more is added at random for each player, so a reconnect wave
+    --- does not arrive all at once.
     LoginRetryDelayMs = 5000,
     --- Not a setting: a payout whose give raises an error (an item, or money)
     --- is checked against the player's inventory or balance. One that all

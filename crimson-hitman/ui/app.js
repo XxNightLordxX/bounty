@@ -504,6 +504,11 @@
     invalid_input: 'Check what you entered.',
     server_error: 'Something broke on the server, not on your end. '
       + 'An admin can see what in the server console.',
+    /* mysql mode only: the database did not answer within the server's
+       limit. A read that timed out moved nothing; a payment being recorded
+       may still land, or is settled by the server, which says so. */
+    db_timeout: 'The server’s records did not answer in time. If you were '
+      + 'paying for something, look before you try again: it may still go through.',
     not_participant: 'That is not yours.',
     already_settled: 'That contract is closed.',
     // The rules are on the server and the numbers are configurable, so the

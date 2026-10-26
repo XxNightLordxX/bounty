@@ -3660,3 +3660,113 @@ describe('the json audit log', function()
         if not ok then error(err, 0) end
     end)
 end)
+
+--- S15, S16, S17: oxmysql never answers a statement it could not get a
+--- connection for (OXMYSQL.md §6), and a thread waiting on it was never
+--- resumed. Every statement is raced against
+--- Config.Database.QueryTimeoutSeconds now, and a probe confirms an outage
+--- before the store stops sending (server/storage/mysql.lua).
+describe('a mysql store whose database stops answering', function()
+    local function store()
+        newStack()
+        -- Its two console lines are said in mysql mode.
+        Config.Database.Mode = 'mysql'
+        Exec.install(Natives)
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local m = require('crimson-hitman.server.storage.mysql')
+        m.open()
+        m.writeContract(contractFixture('ct00000101'))
+        return m
+    end
+
+    local function said(text)
+        for _, line in ipairs(Env.console) do
+            if line:find(text, 1, true) then return true end
+        end
+        return false
+    end
+
+    it('raises after the limit and the thread goes on, and one console line each way', function()
+        local m = store()
+        Env.console = {}
+        Exec.down = true
+        local reader = Env.spawn(function() return pcall(m.readContract, 'ct00000101') end)
+        Env.advance(9)
+        falsy(reader.done, 'waiting within the limit')
+        Env.advance(1)
+        truthy(reader.done, 'answered at the limit: it used to wait for good')
+        falsy(reader.results[1])
+        truthy(m.timedOut(reader.results[2]), tostring(reader.results[2]))
+        falsy(m.notSent(reader.results[2]), 'it was sent, so it may still run')
+        truthy(m.healthy(), 'one statement given up on is not an outage until the probe says so')
+
+        Env.advance(3)
+        falsy(m.healthy(), 'the probe went unanswered too: the store is down')
+        truthy(said('the database stopped answering'), table.concat(Env.console, '\n'))
+        local sent = #Exec.statements
+        local ok, err = pcall(m.readContract, 'ct00000101')
+        falsy(ok)
+        truthy(m.notSent(err), tostring(err))
+        eq(#Exec.statements, sent, 'refused here, never sent to the database')
+
+        Exec.down = false
+        Env.advance(5)
+        falsy(pcall(m.readContract, 'ct00000101'), 'this one asks for the probe, and is not sent')
+        truthy(m.healthy(), 'the probe was answered')
+        truthy(m.readContract('ct00000101'), 'and statements go again')
+        truthy(said('the database answers again'), table.concat(Env.console, '\n'))
+        local down = 0
+        for _, line in ipairs(Env.console) do
+            if line:find('the database stopped answering', 1, true) then down = down + 1 end
+        end
+        eq(down, 1, 'one line for the outage, however many statements it refused')
+        eq(m.health().gaveUp, 1)
+    end)
+
+    it('one slow statement whose probe answers changes nothing, and its late answer is counted', function()
+        local m = store()
+        Env.console = {}
+        Exec.lateNext = 1
+        local writer = Env.spawn(function()
+            local c = contractFixture('ct00000102')
+            return pcall(m.writeContract, c)
+        end)
+        Env.advance(10)
+        truthy(writer.done)
+        falsy(writer.results[1], 'given up on at the limit')
+        Env.advance(5)
+        truthy(m.healthy(), 'the probe was answered: not down')
+        falsy(said('the database stopped answering'), 'and nothing said')
+
+        eq(Exec.releaseLate(), 1)
+        Env.runTimers()
+        truthy(m.readContract('ct00000102'), 'the write it gave up on landed all the same')
+        eq(m.health().late, 1, 'counted as answered late')
+        eq(m.health().gaveUp, 1)
+    end)
+
+    it('gives a schema change at start ten minutes, not ten seconds', function()
+        local m = store()
+        -- A column an older version did not have, so the start adds it, and
+        -- the ALTER is held as a long one is.
+        local order = Exec.schema.crimson_contracts.order
+        for i = #order, 1, -1 do
+            if order[i] == 'advised_hitmen' then table.remove(order, i) end
+        end
+        local realAwait = MySQL.query.await
+        MySQL.query.await = function(sql, ...)
+            if tostring(sql):find('^ALTER') then return Citizen.Await(promise.new()) end
+            return realAwait(sql, ...)
+        end
+        local opening = Env.spawn(function() return pcall(m.migrate) end)
+        Env.advance(30)
+        local waited = not opening.done
+        Env.advance(600)
+        MySQL.query.await = realAwait
+        truthy(waited, 'an index on a long audit log takes a while')
+        truthy(opening.done)
+        falsy(opening.results[1], 'given up on at last')
+        truthy(m.timedOut(opening.results[2]), 'as unanswered, not as a grant refused: '
+            .. tostring(opening.results[2]))
+    end)
+end)
