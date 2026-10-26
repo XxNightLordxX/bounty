@@ -278,6 +278,44 @@ describe('starting on a config that predates a setting', function()
         resetConfig()
     end)
 
+    --- How a contract is completed: added to a Completion section every
+    --- operator already has. Absent is what ships, live transfer only, and a
+    --- value that is neither rule is read as that too, never as kills back on.
+    it('fills and checks how contracts are completed', function()
+        local said = {}
+        local realPrint = _G.print
+        _G.print = function(...)
+            local parts = {}
+            for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+            said[#said + 1] = table.concat(parts, ' ')
+        end
+
+        boot(function() Config.Completion.Fulfilment = nil end)
+        eq(Config.Completion.Fulfilment, 'alive', 'absent is what ships')
+        truthy(table.concat(said, ' | '):find('Completion.Fulfilment', 1, true),
+            'and the operator is told it was filled in')
+        resetConfig()
+
+        said = {}
+        boot(function() Config.Completion.Fulfilment = 'kills' end)
+        eq(Config.Completion.Fulfilment, 'alive', 'a misspelling is not kills back on')
+        local told = table.concat(said, ' | ')
+        truthy(told:find('Completion.Fulfilment is "kills"', 1, true), 'and said so: ' .. told)
+        resetConfig()
+
+        said = {}
+        boot(function() Config.Completion.Fulfilment = true end)
+        eq(Config.Completion.Fulfilment, 'alive', 'nor is a switch')
+        resetConfig()
+
+        said = {}
+        boot(function() Config.Completion.Fulfilment = 'either' end)
+        _G.print = realPrint
+        eq(Config.Completion.Fulfilment, 'either', 'the other rule is left alone')
+        falsy(table.concat(said, ' | '):find('Fulfilment', 1, true), 'and nothing is said about it')
+        resetConfig()
+    end)
+
     --- Where photos saved to a phone are served from, and how long one kept
     --- in the app lasts. Both are unset as shipped, and unset is a real
     --- setting: web_baseUrl, and kept until deleted.
@@ -618,6 +656,32 @@ describe('diagnosing an app that shows nothing', function()
         truthy(out:find('3 completion', 1, true),
             'a number that only grows is a completion path that is not '
             .. 'completing: ' .. out)
+    end)
+
+    --- How contracts are completed, first and without a player: on a server
+    --- shipping live transfer only it is the whole answer to "my kill did
+    --- not pay", and the photo settings further down do nothing there.
+    it('says how contracts are completed, and when the kill photo settings are not used', function()
+        local s = newStack()
+        local f = fixture(s)
+        Config.Completion.Fulfilment = 'alive'
+        local out = said(s.admin.diagnose(0))
+        truthy(out:find('completion: alive', 1, true), out)
+        truthy(out:find('kill photo settings', 1, true) and out:find('are not used', 1, true),
+            'the photo settings are said to be unused: ' .. out)
+
+        -- One placed before the switch still pays for a kill, and uses them.
+        Config.Completion.Fulfilment = 'either'
+        truthy(s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x',
+            reward = { baseline = { cash = 5000 } } }))
+        Config.Completion.Fulfilment = 'alive'
+        out = said(s.admin.diagnose(0))
+        truthy(out:find('1 live contract(s) were placed under \'either\'', 1, true), out)
+
+        Config.Completion.Fulfilment = 'either'
+        out = said(s.admin.diagnose(0))
+        truthy(out:find('completion: either', 1, true), out)
+        falsy(out:find('are not used', 1, true), 'nothing is unused under either: ' .. out)
     end)
 
     it('works from the server console, which has no character of its own', function()

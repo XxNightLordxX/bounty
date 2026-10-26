@@ -13,6 +13,12 @@ lb-phone 2.8.0, the 17mov character system, `sc-police`, `sc-ambulance`,
 
 - **Renamed** to `crimson-hitman` (the app: **Crimson-Hitman**), with hitman
   wording everywhere a player or admin reads it.
+- **Live transfer only** (`Config.Completion.Fulfilment = 'alive'`, as
+  shipped): a contract is completed only by delivering the target alive to the
+  client, never by a kill, and the whole reward is paid on delivery with no
+  separate bonus. `'either'` turns kills back on. Each contract keeps the rule
+  it was placed under, and `/ch-diag` says which is in use (see *Live transfer
+  only*).
 - **The kill photo** is the client's alone and seen once, then saved to the
   phone's Photos or deleted. On `'server'` storage (the default) it is taken in
   the app's own viewfinder and kept on this server, so no image host is needed;
@@ -174,6 +180,7 @@ contract) against what those players are carrying.
 
 | Setting | Why it matters |
 |---|---|
+| `Config.Completion.Fulfilment` | How a contract is completed. `'alive'` (as shipped) is live transfer only, because this city wants roleplay before anybody is killed: a kill never completes a contract, the whole reward is paid on delivery, and there is no kidnapping bonus. `'either'` lets a kill complete one too, and pays the bonus on top of a live handover. Each contract keeps the rule it was placed under, so a change reaches new contracts only. Anything else is read as `'alive'`, with a warning at startup. See *Live transfer only* below; `/ch-diag` says which is in use |
 | `Config.Completion.PhotoStorage` | Where kill photos are kept. `'server'` (as shipped) needs no image host: the hitman takes the photo in the app's own viewfinder and it is kept as a file in `crimson-hitman/data/photos/`, which the server must be able to write to. `'host'` uses lb-phone's own camera and the image host it uploads to, keeping only the link. Either way only the client who placed the contract sees the photo, once (see *The kill photo* below). `/ch-diag` says which is in use |
 | `Config.Completion.PhotoMaxSide` / `PhotoMaxBytes` | `'server'` storage only: the app shrinks each kill photo until its longest side is at most this many pixels (1280) and it weighs at most this many bytes (600000; at most 1500000), and the server refuses anything bigger. FXServer moves a photo at about 150 KB a second, so the default takes about four seconds each way. The server also decodes each photo when it arrives and encodes it again when the client opens it, on its main thread and roughly in proportion to its size: about 80 ms each at the default and a fifth of a second at 1500000, each a single hitch (estimates; measure yours with the in-game checklist) |
 | `Config.Completion.PhotoPublicUrl` | `'server'` storage only: the public **https** address this server serves photos from when a client saves one to their phone's Photos, such as `'https://photos.example.com/crimson-hitman'`. Unset (as shipped), the server's `web_baseUrl` is used. Add its host name to lb-phone's `Config.UploadWhitelistedHostnames`. See *No image host?* below; `/ch-diag` says which address is used and whether lb-phone takes it |
@@ -205,6 +212,24 @@ face value would turn every contract into a risk-free laundering rail, so:
 
 ## How it plays
 
+**Live transfer only.** This server ships with
+`Config.Completion.Fulfilment = 'alive'`, because the city wants roleplay
+before anybody is killed. A contract is completed only by a live handover:
+the hitman restrains the target or gets them into the hitman's own vehicle,
+brings them to the client alive and holds them there for the handover
+countdown. Killing the target never completes it: they die and respawn as
+normal, the contract stays open, and there is no **Verify kill**. The whole
+reward is paid on delivery, so there is no separate kidnapping bonus, and
+the kill photo settings are not used. Set it to `'either'` to turn kills back
+on: then a kill, photographed with **Verify kill**, or a live handover
+completes a contract, and a handover pays the kidnapping bonus on top. Each
+contract keeps the rule it was placed under, so changing the setting changes
+new contracts only; a contract stored before this setting existed keeps the
+terms it was taken on, `'either'`. `/ch-diag` says
+which rule is in use and how many live contracts still run under the other.
+What follows about kills, the kill photo and the bonus applies only to
+contracts placed under `'either'`.
+
 **Placing a contract.** Search for a target, give a reason, choose exclusive
 or competitive, and build the reward from any mix of cash, bank, dirty money,
 items and weapons. The target is picked by name or from everyone online
@@ -225,9 +250,11 @@ not offered as goods. On an anonymous contract an item that names you in its
 metadata (an ID, a phone with its number, a key with its owner) is refused,
 since the hitman would be handed it as it is. Set how many payouts it has (how many times it can be
 collected) — each payout is funded separately and all of it is escrowed up
-front. Optionally set a kidnapping bonus (a percentage on top, plus any items
-or weapons marked to pay only if the target is delivered alive), a buyout
-price, and a stake the hitman puts up when they accept. The form shows what
+front. Under `'either'`, optionally set a kidnapping bonus (a percentage on
+top, plus any items or weapons marked to pay only if the target is delivered
+alive); under `'alive'` there is none, since the whole reward pays for the
+delivery, and the server refuses a bonus sent anyway (`no_bonus`). Set a
+buyout price, and a stake the hitman puts up when they accept. The form shows what
 it will take from you before you place it, and the contract runs for
 `Config.Limits.DefaultDeadlineSeconds` (3 hours as shipped) unless you extend
 it from Mine.
@@ -239,7 +266,7 @@ base reward cannot be emptied, because a payout that pays nothing is not a
 contract. The moment somebody accepts, the client can only add to it on their
 own: the hitman took it as written, and escrow exists so it cannot be pulled
 out from under them. Adding — money, items, weapons, a bigger kidnapping
-bonus, a longer deadline — and lowering or removing the stake apply at once,
+bonus (under `'either'` only), a longer deadline — and lowering or removing the stake apply at once,
 from Change reward and Extend deadline. Anything else — a shorter deadline,
 giving back the last payout, a new reason, switching between one hitman and
 several, raising the stake (only while nobody holds it), cancelling — is
@@ -276,8 +303,13 @@ sentence, as `sc-police` writes it, and standing inside
 `Config.Limits.JailZone` (Bolingbroke by default): `sc-police` lets a client
 write its own sentence, so the metadata alone is not trusted.
 
-**Finishing it.** Kill the target, tap **Verify kill** and photograph the
-body for the baseline, standing within `Config.Completion.PhotoRadius` (5 m)
+**Finishing it.** On a contract placed under `'alive'`, as this server ships,
+there is one way: take the target alive to the client and hold them there for
+the handover, as described at the end of this paragraph, for the whole
+reward. A kill does nothing for it, however it happens; **Verify kill** is
+not offered, and the server refuses one with `kill_not_allowed`. On a
+contract placed under `'either'`, kill the target, tap **Verify kill** and
+photograph the body for the baseline, standing within `Config.Completion.PhotoRadius` (5 m)
 of where it lay when they died, or of where it lies now if it has moved
 since (a car rolling on, a body carried off) while they are still dead. On `'server'` storage the app opens its own
 viewfinder over the screen, showing the phone's rear camera: point it at the
@@ -317,7 +349,8 @@ holds off the expiry until it finishes, for that long at most; a kill made
 after the deadline does not, and a handover cannot be started once the
 deadline has passed. A buyout's delay is held off the same way, only for a
 kill made or a handover armed before the delay ran out. Or take them alive to the client and hold them there
-for thirty seconds for baseline plus bonus: restrained or in your vehicle,
+for thirty seconds (`Config.Kidnap.CountdownSeconds`), for baseline plus bonus
+under `'either'` and the whole reward under `'alive'`: restrained or in your vehicle,
 neither dead nor down, and not under `Config.Kidnap.MinTargetHealthPercent`
 (20%) health. A target hurt worse than that (Qbox gives no health back on its
 own) has to be patched up first, and the app says so.
@@ -681,6 +714,7 @@ headshots), `Config.Kidnap.RestraintProvider` (`IsRestrained(playerId)`) and
 | Issue | Solution |
 |---|---|
 | A player cannot find the app | It is in the phone's App Store, not on the home screen: each player downloads it. Set `Config.App.DefaultInstalled = true` to put it on every eligible phone. Players with a barred job (`Config.BlockedJobTypes` / `Config.BlockedJobNames`, any job they hold) never see it. `/ch-diag <player id>` says why it is not showing for them |
+| A kill does not complete a contract, or there is no Verify kill | As shipped, `Config.Completion.Fulfilment` is `'alive'`: contracts are completed only by a live handover to the client, and a kill never completes one (the server answers `kill_not_allowed`). Set it to `'either'` to let kills complete contracts placed from then on; ones already placed keep their rule. `/ch-diag` says which is in use |
 | A staff command answers "Not authorised" in game | Grant the ACE in `server.cfg`: `add_ace group.admin crimson.admin allow` (and `crimson.identity` for `/ch-whois`). The server console never refuses, so you can run any of them there meanwhile |
 | The console printed `BOOT RECOVERY FAILED`, and `/ch-settle`, `/ch-void` and `/ch-stuck` answer *Recovery failed at the last start* | Boot recovery raised an error (the text after `BOOT RECOVERY FAILED:` says what), so what the last shutdown left part-way is not settled. Rather than act on it, the resource keeps the app, the login payouts, the maintenance tick and those commands closed until it is restarted. Fix the cause (a database that refused the query, say), then restart the resource (`restart crimson-hitman`): the next start runs recovery again |
 | The console keeps printing `[crimson-hitman] still waiting after ...s for ... resource(s) to start` | The lines under it name `qbx_core` or `ox_inventory`, which is not started or runs under another name. Start it under that name; a renamed or forked copy never matches |

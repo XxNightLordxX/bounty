@@ -125,7 +125,40 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] After the first claim, the board shows payout 2's reward
 - [ ] After the third claim the contract closes and the fourth hitman gets nothing
 
+## 4a. Live transfer only (as shipped)
+
+`Config.Completion.Fulfilment = 'alive'`: a contract is completed only by
+delivering the target alive to the client. Run these before changing it.
+
+- [ ] `/ch-diag` says `completion: alive` and that the kill photo settings
+      are not used
+- [ ] The Place form offers no kidnapping bonus and no "alive only" marking
+      on goods, and the placed contract holds no bonus line
+- [ ] Place a contract, take it with a second character, **restrain** the
+      target (cuffs) and bring them to the client: the handover arms, counts
+      down and pays the **whole reward**; the contract closes
+- [ ] Again, with the target uncuffed in the **hitman's vehicle**: the
+      handover arms and pays the same
+- [ ] Again, but **kill** the target first: they die and respawn as normal,
+      the contract stays open under Mine for the client and the hitman,
+      there is no **Verify kill**, and nothing is paid; `/ch-timeline` on it
+      shows no `death_attributed`. Restrain them after the respawn and the
+      handover still pays
+- [ ] The client's **Change reward** offers no kidnapping bonus to raise;
+      adding money still works, and it is paid on the handover
+- [ ] **One `'either'` smoke test** (on a copy, or set it back afterwards):
+      set `Config.Completion.Fulfilment = 'either'` and restart. `/ch-diag`
+      says `completion: either`, and counts any contract still open from the
+      step above as placed under `'alive'`: a kill on that one still pays
+      nothing. Place a new contract with a 50% kidnapping bonus: a kill
+      photographed with **Verify kill** pays the baseline and the bonus goes
+      back to the client; on a second one, a handover pays baseline plus
+      bonus
+
 ## 5. Elimination
+
+Only on contracts placed under `'either'`: run this section on a copy with
+`Config.Completion.Fulfilment = 'either'`.
 
 - [ ] Hitman kills target with a firearm → hitman can request the camera
 - [ ] The same from 300-400 m with a sniper rifle → the kill is credited
@@ -242,7 +275,8 @@ uploads, and with neither. Restart the resource between them.
 - [ ] With hitman, target and creator together, the countdown starts
 - [ ] Walking away pauses it and it recovers within the grace window
 - [ ] Walking away for longer fails the delivery
-- [ ] Completing pays **baseline + bonus**
+- [ ] Completing pays **baseline + bonus** under `'either'`, and the whole
+      reward under `'alive'` (4a)
 - [ ] Killing the target mid-countdown fails the delivery — no payout
 - [ ] Downing the target mid-countdown fails the delivery
 - [ ] A cuffed, conscious target under 20% health is refused as "too badly

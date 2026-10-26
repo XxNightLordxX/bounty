@@ -402,6 +402,16 @@ do
             for name in src:gmatch('[^%w_]settled%.([%a_][%w_]*)%s*=[^=]') do
                 seen[name] = seen[name] or path
             end
+            -- And the fields a contract is born with, in the constructor
+            -- Contracts.create builds it from. None of them is assigned as
+            -- contract.<field>, so a term only ever set there — how the
+            -- contract may be completed, fulfilment_rule — passed the reads
+            -- above with no column behind it. One field per line, as the
+            -- constructor is written; a comment line starts with '-'.
+            local born = src:match('\n%s*local contract = (%b{})')
+            for name in (born or ''):gmatch('\n%s*([%a_][%w_]*)%s*=[^=]') do
+                seen[name] = seen[name] or path
+            end
         end
     end
 
@@ -1753,6 +1763,7 @@ do
         ['crimson_contracts.target_protected'] = 'judged once, at creation, against the rules then',
         ['crimson_contracts.target_job']      = 'the same: what they were doing when it was placed',
         ['crimson_contracts.anon_creator']    = 'chosen at creation and not revisitable',
+        ['crimson_contracts.fulfilment_rule'] = 'how it may be completed, a term it was placed under',
         ['crimson_contracts.created_at']      = 'when it was placed',
         -- The payout counters. Move only through advanceSlot, because every
         -- other writer carries a copy read before its own awaits, and writing

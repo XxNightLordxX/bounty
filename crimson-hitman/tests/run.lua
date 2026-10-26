@@ -71,6 +71,17 @@ local CONFIG_DEFAULTS = deepCopy(Config)
 --- the specs that set 'server' and send a picture (server_photos_spec).
 CONFIG_DEFAULTS.Completion.PhotoStorage = 'host'
 
+--- And places its contracts under 'either', where a kill completes one too,
+--- though the resource ships 'alive', live transfer only.
+---
+--- Most of what the specs hold the server to — attribution, the photo, the
+--- slot, the bonus an elimination hands back, the money conserved across
+--- both endings — exists only where a kill can pay, and they were written
+--- placing contracts that kills complete. What only 'alive' does is the
+--- business of the specs that set it (fulfilment_spec), which cover the
+--- shipped default explicitly.
+CONFIG_DEFAULTS.Completion.Fulfilment = 'either'
+
 --- Restore in place, recursing into tables that exist in both. Assigning a
 --- fresh table would leave anything holding a subtable — a module that did
 --- `local rules = Config.Sources.item` at load — looking at a detached copy.
@@ -395,7 +406,7 @@ end
 --- Load and run every suite listed here.
 local suites = {
     'escrow_spec', 'contracts_spec', 'exploit_spec', 'advisory_spec', 'slots_spec',
-    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec', 'anonymity_spec',
+    'completion_spec', 'kidnap_spec', 'interaction_spec', 'projection_spec', 'storage_spec', 'progression_spec', 'invariant_spec', 'boot_spec', 'admin_spec', 'fuzz_spec', 'clock_spec', 'client_spec', 'config_drift_spec', 'ratelimit_budget_spec', 'unknown_account_spec', 'store_write_spec', 'cancel_spec', 'responsiveness_spec', 'resilience_spec', 'reward_edit_spec', 'money_spec', 'conservation_spec', 'conservation_fuzz_spec', 'journey_spec', 'differential_spec', 'chaos_spec', 'metamorphic_spec', 'interleave_spec', 'ceilings_spec', 'authz_matrix_spec', 'boundary_spec', 'complexity_spec', 'client_hostile_spec', 'spec_conformance_spec', 'idempotence_spec', 'states_spec', 'journeys_spec', 'projection_fields_spec', 'delivery_spec', 'money_paths_spec', 'races_spec', 'followups_spec', 'restart_spec', 'page_answers_spec', 'abuse_spec', 'photos_spec', 'server_photos_spec', 'anonymity_spec', 'fulfilment_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

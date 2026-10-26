@@ -57,6 +57,7 @@ describe('storage conformance', function()
             target_name = 'Dana Reyes',
             target_protected = true, target_job = 'trooper', reason = 'Unpaid debt',
             mode = CH.MODE.COMPETITIVE, state = CH.STATE.ACTIVE, anon_creator = true,
+            fulfilment_rule = CH.FULFILMENT_RULE.ALIVE,
             bonus_percent = 50, bailout_amount = 15000, penalty_amount = 10000,
             payout_slots = 3, slots_claimed = 1, next_slot = 2,
             created_at = 1700000001, deadline_at = 1700000002, expires_at = 1700000003,
@@ -1158,6 +1159,7 @@ describe('the mysql schema holds every field the code writes', function()
             creator_name = 'A', target_cid = 'T', target_name = 'B',
             target_protected = false, target_job = 'unemployed', reason = 'x',
             mode = 'exclusive', state = 'active', anon_creator = false,
+            fulfilment_rule = 'either',
             bonus_percent = 50, bailout_amount = 100, penalty_amount = 100,
             payout_slots = 1, slots_claimed = 0, next_slot = 1,
             created_at = 1, deadline_at = 2, expires_at = 3,
@@ -1635,6 +1637,27 @@ describe('mysql schema migration', function()
             'the bailout queue: ' .. names)
         truthy(names:find('crimson_contracts.bailout_attempts', 1, true),
             'and the newest column: ' .. names)
+    end)
+
+    --- Live transfer only added one column, to a table every mysql server
+    --- already has. A database from the version before it gets just that,
+    --- NULL on every row it holds, which reads as 'either'.
+    it('adds the rule column to a contracts table from before it, and nothing else', function()
+        opened(nil)
+        local previous = {}
+        for column in pairs(Sim.schema.crimson_contracts) do
+            if column ~= 'fulfilment_rule' then previous[column] = true end
+        end
+        truthy(next(previous), 'the current table, less the one column')
+
+        opened({ crimson_contracts = previous })
+        eq(table.concat(addedColumns(), ' '), 'crimson_contracts.fulfilment_rule')
+        local sql
+        for _, change in ipairs(Sim.altered) do
+            if change.column == 'fulfilment_rule' then sql = change.sql end
+        end
+        eq(sql, 'ALTER TABLE crimson_contracts ADD COLUMN fulfilment_rule VARCHAR(8)',
+            'no default: an older row has no rule, and reads as the one it was taken on')
     end)
 
     it('leaves the columns that are already there alone', function()
@@ -2593,6 +2616,67 @@ describe('rewriting a contract', function()
                 eq(read[key], value, ('%s: %s was discarded on rewrite'):format(
                     b.name, key))
             end
+        end
+    end)
+end)
+
+describe('the rule a contract was placed under', function()
+    --- How it may be completed is a term, written when it is placed and
+    --- never after. The mysql upsert leaves it out of its update list on
+    --- purpose, so memory and json have to keep it the same way, or a copy
+    --- written back would behave differently on each backend.
+    it('survives a rewrite unchanged, in every backend', function()
+        for _, b in ipairs(backends()) do
+            local placed = contractFixture('ctrule01')
+            placed.fulfilment_rule = CH.FULFILMENT_RULE.ALIVE
+            b.store.writeContract(placed)
+
+            local copy = {}
+            for k, v in pairs(b.store.readContract('ctrule01')) do copy[k] = v end
+            copy.fulfilment_rule = CH.FULFILMENT_RULE.EITHER
+            copy.reason = 'renegotiated'
+            b.store.writeContract(copy)
+
+            local read = b.store.readContract('ctrule01')
+            eq(read.fulfilment_rule, CH.FULFILMENT_RULE.ALIVE,
+                b.name .. ': a rewrite changed the terms it was placed under')
+            eq(read.reason, 'renegotiated', b.name .. ': the rewrite itself still lands')
+        end
+    end)
+
+    it('survives a restart in json mode', function()
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        Natives.files = {}
+        local store = require('crimson-hitman.server.storage.json')
+        store.open()
+        local placed = contractFixture('ctrule02')
+        placed.fulfilment_rule = CH.FULFILMENT_RULE.ALIVE
+        store.writeContract(placed)
+        store.close()
+
+        package.loaded['crimson-hitman.server.storage.json'] = nil
+        local reopened = require('crimson-hitman.server.storage.json')
+        reopened.open()
+        eq(reopened.readContract('ctrule02').fulfilment_rule, CH.FULFILMENT_RULE.ALIVE,
+            'a live transfer must not come back from a restart as one a kill completes')
+    end)
+
+    --- A row from before the rule existed has none, in every backend, and
+    --- reads as the terms it was taken on.
+    it('is absent on an older row, which reads as either', function()
+        for _, b in ipairs(backends()) do
+            b.store.writeContract(contractFixture('ctold01'))
+            local read = b.store.readContract('ctold01')
+            eq(read.fulfilment_rule, nil, b.name .. ': an older row carries no rule')
+            eq(Util.fulfilmentRule(read),
+                CH.FULFILMENT_RULE.EITHER, b.name)
+
+            -- And a write back of it is not handed one either.
+            local copy = {}
+            for k, v in pairs(read) do copy[k] = v end
+            copy.fulfilment_rule = CH.FULFILMENT_RULE.ALIVE
+            b.store.writeContract(copy)
+            eq(b.store.readContract('ctold01').fulfilment_rule, nil, b.name)
         end
     end)
 end)

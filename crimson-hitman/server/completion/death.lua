@@ -790,6 +790,19 @@ function Death.watchTargets(contracts, rosters)
     -- throws part-way leaves the last complete one standing.
     local targets = {}
 
+    -- Whose death a kill could complete a contract on: named by a live one
+    -- placed under 'either'. Asked before the walk, because one target can
+    -- be named by several, and the first of them to mark the death seen
+    -- would leave nothing fresh for the second.
+    local killable = {}
+    for i = 1, #contracts do
+        local c = contracts[i]
+        if (c.state == CH.STATE.ACTIVE or c.state == CH.STATE.ACCEPTED)
+            and Util.fulfilmentRule(c) == CH.FULFILMENT_RULE.EITHER then
+            killable[c.target_cid] = true
+        end
+    end
+
     for i = 1, #contracts do
         local c = contracts[i]
         if c.state == CH.STATE.ACTIVE or c.state == CH.STATE.ACCEPTED then
@@ -847,9 +860,15 @@ function Death.watchTargets(contracts, rosters)
                 if resolved and dead and not (Config.Completion.RejectLastStand and lastStand) then
                     -- Seen dead before this is the same death: reported, or
                     -- already waiting on its report.
+                    --
+                    -- Marked whatever the contract, since the revive that
+                    -- follows is what a new contract's respawn protection
+                    -- is measured from. Attributed without a report only
+                    -- where a kill could complete something: a target named
+                    -- only by live transfers has no kill to open.
                     local fresh = not Death.wasSeenDead(target.cid)
                     Death.markDead(target.cid)
-                    if fresh then awaitReport(target) end
+                    if fresh and killable[target.cid] then awaitReport(target) end
                 end
 
                 local targetCoords = GetEntityCoords(GetPlayerPed(target.source))
@@ -1116,7 +1135,12 @@ function Death.attributeDeath(victim, victimSource, named, reportedAt, victimCoo
 
     for i = 1, #contracts do
         local contract = contracts[i]
-        if contract.target_cid == victim.cid and contract.state == CH.STATE.ACCEPTED then
+        -- Only a contract a kill completes. One placed for a live delivery
+        -- only is left as it was: the target died, will respawn, and is
+        -- still to be delivered. No kill is opened on it from the victim's
+        -- report or from the server's own sighting, both of which end here.
+        if contract.target_cid == victim.cid and contract.state == CH.STATE.ACCEPTED
+            and Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.EITHER then
             local hitmen = Storage.readHitmen(contract.id)
             local active = {}
             for j = 1, #hitmen do

@@ -113,6 +113,9 @@ ConfigDefaults.EscrowBlacklist = {
 
 --- Kidnapping bonus. Percentage applies per money source; items are extra
 --- lines escrowed alongside the baseline.
+--- Only on contracts that can also be completed by a kill
+--- (Config.Completion.Fulfilment = 'either'). Live transfer only pays the
+--- whole reward on delivery, so there is no bonus on top.
 ConfigDefaults.Bonus = {
     --- Ceiling on the kidnapping bonus percentage a creator may set.
     maxPercent = 200,
@@ -350,6 +353,27 @@ ConfigDefaults.Immunity = {
 --------------------------------------------------------------------------
 
 ConfigDefaults.Completion = {
+    --- How a contract is completed: 'alive' (as shipped) or 'either'.
+    ---
+    --- 'alive' is live transfer only, because this city wants roleplay
+    --- before anybody is killed. The hitman restrains the target, or gets
+    --- them into the hitman's own vehicle, brings them to the client alive
+    --- and holds them there for the handover countdown (Config.Kidnap).
+    --- Killing the target never completes the contract: they die and
+    --- respawn as normal, the contract stays open, and Verify kill is not
+    --- offered. The whole reward is paid on delivery, so there is no
+    --- separate kidnapping bonus (Config.Bonus is not used), and the kill
+    --- photo settings below are not used.
+    ---
+    --- 'either' turns kills back on: a contract is completed by a kill
+    --- (photographed with Verify kill) or by a live handover, which pays
+    --- the kidnapping bonus on top.
+    ---
+    --- Each contract keeps the rule it was placed under, so changing this
+    --- changes new contracts only. Anything else is read as 'alive', with a
+    --- warning at startup. /ch-diag says which is in use.
+    Fulfilment = 'alive',
+
     --- Where kill photos are kept: 'server' (the default) or 'host'.
     ---
     --- 'server' needs no image host at all. The hitman takes the photo in

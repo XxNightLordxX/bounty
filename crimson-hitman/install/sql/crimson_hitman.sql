@@ -32,6 +32,11 @@ CREATE TABLE IF NOT EXISTS crimson_contracts (
     mode VARCHAR(16) NOT NULL,
     state VARCHAR(16) NOT NULL,
     anon_creator TINYINT(1) DEFAULT 0,
+    -- How it may be completed, 'alive' or 'either' (CH.FULFILMENT_RULE),
+    -- as it was placed, and it never changes after. Added to existing
+    -- databases by migrate. NULL on older rows, which read as 'either',
+    -- the terms they were taken on.
+    fulfilment_rule VARCHAR(8),
     bonus_percent INT DEFAULT 0,
     bailout_amount INT DEFAULT 0,
     penalty_amount INT DEFAULT 0,

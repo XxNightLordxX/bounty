@@ -984,6 +984,41 @@ function Admin.diagnose(source, subjectId, later)
     say('--- crimson-hitman diagnosis ---')
     say(('storage: %s'):format(tostring(Config.Database.Mode)))
 
+    -- How contracts are completed, server-wide and first: "my kill did not
+    -- pay" has its whole answer here on a server that ships live transfer
+    -- only, and everything about photos further down applies only where a
+    -- kill can pay. Contracts placed before a switch keep their own rule,
+    -- so the ones still running under the other are counted.
+    local placing = Util.placingRule()
+    local other = 0
+    local okLive, live = pcall(Storage.liveContracts)
+    for _, c in ipairs(okLive and live or {}) do
+        if Util.fulfilmentRule(c) ~= placing then other = other + 1 end
+    end
+    if placing == CH.FULFILMENT_RULE.ALIVE then
+        say('completion: alive (Config.Completion.Fulfilment): live transfer only. A '
+            .. 'contract is completed by a handover to the client; a kill never completes one')
+        if other > 0 then
+            say(('  -> the kill photo settings (Config.Completion.PhotoStorage and the other '
+                .. 'Photo* settings, ExtraPhotoHosts, ProofWindowSeconds) and Config.Bonus are '
+                .. 'not used by new contracts. %d live contract(s) were placed under \'either\' '
+                .. 'and can still be completed by a kill until they end; those still use them.')
+                :format(other))
+        else
+            say('  -> no kill photo is taken, so the kill photo settings '
+                .. '(Config.Completion.PhotoStorage and the other Photo* settings, '
+                .. 'ExtraPhotoHosts, ProofWindowSeconds) and Config.Bonus are not used, beyond '
+                .. 'photos taken before and still waiting for or kept by their clients')
+        end
+    else
+        say('completion: either (Config.Completion.Fulfilment): a kill, verified with a '
+            .. 'photo, or a handover to the client completes a contract')
+        if other > 0 then
+            say(('  %d live contract(s) were placed under \'alive\' and are completed only by '
+                .. 'a handover until they end'):format(other))
+        end
+    end
+
     -- Writes that did not read back as what was written.
     --
     -- The store prints the first three and then stops, deliberately, so a

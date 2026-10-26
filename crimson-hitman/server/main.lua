@@ -125,6 +125,11 @@ local DEFAULTS = {
     Completion = {
         RequireObservedDamage = true,
         RejectLastStand = true,
+        --- How a contract is completed. Absent on every config from before
+        --- live transfer only, and filled with what ships, as every switch
+        --- here is: a city that never chose kills does not get them back
+        --- by having an older config. Checked below.
+        Fulfilment = 'alive',
         --- Where kill photos are kept, and how long one stays open. Absent
         --- on a config from before the client's one view existed; the
         --- storage is checked below, the open time read by the tick.
@@ -524,6 +529,18 @@ local function validateConfig()
         Config.Audit.FlushIntervalMs = 1000
     else
         Config.Audit.FlushIntervalMs = flushMs
+    end
+
+    -- How a contract is completed. A misspelling is not a third rule, and
+    -- not the looser one: it is read as live transfer only, as shipped, and
+    -- said so, rather than handing back kills to a city that switched them
+    -- off.
+    local fulfilment = Config.Completion.Fulfilment
+    if fulfilment ~= CH.FULFILMENT_RULE.ALIVE and fulfilment ~= CH.FULFILMENT_RULE.EITHER then
+        warn[#warn + 1] = ('Completion.Fulfilment is %s; it has to be \'alive\' or '
+            .. '\'either\'. Using \'alive\': contracts are completed only by a live handover.')
+            :format(type(fulfilment) == 'string' and ('"' .. fulfilment .. '"') or tostring(fulfilment))
+        Config.Completion.Fulfilment = CH.FULFILMENT_RULE.ALIVE
     end
 
     -- Where kill photos are kept. A misspelling is not a third place: it

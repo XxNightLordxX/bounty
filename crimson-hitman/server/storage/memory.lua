@@ -88,6 +88,12 @@ local SLOT_COUNTERS = { 'next_slot', 'slots_claimed', 'payout_slots' }
 --- expiry pass had just started, or an extension the client had just made.
 local CLOCK = { 'deadline_at', 'paused_ms', 'paused_since' }
 
+--- The terms a contract was placed under and that never change after:
+--- how it may be completed (CH.FULFILMENT_RULE). A copy written back keeps
+--- what is stored, as the mysql upsert does, so a row written before the
+--- term existed is not handed one by a later write.
+local TERMS = { 'fulfilment_rule' }
+
 function Memory.writeContract(contract)
     local existing = db.contracts[contract.id]
     if existing and existing ~= contract then
@@ -100,6 +106,9 @@ function Memory.writeContract(contract)
         end
         for i = 1, #CLOCK do
             contract[CLOCK[i]] = existing[CLOCK[i]]
+        end
+        for i = 1, #TERMS do
+            contract[TERMS[i]] = existing[TERMS[i]]
         end
     end
     db.contracts[contract.id] = contract

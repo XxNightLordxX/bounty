@@ -60,6 +60,11 @@ local SCHEMA = {
         mode VARCHAR(16) NOT NULL,
         state VARCHAR(16) NOT NULL,
         anon_creator TINYINT(1) DEFAULT 0,
+        -- How it may be completed, 'alive' or 'either' (CH.FULFILMENT_RULE),
+        -- as it was placed, and it never changes after. Added to existing
+        -- databases by migrate. NULL on older rows, which read as 'either',
+        -- the terms they were taken on.
+        fulfilment_rule VARCHAR(8),
         bonus_percent INT DEFAULT 0,
         bailout_amount INT DEFAULT 0,
         penalty_amount INT DEFAULT 0,
@@ -673,12 +678,13 @@ function MySQLStore.writeContract(c)
     db.query([[
         INSERT INTO crimson_contracts
             (id, creator_cid, creator_account, creator_name, target_cid, target_account,
-             target_name, target_protected, target_job, reason, mode, state, anon_creator, bonus_percent,
+             target_name, target_protected, target_job, reason, mode, state, anon_creator,
+             fulfilment_rule, bonus_percent,
              bailout_amount, penalty_amount, payout_slots, slots_claimed, next_slot,
              created_at, deadline_at, expires_at, paused_ms, paused_since,
              bailout_queued_at, bailout_paid_by, bailout_paid_amount, bailout_paid_account,
              bailout_attempts, resolved_at, resolution)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         -- Every column a caller can change after creation has to be in this
         -- list. Two were missing, and both were invisible in memory and json
         -- mode, which is where the tests ran.
@@ -695,6 +701,11 @@ function MySQLStore.writeContract(c)
         --
         --   expires_at — the absolute lifetime. Nothing extended one until
         --   the staff timer refresh did.
+        --
+        -- fulfilment_rule is deliberately absent too. It is a term the
+        -- contract was placed under and never changes, so a copy written
+        -- back could only put the same value, or none from a row older
+        -- than it.
         --
         ON DUPLICATE KEY UPDATE
             reason = VALUES(reason), mode = VALUES(mode),
@@ -719,7 +730,7 @@ function MySQLStore.writeContract(c)
     ]], {
         c.id, c.creator_cid, c.creator_account, c.creator_name, c.target_cid, c.target_account,
         c.target_name, c.target_protected and 1 or 0, c.target_job, c.reason, c.mode, c.state,
-        c.anon_creator and 1 or 0, c.bonus_percent or 0, c.bailout_amount or 0,
+        c.anon_creator and 1 or 0, c.fulfilment_rule, c.bonus_percent or 0, c.bailout_amount or 0,
         c.penalty_amount or 0, c.payout_slots or 1, c.slots_claimed or 0, c.next_slot or 1,
         c.created_at, c.deadline_at, c.expires_at, c.paused_ms or 0, c.paused_since,
         c.bailout_queued_at, c.bailout_paid_by, c.bailout_paid_amount, c.bailout_paid_account,

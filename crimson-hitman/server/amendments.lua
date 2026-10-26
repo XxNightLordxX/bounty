@@ -243,6 +243,14 @@ addEscrowUnlocked = function(actor, contractId, rewardSpec)
 
     local lines, err = Escrow.validate(actor, rewardSpec, nil, held, worth)
     if not lines then return false, err end
+    -- As at creation: a contract that pays only for a live delivery takes
+    -- no bonus of its own. Added to the reward, the same thing is paid on
+    -- the same delivery.
+    if Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
+        for i = 1, #lines do
+            if lines[i].portion == CH.PORTION.BONUS then return false, CH.ERR.NO_BONUS end
+        end
+    end
     -- As at creation (Escrow.namesOwner): a top-up is handed over the same way.
     if contract.anon_creator and Escrow.namesOwner(actor, lines) then
         return false, CH.ERR.ITEM_NAMES_OWNER
@@ -329,6 +337,14 @@ improveUnlocked = function(actor, contractId, kind, payload)
         and contract.state ~= CH.STATE.ACTIVE
         and contract.state ~= CH.STATE.ACCEPTED then
         return false, CH.ERR.BAD_STATE
+    end
+
+    -- A contract that pays only for a live delivery pays all of it for one,
+    -- so it has no bonus to raise. Refused before anything is priced or
+    -- taken; adding to the reward is the way to offer more.
+    if kind == CH.AMENDMENT.RAISE_BONUS
+        and Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
+        return false, CH.ERR.NO_BONUS
     end
 
     if kind == CH.AMENDMENT.EXTEND_DEADLINE then

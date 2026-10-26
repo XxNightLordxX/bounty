@@ -718,11 +718,29 @@ function Contracts.create(actor, req)
         bonusPercent = Util.toCount(req.bonusPercent) and Config.Bonus.maxPercent or 0
     end
 
+    -- How it may be completed, as this server places contracts now, and
+    -- kept on the contract: the setting changing later changes nothing a
+    -- hitman has already taken on. Live transfer only pays the whole reward
+    -- on delivery, so there is nothing to pay on top of it: the percentage
+    -- is dropped, as the form that hides it would send.
+    local rule = Util.placingRule()
+    local aliveOnly = rule == CH.FULFILMENT_RULE.ALIVE
+    if aliveOnly then bonusPercent = 0 end
+
     -- The bonus is escrowed at creation like everything else, so a creator
     -- cannot promise a live-delivery premium they have not surrendered.
     local lines, slotCount
     lines, err, slotCount = Escrow.validate(actor, req.reward, bonusPercent)
     if not lines then return nil, err end
+    -- And goods or money named as a bonus of their own are refused, not
+    -- quietly made part of the reward: the creator said "only if alive" of
+    -- something, and on this contract that is all of it. Nothing has been
+    -- taken yet.
+    if aliveOnly then
+        for i = 1, #lines do
+            if lines[i].portion == CH.PORTION.BONUS then return nil, CH.ERR.NO_BONUS end
+        end
+    end
     -- An item reaches the hitman with its metadata, and some of it names
     -- the client: an anonymous one is refused it rather than unmasked.
     if req.anonymous == true and Escrow.namesOwner(actor, lines) then
@@ -774,6 +792,8 @@ function Contracts.create(actor, req)
         mode          = mode,
         state         = CH.STATE.ACTIVE,
         anon_creator  = req.anonymous == true,
+        -- CH.FULFILMENT_RULE: a kill completes it only under 'either'.
+        fulfilment_rule = rule,
         bonus_percent = bonusPercent,
         payout_slots  = slotCount,
         slots_claimed = 0,
@@ -1884,6 +1904,16 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     local contract = Storage.readContract(contractId)
     if not contract then return false, CH.ERR.NOT_FOUND end
     if contract.state ~= CH.STATE.ACCEPTED then return false, CH.ERR.BAD_STATE end
+
+    -- A contract placed for a live delivery only is never paid for a kill,
+    -- whatever led here. Nothing opens a kill on one (Death.attributeDeath)
+    -- and nothing issues a photo token for one (Photo.issue); this is the
+    -- one place a fulfilment becomes money, so it is said here too. The
+    -- rule never changes once placed, so the read above is enough.
+    if fulfilment ~= CH.FULFILMENT.KIDNAPPING
+        and Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
+        return false, CH.ERR.KILL_NOT_ALLOWED
+    end
 
     local hitman = Storage.readHitman(contractId, hitmanCid)
     if not hitman or hitman.state ~= 'active' then return false, CH.ERR.NOT_PARTICIPANT end

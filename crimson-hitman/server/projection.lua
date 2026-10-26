@@ -104,6 +104,11 @@ function Projection.contract(contract, viewerCid)
         mode          = contract.mode,
         state         = contract.state,
         reward        = reward,
+        -- How it may be completed, as it was placed: 'alive', only by a live
+        -- handover, or 'either', a kill too. A term like the reward, the
+        -- same for every viewer, so the page can say what pays and draw
+        -- Verify kill only where a kill can.
+        fulfilment    = Util.fulfilmentRule(contract),
         bonusPercent  = contract.bonus_percent,
         slots         = contract.payout_slots or 1,
         slotsClaimed  = contract.slots_claimed or 0,
@@ -358,6 +363,11 @@ local function buildListing(viewerCid, page)
                 radius = Config.Kidnap.Radius,
                 seconds = Config.Kidnap.CountdownSeconds,
             },
+            -- How a contract placed now may be completed: 'alive' (live
+            -- transfer only, with no bonus, so the Place form offers none)
+            -- or 'either'. Each contract carries its own as `fulfilment`,
+            -- which is what decides it once placed.
+            fulfilment = Util.placingRule(),
             -- Whether officers are really told, at each stage. A contract on
             -- an officer is marked whatever this says, and the page's warnings
             -- said "their department has been advised" on a server that
@@ -633,6 +643,7 @@ end
 Projection.ALLOWED_KEYS = {
     common = {
         id = true, reason = true, mode = true, state = true, reward = true,
+        fulfilment = true,
         bonusPercent = true, slots = true, slotsClaimed = true, currentSlot = true,
         hitmenActive = true, hitmenMax = true, targetName = true,
         targetProtected = true, deadline = true, secondsLeft = true,

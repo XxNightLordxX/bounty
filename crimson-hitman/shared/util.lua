@@ -238,6 +238,35 @@ function Util.advises(stage)
     return advisory[key] ~= false
 end
 
+--- How a contract may be completed: CH.FULFILMENT_RULE.ALIVE, only by a
+--- live handover, or EITHER, by a kill or a live handover.
+---
+--- Read off the contract, never off the config: the rule is a term it was
+--- placed under, like its reward, and a server switching the setting must
+--- not change what a hitman already took on. A contract stored before the
+--- rule existed carries none and reads as 'either', the terms it was
+--- accepted under. Anything else is read as the stricter rule.
+---@param contract table
+---@return string
+function Util.fulfilmentRule(contract)
+    local rule = contract and contract.fulfilment_rule
+    if rule == nil or rule == CH.FULFILMENT_RULE.EITHER then return CH.FULFILMENT_RULE.EITHER end
+    return CH.FULFILMENT_RULE.ALIVE
+end
+
+--- The rule a contract placed now is placed under
+--- (Config.Completion.Fulfilment). Checked at boot, so anything else here is
+--- a config changed under a running server, read as the default the boot
+--- check would have made it: live transfer only.
+---@return string
+function Util.placingRule()
+    local completion = Config and Config.Completion
+    if type(completion) == 'table' and completion.Fulfilment == CH.FULFILMENT_RULE.EITHER then
+        return CH.FULFILMENT_RULE.EITHER
+    end
+    return CH.FULFILMENT_RULE.ALIVE
+end
+
 --- Count digits, used to blunt phone numbers and addresses in free text (§14.30).
 function Util.digitCount(text)
     local n = 0

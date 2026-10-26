@@ -1348,6 +1348,10 @@ local SLOT_COUNTERS = { 'next_slot', 'slots_claimed', 'payout_slots' }
 --- memory backend.
 local CLOCK = { 'deadline_at', 'paused_ms', 'paused_since' }
 
+--- The terms a contract was placed under and never changes; see the memory
+--- backend.
+local TERMS = { 'fulfilment_rule' }
+
 function JsonStore.writeContract(c)
     local existing = db.contracts[c.id]
     if existing and existing ~= c then
@@ -1360,6 +1364,9 @@ function JsonStore.writeContract(c)
         end
         for i = 1, #CLOCK do
             c[CLOCK[i]] = existing[CLOCK[i]]
+        end
+        for i = 1, #TERMS do
+            c[TERMS[i]] = existing[TERMS[i]]
         end
     end
     db.contracts[c.id] = c

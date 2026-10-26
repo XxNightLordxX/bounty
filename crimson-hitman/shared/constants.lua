@@ -81,6 +81,13 @@ CH.MODE = { EXCLUSIVE = 'exclusive', COMPETITIVE = 'competitive' }
 
 CH.FULFILMENT = { ELIMINATION = 'elimination', KIDNAPPING = 'kidnapping' }
 
+--- How a contract may be completed (Config.Completion.Fulfilment): ALIVE
+--- only by a live handover, EITHER by a kill or a live handover. A term of
+--- the contract like its reward, written onto it as fulfilment_rule when it
+--- is placed, so changing the setting changes only what new contracts are
+--- placed under (Util.fulfilmentRule).
+CH.FULFILMENT_RULE = { ALIVE = 'alive', EITHER = 'either' }
+
 --- Where a kill photograph kept for a contract's client stands (§14.43).
 --- PENDING until the client opens it, OPEN while they are looking at it,
 --- and then SAVED to their phone, KEPT for them in this app, or DELETED.
@@ -144,6 +151,17 @@ CH.ERR = {
     --- fire, a car (Config.Completion.RequireObservedDamage). "Down is not
     --- dead" was what they were told, about a target they had blown up.
     KILL_UNOBSERVED   = 'kill_unobserved',
+    --- This contract pays only for delivering the target alive
+    --- (CH.FULFILMENT_RULE.ALIVE), so a kill does not complete it and there
+    --- is no kill to verify. Its own code: no_kill_to_verify tells the
+    --- hitman to finish the target and photograph the body, which on this
+    --- contract is the one thing that can never pay.
+    KILL_NOT_ALLOWED  = 'kill_not_allowed',
+    --- A contract that pays only for a live delivery pays its whole reward
+    --- for it, so it carries no separate bonus: none is taken when it is
+    --- placed, and none can be raised or added. Its own code, because
+    --- invalid_reward says the figures do not add up, and they do.
+    NO_BONUS          = 'no_bonus',
     --- No handover is running on this contract for this hitman. Either it
     --- ended or it was never armed, and both are ordinary answers to an
     --- ordinary question rather than faults.

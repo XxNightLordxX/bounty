@@ -331,6 +331,19 @@ function Photo.issue(actor, contractId)
     contractId = Util.toId(contractId)
     if not contractId then return nil, CH.ERR.INVALID_INPUT end
 
+    -- A contract placed for a live delivery only has no kill to verify, ever.
+    -- Said first and plainly to a hitman on it: "no kill is waiting, finish
+    -- them and take the photo" is the one thing that can never pay on it.
+    -- Its rule is a term they were shown when they took it. Anybody else is
+    -- told what they were always told, that there is no kill of theirs, so
+    -- an id is not a way to ask whether a contract still exists.
+    local contract = Storage.readContract(contractId)
+    if contract and Util.fulfilmentRule(contract) == CH.FULFILMENT_RULE.ALIVE then
+        local hitman = Storage.readHitman(contractId, actor.cid)
+        if hitman and hitman.state == 'active' then return nil, CH.ERR.KILL_NOT_ALLOWED end
+        return nil, CH.ERR.NO_KILL_TO_VERIFY
+    end
+
     -- Its own code. This is the ordinary outcome of tapping Verify kill at
     -- any moment other than standing over a body the server saw this hitman
     -- put there, and it needs to say so.
@@ -418,6 +431,17 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
     if record.hitmanCid ~= actor.cid then
         Audit.rejected('photo_token_foreign', actor.cid, record.contractId, {})
         return false, CH.ERR.TOKEN_INVALID
+    end
+
+    -- Never for a contract that pays only for a live delivery. Photo.issue
+    -- mints no token for one, and the rule cannot change once placed, so a
+    -- token here for one is a fault somewhere else: refused, and spent,
+    -- before the picture costs anything to read.
+    local placed = Storage.readContract(record.contractId)
+    if placed and Util.fulfilmentRule(placed) == CH.FULFILMENT_RULE.ALIVE then
+        tokens[token] = nil
+        Audit.rejected('photo_kill_not_allowed', actor.cid, record.contractId, {})
+        return false, CH.ERR.KILL_NOT_ALLOWED
     end
 
     if Util.monotonicMs() - record.issuedAt > (Config.Completion.PhotoTokenLifetimeSeconds * 1000)

@@ -486,6 +486,16 @@
     kill_unobserved: 'They died, but no shot or blow of yours was seen landing on '
       + 'them, so the kill pays nobody. Only gunfire and melee count: '
       + 'explosives, fire, run-overs and falls do not.',
+    // A contract placed for a live delivery only (its fulfilment is
+    // 'alive'): a kill never completes it, so there is never one to verify.
+    kill_not_allowed: 'This contract pays only for delivering the target alive. '
+      + 'A kill does not complete it: restrain them or get them into your '
+      + 'vehicle, bring them to the client and hold them there for the handover.',
+    // The same contracts pay their whole reward for that delivery, so there
+    // is no bonus on top to set, raise or add to.
+    no_bonus: 'Contracts that pay only for delivering the target alive pay the '
+      + 'whole reward for it, so there is no separate bonus. Add it to the '
+      + 'reward instead.',
     // Not a fault. The poller stops on this and says the handover ended.
     no_handover: 'That handover is not running.',
     // A token outlived by a newer kill, replaced by a second tap, or lost to

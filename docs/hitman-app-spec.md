@@ -77,6 +77,8 @@ The app presents these as a single reward builder: the creator picks sources, se
 
 **Hitman choice.** The hitman decides on the fly how to handle the target based on opportunity — eliminate for the baseline, or kidnap for baseline + bonus.
 
+*As built:* how a contract may be completed is a server setting, `Config.Completion.Fulfilment`, and this server ships `'alive'`: live transfer only, because the city requires roleplay before anybody is killed. `'either'` is the hitman choice above, unchanged. The rule is a term of the contract like its reward: written onto it when it is placed (`fulfilment_rule`, a column in mysql mode that no later write changes), and sent to every party in its projection (`fulfilment`), with the rule a new contract would be placed under in the board's settings. Changing the setting reaches new contracts only; a contract stored before the setting existed has no rule and reads as `'either'`, the terms it was taken on. On an `'alive'` contract the kidnapping fulfilment (§7.4) is the only one, and it releases the whole reward, with no bonus: creation drops the percentage to 0 and refuses a bonus named on its own with `no_bonus`, as do a bonus raise and a top-up naming one. A kill never completes it: no pending completion is opened on it, from the victim's report or from the server's own sighting of an unreported death (which is not even waited for where only live transfers name the target), a capture token for it is refused with `kill_not_allowed`, and the payout claim refuses an elimination on it whatever reaches it. The target dies and respawns as normal, and the contract stays open. Damage on its target is still observed and corroborated, because a hit landed is one of the two attempts that keep an exclusive hold (§14.8); the death state the delivery checks, and the revive that a new contract's respawn protection is measured from, are read as before. `/ch-diag` says which rule new contracts are placed under, that the kill photo settings are not used under `'alive'`, and how many live contracts still run under the other rule.
+
 ### 3.5 Payout Slots — multiple collections per contract
 
 A contract is not limited to paying out once. The creator sets **how many times it can be collected**, and funds a **separate reward set for each collection**.
@@ -193,6 +195,7 @@ A hitman must **explicitly accept** the contract via the phone app to participat
 **Acceptance** is rate-limited server-side per citizen id (§9.5), and on a **competitive** contract the first valid completion takes an **atomic single-winner lock** before any funds move — every other hitman receives a clean "contract closed" result and no partial payout.
 
 #### Elimination Fulfillment
+- *As built:* only on a contract placed under `Config.Completion.Fulfilment = 'either'`; this server ships `'alive'`, where a kill never completes a contract (§3.4).
 - Payout triggers **only** if the target is killed specifically by a player who accepted the contract.
 - To claim, the hitman must stand near the dead target and take a **verification photo** with the phone's camera: in the app's own viewfinder, which draws lb-phone's game camera into the app (`Config.Completion.PhotoStorage = 'server'`, the default), or with lb-phone's own camera, which uploads to the phone's image host (`'host'`).
 - The script confirms completion only if the target player's entity is within a short radius of the hitman at capture time.
@@ -208,7 +211,7 @@ Attribution and photo binding:
 #### Kidnapping Fulfillment
 - The contractor must bring the target **alive** to the physical location of the contract creator.
 - The script must detect a **30-second continuous proximity countdown** between contractor, target, and creator.
-- On success: **baseline + bonus** escrowed rewards are released, and the contract closes for all hitmen.
+- On success: **baseline + bonus** escrowed rewards are released, and the contract closes for all hitmen. *As built:* on a contract placed under `'alive'`, as shipped, this is the only fulfilment and the whole reward is released, there being no bonus (§3.4).
 - **The target must be alive and conscious for the entire delivery** — not dead, not downed / bleeding out, and above a configurable health floor. This is re-checked on every countdown sample, not only when the countdown arms: a target who dies or drops into last stand mid-countdown fails the delivery, and the hitman gets nothing. Delivering a corpse is not a kidnapping. (As built, a target under the health floor but awake is refused, or fails, as too badly hurt rather than as down, so the hitman is told what they can see.)
 - A short **grace period (config-backed, 2–3s default)** absorbs desync and doorways before the countdown resets; only a break exceeding the grace resets it.
 - The hitman sees the live countdown and its grace state on screen, so a reset is never silent.
