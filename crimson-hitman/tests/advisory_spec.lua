@@ -174,6 +174,37 @@ describe('threat advisory', function()
         eq(countParanoid(), 1, 'one alert per cooldown')
     end)
 
+    --- What a drop clears for a player (Bridges, Notify.clearPlayer) keeps
+    --- a cooldown still running, or a relog would buy a second alert, and
+    --- the alerts would count the people paying.
+    it('sends no second alert to a target who relogged inside the cooldown', function()
+        local s, f = seeded()
+        require('crimson-hitman.tests.harness.shipped').apply()
+        truthy(s.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
+        }))
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        eq(countParanoid(), 1, 'the first contract alerts them')
+        local alerted = Env.time
+
+        -- Out of the city and back, inside ParanoidCooldownMinutes.
+        Env.removePlayer(2)
+        s.notify.clearPlayer('TARGET01')
+        Env.advance(60)
+        Env.addPlayer({ source = 2, citizenid = 'TARGET01', license = 'license:bbb',
+            cash = 20000, bank = 20000, firstname = 'Dana', lastname = 'Reyes' })
+
+        Env.addPlayer({ source = 5, citizenid = 'CREATOR2', license = 'license:eee',
+            cash = 100000 })
+        truthy(s.contracts.create(s.identity.resolve(5), {
+            targetCid = 'TARGET01', reason = 'y', reward = { baseline = { cash = 1000 } },
+        }))
+        Env.advance(Config.Notifications.ParanoidAlertJitter.max + 1)
+        truthy(Env.time - alerted < Config.Notifications.ParanoidCooldownMinutes * 60,
+            'all of it inside the cooldown')
+        eq(countParanoid(), 1, 'a relog does not earn a second alert')
+    end)
+
     it('refuses the contract entirely when protected targets are disallowed', function()
         local s, f = seeded(leoJob('trooper'))
         Config.Targeting.AllowProtectedJobTargets = false

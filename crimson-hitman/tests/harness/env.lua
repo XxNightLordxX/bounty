@@ -36,7 +36,15 @@ Env.consoleOut = {}       -- lines a command printed to the console
 Env.notifications = {}
 Env.threads = {}
 Env.timers = {}
+Env.clearedTimers = {}    -- [timer id] = true, as ClearTimeout left it
 Env.console = {}
+--- Coroutines waiting in Citizen.Await, in the order they parked:
+--- { co, promise }. Resumed by Env.runTimers once the promise settles.
+Env.parked = {}
+--- What a parked coroutine yields, so a driver resuming coroutines of its
+--- own (tests/harness/await_scheduler.lua) can tell one waiting on the
+--- database from one that yielded for any other reason.
+Env.PARKED = setmetatable({}, { __tostring = function() return 'parked on an await' end })
 
 --------------------------------------------------------------------------
 -- Player fixtures
@@ -179,6 +187,7 @@ function Env.reset()
     Env.commands, Env.chat, Env.aces, Env.consoleOut = {}, {}, {}, {}
     Env.handlers = {}
     Env.threads, Env.timers, Env.console = {}, {}, {}
+    Env.clearedTimers, Env.parked = {}, {}
     Env.eventCanceled = nil
     -- qbx_core's job list, which GetJob answers from. Only the jobs a test
     -- names; a job missing here reads as one the framework does not know.
@@ -234,7 +243,52 @@ function Env.runTimers()
         if a.at ~= b.at then return a.at < b.at end
         return (a.seq or 0) < (b.seq or 0)
     end)
-    for i = 1, #due do due[i].fn() end
+    Env.resumeParked()
+    for i = 1, #due do
+        if not Env.clearedTimers[due[i].seq] then due[i].fn() end
+    end
+    Env.resumeParked()
+end
+
+--------------------------------------------------------------------------
+-- Threads
+--------------------------------------------------------------------------
+
+--- Run fn in a coroutine of its own, as the engine runs a net event or a
+--- thread, up to its first yield; an await nothing answers parks it there
+--- (Env.parked) and the caller carries on. Answers a handle: `done` once
+--- fn has returned, `results` what it returned (packed). An error inside
+--- is raised from whoever resumed it, here or Env.runTimers, so a test
+--- sees it.
+---@return table handle { co, done, results }
+function Env.spawn(fn, ...)
+    local args = table.pack(...)
+    local handle = { done = false }
+    handle.co = coroutine.create(function()
+        handle.results = table.pack(fn(table.unpack(args, 1, args.n)))
+        handle.done = true
+    end)
+    local ok, err = coroutine.resume(handle.co)
+    if not ok then error(err, 0) end
+    return handle
+end
+
+--- Resume every parked coroutine whose promise has settled, in the order
+--- they parked. One that parks again goes to the back.
+function Env.resumeParked()
+    local i = 1
+    while i <= #Env.parked do
+        local entry = Env.parked[i]
+        if entry.promise.state ~= 0 then
+            table.remove(Env.parked, i)
+            if coroutine.status(entry.co) == 'suspended' then
+                local ok, err = coroutine.resume(entry.co)
+                if not ok then error(err, 0) end
+            end
+        else
+            i = i + 1
+        end
+    end
 end
 
 return Env

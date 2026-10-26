@@ -13,16 +13,36 @@ function Natives.install()
     _G.GetGameTimer = function() return Env.gameTimer end
     _G.os_time_real = os.time
     _G.CreateThread = function(fn) table.insert(Env.threads, fn) end
-    -- Runs at once, up to its first wait, then the caller carries on;
-    -- nothing here waits, so it runs to the end. What Notify sends a
-    -- notification in, so a settlement does not yield for the database
-    -- lb-phone writes it to.
-    _G.Citizen = { CreateThreadNow = function(fn) fn() end }
+    _G.promise = Natives.promise
+    _G.Citizen = {
+        -- Runs at once, in a coroutine of its own, up to its first wait,
+        -- then the caller carries on. What Notify sends a notification in,
+        -- so a settlement does not yield for the database lb-phone writes
+        -- it to. Nothing in the harness waits there, so it runs to the end;
+        -- an await nothing answers parks this thread alone (Env.parked).
+        -- An error inside is raised here, so a test sees it.
+        CreateThreadNow = function(fn)
+            local co = coroutine.create(fn)
+            local ok, err = coroutine.resume(co)
+            if not ok then error(err, 0) end
+        end,
+        Await = Natives.await,
+    }
     _G.SetTimeout = function(ms, fn)
         -- Numbered as set, so timers due together run in the order they
-        -- were set, as the engine runs them.
+        -- were set, as the engine runs them. The number is the timer's id,
+        -- which ClearTimeout takes.
         Env.timerSeq = (Env.timerSeq or 0) + 1
         table.insert(Env.timers, { at = Env.gameTimer + ms, fn = fn, seq = Env.timerSeq })
+        return Env.timerSeq
+    end
+    --- A timer that has not fired never will. One already due in the same
+    --- pass is skipped too (Env.runTimers reads Env.clearedTimers).
+    _G.ClearTimeout = function(id)
+        Env.clearedTimers[id] = true
+        for i = #Env.timers, 1, -1 do
+            if Env.timers[i].seq == id then table.remove(Env.timers, i) end
+        end
     end
     _G.Wait = function() end
     _G.GetCurrentResourceName = function() return 'crimson-hitman' end
@@ -213,6 +233,36 @@ function Natives.install()
     _G.GetResourceKvpInt = function(key) return tonumber(kvp()[key]) or 0 end
     _G.SetResourceKvpInt = function(key, value) kvp()[key] = math.floor(tonumber(value) or 0) end
     _G.DeleteResourceKvp = function(key) kvp()[key] = nil end
+    -- The string half, on the same store: nil for a key never set, or set
+    -- as a number.
+    _G.SetResourceKvp = function(key, value) kvp()[key] = tostring(value) end
+    _G.GetResourceKvpString = function(key)
+        local value = kvp()[key]
+        return type(value) == 'string' and value or nil
+    end
+    -- A walk over every key starting with a prefix, in key order, as the
+    -- store FiveM keeps them in sorts them. The keys are taken when the
+    -- walk starts, so one written or deleted during it does not move it.
+    local finds, findSeq = {}, 0
+    _G.StartFindKvp = function(prefix)
+        local keys = {}
+        for key in pairs(kvp()) do
+            if type(key) == 'string' and key:sub(1, #tostring(prefix)) == tostring(prefix) then
+                keys[#keys + 1] = key
+            end
+        end
+        table.sort(keys)
+        findSeq = findSeq + 1
+        finds[findSeq] = { keys = keys, at = 0 }
+        return findSeq
+    end
+    _G.FindKvp = function(handle)
+        local find = finds[handle]
+        if not find then return nil end
+        find.at = find.at + 1
+        return find.keys[find.at]
+    end
+    _G.EndFindKvp = function(handle) finds[handle] = nil end
 
     -- Env.reset is a fresh server, which is a fresh disk: the boots that
     -- call it model one, and a store another suite left in the files
@@ -389,6 +439,77 @@ function Natives.install()
     _G.json = Natives.json
     _G.exports = Natives.exportsProxy()
     _G.MySQL = Natives.mysql
+end
+
+--------------------------------------------------------------------------
+-- promise and Citizen.Await, as FiveM's deferred.lua and scheduler.lua
+-- have them
+--------------------------------------------------------------------------
+
+--- FiveM's promise: pending is state 0, and a promise settles once, the
+--- first resolve or reject winning. Settled reads 3 (resolved) or 4
+--- (rejected), the states deferred.lua leaves once its callbacks ran.
+local PENDING, RESOLVED, REJECTED = 0, 3, 4
+local Promise = {}
+Promise.__index = Promise
+
+local function settle(p, state, value)
+    if p.state ~= PENDING then return p end
+    p.state, p.value = state, value
+    local queue = p.queue
+    p.queue = {}
+    for i = 1, #queue do queue[i](p) end
+    return p
+end
+
+function Promise:resolve(value) return settle(self, RESOLVED, value) end
+function Promise:reject(value) return settle(self, REJECTED, value) end
+
+--- success(value) once it resolves, failure(value) once it rejects, at
+--- once where it already has. Answers a promise of what the one called
+--- returns; a failure that returns resolves it, as deferred.lua does.
+function Promise:next(success, failure)
+    local after = Natives.promise.new()
+    local function run(p)
+        local fn = p.state == RESOLVED and success or failure
+        if type(fn) ~= 'function' then return settle(after, p.state, p.value) end
+        local ok, out = pcall(fn, p.value)
+        if ok then after:resolve(out) else after:reject(out) end
+    end
+    if self.state == PENDING then self.queue[#self.queue + 1] = run else run(self) end
+    return after
+end
+
+Natives.promise = {
+    new = function(fn)
+        local p = setmetatable({ state = PENDING, queue = {} }, Promise)
+        if type(fn) == 'function' then
+            local ok, err = pcall(fn, p)
+            if not ok then p:reject(err) end
+        end
+        return p
+    end,
+}
+
+--- Citizen.Await: a settled promise answers at once, its value or a raise
+--- of what rejected it. A pending one inside a coroutine parks it in
+--- Env.parked until the promise settles, and Env.runTimers or Env.advance
+--- resume it then, as the scheduler resumes a thread on a later tick; one
+--- that never settles is never resumed, which is a database that stopped
+--- answering (OXMYSQL.md §6). Pending outside a coroutine nothing could
+--- ever resume, so it raises: a test of an outage runs the handler in
+--- Env.spawn.
+function Natives.await(p)
+    if p.state == PENDING then
+        local co, main = coroutine.running()
+        if main or not coroutine.isyieldable() then
+            error('an await nothing answers, outside a coroutine', 2)
+        end
+        Env.parked[#Env.parked + 1] = { co = co, promise = p }
+        repeat coroutine.yield(Env.PARKED) until p.state ~= PENDING
+    end
+    if p.state == 2 or p.state == REJECTED then error(p.value, 2) end
+    return p.value
 end
 
 --------------------------------------------------------------------------

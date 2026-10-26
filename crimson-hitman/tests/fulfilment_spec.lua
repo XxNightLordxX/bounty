@@ -647,3 +647,122 @@ describe('the words for a live handover', function()
             'kill photos ship off, so nothing about a photo: ' .. entry.about)
     end)
 end)
+
+--- The switches the owner runs (tests/harness/shipped.lua), all of them at
+--- once, through the requests the page sends: what a player on the live
+--- server meets from Place to paid. Every other stack here keeps kill
+--- photos on and three collections from tests/run.lua.
+describe('the shipped switches, from the Place form to paid', function()
+    local Shipped = require('crimson-hitman.tests.harness.shipped')
+
+    local function call(name, src, payload)
+        local fire = Env.events['crimson-hitman:' .. name]
+        if not fire then return { ok = false, err = 'NO SUCH HANDLER ' .. name } end
+        Env.clientEvents = {}
+        _G.source = src
+        local fired, err = pcall(fire, payload or {})
+        _G.source = nil
+        if not fired then return { ok = false, err = 'THREW: ' .. tostring(err) } end
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:result' then return event.args[1] end
+        end
+        return { ok = false, err = 'NO REPLY' }
+    end
+
+    local function answered(name, src, payload)
+        local reply = call(name, src, payload)
+        truthy(reply.ok, name .. ' was refused: ' .. tostring(reply.err))
+        return reply.data
+    end
+
+    local function money(src)
+        local m = Env.players[src].PlayerData.money
+        return m.cash + m.bank
+    end
+
+    it('are what config/config.lua ships', function()
+        local file = Shipped.fromFile()
+        for _, entry in ipairs(Shipped.VALUES) do
+            local section, key, value = entry[1], entry[2], entry[3]
+            local shipped = file[key]
+            if section then shipped = file[section][key] end
+            eq(shipped, value, ('Config.%s%s'):format(section and (section .. '.') or '', key))
+        end
+    end)
+
+    it('place one collection, hand the target over in person, and pay without a photograph', function()
+        local s = Shipped.newStack()
+        local f = fixture(s)
+
+        local wallet = answered('rewardOptions', 1, {})
+        eq(wallet.caps.slots, 1, 'the form is told one collection')
+        eq(wallet.caps.fulfilment, 'alive')
+        eq(wallet.caps.minValue, 1000)
+
+        local handle
+        for _, row in ipairs(answered('browseTargets', 1, { scope = 'online', page = 1 }).people or {}) do
+            if row.name == 'Dana Reyes' then handle = row.handle end
+        end
+        truthy(handle, 'the target is listed')
+
+        local creatorBefore, hitmanBefore = money(1), money(3)
+        local forged = call('create', 1, { target = handle, reason = 'Unpaid debt',
+            mode = 'competitive', penaltyAmount = 1000,
+            reward = { slots = { { baseline = { cash = 5000 } }, { baseline = { cash = 5000 } } } } })
+        eq(forged.err, CH.ERR.INVALID_REWARD, 'a second collection is refused')
+        eq(money(1), creatorBefore, 'and nothing was taken for it')
+
+        local placed = answered('create', 1, { target = handle, reason = 'Unpaid debt',
+            mode = 'competitive', penaltyAmount = 1000,
+            reward = { slots = { { baseline = { cash = 5000 } } } } })
+        local id = placed.id
+        eq(s.storage.readContract(id).fulfilment_rule, CH.FULFILMENT_RULE.ALIVE)
+        eq(money(1), creatorBefore - 5000)
+
+        answered('accept', 3, { id = id, anonymous = false, penaltyAmount = 1000 })
+        eq(money(3), hitmanBefore - 1000, 'the stake is taken')
+
+        for _, src in ipairs({ 1, 2, 3 }) do
+            Env.players[src]._coords = { x = AT.x, y = AT.y, z = AT.z }
+        end
+        Env.players[2].PlayerData.metadata.ishandcuffed = true
+        Natives.calls.notifications = {}
+        answered('armKidnap', 3, { id = id })
+        truthy(answered('kidnapProgress', 3, { id = id }).required, 'the countdown is running')
+        for _ = 1, math.floor(Config.Kidnap.CountdownSeconds * 1000 / Config.Kidnap.TickMs) + 1 do
+            s.kidnap.tick(Config.Kidnap.TickMs)
+        end
+
+        eq(s.storage.readContract(id).state, CH.STATE.COMPLETED)
+        eq(money(3), hitmanBefore + 5000, 'the hitman is paid, and the stake comes back')
+        eq(money(1), creatorBefore - 5000, 'the creator paid the reward once')
+
+        local told = {}
+        for _, note in ipairs(Natives.calls.notifications) do
+            if note.title ~= 'Handover starting' then
+                told[#told + 1] = tostring(note.title) .. ': ' .. tostring(note.content)
+            end
+        end
+        local said = table.concat(told, '\n')
+        truthy(said:find('Contract fulfilled: Your contract was fulfilled by live delivery: the '
+            .. 'target was handed over in person.', 1, true), said)
+        falsy(said:find('Collection', 1, true), 'one collection is the whole contract: ' .. said)
+        falsy(said:lower():find('photo', 1, true), 'and no photograph is mentioned: ' .. said)
+
+        for _, src in ipairs({ 1, 3 }) do
+            for _, entry in ipairs(answered('ledger', src, {}).entries or {}) do
+                falsy(entry.photo, 'no Ledger row offers a photo')
+            end
+        end
+        eq(#s.storage.photosOf('CREATOR1'), 0, 'and none is kept')
+
+        Env.addPlayer({ source = 4, citizenid = 'HITMAN02', license = 'license:ddd',
+            cash = 50000, bank = 50000, firstname = 'Kade', lastname = 'Wolfe' })
+        local again, err = s.contracts.create(s.identity.resolve(4), {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        falsy(again, 'the target was just delivered')
+        eq(err, CH.ERR.TARGET_RECENTLY_ON)
+    end)
+end)

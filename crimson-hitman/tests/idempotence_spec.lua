@@ -690,6 +690,48 @@ describe('verifying the same kill twice with kill photos off', function()
         eq(Env.players[3].PlayerData.money.cash, 5000 + 5000, 'one baseline')
         eq(#s.storage._raw().ledger, 3, 'and one set of ledger entries')
     end)
+
+    --- The second tap arriving while the first waits on the database, at
+    --- every await it makes, before the statement and after it: on mysql
+    --- with every await a yield (tests/harness/await_scheduler.lua). Every
+    --- outcome has to be one of the taps paid and the other refused.
+    it('pays for the kill once however the two taps interleave on mysql', function()
+        local Scheduler = require('crimson-hitman.tests.harness.await_scheduler')
+        local function tap(x, rid)
+            _G.source = 3
+            Env.events['crimson-hitman:verifyKill']({ id = x.c.id, __rid = rid })
+            _G.source = nil
+            return true
+        end
+        local res = Scheduler.explore({
+            name = 'verifyKill x verifyKill, one hitman',
+            build = function()
+                -- The switches as this resource ships them, contracts
+                -- placed under 'either' as on a server that ran it.
+                local main, m = Scheduler.boot(function()
+                    require('crimson-hitman.tests.harness.shipped').apply()
+                    Config.Completion.Fulfilment = 'either'
+                end)
+                local f = Scheduler.fixture(m)
+                local c = assert(m.contracts.create(f.creator, {
+                    targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+                    reward = { baseline = { cash = 5000 } },
+                }))
+                assert(m.contracts.accept(f.hitman, c.id, false))
+                Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+                Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+                Env.players[2]._health = 140
+                m.death.recordDamage(3, 2, 123456)
+                Env.players[2].PlayerData.metadata.isdead = true
+                assert(m.death.onVictimReport(2) == 1, 'the kill is attributed')
+                return main, m, { f = f, c = c }
+            end,
+            first = function(_, x) return tap(x, 801) end,
+            second = function(_, x) return tap(x, 802) end,
+        })
+        truthy(res.depth > 0, 'a verification waits on the database')
+        eq(#res.findings, 0, Scheduler.report(res))
+    end)
 end)
 
 --------------------------------------------------------------------------

@@ -1590,3 +1590,142 @@ describe('kill photos switched off', function()
         eq(#reads, 0, 'and reads no file to say so')
     end)
 end)
+
+--- What happens to a photo under way when staff switch kill photos, and
+--- what looks after one kept, on the real start and its maintenance tick
+--- (main.lua) rather than each module called by hand.
+describe('kill photos switched while a photo is under way', function()
+    local Shipped = require('crimson-hitman.tests.harness.shipped')
+
+    --- Change a setting as the panel does, and insist it took.
+    local function turn(s, key, value)
+        local ok, err, why = s.settings.set(key, value, 'ADMIN001', 'ADMIN001')
+        truthy(ok, ('%s: %s %s'):format(key, tostring(err), tostring(why)))
+    end
+
+    --- main.lua's own start, on memory, with the disk empty.
+    local function booted(configure)
+        for name in pairs(package.loaded) do
+            if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+                package.loaded[name] = nil
+            end
+        end
+        Env.reset()
+        Natives.calls = { notifications = {}, dispatch = {}, inventory = {} }
+        Natives.resetResourceStates()
+        resetConfig()
+        Config.Database.Mode = 'memory'
+        Config.Completion.PhotoStorage = 'server'
+        if configure then configure() end
+        local main = require('server.main')
+        return main, main.start()
+    end
+
+    local function killedOn(m)
+        local f = fixture(m)
+        local c = m.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'Unpaid debt', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } },
+        })
+        truthy(c, 'the contract has to exist')
+        truthy(m.contracts.accept(f.hitman, c.id, false))
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 140
+        m.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        m.death.onVictimReport(2)
+        return f, c
+    end
+
+    --- The viewfinder is open, its token issued, when staff turn kill
+    --- photos off from the panel. The picture it sends is refused unread
+    --- and the kill is still the hitman's, checked at the scene instead
+    --- (the page tries Verify kill on that answer, tests/ui/run.js).
+    it('refuses the picture from a viewfinder opened before, spends no token, and still pays at the scene', function()
+        local s, f, c = killed()
+        local issued = call('requestPhotoToken', 3, { id = c.id })
+        truthy(issued and issued.ok, 'the viewfinder has its token: ' .. tostring(issued and issued.err))
+        eq(s.photo.tokenCount(), 1)
+
+        turn(s, 'Completion.KillPhotos', false)
+        local sent = call('submitPhoto', 3, { token = issued.data.token, image = uri('image/jpeg', JPEG) })
+        eq(sent.err, CH.ERR.PHOTO_GONE, 'refused as a photo nobody has')
+        eq(s.photo.tokenCount(), 1, 'the token is not spent')
+        eq(#photoFiles(), 0, 'nothing was written')
+        eq(s.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'and nothing was claimed')
+
+        local before = Env.players[3].PlayerData.money.cash
+        local verified = call('verifyKill', 3, { id = c.id })
+        truthy(verified and verified.ok, 'the kill is still the hitman\'s: ' .. tostring(verified and verified.err))
+        eq(Env.players[3].PlayerData.money.cash - before, 5000, 'paid once')
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
+        eq(#s.storage.photosOf('CREATOR1'), 0, 'and no photo kept')
+    end)
+
+    --- photos.expire is run by the maintenance tick only while a photo is
+    --- kept or kill photos are on (Photos.inUse). One kept from before they
+    --- went off still goes when it is due, through that gate.
+    it('lets the tick expire a photo kept from before, then stops looking after photos', function()
+        local main, m = booted()
+        local f, c = killedOn(m)
+        local token = m.photo.issue(f.hitman, c.id)
+        truthy(token)
+        truthy(m.photo.submit(f.hitman, token, nil, uri('image/jpeg', JPEG)))
+        local handle = m.storage.readLedger('CREATOR1', 10)[1].photo_ref
+        local file = 'data/photos/' .. handle .. '.jpg'
+        truthy(Natives.files[file], 'kept in its file')
+        local opened = call('openPhoto', 1, { handle = handle })
+        truthy(opened and opened.ok, tostring(opened and opened.err))
+        landed(1, handle)
+
+        turn(m, 'Completion.KillPhotos', false)
+        Env.advance(Config.Completion.PhotoOpenSeconds + 1)
+        main.tick()
+        eq(Natives.files[file], nil, 'left open past the time to decide, the tick took its file')
+        eq(table.concat(photoFiles(), ','), 'data/photos/.mode',
+            'and no other: what is left is the start-up sweep\'s mark')
+
+        Env.advance(Config.Ledger.PhotoRetentionDays * 86400 + 61)
+        main.tick()
+        Env.advance(61)
+        main.tick()
+        falsy(m.photos.inUse(), 'with none kept and none taken')
+        local expired = 0
+        local real = m.photos.expire
+        m.photos.expire = function(...) expired = expired + 1 return real(...) end
+        Env.advance(61)
+        main.tick()
+        m.photos.expire = real
+        eq(expired, 0, 'and the tick no longer looks')
+    end)
+
+    --- Started as this resource ships, kill photos off: lb-phone is never
+    --- asked for its upload hosts. Staff turning them on from an image host
+    --- reads the list there and then (Bridges' settings hook), not at the
+    --- next refresh, so the first photo is checked against it.
+    it('reads the upload hosts the moment staff turn photos on from a host, and takes a photo from one', function()
+        local _, m = booted(Shipped.apply)
+        eq(#m.photo.allowedHosts(), 0, 'nothing asked while photos are off')
+
+        turn(m, 'Completion.KillPhotos', true)
+        eq(#m.photo.allowedHosts(), 0, 'kept on this server, nothing to ask')
+        turn(m, 'Completion.PhotoStorage', 'host')
+        local hosts = table.concat(m.photo.allowedHosts(), ',')
+        truthy(hosts:find('fivemanage.com', 1, true), hosts)
+        truthy(hosts:find('fmfile.com', 1, true), hosts)
+        falsy(hosts:find('amazonaws.com', 1, true), 'a shared cloud is left out: ' .. hosts)
+
+        turn(m, 'Completion.Fulfilment', 'either')
+        local f, c = killedOn(m)
+        local issued = call('requestPhotoToken', 3, { id = c.id })
+        truthy(issued and issued.ok, tostring(issued and issued.err))
+        local before = Env.players[3].PlayerData.money.cash
+        local sent = call('submitPhoto', 3, { token = issued.data.token,
+            url = 'https://cdn.fivemanage.com/p.png' })
+        truthy(sent and sent.ok, 'a link on an allowed host: ' .. tostring(sent and sent.err))
+        eq(Env.players[3].PlayerData.money.cash - before, 5000)
+        eq(m.storage.readContract(c.id).state, CH.STATE.COMPLETED)
+        local _ = f
+    end)
+end)

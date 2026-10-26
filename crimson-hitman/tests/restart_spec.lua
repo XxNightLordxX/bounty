@@ -4234,3 +4234,77 @@ describe('a staff settle of a line of a contract still being placed', function()
         end)
     end
 end)
+
+--- Verify kill with kill photos off, on a contract a kill may complete and
+--- the switches as this resource ships them (tests/harness/shipped.lua),
+--- with the server restarting between the kill and the tap. The kill the server saw
+--- is held in memory and goes with the process; the contract and the money
+--- are in the store and stay. Nothing is paid for a kill the new process
+--- never saw, and the hitman's next one is paid once.
+describe('a kill not yet verified when the server restarts', function()
+    local function reply(name, src, payload)
+        local fire = Env.events['crimson-hitman:' .. name]
+        if not fire then return { ok = false, err = 'NO SUCH HANDLER' } end
+        Env.clientEvents = {}
+        _G.source = src
+        local fired, err = pcall(fire, payload or {})
+        _G.source = nil
+        if not fired then return { ok = false, err = 'THREW: ' .. tostring(err) } end
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:result' then return event.args[1] end
+        end
+        return { ok = false, err = 'NO REPLY' }
+    end
+
+    local function kill(s)
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 140
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.onVictimReport(2)
+    end
+
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': is not paid after it, and the next kill is paid once', function()
+            local _, s = boot(mode)
+            local f = fixture(s)
+            -- Placed under 'either', as on a server that ran it; then every
+            -- switch as this resource ships them, kept across the restart.
+            local c = s.contracts.create(f.creator, {
+                targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+                reward = { baseline = { cash = 5000 } },
+            })
+            truthy(c, 'placed')
+            truthy(s.contracts.accept(f.hitman, c.id, false))
+            require('crimson-hitman.tests.harness.shipped').apply()
+            kill(s)
+            local before = { creator = money(1), hitman = money(3) }
+
+            local _, s2 = restart(mode, s)
+            local after = reply('verifyKill', 3, { id = c.id })
+            eq(after.err, CH.ERR.NO_KILL_TO_VERIFY, 'the new process never saw that kill')
+            eq(money(3), before.hitman, 'nothing paid for it')
+            eq(money(1), before.creator)
+            eq(s2.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'the contract is still theirs')
+            eq(#s2.storage.readEscrow(c.id), 1, 'with its reward still held')
+
+            -- Up again, and killed again, in front of this process.
+            Env.players[2].PlayerData.metadata.isdead = false
+            Env.players[2]._health = 200
+            s2.death.onRevived('TARGET01')
+            Env.advance(math.max(Config.Completion.ProofWindowSeconds,
+                Config.Immunity.PostRespawnSeconds or 0) + 5)
+            -- What the new process's sampler does within its first second:
+            -- the health the next hit is measured against.
+            s2.death.watchTargets(s2.storage.liveContracts(), s2.storage.liveHitmen())
+            kill(s2)
+            local verified = reply('verifyKill', 3, { id = c.id })
+            truthy(verified.ok, 'verified at the scene: ' .. tostring(verified.err))
+            eq(money(3) - before.hitman, 5000, 'paid once')
+            eq(s2.storage.readContract(c.id).state, CH.STATE.COMPLETED)
+            eq(reply('verifyKill', 3, { id = c.id }).ok, false, 'and not again')
+            eq(money(3) - before.hitman, 5000)
+        end)
+    end
+end)

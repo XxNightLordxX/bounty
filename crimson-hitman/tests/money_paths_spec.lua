@@ -5,7 +5,9 @@
 
 local Exec = require('crimson-hitman.tests.harness.mysql_exec')
 
-local function boot()
+--- main.lua's own start on memory. `configure` runs after the config is
+--- reset and before the start, as a server.cfg's config would.
+local function boot(configure)
     for name in pairs(package.loaded) do
         if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
             package.loaded[name] = nil
@@ -17,6 +19,7 @@ local function boot()
     Natives.resetResourceStates()
     resetConfig()
     Config.Database.Mode = 'memory'
+    if configure then configure() end
     local main = require('server.main')
     return main, main.start()
 end
@@ -753,5 +756,70 @@ describe('a deadline that runs out while a hitman is finishing', function()
         main.markPresenceChanged()
         main.expire()
         eq(m.storage.readContract(c.id).state, CH.STATE.EXPIRED, 'the ceiling holds whatever anyone is doing')
+    end)
+end)
+
+--- The same deadline under the rule this resource ships (Completion.Fulfilment
+--- = 'alive', tests/harness/shipped.lua), where no kill can complete a
+--- contract: the only thing that holds an expiry off is a handover armed
+--- before the deadline (Bailout.finishing, through Kidnap.armedAt).
+describe('a deadline that runs out during a live handover, as this resource ships', function()
+    local Shipped = require('crimson-hitman.tests.harness.shipped')
+
+    local function handingOver()
+        local main, m = boot(Shipped.apply)
+        local f = fixture(m)
+        local c = m.contracts.create(f.creator, {
+            targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.EXCLUSIVE,
+            reward = { baseline = { cash = 5000 } }, penaltyAmount = 2000,
+        })
+        truthy(c, 'placed')
+        eq(c.fulfilment_rule, CH.FULFILMENT_RULE.ALIVE)
+        truthy(m.contracts.accept(f.hitman, c.id, false))
+        local row = m.storage.readContract(c.id)
+        row.deadline_at = Env.time + 60
+        m.storage.writeContract(row)
+        main.markPresenceChanged()
+        main.expire()
+        for _, src in ipairs({ 1, 2, 3 }) do
+            Env.players[src]._coords = { x = 300.0, y = 300.0, z = 30.0 }
+        end
+        Env.players[2].PlayerData.metadata.ishandcuffed = true
+        -- Armed ten seconds before the deadline; the pass after it runs.
+        Env.advance(50)
+        truthy(m.kidnap.arm(c.id, 'HITMAN01'), 'armed in time')
+        Env.advance(11)
+        main.markPresenceChanged()
+        main.expire()
+        eq(m.storage.readContract(c.id).state, CH.STATE.ACCEPTED,
+            'not expired under a handover armed before the deadline')
+        return main, m, f, c
+    end
+
+    it('pays the handover armed in time, with the stake back', function()
+        local before = {}
+        local _, m, _, c = handingOver()
+        before.creator, before.hitman = worth(1), worth(3)
+        for _ = 1, math.floor(Config.Kidnap.CountdownSeconds * 1000 / Config.Kidnap.TickMs) + 1 do
+            m.kidnap.tick(Config.Kidnap.TickMs)
+        end
+        eq(m.storage.readContract(c.id).state, CH.STATE.COMPLETED)
+        eq(worth(3) - before.hitman, 5000 + 2000, 'the reward, and the stake back')
+        eq(worth(1) - before.creator, 0, 'the client keeps nothing of a hitman who did it in time')
+    end)
+
+    it('expires on the next pass once that countdown breaks, and forfeits the stake', function()
+        local before = {}
+        local main, m, _, c = handingOver()
+        before.creator, before.hitman = worth(1), worth(3)
+        -- The person who placed it walks away: the handover fails.
+        Env.players[1]._coords = { x = 3000.0, y = 3000.0, z = 30.0 }
+        for _ = 1, 10 do m.kidnap.tick(Config.Kidnap.MaxTotalGraceMs) end
+        eq(m.storage.readContract(c.id).state, CH.STATE.ACCEPTED, 'the failed handover closes nothing')
+        Env.advance(10)
+        main.expire()
+        eq(m.storage.readContract(c.id).state, CH.STATE.EXPIRED, 'the next pass expires it')
+        eq(worth(3) - before.hitman, 0, 'the hitman ran out of time')
+        eq(worth(1) - before.creator, 5000 + 2000, 'the escrow back and the stake forfeited')
     end)
 end)

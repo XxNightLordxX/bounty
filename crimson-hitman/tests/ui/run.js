@@ -7107,6 +7107,31 @@ async function main() {
       });
     })();
 
+    /* Staff turned kill photos off while the viewfinder was open. The server
+       refuses the picture unread, as a photo nobody has (photo_gone), and
+       the same tap checks the scene instead, as a page that had read "off"
+       would have from the start (server_photos_spec holds the server to the
+       token not spent and the kill still the hitman's). */
+    await (async function viewfinderAfterPhotosWentOff() {
+      const { app } = await viewfinderOpen({
+        sendVerificationPhoto: { ok: false, err: 'photo_gone' },
+        verifyKill: { ok: true, data: { settled: 1, pending: 0 } }
+      });
+      await shoot(app);
+      for (let i = 0; i < 4; i++) { await settle(); }
+
+      it('checks the scene when the picture is refused because photos went off', function () {
+        const WATCHED = ['takeVerificationPhoto', 'verificationCamera', 'sendVerificationPhoto', 'verifyKill'];
+        const asked = app.sent.filter(function (r) { return WATCHED.indexOf(r.name) !== -1; })
+          .map(function (r) { return r.name === 'verificationCamera' ? r.name + ':' + r.body.on : r.name; });
+        eq(asked.join(','), 'takeVerificationPhoto,verificationCamera:true,verificationCamera:false,'
+          + 'sendVerificationPhoto,verifyKill');
+        truthy(app.notice().indexOf('Verified') !== -1, app.notice());
+        falsy(app.notice().indexOf('That photo is gone') !== -1, app.notice());
+        eq(finder(app), null, 'the viewfinder is gone');
+      });
+    })();
+
     /* The shutter waits for the client to say the rear camera is on. Until
        then the render shows the ordinary game camera, with the hitman in
        it, and a quick tap sent the client that. */

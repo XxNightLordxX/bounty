@@ -1308,10 +1308,12 @@ CH_SUITES=journeys_spec lua crimson-hitman/tests/run.lua   # one area, in second
 
 Six kinds of check, because each catches what the others cannot:
 
-- **Server suite** (about 2,700 tests) — escrow arithmetic, the state machine,
+- **Server suite** (about 2,900 tests) — escrow arithmetic, the state machine,
   every payout and refund path, whole player journeys, every action against
   every contract state, deliberate exploit attempts, storage conformance
-  across all three backends, every admin panel request against every
+  across all three backends (mysql on an executor that refuses what MariaDB's
+  strict mode refuses, with pairs of requests landed at every database wait
+  of each other), every admin panel request against every
   permission (with what each staff member may see of an anonymous party),
   every feature switch turned off and on with what it does to things under
   way, settings kept across a restart in each backend, and randomised

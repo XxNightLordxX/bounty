@@ -17,9 +17,34 @@
 ---     hands it back (Exec.booleans = false gives the 0 and 1 of a driver
 ---     without it);
 ---   * every read returns a fresh copy, so a caller mutating what it read
----     does not reach into the store.
+---     does not reach into the store;
+---   * a value is held to its column as MariaDB 10.11's strict mode holds
+---     it (OXMYSQL.md §5): an INT past -2^31..2^31-1, a VARCHAR(n) past n
+---     characters, a TEXT past 65,535 bytes, a NULL in a NOT NULL column
+---     and a NOT NULL column left out with no DEFAULT are refused, with
+---     the server's own words inside oxmysql's message, and a statement
+---     refused writes none of itself. A column left out takes its DEFAULT,
+---     so crimson_hitmen.stake_amount reads 0 as it does there;
+---   * a transaction is all or nothing, and answers false where a
+---     statement in it fails, as oxmysql's does (OXMYSQL.md §3);
+---   * an await can be left unanswered, the database gone (Exec.down), or
+---     answered late, a write that lands after its caller stopped waiting
+---     (Exec.lateNext, Exec.releaseLate). Both park the caller's coroutine
+---     in Citizen.Await (tests/harness/natives.lua), so a test runs the
+---     caller in Env.spawn.
 
-local Exec = { tables = {}, schema = {}, primary = {}, engines = {}, booleans = true }
+local Exec = {
+    tables = {}, schema = {}, primary = {}, engines = {}, booleans = true,
+    -- Every await sent while this is set is never answered.
+    down = false,
+    -- How many of the next awaited statements are held for releaseLate.
+    lateNext = 0,
+    late = {},
+    -- oxmysql's message for every statement the database refused.
+    refused = {},
+    -- Every statement sent while the database was down, which never landed.
+    lost = {},
+}
 
 local function copy(value)
     if type(value) ~= 'table' then return value end
@@ -36,11 +61,34 @@ end
 -- Schema
 --------------------------------------------------------------------------
 
+--- What one column declaration says its values must be: the base type and
+--- length (VARCHAR(32), TINYINT(1), INT, TEXT), NOT NULL (a primary key is
+--- one), the DEFAULT, and AUTO_INCREMENT.
+local function declared(definition)
+    local rest = definition:match('^[%w_]+%s+(.*)$') or ''
+    local upper = rest:upper()
+    local base, size = upper:match('^(%a+)%s*%((%d+)%)')
+    if not base then base = upper:match('^(%a+)') end
+    local literal = rest:match("%f[%w_][Dd][Ee][Ff][Aa][Uu][Ll][Tt]%s+('[^']*')")
+        or rest:match('%f[%w_][Dd][Ee][Ff][Aa][Uu][Ll][Tt]%s+([^%s,]+)')
+    local default
+    if literal and literal:upper() ~= 'NULL' then
+        default = literal:match("^'(.*)'$") or tonumber(literal) or literal
+    end
+    return {
+        base = base, size = tonumber(size),
+        notNull = upper:find('NOT NULL', 1, true) ~= nil
+            or upper:find('PRIMARY KEY', 1, true) ~= nil,
+        hasDefault = literal ~= nil, default = default,
+        auto = upper:find('AUTO_INCREMENT', 1, true) ~= nil,
+    }
+end
+
 local function parseSchema(sql)
     local name = sql:match('CREATE TABLE IF NOT EXISTS ([%w_]+)')
     if not name then return end
 
-    local columns, order, primary = {}, {}, nil
+    local columns, order, primary, types = {}, {}, nil, {}
     -- Up to the last bracket: the table options (the character set) follow.
     local body = sql:gsub('%-%-[^\n]*', ''):match('%((.*)%)[^)]*$') or ''
 
@@ -58,11 +106,12 @@ local function parseSchema(sql)
                     columns[column] = 'auto'
                     primary = primary or column
                 end
+                types[column] = declared(trimmed)
             end
         end
     end
 
-    Exec.schema[name] = { columns = columns, order = order }
+    Exec.schema[name] = { columns = columns, order = order, types = types }
     Exec.primary[name] = primary or 'id'
     Exec.tables[name] = Exec.tables[name] or {}
     -- The engine it names, or the server's default, which is InnoDB.
@@ -82,6 +131,54 @@ local function coerce(tableName, column, value)
         return on and 1 or 0
     end
     return value
+end
+
+--------------------------------------------------------------------------
+-- Strict mode
+--------------------------------------------------------------------------
+
+local INT_RANGE = { INT = { -2147483648, 2147483647 }, TINYINT = { -128, 127 } }
+local TEXT_BYTES = 65535
+
+--- A refusal on its way to Exec.run, which puts it in oxmysql's words.
+local Refusal = {}
+
+local function refuse(text)
+    error(setmetatable({ text = text }, Refusal), 0)
+end
+
+--- Refuse a value its column cannot hold, as MariaDB 10.11 in strict mode
+--- does (STRICT_TRANS_TABLES, which oxmysql's connections run under): in
+--- its own words, the row counted from 1. A column the schema does not
+--- declare is dropped elsewhere, not refused here.
+local function check(tableName, column, value, rowNumber)
+    local schema = Exec.schema[tableName]
+    local t = schema and schema.types and schema.types[column]
+    if not t then return end
+    if value == nil then
+        if t.notNull and not t.auto then refuse(("Column '%s' cannot be null"):format(column)) end
+        return
+    end
+    local range = INT_RANGE[t.base]
+    if range then
+        local n = value
+        if type(n) == 'boolean' then n = n and 1 or 0 end
+        n = tonumber(n)
+        if n and (n < range[1] or n > range[2]) then
+            refuse(("Out of range value for column '%s' at row %d"):format(column, rowNumber or 1))
+        end
+    elseif (t.base == 'VARCHAR' and t.size and (utf8.len(tostring(value)) or #tostring(value)) > t.size)
+        or (t.base == 'TEXT' and #tostring(value) > TEXT_BYTES) then
+        refuse(("Data too long for column '%s' at row %d"):format(column, rowNumber or 1))
+    end
+end
+
+--- What oxmysql's await raises for a statement the database refused
+--- (OXMYSQL.md §5): the statement, its parameters, the server's message.
+local function oxmysqlText(sql, params, message)
+    local ok, encoded = pcall(json.encode, params or {})
+    return ('%s was unable to execute a query!\nQuery: %s\n%s\n%s'):format(
+        GetCurrentResourceName(), tostring(sql), ok and encoded or '[]', message)
 end
 
 --------------------------------------------------------------------------
@@ -298,6 +395,78 @@ local function parseConditions(clause, sql)
     return conditions, index
 end
 
+--- One row of an INSERT, checked as MariaDB checks it, and the change it
+--- makes, not yet made: answers the function that makes it.
+local function prepareRow(sql, tableName, columns, values, rowNumber)
+    local declaredTable = Exec.schema[tableName]
+    local row, named = {}, {}
+    for i = 1, #columns do
+        named[columns[i]] = true
+        check(tableName, columns[i], values[i], rowNumber)
+        local value = coerce(tableName, columns[i], values[i])
+        if value ~= nil then row[columns[i]] = value end
+    end
+    -- Every column the statement leaves out takes its DEFAULT, or refuses
+    -- the row where it is NOT NULL with none to take.
+    for _, column in ipairs(declaredTable and declaredTable.order or {}) do
+        local t = declaredTable.types and declaredTable.types[column]
+        if t and not named[column] then
+            if t.hasDefault then
+                if t.default ~= nil then row[column] = coerce(tableName, column, t.default) end
+            elseif t.notNull and not t.auto then
+                refuse(("Field '%s' doesn't have a default value"):format(column))
+            end
+        end
+    end
+
+    local key = Exec.primary[tableName] or 'id'
+    local existing = row[key] ~= nil and (Exec.tables[tableName] or {})[row[key]]
+    if existing and sql:find('ON DUPLICATE KEY UPDATE') then
+        -- Only the columns the UPDATE clause names are changed, which is how
+        -- `state` stays out of writeContract's reach.
+        local clause = sql:match('ON DUPLICATE KEY UPDATE (.*)$') or ''
+        local changes = {}
+        -- Written even when nil. `col = VALUES(col)` with a NULL parameter
+        -- sets the column to NULL on a real database; this used to skip nil
+        -- values, so a stale copy carrying nil could never erase a column
+        -- here while it did on MySQL. That is exactly the shape of the
+        -- buyout-queue fault — a row read before the target paid, written
+        -- back after with nil in the queue columns — and the simulator was
+        -- incapable of showing it.
+        for column in clause:gmatch('([%w_]+) = VALUES%(') do changes[column] = { row[column] } end
+        -- `col = COALESCE(VALUES(col), col)`: a NULL parameter keeps what
+        -- the row has.
+        for column in clause:gmatch('([%w_]+) = COALESCE%(VALUES%(') do
+            if row[column] ~= nil then changes[column] = { row[column] } end
+        end
+        -- `col = col + VALUES(col)`: bumpStat's counters, added to what the
+        -- row holds. Ignored, a second bump left the first one's count.
+        for column, source in clause:gmatch('([%w_]+) = ([%w_]+) %+ VALUES%(') do
+            local held, added = tonumber(existing[source]), tonumber(row[column])
+            changes[column] = { (held and added) and (held + added) or nil }
+        end
+        for column, change in pairs(changes) do check(tableName, column, change[1], rowNumber) end
+        return function()
+            for column, change in pairs(changes) do existing[column] = change[1] end
+        end
+    end
+
+    return function()
+        Exec.tables[tableName] = Exec.tables[tableName] or {}
+        local id = row[key]
+        if id == nil then
+            -- AUTO_INCREMENT.
+            local next_ = 1
+            for taken in pairs(Exec.tables[tableName]) do
+                if type(taken) == 'number' and taken >= next_ then next_ = taken + 1 end
+            end
+            id = next_
+            row[key] = id
+        end
+        Exec.tables[tableName][id] = row
+    end
+end
+
 local function insert(sql, params)
     local tableName = sql:match('INSERT INTO ([%w_]+)')
     local list = sql:match('INSERT INTO [%w_]+ %(([^)]+)%)')
@@ -309,64 +478,22 @@ local function insert(sql, params)
     -- Several rows in one statement, VALUES (...),(...): each group a row,
     -- its parameters in order. Not under ON DUPLICATE KEY UPDATE, whose
     -- VALUES(col) are not row groups.
+    local groups = 1
     if not sql:find('ON DUPLICATE KEY UPDATE', 1, true) then
-        local groups = 0
+        groups = 0
         for _ in (sql:match('VALUES%s*(.*)$') or ''):gmatch('%b()') do groups = groups + 1 end
-        if groups > 1 then
-            local single = sql:match('^(.-VALUES)') .. ' (' .. ('?,'):rep(#columns - 1) .. '?)'
-            for g = 0, groups - 1 do
-                local slice = {}
-                for i = 1, #columns do slice[i] = params[g * #columns + i] end
-                insert(single, slice)
-            end
-            return {}
-        end
+        groups = math.max(groups, 1)
     end
 
-    local row = {}
-    for i = 1, #columns do
-        local value = coerce(tableName, columns[i], params[i])
-        if value ~= nil then row[columns[i]] = value end
+    -- Every row checked before any is stored: one statement is all or
+    -- nothing, so a row the database refuses leaves none of the others.
+    local writes = {}
+    for g = 0, groups - 1 do
+        local values = {}
+        for i = 1, #columns do values[i] = params[g * #columns + i] end
+        writes[#writes + 1] = prepareRow(sql, tableName, columns, values, g + 1)
     end
-
-    local key = Exec.primary[tableName] or 'id'
-    Exec.tables[tableName] = Exec.tables[tableName] or {}
-
-    local id = row[key]
-    if id == nil then
-        -- AUTO_INCREMENT.
-        local next_ = 1
-        for existing in pairs(Exec.tables[tableName]) do
-            if type(existing) == 'number' and existing >= next_ then next_ = existing + 1 end
-        end
-        id = next_
-        row[key] = id
-    end
-
-    local existing = Exec.tables[tableName][id]
-    if existing and sql:find('ON DUPLICATE KEY UPDATE') then
-        -- Only the columns the UPDATE clause names are changed, which is how
-        -- `state` stays out of writeContract's reach.
-        local clause = sql:match('ON DUPLICATE KEY UPDATE (.*)$') or ''
-        -- Written even when nil. `col = VALUES(col)` with a NULL parameter
-        -- sets the column to NULL on a real database; this used to skip nil
-        -- values, so a stale copy carrying nil could never erase a column
-        -- here while it did on MySQL. That is exactly the shape of the
-        -- buyout-queue fault — a row read before the target paid, written
-        -- back after with nil in the queue columns — and the simulator was
-        -- incapable of showing it.
-        for column in clause:gmatch('([%w_]+) = VALUES%(') do
-            existing[column] = row[column]
-        end
-        -- `col = COALESCE(VALUES(col), col)`: a NULL parameter keeps what
-        -- the row has.
-        for column in clause:gmatch('([%w_]+) = COALESCE%(VALUES%(') do
-            if row[column] ~= nil then existing[column] = row[column] end
-        end
-        return {}
-    end
-
-    Exec.tables[tableName][id] = row
+    for i = 1, #writes do writes[i]() end
     return {}
 end
 
@@ -424,7 +551,10 @@ local function update(sql, params)
         if not alsoNotNull then requireUnset[#requireUnset + 1] = column end
     end
 
-    local changed = 0
+    -- Every matched row worked out and checked before any is changed: one
+    -- statement is all or nothing, so a row the database refuses leaves
+    -- every other row as it was.
+    local changed, writes = 0, {}
 
     for _, row in pairs(Exec.tables[tableName] or {}) do
         local eligible = matches(row, conditions, params, index + 1)
@@ -436,8 +566,17 @@ local function update(sql, params)
         end
 
         if eligible then
+            changed = changed + 1
+            -- Left to right, each assignment seeing the ones before it, as
+            -- MariaDB assigns a single-table UPDATE.
+            local after, order = {}, {}
+            local function current(column)
+                if after[column] ~= nil then return after[column][1] end
+                return row[column]
+            end
             for i = 1, #assignments do
                 local assignment = assignments[i]
+                local value
 
                 if assignment.relative then
                     local delta = assignment.delta
@@ -445,35 +584,42 @@ local function update(sql, params)
                         delta = tonumber(params[assignment.index]) or 0
                         if assignment.negate then delta = -delta end
                     end
-                    row[assignment.column] = (tonumber(row[assignment.relative]) or 0) + delta
-                    goto continue
-                end
-
-                local value = assignment.literal
-                local bound = value == nil
-                if bound then value = params[assignment.index] end
-
-                if bound and value == nil then
-                    -- `col = ?` bound to nil is NULL on a real database, as
-                    -- it is in an INSERT above. Skipping it left a column a
-                    -- statement meant to clear holding its old value here
-                    -- alone: a kill photo's served link outlived the close
-                    -- that took its file.
-                    row[assignment.column] = nil
-                elseif type(value) == 'string' and value:upper() == 'NULL' then
-                    -- A real database stores a NULL and oxmysql hands it back
-                    -- as nil. Storing the string 'NULL' would make a column
-                    -- that was cleared look like one holding the word.
-                    row[assignment.column] = nil
+                    value = { (tonumber(current(assignment.relative)) or 0) + delta }
                 else
-                    local coerced = coerce(tableName, assignment.column, value)
-                    if coerced ~= nil then row[assignment.column] = coerced end
+                    local literal = assignment.literal
+                    local bound = literal == nil
+                    if bound then literal = params[assignment.index] end
+
+                    if bound and literal == nil then
+                        -- `col = ?` bound to nil is NULL on a real database, as
+                        -- it is in an INSERT above. Skipping it left a column a
+                        -- statement meant to clear holding its old value here
+                        -- alone: a kill photo's served link outlived the close
+                        -- that took its file.
+                        value = { nil }
+                    elseif type(literal) == 'string' and literal:upper() == 'NULL' then
+                        -- A real database stores a NULL and oxmysql hands it back
+                        -- as nil. Storing the string 'NULL' would make a column
+                        -- that was cleared look like one holding the word.
+                        value = { nil }
+                    else
+                        local coerced = coerce(tableName, assignment.column, literal)
+                        if coerced ~= nil then value = { coerced } end
+                    end
                 end
 
-                ::continue::
+                if value then
+                    check(tableName, assignment.column, value[1], changed)
+                    if after[assignment.column] == nil then order[#order + 1] = assignment.column end
+                    after[assignment.column] = value
+                end
             end
-            changed = changed + 1
+            writes[#writes + 1] = { row = row, after = after, order = order }
         end
+    end
+
+    for _, write in ipairs(writes) do
+        for _, column in ipairs(write.order) do write.row[column] = write.after[column][1] end
     end
 
     return changed
@@ -697,15 +843,11 @@ end
 function Exec.reset()
     Exec.tables, Exec.schema, Exec.primary, Exec.engines = {}, {}, {}, {}
     Exec.statements = {}
+    Exec.down, Exec.lateNext, Exec.late, Exec.refused, Exec.lost = false, 0, {}, {}, {}
 end
 
-function Exec.run(sql, params)
-    if type(sql) ~= 'string' then return {} end
-    params = params or {}
-
-    local flat = squash(sql)
-    Exec.statements[#Exec.statements + 1] = flat
-
+--- What one statement does, by its shape.
+local function execute(sql, params, flat)
     if flat:find('^CREATE TABLE') then
         -- IF NOT EXISTS: a table already here is left exactly as it is.
         local name = flat:match('^CREATE TABLE IF NOT EXISTS ([%w_]+)')
@@ -771,24 +913,142 @@ function Exec.run(sql, params)
     error('mysql_exec: unrecognised statement: ' .. flat)
 end
 
+--- Run one statement. One the database refuses raises what oxmysql's await
+--- raises, the server's words last, and is kept in Exec.refused; one this
+--- executor cannot read raises its own words, so a gap stays loud.
+function Exec.run(sql, params)
+    if type(sql) ~= 'string' then return {} end
+    params = params or {}
+
+    local flat = squash(sql)
+    Exec.statements[#Exec.statements + 1] = flat
+
+    local ok, result = pcall(execute, sql, params, flat)
+    if ok then return result end
+    if getmetatable(result) == Refusal then
+        local message = oxmysqlText(sql, params, result.text)
+        Exec.refused[#Exec.refused + 1] = message
+        error(message, 0)
+    end
+    error(result, 0)
+end
+
+--- Whether an error is a statement the database refused, rather than one
+--- this executor could not read.
+local function isRefusal(err)
+    return type(err) == 'string' and err:find('was unable to execute a query!', 1, true) ~= nil
+end
+
+local function describeStatement(sql)
+    if type(sql) == 'table' then return 'TRANSACTION(' .. #sql .. ')' end
+    return squash(tostring(sql))
+end
+
+--- One oxmysql method over the executor, both ways lib/MySQL.lua gives it.
+---
+--- `.await(sql, params)` answers at once, unless the database is down
+--- (Exec.down: it parks for good, as an await on a pool that cannot
+--- connect does, OXMYSQL.md §6) or the statement is one of the next
+--- Exec.lateNext (held, unanswered, until Exec.releaseLate runs it).
+---
+--- Called directly, `(sql, params, cb)`, it is handed over and not waited
+--- for: lost while the database is down, and where the database refuses
+--- it, printed by oxmysql with cb never called (no return_callback_errors);
+--- a statement this executor cannot read still raises.
+local function method(run)
+    local m = {}
+    m.await = function(sql, params)
+        if Exec.down then
+            Exec.lost[#Exec.lost + 1] = describeStatement(sql)
+            return Citizen.Await(promise.new())
+        end
+        if (Exec.lateNext or 0) > 0 then
+            Exec.lateNext = Exec.lateNext - 1
+            local p = promise.new()
+            Exec.late[#Exec.late + 1] = {
+                promise = p, sql = describeStatement(sql),
+                run = function() return run(sql, params) end,
+            }
+            return Citizen.Await(p)
+        end
+        return run(sql, params)
+    end
+    return setmetatable(m, { __call = function(_, sql, params, cb)
+        if type(params) == 'function' then params, cb = nil, params end
+        if Exec.down then
+            Exec.lost[#Exec.lost + 1] = describeStatement(sql)
+            return
+        end
+        local ok, result = pcall(run, sql, params)
+        if not ok then
+            if isRefusal(result) then return end
+            error(result, 0)
+        end
+        if type(cb) == 'function' then cb(result) end
+    end })
+end
+
+--- Every statement Exec.lateNext held, run now in the order they were
+--- sent, each one's await settled with what it answered. A caller whose
+--- own timeout settled its promise first is told nothing more, and the
+--- write lands all the same: a timed-out write landing late. The callers
+--- still waiting resume at the next Env.runTimers or Env.advance.
+---@return integer count how many ran
+function Exec.releaseLate()
+    local held = Exec.late
+    Exec.late = {}
+    for i = 1, #held do
+        local ok, result = pcall(held[i].run)
+        if ok then held[i].promise:resolve(result) else held[i].promise:reject(result) end
+    end
+    return #held
+end
+
+--- The table a write statement changes, or nil.
+local function writtenTable(sql)
+    local flat = squash(tostring(sql or ''))
+    return flat:match('^INSERT INTO ([%w_]+)') or flat:match('^UPDATE ([%w_]+)')
+        or flat:match('^DELETE FROM ([%w_]+)')
+end
+
+--- oxmysql's transaction: every statement on one connection, committed
+--- together or not at all. A statement that fails rolls back every one
+--- before it and the answer is false, not a raise (OXMYSQL.md §3); this
+--- used to keep the ones before it and raise. A statement this executor
+--- cannot read is put back the same way and still raises.
+local function transaction(queries)
+    local saved = {}
+    for _, q in ipairs(queries) do
+        local name = writtenTable(q.query or q[1])
+        if name and saved[name] == nil then
+            saved[name] = { rows = Exec.tables[name] and copy(Exec.tables[name]) }
+        end
+    end
+    for _, q in ipairs(queries) do
+        local ok, err = pcall(Exec.run, q.query or q[1], q.values or q.parameters or q[2])
+        if not ok then
+            for name, kept in pairs(saved) do Exec.tables[name] = kept.rows end
+            if type(err) == 'string' and err:find('mysql_exec: ', 1, true) and not isRefusal(err) then
+                error(err, 0)
+            end
+            return false
+        end
+    end
+    return true
+end
+
 function Exec.install(Natives)
     Exec.reset()
-    local method = Natives.mysqlMethod
-    Natives.mysql.query = method({ await = function(sql, params) return Exec.run(sql, params) end })
-    Natives.mysql.insert = method({ await = function(sql, params) Exec.run(sql, params) return 1 end })
-    Natives.mysql.update = method({ await = function(sql, params) return Exec.run(sql, params) end })
-    Natives.mysql.scalar = method({ await = function(sql, params)
+    Natives.mysql.query = method(function(sql, params) return Exec.run(sql, params) end)
+    Natives.mysql.insert = method(function(sql, params) Exec.run(sql, params) return 1 end)
+    Natives.mysql.update = method(function(sql, params) return Exec.run(sql, params) end)
+    Natives.mysql.scalar = method(function(sql, params)
         local result = Exec.run(sql, params)
         return type(result) == 'number' and result or 0
-    end })
+    end)
     -- All of it, in one await: nothing else runs in between, as nothing sees
     -- a transaction half-applied on a real database.
-    Natives.mysql.transaction = { await = function(queries)
-        for _, q in ipairs(queries) do
-            Exec.run(q.query or q[1], q.values or q.parameters or q[2])
-        end
-        return true
-    end }
+    Natives.mysql.transaction = method(transaction)
 end
 
 return Exec

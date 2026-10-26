@@ -193,3 +193,137 @@ describe('a phone build with no word filter', function()
         eq(err, CH.ERR.INVALID_INPUT)
     end)
 end)
+
+--- The harness's own outage: a database that stops answering, and one that
+--- answers after the caller stopped waiting (tests/harness/mysql_exec.lua).
+--- Later suites hold the store to both, so these hold the harness to what
+--- oxmysql does (OXMYSQL.md §6): an await on a database that is gone is
+--- never answered and parks only its own thread; a statement already sent
+--- can still land after its caller gave up on it.
+describe('the harness can leave an await unanswered, or answer it late', function()
+    local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+
+    local function store()
+        newStack()
+        Exec.install(Natives)
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local m = require('crimson-hitman.server.storage.mysql')
+        m.open()
+        return m
+    end
+
+    local function contract(id)
+        return { id = id, creator_cid = 'CREATOR1', target_cid = 'TARGET01',
+                 mode = CH.MODE.EXCLUSIVE, state = CH.STATE.ACTIVE,
+                 created_at = os.time(), payout_slots = 1, next_slot = 1 }
+    end
+
+    it('parks only the thread whose statement went out while the database was down', function()
+        local m = store()
+        m.writeContract(contract('c1'))
+        Exec.down = true
+        local reader = Env.spawn(function() return m.readContract('c1') end)
+        falsy(reader.done, 'the read is waiting')
+        eq(#Env.parked, 1, 'parked in Citizen.Await')
+
+        local fired = false
+        SetTimeout(500, function() fired = true end)
+        Env.advance(1)
+        truthy(fired, 'the rest of the server goes on: a timer still fires')
+
+        Exec.down = false
+        truthy(m.readContract('c1'), 'a statement sent once it is back is answered')
+        Env.advance(60)
+        falsy(reader.done, 'and the one sent while it was down never is')
+
+        Exec.down = true
+        local ok, err = pcall(m.readContract, 'c1')
+        falsy(ok, 'outside a coroutine nothing could resume it')
+        truthy(tostring(err):find('outside a coroutine', 1, true), tostring(err))
+
+        local answered = false
+        MySQL.query('SELECT * FROM crimson_contracts WHERE id = ?', { 'c1' },
+            function() answered = true end)
+        falsy(answered, 'a direct call is lost too')
+        eq(Exec.lost[#Exec.lost], 'SELECT * FROM crimson_contracts WHERE id = ?')
+    end)
+
+    it('lands a held write after its caller moved on', function()
+        local m = store()
+        Exec.lateNext = 1
+        local writer = Env.spawn(function()
+            m.writeContract(contract('c2'))
+            return 'written'
+        end)
+        falsy(writer.done, 'the write is waiting on its answer')
+        eq(m.readContract('c2'), nil, 'and has not landed')
+
+        m.writeContract(contract('c3'))
+        truthy(m.readContract('c3'), 'the next statement is not held')
+
+        eq(Exec.releaseLate(), 1)
+        truthy(m.readContract('c2'), 'it lands when the test lets it')
+        falsy(writer.done, 'its caller resumes on the next tick, not inside the landing')
+        Env.runTimers()
+        truthy(writer.done)
+        eq(writer.results[1], 'written')
+    end)
+
+    it('keeps the first answer an await got, and lands the write all the same', function()
+        local m = store()
+        Exec.lateNext = 1
+        local writer = Env.spawn(function()
+            return pcall(m.writeContract, contract('c4'))
+        end)
+        -- The caller's own timeout answers first, as a bounded await would.
+        Exec.late[1].promise:reject('timed out')
+        Env.runTimers()
+        truthy(writer.done)
+        falsy(writer.results[1], 'the caller was told it timed out')
+        truthy(tostring(writer.results[2]):find('timed out', 1, true), tostring(writer.results[2]))
+
+        Exec.releaseLate()
+        truthy(m.readContract('c4'), 'the write it gave up on still landed')
+        eq(Exec.late[1], nil)
+    end)
+
+    it('keeps what the database refused, in oxmysql\'s words, as its console would', function()
+        local m = store()
+        local answered = false
+        MySQL.query('INSERT INTO crimson_audit (ts, kind, action) VALUES (?, ?, ?)',
+            { os.time(), nil, 'x' }, function() answered = true end)
+        falsy(answered, 'a direct call the database refuses is never answered')
+        eq(#Exec.refused, 1)
+        truthy(Exec.refused[1]:find('was unable to execute a query!', 1, true), Exec.refused[1])
+        truthy(Exec.refused[1]:find("Column 'kind' cannot be null", 1, true), Exec.refused[1])
+        local ok, err = pcall(m.writeAudit, { ts = os.time(), action = 'x', detail = {} })
+        falsy(ok, 'an awaited one raises')
+        eq(Exec.refused[2], err, 'and is kept too')
+    end)
+
+    it('has a timer that can be cleared, and a string KVP on the same store', function()
+        newStack()
+        local fired = {}
+        local a = SetTimeout(100, function() fired[#fired + 1] = 'a' end)
+        SetTimeout(100, function() fired[#fired + 1] = 'b' end)
+        ClearTimeout(a)
+        Env.advance(1)
+        eq(table.concat(fired, ','), 'b', 'the cleared timer never fired')
+
+        SetResourceKvp('crimson:review:1', '{"id":1}')
+        SetResourceKvp('crimson:review:2', '{"id":2}')
+        SetResourceKvpInt('other', 3)
+        eq(GetResourceKvpString('crimson:review:1'), '{"id":1}')
+        eq(GetResourceKvpString('other'), nil, 'a number is not a string')
+        local handle, keys = StartFindKvp('crimson:review:'), {}
+        local key = FindKvp(handle)
+        while key do
+            keys[#keys + 1] = key
+            DeleteResourceKvp(key)
+            key = FindKvp(handle)
+        end
+        EndFindKvp(handle)
+        eq(table.concat(keys, ','), 'crimson:review:1,crimson:review:2')
+        eq(GetResourceKvpString('crimson:review:2'), nil, 'deleted on the way')
+    end)
+end)

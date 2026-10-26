@@ -320,3 +320,69 @@ describe('two actions landing on the same contract at once', function()
             .. table.concat(broken, '\n  '))
     end)
 end)
+
+--- The same question asked where it is real: on mysql, with every database
+--- await a yield (tests/harness/await_scheduler.lua). The store-call seam
+--- above runs the second actor re-entrantly from inside a store call;
+--- these let it land while the first one waits on the database, before a
+--- statement or after it and before its answer, as two net events do.
+describe('the await scheduler', function()
+    local Scheduler = require('crimson-hitman.tests.harness.await_scheduler')
+
+    --- One hitman accepting two contracts at once, allowed one at a time:
+    --- the two acceptances share no contract, so the hitman: key is all
+    --- that keeps them apart.
+    local function oneHitmanTwoContracts()
+        return {
+            name = 'accept x accept, one hitman, two contracts',
+            build = function()
+                local main, m = Scheduler.boot(function()
+                    Config.Limits.MaxAcceptedPerHitman = 1
+                end)
+                local f = Scheduler.fixture(m)
+                local function place()
+                    local c, err = m.contracts.create(f.creator, {
+                        targetCid = 'TARGET01', reason = 'Unpaid debt',
+                        mode = CH.MODE.COMPETITIVE,
+                        reward = { baseline = { cash = 5000 } }, penaltyAmount = 1000,
+                    })
+                    assert(c, 'create refused: ' .. tostring(err))
+                    return c
+                end
+                return main, m, { f = f, one = place(), two = place() }
+            end,
+            first = function(m, x) return m.contracts.accept(x.f.hitman, x.one.id, false) end,
+            second = function(m, x) return m.contracts.accept(x.f.hitman, x.two.id, false) end,
+        }
+    end
+
+    it('finds every interleaving of a serialized pairing at every await serial', function()
+        local res = Scheduler.explore(oneHitmanTwoContracts())
+        truthy(res.depth >= 3, 'an acceptance waits on the database more than this: ' .. res.depth)
+        eq(res.runs, 2 * res.depth, 'before and after every await')
+        eq(#res.findings, 0, Scheduler.report(res))
+    end)
+
+    it('fails the oracle once the hitman key is taken out of the acceptance', function()
+        local scn = oneHitmanTwoContracts()
+        local build = scn.build
+        scn.build = function()
+            local main, m, x = build()
+            local real = m.contracts.serialized
+            m.contracts.serialized = function(keys, fn, ...)
+                local kept = {}
+                for _, key in ipairs(keys) do
+                    if not key:find('^hitman:') then kept[#kept + 1] = key end
+                end
+                return real(kept, fn, ...)
+            end
+            return main, m, x
+        end
+        local res = Scheduler.explore(scn)
+        truthy(#res.findings > 0,
+            'two acceptances by one hitman overlapped and the oracle saw nothing: '
+            .. Scheduler.report(res))
+        local said = Scheduler.report(res)
+        truthy(said:find('matches no serial order', 1, true), said)
+    end)
+end)

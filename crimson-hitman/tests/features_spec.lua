@@ -519,6 +519,49 @@ describe('Verify kill with kill photos off', function()
         truthy(reply('requestPhotoToken', 3, { id = c.id }).ok, 'the camera is the way in')
     end)
 
+    --- A contract placed before the rule existed, on a server running every
+    --- switch as this resource ships them (tests/harness/shipped.lua): the
+    --- one place a kill still completes a contract there.
+    it('completes an older contract a kill may complete, on the switches this resource ships', function()
+        local Shipped = require('crimson-hitman.tests.harness.shipped')
+        local s, f = stack()
+        local c = place(s, f)
+        truthy(c, 'placed under either')
+        truthy(s.contracts.accept(f.hitman, c.id, false))
+        -- As a row an older version stored it: no rule, read as 'either'.
+        s.storage.readContract(c.id).fulfilment_rule = nil
+        Shipped.apply()
+        eq(s.projection.accepted('HITMAN01')[1].fulfilment, 'either', 'on the terms it was taken on')
+
+        Env.players[3]._coords = { x = 100.0, y = 100.0, z = 30.0 }
+        Env.players[2]._coords = { x = 101.0, y = 100.0, z = 30.0 }
+        Env.players[2]._health = 140
+        s.death.recordDamage(3, 2, 123456)
+        Env.players[2].PlayerData.metadata.isdead = true
+        s.death.onVictimReport(2)
+        local before = Env.players[3].PlayerData.money.cash
+        Natives.calls.notifications = {}
+
+        eq(reply('requestPhotoToken', 3, { id = c.id }).err, CH.ERR.PHOTO_GONE, 'no camera')
+        local answer = reply('verifyKill', 3, { id = c.id })
+        truthy(answer.ok, 'verified at the scene: ' .. tostring(answer.err))
+        eq(Env.players[3].PlayerData.money.cash, before + 5000, 'the hitman is paid')
+        eq(s.storage.readContract(c.id).state, CH.STATE.COMPLETED)
+        eq(s.photo.tokenCount(), 0, 'no token was ever issued')
+        eq(#s.storage.photosOf('CREATOR1'), 0, 'and no photo kept')
+        falsy(Natives.dirs['data/photos'], 'nor a folder made for one')
+        for _, entry in ipairs(reply('ledger', 1, {}).data.entries or {}) do
+            falsy(entry.photo, 'the client\'s Ledger offers no photo')
+        end
+        local said = {}
+        for _, data in ipairs(Natives.calls.notifications) do
+            said[#said + 1] = tostring(data.title) .. ': ' .. tostring(data.content)
+        end
+        local text = table.concat(said, '\n')
+        truthy(text:find('Contract fulfilled: Your contract was fulfilled.', 1, true), text)
+        falsy(text:lower():find('photo', 1, true), 'and nothing told anybody about a photo: ' .. text)
+    end)
+
     it('takes effect at the next tap, both ways, with no restart', function()
         local s, f = stack()
         local c = killedHere(s, f)

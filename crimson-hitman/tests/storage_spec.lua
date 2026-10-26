@@ -225,7 +225,7 @@ describe('storage conformance', function()
         for _, b in ipairs(backends()) do
             b.store.writeContract(contractFixture('ct1'))
             b.store.writeAudit({
-                action = 'release_interrupted', actor_cid = 'HITMAN01',
+                kind = 'financial', action = 'release_interrupted', actor_cid = 'HITMAN01',
                 contract_id = 'ct1', ts = os.time(),
                 detail = { line = 'ct1:1', reason = 'inventory full' },
             })
@@ -294,7 +294,7 @@ describe('storage conformance', function()
     it('round-trips an audit detail through the general read too', function()
         for _, b in ipairs(backends()) do
             b.store.writeAudit({
-                action = 'release_interrupted', actor_cid = 'HITMAN01',
+                kind = 'financial', action = 'release_interrupted', actor_cid = 'HITMAN01',
                 contract_id = 'ct2', ts = os.time(),
                 detail = { line = 'ct2:1' },
             })
@@ -990,6 +990,138 @@ describe('the mysql executor refuses a statement it cannot read', function()
         ]], {})
         eq(#rows, 1, 'only the row with nothing open against it')
         eq(rows[1].id, 'b')
+    end)
+end)
+
+--- MariaDB 10.11 runs oxmysql's connections in strict mode (OXMYSQL.md
+--- §5): a value its column cannot hold is refused, not cut or wrapped. The
+--- executor stored anything, so a paused_ms past INT, money past INT and
+--- item metadata past TEXT never failed a test, and three fixtures above
+--- wrote rows a real database refuses (a missing kind, from_cid, role).
+describe('the mysql executor refuses what strict MariaDB refuses', function()
+    local Exec = require('crimson-hitman.tests.harness.mysql_exec')
+
+    local function loaded()
+        Exec.install(Natives)
+        Exec.run([[CREATE TABLE IF NOT EXISTS t (
+            id VARCHAR(16) PRIMARY KEY,
+            n INT DEFAULT 7,
+            body TEXT,
+            must VARCHAR(8) NOT NULL,
+            flag TINYINT(1) DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]])
+        return Exec
+    end
+
+    --- What the store would see: the error oxmysql's await raises.
+    local function refused(sql, params)
+        local ok, err = pcall(Exec.run, sql, params)
+        falsy(ok, 'accepted: ' .. sql)
+        return tostring(err)
+    end
+
+    local INSERT = 'INSERT INTO t (id, n, body, must) VALUES (?, ?, ?, ?)'
+
+    it('refuses an INT past its range, at either end, and takes its last value', function()
+        loaded()
+        local err = refused(INSERT, { 'a', 2147483648, 'x', 'm' })
+        truthy(err:find("Out of range value for column 'n' at row 1", 1, true), err)
+        truthy(err:find('was unable to execute a query!', 1, true), 'in oxmysql\'s words: ' .. err)
+        truthy(err:find('2147483648', 1, true), 'with the parameters, as oxmysql sends them: ' .. err)
+        err = refused(INSERT, { 'a', -2147483649, 'x', 'm' })
+        truthy(err:find("Out of range value for column 'n'", 1, true), err)
+        Exec.run(INSERT, { 'a', 2147483647, 'x', 'm' })
+        eq(Exec.run('SELECT * FROM t WHERE id = ?', { 'a' })[1].n, 2147483647)
+        err = refused('UPDATE t SET n = n + ? WHERE id = ?', { 1, 'a' })
+        truthy(err:find("Out of range value for column 'n' at row 1", 1, true), 'an UPDATE too: ' .. err)
+        eq(Exec.run('SELECT * FROM t WHERE id = ?', { 'a' })[1].n, 2147483647, 'and left it as it was')
+    end)
+
+    it('counts a VARCHAR in characters and a TEXT in bytes', function()
+        loaded()
+        local err = refused(INSERT, { ('x'):rep(17), 1, 'x', 'm' })
+        truthy(err:find("Data too long for column 'id' at row 1", 1, true), err)
+        -- Sixteen four-byte characters are sixty-four bytes and fit.
+        Exec.run(INSERT, { ('\u{1F600}'):rep(16), 1, 'x', 'm' })
+        eq(#Exec.run('SELECT * FROM t', {}), 1, 'sixteen characters of four bytes each fit a VARCHAR(16)')
+
+        Exec.run(INSERT, { 'b', 1, ('y'):rep(65535), 'm' })
+        err = refused(INSERT, { 'c', 1, ('y'):rep(65536), 'm' })
+        truthy(err:find("Data too long for column 'body' at row 1", 1, true), err)
+    end)
+
+    it('refuses NULL in a NOT NULL column, and one left out with no default', function()
+        loaded()
+        local err = refused(INSERT, { 'a', 1, 'x', nil })
+        truthy(err:find("Column 'must' cannot be null", 1, true), err)
+        err = refused('INSERT INTO t (id, n) VALUES (?, ?)', { 'a', 1 })
+        truthy(err:find("Field 'must' doesn't have a default value", 1, true), err)
+        err = refused(INSERT, { nil, 1, 'x', 'm' })
+        truthy(err:find("Column 'id' cannot be null", 1, true), 'a primary key is NOT NULL: ' .. err)
+        Exec.run(INSERT, { 'a', 1, 'x', 'm' })
+        err = refused('UPDATE t SET must = ? WHERE id = ?', { nil, 'a' })
+        truthy(err:find("Column 'must' cannot be null", 1, true), 'an UPDATE too: ' .. err)
+        eq(Exec.run('SELECT * FROM t WHERE id = ?', { 'a' })[1].must, 'm')
+        eq(#Exec.run('SELECT * FROM t', {}), 1, 'and nothing refused was stored')
+    end)
+
+    it('gives a column left out its DEFAULT, as MariaDB does', function()
+        loaded()
+        Exec.run('INSERT INTO t (id, must) VALUES (?, ?)', { 'a', 'm' })
+        local row = Exec.run('SELECT * FROM t WHERE id = ?', { 'a' })[1]
+        eq(row.n, 7, 'INT DEFAULT 7')
+        eq(row.flag, false, 'a TINYINT(1) DEFAULT 0 reads as oxmysql hands it back')
+        eq(row.body, nil, 'and a column with none is NULL')
+
+        -- On the store's own tables: a hitman added without a stake, and the
+        -- counters a first bump does not name.
+        package.loaded['crimson-hitman.server.storage.mysql'] = nil
+        local m = require('crimson-hitman.server.storage.mysql')
+        m.open()
+        m.addHitman({ id = 'h1', contract_id = 'c1', hitman_cid = 'H', state = 'active',
+            accepted_at = 1, alias = 'Op' })
+        eq(m.readHitman('c1', 'H').stake_amount, 0, 'stake_amount INT DEFAULT 0')
+        m.bumpStat('A', 'completed', 1)
+        m.bumpStat('A', 'completed', 1)
+        local stats = m.readStats('A')
+        eq(stats.failed, 0, 'a counter never bumped is 0, not missing')
+        eq(stats.completed, 2, 'and ON DUPLICATE KEY UPDATE completed = completed + VALUES(completed) adds')
+    end)
+
+    it('writes none of a statement it refuses one row of', function()
+        loaded()
+        local err = refused('INSERT INTO t (id, n, body, must) VALUES (?, ?, ?, ?),(?, ?, ?, ?)',
+            { 'a', 1, 'x', 'm', 'b', 2147483648, 'x', 'm' })
+        truthy(err:find("Out of range value for column 'n' at row 2", 1, true), err)
+        eq(#Exec.run('SELECT * FROM t', {}), 0, 'the first row was not kept')
+
+        Exec.run(INSERT, { 'a', 1, 'x', 'm' })
+        Exec.run(INSERT, { 'b', 2147483647, 'x', 'm' })
+        refused('UPDATE t SET n = n + ? WHERE must = ?', { 1, 'm' })
+        eq(Exec.run('SELECT * FROM t WHERE id = ?', { 'a' })[1].n, 1, 'neither row changed')
+    end)
+
+    it('answers false for a transaction one statement of fails, and keeps neither', function()
+        loaded()
+        local answer = MySQL.transaction.await({
+            { query = INSERT, values = { 'a', 1, 'x', 'm' } },
+            { query = INSERT, values = { 'b', 1, 'x', nil } },
+        })
+        eq(answer, false, 'oxmysql answers false and rolls back, it does not raise')
+        eq(#Exec.run('SELECT * FROM t', {}), 0, 'the first statement was rolled back')
+        eq(MySQL.transaction.await({
+            { query = INSERT, values = { 'a', 1, 'x', 'm' } },
+            { query = INSERT, values = { 'b', 1, 'x', 'm' } },
+        }), true)
+        eq(#Exec.run('SELECT * FROM t', {}), 2)
+    end)
+
+    it('raises nothing for a direct call the database refuses, and never answers it', function()
+        loaded()
+        local answered = false
+        MySQL.query(INSERT, { 'a', 1, 'x', nil }, function() answered = true end)
+        falsy(answered, 'oxmysql prints the error and never calls cb without return_callback_errors')
+        eq(#Exec.run('SELECT * FROM t', {}), 0)
     end)
 end)
 
@@ -2513,9 +2645,9 @@ describe('every mysql statement is executable', function()
             function() m.writeAmendment({ id='am1', contract_id='c1', proposer='A', kind='cancel', payload={}, approvals={}, expires_at=1, outcome='open' }) end,
             function() m.readAmendment('am1') end,
             function() m.readOpenAmendments('c1') end,
-            function() m.writeMessage({ contract_id='c1', thread_id='t1', sender_cid='A', body='x', sent_at=1 }) end,
+            function() m.writeMessage({ contract_id='c1', thread_id='t1', from_cid='A', from_alias='Op', body='x', sent_at=1 }) end,
             function() m.readMessages('c1','t1') end,
-            function() m.writeLedger({ cid='A', contract_id='c1', resolved_at=1 }) end,
+            function() m.writeLedger({ cid='A', contract_id='c1', role='creator', resolved_at=1 }) end,
             function() m.readLedger('A', 10) end,
             function() m.queuePending('A','c1','c1:1') end,
             function() m.readPending('A') end,
